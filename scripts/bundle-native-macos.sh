@@ -77,6 +77,7 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>gespan.icns</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>Gespan uses the microphone when you dictate a message. Audio stays on this device.</string>
 </dict></plist>
 PLIST
 native_identity="${GESPAN_NATIVE_SIGNING_IDENTITY:--}"

@@ -1,4 +1,4 @@
-import { GripVertical, X } from "../../../shared/ui/icons";
+import { GripVertical, Pause, X } from "../../../shared/ui/icons";
 import { useSessionSnapshot } from "../model/sessionStateStore";
 import {
   memo,
@@ -102,6 +102,11 @@ import {
 } from "../../settings/model/settings";
 import { getComposerDraft, setComposerDraft } from "../model/draftCache";
 import { resolveModel } from "../model/models";
+import { NO_CODING_AGENT_HINT } from "../model/noCodingAgent";
+import {
+  NoCodingAgentSettingsButton,
+  useNoCodingAgentDetected,
+} from "./NoCodingAgent";
 import { isAstraModel } from "../model/astraWelcome";
 import { isOpus55Model } from "../model/opusWelcome";
 import { AstraWelcome } from "./AstraWelcome";
@@ -132,6 +137,8 @@ export type SessionPaneProps = {
   session: Session;
   workspaceSwitchingSessionId?: string;
   reviewUndoLocked?: boolean;
+  /** Stopped by Hold with something to continue on Resume. */
+  held?: boolean;
   visible: boolean;
   focused: boolean;
   addToChatTarget?: boolean;
@@ -316,6 +323,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
   session,
   workspaceSwitchingSessionId,
   reviewUndoLocked = false,
+  held = false,
   visible,
   focused,
   addToChatTarget = focused,
@@ -409,6 +417,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
   );
   const recallLastTurnRef = useRef<(() => void) | null>(null);
   const remote = remoteSession;
+  const noCodingAgent = useNoCodingAgentDetected() && !remoteSession;
   // A Pilot's chat is a running conversation; what was said stays said.
   const editLastTurnSupported =
     !remote && !pilotForSession(session.id) && canEditLastTurn(session);
@@ -668,6 +677,12 @@ const LocalSessionPane = memo(function LocalSessionPane({
       draftRef.current = session.composerSeed;
     seedRef.current = session.composerSeed;
   }
+  const holdNotice = held ? (
+    <div className="mb-1.5 flex items-center gap-2 rounded-[10px] bg-content/5 px-3 py-1.5 text-[12px] text-content/60">
+      <Pause className="size-3.5" strokeWidth={1.75} aria-hidden />
+      <span>Held · continues on Resume</span>
+    </div>
+  ) : null;
   const composer = (
     <Composer
       key={session.id}
@@ -961,6 +976,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                         ref={composerDockMotion.centeredRef}
                         data-session-composer
                       >
+                        {holdNotice}
                         {composer}
                       </div>
                     )
@@ -1177,6 +1193,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
               inert={btw.open}
               className="mx-auto w-full max-w-4xl shrink-0"
             >
+              {holdNotice}
               {agent ? (
                 <>
                   <MessageQueue
@@ -1235,6 +1252,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     onSubmit={(text, attachments) =>
                       onSubmit(session.id, text, attachments)
                     }
+                    blockedReason={
+                      noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                    }
                     // The plan's usage, as the session footer shows it,
                     // which a Pilot in full view covers. Its account moves
                     // with the usage-limit notice, not here. A narrow chat
@@ -1269,6 +1289,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
                           hotkeys={focused && !btw.open}
                           variant="text"
                           labelClassName="@max-sm:hidden"
+                          disabledReason={
+                            noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                          }
                           onChange={(harness, model) =>
                             onModelChange(session.id, harness, model)
                           }
@@ -1276,6 +1299,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             onModelSettingsChange(session.id, settings)
                           }
                         />
+                        {noCodingAgent ? <NoCodingAgentSettingsButton /> : null}
                         <ModelControlPills
                           harness={session.harness}
                           model={session.model}

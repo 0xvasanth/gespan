@@ -1493,6 +1493,7 @@ mod tests {
                 internal: false,
                 error: None,
                 attachments: Vec::new(),
+                report: Vec::new(),
             });
         roster.save(&store).unwrap();
         drop(store);

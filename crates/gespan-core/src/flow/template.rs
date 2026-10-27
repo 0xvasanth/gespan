@@ -299,6 +299,7 @@ mod tests {
             initial: String::new(),
             states: vec![],
             access: "auto".into(),
+            owner: None,
             created_at: 0,
             updated_at: 0,
         }

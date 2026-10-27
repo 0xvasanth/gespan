@@ -454,14 +454,14 @@ fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_stri
     store
         .conn
         .execute(
-            "UPDATE sessions SET harness='kiro',model='kiro:auto' WHERE id=?1",
+            "UPDATE sessions SET harness='nonexistent',model='nonexistent:auto' WHERE id=?1",
             [&source],
         )
         .unwrap();
-    assert!(crate::provider::Kind::parse("kiro").is_none());
+    assert!(crate::provider::Kind::parse("nonexistent").is_none());
     let listed = store.sessions().unwrap();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].provider, "kiro");
+    assert_eq!(listed[0].provider, "nonexistent");
     store.load(id).unwrap();
     store.agent_settings(id).unwrap();
     let harness: String = store
@@ -470,7 +470,7 @@ fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_stri
             r.get(0)
         })
         .unwrap();
-    assert_eq!(harness, "kiro");
+    assert_eq!(harness, "nonexistent");
 }
 
 #[test]

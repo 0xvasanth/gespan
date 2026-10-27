@@ -81,7 +81,7 @@ pub(crate) struct FlowsView {
     pub(super) cwd: String,
     pub(super) projects: Vec<String>,
     pub(super) appearances: HashMap<String, gespan_core::project_appearance::ProjectAppearance>,
-    pub(super) flows: Vec<Flow>,
+    pub(crate) flows: Vec<Flow>,
     pub(super) last_runs: HashMap<String, FlowRun>,
     /// Flows with a running or waiting-approval run.
     pub(super) active: HashSet<String>,
@@ -240,7 +240,8 @@ impl FlowsView {
         };
         let work = cx.background_executor().spawn(async move {
             let store = store_lock(&store)?;
-            let flows = store.list()?;
+            let mut flows = store.list()?;
+            flows.retain(|f| f.owner.is_none());
             let mut last_runs = HashMap::new();
             for flow in &flows {
                 if let Some(run) = store.runs(&flow.id, 1)?.into_iter().next() {
@@ -250,6 +251,7 @@ impl FlowsView {
             let active: HashSet<String> = store
                 .active_runs()?
                 .into_iter()
+                .filter(|run| run.flow.owner.is_none())
                 .map(|run| run.flow_id)
                 .collect();
             let run = match open_run {

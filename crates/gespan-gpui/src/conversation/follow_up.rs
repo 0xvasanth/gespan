@@ -108,7 +108,9 @@ impl Conversation {
             .is_none_or(|prefs| prefs.follow_up == "steer")
             || !self.background.tasks.is_empty())
             && Kind::from_id(&self.summary.provider).can_steer()
-            && message.can_steer();
+            && message.can_steer()
+            // Held messages wait for Resume instead of joining a settling turn.
+            && !crate::hold::active(cx);
         self.follow_ups.motion.insert(
             &message.id,
             self.follow_ups.state.messages.is_empty(),
@@ -268,7 +270,7 @@ impl Conversation {
         }
     }
     pub(super) fn pump_follow_ups(&mut self, cx: &mut Context<Self>) {
-        if self.editing_last_turn.pending() || self.stopping {
+        if self.editing_last_turn.pending() || self.stopping || crate::hold::active(cx) {
             return;
         }
         if !self.history_ready() {
@@ -386,7 +388,7 @@ impl Conversation {
         }
         cx.notify();
     }
-    fn resume_queue(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn resume_queue(&mut self, cx: &mut Context<Self>) {
         if self.stopping {
             self.defer_history_action(|this, cx| this.resume_queue(cx), cx);
             return;
@@ -489,12 +491,14 @@ impl Conversation {
             .messages
             .iter()
             .any(|m| m.error.is_some());
+        let held = self.held.is_some() || crate::hold::active(cx);
         let card = composer_shelf::card("message-queue-card", self.classic_layout)
             .when(self.follow_ups.state.paused && !self.follow_ups.resuming, |d| d.child(
                 div().h(px(28.)).flex().items_center().gap_2().border_b_1().border_color(content(0.1))
                     .child(icon("queue-pause", 14.))
-                    .child(div().flex_1().min_w_0().truncate().child(if failed { "A message couldn't be sent" } else { "Queue paused because you interrupted" }))
-                    .child(queue_button("queue-resume", if failed { "Retry queue" } else { "Resume queue" }, "queue-play").w_auto().px(px(6.)).gap(px(6.)).child(if failed { "Retry" } else { "Resume" }).on_click(cx.listener(|this, _, _, cx| this.resume_queue(cx))))
+                    .child(div().flex_1().min_w_0().truncate().child(if failed { "A message couldn't be sent" } else if held { "Held: sends on Resume" } else { "Queue paused because you interrupted" }))
+                    // While held, the status bar's Resume continues the queue.
+                    .when(!held, |d| d.child(queue_button("queue-resume", if failed { "Retry queue" } else { "Resume queue" }, "queue-play").w_auto().px(px(6.)).gap(px(6.)).child(if failed { "Retry" } else { "Resume" }).on_click(cx.listener(|this, _, _, cx| this.resume_queue(cx)))))
             ))
             .children(self.follow_ups.state.messages.iter().enumerate().map(|(index, message)| {
                 let id = message.id.clone();
@@ -543,6 +547,7 @@ fn queue_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .debug_selector(move || id.into())
         .role(Role::Button)
         .aria_label(label)
         .size(px(24.))
@@ -681,6 +686,34 @@ mod tests {
         assert!(
             queue_top - settled >= 30.,
             "Reduce Motion must reveal the full row immediately"
+        );
+    }
+
+    #[gpui::test]
+    fn the_paused_queue_offers_its_own_resume_only_when_nothing_is_held(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                view.summary.has_messages = true;
+                view.enqueue_follow_up("Later".into(), None, cx);
+                view.follow_ups.state.paused = true;
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("queue-resume").is_some());
+        visual.update(|_, cx| {
+            let mut state = gespan_core::hold::HoldState::new(1);
+            state.refresh_phase();
+            cx.set_global(crate::hold::Hold(Some(state)));
+        });
+        window.update(visual, |_, _, cx| cx.notify()).unwrap();
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("queue-resume").is_none(),
+            "the status bar's Resume continues held queues"
         );
     }
 

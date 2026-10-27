@@ -42,6 +42,8 @@ pub(super) struct Wire {
     pub stdin: Input,
     pub rx: mpsc::Receiver<Result<Vec<u8>, String>>,
     pub tail: Arc<Mutex<Vec<u8>>>,
+    /// Kiro's first sign-in failure on stderr; see `acp::kiro_stderr_auth`.
+    pub auth: Arc<Mutex<Option<String>>>,
     reader: Option<thread::JoinHandle<()>>,
     stderr_reader: Option<thread::JoinHandle<()>>,
     writer: Option<thread::JoinHandle<()>>,
@@ -111,17 +113,47 @@ impl Wire {
         });
         let tail = Arc::new(Mutex::new(Vec::new()));
         let stderr_tail = tail.clone();
+        let auth = Arc::new(Mutex::new(None));
+        let stderr_auth = (request.kind == Kind::Kiro).then(|| auth.clone());
         let stderr_reader = thread::spawn(move || {
             let mut reader = BufReader::new(stderr);
             let mut chunk = [0; 4096];
+            let mut line = Vec::new();
             while let Ok(n) = reader.read(&mut chunk) {
                 if n == 0 {
                     break;
+                }
+                if let Some(auth) = &stderr_auth {
+                    for &byte in &chunk[..n] {
+                        if byte != b'\n' {
+                            // One line never needs more than the whole tail.
+                            if line.len() < 8192 {
+                                line.push(byte);
+                            }
+                            continue;
+                        }
+                        let text = String::from_utf8_lossy(&line);
+                        if let Some(detail) = super::acp::kiro_stderr_auth(&text) {
+                            auth.lock()
+                                .unwrap()
+                                .get_or_insert_with(|| detail.to_owned());
+                        }
+                        line.clear();
+                    }
                 }
                 let mut tail = stderr_tail.lock().unwrap();
                 tail.extend_from_slice(&chunk[..n]);
                 let excess = tail.len().saturating_sub(8192);
                 tail.drain(..excess);
+            }
+            // The last line may end at exit without a newline.
+            if let Some(auth) = &stderr_auth {
+                if let Some(detail) = super::acp::kiro_stderr_auth(&String::from_utf8_lossy(&line))
+                {
+                    auth.lock()
+                        .unwrap()
+                        .get_or_insert_with(|| detail.to_owned());
+                }
             }
         });
         Ok(Self {
@@ -131,12 +163,19 @@ impl Wire {
             },
             rx,
             tail,
+            auth,
             reader: Some(reader),
             stderr_reader: Some(stderr_reader),
             writer: Some(writer),
             _registration: registration,
             _account: account,
         })
+    }
+    /// Whether stderr reached its end, so nothing more can be learned from it.
+    pub fn stderr_closed(&self) -> bool {
+        self.stderr_reader
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
     }
 }
 impl Drop for Wire {
@@ -163,8 +202,60 @@ pub(super) struct Parked {
     pub key: String,
     at: Instant,
     owner: Option<i64>,
+    /// Parked by Hold: kept with the warm pool off, and outside its limit.
+    held: bool,
 }
 static LIMIT: AtomicUsize = AtomicUsize::new(0);
+/// How long an idle agent is kept.
+const IDLE: Duration = Duration::from_secs(180);
+fn pinned_sessions() -> &'static Mutex<std::collections::HashSet<i64>> {
+    static PINNED: OnceLock<Mutex<std::collections::HashSet<i64>>> = OnceLock::new();
+    PINNED.get_or_init(Default::default)
+}
+fn pinned(owner: Option<i64>) -> bool {
+    owner.is_some_and(|owner| {
+        pinned_sessions()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&owner)
+    })
+}
+/// Hold: these sessions' parked agents, and the background work running in
+/// them, stay alive however long the hold lasts. Quit and deleting a
+/// session still end them.
+pub fn pin_idle_agents(ids: impl IntoIterator<Item = i64>) {
+    pinned_sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .extend(ids);
+}
+/// Whether Hold is keeping this session's agent.
+pub fn idle_agent_pinned(id: i64) -> bool {
+    pinned(Some(id))
+}
+/// Resume: held agents get the usual idle period from now, so a resumed
+/// turn can take its agent back even with the warm pool off.
+pub fn unpin_idle_agents() {
+    let unpinned =
+        std::mem::take(&mut *pinned_sessions().lock().unwrap_or_else(|e| e.into_inner()));
+    let now = Instant::now();
+    for parked in idle_pool().lock().unwrap().iter_mut() {
+        if parked.owner.is_some_and(|owner| unpinned.contains(&owner)) {
+            parked.at = now;
+        }
+    }
+}
+fn expired(parked: &Parked, limit: usize) -> bool {
+    if pinned(parked.owner) {
+        return false;
+    }
+    let idle = parked.at.elapsed() >= IDLE;
+    if parked.held {
+        idle
+    } else {
+        limit == 0 || idle
+    }
+}
 fn selected_sessions() -> &'static Mutex<std::collections::HashSet<i64>> {
     static SELECTED: OnceLock<Mutex<std::collections::HashSet<i64>>> = OnceLock::new();
     SELECTED.get_or_init(Default::default)
@@ -218,10 +309,13 @@ pub fn configure(limit: usize) {
 pub(super) fn enforce_idle_limit() {
     static EVICT: OnceLock<Mutex<()>> = OnceLock::new();
     let _evict = EVICT.get_or_init(Default::default).lock().unwrap();
+    // Held and pinned agents expire on their own clock and don't take
+    // warm-pool slots, so no other agent can evict them.
     let mut entries: Vec<_> = idle_pool()
         .lock()
         .unwrap()
         .iter()
+        .filter(|entry| !entry.held && !pinned(entry.owner))
         .map(|entry| (entry.wire.child.id(), entry.at, entry.owner))
         .collect();
     entries.extend(opencode::idle_entries());
@@ -283,22 +377,29 @@ pub(super) fn key(request: &Request) -> String {
     .to_string()
 }
 pub(super) fn take(key: &str) -> Option<Parked> {
-    if LIMIT.load(Ordering::Relaxed) == 0 {
-        return None;
-    }
+    let limit = LIMIT.load(Ordering::Relaxed);
     let mut pool = idle_pool().lock().unwrap();
-    let ix = pool.iter().position(|p| p.key == key)?;
+    let ix = pool
+        .iter()
+        .position(|p| p.key == key && (limit > 0 || p.held))?;
     let mut parked = pool.remove(ix);
-    if parked.at.elapsed() >= Duration::from_secs(180)
-        || parked.wire.child.try_wait().ok().flatten().is_some()
-    {
+    drop(pool);
+    if expired(&parked, limit) || parked.wire.child.try_wait().ok().flatten().is_some() {
         return None;
     }
     process::mark_idle(parked.wire.child.id(), false);
     Some(parked)
 }
-pub(super) fn put(wire: Wire, mut protocol: Protocol) {
-    if LIMIT.load(Ordering::Relaxed) == 0 || protocol.request.provider_id.is_none() {
+pub(super) fn put(wire: Wire, protocol: Protocol) {
+    park(wire, protocol, false);
+}
+/// A turn interrupted by Hold: its agent may still be running background
+/// work, so it is kept even with the warm pool off.
+pub(super) fn put_held(wire: Wire, protocol: Protocol) {
+    park(wire, protocol, true);
+}
+fn park(wire: Wire, mut protocol: Protocol, held: bool) {
+    if (LIMIT.load(Ordering::Relaxed) == 0 && !held) || protocol.request.provider_id.is_none() {
         return;
     }
     let key = key(&protocol.request);
@@ -317,6 +418,7 @@ pub(super) fn put(wire: Wire, mut protocol: Protocol) {
         key,
         at: Instant::now(),
         owner: process::owner(),
+        held,
     });
     drop(pool);
     enforce_idle_limit();
@@ -324,23 +426,29 @@ pub(super) fn put(wire: Wire, mut protocol: Protocol) {
     WATCH.get_or_init(|| {
         thread::spawn(|| loop {
             thread::sleep(Duration::from_secs(1));
-            let mut pool = idle_pool().lock().unwrap();
-            let limit = LIMIT.load(Ordering::Relaxed);
-            let mut ix = 0;
-            while ix < pool.len() {
-                if limit == 0
-                    || pool[ix].at.elapsed() >= Duration::from_secs(180)
-                    || pool[ix].wire.child.try_wait().ok().flatten().is_some()
-                {
-                    pool.remove(ix);
-                } else {
-                    ix += 1;
-                }
-            }
-            drop(pool);
+            sweep();
             enforce_idle_limit();
         });
     });
+}
+/// Ends idle agents that expired or exited.
+fn sweep() {
+    let limit = LIMIT.load(Ordering::Relaxed);
+    let retired: Vec<_> = {
+        let mut pool = idle_pool().lock().unwrap();
+        let mut retired = Vec::new();
+        let mut ix = 0;
+        while ix < pool.len() {
+            if expired(&pool[ix], limit) || pool[ix].wire.child.try_wait().ok().flatten().is_some()
+            {
+                retired.push(pool.remove(ix));
+            } else {
+                ix += 1;
+            }
+        }
+        retired
+    };
+    drop(retired);
 }
 
 /// Stop settles after the provider interrupt is written/acknowledged. Keep the
@@ -681,6 +789,118 @@ for line in sys.stdin:
         request.cwd = dir.path().join("other");
         assert_ne!(original, key(&request));
         configure(0);
+        idle_pool().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn held_agents_stay_parked_while_pinned_and_get_the_usual_idle_period_after() {
+        const CHILD: &str = "GESPAN_PARKED_HOLD_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The idle limit and pool are process-wide; run alone.
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "provider::parked::tests::held_agents_stay_parked_while_pinned_and_get_the_usual_idle_period_after",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        fn alive(pid: u32) -> bool {
+            unsafe { libc::kill(pid as i32, 0) == 0 }
+        }
+        fn spawn(session: &str) -> (Wire, Protocol, u32) {
+            let mut request = start_request(Kind::Codex, "/bin/cat");
+            request.provider_id = Some(session.into());
+            let mut command = Command::new(&request.binary);
+            command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            process::isolate(&mut command);
+            let wire = Wire::spawn(&mut command, &request, false).unwrap();
+            let pid = wire.child.id();
+            (wire, Protocol::new(request), pid)
+        }
+        fn backdate(pid: u32, by: Duration) {
+            let mut pool = idle_pool().lock().unwrap();
+            let entry = pool.iter_mut().find(|p| p.wire.child.id() == pid).unwrap();
+            entry.at = Instant::now() - by;
+        }
+        fn parked(pid: u32) -> bool {
+            idle_pool()
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|p| p.wire.child.id() == pid)
+        }
+        // The warm pool is off: an unheld agent is not kept.
+        configure(0);
+        let (wire, protocol, plain) = spawn("plain");
+        process::owned_by(41, || put(wire, protocol));
+        assert!(!parked(plain));
+
+        pin_idle_agents([42]);
+        let (wire, protocol, held) = spawn("held");
+        // The key names its session, as in a real launch.
+        let key = process::owned_by(42, || key(&protocol.request));
+        process::owned_by(42, || put_held(wire, protocol));
+        assert!(parked(held) && alive(held), "Hold keeps its agent");
+        // However long the hold lasts.
+        backdate(held, Duration::from_secs(3600));
+        sweep();
+        enforce_idle_limit();
+        assert!(parked(held) && alive(held));
+
+        // Resume: the usual idle period starts now, even with the pool off.
+        unpin_idle_agents();
+        sweep();
+        enforce_idle_limit();
+        assert!(parked(held), "a resumed turn can still take it back");
+        let taken =
+            process::owned_by(42, || take(&key)).expect("the resumed turn reuses the held agent");
+        assert_eq!(taken.wire.child.id(), held);
+        process::owned_by(42, || put_held(taken.wire, taken.protocol));
+        backdate(held, IDLE);
+        sweep();
+        assert!(!parked(held), "then it expires like any idle agent");
+
+        // With the warm pool on, an agent already idle when Hold pinned it
+        // is not evicted to make room for others.
+        configure(1);
+        let (wire, protocol, idle) = spawn("idle-before-hold");
+        process::owned_by(44, || put(wire, protocol));
+        pin_idle_agents([44]);
+        let (wire, protocol, later) = spawn("finished-during-hold");
+        process::owned_by(45, || put(wire, protocol));
+        assert!(parked(idle) && alive(idle), "the pinned agent stays");
+        assert!(parked(later), "the newer one is kept within the limit");
+        unpin_idle_agents();
+        configure(0);
+        idle_pool().lock().unwrap().clear();
+
+        // Deleting a held session still ends its agent.
+        pin_idle_agents([43]);
+        let (wire, protocol, deleted) = spawn("deleted");
+        let request = protocol.request.clone();
+        process::owned_by(43, || put_held(wire, protocol));
+        assert!(parked(deleted));
+        forget_session(
+            request.kind,
+            "deleted",
+            &request.settings.account.id,
+            &request.cwd,
+        );
+        assert!(!parked(deleted));
+        unpin_idle_agents();
         idle_pool().lock().unwrap().clear();
     }
 }

@@ -12,6 +12,7 @@ pub(super) enum OverviewTab {
     Habits,
     Documents,
     Changes,
+    Roadmap,
     Activity,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -109,36 +110,6 @@ fn setting(label: &str, description: Option<&str>, control: AnyElement) -> Div {
                 .child(control),
         )
 }
-fn switch_setting(label: &str, description: &str, disabled: bool, control: AnyElement) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .px_3()
-        .py_2()
-        .when(disabled, |d| d.opacity(0.4))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .text_size(px(13.))
-                        .line_height(px(20.))
-                        .text_color(content(0.9))
-                        .child(label.to_string()),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .line_height(px(20.))
-                        .text_color(content(0.4))
-                        .truncate()
-                        .child(description.to_string()),
-                ),
-        )
-        .child(control)
-}
 fn heading(title: &str, description: Option<&str>) -> Div {
     div()
         .pt_7()
@@ -169,7 +140,7 @@ fn card() -> Div {
         .flex_col()
 }
 /// pilotPanelParts' EmptyState: an icon over a short, centred note.
-fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
+pub(super) fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
     div()
         .size_full()
         .flex()
@@ -773,6 +744,9 @@ impl Pilots {
             self.overview_tab = tab;
             cx.notify();
         }
+        if tab == OverviewTab::Roadmap {
+            self.reload_roadmap(cx);
+        }
     }
     /// PilotSidebarHeader lives in the base page, so routed pages replace its
     /// tabs and close control together with the overview body.
@@ -859,6 +833,7 @@ impl Pilots {
                 "file-diff",
                 self.project_changes.count(&pilot.id),
             ),
+            (OverviewTab::Roadmap, "SOP Roadmap", "git-merge", 0),
         ];
         div()
             .id("pilot-overview-tabs")
@@ -885,6 +860,7 @@ impl Pilots {
                     OverviewTab::Documents => "pilot-overview-Documents",
                     OverviewTab::Habits => "pilot-overview-Habits",
                     OverviewTab::Changes => "pilot-overview-Changes",
+                    OverviewTab::Roadmap => "pilot-overview-roadmap",
                     OverviewTab::Activity => unreachable!(),
                 };
                 crate::project_tabs::tab_button(
@@ -944,6 +920,7 @@ impl Pilots {
             OverviewTab::Habits => self.habits_list(pilot, cx),
             OverviewTab::Documents => self.document_list(pilot, cx),
             OverviewTab::Changes => self.changes_list(pilot, cx),
+            OverviewTab::Roadmap => self.shown_roadmap(&pilot.id, cx).into_any_element(),
             OverviewTab::Activity => self.activity_view(pilot, cx),
         };
         div()
@@ -1606,127 +1583,332 @@ impl Pilots {
                 .hover(|s| s.bg(content(0.06)))
                 .child(label)
         };
-        div().id("pilot-general-settings").debug_selector(||"pilot-general-settings".into())
-            .flex_1().min_h_0().overflow_y_scroll().px_8().pt_6().pb_8()
-            .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child("General"))
-            .child(div().flex().flex_col().items_center().pt_4().pb_6()
-                .child(div().id("pilot-look").debug_selector(||"pilot-look".into()).role(Role::Button)
-                    .aria_label("Change mascot and color").relative().size(px(80.)).flex_shrink_0()
-                    .flex().items_center().justify_center().rounded_2xl().border_1().border_color(content(0.04))
-                    .bg(content(0.04)).hover(|s|s.bg(content(0.08)))
-                    .child(self.settings_anchor.probe())
-                    .child(avatar::avatar(&pilot.mascot, pilot.color, "idle", 48., false))
-                    .on_click(cx.listener(move |this, _, w, cx|this.open_settings_look(&look,w,cx))))
-                .child(div().id("pilot-name-field").debug_selector(||"pilot-name-field".into()).mt_3().h(px(32.)).w(px(256.)).max_w_full().px_2().py_1p5()
-                    .rounded_md().font_weight(FontWeight::MEDIUM).hover(|s|s.bg(content(0.05))).child(name)))
-            .child(heading("Model", None))
-            .child(card()
-                .child(setting("Model",Some("What it thinks and replies with."),
-                    div().id("pilot-settings-model").role(Role::Button).aria_label(format!("Choose model, {model}"))
-                        .h(px(28.)).px_1p5().mx(px(-6.)).rounded_md().flex().items_center().gap_2()
-                        .text_size(px(12.)).text_color(content(0.85)).hover(|s|s.bg(content(0.06)))
-                        .child(self.model_anchor.probe()).child(provider_icon(&provider,14.)).child(model)
-                        .on_click(cx.listener(|this,_,w,cx|this.open_model_picker(w,cx))).into_any_element()))
-                .children(model_options.into_iter().filter_map(|item| {
-                    let MenuItem::Action(option)=item else { return None; };
-                    let label=option.label.clone();
-                    let value=option.value.clone().unwrap_or_else(||if option.checked {"On"}else{"Off"}.into());
-                    let anchor=AnchorSlot::default(); let probe=anchor.probe();
-                    Some(setting(&label,None,
-                        plain(SharedString::from(format!("pilot-option-{}",option.id)),value).child(probe)
-                            .on_click(cx.listener(move |this,_,w,cx| {
-                                if option.submenu.is_empty() {
-                                    if let Some(chat)=this.chat() && let Err(e)=chat.update(cx,|v,cx|v.pilot_pick_model_option(&option.id,cx)) { this.error=Some(e); }
-                                    this.changed(cx);
-                                } else { this.open_model_option(option.label.clone(),option.submenu.clone(),anchor.clone(),w,cx); }
-                            })).into_any_element()).border_t_1().border_color(content(0.04)))
-                }))
-                .child(setting("Permissions",Some("What it may do without asking."),
-                    div().id("pilot-settings-access").role(Role::Button).aria_label(format!("Permissions, {}",mode.label()))
-                        .h(px(28.)).max_w(px(208.)).px_1p5().mx(px(-6.)).rounded_md().flex().items_center().gap_2()
-                        .text_size(px(12.)).text_color(content(0.85)).hover(|s|s.bg(content(0.06)))
-                        .child(self.access_anchor.probe()).child(icon(access_icon,14.).when(mode==AccessMode::FullAccess,|i|i.text_color(rgb(0xffb900))))
-                        .child(mode.label()).child(icon("chevron-down",12.))
-                        .on_click(cx.listener(|this,_,w,cx|this.open_access_picker(w,cx))).into_any_element())
-                    .border_t_1().border_color(content(0.04))))
-            .child(heading("Projects",Some("It can see every session, note and folder in these.")))
-            .child(card()
-                .children(pilot.projects.iter().enumerate().map(|(ix,project)| {
-                    let remove=project.clone();
-                    let appearance=self.owner.upgrade().and_then(|o|o.read(cx).workspace.project_appearance.get(project).cloned()).unwrap_or_default();
-                    let label=appearance.label(project);
-                    let pretty=std::env::var("HOME").ok().and_then(|home|project.strip_prefix(&home).map(|rest|format!("~{rest}"))).unwrap_or_else(||project.clone());
-                    let group:SharedString=format!("pilot-project-{ix}").into();
-                    div().id(("pilot-project",ix)).group(group.clone()).min_h(px(48.)).flex().items_center().gap_3().px_3().py_2()
-                        .when(ix>0,|d|d.border_t_1().border_color(content(0.04)))
-                        .child(div().size(px(32.)).flex_shrink_0().rounded_lg().bg(content(0.05)).flex().items_center().justify_center()
-                            .child(crate::project_settings::project_icon(&appearance,project,16.)))
-                        .child(div().flex_1().min_w_0()
-                            .child(div().text_size(px(13.)).line_height(px(20.)).text_color(content(0.9)).truncate().child(label))
-                            .child(div().text_size(px(11.)).line_height(px(16.)).text_color(content(0.4)).truncate().child(pretty)))
-                        .child(icon_button("pilot-remove-project","Remove project","close").opacity(0.).group_hover(group,|s|s.opacity(1.))
-                            .on_click(cx.listener(move |this,_,_,cx| { if let Some(id)=this.active.clone() {
-                                if let Some(m)=this.roster.get_mut(&id) {m.projects.retain(|p|p!=&remove);}
-                                this.configure_chat(&id,cx);this.save(cx);
-                            }})))
-                }))
-                .child(div().id("pilot-add-project").role(Role::Button).aria_label("Add project").h(px(44.)).px_3().flex().items_center().gap_3()
-                    .text_size(px(13.)).text_color(content(0.55)).hover(|s|s.bg(content(0.04)).text_color(content(1.)))
-                    .when(!pilot.projects.is_empty(),|d|d.border_t_1().border_color(content(0.04)))
-                    .child(self.projects_anchor.probe())
-                    .child(div().size(px(32.)).rounded_lg().border_1().border_color(content(0.15)).flex().items_center().justify_center().child(icon("plus",14.)))
-                    .child("Add project").on_click(cx.listener(move |this,_,w,cx|this.pick_project(&add,w,cx)))))
-            .child(heading("Sessions it starts",None))
-            .child(card()
-                .child(switch_setting("Show sessions in sidebar","Sessions it starts appear in your project sidebar. Hidden ones stay saved and open from its overview.",false,
-                    self.switch("pilot-show-started",pilot.show_started_sessions_in_sidebar,false,|m,on|m.show_started_sessions_in_sidebar=on,cx)))
-                .child(switch_setting("Group in a folder",&format!("Sessions it starts go in a “{}” folder in your project sidebar.",pilot.label()),!pilot.show_started_sessions_in_sidebar,
-                    self.switch("pilot-group-started",pilot.show_started_sessions_in_sidebar&&pilot.use_sidebar_folders,!pilot.show_started_sessions_in_sidebar,|m,on|m.use_sidebar_folders=on,cx))
-                    .border_t_1().border_color(content(0.04))))
-            .child(heading("Conversation",None))
-            .child(card().child(setting("Reset conversation",Some("Clear all messages and start fresh. Its soul, memory and habits stay."),
-                div().id("pilot-reset").role(Role::Button).aria_label("Reset").flex().items_center().px_3().py_1p5().rounded_md().text_size(px(12.)).border_1().border_color(content(0.04)).text_color(rgb(0xff6467)).hover(|s|s.bg(rgb(0xfb2c36).opacity(0.1))).child("Reset")
-                    .on_click(cx.listener(move |this,_,w,cx|this.reset_conversation(&reset,w,cx))).into_any_element())))
-            .into_any_element()
-    }
-    fn switch(
-        &self,
-        id: &'static str,
-        on: bool,
-        disabled: bool,
-        change: fn(&mut Pilot, bool),
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
         div()
-            .id(id)
-            .role(Role::Switch)
-            .aria_label(id)
-            .aria_selected(on)
-            .w(px(36.))
-            .h(px(20.))
-            .flex_shrink_0()
-            .rounded_full()
-            .bg(if on { accent_color() } else { content(0.2) })
+            .id("pilot-general-settings")
+            .debug_selector(|| "pilot-general-settings".into())
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px_8()
+            .pt_6()
+            .pb_8()
             .child(
                 div()
-                    .size(px(16.))
-                    .mt(px(2.))
-                    .ml(px(if on { 18. } else { 2. }))
-                    .rounded_full()
-                    .bg(gpui::white()),
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("General"),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if disabled {
-                    return;
-                }
-                if let Some(id) = this.active.clone() {
-                    if let Some(m) = this.roster.get_mut(&id) {
-                        change(m, !on);
-                    }
-                    this.configure_chat(&id, cx);
-                    this.save(cx);
-                }
-            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .pt_4()
+                    .pb_6()
+                    .child(
+                        div()
+                            .id("pilot-look")
+                            .debug_selector(|| "pilot-look".into())
+                            .role(Role::Button)
+                            .aria_label("Change mascot and color")
+                            .relative()
+                            .size(px(80.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_2xl()
+                            .border_1()
+                            .border_color(content(0.04))
+                            .bg(content(0.04))
+                            .hover(|s| s.bg(content(0.08)))
+                            .child(self.settings_anchor.probe())
+                            .child(avatar::avatar(
+                                &pilot.mascot,
+                                pilot.color,
+                                "idle",
+                                48.,
+                                false,
+                            ))
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                this.open_settings_look(&look, w, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("pilot-name-field")
+                            .debug_selector(|| "pilot-name-field".into())
+                            .mt_3()
+                            .h(px(32.))
+                            .w(px(256.))
+                            .max_w_full()
+                            .px_2()
+                            .py_1p5()
+                            .rounded_md()
+                            .font_weight(FontWeight::MEDIUM)
+                            .hover(|s| s.bg(content(0.05)))
+                            .child(name),
+                    ),
+            )
+            .child(heading("Model", None))
+            .child(
+                card()
+                    .child(setting(
+                        "Model",
+                        Some("What it thinks and replies with."),
+                        div()
+                            .id("pilot-settings-model")
+                            .role(Role::Button)
+                            .aria_label(format!("Choose model, {model}"))
+                            .h(px(28.))
+                            .px_1p5()
+                            .mx(px(-6.))
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(px(12.))
+                            .text_color(content(0.85))
+                            .hover(|s| s.bg(content(0.06)))
+                            .child(self.model_anchor.probe())
+                            .child(provider_icon(&provider, 14.))
+                            .child(model)
+                            .on_click(cx.listener(|this, _, w, cx| this.open_model_picker(w, cx)))
+                            .into_any_element(),
+                    ))
+                    .children(model_options.into_iter().filter_map(|item| {
+                        let MenuItem::Action(option) = item else {
+                            return None;
+                        };
+                        let label = option.label.clone();
+                        let value = option
+                            .value
+                            .clone()
+                            .unwrap_or_else(|| if option.checked { "On" } else { "Off" }.into());
+                        let anchor = AnchorSlot::default();
+                        let probe = anchor.probe();
+                        Some(
+                            setting(
+                                &label,
+                                None,
+                                plain(
+                                    SharedString::from(format!("pilot-option-{}", option.id)),
+                                    value,
+                                )
+                                .child(probe)
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    if option.submenu.is_empty() {
+                                        if let Some(chat) = this.chat()
+                                            && let Err(e) = chat.update(cx, |v, cx| {
+                                                v.pilot_pick_model_option(&option.id, cx)
+                                            })
+                                        {
+                                            this.error = Some(e);
+                                        }
+                                        this.changed(cx);
+                                    } else {
+                                        this.open_model_option(
+                                            option.label.clone(),
+                                            option.submenu.clone(),
+                                            anchor.clone(),
+                                            w,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .into_any_element(),
+                            )
+                            .border_t_1()
+                            .border_color(content(0.04)),
+                        )
+                    }))
+                    .child(
+                        setting(
+                            "Permissions",
+                            Some("What it may do without asking."),
+                            div()
+                                .id("pilot-settings-access")
+                                .role(Role::Button)
+                                .aria_label(format!("Permissions, {}", mode.label()))
+                                .h(px(28.))
+                                .max_w(px(208.))
+                                .px_1p5()
+                                .mx(px(-6.))
+                                .rounded_md()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(12.))
+                                .text_color(content(0.85))
+                                .hover(|s| s.bg(content(0.06)))
+                                .child(self.access_anchor.probe())
+                                .child(
+                                    icon(access_icon, 14.)
+                                        .when(mode == AccessMode::FullAccess, |i| {
+                                            i.text_color(rgb(0xffb900))
+                                        }),
+                                )
+                                .child(mode.label())
+                                .child(icon("chevron-down", 12.))
+                                .on_click(
+                                    cx.listener(|this, _, w, cx| this.open_access_picker(w, cx)),
+                                )
+                                .into_any_element(),
+                        )
+                        .border_t_1()
+                        .border_color(content(0.04)),
+                    ),
+            )
+            .child(heading(
+                "Projects",
+                Some("It can see every session, note and folder in these."),
+            ))
+            .child(
+                card()
+                    .children(pilot.projects.iter().enumerate().map(|(ix, project)| {
+                        let remove = project.clone();
+                        let appearance = self
+                            .owner
+                            .upgrade()
+                            .and_then(|o| {
+                                o.read(cx)
+                                    .workspace
+                                    .project_appearance
+                                    .get(project)
+                                    .cloned()
+                            })
+                            .unwrap_or_default();
+                        let label = appearance.label(project);
+                        let pretty = std::env::var("HOME")
+                            .ok()
+                            .and_then(|home| {
+                                project.strip_prefix(&home).map(|rest| format!("~{rest}"))
+                            })
+                            .unwrap_or_else(|| project.clone());
+                        let group: SharedString = format!("pilot-project-{ix}").into();
+                        div()
+                            .id(("pilot-project", ix))
+                            .group(group.clone())
+                            .min_h(px(48.))
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .px_3()
+                            .py_2()
+                            .when(ix > 0, |d| d.border_t_1().border_color(content(0.04)))
+                            .child(
+                                div()
+                                    .size(px(32.))
+                                    .flex_shrink_0()
+                                    .rounded_lg()
+                                    .bg(content(0.05))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(crate::project_settings::project_icon(
+                                        &appearance,
+                                        project,
+                                        16.,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .line_height(px(20.))
+                                            .text_color(content(0.9))
+                                            .truncate()
+                                            .child(label),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .line_height(px(16.))
+                                            .text_color(content(0.4))
+                                            .truncate()
+                                            .child(pretty),
+                                    ),
+                            )
+                            .child(
+                                icon_button("pilot-remove-project", "Remove project", "close")
+                                    .opacity(0.)
+                                    .group_hover(group, |s| s.opacity(1.))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(id) = this.active.clone() {
+                                            if let Some(m) = this.roster.get_mut(&id) {
+                                                m.projects.retain(|p| p != &remove);
+                                            }
+                                            this.configure_chat(&id, cx);
+                                            this.save(cx);
+                                        }
+                                    })),
+                            )
+                    }))
+                    .child(
+                        div()
+                            .id("pilot-add-project")
+                            .role(Role::Button)
+                            .aria_label("Add project")
+                            .h(px(44.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .text_size(px(13.))
+                            .text_color(content(0.55))
+                            .hover(|s| s.bg(content(0.04)).text_color(content(1.)))
+                            .when(!pilot.projects.is_empty(), |d| {
+                                d.border_t_1().border_color(content(0.04))
+                            })
+                            .child(self.projects_anchor.probe())
+                            .child(
+                                div()
+                                    .size(px(32.))
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(content(0.15))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(icon("plus", 14.)),
+                            )
+                            .child("Add project")
+                            .on_click(
+                                cx.listener(move |this, _, w, cx| this.pick_project(&add, w, cx)),
+                            ),
+                    ),
+            )
+            .child(heading("Conversation", None))
+            .child(
+                card().child(setting(
+                    "Reset conversation",
+                    Some("Clear all messages and start fresh. Its soul, memory and habits stay."),
+                    div()
+                        .id("pilot-reset")
+                        .role(Role::Button)
+                        .aria_label("Reset")
+                        .flex()
+                        .items_center()
+                        .px_3()
+                        .py_1p5()
+                        .rounded_md()
+                        .text_size(px(12.))
+                        .border_1()
+                        .border_color(content(0.04))
+                        .text_color(rgb(0xff6467))
+                        .hover(|s| s.bg(rgb(0xfb2c36).opacity(0.1)))
+                        .child("Reset")
+                        .on_click(
+                            cx.listener(move |this, _, w, cx| {
+                                this.reset_conversation(&reset, w, cx)
+                            }),
+                        )
+                        .into_any_element(),
+                )),
+            )
             .into_any_element()
     }
     /// PilotMenu, beside the row's options button or at a right-click.
@@ -1824,6 +2006,12 @@ impl Pilots {
         let Some(chat) = self.chat() else {
             return;
         };
+        // No CLI detected: the dropdown leads to where one is set up.
+        if crate::installed_providers::none_detected(cx) {
+            window.focus(&chat.read(cx).input.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(crate::conversation::OpenAgentSettings), cx);
+            return;
+        }
         let view = chat.read(cx);
         let provider = Kind::from_id(&view.summary.provider);
         let model = view.pilot_model();
@@ -1832,12 +2020,13 @@ impl Pilots {
         let list = cx.new(|cx| ModelList::new_for(provider, model, &project, account, cx));
         let focus = list.read(cx).search_focus(cx);
         let picked = cx.subscribe(&list, |this, _, picked: &ModelPicked, cx| {
-            if let Some(view) = this.chat()
-                && let Err(e) = view.update(cx, |v, cx| {
+            if let Some(view) = this.chat() {
+                match view.update(cx, |v, cx| {
                     v.pilot_config(picked.0, picked.1.clone(), HashMap::new(), cx)
-                })
-            {
-                this.error = Some(e);
+                }) {
+                    Ok(()) => crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx),
+                    Err(e) => this.error = Some(e),
+                }
             }
             this.picker = None;
             this.changed(cx);

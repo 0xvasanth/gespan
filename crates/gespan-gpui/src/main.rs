@@ -33,10 +33,13 @@ mod git_graph;
 mod git_picker;
 mod git_status;
 mod history;
+mod hold;
+mod hold_confirm;
 mod image_lightbox;
 mod image_memory;
 mod inbox;
 mod input;
+mod installed_providers;
 #[cfg(test)]
 mod log_capture;
 mod markdown;
@@ -206,6 +209,13 @@ fn fatal(echo: bool, code: i32, message: &str) -> ! {
     exit(code)
 }
 fn main() {
+    // The dictation helper this binary runs as a child: no app, no GPUI.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|a| a == "speech-helper")
+    {
+        gespan_speech::helper_main();
+    }
     if let Some(code) = gespan_core::remote::ssh_askpass::maybe_run() {
         exit(code);
     }

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   defaultModelId,
   loadLastModelChoice,
@@ -64,5 +64,24 @@ it("uses an enabled provider while the configured default is hidden", () => {
   expect(initialQuickChoice()).toEqual({
     harness: "codex",
     model: "codex:gpt-5.6-luna",
+  });
+});
+
+it("starts on an installed provider once the workspace reports what is installed", async () => {
+  // A landed catalog marks detection done for good, so use a fresh module.
+  vi.resetModules();
+  const models = await import("../../sessions/model/models");
+  const quick = await import("./quickComposer");
+  models.saveLastModelChoice("codex", "codex:gpt-5.6-luna");
+  expect(quick.initialQuickChoice().harness).toBe("codex");
+  quick.applyQuickCatalog({
+    models: {},
+    availableHarnesses: ["kiro", "opencode"],
+  });
+  expect(quick.initialQuickChoice().harness).toBe("opencode");
+  models.saveLastModelChoice("kiro", "kiro:auto");
+  expect(quick.initialQuickChoice()).toEqual({
+    harness: "kiro",
+    model: "kiro:auto",
   });
 });

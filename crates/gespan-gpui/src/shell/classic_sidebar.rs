@@ -366,7 +366,7 @@ impl Shell {
                                         })
                                         .on_click(
                                             cx.listener(|this, _, _, cx| {
-                                                this.create(this.default_kind(), cx)
+                                                this.create(this.default_kind(cx), cx)
                                             }),
                                         ),
                                     ),

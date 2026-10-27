@@ -407,6 +407,7 @@ fn approval_flow() -> Flow {
             max_visits: 3,
         })],
         access: "auto".into(),
+        owner: None,
         created_at: 0,
         updated_at: 0,
     }
@@ -483,6 +484,8 @@ fn seed_failed_run(window: WindowHandle<Shell>, visual: &mut VisualTestContext, 
         error: Some("Output contract not met: missing summary".into()),
         created_at: 1,
         finished_at: Some(3_000),
+        tag: None,
+        edits: vec![],
     };
     let mut triage = visit("run1", 1, "triage", VisitStatus::Completed);
     triage.outputs = Some(HashMap::from([
@@ -580,6 +583,8 @@ fn delete_is_disabled_while_a_run_is_active(cx: &mut TestAppContext) {
                 error: None,
                 created_at: 1,
                 finished_at: None,
+                tag: None,
+                edits: vec![],
             })
             .unwrap()
     });
@@ -625,6 +630,8 @@ fn a_refused_delete_shows_the_stores_error(cx: &mut TestAppContext) {
                 error: None,
                 created_at: 1,
                 finished_at: None,
+                tag: None,
+                edits: vec![],
             })
             .unwrap()
     });
@@ -791,6 +798,8 @@ fn a_running_visit_waiting_on_its_session_shows_the_approval_wait(cx: &mut TestA
         error: None,
         created_at: 1,
         finished_at: None,
+        tag: None,
+        edits: vec![],
     };
     let mut triage = visit("run1", 1, "triage", VisitStatus::Running);
     triage.session_id = Some("77".into());
@@ -876,6 +885,8 @@ fn resuming_a_run_that_lost_its_worktree_takes_it_from_the_visit_session(cx: &mu
         error: Some("Interrupted by app restart".into()),
         created_at: 1,
         finished_at: Some(3_000),
+        tag: None,
+        edits: vec![],
     };
     let mut triage = visit("run1", 1, "triage", VisitStatus::Failed);
     triage.session_id = Some(session.to_string());
@@ -934,5 +945,34 @@ fn the_run_dialogs_access_choice_reaches_the_runs_snapshot_only(cx: &mut TestApp
     assert!(visual.debug_bounds("flow-run-access-mode").is_some());
     view.read_with(visual, |view, _| {
         assert_eq!(view.open_run().unwrap().0.flow.access, "full-access")
+    });
+}
+
+#[gpui::test]
+fn flows_view_lists_only_user_flows(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let mine = fix_an_issue("user-flow", "/tmp/project");
+    let mut owned = fix_an_issue("pilot-flow", "/tmp/project");
+    owned.states.truncate(1);
+    let FlowState::Agent(only) = &mut owned.states[0] else {
+        panic!("the starter begins with an agent");
+    };
+    only.transitions = vec![Transition {
+        to: gespan_core::flow::SUCCEEDED.into(),
+        when: None,
+    }];
+    owned.initial = only.id.clone();
+    owned.owner = Some("p1".into());
+    with_store(window, visual, |store| {
+        store.upsert(&owned).unwrap();
+    });
+    open_with(window, visual, &mine);
+    let ids: Vec<String> = view(window, visual).read_with(visual, |v, _| {
+        v.flows.iter().map(|f| f.id.clone()).collect()
+    });
+    assert_eq!(ids, ["user-flow"]);
+    with_store(window, visual, |store| {
+        assert!(store.owned_flow("p1", "pilot-flow").unwrap().is_some());
     });
 }

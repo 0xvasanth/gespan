@@ -57,6 +57,7 @@
     "linux": {
       "rpm": {
         "depends": [
+          "alsa-lib",
           "gtk3",
           "libappindicator-gtk3",
           "librsvg2",

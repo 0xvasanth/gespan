@@ -188,6 +188,9 @@ impl Protocol {
         stdin: &mut impl Write,
     ) -> Result<Vec<Event>, String> {
         let mut events = Vec::new();
+        if self.holding {
+            return Ok(events);
+        }
         let expired = self.visible_question.as_ref().and_then(|id| {
             self.questions
                 .get(id)

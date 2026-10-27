@@ -1,0 +1,35 @@
+import { useEffect, useRef, useState } from "react";
+import type { HoldState } from "./hold";
+import { HoldCoordinator, type HoldHost } from "./holdCoordinator";
+
+export type HoldActions = Omit<HoldHost, "changed">;
+
+/**
+ * One HoldCoordinator for the app. `actions` may change every render; the
+ * coordinator always calls the latest ones.
+ */
+export function useHold(actions: HoldActions) {
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  const coordinatorRef = useRef<HoldCoordinator | null>(null);
+  const changedRef = useRef<(state: HoldState | null) => void>(() => undefined);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new HoldCoordinator({
+      sessions: () => actionsRef.current.sessions(),
+      holdTurn: (id) => actionsRef.current.holdTurn(id),
+      stop: (id) => actionsRef.current.stop?.(id),
+      resume: (id, prompt) => actionsRef.current.resume(id, prompt),
+      changed: (state) => changedRef.current(state),
+    });
+  }
+  const hold = coordinatorRef.current;
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    changedRef.current = () => setVersion((v) => v + 1);
+    return () => {
+      changedRef.current = () => undefined;
+    };
+  }, []);
+  // Changes whenever the hold does, for memoised views of it.
+  return { hold, phase: hold.phase(), version };
+}

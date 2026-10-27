@@ -89,10 +89,12 @@ impl SettingsView {
             } else {
                 p.project_providers.get(&scope)
             };
+            // The global default is the last used provider (desktop lastModel).
             let selected = project
                 .and_then(|p| p.provider.as_deref())
-                .or(p.default_provider.as_deref())
-                == Some(kind.id());
+                .map(Kind::parse)
+                .unwrap_or_else(|| p.last_used_provider())
+                == Some(kind);
             let globally_hidden = p.hidden_providers.iter().any(|id| id == kind.id());
             let locked = scope != "global" && globally_hidden;
             let visible = !globally_hidden
@@ -178,7 +180,7 @@ impl SettingsView {
                             let scope = this.provider_scope.clone();
                             this.update(cx, |p| {
                                 if scope == "global" {
-                                    p.default_provider = Some(kind.id().into());
+                                    p.use_by_default(kind);
                                 } else {
                                     p.project_providers.entry(scope).or_default().provider =
                                         Some(kind.id().into());

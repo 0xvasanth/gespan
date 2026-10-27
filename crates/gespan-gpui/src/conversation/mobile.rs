@@ -62,12 +62,15 @@ impl Conversation {
         access: Option<AccessMode>,
         cx: &mut Context<Self>,
     ) {
-        if let Some((kind, model)) = model
-            && (self.summary.provider != kind.id() || self.model != model)
-        {
-            let picked = ModelPicked(kind, model);
-            if self.apply_model_pick(&picked, cx) {
-                remember_model(kind, picked.1, cx);
+        if let Some((kind, model)) = model {
+            if self.summary.provider != kind.id() || self.model != model {
+                let picked = ModelPicked(kind, model);
+                if self.apply_model_pick(&picked, cx) {
+                    remember_model(kind, picked.1, cx);
+                }
+            } else if !self.is_remote() {
+                // Re-picking the current model is still the latest pick.
+                crate::pickers::remember_last_used(kind, model, cx);
             }
         }
         for (key, value) in model_settings {

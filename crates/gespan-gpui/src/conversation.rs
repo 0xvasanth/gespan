@@ -6,11 +6,14 @@ mod btw;
 mod commands;
 pub(crate) mod composer_features;
 mod composer_shelf;
+pub(crate) mod dictation;
 mod edit_last_turn;
 #[cfg(test)]
 mod empty_arcade_tests;
 mod follow_up;
 mod history;
+mod hold;
+pub(crate) use hold::HoldChanged;
 mod mobile;
 mod notifications;
 mod pilot;
@@ -88,6 +91,14 @@ const ACCESS_MODES: &[(&str, &str, &str, &str)] = &[
         "shield-alert",
     ),
 ];
+gpui::actions!(
+    conversation,
+    [
+        /// Opens Settings at the providers page (Agent CLIs).
+        OpenAgentSettings
+    ]
+);
+
 /// The access-mode menu's rows, without provider-specific hints, for pickers
 /// outside a session: Read-only, then `ACCESS_MODES`, `checked` ticked.
 pub(crate) fn access_menu_items(checked: &str) -> Vec<MenuItem> {
@@ -163,6 +174,8 @@ pub(crate) struct Conversation {
     _command_removal: Subscription,
     _draft_observation: Subscription,
     _input_focus: Option<[Subscription; 2]>,
+    pub(crate) dictation: Entity<dictation::Dictation>,
+    _dictation: Subscription,
     draft_has_value: bool,
     folder_selected: bool,
     follow_ups: follow_up::FollowUps,
@@ -208,13 +221,21 @@ pub(crate) struct Conversation {
     catalog_epoch: u64,
     account_switching: bool,
     _usage_clock: gpui::Task<()>,
+    /// Re-renders when CLI detection lands, so the no-agent state clears.
+    _installed: Subscription,
     _account_usage: Option<Subscription>,
     approvals: std::collections::VecDeque<Approval>,
     approval_ui: approvals::State,
     questions:
         std::collections::VecDeque<(Entity<crate::questions::QuestionCard>, Vec<Subscription>)>,
     question_overlay: crate::questions::Overlay,
-    controls: Option<std::sync::mpsc::Sender<Control>>,
+    pub(crate) controls: Option<std::sync::mpsc::Sender<Control>>,
+    /// Where this session rests while the app is on hold.
+    pub(crate) held: Option<gespan_core::hold::Reason>,
+    /// Hold was sent to the running turn and its safe point is pending.
+    pub(crate) hold_requested: bool,
+    /// The held turn was interrupted and is draining.
+    hold_interrupted: bool,
     branch: Option<String>,
     git: Option<gespan_core::git::Snapshot>,
     git_picker: Option<Entity<GitPicker>>,
@@ -533,6 +554,8 @@ impl Conversation {
             this.open_typed_btw(cx);
         });
         let submission = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| this.send(cx));
+        let dictation = cx.new(|cx| dictation::Dictation::new(input.downgrade(), cx));
+        let dictation_observation = cx.observe(&dictation, |_, _, cx| cx.notify());
         let review =
             cx.new(|_| crate::session_review::SessionReview::new(summary.id, summary.cwd.clone()));
         let review_events = cx.subscribe(&review, |this, review, event, cx| match event {
@@ -603,6 +626,8 @@ impl Conversation {
             _command_removal: command_removal,
             _draft_observation: draft_observation,
             _input_focus: None,
+            dictation,
+            _dictation: dictation_observation,
             draft_has_value: false,
             folder_selected: false,
             follow_ups: Default::default(),
@@ -643,12 +668,18 @@ impl Conversation {
             catalog_epoch: 0,
             account_switching: false,
             _usage_clock: usage_clock,
+            _installed: cx.observe_global::<crate::installed_providers::InstalledProviders>(
+                |_, cx| cx.notify(),
+            ),
             _account_usage: account_usage,
             approvals: Default::default(),
             approval_ui: Default::default(),
             questions: Default::default(),
             question_overlay: Default::default(),
             controls: None,
+            held: None,
+            hold_requested: false,
+            hold_interrupted: false,
             branch: git.as_ref().and_then(|s| s.current.clone()),
             git,
             git_picker: None,
@@ -859,6 +890,9 @@ impl Conversation {
         if self.is_remote() && self.remote_send_guard(cx) {
             return;
         }
+        if self.no_agent_hint(cx).is_some() {
+            return;
+        }
         if self.needs_history_restore() {
             self.defer_history_action(|this, cx| this.send(cx), cx);
             return;
@@ -975,17 +1009,17 @@ impl Conversation {
         }
     }
     fn launch_prompt(&mut self, prompt: String, cx: &mut Context<Self>) {
+        // While on hold nothing starts: the prompt waits in the queue for Resume.
+        if crate::hold::active(cx) {
+            let mode = self.submitted_mode();
+            self.enqueue_follow_up(prompt, mode, cx);
+            cx.emit(SessionChanged);
+            cx.notify();
+            return;
+        }
         if self.stopping {
-            let mode = if self.settings.orchestrator {
-                Some("orchestrator")
-            } else if self.settings.plan {
-                Some("plan")
-            } else if self.settings.operator {
-                Some("operator")
-            } else {
-                None
-            };
-            self.enqueue_follow_up(prompt, mode.map(str::to_owned), cx);
+            let mode = self.submitted_mode();
+            self.enqueue_follow_up(prompt, mode, cx);
             if let Some(id) = self
                 .follow_ups
                 .state
@@ -1298,6 +1332,9 @@ impl Conversation {
                         if let Some(tasks) = update.background.filter(|_| !stopping) {
                             this.set_background(tasks, cx);
                         }
+                        if let Some(point) = update.hold.filter(|_| !stopping) {
+                            this.hold_point(point, cx);
+                        }
                         if !stopping {
                             this.approvals.extend(update.approvals);
                         }
@@ -1444,6 +1481,7 @@ impl Conversation {
                             this.refresh_git(cx);
                             this.run_history_actions(cx);
                             this.pilot_flush_external(cx);
+                            this.hold_turn_finished(cx);
                             cx.emit(SessionChanged);
                         } else if incoming_notification_input
                             || pilot_queue_changed
@@ -1469,7 +1507,19 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
+    fn submitted_mode(&self) -> Option<String> {
+        if self.settings.orchestrator {
+            Some("orchestrator".into())
+        } else if self.settings.plan {
+            Some("plan".into())
+        } else if self.settings.operator {
+            Some("operator".into())
+        } else {
+            None
+        }
+    }
     fn begin_turn(&mut self, cx: &mut Context<Self>) {
+        self.held = None;
         self.submission_generation = self.submission_generation.wrapping_add(1);
         if !self.summary.has_messages {
             self.composer_motion.capture(self.composer_anchor.get());
@@ -1973,12 +2023,15 @@ impl Conversation {
         } else if let Some(tier) = id.strip_prefix("tier:") {
             self.settings.service_tier = (!tier.is_empty()).then(|| tier.to_owned());
             self.settings.model_settings.remove("serviceTier");
+            self.remember_control("serviceTier", self.settings.service_tier.clone(), cx);
         } else if let Some(setting) = id.strip_prefix("model-setting:") {
             if let Ok((key, value)) = serde_json::from_str::<(String, String)>(setting) {
-                if is_effort_key(&key)
-                    && (!self.is_remote() || matches!(key.as_str(), "effort" | "reasoningEffort"))
-                {
-                    self.set_effort_choice(&value, cx);
+                if is_effort_key(&key) {
+                    if !self.is_remote() || matches!(key.as_str(), "effort" | "reasoningEffort") {
+                        self.set_effort_choice(&value, cx);
+                    }
+                } else {
+                    self.remember_control(&key, Some(value.clone()), cx);
                 }
                 self.settings.model_settings.insert(key, value);
             }
@@ -2001,6 +2054,7 @@ impl Conversation {
             self.settings
                 .model_settings
                 .insert(key.to_owned(), value.to_owned());
+            self.remember_control(key, Some(value.to_owned()), cx);
         } else {
             match id {
                 "workspace:current" => {
@@ -2017,11 +2071,21 @@ impl Conversation {
                         self.settings.worktree_base.clone().or(self.branch.clone());
                     self.refresh_git(cx);
                 }
-                "fast" => self.settings.fast = !self.settings.fast,
-                "fast:on" => self.settings.fast = true,
-                "fast:off" => self.settings.fast = false,
+                "fast" | "fast:on" | "fast:off" => {
+                    self.settings.fast = match id {
+                        "fast:on" => true,
+                        "fast:off" => false,
+                        _ => !self.settings.fast,
+                    };
+                    self.remember_control("fast", Some(self.settings.fast.to_string()), cx);
+                }
                 "thinking" => {
-                    self.settings.thinking = Some(!self.settings.thinking.unwrap_or(false))
+                    self.settings.thinking = Some(!self.settings.thinking.unwrap_or(false));
+                    self.remember_control(
+                        "thinking",
+                        self.settings.thinking.map(|t| t.to_string()),
+                        cx,
+                    );
                 }
                 "plan" | "operator" | "orchestrator" | "draft" => {
                     self.toggle_mode(id, cx);
@@ -2275,6 +2339,10 @@ impl Conversation {
         }
         self.refresh_catalog(cx);
         self.save_settings(cx);
+        // A remote session's choice is the other machine's, not this one's.
+        if !self.is_remote() {
+            crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx);
+        }
         cx.emit(SessionChanged);
         true
     }
@@ -2301,6 +2369,11 @@ impl Conversation {
         cx.notify();
     }
     fn toggle_menu(&mut self, kind: ComposerMenu, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(kind, ComposerMenu::Model | ComposerMenu::Recent)
+            && self.no_agent_hint(cx).is_some()
+        {
+            return;
+        }
         if kind == ComposerMenu::Model
             && cx
                 .try_global::<crate::settings::Preferences>()
@@ -2565,6 +2638,9 @@ impl Conversation {
     /// The model trigger: the composer's model menu.
     #[cfg(test)]
     pub(crate) fn toggle_model_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.no_agent_hint(cx).is_some() {
+            return;
+        }
         if self.settings.pilot.is_some() {
             self.toggle_pilot_models(window, cx);
             return;
@@ -2574,6 +2650,9 @@ impl Conversation {
     /// `App: Switch Model` (Cmd+.): toggles the recent models, as ModelPicker's
     /// hotkey does.
     pub(crate) fn toggle_recent_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.no_agent_hint(cx).is_some() {
+            return;
+        }
         self.pilot_ui.models = None;
         self.toggle_menu(ComposerMenu::Recent, window, cx);
     }
@@ -2719,6 +2798,7 @@ impl Conversation {
         } else {
             Vec::new()
         };
+        self.dictation_context(cx);
         let input = self.input.read(cx);
         let has_value = input.has_message_text() || !self.attachments.is_empty();
         self.completion.update(cx, |completion, cx| {
@@ -2731,6 +2811,7 @@ impl Conversation {
             )
         });
         let kind = Kind::from_id(&self.summary.provider);
+        let no_agent = self.no_agent_hint(cx);
         let menu: Vec<_> = self
             .menu
             .as_ref()
@@ -2754,6 +2835,7 @@ impl Conversation {
             .children(self.model_list_popover(cx))
             .children(self.orchestration_card(cx))
             .children(if self.is_remote() { None } else { self.usage_notice(false, cx) })
+            .children(self.hold_notice(cx))
             .child(self.background_shelf(window, cx))
             .child(self.message_queue(window, cx))
             .children(if self.is_remote() { None } else { self.auth_notice(cx) })
@@ -2812,8 +2894,7 @@ impl Conversation {
             })
             .child(self.approval_shelf(window, cx))
             .child(
-                div()
-                    .id("composer-box")
+                self.dictation_keys(div().id("composer-box"), cx)
                     .debug_selector(|| "composer-box".into())
                     .capture_action(cx.listener(|this, _: &input::Paste, _, cx| {
                         if this.paste_attachments(cx) {
@@ -2861,6 +2942,7 @@ impl Conversation {
                         .size_full(),
                     )
                     .children(self.attachment_chips(cx))
+                    .children(dictation::bar(&self.dictation, &self.input, cx))
                     .child(
                         div()
                             .px_3()
@@ -2895,6 +2977,7 @@ impl Conversation {
                                             }),
                                     ),
                             )
+                            .child(dictation::mic_button(&self.dictation, &self.input, cx))
                             .child(
                                 div()
                                     .flex_1()
@@ -2905,6 +2988,14 @@ impl Conversation {
                                     .gap_1()
                                     .child(
                                         tool_pill("composer-model", "Model")
+                                            .debug_selector(|| "composer-model".into())
+                                            .when_some(no_agent, |d, hint| {
+                                                d.aria_description(hint)
+                                                    .opacity(0.5)
+                                                    .tooltip(move |_, cx| {
+                                                        cx.new(|_| HintTooltip(hint)).into()
+                                                    })
+                                            })
                                             .min_w_0()
                                             .max_w(px(220.))
                                             .flex_shrink(1.)
@@ -2920,7 +3011,12 @@ impl Conversation {
                                             .child(self.model_anchor.probe())
                                             .aria_expanded(self.menu_is(ComposerMenu::Model) || self.menu_is(ComposerMenu::Recent) || self.pilot_ui.models.is_some())
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.toggle_menu(ComposerMenu::Model, window, cx)
+                                                // Disabled: it leads to where a CLI is set up.
+                                                if this.no_agent_hint(cx).is_some() {
+                                                    this.open_agent_settings(window, cx);
+                                                } else {
+                                                    this.toggle_menu(ComposerMenu::Model, window, cx)
+                                                }
                                             }))
                                             .on_mouse_down(
                                                 MouseButton::Right,
@@ -3196,14 +3292,44 @@ impl Conversation {
             )
     }
 
+    /// Detection ran and found no provider CLI: the model picker and send are
+    /// disabled with this hint. Remote sessions run on another machine.
+    pub(crate) fn no_agent_hint(&self, cx: &gpui::App) -> Option<&'static str> {
+        (!self.is_remote() && crate::installed_providers::none_detected(cx))
+            .then_some(crate::installed_providers::NO_AGENT_HINT)
+    }
+    /// A changed control becomes the last used one for new local sessions.
+    fn remember_control(&self, key: &str, value: Option<String>, cx: &mut gpui::App) {
+        if !self.is_remote() && cx.has_global::<crate::settings::Preferences>() {
+            cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                prefs.remember_control(key, value)
+            });
+        }
+    }
+    /// Settings at Agent CLIs, from the composer so the workspace handles it.
+    fn open_agent_settings(&self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.input.focus_handle(cx), cx);
+        window.dispatch_action(Box::new(OpenAgentSettings), cx);
+    }
+    /// Whether the send button sends (or stops a running turn).
+    fn send_allowed(&self, has_value: bool, cx: &gpui::App) -> bool {
+        let busy = self.responding() && !has_value;
+        let draft = self.draft_active(cx);
+        !self.attaching
+            && (!self.preparing_worktree || self.busy || self.stopping)
+            && (busy || (has_value && self.loaded && self.no_agent_hint(cx).is_none()))
+            && (busy || !draft || (!self.busy && self.follow_ups.state.draft.is_none()))
+    }
+    #[cfg(test)]
+    pub(crate) fn choose_setting_for_test(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.menu_choice(id, cx);
+    }
     // ComposerAction: a solid submit, dimmed while empty; Stop while busy.
     fn action(&self, has_value: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.responding() && !has_value;
         let draft = self.draft_active(cx);
-        let enabled = !self.attaching
-            && (!self.preparing_worktree || self.busy || self.stopping)
-            && (busy || (has_value && self.loaded))
-            && (busy || !draft || (!self.busy && self.follow_ups.state.draft.is_none()));
+        let enabled = self.send_allowed(has_value, cx);
+        let no_agent = (!busy).then(|| self.no_agent_hint(cx)).flatten();
         let accent = primary_action(enabled);
         div()
             .id("send-or-stop")
@@ -3214,6 +3340,11 @@ impl Conversation {
                 "Save draft"
             } else {
                 "Send"
+            })
+            .debug_selector(|| "send-or-stop".into())
+            .when_some(no_agent, |d, hint| {
+                d.aria_description(hint)
+                    .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
             })
             .cursor_pointer()
             .flex_shrink_0()
@@ -3653,7 +3784,11 @@ impl Render for Conversation {
             let focus = self.input.focus_handle(cx);
             self._input_focus = Some([
                 cx.on_focus(&focus, window, |_, _, cx| cx.notify()),
-                cx.on_blur(&focus, window, |_, _, cx| cx.notify()),
+                cx.on_blur(&focus, window, |this, _, cx| {
+                    // A hold that ends outside the field still ends.
+                    this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+                    cx.notify()
+                }),
             ]);
         }
         if self.response_events.is_none() {
@@ -3732,6 +3867,26 @@ impl Render for Conversation {
 }
 
 // The composer's `h-6.5` toolbar pills share `bg-selection` and its hover.
+/// The no-agent hint over the disabled model picker and send button.
+pub(crate) struct HintTooltip(pub(crate) &'static str);
+impl Render for HintTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut background = shell_fill();
+        background.a = 1.;
+        div()
+            .max_w(px(260.))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(background)
+            .border_1()
+            .border_color(content(0.12))
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .text_color(content(0.85))
+            .child(self.0)
+    }
+}
 fn tool_pill(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -3839,6 +3994,225 @@ mod menu_tests {
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
     use std::sync::Mutex;
+
+    #[gpui::test]
+    fn no_agent_detected_disables_the_picker_and_send_with_the_settings_hint(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::installed_providers::{InstalledProviders, NO_AGENT_HINT};
+        use std::{cell::Cell, rc::Rc};
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        // A fixture provider: a send that slips through fails without
+        // launching a real CLI.
+        let mut summary = store.create("codex", "/missing/no-agent").unwrap();
+        summary.provider = "fixture".into();
+        let store = Arc::new(Mutex::new(store));
+        let opened = Rc::new(Cell::new(0));
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            let opened = opened.clone();
+            cx.on_action(move |_: &OpenAgentSettings, _| opened.set(opened.get() + 1));
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, store, cx);
+                    view.loaded = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |c, w, cx| {
+                w.focus(&c.input.focus_handle(cx), cx);
+                c.input
+                    .update(cx, |input, cx| input.set_text("Fix the bug".into(), cx));
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // Detection has not finished: nothing is disabled.
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.no_agent_hint(cx), None);
+                assert!(c.send_allowed(true, cx));
+            })
+            .unwrap();
+
+        visual.update(|_, cx| cx.set_global(InstalledProviders::probed([])));
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(
+                    c.no_agent_hint(cx),
+                    Some("No coding agent detected. Set one up in Settings → Agent CLIs.")
+                );
+                assert_eq!(c.no_agent_hint(cx), Some(NO_AGENT_HINT));
+                assert!(!c.send_allowed(true, cx));
+            })
+            .unwrap();
+        // The picker opens Settings instead of a model list.
+        let pill = visual.debug_bounds("composer-model").unwrap();
+        visual.simulate_click(pill.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(opened.get(), 1, "the picker opens Settings → Agent CLIs");
+        window
+            .update(visual, |c, w, cx| {
+                assert!(c.menu.is_none() && c.pilot_ui.models.is_none());
+                c.toggle_recent_models(w, cx);
+                assert!(c.menu.is_none(), "Switch Model stays closed too");
+            })
+            .unwrap();
+        // Neither the send button nor Enter sends; the draft stays.
+        let send = visual.debug_bounds("send-or-stop").unwrap();
+        visual.simulate_click(send.center(), gpui::Modifiers::default());
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.input.read(cx).content.as_ref(), "Fix the bug");
+                assert!(!c.busy);
+                assert!(!c.summary.has_messages, "no turn was saved");
+            })
+            .unwrap();
+
+        // Detection finds a CLI: everything is enabled again.
+        visual.update(|_, cx| cx.set_global(InstalledProviders::probed([Kind::Kiro])));
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.no_agent_hint(cx), None);
+                assert!(c.send_allowed(true, cx));
+            })
+            .unwrap();
+        let pill = visual.debug_bounds("composer-model").unwrap();
+        visual.simulate_click(pill.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(opened.get(), 1);
+        window
+            .update(visual, |c, _, _| assert!(c.menu.is_some()))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn no_agent_detected_disables_the_pilot_chat_picker_and_send(cx: &mut TestAppContext) {
+        use crate::installed_providers::{InstalledProviders, NO_AGENT_HINT};
+        use std::{cell::Cell, rc::Rc};
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let mut summary = store.create("codex", "/missing/no-agent-pilot").unwrap();
+        summary.provider = "fixture".into();
+        let store = Arc::new(Mutex::new(store));
+        let opened = Rc::new(Cell::new(0));
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            let opened = opened.clone();
+            cx.on_action(move |_: &OpenAgentSettings, _| opened.set(opened.get() + 1));
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, store, cx);
+                    view.configure_pilot(
+                        gespan_core::pilot::Pilot::default(),
+                        "/tmp".into(),
+                        Default::default(),
+                        cx,
+                    );
+                    view.loaded = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |c, w, cx| {
+                w.focus(&c.input.focus_handle(cx), cx);
+                c.input
+                    .update(cx, |input, cx| input.set_text("Plan the week".into(), cx));
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.update(|_, cx| cx.set_global(InstalledProviders::probed([])));
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.no_agent_hint(cx), Some(NO_AGENT_HINT));
+                assert!(!c.pilot_send_ready(cx));
+            })
+            .unwrap();
+        // The Pilot chat's model pill opens Settings, not the model list.
+        let pill = visual.debug_bounds("pilot-model").unwrap();
+        visual.simulate_click(pill.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(opened.get(), 1);
+        window
+            .update(visual, |c, w, cx| {
+                assert_eq!(c.pilot_menus_open(), (false, false));
+                c.toggle_pilot_models(w, cx);
+                c.toggle_model_menu(w, cx);
+                assert_eq!(c.pilot_menus_open(), (false, false));
+            })
+            .unwrap();
+        // Neither send nor Enter takes the message.
+        let send = visual.debug_bounds("pilot-send").unwrap();
+        visual.simulate_click(send.center(), gpui::Modifiers::default());
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.input.read(cx).content.as_ref(), "Plan the week");
+            })
+            .unwrap();
+        // A detected CLI re-enables both.
+        visual.update(|_, cx| cx.set_global(InstalledProviders::probed([Kind::Kiro])));
+        visual.run_until_parked();
+        window
+            .update(visual, |c, _, cx| {
+                assert_eq!(c.no_agent_hint(cx), None);
+                assert!(c.pilot_send_ready(cx));
+            })
+            .unwrap();
+        let pill = visual.debug_bounds("pilot-model").unwrap();
+        visual.simulate_click(pill.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(opened.get(), 1);
+        window
+            .update(visual, |c, _, _| assert!(c.pilot_menus_open().0))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn remote_picks_and_controls_leave_the_last_used_choice_alone(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let mut summary = store.create("claude", "/work/remote-copy").unwrap();
+        summary.cwd = "remote://env/home/code".into();
+        let store = Arc::new(Mutex::new(store));
+        let start = crate::settings::Preferences {
+            last_provider: Some("kiro".into()),
+            ..Default::default()
+        };
+        cx.update(|cx| cx.set_global(start.clone()));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Conversation::new(summary, store, cx))
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |c, _, cx| {
+                assert!(c.is_remote());
+                assert!(
+                    c.apply_model_pick(&ModelPicked(Kind::Codex, Some("gpt-remote".into())), cx)
+                );
+                c.menu_choice("fast:on", cx);
+                c.menu_choice("tier:flex", cx);
+                let prefs = cx.global::<crate::settings::Preferences>();
+                assert_eq!(prefs.last_provider.as_deref(), Some("kiro"));
+                assert!(prefs.default_models.is_empty());
+                assert!(prefs.last_model_settings.is_empty());
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn combined_picker_paints_effort_and_beside_mode_moves_it_to_its_own_control(
         cx: &mut TestAppContext,

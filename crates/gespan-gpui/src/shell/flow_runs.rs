@@ -1,11 +1,12 @@
 //! Flow visits run as background sessions, launched like automation runs.
 //! `crate::flows::Host` owns the routing; this is its session driver.
 use super::automation_runs::{WorktreeChoice, launch_available, managed_settings};
+use super::pilot_flows::PilotFlowEvent;
 use super::*;
 use crate::flows::{Host, Probe, SessionDriver, Settled, Waiting, fill_worktree};
-use gespan_core::flow::{Flow, FlowRun, FlowStore, FlowVisit, LaunchRequest, Runner};
+use gespan_core::flow::{Flow, FlowRun, FlowStore, FlowVisit, LaunchRequest, RunStatus, Runner};
 
-pub(super) type StoreHandle = Arc<Mutex<FlowStore>>;
+pub(crate) type StoreHandle = Arc<Mutex<FlowStore>>;
 
 const STILL_OPENING: &str = "Flows are still opening";
 /// `FlowStore::delete`'s refusal, for a run the store has not seen yet.
@@ -15,11 +16,20 @@ const FLOW_ACTIVE: &str = "Flow has an active run";
 pub(super) struct State {
     pub store: Option<StoreHandle>,
     /// Taken while it applies effects, so the driver can borrow the shell.
-    host: Option<Host>,
+    pub(super) host: Option<Host>,
     opening: bool,
     writes: Option<gpui::Task<()>>,
     /// Flow sessions whose running turn is waiting for the user's approval.
     pub waiting: HashMap<i64, Waiting>,
+    /// The owning Pilot of each active Pilot run, from the run's writes, so
+    /// its `Finished` (which names only the run) reaches that Pilot.
+    pub pilot_runs: HashMap<String, String>,
+    /// Pilot run events not yet handed to the Pilots entity, oldest first.
+    pub pilot_events: Vec<(String, super::pilot_flows::PilotFlowEvent)>,
+    pub pilot_events_scheduled: bool,
+    /// Launches tests hold instead of opening sessions, when set.
+    #[cfg(test)]
+    pub held_launches: Option<Vec<LaunchRequest>>,
 }
 
 impl State {
@@ -33,7 +43,9 @@ fn now() -> i64 {
     gespan_core::time::now_ms().min(i64::MAX as u64) as i64
 }
 
-fn store_lock(store: &StoreHandle) -> Result<std::sync::MutexGuard<'_, FlowStore>, String> {
+pub(super) fn store_lock(
+    store: &StoreHandle,
+) -> Result<std::sync::MutexGuard<'_, FlowStore>, String> {
     store.lock().map_err(|_| "Flows are unavailable".into())
 }
 
@@ -61,11 +73,27 @@ impl SessionDriver for Driver<'_, '_> {
         }
     }
     fn persist(&mut self, run: FlowRun, visit: Option<FlowVisit>) {
+        // `Persist` precedes every `Finished`, so the owner is known by then.
+        if let Some(owner) = run.flow.owner.clone() {
+            self.shell
+                .flows_state
+                .pilot_runs
+                .insert(run.id.clone(), owner);
+        }
         self.shell.persist_flow_run(run, visit, self.cx);
     }
     fn changed(&mut self, _run_id: &str) {
         self.shell.refresh_flows_view(self.cx);
         self.cx.notify();
+    }
+    fn visit_finished(&mut self, run: FlowRun, visit: FlowVisit) {
+        self.shell
+            .pilot_flow_event(PilotFlowEvent::Step { run, visit }, self.cx);
+    }
+    fn run_finished(&mut self, run_id: &str, status: RunStatus) {
+        let run_id = run_id.to_owned();
+        self.shell
+            .pilot_flow_event(PilotFlowEvent::Finished { run_id, status }, self.cx);
     }
 }
 
@@ -126,7 +154,7 @@ impl Shell {
         inputs: &HashMap<String, String>,
         cx: &mut Context<Self>,
     ) -> Result<FlowRun, Vec<String>> {
-        self.with_flow_host(cx, |host, driver| host.start(driver, flow, inputs))
+        self.with_flow_host(cx, |host, driver| host.start(driver, flow, inputs, None))
             .unwrap_or_else(|| Err(vec![STILL_OPENING.into()]))
     }
 
@@ -222,6 +250,16 @@ impl Shell {
     /// Deletes a Flow unless a run of it is in flight. The runner knows of a
     /// run before its records are written, so it is asked as well as the store.
     pub(crate) fn delete_flow(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        self.refuse_active_flow(id)?;
+        if let Some(view) = &self.flows {
+            view.update(cx, |view, cx| view.delete(id.to_owned(), cx));
+        }
+        Ok(())
+    }
+
+    /// `FlowStore::delete`'s refusal for a run the runner holds, which the
+    /// store may not have seen yet.
+    pub(super) fn refuse_active_flow(&self, id: &str) -> Result<(), String> {
         if self
             .flows_state
             .host
@@ -229,9 +267,6 @@ impl Shell {
             .is_some_and(|host| host.has_active(id))
         {
             return Err(FLOW_ACTIVE.into());
-        }
-        if let Some(view) = &self.flows {
-            view.update(cx, |view, cx| view.delete(id.to_owned(), cx));
         }
         Ok(())
     }
@@ -312,7 +347,7 @@ impl Shell {
 
     /// Runs `f` with the host and a driver over this shell, then probes the
     /// sessions it re-armed. `None` until the Flow store has opened.
-    fn with_flow_host<R>(
+    pub(super) fn with_flow_host<R>(
         &mut self,
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut Host, &mut dyn SessionDriver) -> R,
@@ -328,6 +363,13 @@ impl Shell {
     }
 
     fn launch_flow_visit(&mut self, request: LaunchRequest, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        if let Some(held) = &mut self.flows_state.held_launches {
+            held.push(request);
+            return;
+        }
+        // Read now: the run may end (and leave the map) before its session exists.
+        let owner = self.flows_state.pilot_runs.get(&request.run_id).cloned();
         let kind = Kind::from_id(&request.harness);
         let mut settings =
             managed_settings(Default::default(), kind, &request.cwd, &request.model, cx);
@@ -364,7 +406,15 @@ impl Shell {
             let _ = this.update(cx, |this, cx| match result {
                 Ok((summary, settings)) => {
                     let id = summary.id;
+                    let project = summary.cwd.clone();
                     this.add(summary, cx);
+                    // A Pilot's run files its step sessions in the Pilot's folder. Deferred:
+                    // filing reads this Shell, which is being updated now.
+                    if let (Some(owner), Some(pilots)) = (owner, this.pilots.clone()) {
+                        cx.defer(move |cx| {
+                            pilots.update(cx, |m, cx| m.file_flow_session(&owner, project, id, cx));
+                        });
+                    }
                     let before = this.sessions[&id].read(cx).submission_generation;
                     let submit = this
                         .with_flow_host(cx, |host, driver| {
@@ -418,12 +468,32 @@ impl Shell {
             });
         }));
     }
+
+    /// Resolves once every run write queued so far has finished, so a reader
+    /// that follows a change (a roadmap reloading after `flows.editRun`)
+    /// sees it in the store.
+    pub(crate) fn flow_writes_saved(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl std::future::Future<Output = ()> + use<> {
+        let (done, saved) = async_channel::bounded::<()>(1);
+        let previous = self.flows_state.writes.take();
+        self.flows_state.writes = Some(cx.spawn(async move |_, _| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            drop(done);
+        }));
+        async move {
+            let _ = saved.recv().await;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gespan_core::flow::{Effect, RunStatus, VisitStatus, starter_flows};
+    use gespan_core::flow::{Effect, VisitStatus, starter_flows};
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle};
 
@@ -457,6 +527,8 @@ mod tests {
             self.0.push((run, visit));
         }
         fn changed(&mut self, _: &str) {}
+        fn visit_finished(&mut self, _: FlowRun, _: FlowVisit) {}
+        fn run_finished(&mut self, _: &str, _: RunStatus) {}
     }
 
     fn shell(store: Store, cwd: &str, cx: &mut TestAppContext) -> WindowHandle<Shell> {
@@ -485,7 +557,7 @@ mod tests {
             let flows = FlowStore::open(&path).unwrap();
             let flow = flows.upsert(&fix_an_issue("/repo")).unwrap();
             let mut runner = Runner::new(now, gespan_core::automations::new_id);
-            let (run, effects) = runner.start(&flow, &inputs(&flow)).unwrap();
+            let (run, effects) = runner.start(&flow, &inputs(&flow), None).unwrap();
             let mut visit_id = None;
             for effect in effects {
                 if let Effect::Persist { run, visit } = effect {
@@ -604,7 +676,7 @@ mod tests {
                 // Start without launching, so no background launch fails it.
                 let mut host = shell.flows_state.host.take().unwrap();
                 let mut quiet = Quiet::default();
-                host.start(&mut quiet, &flow, &inputs(&flow)).unwrap();
+                host.start(&mut quiet, &flow, &inputs(&flow), None).unwrap();
                 shell.flows_state.host = Some(host);
                 for (run, visit) in quiet.0 {
                     let flows = store_lock(&flows).unwrap();
@@ -752,7 +824,7 @@ mod tests {
                 let flows = store_lock(shell.flows_state.store.as_ref().unwrap()).unwrap();
                 let flow = flows.upsert(&fix_an_issue("/missing")).unwrap();
                 let mut runner = Runner::new(now, gespan_core::automations::new_id);
-                let (mut run, _) = runner.start(&flow, &inputs(&flow)).unwrap();
+                let (mut run, _) = runner.start(&flow, &inputs(&flow), None).unwrap();
                 run.status = RunStatus::Failed;
                 flows.save_run(&run).unwrap();
                 drop(flows);

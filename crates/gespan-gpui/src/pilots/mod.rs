@@ -4,9 +4,12 @@ pub(crate) mod avatar;
 pub(crate) mod cards;
 mod changes;
 mod color_picker;
+#[cfg(test)]
+mod dictation_tests;
 mod files;
 mod filters;
 mod floating;
+mod flow_reviews;
 mod host;
 mod html;
 mod memory_ui;
@@ -14,6 +17,7 @@ mod notifications;
 mod overview;
 mod panel_stack;
 mod panels;
+mod roadmap;
 mod scheduler;
 mod search;
 #[cfg(all(target_os = "macos", not(test)))]
@@ -69,7 +73,8 @@ struct RunningHabit {
     failure: Option<String>,
     waiting_since: Option<u64>,
     cards: Vec<serde_json::Value>,
-    mailbox: Vec<String>,
+    /// Completion reports waiting for the run to finish its turn.
+    mailbox: Vec<Message>,
 }
 pub(crate) struct Pilots {
     #[cfg(all(target_os = "macos", not(test)))]
@@ -96,6 +101,10 @@ pub(crate) struct Pilots {
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
     overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
+    /// Each Pilot's SOP Roadmap tab, made when first shown.
+    roadmaps: HashMap<String, (Entity<roadmap::Roadmap>, [Subscription; 2])>,
+    /// Roadmaps to reload when next drawn.
+    stale_roadmaps: HashSet<String>,
     route: Option<Route>,
     settings: Option<SettingsSection>,
     settings_focus: gpui::FocusHandle,
@@ -126,7 +135,8 @@ pub(crate) struct Pilots {
     rail_ids: Vec<String>,
     running: HashMap<i64, RunningHabit>,
     active_run: Option<i64>,
-    completion_work: HashSet<(String, u64)>,
+    /// Completion reports per `(pilot_id, source session)`, held until all of them are built.
+    completion_work: HashMap<(String, i64), Vec<host::PendingReport>>,
     /// The open background dialog, centred in the window it opened in.
     background: Option<(
         Entity<crate::project_settings::BackgroundDialog>,
@@ -142,11 +152,31 @@ pub(crate) struct Pilots {
     persisted_messages: HashSet<String>,
     failed_reports: HashSet<String>,
     inflight: HashMap<String, Message>,
+    /// Each loaded chat's last seen (provider, model): a switch retries its
+    /// failed queued messages.
+    chat_choices: HashMap<String, (String, Option<String>)>,
     card_refresh: HashMap<String, u64>,
     session_filters: filters::Filters,
     session_filter_anchor: AnchorSlot,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
+    /// Side reviews of finished Flow steps, by review session.
+    reviews: HashMap<i64, flow_reviews::RunningReview>,
+    /// Completed steps waiting for a review slot, oldest first.
+    review_queue: std::collections::VecDeque<flow_reviews::QueuedReview>,
+    flow_watch: flow_reviews::Watch,
+    /// Prompts hidden runs were given; tests never send them.
+    #[cfg(test)]
+    pub(crate) hidden_prompts: Vec<(i64, String)>,
+    /// Hidden runs cannot start, as when their session refuses the prompt.
+    #[cfg(test)]
+    pub(crate) hidden_dispatch_fails: bool,
+    /// Every Flow event handed to a Pilot, in order.
+    #[cfg(test)]
+    pub(crate) flow_events: Vec<(String, crate::shell::pilot_flows::PilotFlowEvent)>,
+    /// Every Pilot a successful mutating `flows.*` call changed, in order.
+    #[cfg(test)]
+    pub(crate) flows_changes: Vec<String>,
 }
 impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
@@ -159,6 +189,7 @@ impl Pilots {
         self.chats
             .values()
             .chain(self.running.values().map(|r| &r.view))
+            .chain(self.reviews.values().map(|r| &r.view))
             .map(|v| {
                 let s = &v.read(cx).summary;
                 (
@@ -176,6 +207,7 @@ impl Pilots {
             .chats
             .values()
             .chain(self.running.values().map(|r| &r.view))
+            .chain(self.reviews.values().map(|r| &r.view))
             .find(|v| v.read(cx).summary.id == id)
         {
             view.update(cx, |v, cx| v.stop_if_busy(cx));
@@ -183,6 +215,10 @@ impl Pilots {
     }
     pub(crate) fn bind_window(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.parent_window = Some(window.window_handle());
+        self.sync_status(cx);
+    }
+    /// The menu-bar item's Hold or Resume label follows the hold.
+    pub(crate) fn hold_changed(&mut self, cx: &mut Context<Self>) {
         self.sync_status(cx);
     }
     fn sync_status(&mut self, _cx: &mut Context<Self>) {
@@ -199,8 +235,28 @@ impl Pilots {
             let app = std::cell::RefCell::new(_cx.to_async());
             let run = std::rc::Rc::new(move |id: &str| {
                 let _ = entity.update(&mut *app.borrow_mut(), |this, cx| {
-                    if id == "quit" {
-                        cx.quit();
+                    if id == "quit" || id == "hold" {
+                        // Both go through the window, so Hold asks first and
+                        // Quit waits for anything still finishing.
+                        if let Some(handle) = this.parent_window {
+                            let owner = this.owner.clone();
+                            let hold = id == "hold";
+                            let app: &mut App = cx;
+                            app.defer(move |cx| {
+                                let _ = handle.update(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    let _ = owner.update(cx, |o, cx| {
+                                        if hold {
+                                            o.pilot_toggle_hold(window, cx)
+                                        } else {
+                                            o.pilot_request_quit(window, cx)
+                                        }
+                                    });
+                                });
+                            });
+                        } else if id == "quit" {
+                            cx.quit();
+                        }
                     } else if id == "composer" {
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
@@ -214,6 +270,7 @@ impl Pilots {
                         }
                     } else if this.roster.get(id).is_some() {
                         this.active = Some(id.into());
+                        this.reload_roadmap(cx);
                         this.ensure_chat(id, cx);
                         this.open_floating(cx);
                         this.changed(cx);
@@ -226,8 +283,9 @@ impl Pilots {
                 .iter()
                 .map(|m| (m.id.clone(), m.label()))
                 .collect::<Vec<_>>();
+            let hold = crate::quick_open::hold_label(_cx);
             if let Some(status) = &mut self.status {
-                status.update(&pilots, run);
+                status.update(&pilots, hold, run);
             }
         }
     }
@@ -235,28 +293,6 @@ impl Pilots {
         for view in self.html_documents.values() {
             view.read(cx).hide();
         }
-    }
-    pub(crate) fn sidebar_preferences(
-        &mut self,
-        id: &str,
-        show: bool,
-        folders: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(m) = self.roster.get_mut(id) {
-            m.show_started_sessions_in_sidebar = show;
-            m.use_sidebar_folders = folders;
-        }
-        let sessions = self
-            .roster
-            .get(id)
-            .map(|m| m.launches.iter().map(|l| l.session_id).collect::<Vec<_>>())
-            .unwrap_or_default();
-        for session in sessions {
-            self.group_launch(id, session, cx);
-        }
-        self.configure_chat(id, cx);
-        self.save(cx);
     }
     pub(crate) fn new(
         store: Database,
@@ -322,6 +358,8 @@ impl Pilots {
             overview_tab: OverviewTab::Sessions,
             overview_previous: OverviewTab::Sessions,
             overview_reveal: None,
+            roadmaps: HashMap::new(),
+            stale_roadmaps: HashSet::new(),
             route: None,
             settings: None,
             settings_focus: cx.focus_handle(),
@@ -352,7 +390,7 @@ impl Pilots {
             rail_ids: Vec::new(),
             running: HashMap::new(),
             active_run: None,
-            completion_work: HashSet::new(),
+            completion_work: HashMap::new(),
             background: None,
             backgrounds: HashMap::new(),
             drag: None,
@@ -363,11 +401,23 @@ impl Pilots {
             persisted_messages,
             failed_reports: HashSet::new(),
             inflight: HashMap::new(),
+            chat_choices: HashMap::new(),
             card_refresh: HashMap::new(),
             session_filters,
             session_filter_anchor: AnchorSlot::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
+            reviews: HashMap::new(),
+            review_queue: Default::default(),
+            flow_watch: Default::default(),
+            #[cfg(test)]
+            hidden_prompts: Vec::new(),
+            #[cfg(test)]
+            hidden_dispatch_fails: false,
+            #[cfg(test)]
+            flow_events: Vec::new(),
+            #[cfg(test)]
+            flows_changes: Vec::new(),
         };
         if let Some(rx) = rx {
             this._bridge_task = Some(cx.spawn(async move |this, cx| {
@@ -401,7 +451,19 @@ impl Pilots {
             this.ensure_chat(&id, cx);
             this.reload_files(&id, cx);
         }
+        this.file_loose_launches(cx);
         this
+    }
+    /// Every Pilot-owned conversation Hold must stop: chats (resumed last),
+    /// running habits and Flow reviews.
+    pub(crate) fn hold_views(&self) -> Vec<(Entity<Conversation>, bool)> {
+        let chats = self.chats.values().map(|view| (view.clone(), true));
+        let habits = self.running.values().map(|run| (run.view.clone(), true));
+        let reviews = self
+            .reviews
+            .values()
+            .map(|review| (review.view.clone(), false));
+        chats.chain(habits).chain(reviews).collect()
     }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
         self.roster.hidden_sessions.contains(&id)
@@ -414,9 +476,6 @@ impl Pilots {
     }
     pub(crate) fn hidden_session(&self, id: i64) -> bool {
         self.is_pilot_session(id)
-            || self.roster.pilots.iter().any(|m| {
-                !m.show_started_sessions_in_sidebar && m.launches.iter().any(|l| l.session_id == id)
-            })
     }
     pub(crate) fn set_preferences(
         &mut self,
@@ -604,6 +663,8 @@ impl Pilots {
                 )
             })
             .collect::<Vec<_>>();
+        // Every outbox change saves: a message the roadmap sent may be gone.
+        self.sync_roadmap_queues(cx);
         let previous = self.writes.take();
         self.writes = Some(cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
@@ -638,6 +699,7 @@ impl Pilots {
         };
         let store = self.store.clone();
         let prefs = self.prefs.clone();
+        let known = crate::installed_providers::snapshot(cx);
         let id = id.to_string();
         let work = cx.background_executor().spawn(async move {
             let db = locked(&store)?;
@@ -663,19 +725,18 @@ impl Pilots {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_else(|_| ".".into());
-            let provider = prefs
-                .default_provider
-                .as_deref()
-                .and_then(Kind::parse)
-                .unwrap_or(Kind::Codex);
+            // A new Pilot's chat starts where a new session would.
+            let (provider, model) =
+                crate::installed_providers::new_session_choice_resolving(&known, &prefs, None);
             let mut summary = db.create(provider.id(), &home)?;
             summary.title = pilot.label();
             db.title(summary.id, &summary.title)?;
-            let settings = Settings {
+            let mut settings = Settings {
                 access: AccessMode::Auto,
-                model: prefs.default_models.get(provider.id()).cloned(),
+                model,
                 ..Default::default()
             };
+            prefs.apply_last_controls(&mut settings, provider);
             db.configure_agent(summary.id, provider.id(), &settings)?;
             Ok((summary, Some(settings), Vec::new()))
         });
@@ -732,7 +793,7 @@ impl Pilots {
                                 .collect(),
                             false,
                             cx,
-                        )
+                        );
                     },
                 ));
                 let source = id.clone();
@@ -817,6 +878,12 @@ impl Pilots {
                         this.card_action(&source, &event.0, cx)
                     },
                 ));
+                if this.active.as_deref() == Some(&id) {
+                    // Opened before its chat loaded: `open` had no dictation
+                    // to keep, so other composers stop now.
+                    let dictation = view.read(cx).dictation.clone();
+                    crate::conversation::dictation::switched_to(&dictation, cx);
+                }
                 this.chats.insert(id.clone(), view);
                 if let Some(handle) = this.parent_window {
                     let owner = cx.weak_entity();
@@ -865,6 +932,7 @@ impl Pilots {
             view.update(cx, |view, cx| view.configure_pilot(pilot, root, env, cx));
         }
     }
+    /// Queues a message for Pilot `id`'s chat; returns the message's id.
     fn enqueue(
         &mut self,
         id: &str,
@@ -872,20 +940,21 @@ impl Pilots {
         attachments: Vec<String>,
         internal: bool,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(pilot) = self.roster.get_mut(id) {
-            pilot.outbox.push(Message {
-                id: pilot::new_id(),
-                text,
-                sent_at: Some(gespan_core::time::now_ms()),
-                internal,
-                error: None,
-                attachments,
-            });
-            self.save(cx);
-            self.configure_chat(id, cx);
-            self.dispatch(id, cx);
-        }
+    ) -> Option<String> {
+        let message_id = pilot::new_id();
+        self.roster.get_mut(id)?.outbox.push(Message {
+            id: message_id.clone(),
+            text,
+            sent_at: Some(gespan_core::time::now_ms()),
+            internal,
+            error: None,
+            attachments,
+            report: Vec::new(),
+        });
+        self.save(cx);
+        self.configure_chat(id, cx);
+        self.dispatch(id, cx);
+        Some(message_id)
     }
     fn dispatch(&mut self, id: &str, cx: &mut Context<Self>) {
         let delivered = self
@@ -956,18 +1025,53 @@ impl Pilots {
             return;
         };
         let busy = view.read(cx).busy;
-        let Some(message) = self
-            .roster
-            .get(id)
-            .and_then(|m| m.outbox.iter().find(|message| !busy || !message.internal))
-            .cloned()
-            .filter(|m| m.error.is_none() && self.persisted_messages.contains(&m.id))
-        else {
+        let Some(message) = self.next_outbox_message(id, busy) else {
             return;
         };
         if view.update(cx, |v, cx| v.pilot_dispatch(&message, cx)) && !busy {
             self.inflight.insert(id.into(), message);
         }
+    }
+    /// A failed message stays at the head of the outbox. When the user moves
+    /// the chat to another provider or model, the queue is retried there; the
+    /// caller dispatches.
+    /// Ignores the values a chat loads with, and a model a running turn reports.
+    fn retry_after_provider_switch(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(view) = self.chats.get(id) else {
+            return;
+        };
+        let view = view.read(cx);
+        if !view.pilot_history_ready() {
+            self.chat_choices.remove(id);
+            return;
+        }
+        let busy = view.busy;
+        let choice = (view.summary.provider.clone(), view.pilot_model());
+        let Some(previous) = self.chat_choices.insert(id.into(), choice.clone()) else {
+            return;
+        };
+        if previous == choice || (busy && previous.0 == choice.0) {
+            return;
+        }
+        let mut retried = false;
+        if let Some(pilot) = self.roster.get_mut(id) {
+            for message in &mut pilot.outbox {
+                retried |= message.error.take().is_some();
+            }
+        }
+        if retried {
+            self.save(cx);
+            self.configure_chat(id, cx);
+        }
+    }
+    /// The outbox message `dispatch` sends next: the first one the chat can
+    /// take now. A failed head holds the queue until it is retried.
+    fn next_outbox_message(&self, id: &str, busy: bool) -> Option<Message> {
+        self.roster
+            .get(id)
+            .and_then(|m| m.outbox.iter().find(|message| !busy || !message.internal))
+            .cloned()
+            .filter(|m| m.error.is_none() && self.persisted_messages.contains(&m.id))
     }
     fn chat_changed(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(view) = self.chats.get(id) else {
@@ -1011,7 +1115,16 @@ impl Pilots {
             }
             self.check_completions(cx);
             self.reload_files(id, cx);
+            if self.flow_alert_turns(id) {
+                // A turn that read a failure may have ended: its goal can
+                // roll up now.
+                self.settle_flows(id, cx);
+            } else {
+                self.flush_flow_alerts(id, cx);
+            }
+            self.pump_reviews(cx);
         }
+        self.retry_after_provider_switch(id, cx);
         self.dispatch(id, cx);
         self.changed(cx);
     }
@@ -1032,7 +1145,13 @@ impl Pilots {
             self.settings = None;
         }
         self.active = Some(id.into());
+        self.reload_roadmap(cx);
         self.ensure_chat(id, cx);
+        // One dictation at a time, as when switching sessions.
+        if let Some(chat) = self.chats.get(id) {
+            let dictation = chat.read(cx).dictation.clone();
+            crate::conversation::dictation::switched_to(&dictation, cx);
+        }
         self.reload_files(id, cx);
         cx.emit(TabOpened(id.into()));
         self.focus_active(window, cx);

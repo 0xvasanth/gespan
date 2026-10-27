@@ -32,6 +32,15 @@ pub(crate) enum Command {
     OpenLogs,
     CopyDiagnostics,
     ReportIssue,
+    Hold,
+}
+/// The palette offers Resume once everything is on hold.
+pub(crate) fn hold_label(cx: &gpui::App) -> &'static str {
+    if crate::hold::phase(cx) == Some(gespan_core::hold::Phase::OnHold) {
+        "Resume everything"
+    } else {
+        "Hold everything"
+    }
 }
 const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::New, "New conversation", "⌘N"),
@@ -58,6 +67,7 @@ const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::OpenLogs, "Open logs folder", ""),
     (Command::CopyDiagnostics, "Copy diagnostics", ""),
     (Command::ReportIssue, "Report an issue", ""),
+    (Command::Hold, "Hold everything", "⌘⇧H"),
 ];
 pub(crate) enum Picked {
     File(String),
@@ -148,19 +158,27 @@ impl QuickOpen {
         self.rows = if let Some(query) = query.strip_prefix('>') {
             let mut commands: Vec<_> = COMMANDS
                 .iter()
+                .map(|&(command, label, hint)| {
+                    let label = if matches!(command, Command::Hold) {
+                        hold_label(cx)
+                    } else {
+                        label
+                    };
+                    (command, label, hint)
+                })
                 .filter_map(|(command, label, hint)| {
                     composer::score(query.trim(), label).map(|score| {
                         (
                             score,
                             Row {
-                                label: (*label).into(),
+                                label: label.into(),
                                 detail: if cfg!(target_os = "macos") {
-                                    (*hint).into()
+                                    hint.into()
                                 } else {
                                     hint.replace('⌘', "Ctrl+").replace('⇧', "Shift+")
                                 },
                                 path: None,
-                                command: Some(*command),
+                                command: Some(command),
                             },
                         )
                     })

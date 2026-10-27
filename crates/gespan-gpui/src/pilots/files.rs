@@ -235,6 +235,7 @@ impl Pilots {
                 if let Some(view) = this.chats.remove(&id) {
                     view.update(cx, |v, cx| v.pilot_stop(cx));
                 }
+                this.chat_choices.remove(&id);
                 if let Some(pilot) = this.roster.get_mut(&id) {
                     pilot.session_id = None;
                     pilot.unavailable_session = None;
@@ -264,10 +265,12 @@ impl Pilots {
                 if let Some(view) = this.chats.remove(&id) {
                     view.update(cx, |v, cx| v.pilot_stop(cx));
                 }
+                this.chat_choices.remove(&id);
                 for run in this.running.values().filter(|r| r.pilot == id) {
                     run.view.update(cx, |v, cx| v.pilot_stop(cx));
                 }
                 this.roster.pilots.retain(|m| m.id != id);
+                this.roadmaps.remove(&id);
                 if this.active.as_ref() == Some(&id) {
                     this.active = None;
                 }

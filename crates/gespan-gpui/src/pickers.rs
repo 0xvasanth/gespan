@@ -86,6 +86,15 @@ pub(crate) fn remember_model(kind: Kind, model: Option<String>, cx: &mut gpui::A
         });
     }
 }
+/// A user's pick in a session or Pilot chat picker, the quick composer or a
+/// phone: new sessions start on it (desktop `saveLastModelChoice`).
+pub(crate) fn remember_last_used(kind: Kind, model: Option<String>, cx: &mut gpui::App) {
+    if cx.has_global::<crate::settings::Preferences>() {
+        cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+            prefs.remember_choice(kind, model)
+        });
+    }
+}
 fn contains_account_id(value: &str) -> bool {
     value.match_indices("account-").any(|(offset, _)| {
         let tail = &value[offset + "account-".len()..];
@@ -136,6 +145,49 @@ mod model_label_tests {
                 assert_eq!(entries.len(), 1);
                 assert_eq!(entries[0].id, None);
             });
+        });
+    }
+
+    #[gpui::test]
+    fn picker_lists_only_installed_providers_after_detection(cx: &mut gpui::TestAppContext) {
+        use crate::installed_providers::InstalledProviders;
+        let list = cx.update(|cx| {
+            cx.new(|cx| ModelList::new_for(Kind::Codex, None, "/work", Default::default(), cx))
+        });
+        // Before detection finishes nothing is hidden, so nothing flashes.
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.listed_providers(), Kind::ALL.to_vec());
+            assert!(list.enabled(Kind::Hermes));
+        });
+
+        // Detection lands while the picker is open: only installed CLIs stay,
+        // plus the session's own provider.
+        cx.update(|cx| cx.set_global(InstalledProviders::probed([Kind::Kiro, Kind::Claude])));
+        list.read_with(cx, |list, _| {
+            assert_eq!(
+                list.listed_providers(),
+                vec![Kind::Claude, Kind::Codex, Kind::Kiro]
+            );
+            assert!(!list.enabled(Kind::Hermes));
+            assert!(list.enabled(Kind::Kiro));
+        });
+
+        // A picker opened after detection starts filtered, and a hidden
+        // provider stays hidden even when installed.
+        let later = cx.update(|cx| {
+            cx.new(|cx| {
+                ModelList::new_for(Kind::Kiro, None, "/work", Default::default(), cx)
+                    .hide_providers(vec!["claude".into()])
+            })
+        });
+        later.read_with(cx, |list, _| {
+            assert_eq!(list.listed_providers(), vec![Kind::Kiro])
+        });
+
+        // A newly installed CLI shows up without reopening.
+        cx.update(|cx| cx.set_global(InstalledProviders::probed([Kind::Kiro, Kind::Grok])));
+        later.read_with(cx, |list, _| {
+            assert_eq!(list.listed_providers(), vec![Kind::Grok, Kind::Kiro])
         });
     }
 
@@ -259,6 +311,7 @@ pub(crate) struct ModelList {
     highlighted: usize,
     search: Entity<input::Input>,
     _changed: Subscription,
+    _installed: Subscription,
 }
 impl EventEmitter<ModelPicked> for ModelList {}
 impl ModelList {
@@ -310,8 +363,15 @@ impl ModelList {
             highlighted: 0,
             search,
             _changed: changed,
+            _installed: cx.observe_global::<crate::installed_providers::InstalledProviders>(
+                |this, cx| {
+                    this.sync_installed(cx);
+                    cx.notify();
+                },
+            ),
         };
         list.highlighted = list.current_index(cx);
+        list.sync_installed(cx);
         list.probe_installed(cx);
         list.discover(
             match list.tab {
@@ -338,6 +398,49 @@ impl ModelList {
     pub(crate) fn allow_provider_switch(mut self, allowed: bool) -> Self {
         self.switch_allowed = allowed;
         self
+    }
+    /// The app's detected CLIs (none hidden before detection finishes).
+    fn sync_installed(&mut self, cx: &mut Context<Self>) {
+        if self.remote_project.is_some() {
+            return;
+        }
+        let known = crate::installed_providers::snapshot(cx);
+        if !known.is_probed() {
+            return;
+        }
+        self.missing = Kind::ALL
+            .into_iter()
+            .filter(|kind| !known.installed(*kind))
+            .collect();
+        if let ModelTab::Harness(selected) = self.tab
+            && selected != self.provider
+            && self.missing.contains(&selected)
+        {
+            self.tab = ModelTab::Harness(self.provider);
+        }
+        if self.query(cx).is_empty() {
+            self.highlighted = self.current_index(cx);
+        }
+    }
+    /// The providers down the rail: once detection ran, only installed ones,
+    /// and never a hidden one. The session's own provider always stays.
+    fn listed_providers(&self) -> Vec<Kind> {
+        Kind::ALL
+            .into_iter()
+            .filter(|kind| {
+                if self.remote_project.is_some() {
+                    *kind == self.provider
+                        || self
+                            .remote_providers
+                            .as_ref()
+                            .is_some_and(|providers| providers.contains(kind))
+                } else {
+                    *kind == self.provider
+                        || (!self.hidden.iter().any(|id| id == kind.id())
+                            && !self.missing.contains(kind))
+                }
+            })
+            .collect()
     }
     /// Like the Tauri picker, hide providers whose CLI isn't installed once the
     /// probe settles. The session's own provider always stays.
@@ -787,21 +890,8 @@ impl Render for ModelList {
                     .border_color(content(0.07))
                     .child(self.tab(ModelTab::Favorites, cx))
                     .children(
-                        Kind::ALL
+                        self.listed_providers()
                             .into_iter()
-                            .filter(|kind| {
-                                if self.remote_project.is_some() {
-                                    *kind == self.provider
-                                        || self
-                                            .remote_providers
-                                            .as_ref()
-                                            .is_some_and(|providers| providers.contains(kind))
-                                } else {
-                                    *kind == self.provider
-                                        || (!self.hidden.iter().any(|id| id == kind.id())
-                                            && !self.missing.contains(kind))
-                                }
-                            })
                             .map(|kind| self.tab(ModelTab::Harness(kind), cx)),
                     ),
             )

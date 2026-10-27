@@ -5,6 +5,7 @@ import {
   CircleDashed,
   CursorMagicSelection,
   FilePlus,
+  Mic,
   Plus,
   Share,
   Square,
@@ -80,6 +81,7 @@ import type {
   UserQuestionReply,
 } from "../model/userQuestion";
 import { isImeComposition } from "../../../shared/lib/keyboard";
+import { MOD, SHIFT } from "../../../platform/tauri/platform";
 import {
   captureDraft,
   dropPastedText,
@@ -118,6 +120,9 @@ import { HandoffMiniCard } from "./HandoffMiniCard";
 import { ModelControlPills, ModelPicker } from "./ModelPicker";
 import { QuestionForm } from "./QuestionForm";
 import { MessageQueue } from "./MessageQueue";
+import { DictationBar, dictationBarVisible } from "./DictationBar";
+import { useDictation } from "../dictation/useDictation";
+import { DICTATE_COMMAND, isDictationShortcut } from "../dictation/shortcut";
 import { SkillPicker } from "../../skills/ui/SkillPicker";
 import { pathKey, projectKey } from "../../../shared/lib/paths";
 import { consumeQuoteRequest, type QuoteRequest } from "../model/quoteDraft";
@@ -127,6 +132,7 @@ import {
   COMPOSER_RUNNER_CHANGE_EVENT,
   loadComposerRunner,
   loadModelControls,
+  keybindingShortcutLabel,
   loadNotesEnabled,
   subscribeModelControls,
   subscribeNotesEnabled,
@@ -198,6 +204,11 @@ import {
   type McpSettingsSnapshot,
 } from "../../settings/model/mcpSettingsCache";
 import type { LastTurnRecall } from "../model/editLastTurn";
+import { NO_CODING_AGENT_HINT } from "../model/noCodingAgent";
+import {
+  NoCodingAgentSettingsButton,
+  useNoCodingAgentDetected,
+} from "./NoCodingAgent";
 import { useComposerAutocorrect } from "../../settings/model/displayPrefs";
 import {
   INSET_LAYOUT_DEFAULT,
@@ -419,6 +430,8 @@ export function Composer({
   onEditingLastTurnChange,
   children,
 }: Props) {
+  // A host session runs the host's CLIs, so this computer's matter only here.
+  const noCodingAgent = useNoCodingAgentDetected() && !remoteSession;
   const ref = useRef<HTMLTextAreaElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const plusRef = useRef<HTMLDivElement>(null);
@@ -438,6 +451,33 @@ export function Composer({
   const slashRef = useRef<SlashToken | null>(null);
   const mentionRef = useRef<MentionToken | null>(null);
   const [draft, setDraft] = useState(initialDraft ?? "");
+  const dictation = useDictation({
+    fieldRef: ref,
+    projectPath: remoteSession ? undefined : executionCwd,
+    sessionId,
+    knownNames: [...Object.values(HARNESS_TITLE), model],
+  });
+  const dictating =
+    dictation.state === "starting" ||
+    dictation.state === "listening" ||
+    dictation.state === "finishing";
+  const dictationCancellable = dictating || dictation.state === "needs-model";
+  const cancelDictation = dictation.cancel;
+  // A disabled field gets no key events, so Escape is heard on the window.
+  useEffect(() => {
+    if (!disabled || !dictationCancellable) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      cancelDictation();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [cancelDictation, dictationCancellable, disabled]);
+  const dictateShortcut = keybindingShortcutLabel(
+    DICTATE_COMMAND,
+    `${MOD}${SHIFT}M`,
+  );
   // React rewrites a textarea's text node whenever defaultValue changes, and
   // WebKit then resets the field, committing any IME composition. Parents
   // re-render with the latest draft (remote sessions on every poll), so keep
@@ -1295,7 +1335,8 @@ export function Composer({
   }, [editLastTurnSupported, onRecallLastTurnReady, recallLastTurn]);
 
   const submit = (value: string) => {
-    if (disabled || worktreeRemoved || submitLockRef.current) return;
+    if (disabled || noCodingAgent || worktreeRemoved || submitLockRef.current)
+      return;
     submitLockRef.current = true;
     void completeSubmit(value).finally(() => {
       submitLockRef.current = false;
@@ -1491,9 +1532,20 @@ export function Composer({
     syncHasValue("", []);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Cancelling dictation stays possible after the composer is disabled.
+    if (e.key === "Escape" && dictationCancellable) {
+      e.preventDefault();
+      dictation.cancel();
+      return;
+    }
     if (disabled) return;
     if (isImeComposition(e.nativeEvent)) return;
     if (creatingSkill) return;
+    if (isDictationShortcut(e)) {
+      e.preventDefault();
+      if (!e.repeat) dictation.pressStart();
+      return;
+    }
     if (
       e.key === "Enter" &&
       !e.shiftKey &&
@@ -2093,6 +2145,13 @@ export function Composer({
             />
           ) : null}
 
+          {dictationBarVisible(dictation) ? (
+            <DictationBar
+              dictation={dictation}
+              onDismiss={() => ref.current?.focus()}
+            />
+          ) : null}
+
           <div className="relative">
             <div
               ref={highlightRef}
@@ -2142,7 +2201,11 @@ export function Composer({
               onPaste={onPaste}
               onScroll={(e) => syncHighlightScroll(e.currentTarget)}
               onClick={(e) => syncTokensFromTextarea(e.currentTarget)}
-              onKeyUp={(e) => syncTokensFromTextarea(e.currentTarget)}
+              onKeyUp={(e) => {
+                dictation.pressEnd();
+                syncTokensFromTextarea(e.currentTarget);
+              }}
+              onBlur={() => dictation.pressEnd()}
               onSelect={(e) => syncTokensFromTextarea(e.currentTarget)}
               onInput={(e) => {
                 const el = e.currentTarget;
@@ -2346,6 +2409,25 @@ export function Composer({
                 </Popover>
               ) : null}
             </div>
+            {compact ? null : (
+              <ToolButton
+                label={
+                  dictating
+                    ? "Stop dictation"
+                    : dictateShortcut
+                      ? `Dictate (${dictateShortcut})`
+                      : "Dictate"
+                }
+                active={dictating}
+                disabled={disabled && !dictating}
+                onClick={() => {
+                  dictation.toggle();
+                  ref.current?.focus();
+                }}
+              >
+                <Mic className="size-3.5" strokeWidth={1.5} />
+              </ToolButton>
+            )}
             {!compact && operatorActive ? (
               <ModeCommandPill
                 name={OPERATOR_COMMAND.name}
@@ -2411,6 +2493,9 @@ export function Composer({
                   project={cwd}
                   hideSettings={controlsBeside}
                   hotkeys={hotkeys && enabled}
+                  disabledReason={
+                    noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                  }
                   onChange={onModelChange}
                   onSettingsChange={(settings) =>
                     onModelSettingsChange?.(settings)
@@ -2428,6 +2513,7 @@ export function Composer({
                     onClose={() => ref.current?.focus()}
                   />
                 ) : null}
+                {noCodingAgent ? <NoCodingAgentSettingsButton /> : null}
                 {!compact && harness !== "fx" ? (
                   <AccessPicker
                     value={runtimeMode}
@@ -2455,8 +2541,10 @@ export function Composer({
             <div className="flex shrink-0 items-center gap-1">
               <ComposerAction
                 busy={busy}
-                disabled={disabled}
-                hasValue={hasValue && !worktreeRemoved}
+                // A running turn keeps its Stop button.
+                disabled={disabled || (noCodingAgent && !busy)}
+                disabledReason={noCodingAgent ? NO_CODING_AGENT_HINT : undefined}
+                hasValue={hasValue && !worktreeRemoved && !noCodingAgent}
                 allowBusySubmit={allowBusySubmit}
                 label={draftActive ? "Save draft" : "Send"}
                 onSend={() => submit(ref.current?.value ?? "")}
@@ -2591,6 +2679,7 @@ function FileMentionRuns({
 export function ComposerAction({
   busy,
   disabled = false,
+  disabledReason,
   hasValue,
   allowBusySubmit = true,
   label = "Send",
@@ -2599,6 +2688,8 @@ export function ComposerAction({
 }: {
   busy: boolean;
   disabled?: boolean;
+  /** Tooltip for a disabled button, in place of its label. */
+  disabledReason?: string;
   hasValue: boolean;
   allowBusySubmit?: boolean;
   label?: string;
@@ -2609,7 +2700,7 @@ export function ComposerAction({
     return (
       <button
         type="button"
-        title={label}
+        title={disabledReason ?? label}
         aria-label={label}
         disabled
         className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"

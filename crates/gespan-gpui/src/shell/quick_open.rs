@@ -90,6 +90,7 @@ impl Shell {
                     Command::SwitchBoard => {
                         this.board_command(BoardCommand::SwitchBoard, window, cx)
                     }
+                    Command::Hold => window.dispatch_action(Box::new(HoldFromMenu), cx),
                     Command::OpenLogs => {
                         let open = cx
                             .background_executor()

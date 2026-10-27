@@ -1,8 +1,5 @@
 use crate::settings::SettingsView;
-use crate::{
-    settings::{SettingsEvent, management::Target, widgets::icon_action},
-    theme::*,
-};
+use crate::settings::{management::Target, widgets::icon_action};
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 impl SettingsView {
     pub(super) fn pilots_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -15,9 +12,6 @@ impl SettingsView {
         }
         let mut roster = Vec::new();
         for (ix, pilot) in self.ctx.pilots.clone().into_iter().enumerate() {
-            let show_id = pilot.id.clone();
-            let show = pilot.show;
-            let folders = pilot.folders;
             let description = match pilot.projects.split_last() {
                 None => "No projects yet".to_owned(),
                 Some((last, [])) => format!("Works on {last}"),
@@ -50,26 +44,6 @@ impl SettingsView {
                 );
             let reset = pilot.clone();
             let controls = vec![
-                div()
-                    .text_size(px(12.))
-                    .line_height(px(20.))
-                    .text_color(content(0.5))
-                    .child("Show Pilot spawned session on the sidebar")
-                    .into_any_element(),
-                div()
-                    .debug_selector(|| "settings-pilot-sidebar-switch".into())
-                    .flex_shrink_0()
-                    .child(self.toggle(
-                        "pilot-sidebar-show",
-                        format!("Show sessions started by {} in sidebar", pilot.name),
-                        show,
-                        false,
-                        cx,
-                        move |_, on, cx| {
-                            cx.emit(SettingsEvent::PilotSidebar(show_id.clone(), on, folders))
-                        },
-                    ))
-                    .into_any_element(),
                 icon_action(
                     "reset-pilot",
                     format!("Reset {} to defaults", pilot.name),

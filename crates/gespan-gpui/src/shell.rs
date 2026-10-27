@@ -11,6 +11,7 @@ mod file_panes;
 mod flow_runs;
 #[cfg(test)]
 mod flow_view_tests;
+mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
@@ -21,6 +22,7 @@ mod notifications;
 mod open_in_editor;
 mod orchestration;
 mod picker_preferences;
+pub(crate) mod pilot_flows;
 pub(crate) mod pilots;
 mod project_rail;
 mod project_removal;
@@ -121,7 +123,9 @@ actions!(
         ToggleLayout,
         OpenSettings,
         GoToFile,
-        OpenCommandPalette
+        OpenCommandPalette,
+        ToggleHold,
+        HoldFromMenu
     ]
 );
 
@@ -185,6 +189,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     let context = Some("Workspace");
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-n"), NewCodex, context),
+        KeyBinding::new(&format!("{modifier}-shift-h"), ToggleHold, context),
         KeyBinding::new(&format!("{modifier}-t"), NewCodex, context),
         KeyBinding::new(&format!("{modifier}-shift-n"), NewClaude, context),
         KeyBinding::new(&format!("{modifier}-o"), OpenProject, context),
@@ -572,6 +577,7 @@ pub(crate) struct Shell {
     /// Repaints the live agents card's elapsed times once a second.
     live_tick: Option<gpui::Task<()>>,
     busy_sessions: HashSet<i64>,
+    hold: hold::HoldCoordinator,
     /// Held per Settings → Keep screen awake; released on drop at quit.
     keep_awake: gespan_keep_awake::KeepAwake,
     notification_state: notifications::State,
@@ -805,6 +811,7 @@ impl Shell {
         let metadata: Vec<_> = summaries.iter().map(|s| (s.id, s.cwd.clone())).collect();
         let workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
         gespan_core::cli::initialize(&workspace.preferences.binary_paths);
+        crate::installed_providers::probe(cx);
         let latest_state = Arc::new(Mutex::new(serde_json::to_string(&workspace).unwrap()));
         let quit_state = latest_state.clone();
         let quit_store = store.clone();
@@ -940,6 +947,7 @@ impl Shell {
             live_agents_expanded: false,
             live_tick: None,
             busy_sessions: HashSet::new(),
+            hold: Default::default(),
             keep_awake: gespan_keep_awake::KeepAwake::new(),
             notification_state,
             quick: Default::default(),
@@ -1158,6 +1166,8 @@ impl Shell {
                 }
             }));
         this.pilots = Some(pilots);
+        // Its roster loaded with it: Pilot Flow events can be delivered.
+        this.flush_pilot_flow_events(cx);
         this.bind_notices(cx);
         this.init_app_bridge(cx);
         for summary in summaries {
@@ -1172,6 +1182,7 @@ impl Shell {
             this.session_summaries.insert(summary.id, summary);
         }
         this.init_mobile_host(cx);
+        this.restore_hold(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1337,6 +1348,10 @@ impl Shell {
         if !self.order.contains(&id) {
             self.order.push(id);
         }
+        // Restored after a restart, a held session has no view state of its own.
+        if crate::hold::active(cx) {
+            self.refresh_session_mark(id, cx);
+        }
     }
     /// SessionPane's reviewUndoLocked: another running session shares the checkout.
     fn sync_review_locks(&mut self, cx: &mut Context<Self>) {
@@ -1377,7 +1392,10 @@ impl Shell {
         if focused || session.summary.archived {
             self.unseen_finished.remove(&id);
         }
-        let state = if busy {
+        // Held outranks the rest: a session left waiting is still busy.
+        let state = if self.held_mark(id, Some(session), cx) {
+            MarkState::Held
+        } else if busy {
             MarkState::Working
         } else if self.unseen_finished.contains(&id) {
             MarkState::Done
@@ -1799,6 +1817,31 @@ impl Shell {
             .any(|pane| pane.read(cx).unsaved_files(cx))
     }
     fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.quit_prompted && !self.settling_sessions(cx).is_empty() {
+            self.quit_prompted = true;
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                "Some sessions are still finishing a command",
+                Some("Quit anyway and stop them? Gespan stays on hold and continues them when you resume."),
+                &["Quit Anyway", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.quit_prompted = false;
+                    if matches!(answer, Ok(0)) {
+                        // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        self.quit_unless_unsaved(window, cx);
+    }
+    fn quit_unless_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.unsaved_files(cx) {
             crate::quit(cx);
             return;
@@ -3172,6 +3215,20 @@ impl Shell {
         self.persist(cx);
         cx.notify();
     }
+    /// A session whose pane or tab closed stops dictating, even when the
+    /// active session stays the same.
+    pub(super) fn leave_closed_dictation(&self, cx: &mut Context<Self>) {
+        let open = self.workspace.open_sessions();
+        let closed: Vec<_> = self
+            .sessions
+            .iter()
+            .filter(|(id, _)| !open.contains(id))
+            .map(|(_, view)| view.read(cx).dictation.clone())
+            .collect();
+        for dictation in closed {
+            dictation.update(cx, |d, cx| d.leave(cx));
+        }
+    }
     /// Close one pane of a split tab; the tab's only pane closes the tab.
     fn close_pane(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.workspace.active;
@@ -3182,6 +3239,7 @@ impl Shell {
         }
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
+        self.leave_closed_dictation(cx);
         self.navigation_revision += 1;
         self.begin_pane_motion(before, cx);
         self.fit_sidebar(cx);
@@ -3748,6 +3806,10 @@ impl Shell {
             window.focus(&self.focus, cx);
         }
     }
+    #[cfg(test)]
+    pub(crate) fn session_view(&self, id: i64) -> Option<Entity<Conversation>> {
+        self.sessions.get(&id).cloned()
+    }
     pub(crate) fn open(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
@@ -3818,6 +3880,8 @@ impl Shell {
         let Some(view) = self.ensure_session(id, cx) else {
             return;
         };
+        let dictation = view.read(cx).dictation.clone();
+        crate::conversation::dictation::switched_to(&dictation, cx);
         self.history.record(id);
         self.workspace.open(id);
         self.workspace.project = view.read(cx).summary.cwd.clone();
@@ -4052,7 +4116,7 @@ impl Shell {
         }) {
             self.activate_session(id, window, cx);
         } else {
-            self.create_session(self.default_kind(), true, cx);
+            self.create_session(self.default_kind(cx), true, cx);
         }
     }
     fn open_project(&mut self, cx: &mut Context<Self>) {
@@ -4089,7 +4153,7 @@ impl Shell {
         self.create_session_target(kind, only_if_empty, None, None, cx);
     }
     fn create_in_folder(&mut self, folder: String, cx: &mut Context<Self>) {
-        self.create_session_target(self.default_kind(), false, Some(folder), None, cx);
+        self.create_session_target(self.default_kind(cx), false, Some(folder), None, cx);
     }
     fn create_session_target(
         &mut self,
@@ -4120,6 +4184,7 @@ impl Shell {
             .unwrap_or_default();
         let access = crate::conversation::default_access(cx);
         let effort = crate::conversation::preferred_effort(kind.id(), cx);
+        let controls = self.workspace.preferences.last_model_settings.clone();
         let work = cx.background_executor().spawn({
             let cwd = cwd.clone();
             let worktree_cwd = focus.as_ref().map(|f| f.path.clone());
@@ -4143,10 +4208,14 @@ impl Shell {
                     settings.effort = Some(effort);
                 }
                 settings.account = account;
+                crate::settings::apply_last_controls_to(&controls, &mut settings, kind);
                 settings.worktree_cwd = worktree_cwd;
                 if settings.model.is_some()
                     || settings.effort.is_some()
                     || !settings.model_settings.is_empty()
+                    || settings.fast
+                    || settings.thinking.is_some()
+                    || settings.service_tier.is_some()
                     || settings.worktree_cwd.is_some()
                     || settings.account.id != gespan_core::accounts::DEFAULT
                     || access != Default::default()
@@ -5666,6 +5735,10 @@ impl Shell {
                     .clone()
                     .cached(StyleRefinement::default().size(px(side)).flex_shrink_0())
                     .into_any_element(),
+                // Not loaded yet, as after a restart: the saved hold still marks it.
+                None if self.held_mark(id, None, cx) => {
+                    crate::session_mark::held("session-held-unloaded").into_any_element()
+                }
                 None => provider_icon(&session.summary.provider, side).into_any_element(),
             };
             div()
@@ -7627,7 +7700,9 @@ impl Shell {
                                     .group_hover("new-tab", |s| s.text_color(content(1.))),
                             )
                             .on_click(
-                                cx.listener(|this, _, _, cx| this.create(this.default_kind(), cx)),
+                                cx.listener(|this, _, _, cx| {
+                                    this.create(this.default_kind(cx), cx)
+                                }),
                             ),
                     )
                     .child(titlebar_drag_area().flex_1().min_w_0()),
@@ -7838,6 +7913,7 @@ impl Render for Shell {
                 .push(cx.observe_window_activation(window, |this, window, cx| {
                     if !window.is_window_active() {
                         this.close_preview(cx);
+                        this.cancel_hold_press(cx);
                     } else {
                         this.resume_git(cx);
                     }
@@ -7976,12 +8052,23 @@ impl Render for Shell {
                 }),
             )
             .on_action(cx.listener(report::report_issue))
+            .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
+            .on_action(cx.listener(|this, _: &HoldFromMenu, _, cx| this.hold_from_menu(cx)))
+            .on_key_up(cx.listener(|this, event, _, cx| this.hold_key_up(event, cx)))
+            .on_modifiers_changed(
+                cx.listener(|this, event, _, cx| this.hold_modifiers_changed(event, cx)),
+            )
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_settings(crate::settings::Section::General, window, cx)
             }))
+            .on_action(cx.listener(
+                |this, _: &crate::conversation::OpenAgentSettings, window, cx| {
+                    this.open_settings(crate::settings::Section::Providers, window, cx)
+                },
+            ))
             .on_action(
                 cx.listener(|this, _: &session_groups::RenameSidebarItem, window, cx| {
                     this.rename_sidebar_item(window, cx)
@@ -7992,7 +8079,7 @@ impl Render for Shell {
                 if this.dock_focused(window, cx).is_some() {
                     this.new_terminal(window, cx);
                 } else {
-                    this.create(this.default_kind(), cx);
+                    this.create(this.default_kind(cx), cx);
                 }
             }))
             .on_action(
@@ -8313,6 +8400,7 @@ impl Render for Shell {
             .children(self.link_modal(window, cx))
             .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))
+            .children(self.hold_details(window, cx))
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
             .children(self.remote_project_modal(window, cx))
@@ -8742,6 +8830,60 @@ mod tests {
                 assert_eq!(shell.workspace.project, "/work/gespan");
             })
             .unwrap();
+    }
+    #[gpui::test]
+    fn closing_a_dictating_pane_cancels_its_dictation(cx: &mut TestAppContext) {
+        use crate::conversation::dictation::{self, DictationState};
+        use gespan_speech::protocol::{Event, Request};
+        let models = tempfile::tempdir().unwrap();
+        dictation::tests::make_ready(models.path(), &gespan_speech::catalog::PARAKEET_V2_EN);
+        let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = sent.clone();
+        let hub = cx.update(|cx| {
+            dictation::with_sink(
+                gespan_models::ModelStore::new(models.path().to_path_buf()),
+                move |r| log.borrow_mut().push(r),
+                cx,
+            )
+        });
+        let (window, a, _) = window(cx);
+        let (c, speaking) = window
+            .update(cx, |shell, w, cx| {
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("codex", "/work/another-project")
+                    .unwrap();
+                let c = summary.id;
+                shell.add(summary, cx);
+                shell.open(a, w, cx);
+                shell.workspace.split(c, SplitDir::Right);
+                shell.focus_pane(a, w, cx);
+                let speaking = shell.sessions[&a].read(cx).dictation.clone();
+                speaking.update(cx, |d, cx| d.toggle(cx));
+                (c, speaking)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        hub.read_with(cx, |s, _| s.emit(Event::Listening));
+        cx.run_until_parked();
+        assert!(speaking.read_with(cx, |d, _| d.dictating()));
+        sent.borrow_mut().clear();
+
+        // Focusing the other pane keeps listening; closing A's pane does not.
+        window
+            .update(cx, |shell, w, cx| {
+                shell.focus_pane(c, w, cx);
+                assert!(speaking.read(cx).dictating());
+                shell.close_pane(a, w, cx);
+                assert_eq!(shell.workspace.active, Some(c));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*sent.borrow(), vec![Request::Cancel]);
+        assert_eq!(
+            speaking.read_with(cx, |d, _| d.state().clone()),
+            DictationState::Idle
+        );
     }
     #[gpui::test]
     fn tab_lifecycle_closing_an_inactive_split_pane_keeps_notes(cx: &mut TestAppContext) {

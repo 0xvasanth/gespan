@@ -12,6 +12,8 @@ on:
       - 'crates/tracker-secrets/**'
       - 'crates/tracker-client/**'
       - 'crates/board-store/**'
+      - 'crates/gespan-speech/**'
+      - 'crates/gespan-models/**'
       - 'vendor/gpui-pre*/**'
       - 'scripts/*native*'
       - 'scripts/native-editor/**'

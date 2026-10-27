@@ -6,7 +6,7 @@ establish runtime or platform parity with the production React/Tauri app. See
 
 ## Providers
 
-All eleven providers have discovery, model selection and native transports.
+All twelve providers have discovery, model selection and native transports.
 The live results below are historical spot checks, not certification of every
 provider feature or the current revision.
 
@@ -21,6 +21,7 @@ provider feature or the current revision.
 | omp | RPC | Catalog, streaming and two-turn resume (Oct 19) |
 | fx | ACP | Catalog, streaming and two-turn resume (Oct 19) |
 | Hermes Agent | ACP | Catalog; prompt blocked by upstream account credit (Oct 19) |
+| Kiro CLI | ACP | No live check; protocol fixtures and a fake `kiro-cli` only |
 | Antigravity | ACP | Protocol fixtures only; no installed server for a live check |
 | Devin | ACP | Catalog, streaming, two-turn resume and supervised write approval (Oct 19) |
 

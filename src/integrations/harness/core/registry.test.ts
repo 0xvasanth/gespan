@@ -15,6 +15,8 @@ import {
   compactHarnessContext,
   configureHarnessIdlePark,
   enforceHarnessIdleLimit,
+  holdHarnessTurn,
+  holdIdlePark,
   isLiveHarness,
   listHarnesses,
   refreshHarnessCatalogs,
@@ -431,6 +433,32 @@ describe("harness registry", () => {
       await turn("viewed");
       await vi.advanceTimersByTimeAsync(0);
       expect(stopSession).toHaveBeenCalledWith("viewed");
+    });
+
+    it("keeps held sessions' children through the hold, then parks them after Resume", async () => {
+      vi.useFakeTimers();
+      const stopSession = vi.fn(async () => undefined);
+      registerHarness(stub("cursor", { stopSession }));
+      configureHarnessIdlePark({ limit: () => 0, keep: () => false });
+
+      // Idle before the hold, and interrupted by it.
+      await turn("earlier");
+      holdIdlePark((id) => id !== "other");
+      await holdHarnessTurn("cursor", "held");
+      await turn("other");
+      await vi.advanceTimersByTimeAsync(HARNESS_IDLE_PARK_MS * 10);
+      expect(stopSession.mock.calls).toEqual([["other"]]);
+
+      // Resume: the usual idle period starts now.
+      holdIdlePark(null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopSession.mock.calls).toEqual([["other"]]);
+      await vi.advanceTimersByTimeAsync(HARNESS_IDLE_PARK_MS);
+      expect(stopSession.mock.calls.flat().sort()).toEqual([
+        "earlier",
+        "held",
+        "other",
+      ]);
     });
 
     it("applies a lowered limit straight away", async () => {

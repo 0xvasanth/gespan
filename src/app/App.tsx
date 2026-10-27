@@ -96,6 +96,7 @@ import {
 import { flushSync } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import {
   startTransition,
@@ -345,6 +346,8 @@ import {
   bindHarnessSession,
   transferHarnessSessionAccount,
   cancelHarnessTurn,
+  holdHarnessTurn,
+  holdIdlePark,
   canCompactHarnessContext,
   canRewindHarnessLastTurn,
   canSteerHarness,
@@ -357,6 +360,7 @@ import {
   isLiveHarness,
   latestTurnNeedsHarnessLogin,
   probeHarnessAvailability,
+  subscribeHarnessAvailability,
   refreshHarnessCatalogs,
   registerBuiltinHarnesses,
   promoteLastAssistantToPlan,
@@ -440,10 +444,17 @@ import {
   mergeModelSettings,
   nativeModelId,
   preferredModelSettings,
+  rememberModelPick,
   resolveModel,
   saveLastModelSettings,
   saveRecentModelChoice,
 } from "../features/sessions/model/models";
+import {
+  OPEN_AGENT_CLIS_EVENT,
+  OPEN_AGENT_CLIS_REQUEST_EVENT,
+  answerAgentClisSettingsRequest,
+  assertPhoneSendAllowed,
+} from "../features/sessions/model/noCodingAgent";
 
 import {
   buildPlanPrompt,
@@ -527,6 +538,7 @@ import {
   sessionDraftBlock,
   sessionWorkCwd,
   titleFromPrompt,
+  withInstalledDefault,
   type Attachment,
   type Block,
   type BtwThread,
@@ -886,6 +898,10 @@ import {
   sameSessionSummaries,
   summaryFromSession,
 } from "../features/sessions/data/sessionHistory";
+import { HoldPhaseContext } from "../features/hold/model/holdContext";
+import { useHold } from "../features/hold/model/useHold";
+import { HoldPress } from "../features/hold/model/holdPress";
+import { HoldControl } from "../features/hold/ui/HoldControl";
 import {
   CONTINUE_PROMPT,
   canAutoContinue,
@@ -1233,6 +1249,99 @@ function Workspace({
     useWorkspaceSessionState(
       () => windowTransfer?.sessions ?? resumed?.sessions ?? [seed.session],
     );
+  // Hold everything: local sessions that are working, waiting or queued.
+  const holdApi = useHold({
+    sessions: () =>
+      sessionsRef.current
+        .filter(
+          (s) =>
+            !remoteProjectFor(s.cwd) &&
+            (!!s.busy ||
+              (s.queuedMessages?.length ?? 0) > 0 ||
+              sessionNeedsInput(s) ||
+              holdRef.current.isSessionHeld(s.id)),
+        )
+        .map((s) => ({
+          id: s.id,
+          busy: !!s.busy,
+          pilotChat: isPilotSession(s.id),
+          awaitingInput: sessionNeedsInput(s),
+          queued: s.queuedMessages?.length ?? 0,
+        })),
+    holdTurn: (id) => {
+      const session = sessionsRef.current.find((s) => s.id === id);
+      // Before the interrupt settles: its child must not be idle-parked.
+      holdIdlePark(keepHeldIdle);
+      if (session) void holdHarnessTurn(session.harness, id);
+    },
+    stop: (id) => onStopRef.current(id),
+    resume: (id, prompt) => {
+      const session = sessionsRef.current.find((s) => s.id === id);
+      if (!session) return false;
+      const queued = (session.queuedMessages?.length ?? 0) > 0;
+      if (queued)
+        setSessions((prev) =>
+          prev.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  // The continuation goes first; the queue follows it.
+                  queueStatus:
+                    prompt && !isPilotSession(id) ? "resuming" : "active",
+                }
+              : entry,
+          ),
+        );
+      if (!prompt) return false;
+      return onSubmitRef.current(id, prompt, [], { followUpBehavior: "steer" });
+    },
+  });
+  const holdRef = useRef(holdApi.hold);
+  // Held sessions' children, and their background work, stay warm until
+  // Resume; then they get the usual idle period.
+  const keepHeldIdle = (id: string) => holdRef.current.isSessionHeld(id);
+  const holding = holdApi.phase !== null;
+  useEffect(() => {
+    holdIdlePark(holding ? keepHeldIdle : null);
+  }, [holding]);
+  // The status-bar button and held ⌘⇧H share one hold-to-confirm press.
+  const [holdPress] = useState(
+    () =>
+      new HoldPress(() => {
+        if (holdRef.current.phase() === null) holdRef.current.toggle();
+      }),
+  );
+  useEffect(() => () => holdPress.dispose(), [holdPress]);
+  // The palette and menus can't be held: they show the button's hint, or
+  // resume once on hold. An echo of a held ⌘⇧H is ignored.
+  const holdFromMenu = useCallback(() => {
+    if (holdPress.keyHeld) return;
+    if (holdRef.current.phase() === null) holdPress.hint();
+    else holdRef.current.toggle();
+  }, [holdPress]);
+  const onStopRef = useRef<(id: string) => void>(() => undefined);
+  const onSubmitRef = useRef<(...args: Parameters<Submit>) => boolean>(
+    () => false,
+  );
+  useEffect(() => {
+    holdRef.current.sync();
+  }, [sessions]);
+  // Sessions held with something to continue, for the sidebar and panes.
+  const heldSessionIds = useMemo(
+    () =>
+      new Set(
+        sessions
+          .filter((s) => holdRef.current.isSessionMarked(s.id))
+          .map((s) => s.id),
+      ),
+    // The coordinator lives in a ref; its version changes with the hold.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, holdApi.version],
+  );
+  useEffect(() => {
+    // Resume lifts the hold: queued orchestration work may start again.
+    if (holdApi.phase === null) orchestrator.wake();
+  }, [holdApi.phase]);
   const [sessionDeleteDialog, setSessionDeleteDialog] = useState<{
     mode: "archive" | "delete";
     title: string;
@@ -2115,6 +2224,25 @@ function Workspace({
     };
   }, [pilotsSnap]);
 
+  // Conversations opened before detection finished may sit on a provider this
+  // computer lacks; until their first message, move them to one it has.
+  useEffect(
+    () =>
+      subscribeHarnessAvailability(() => {
+        setSessions((prev) => {
+          let changed = false;
+          const next = prev.map((session) => {
+            if (isRemoteProjectPath(session.cwd)) return session;
+            const moved = withInstalledDefault(session);
+            if (moved !== session) changed = true;
+            return moved;
+          });
+          return changed ? next : prev;
+        });
+      }),
+    [],
+  );
+
   useEffect(() => {
     void probeHarnessAvailability();
     // Only the harnesses already in this window. Probing every installed CLI
@@ -2562,8 +2690,8 @@ function Workspace({
 
   const keepAwake = useKeepAwake();
   useEffect(() => {
-    syncKeepAwake(sessions, keepAwake);
-  }, [sessions, keepAwake]);
+    syncKeepAwake(sessions, keepAwake, holdApi.phase === "onHold");
+  }, [sessions, keepAwake, holdApi.phase]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -7229,9 +7357,10 @@ function Workspace({
       if (!current) return;
       if (isPreparingHandoff(current)) return;
       const resolved = resolveModel(harness, model);
-      saveRecentModelChoice(resolved.harness, resolved.id);
-      if (current.modelSettings) {
-        saveLastModelSettings(current.modelSettings, "fill");
+      // The pick becomes the last used choice new conversations start with.
+      // Host sessions pick from the host's CLIs, so they leave it alone.
+      if (!isRemoteProjectPath(current.cwd)) {
+        rememberModelPick(resolved, current.modelSettings);
       }
       const modelSettings = preferredModelSettings(
         resolved,
@@ -7709,7 +7838,9 @@ function Workspace({
         });
       }
 
-      if (current.busy && !pendingSwitch) {
+      // While on hold nothing starts: the message waits for Resume.
+      const held = holdRef.current.isHeld();
+      if ((current.busy || held) && !pendingSwitch) {
         if (
           operatorCommand.matched &&
           options?.queuedMessageId &&
@@ -7725,6 +7856,7 @@ function Workspace({
         const steerable =
           isLiveHarness(current.harness) && canSteerHarness(current.harness);
         const followUpBehavior =
+          held ||
           current.worktreePreparing ||
           intent === "plan" ||
           intent === "orchestrate" ||
@@ -7743,6 +7875,7 @@ function Workspace({
                   : "queue"
                 : (options?.followUpBehavior ?? loadFollowUpBehavior());
         if (followUpBehavior === "queue") {
+          if (held) holdRef.current.noteQueued(sessionId, isPilotSession(sessionId));
           setSessions((prev) =>
             prev.map((s) =>
               s.id === sessionId
@@ -7764,7 +7897,7 @@ function Workspace({
                       },
                     ],
                     queueStatus:
-                      s.queueStatus === "paused" ? "paused" : "active",
+                      held || s.queueStatus === "paused" ? "paused" : "active",
                   }
                 : s,
             ),
@@ -8381,6 +8514,7 @@ function Workspace({
 
         const pendingEditedEvents: HarnessEvent[] = [];
         const applyTurnEvent = (event: HarnessEvent) => {
+          holdRef.current.observe(sessionId, event);
           orchestrator.observe(sessionId, event);
           if (options?.onSettled && event.type === "message.delta")
             controlText = (controlText + event.text).slice(-20_000);
@@ -8903,7 +9037,17 @@ function Workspace({
                 )
               : undefined,
           );
-          options?.onSettled?.(outcome);
+          // A held turn hasn't finished: its settlement waits for the turn
+          // that really ends after Resume.
+          const settle = options?.onSettled;
+          if (settle && holdRef.current.isSessionHeld(sessionId)) {
+            holdRef.current.deferSettlement<ControlOutcome>(sessionId, (later) =>
+              settle(later ?? outcome),
+            );
+          } else {
+            settle?.(outcome);
+            holdRef.current.turnEnded(sessionId, outcome);
+          }
         });
       return true;
     },
@@ -8929,6 +9073,7 @@ function Workspace({
     },
     [submitSession],
   );
+  onSubmitRef.current = onSubmit;
 
   // onApproval is created once; it reaches the current helper through this.
   const decidePilotBlockRef = useRef<
@@ -8987,6 +9132,8 @@ function Workspace({
   decidePilotBlockRef.current = decidePilotBlock;
 
   usePilotHabits({
+    held: () => holdRef.current.isHeld(),
+    heldSince: () => holdRef.current.heldSince(),
     sessions: () => sessionsRef.current,
     open: async (id) => (await ensureOpenSession(id)) ?? undefined,
     add: (session) => {
@@ -9375,6 +9522,7 @@ function Workspace({
         if (!id) throw new Error("Missing mobile session ID");
         const existing = sessionsRef.current.find(current => current.id === id) ?? await getSession(id);
         if (existing?.blocks.some(block => block.appRequestId === commandId)) return { sessionId: id };
+        assertPhoneSendAllowed(isRemoteProjectPath(cwd));
         // Staged before the session exists, so a bad file leaves nothing behind.
         const attachments = await mobileAttachments(params.attachments);
         const session = existing ?? {
@@ -9446,6 +9594,7 @@ function Workspace({
         session.queuedMessages?.some((message) => message.id === commandId)
       )
         return { sessionId: session.id };
+      assertPhoneSendAllowed(isRemoteProjectPath(session.cwd));
       const attachments = await mobileAttachments(params.attachments);
       // Mid-turn it steers or queues, as a message typed in the composer would.
       if (!submitSessionRef.current(session.id, text, attachments, { appRequestId: commandId, followsUp: true }))
@@ -9488,7 +9637,8 @@ function Workspace({
     let disposed = false;
     let evaluating = false;
     const evaluate = async () => {
-      if (disposed || evaluating) return;
+      // Due runs stay due while held and are claimed once on Resume.
+      if (disposed || evaluating || holdRef.current.isHeld()) return;
       evaluating = true;
       try {
         await ensureAutomationRecovery();
@@ -10807,6 +10957,8 @@ function Workspace({
     // Delay past React StrictMode's dev remount so Continue is not claimed
     // against a discarded tree (sessionStorage also survives Vite reloads).
     const timer = window.setTimeout(() => {
+      // Resume continues held sessions itself.
+      if (holdRef.current.isHeld()) return;
       for (const id of ids) {
         const session = sessionsRef.current.find((entry) => entry.id === id);
         if (
@@ -10972,6 +11124,7 @@ function Workspace({
     },
     [flushHarnessEvents],
   );
+  onStopRef.current = onStop;
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -11119,6 +11272,7 @@ function Workspace({
 
   useLayoutEffect(() => {
     orchestrator.bind({
+      held: () => holdRef.current.isHeld(),
       session: (id) => sessionsRef.current.find((session) => session.id === id),
       sessions: () => sessionsRef.current,
       choices: () =>
@@ -12763,6 +12917,13 @@ function Workspace({
   }, []);
 
   useEffect(() => {
+    const onOpenAgentClis = () => openSettings("providers", "agent-clis");
+    window.addEventListener(OPEN_AGENT_CLIS_EVENT, onOpenAgentClis);
+    return () =>
+      window.removeEventListener(OPEN_AGENT_CLIS_EVENT, onOpenAgentClis);
+  }, [openSettings]);
+
+  useEffect(() => {
     const onOpenMcp = () => openSettings("mcp");
     window.addEventListener("gespan:open-mcp-settings", onOpenMcp);
     return () =>
@@ -13512,12 +13673,30 @@ function Workspace({
           run("open_settings", () => a.openSettings());
         else if (shortcut === "App: Find in Files")
           run("find_in_project", a.onFindInProject);
+        else if (shortcut === "App: Hold Everything")
+          run("hold_toggle", () =>
+            holdPress.shortcutDown(holdRef.current.phase(), () =>
+              holdRef.current.resume(),
+            ),
+          );
         return;
       }
     };
+    // A held ⌘⇧H ends when H or a modifier goes up, or the window blurs.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (["Meta", "Control", "Shift", "h", "H"].includes(e.key))
+        holdPress.shortcutUp();
+    };
+    const onBlur = () => holdPress.cancel();
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [run]);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [run, holdPress]);
 
   useEffect(() => {
     const unlisten: Array<Promise<() => void>> = [
@@ -13581,6 +13760,7 @@ function Workspace({
       listen("open_command_palette", () =>
         run("open_command_palette", actions.current.onOpenCommandPalette),
       ),
+      listen("hold_toggle", () => run("hold_toggle", holdFromMenu)),
       listen("reload", () => run("reload", actions.current.onReload)),
       listen("open_search", () => actions.current.onOpenSearch()),
       listen("open_inbox", () => actions.current.onOpenInbox()),
@@ -13588,6 +13768,15 @@ function Workspace({
       listen("open_settings", () => actions.current.openSettings()),
       listen("check_for_updates", () => {
         void runUpdateFlow(true);
+      }),
+      // "Open Settings" from the quick composer or a floating Pilot chat when
+      // no coding agent is found.
+      listen(OPEN_AGENT_CLIS_REQUEST_EVENT, async () => {
+        await answerAgentClisSettingsRequest(
+          getCurrentWindow(),
+          await getAllWebviewWindows(),
+          () => actions.current.openSettings("providers", "agent-clis"),
+        );
       }),
       listen("sidebar_opacity", () => {
         actions.current.openSettings("appearance");
@@ -14027,6 +14216,7 @@ function Workspace({
           <SessionPane
             {...sessionPaneProps}
             session={pilotShownSessionPane}
+            held={heldSessionIds.has(pilotShownSessionPane.id)}
             // The Pilot view covers the workspace, so a review opens
             // beside the chat rather than in a hidden tab.
             onOpenDiff={onOpenPilotDiff}
@@ -14618,6 +14808,7 @@ function Workspace({
       sessions={sidebarHistory}
       busySessionIds={busySessionIds}
       approvalSessionIds={approvalSessionIds}
+      heldSessionIds={heldSessionIds}
       activeSessionId={activeSessionId}
       status={historyFailed ? "error" : "idle"}
       pending={historyPending}
@@ -14716,6 +14907,19 @@ function Workspace({
     (pilotCovers && !insetLayout) ? null : (
       <UsageFooter
         pressureSlot={setPressureChipHost}
+        holdSlot={
+          <HoldControl
+            phase={holdApi.phase}
+            summary={holdApi.hold.summary()}
+            settling={holdApi.hold.settling().map((id) => {
+              const session = sessions.find((s) => s.id === id);
+              return { id, title: session?.title || "Session" };
+            })}
+            press={holdPress}
+            onResume={() => holdApi.hold.resume()}
+            onStopNow={(id) => holdApi.hold.stopNow(id)}
+          />
+        }
         providers={usageProviders}
         session={usageSession}
         project={usageSource?.cwd ?? projectCwd}
@@ -14744,6 +14948,7 @@ function Workspace({
     );
 
   return (
+    <HoldPhaseContext.Provider value={holdApi.phase}>
     <SessionStateContext.Provider value={sessionState}>
     <OrchestrationActions.Provider value={orchestrationActions}>
       <OrchestrationWorkers.Provider value={orchestrationWorkers}>
@@ -15024,6 +15229,7 @@ function Workspace({
                                         <SessionPane
                                           {...sessionPaneProps}
                                           session={session}
+                                          held={heldSessionIds.has(session.id)}
                                           visible={visible}
                                           focused={
                                             visible &&
@@ -15143,6 +15349,7 @@ function Workspace({
                             <SessionPane
                               {...sessionPaneProps}
                               session={session}
+                              held={heldSessionIds.has(session.id)}
                               visible={visible}
                               focused={visible}
                               inSplit={false}
@@ -15329,6 +15536,9 @@ function Workspace({
               openPaths={openFilePaths}
               initialQuery={filePickerInitialQuery}
               onOpenFile={onOpenFile}
+              holdLabel={
+                holdApi.phase === "onHold" ? "Resume everything" : "Hold everything"
+              }
               extraActions={
                 boardEnabled ? BOARD_PALETTE_ACTIONS : SESSION_PALETTE_ACTIONS
               }
@@ -15339,6 +15549,7 @@ function Workspace({
                 else if (id === "board-create-card") onBoardCommand("new-card");
                 else if (id === "board-go-to") onOpenBoard();
                 else if (id === "board-switch") onBoardCommand("switch-board");
+                else if (id === "hold") holdFromMenu();
               }}
               onClose={() => setFilePickerOpen(false)}
             />
@@ -15433,6 +15644,7 @@ function Workspace({
       </OrchestrationWorkers.Provider>
     </OrchestrationActions.Provider>
     </SessionStateContext.Provider>
+    </HoldPhaseContext.Provider>
   );
 }
 function conversationTitle(session: Session): string {

@@ -56,6 +56,7 @@ mod resources;
 mod search;
 mod session_store;
 mod skills;
+mod speech;
 pub mod ssh_askpass;
 mod tickets;
 mod tool_detail;
@@ -288,6 +289,7 @@ pub fn run() {
         .manage(remote::RemoteConnections::default())
         .manage(window_transfer::WindowTransferState::new())
         .manage(keep_awake::KeepAwakeState::default())
+        .manage(speech::State::default())
         .setup(|app| {
             harness::reap_orphaned_harness_processes();
             session_store::init(app.handle())?;
@@ -320,6 +322,13 @@ pub fn run() {
             menu::dispatch(app, event.id().as_ref());
         })
         .invoke_handler(tauri::generate_handler![
+            speech::dictation_models,
+            speech::dictation_download,
+            speech::dictation_cancel_download,
+            speech::dictation_delete_model,
+            speech::dictation_start,
+            speech::dictation_stop,
+            speech::dictation_cancel,
             mobile_access::mobile_status,
             mobile_access::mobile_configure,
             mobile_access::mobile_invite,
@@ -833,6 +842,7 @@ pub fn run() {
         }
         tauri::RunEvent::Exit => {
             handle.state::<remote::RemoteConnections>().shutdown();
+            speech::shutdown(&handle.state::<speech::State>());
             reap_harness_children(handle);
         }
         _ => {}

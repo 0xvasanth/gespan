@@ -184,6 +184,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                 let _ = open(app, pilot_id.to_owned());
             } else if id == "pilot-chat-composer" {
                 crate::quick_composer::open(app);
+            } else if id == "pilot-chat-hold" {
+                // Hold is confirmed by holding the status-bar button: bring a window
+                // forward to show its "Hold to confirm" hint.
+                let _ = crate::window::show_hidden_or_open_new(app);
+                crate::menu::dispatch(app, "hold_toggle");
             } else if id == "pilot-chat-quit" {
                 crate::window::request_quit(app);
             }

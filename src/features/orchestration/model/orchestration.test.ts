@@ -601,6 +601,21 @@ describe("local orchestration", () => {
     });
     expect(f.manager.run("lead")?.dispatches).toHaveLength(2);
   });
+  it("dispatches no worker while held and continues on resume", async () => {
+    const f = setup();
+    let held = true;
+    f.host.held = () => held;
+    await f.start();
+    await f.delegate(["src/a"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      vi.mocked(f.host.submit).mock.calls.filter(([id]) => id !== "lead"),
+    ).toHaveLength(0);
+    expect(f.tasks()[0].status).toBe("queued");
+    held = false;
+    f.manager.wake();
+    await vi.waitFor(() => expect(f.tasks()[0].status).toBe("running"));
+  });
   it("runs disjoint workers concurrently and queues overlap", async () => {
     const f = setup();
     await f.start();

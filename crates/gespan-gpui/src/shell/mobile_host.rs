@@ -327,17 +327,12 @@ impl Shell {
 
     /// What a new session in `cwd` starts with, as a new desktop tab would.
     fn mobile_defaults(&self, cwd: &str, cx: &App) -> (Kind, Option<String>, AccessMode) {
-        let prefs = &self.workspace.preferences;
-        let project = prefs.project_providers.get(cwd);
-        let kind = project
-            .and_then(|p| p.provider.as_deref())
-            .or(prefs.default_provider.as_deref())
-            .and_then(Kind::parse)
-            .unwrap_or(Kind::Codex);
-        let model = project
-            .and_then(|p| p.models.get(kind.id()))
-            .or(prefs.default_models.get(kind.id()))
-            .and_then(|model| gespan_core::store::native_model(model, kind.id()));
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(cwd),
+            cx,
+        );
+        let model = model.and_then(|model| gespan_core::store::native_model(&model, kind.id()));
         (kind, model, crate::conversation::default_access(cx))
     }
 
@@ -1145,6 +1140,14 @@ impl Shell {
         let conversation = string(&request.params, "conversationId").unwrap_or_default();
         let staged = (|| {
             let target = self.mobile_target(&conversation, cx)?;
+            let remote = match &target {
+                Target::Session(id) => self
+                    .session_summaries
+                    .get(id)
+                    .is_some_and(|s| s.cwd.starts_with("remote://")),
+                Target::Pilot(_) => false,
+            };
+            phone_send_allowed(remote, cx)?;
             let text = message_text(&request.params)?;
             Ok::<_, String>((target, text))
         })();
@@ -1201,6 +1204,7 @@ impl Shell {
             let text = message_text(&params)?;
             let cwd =
                 self.mobile_project_path(&string(&params, "projectId").unwrap_or_default(), cx)?;
+            phone_send_allowed(cwd.starts_with("remote://"), cx)?;
             let (default_kind, default_model, default_access) = self.mobile_defaults(&cwd, cx);
             let chosen = string(&params, "harness").as_deref().and_then(Kind::parse);
             let kind = chosen.unwrap_or(default_kind);
@@ -1691,6 +1695,15 @@ fn model_settings(params: &Value) -> HashMap<String, String> {
         .collect()
 }
 
+/// Phone sends need a coding agent here, unless the session is remote.
+fn phone_send_allowed(remote: bool, cx: &App) -> Result<(), String> {
+    if !remote && crate::installed_providers::none_detected(cx) {
+        Err(crate::installed_providers::NO_AGENT_HINT.into())
+    } else {
+        Ok(())
+    }
+}
+
 fn mobile_settings_of(settings: &Settings) -> HashMap<String, String> {
     let mut values = settings.model_settings.clone();
     if let Some(effort) = &settings.effort {
@@ -1760,6 +1773,25 @@ fn catalog_model(kind: Kind, model: gespan_core::catalog::Model) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn phone_sends_report_that_no_coding_agent_is_detected(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            // Before detection finishes, phone sends go through.
+            assert_eq!(phone_send_allowed(false, cx), Ok(()));
+            cx.set_global(crate::installed_providers::InstalledProviders::probed([]));
+            assert_eq!(
+                phone_send_allowed(false, cx),
+                Err("No coding agent detected. Set one up in Settings → Agent CLIs.".into())
+            );
+            // A remote session runs on the other machine's CLIs.
+            assert_eq!(phone_send_allowed(true, cx), Ok(()));
+            cx.set_global(crate::installed_providers::InstalledProviders::probed([
+                Kind::Kiro,
+            ]));
+            assert_eq!(phone_send_allowed(false, cx), Ok(()));
+        });
+    }
 
     #[gpui::test]
     fn mobile_catalog_matches_sidebar_visibility_for_saved_and_open_sessions(

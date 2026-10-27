@@ -11,6 +11,7 @@ pub(crate) enum Section {
     Connections,
     Appearance,
     Keybindings,
+    Dictation,
     Chat,
     Providers,
     Mcp,
@@ -30,6 +31,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
             Section::Connections,
             Section::Appearance,
             Section::Keybindings,
+            Section::Dictation,
         ],
     ),
     (
@@ -49,12 +51,13 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 13] = [
+    pub(crate) const ALL: [Section; 14] = [
         Section::General,
         Section::Diagnostics,
         Section::Connections,
         Section::Appearance,
         Section::Keybindings,
+        Section::Dictation,
         Section::Chat,
         Section::Providers,
         Section::Mcp,
@@ -71,6 +74,7 @@ impl Section {
             Section::Connections => "connections",
             Section::Appearance => "appearance",
             Section::Keybindings => "keybindings",
+            Section::Dictation => "dictation",
             Section::Chat => "chat",
             Section::Providers => "providers",
             Section::Mcp => "mcp",
@@ -88,6 +92,7 @@ impl Section {
             Section::Connections => "Connections",
             Section::Appearance => "Appearance",
             Section::Keybindings => "Keybindings",
+            Section::Dictation => "Dictation",
             Section::Chat => "Chat",
             Section::Providers => "Providers",
             Section::Mcp => "MCP",
@@ -113,6 +118,7 @@ impl Section {
             Section::Keybindings => {
                 "Every shortcut the workspace handles, from the app menu and the key handler."
             }
+            Section::Dictation => "Speak into the composer. Speech is recognized on this device.",
             Section::Chat => {
                 "How transcripts read, what the composer does with a follow-up, how files save, and how diffs open."
             }
@@ -142,6 +148,7 @@ impl Section {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
             }
             Section::Keybindings => "shortcut hotkey keyboard binding",
+            Section::Dictation => "voice microphone speech parakeet",
             Section::Chat => {
                 "transcript composer prompt message diff review layout format save editor"
             }
@@ -168,6 +175,7 @@ impl Section {
             Section::Connections => "internet",
             Section::Appearance => "palette",
             Section::Keybindings => "keyboard",
+            Section::Dictation => "mic-01",
             Section::Chat => "message-square",
             Section::Providers => "bot",
             Section::Mcp => "globe",
@@ -223,6 +231,24 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Pilots,
         "Your pilots",
         "pilot reset soul name projects sessions sidebar visibility hidden show",
+    ),
+    (
+        "dictation-model",
+        Section::Dictation,
+        "Speech model",
+        "voice microphone parakeet download english multilingual delete",
+    ),
+    (
+        "dictation-words",
+        Section::Dictation,
+        "Custom words",
+        "voice vocabulary names identifiers spelling",
+    ),
+    (
+        "dictation-shortcut",
+        Section::Dictation,
+        "Shortcut",
+        "voice push to talk hold tap microphone",
     ),
     (
         "project-worktrees",
@@ -445,7 +471,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "agent-clis",
         Section::Providers,
         "Agent CLIs",
-        "codex opencode cursor grok pi omp fx hermes antigravity devin binary path",
+        "codex opencode cursor grok pi omp fx hermes kiro antigravity devin binary path",
     ),
     (
         "provider-accounts",
@@ -590,6 +616,31 @@ mod tests {
             let hit = results.iter().find(|r| r.setting == Some("keep-awake"));
             assert_eq!(hit.map(|r| r.section), Some(Section::General), "{query}");
         }
+    }
+
+    #[test]
+    fn settings_section_count_is_14() {
+        assert_eq!(Section::ALL.len(), 14);
+        let grouped: Vec<Section> = GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
+        assert_eq!(grouped.len(), Section::ALL.len());
+        for section in Section::ALL {
+            assert!(grouped.contains(&section), "{section:?} has no rail group");
+        }
+        let (group, app) = GROUPS[0];
+        assert_eq!(group, "App");
+        assert_eq!(app.last(), Some(&Section::Dictation));
+        for query in ["dictation", "microphone", "parakeet", "microphone speech"] {
+            assert!(
+                search(query)
+                    .iter()
+                    .any(|r| r.section == Section::Dictation),
+                "{query}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&Section::Dictation).unwrap(),
+            "\"dictation\""
+        );
     }
 
     #[test]

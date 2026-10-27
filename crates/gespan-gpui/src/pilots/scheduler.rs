@@ -3,6 +3,10 @@ use super::*;
 use gespan_core::pilot::habits::{Run, Schedule};
 use gespan_core::time::now_ms;
 
+/// A started hidden run: its session, its view, and whether the session
+/// took the prompt.
+pub(super) type HiddenRun = (i64, Entity<Conversation>, bool);
+
 #[derive(Default)]
 pub(super) struct HabitUi {
     saving: bool,
@@ -1180,11 +1184,42 @@ impl Pilots {
         })
         .detach();
     }
-    pub(super) fn tick(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.check_habits(cx);
+    /// After a hold: running habits don't count the held time against their
+    /// timeouts, and habits that came due while held run once now.
+    pub(crate) fn resumed(&mut self, held_ms: u64, since: u64, cx: &mut Context<Self>) {
+        for run in self.running.values_mut() {
+            run.started += held_ms;
+            if let Some(waiting) = run.waiting_since.as_mut() {
+                *waiting += held_ms;
+            }
+        }
+        let now = now_ms();
+        for id in self
+            .roster
+            .pilots
+            .iter()
+            .map(|m| m.id.clone())
+            .collect::<Vec<_>>()
+        {
+            if let Err(error) = habits::update(&self.root, &id, |all| {
+                habits::catch_up(all, since, now);
+                Ok(())
+            }) {
+                self.error = Some(error);
+            }
+        }
         cx.notify();
     }
-    fn check_habits(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn tick(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.check_habits(cx);
+        self.tick_flows(cx);
+        cx.notify();
+    }
+    pub(super) fn check_habits(&mut self, cx: &mut Context<Self>) {
+        // While held no habit starts, times out or reports; Resume moves the clocks on.
+        if crate::hold::active(cx) {
+            return;
+        }
         let now = now_ms();
         if let Some(id) = self.active.clone() {
             self.refresh_work(&id, cx);
@@ -1301,44 +1336,164 @@ impl Pilots {
     }
     fn start_habit(&mut self, id: &str, habit: Habit, cx: &mut Context<Self>) {
         self.active_run = Some(-1);
-        let Some(pilot) = self.roster.get(id).cloned() else {
+        let Some(pilot) = self.roster.get(id).map(|p| p.label()) else {
             return;
         };
-        self.ensure_chat(id, cx);
+        let target = id.to_string();
+        let habit_id = habit.id.clone();
+        let prompt = format!(
+            "[Scheduled habit: {}]\n{}\n\nDo this scheduled work independently. Return a concise report; if nothing requires attention, reply exactly NOTHING_TO_REPORT. Any session you start belongs to this habit. Do not change the habit unless asked.",
+            habit.name, habit.instructions
+        );
+        let run = self.spawn_hidden_run(
+            id,
+            format!("{} · {}", pilot, habit.name),
+            prompt,
+            AccessMode::FullAccess,
+            move |this, session, view, cx| {
+                this.observations.push(
+                    cx.subscribe(view, move |this, _, _: &SessionChanged, cx| {
+                        this.habit_changed(session, cx)
+                    }),
+                );
+                this.running.insert(
+                    session,
+                    RunningHabit {
+                        pilot: target.clone(),
+                        habit: habit_id,
+                        view: view.clone(),
+                        started: now_ms(),
+                        launched: now_ms(),
+                        failure: None,
+                        waiting_since: None,
+                        cards: Vec::new(),
+                        mailbox: Vec::new(),
+                    },
+                );
+                this.active_run = Some(session);
+                if let Some(m) = this.roster.get_mut(&target) {
+                    m.habit_sessions.push(session);
+                }
+            },
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let result = run.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.active_run = None;
+                    this.error = Some(e);
+                }
+                this.changed(cx);
+            });
+        })
+        .detach();
+    }
+    /// Starts a hidden standalone session for `pilot_id` with its chat's
+    /// settings, files it in `roster.hidden_sessions` and sends `prompt` as
+    /// an internal message. `register` runs first, so the caller tracks the
+    /// session before its turn can report anything. The task's flag says
+    /// whether the session took the prompt; if not, no turn will start.
+    pub(super) fn spawn_hidden_run(
+        &mut self,
+        pilot_id: &str,
+        title: String,
+        prompt: String,
+        access: AccessMode,
+        register: impl FnOnce(&mut Self, i64, &Entity<Conversation>, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<HiddenRun, String>> {
+        let Some(pilot) = self.roster.get(pilot_id).cloned() else {
+            return gpui::Task::ready(Err("Pilot is no longer available".into()));
+        };
+        self.ensure_chat(pilot_id, cx);
         let inherited = self
             .chats
-            .get(id)
+            .get(pilot_id)
             .map(|v| v.read(cx).settings.clone())
             .unwrap_or_default();
-        let provider = self
+        let chat_provider = self
             .chats
-            .get(id)
-            .map(|v| v.read(cx).summary.provider.clone())
-            .unwrap_or_else(|| "codex".into());
+            .get(pilot_id)
+            .map(|v| v.read(cx).summary.provider.clone());
+        // The chat is still loading: start where it will.
+        let prefs = self.prefs.clone();
+        let known = crate::installed_providers::snapshot(cx);
         let store = self.store.clone();
-        let target = id.to_string();
         let work = cx.background_executor().spawn(async move {
+            let provider = chat_provider.unwrap_or_else(|| {
+                crate::installed_providers::new_session_choice_resolving(&known, &prefs, None)
+                    .0
+                    .id()
+                    .into()
+            });
             let db = locked(&store)?;
             let cwd = std::env::var("HOME").unwrap_or_else(|_| ".".into());
             let mut s = db.create(&provider, &cwd)?;
-            s.title = format!("{} · {}", pilot.label(), habit.name);
+            s.title = title;
             db.title(s.id, &s.title)?;
-            Ok::<_, String>((s, pilot, inherited, habit))
+            Ok::<_, String>(s)
         });
-        cx.spawn(async move|this,cx|{let result=work.await;let _=this.update(cx,|this,cx|{
-            match result{Err(e)=>{this.active_run=None;this.error=Some(e);},Ok((summary,pilot,mut settings,habit))=>{
-                let session=summary.id;let view=cx.new(|cx|Conversation::new(summary,this.store.clone(),cx));let root=this.root.clone();let env=this.bridge.as_ref().map(|b|b.environment(session)).unwrap_or_default();
-                settings.access=AccessMode::FullAccess;settings.internal_message=true;settings.pilot=None;settings.environment.clear();
-                view.update(cx,|v,cx|{v.install_transfer(settings,None,cx);v.configure_pilot(pilot,root,env,cx);});
-                this.observations.push(cx.subscribe(&view,move|this,_,_:&SessionChanged,cx|this.habit_changed(session,cx)));
-                this.running.insert(session,RunningHabit{pilot:target.clone(),habit:habit.id.clone(),view:view.clone(),started:now_ms(),launched:now_ms(),failure:None,waiting_since:None,cards:Vec::new(),mailbox:Vec::new()});this.active_run=Some(session);
+        cx.spawn(async move |this, cx| {
+            let summary = work.await?;
+            this.update(cx, |this, cx| {
+                let session = summary.id;
+                let view = cx.new(|cx| Conversation::new(summary, this.store.clone(), cx));
+                let root = this.root.clone();
+                let env = this
+                    .bridge
+                    .as_ref()
+                    .map(|b| b.environment(session))
+                    .unwrap_or_default();
+                let mut settings = inherited;
+                settings.access = access;
+                settings.internal_message = true;
+                settings.pilot = None;
+                settings.environment.clear();
+                // The main chat's limit is not this session's: like
+                // sessions.start, a hidden run gets its own try.
+                settings.usage_limit = None;
+                view.update(cx, |v, cx| {
+                    v.install_transfer(settings, None, cx);
+                    v.configure_pilot(pilot, root, env, cx);
+                });
+                register(this, session, &view, cx);
                 this.roster.hidden_sessions.push(session);
-                if let Some(m)=this.roster.get_mut(&target){m.habit_sessions.push(session);}
                 this.save(cx);
-                let message=Message{sent_at:Some(gespan_core::time::now_ms()),id:pilot::new_id(),text:format!("[Scheduled habit: {}]\n{}\n\nDo this scheduled work independently. Return a concise report; if nothing requires attention, reply exactly NOTHING_TO_REPORT. Any session you start belongs to this habit. Do not change the habit unless asked.",habit.name,habit.instructions),internal:true,error:None,attachments:Vec::new()};
-                view.update(cx,|v,cx|v.pilot_dispatch(&message,cx));
-            }}this.changed(cx);
-        });}).detach();
+                let message = Message {
+                    sent_at: Some(gespan_core::time::now_ms()),
+                    id: pilot::new_id(),
+                    text: prompt,
+                    internal: true,
+                    error: None,
+                    attachments: Vec::new(),
+                    report: Vec::new(),
+                };
+                // Tests never start a provider turn: the prompt is recorded
+                // and the session holds it as a turn that is still running.
+                #[cfg(test)]
+                let held = {
+                    this.hidden_prompts.push((session, message.text.clone()));
+                    if this.hidden_dispatch_fails {
+                        // A session that refuses the prompt before any turn.
+                        view.update(cx, |v, _| v.settings.usage_limit = Some(Default::default()));
+                    } else {
+                        view.update(cx, |v, _| v.hold_history_for_test());
+                    }
+                    !this.hidden_dispatch_fails
+                };
+                let dispatched = view.update(cx, |v, cx| v.pilot_dispatch(&message, cx));
+                #[cfg(test)]
+                let dispatched = if held {
+                    view.update(cx, |v, _| v.busy = true);
+                    true
+                } else {
+                    dispatched
+                };
+                (session, view, dispatched)
+            })
+            .map_err(|_| "Pilots are no longer available".to_string())
+        })
     }
     pub(super) fn habit_changed(&mut self, session: i64, cx: &mut Context<Self>) {
         cx.emit(NotificationChanged);
@@ -1349,7 +1504,7 @@ impl Pilots {
             self.changed(cx);
             return;
         }
-        if let Some(text) = self.running.get_mut(&session).and_then(|r| {
+        if let Some(message) = self.running.get_mut(&session).and_then(|r| {
             if r.mailbox.is_empty() {
                 None
             } else {
@@ -1357,14 +1512,6 @@ impl Pilots {
             }
         }) {
             let view = self.running[&session].view.clone();
-            let message = Message {
-                id: pilot::new_id(),
-                text,
-                sent_at: Some(gespan_core::time::now_ms()),
-                internal: true,
-                error: None,
-                attachments: Vec::new(),
-            };
             view.update(cx, |v, cx| v.pilot_dispatch(&message, cx));
             return;
         }

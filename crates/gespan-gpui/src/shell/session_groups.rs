@@ -1984,7 +1984,7 @@ impl Shell {
             }
             (None, Some(id)) => self.link_ticket(id, ticket, cx),
             (None, None) => {
-                self.create_session_target(self.default_kind(), false, None, Some(ticket), cx)
+                self.create_session_target(self.default_kind(cx), false, None, Some(ticket), cx)
             }
         }
     }

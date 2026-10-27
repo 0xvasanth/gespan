@@ -102,6 +102,16 @@ describe("syncKeepAwake", () => {
     ]);
   });
 
+  it("lets the Mac sleep once everything is on hold, even with background work", () => {
+    const working = [session({ busy: true, backgroundTasks: ["dev server"] })];
+    syncKeepAwake(working, "agents_running");
+    syncKeepAwake(working, "agents_running", true);
+    expect(invoked.mock.calls).toEqual([
+      ["set_keep_awake", { mode: "agents_running", running: true }],
+      ["set_keep_awake", { mode: "agents_running", running: false }],
+    ]);
+  });
+
   it("reads the saved mode when none is passed", () => {
     saveKeepAwake("app_open");
     syncKeepAwake([]);

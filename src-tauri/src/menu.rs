@@ -165,6 +165,7 @@ pub fn dispatch(app: &AppHandle, id: &str) {
         | "zoom_reset"
         | "reload"
         | "open_command_palette"
+        | "hold_toggle"
         | "close_all_tabs" => emit_to_focused(app, id),
         _ => {}
     }
@@ -444,6 +445,14 @@ fn build(
         "App: Find in Files",
         overrides,
     )?;
+    let hold = menu_item(
+        app,
+        "hold_toggle",
+        "Hold or Resume Everything",
+        "CmdOrCtrl+Shift+H",
+        "App: Hold Everything",
+        overrides,
+    )?;
     let autosave = CheckMenuItem::with_id(
         app,
         "toggle_autosave",
@@ -460,6 +469,8 @@ fn build(
         .item(&go_to_file)
         .item(&command_palette)
         .item(&find_in_project)
+        .separator()
+        .item(&hold)
         .separator()
         .item(&autosave)
         .separator()

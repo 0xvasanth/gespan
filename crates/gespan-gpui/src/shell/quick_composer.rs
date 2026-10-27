@@ -20,17 +20,12 @@ impl Shell {
             return;
         }
         let cwd = self.workspace.project.clone();
-        let kind = self.default_kind();
+        let (kind, model) = self.new_session_choice(cx);
         let p = &self.workspace.preferences;
         let initial = crate::quick_composer::Launch {
             cwd: cwd.clone(),
             kind,
-            model: p
-                .project_providers
-                .get(&cwd)
-                .and_then(|p| p.models.get(kind.id()))
-                .or(p.default_models.get(kind.id()))
-                .cloned(),
+            model,
             access: p
                 .default_access
                 .as_deref()
@@ -45,6 +40,13 @@ impl Shell {
             .clone()
             .filter(|v| self.workspace.projects.contains(&v.cwd))
             .unwrap_or(initial);
+        // The last launch keeps its project; the provider and model are the
+        // new-session choice, so a later pick elsewhere is honoured.
+        (choice.kind, choice.model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&choice.cwd),
+            cx,
+        );
         choice.access = crate::conversation::default_access(cx);
         let projects = self.workspace.projects.clone();
         let store = self.store.clone();
@@ -79,6 +81,16 @@ impl Shell {
                         this.launch_quick_composer(launch.clone(), window, cx);
                     },
                 ));
+                self.quick.settings_events = Some(cx.subscribe_in(
+                    &view,
+                    window,
+                    move |this, _, _: &crate::conversation::OpenAgentSettings, window, cx| {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                        this.quick.window = None;
+                        this.open_settings(crate::settings::Section::Providers, window, cx);
+                        window.activate_window();
+                    },
+                ));
                 self.quick.window = Some(handle);
             }
             Err(e) => self.quick.error = Some(e.to_string()),
@@ -94,19 +106,21 @@ impl Shell {
         let choice = launch.clone();
         crate::conversation::remember_access(choice.access, cx);
         let effort = crate::conversation::preferred_effort(choice.kind.id(), cx);
+        let controls = self.workspace.preferences.last_model_settings.clone();
         let account = crate::accounts::get(cx)
             .map(|a| a.read(cx).selected(launch.kind, &launch.cwd))
             .unwrap_or_default();
         let work = cx.background_executor().spawn(async move {
             let store = locked(&store)?;
             let summary = store.create(choice.kind.id(), &choice.cwd)?;
-            let settings = gespan_core::agent::Settings {
+            let mut settings = gespan_core::agent::Settings {
                 account,
                 model: choice.model,
                 access: choice.access,
                 effort,
                 ..Default::default()
             };
+            crate::settings::apply_last_controls_to(&controls, &mut settings, choice.kind);
             store.save_agent_settings(summary.id, &settings)?;
             Ok::<_, String>((summary, settings))
         });

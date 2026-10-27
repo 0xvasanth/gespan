@@ -42,6 +42,7 @@ import {
 } from "../../../shared/ui/ColorPickerPopover";
 import { Popover } from "../../../shared/ui/Popover";
 import { SecondaryButton } from "../../../shared/ui/SecondaryButton";
+import { DictationSettings } from "./DictationSettings";
 import { JiraSettings } from "./JiraSettings";
 import { PlaneSettings } from "./PlaneSettings";
 import { GradientBlurBackground } from "./GradientBlurBackground";
@@ -662,6 +663,7 @@ export function SettingsView({
               ) : null}
               {section === "chat" ? <ChatPage /> : null}
               {section === "keybindings" ? <KeybindingsPage /> : null}
+              {section === "dictation" ? <DictationSettings /> : null}
               {section === "pilots" ? <PilotsPage /> : null}
               {section === "mcp" ? (
                 <McpSettings cwd={cwd} recents={recents} />

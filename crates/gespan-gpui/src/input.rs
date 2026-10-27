@@ -68,7 +68,8 @@ actions!(
         Submit,
         SubmitSecondary,
         Up,
-        Down
+        Down,
+        Dictate
     ]
 );
 pub struct Submitted;
@@ -137,6 +138,9 @@ pub fn bind(cx: &mut App) {
             SubmitSecondary,
             Some("Composer"),
         ),
+        // Handled by the conversation around the composer: tap to toggle
+        // dictation, hold to talk.
+        KeyBinding::new(&format!("{modifier}-shift-m"), Dictate, Some("Composer")),
     ]);
     if cfg!(target_os = "macos") {
         cx.bind_keys([
@@ -466,6 +470,101 @@ impl Input {
     /// The selected byte range, clamped to the current text.
     pub(crate) fn selected_range(&self) -> Range<usize> {
         self.clip_range(self.selection.clone())
+    }
+    /// `replace_text_in_range` without a window, for text that arrives from
+    /// outside the platform's input handler (dictation).
+    pub(crate) fn replace_text(
+        &mut self,
+        r: Option<Range<usize>>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only {
+            return;
+        }
+        self.manual_scroll = false;
+        self.reveal_pending = self.reveal_in_parent;
+        let mut r = self.replacement_range(r);
+        let mut corrected = None;
+        if self.inline_commands
+            && !self.single_line
+            && self.code.is_none()
+            && self.marked.is_none()
+            && r.start == r.end
+            && text.len() == 1
+            && text.chars().all(char::is_whitespace)
+            && cx
+                .try_global::<crate::settings::Preferences>()
+                .is_none_or(|p| p.autocorrect)
+        {
+            let start = self.content[..r.start]
+                .rfind(|c: char| !c.is_alphabetic())
+                .map_or(0, |ix| {
+                    ix + self.content[ix..].chars().next().unwrap().len_utf8()
+                });
+            let word = &self.content[start..r.start];
+            if word.len() >= 2
+                && (start == 0
+                    || self.content[..start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace))
+                && let Some(value) = spelling::correction(word)
+            {
+                r.start = start;
+                corrected = Some(format!("{value}{text}"));
+            }
+        }
+        let text = corrected.as_deref().unwrap_or(text);
+        let previous_command = self
+            .inline_commands
+            .then(|| Command::leading(&self.content))
+            .flatten();
+        let normalized = self.normalized(text);
+        if self.code.is_some() && !self.accept_code_edit(&r, &normalized, cx) {
+            return;
+        }
+        let mut normalized = normalized.into_owned();
+        if let Some(limit) = self.max_chars {
+            let remaining = limit.saturating_sub(
+                self.content[..r.start].encode_utf16().count()
+                    + self.content[r.end..].encode_utf16().count(),
+            );
+            normalized = limit_utf16(&normalized, remaining);
+        }
+        self.record_undo();
+        let text = bounded(
+            &normalized,
+            (if self.code.is_some() {
+                gespan_core::files::document::MAX_TEXT_BYTES
+            } else {
+                MAX_BYTES
+            })
+            .saturating_sub(self.content.len() - (r.end - r.start)),
+        );
+        self.map_code_folds(&r, text.len());
+        self.content = format!(
+            "{}{}{}",
+            &self.content[..r.start],
+            text,
+            &self.content[r.end..]
+        )
+        .into();
+        let end = r.start + text.len();
+        self.code_changed();
+        self.selection = end..end;
+        self.reversed = false;
+        self.marked = None;
+        self.command_removed(previous_command, cx);
+        cx.emit(Changed);
+        cx.notify();
+    }
+    pub(crate) fn read_only(&self) -> bool {
+        self.read_only
+    }
+    /// The selection in UTF-8 offsets into `content`.
+    pub(crate) fn selection(&self) -> Range<usize> {
+        self.selection.clone()
     }
     pub(crate) fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.manual_scroll = false;
@@ -1148,85 +1247,7 @@ impl EntityInputHandler for Input {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.read_only {
-            return;
-        }
-        self.manual_scroll = false;
-        self.reveal_pending = self.reveal_in_parent;
-        let mut r = self.replacement_range(r);
-        let mut corrected = None;
-        if self.inline_commands
-            && !self.single_line
-            && self.code.is_none()
-            && self.marked.is_none()
-            && r.start == r.end
-            && text.len() == 1
-            && text.chars().all(char::is_whitespace)
-            && cx
-                .try_global::<crate::settings::Preferences>()
-                .is_none_or(|p| p.autocorrect)
-        {
-            let start = self.content[..r.start]
-                .rfind(|c: char| !c.is_alphabetic())
-                .map_or(0, |ix| {
-                    ix + self.content[ix..].chars().next().unwrap().len_utf8()
-                });
-            let word = &self.content[start..r.start];
-            if word.len() >= 2
-                && (start == 0
-                    || self.content[..start]
-                        .chars()
-                        .next_back()
-                        .is_some_and(char::is_whitespace))
-                && let Some(value) = spelling::correction(word)
-            {
-                r.start = start;
-                corrected = Some(format!("{value}{text}"));
-            }
-        }
-        let text = corrected.as_deref().unwrap_or(text);
-        let previous_command = self
-            .inline_commands
-            .then(|| Command::leading(&self.content))
-            .flatten();
-        let normalized = self.normalized(text);
-        if self.code.is_some() && !self.accept_code_edit(&r, &normalized, cx) {
-            return;
-        }
-        let mut normalized = normalized.into_owned();
-        if let Some(limit) = self.max_chars {
-            let remaining = limit.saturating_sub(
-                self.content[..r.start].encode_utf16().count()
-                    + self.content[r.end..].encode_utf16().count(),
-            );
-            normalized = limit_utf16(&normalized, remaining);
-        }
-        self.record_undo();
-        let text = bounded(
-            &normalized,
-            (if self.code.is_some() {
-                gespan_core::files::document::MAX_TEXT_BYTES
-            } else {
-                MAX_BYTES
-            })
-            .saturating_sub(self.content.len() - (r.end - r.start)),
-        );
-        self.map_code_folds(&r, text.len());
-        self.content = format!(
-            "{}{}{}",
-            &self.content[..r.start],
-            text,
-            &self.content[r.end..]
-        )
-        .into();
-        let end = r.start + text.len();
-        self.code_changed();
-        self.selection = end..end;
-        self.reversed = false;
-        self.marked = None;
-        self.command_removed(previous_command, cx);
-        cx.emit(Changed);
-        cx.notify();
+        self.replace_text(r, text, cx);
     }
     fn replace_and_mark_text_in_range(
         &mut self,

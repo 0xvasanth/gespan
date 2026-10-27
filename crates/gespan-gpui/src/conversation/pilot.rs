@@ -69,6 +69,17 @@ impl Conversation {
         cx.emit(SessionChanged);
         Ok(())
     }
+    /// Tests: keep a follow-up queued, as when history is still loading, instead of starting a provider turn.
+    #[cfg(test)]
+    pub(crate) fn hold_history_for_test(&mut self) {
+        self.loading = true;
+    }
+    /// Tests: the chat took Pilot message `id`, as when its turn starts.
+    #[cfg(test)]
+    pub(crate) fn deliver_for_test(&mut self, id: String, cx: &mut Context<Self>) {
+        self.pilot_message_delivered(id, cx);
+        cx.notify();
+    }
     pub(super) fn pilot_flush_external(&mut self, cx: &mut Context<Self>) {
         if !self.history_ready() || self.stopping {
             return;
@@ -134,6 +145,10 @@ impl Conversation {
             .update(cx, |t, cx| t.set_pending(pending, cx));
     }
     pub(crate) fn pilot_dispatch(&mut self, message: &Message, cx: &mut Context<Self>) -> bool {
+        // On hold the message stays in the Pilot's mailbox until Resume.
+        if crate::hold::active(cx) {
+            return false;
+        }
         if self.pilot_ui.delivered.contains(&message.id) || (self.busy && message.internal) {
             return false;
         }
@@ -240,6 +255,11 @@ impl Conversation {
     }
     pub(crate) fn pilot_model(&self) -> Option<String> {
         self.model.clone()
+    }
+    /// Whether this chat's stored settings and history have loaded, so its
+    /// provider and model are the user's, not placeholders.
+    pub(crate) fn pilot_history_ready(&self) -> bool {
+        self.history_ready()
     }
     pub(crate) fn branch_name(&self) -> Option<&str> {
         self.branch.as_deref()
@@ -516,7 +536,9 @@ impl Conversation {
                 .child(self.transcript.clone())
                 .into_any_element()
         };
-        self.attachment_drop_target("pilot-chat", cx)
+        self.dictation_context(cx);
+        let root = self.attachment_drop_target("pilot-chat", cx);
+        self.dictation_keys(root, cx)
             .capture_action(cx.listener(|this, _: &input::Paste, _, cx| {
                 if this.paste_attachments(cx) {
                     cx.stop_propagation();
@@ -654,6 +676,9 @@ impl Conversation {
             self.close_pilot_models(window, cx);
             return;
         }
+        if self.no_agent_hint(cx).is_some() {
+            return;
+        }
         self.menu = None;
         self.completion
             .update(cx, |completion, cx| completion.dismiss(cx));
@@ -776,14 +801,21 @@ impl Conversation {
         }
         ("Model setting", items, 210., MenuStyle::Explorer)
     }
+    /// Whether the Pilot chat's send button sends: a message, and a coding
+    /// agent detected.
+    pub(crate) fn pilot_send_ready(&self, cx: &gpui::App) -> bool {
+        self.loaded
+            && !self.attaching
+            && self.no_agent_hint(cx).is_none()
+            && (!self.input.read(cx).content.trim().is_empty() || !self.attachments.is_empty())
+    }
     /// The form's box: the field and send, as `PilotComposer` lays them out
     /// when it has controls.
     fn pilot_composer_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let runner = self.composer_runner(cx);
         let focused = self.input.focus_handle(cx).contains_focused(window, cx);
-        let ready = self.loaded
-            && !self.attaching
-            && (!self.input.read(cx).content.trim().is_empty() || !self.attachments.is_empty());
+        let ready = self.pilot_send_ready(cx);
+        let no_agent = self.no_agent_hint(cx);
         div()
             .id("pilot-composer")
             .debug_selector(|| "pilot-composer".into())
@@ -804,6 +836,7 @@ impl Conversation {
             .child(self.composer_anchor.probe())
             .children(runner)
             .children(self.attachment_chips(cx))
+            .children(dictation::bar(&self.dictation, &self.input, cx))
             .child(
                 // Even padding centres send beside one line, and keeps it at
                 // the bottom as the text grows.
@@ -833,6 +866,11 @@ impl Conversation {
                             .flex()
                             .items_center()
                             .justify_center()
+                            .when_some(no_agent, |d, hint| {
+                                d.aria_description(hint).tooltip(move |_, cx| {
+                                    cx.new(|_| super::HintTooltip(hint)).into()
+                                })
+                            })
                             .bg(white(if ready { 1. } else { 0.3 }))
                             .when(ready, |d| d.hover(|s| s.bg(white(0.9))))
                             .child(icon("pilot-arrow-up", 14.).text_color(black(if ready {
@@ -1068,6 +1106,7 @@ impl Conversation {
                         cx.notify();
                     })),
             )
+            .child(dictation::mic_button(&self.dictation, &self.input, cx))
             .when(self.pilot_ui.emoji, |d| {
                 d.child(
                     div().flex().gap_1().children(
@@ -1105,6 +1144,11 @@ impl Conversation {
                             .max_w(px(220.))
                             .flex_shrink(1.)
                             .debug_selector(|| "pilot-model".into())
+                            .when_some(self.no_agent_hint(cx), |d, hint| {
+                                d.aria_description(hint).opacity(0.5).tooltip(move |_, cx| {
+                                    cx.new(|_| super::HintTooltip(hint)).into()
+                                })
+                            })
                             .aria_label(format!(
                                 "{}, {}",
                                 Kind::from_id(&self.summary.provider).label(),
@@ -1115,7 +1159,11 @@ impl Conversation {
                             .child(provider_icon(&self.summary.provider, 14.))
                             .child(div().min_w_0().truncate().child(self.model_label()))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_pilot_models(window, cx)
+                                if this.no_agent_hint(cx).is_some() {
+                                    this.open_agent_settings(window, cx);
+                                } else {
+                                    this.toggle_pilot_models(window, cx)
+                                }
                             })),
                     )
                     .children(pills)

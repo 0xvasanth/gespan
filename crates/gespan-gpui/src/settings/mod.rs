@@ -19,7 +19,7 @@ pub(crate) mod widgets;
 pub(crate) use keymap::apply as apply_keybindings;
 pub(crate) use model::Section;
 pub(crate) use pages::command_shortcut;
-pub(crate) use preferences::{ModelChoice, Preferences};
+pub(crate) use preferences::{ModelChoice, Preferences, apply_last_controls_to};
 
 use crate::{
     input::{self, Input},
@@ -97,8 +97,6 @@ pub(crate) struct PilotSetting {
     pub mascot: String,
     pub color: u32,
     pub projects: Vec<String>,
-    pub show: bool,
-    pub folders: bool,
 }
 
 pub(crate) enum SettingsEvent {
@@ -123,7 +121,6 @@ pub(crate) enum SettingsEvent {
         delete_sessions: bool,
     },
     ResetPilot(String),
-    PilotSidebar(String, bool, bool),
     /// Read mobile access again: the router and pairing change on their own.
     MobileRefresh,
     MobileConfigure {
@@ -255,6 +252,7 @@ pub(crate) struct SettingsView {
     accent_anchor: AnchorSlot,
     mobile: pages::MobileState,
     diagnostics: pages::DiagnosticsState,
+    dictation: pages::DictationState,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -391,9 +389,11 @@ impl SettingsView {
             accent_anchor: AnchorSlot::default(),
             mobile: pages::MobileState::default(),
             diagnostics: pages::DiagnosticsState::new(),
+            dictation: Default::default(),
             _subscriptions: subscriptions,
         };
         this.watch_mobile(cx);
+        this.watch_dictation(cx);
         this.watch_connections(cx);
         if this.prefs.notifications {
             this.probe_notification_permission(false, cx);
@@ -420,6 +420,7 @@ impl SettingsView {
         self.discovery_task = Some(cx.spawn(async move |this, cx| {
             let data = work.await;
             let _ = this.update(cx, |this, cx| {
+                crate::installed_providers::record(&data.binaries, cx);
                 this.skill_documents.clear();
                 this.discovery = data;
                 this.discovery_loading = false;
@@ -467,6 +468,7 @@ impl SettingsView {
             self.diagnostics.counters = None;
             self.watch_mobile(cx);
             self.watch_connections(cx);
+            self.watch_dictation(cx);
             if section == Section::Mcp {
                 self.refresh_mcp_health(cx);
             }
