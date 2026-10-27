@@ -1,0 +1,22 @@
+crates/board-store/src/agent.rs
+  s_938a6e0c93b076::t_18ae6ce1759d17 235-237,240-250
+crates/board-store/tests/agent.rs
+  s_938a6e0c93b076::t_18ae6ce1759d17 610-611,614-616,627,629,704-736
+  s_938a6e0c93b076::t_6caf0124f47b58 737-738
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd51402f2bcd155a49ece92165cca4b06a78ed07",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
