@@ -10675,12 +10675,11 @@ mod tests {
                 w.draw(cx).clear(cx);
             })
             .unwrap();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             window
                 .update(cx, |_, w, _| {
                     let (blur, radius) = (24., 11.);
-                    let marker =
-                        gpui_apple::metal_renderer::backdrop_blur_marker(blur * w.scale_factor());
+                    let marker = gpui::backdrop_blur_marker(blur * w.scale_factor());
                     assert!(
                         w.painted_quads().iter().any(|q| q.border_color == marker
                             && q.corner_radii.top_left.0 == radius * w.scale_factor()),
