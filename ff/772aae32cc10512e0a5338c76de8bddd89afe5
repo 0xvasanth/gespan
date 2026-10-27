@@ -1,0 +1,72 @@
+crates/board-store/src/lib.rs
+  s_938a6e0c93b076::t_aeee4ba30f4358 47-48
+crates/gespan-gpui/src/board/tests/final_review.rs
+  s_938a6e0c93b076::t_be0f070c17cbbd 74-102,109-110
+  s_938a6e0c93b076::t_39636483bba770 103-108
+crates/board-store/src/migrate.rs
+  s_938a6e0c93b076::t_b0ca8719fe2789 11,18-20,85
+  s_938a6e0c93b076::t_39636483bba770 26
+  s_938a6e0c93b076::t_1499175745c8a2 125-126
+crates/board-store/src/schema.rs
+  s_938a6e0c93b076::t_b0ca8719fe2789 4,196-204
+  s_938a6e0c93b076::t_bdbbff70727f04 205
+crates/board-store/src/card_ops.rs
+  s_938a6e0c93b076::t_6163f1d17b92f5 155-156,167-175
+crates/board-store/src/agent.rs
+  s_938a6e0c93b076::t_6163f1d17b92f5 8,95-99,101-103
+crates/board-store/tests/agent.rs
+  s_938a6e0c93b076::t_4ae5ce319eaccd 926-935,938-961,966-986,991-992,996-1023,1027-1046,1049-1053,1062-1068
+  s_938a6e0c93b076::t_39636483bba770 936-937,962-965,987-990,993-995,1024-1026,1047-1048,1054-1061
+src-tauri/src/lib.rs
+  s_938a6e0c93b076::t_b7532fc278e69e 389-390
+src/features/board/model/ticketCards.test.ts
+  s_938a6e0c93b076::t_721cfa92c54530 64-66,83,85-89,91-92,96-99,101-102,110,112,120-121,123,139,141,151,153,159,166-167,169
+crates/gespan-core/src/board/mod.rs
+  s_938a6e0c93b076::t_7664310866e3a8 165-190
+crates/board-store/src/ops.rs
+  s_938a6e0c93b076::t_9225e6125e1825 474-486,490,541,569-570,572-574
+  s_938a6e0c93b076::t_5999277f3e1bba 473
+src-tauri/src/board.rs
+  s_938a6e0c93b076::t_b7532fc278e69e 229-269
+crates/board-store/tests/v5.rs
+  s_938a6e0c93b076::t_49bb9074b254a5 119,142,153
+  s_938a6e0c93b076::t_770b018f7d9487 118
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_721cfa92c54530 477-481,483-484,499-502
+src/features/board/model/ticketCards.ts
+  s_938a6e0c93b076::t_b7532fc278e69e 4,7,47-49,64
+crates/board-store/src/links.rs
+  s_938a6e0c93b076::t_6163f1d17b92f5 439
+  s_938a6e0c93b076::t_aeee4ba30f4358 4-9,309-322,372,382,385,390-438,440-471
+  s_938a6e0c93b076::t_3814e7d54afcc4 472
+crates/gespan-gpui/src/board/tickets.rs
+  s_938a6e0c93b076::t_7664310866e3a8 261,266-267,282-284
+crates/board-store/tests/v6.rs
+  s_938a6e0c93b076::t_49bb9074b254a5 1-36,53-77,81-82,99-109,112-134
+  s_938a6e0c93b076::t_39636483bba770 110-111
+src/features/board/model/board.ts
+  s_938a6e0c93b076::t_b7532fc278e69e 181-212
+crates/gespan-core/tests/shared_contracts.rs
+  s_938a6e0c93b076::t_f2882d4e1c9734 469-513
+crates/board-store/src/views.rs
+  s_938a6e0c93b076::t_ef758962c23500 255-257,263-266
+crates/board-store/tests/views.rs
+  s_938a6e0c93b076::t_ffdfabca9bb13f 583-620,622
+  s_938a6e0c93b076::t_89247d7fe21341 621,623-624
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff772aae32cc10512e0a5338c76de8bddd89afe5",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
