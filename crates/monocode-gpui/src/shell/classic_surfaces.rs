@@ -127,7 +127,9 @@ impl Shell {
     }
 
     pub(super) fn classic_rail_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.mono_active(cx) {
+        if self.settings.is_some() {
+            self.close_settings(window, cx);
+        } else if self.mono_active(cx) {
             if let Some(monos) = &self.monos {
                 monos.update(cx, |monos, cx| monos.close(cx));
             }
