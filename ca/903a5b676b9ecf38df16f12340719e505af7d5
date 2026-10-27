@@ -1,0 +1,52 @@
+crates/gespan-gpui/src/board/tests/ux_batch.rs
+  s_938a6e0c93b076::t_78fd6f14581271 1-830
+  s_938a6e0c93b076::t_d370326c795c74 831-833
+  s_61e292c0d10314::t_260471ad5f7c25 834-857
+crates/gespan-gpui/src/board/tests.rs
+  s_938a6e0c93b076::t_e322ac25a9956c 3623,3625
+  s_61e292c0d10314::t_0ed29f2c8bd7ea 8470
+crates/gespan-gpui/src/board/column.rs
+  s_938a6e0c93b076::t_bb7395db978088 608
+crates/gespan-gpui/src/board/detail/view.rs
+  s_938a6e0c93b076::t_cffe4efc80db6d 16,1005-1008,1012,1059,1122-1134
+crates/gespan-gpui/src/board/quick.rs
+  s_938a6e0c93b076::t_f4b39279183fd8 11,89-109,112,124,175-180,416-417,425,427,436-439,441
+crates/gespan-gpui/src/board/settings/columns.rs
+  s_938a6e0c93b076::t_8867b7a7e9be99 4,38,40-45,48,57-60,62
+crates/gespan-gpui/src/board/switcher.rs
+  s_938a6e0c93b076::t_2ba45083f1d80d 37-40,53,144-153,162,170-194,291,498-513
+crates/gespan-gpui/src/input.rs
+  s_938a6e0c93b076::t_9376ebe6b4466f 245
+crates/gespan-gpui/src/popover.rs
+  s_938a6e0c93b076::t_82b0503b7e044d 1043-1054
+crates/gespan-gpui/src/board.rs
+  s_61e292c0d10314::t_41665ed60f0d6a 182-184,468,670-672,692-713,868-874,965-970,983,1401-1405,1542,1618-1671,1674-1712
+crates/gespan-gpui/src/board/detail.rs
+  s_61e292c0d10314::t_35afcf04144215 4,141-160,343-346,348-351,363-378,709,713-715,837-838,840-843,1496-1523
+crates/gespan-gpui/src/board/detail/more.rs
+  s_61e292c0d10314::t_77e7dc5b39a624 19-20,22-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca903a5b676b9ecf38df16f12340719e505af7d5",
+  "prompts": {},
+  "sessions": {
+    "s_61e292c0d10314": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abc4db7d2462a944f",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
