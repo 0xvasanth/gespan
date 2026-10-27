@@ -14,8 +14,10 @@ pub const READ_ONLY: &str = "This session is read-only";
 /// A ticket tool called by a session with no ticket linked right now.
 pub const NO_TICKET: &str = "This session isn't linked to a ticket";
 
+/// A ticket tool call from an agent, tagged by `tool`. Unknown keys are
+/// refused.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "tool", rename_all = "snake_case")]
+#[serde(from = "RawTicketTool", into = "RawTicketTool")]
 pub enum TicketTool {
     Get,
     Comment {
@@ -24,9 +26,47 @@ pub enum TicketTool {
     Statuses,
     SetStatus {
         target: String,
+        fields: BTreeMap<String, Value>,
+    },
+}
+
+/// The wire shape. `get` and `statuses` are empty struct variants so serde
+/// refuses extra keys on them too (it doesn't on a unit variant).
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
+enum RawTicketTool {
+    Get {},
+    Comment {
+        markdown: String,
+    },
+    Statuses {},
+    SetStatus {
+        target: String,
         #[serde(default)]
         fields: BTreeMap<String, Value>,
     },
+}
+
+impl From<RawTicketTool> for TicketTool {
+    fn from(raw: RawTicketTool) -> Self {
+        match raw {
+            RawTicketTool::Get {} => Self::Get,
+            RawTicketTool::Comment { markdown } => Self::Comment { markdown },
+            RawTicketTool::Statuses {} => Self::Statuses,
+            RawTicketTool::SetStatus { target, fields } => Self::SetStatus { target, fields },
+        }
+    }
+}
+
+impl From<TicketTool> for RawTicketTool {
+    fn from(tool: TicketTool) -> Self {
+        match tool {
+            TicketTool::Get => Self::Get {},
+            TicketTool::Comment { markdown } => Self::Comment { markdown },
+            TicketTool::Statuses => Self::Statuses {},
+            TicketTool::SetStatus { target, fields } => Self::SetStatus { target, fields },
+        }
+    }
 }
 
 /// Why a tool may not run in this turn, before it reaches the app.
@@ -177,6 +217,80 @@ mod tests {
     use crate::tickets::{Connection, Tracker};
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn ticket_tool_parses_the_real_payloads_and_refuses_unknown_keys() {
+        let parse = |value: Value| serde_json::from_value::<TicketTool>(value);
+        assert_eq!(parse(json!({"tool": "get"})).unwrap(), TicketTool::Get);
+        assert_eq!(
+            parse(json!({"tool": "statuses"})).unwrap(),
+            TicketTool::Statuses
+        );
+        assert_eq!(
+            parse(json!({"tool": "comment", "markdown": "Done"})).unwrap(),
+            TicketTool::Comment {
+                markdown: "Done".into()
+            }
+        );
+        let fields: BTreeMap<String, Value> = [("resolution".to_string(), json!("Fixed"))].into();
+        assert_eq!(
+            parse(
+                json!({"tool": "set_status", "target": "Done", "fields": {"resolution": "Fixed"}})
+            )
+            .unwrap(),
+            TicketTool::SetStatus {
+                target: "Done".into(),
+                fields: fields.clone()
+            }
+        );
+        // `fields` may be left out.
+        assert_eq!(
+            parse(json!({"tool": "set_status", "target": "Done"})).unwrap(),
+            TicketTool::SetStatus {
+                target: "Done".into(),
+                fields: BTreeMap::new()
+            }
+        );
+        // An extra key on any tool is refused, by name.
+        for bad in [
+            json!({"tool": "get", "key": "ENG-2"}),
+            json!({"tool": "statuses", "sessionId": "other"}),
+            json!({"tool": "comment", "markdown": "x", "ticket": "ENG-2"}),
+            json!({"tool": "set_status", "target": "Done", "fields": {}, "key": "ENG-2"}),
+        ] {
+            let error = parse(bad.clone()).expect_err(&bad.to_string());
+            assert!(
+                error.to_string().contains("unknown field"),
+                "{bad}: {error}"
+            );
+        }
+        for bad in [
+            json!({"tool": "comment"}),
+            json!({"tool": "delete"}),
+            json!({"markdown": "x"}),
+        ] {
+            assert!(parse(bad.clone()).is_err(), "{bad}");
+        }
+        // The wire shape round-trips: what the native bridge sends parses back.
+        for tool in [
+            TicketTool::Get,
+            TicketTool::Statuses,
+            TicketTool::Comment {
+                markdown: "m".into(),
+            },
+            TicketTool::SetStatus {
+                target: "Done".into(),
+                fields,
+            },
+        ] {
+            let wire = serde_json::to_value(&tool).unwrap();
+            assert_eq!(parse(wire).unwrap(), tool);
+        }
+        assert_eq!(
+            serde_json::to_value(TicketTool::Get).unwrap(),
+            json!({"tool": "get"})
+        );
+    }
 
     struct Conn {
         fake: Arc<FakeProvider>,

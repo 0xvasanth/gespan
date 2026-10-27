@@ -495,6 +495,66 @@ mod tests {
         ticket_tool_with(store, tickets, "s1", read_only, &tool, key)
     }
 
+    /// The `ticket_tool` command as Tauri runs it: each argument is
+    /// deserialized from its camelCase key of the invoke payload (the object
+    /// `runTicketTool` sends), then the command body runs.
+    fn invoke_ticket_tool(
+        store: &SessionStore,
+        tickets: &Tickets,
+        payload: Value,
+    ) -> Result<Value, String> {
+        fn arg<T: serde::de::DeserializeOwned>(payload: &Value, key: &str) -> Result<T, String> {
+            serde_json::from_value(payload.get(key).cloned().unwrap_or(Value::Null))
+                .map_err(|error| format!("invalid args `{key}` for command `ticket_tool`: {error}"))
+        }
+        let session_id: String = arg(&payload, "sessionId")?;
+        let read_only: bool = arg(&payload, "readOnly")?;
+        let tool: TicketTool = arg(&payload, "tool")?;
+        let key: Option<String> = arg(&payload, "key")?;
+        ticket_tool_with(
+            store,
+            tickets,
+            &session_id,
+            read_only,
+            &tool,
+            key.as_deref(),
+        )
+    }
+
+    #[test]
+    fn ticket_tool_command_refuses_an_unknown_key_in_the_tool() {
+        let fake = fake_with(&["ENG-1", "ENG-2"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        let payload =
+            |tool: Value| json!({"sessionId": "s1", "readOnly": false, "tool": tool, "key": null});
+        // The payloads the app really sends run.
+        let read = invoke_ticket_tool(&store, &tickets, payload(json!({"tool": "get"}))).unwrap();
+        assert_eq!(read["result"]["key"], "ENG-1");
+        assert!(invoke_ticket_tool(&store, &tickets, payload(json!({"tool": "statuses"}))).is_ok());
+        invoke_ticket_tool(
+            &store,
+            &tickets,
+            payload(json!({"tool": "comment", "markdown": "From the agent"})),
+        )
+        .unwrap();
+        assert_eq!(fake.comments("ENG-1").len(), 1);
+        // An extra key, even one naming another ticket, is refused before
+        // anything runs.
+        for tool in [
+            json!({"tool": "get", "key": "ENG-2"}),
+            json!({"tool": "statuses", "ticket": "ENG-2"}),
+            json!({"tool": "comment", "markdown": "x", "key": "ENG-2"}),
+            json!({"tool": "set_status", "target": "Done", "fields": {}, "sessionId": "s2"}),
+        ] {
+            let error = invoke_ticket_tool(&store, &tickets, payload(tool.clone())).unwrap_err();
+            assert!(error.contains("unknown field"), "{tool}: {error}");
+        }
+        assert!(fake.comments("ENG-2").is_empty());
+        assert_eq!(fake.comments("ENG-1").len(), 1);
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+    }
+
     #[test]
     fn ticket_tool_refuses_another_key() {
         let fake = fake_with(&["ENG-1", "ENG-2"]);
