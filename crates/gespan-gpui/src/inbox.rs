@@ -574,6 +574,9 @@ impl Inbox {
             .items
             .iter()
             .filter(|item| self.state.filters.matches(item, &self.state.source, search))
+            .filter(|item| {
+                item.provider != "linear" || !self.state.hidden_linear_teams.contains(&item.team_id)
+            })
             .cloned()
             .collect()
     }
