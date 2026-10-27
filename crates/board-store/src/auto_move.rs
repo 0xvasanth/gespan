@@ -7,7 +7,7 @@
 //! `"default"`, `"stay"` or `{"column": id}`. "Default" is the forward-only
 //! rule both apps used before rules existed.
 use crate::ops::NewActivity;
-use crate::ops::{db, get_board, get_card, is_archived, log_activity, move_card_in, write_tx};
+use crate::ops::{board_columns, db, get_card, is_archived, log_activity, move_card_in, write_tx};
 use crate::settings::board_settings;
 use crate::Column;
 use rusqlite::Connection;
@@ -210,7 +210,8 @@ fn apply(conn: &Connection, card_id: &str, event: LinkedEvent) -> Result<Option<
         }
     }
     let rules = auto_move_rules(&board_settings(&tx, &card.board_id)?);
-    let columns = get_board(&tx, &card.board_id)?.columns;
+    // Only the columns: loading every card per event would scale with the board.
+    let columns = board_columns(&tx, &card.board_id)?;
     let target = columns
         .iter()
         .find(|column| column.id == card.column_id)

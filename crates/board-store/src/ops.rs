@@ -298,6 +298,18 @@ pub fn list_boards(conn: &Connection) -> Result<Vec<Board>, String> {
     Ok(boards)
 }
 
+/// The board's columns in order, without reading its cards.
+pub(crate) fn board_columns(conn: &Connection, board_id: &str) -> Result<Vec<Column>, String> {
+    let columns = conn
+        .prepare("SELECT * FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid")
+        .map_err(db)?
+        .query_map([board_id], column_from_row)
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db);
+    columns
+}
+
 pub fn get_board(conn: &Connection, board_id: &str) -> Result<BoardDetail, String> {
     let board = conn
         .query_row(
@@ -308,13 +320,7 @@ pub fn get_board(conn: &Connection, board_id: &str) -> Result<BoardDetail, Strin
         .optional()
         .map_err(db)?
         .ok_or_else(|| "Board not found".to_string())?;
-    let columns = conn
-        .prepare("SELECT * FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid")
-        .map_err(db)?
-        .query_map([board_id], column_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+    let columns = board_columns(conn, board_id)?;
     let cards = conn
         .prepare(&format!(
             "SELECT * FROM board_cards WHERE board_id = ?1 AND {LIVE} ORDER BY position, number"

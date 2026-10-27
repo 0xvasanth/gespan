@@ -274,6 +274,29 @@ fn on_linked_work_keeps_going_after_a_failing_card_then_reports_it() {
 }
 
 #[test]
+fn auto_move_reads_only_the_columns_not_every_card_on_the_board() {
+    let conn = fresh();
+    let board = create_board(&conn, "A").unwrap();
+    let columns = columns_of(&conn, &board);
+    let card = create_card(&conn, &columns[0].id, "Linked", "").unwrap();
+    add_link(&conn, &card.id, "session", "s-1", None).unwrap();
+    // Another card on the board that a whole-board read can't decode: if
+    // auto-move loaded the board's cards per event, this would fail it.
+    let other = create_card(&conn, &columns[3].id, "Other", "").unwrap();
+    conn.execute(
+        "UPDATE board_cards SET number = 'not a number' WHERE id = ?1",
+        [&other.id],
+    )
+    .unwrap();
+    assert!(get_board(&conn, &board.id).is_err());
+    assert_eq!(
+        on_linked_work(&conn, "session", "s-1", LinkedEvent::Started).unwrap(),
+        std::slice::from_ref(&board.id)
+    );
+    assert_eq!(get_card(&conn, &card.id).unwrap().column_id, columns[1].id);
+}
+
+#[test]
 fn custom_rule_moves_to_the_chosen_column_even_leftward() {
     let all = roles();
     let rules = AutoMoveRules {
