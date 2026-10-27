@@ -43,6 +43,13 @@
 > That is what this app does for coding agents. You hold the reins, and a team of
 > agents does the pulling.
 
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.gif" />
+  <img src="docs/assets/how-it-works-light.gif" alt="Animation: a Linear ticket lands in the Inbox and becomes a card on the Board. Run with Claude Code starts a session in its own worktree and the card moves to In progress. A daily 09:00 automation starts a Codex run, and the Claude session opens a pull request, which moves its card to Review. A Pilot triages a GitHub issue and starts a Cursor CLI session, finished sessions report back to the Pilot, and the merged card moves to Done." width="100%" />
+</picture>
+
 ## Why Gespan?
 
 Coding agents are good now, and you probably use more than one. Each one comes
@@ -153,25 +160,6 @@ in from your phone.
 </tr>
 </table>
 
-## How it works
-
-```mermaid
-flowchart LR
-    You(["🧑‍💻 You"]) --> App["Gespan<br/>tabs · panes · composer"]
-    App --> Core["Harness core<br/>one event model for every agent"]
-    Core --> A1["Claude Code"]
-    Core --> A2["Codex"]
-    Core --> A3["Cursor"]
-    Core --> A4["OpenCode"]
-    Core --> AN["… 8 more"]
-    App -. SSH .-> Host["Remote host<br/>sessions keep running"]
-```
-
-Each agent has an **adapter** that starts and manages the CLI, and a
-**protocol module** that turns the CLI's output into one shared set of event
-types. The UI only works with those events, so every agent gets the same tabs,
-approvals, diffs and history. The Rust side handles PTYs, the filesystem, Git
-and session storage.
 
 ## Install
 
