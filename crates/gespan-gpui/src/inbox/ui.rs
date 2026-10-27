@@ -971,7 +971,7 @@ impl Inbox {
                             .gap(px(8.))
                             .when(!is_pr, |d| {
                                 d.child(
-                                    action("inbox-send-agent", "Send to agent")
+                                    action("inbox-send-agent", "Open in new session")
                                         .px(px(12.))
                                         .bg(content(1.))
                                         .text_color(shell_fill())
@@ -1009,6 +1009,20 @@ impl Inbox {
                             .when(is_pr && item.provider == "github", |d| {
                                 d.child(self.pr_actions(&item, cx))
                             })
+                            .child(
+                                icon_action("inbox-copy-link", "Copy link", "response-copy")
+                                    .when(item.url.is_empty(), |d| d.opacity(0.4))
+                                    .on_click({
+                                        let url = item.url.clone();
+                                        move |_, _, cx| {
+                                            if !url.is_empty() {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    url.clone(),
+                                                ));
+                                            }
+                                        }
+                                    }),
+                            )
                             .child(
                                 icon_action(
                                     "inbox-open-external",
