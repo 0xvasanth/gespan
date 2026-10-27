@@ -27,8 +27,11 @@ sequenceDiagram
 Rendering waits briefly for streamed text to settle and runs off the UI thread.
 Incomplete or unsupported diagrams show their source and an error, and retry
 when the source changes. The panel follows the diagram's aspect ratio, up to
-640 points tall, and fits the complete diagram inside it. Source scrolls within
+640 points tall, and fits the complete diagram inside it with equal top and
+bottom padding as the window or sidebar changes width. Source scrolls within
 the same panel. Flowchart connections use smooth curves with arrowheads.
+Long sequence participant identifiers wrap inside both their top and bottom
+boxes; copying still uses the original source.
 
 This renderer is a native implementation of Mermaid, so layout and syntax
 coverage can differ from Mermaid.js. Common flowchart, sequence, class, state,

@@ -8,6 +8,10 @@ mod curves;
 use curves::flowchart_curves;
 #[path = "mermaid_input.rs"]
 mod input;
+#[path = "mermaid_media.rs"]
+mod media;
+#[path = "mermaid_sequence.rs"]
+mod sequence;
 
 const SOURCE_HEIGHT: f32 = 320.;
 const LOADING_HEIGHT: f32 = 128.;
@@ -173,10 +177,15 @@ fn diagram_svg(source: &str, dark: bool) -> Result<(String, f32, f32), String> {
         return Err("Diagram is too large to preview. You can still copy its source.".into());
     }
     input::expansion_budget(source)?;
-    let parsed = parse_mermaid_strict(source).map_err(|error| error.to_string())?;
+    let mut parsed = parse_mermaid_strict(source).map_err(|error| error.to_string())?;
     input::validate_styles(&parsed.graph)?;
     if parsed.graph.nodes.len() + parsed.graph.edges.len() > MAX_GRAPH_ITEMS {
         return Err("Diagram has too many nodes or connections to preview.".into());
+    }
+    if parsed.graph.kind == mermaid_rs_renderer::ir::DiagramKind::Sequence {
+        for node in parsed.graph.nodes.values_mut() {
+            node.label = sequence::wrap_participant(&node.label);
+        }
     }
     let mut theme = if dark { Theme::dark() } else { Theme::modern() };
     theme.background = "transparent".into();
@@ -390,21 +399,23 @@ impl RenderOnce for Diagram {
                                 .child(status),
                         )
                     })
-                    .child(
+                    .child(if let Some(ratio) = ratio {
+                        media::FittedMedia::new(
+                            media,
+                            ratio,
+                            MAX_PREVIEW_HEIGHT - 2. * PREVIEW_PADDING,
+                        )
+                        .into_any_element()
+                    } else {
                         div()
                             .relative()
                             .flex_1()
                             .min_h_0()
                             .min_w_0()
-                            .when_some(ratio, |d, ratio| {
-                                d.flex_none()
-                                    .w_full()
-                                    .aspect_ratio(ratio)
-                                    .max_h(px(MAX_PREVIEW_HEIGHT - 2. * PREVIEW_PADDING))
-                            })
                             .overflow_hidden()
-                            .child(media),
-                    ),
+                            .child(media)
+                            .into_any_element()
+                    }),
             )
     }
 }
@@ -545,16 +556,30 @@ mod tests {
             assert!(visual.debug_bounds("mermaid-source").is_none());
             visual.executor().advance_clock(Duration::from_millis(200));
             visual.run_until_parked();
-            let image = visual.debug_bounds("mermaid-image").unwrap();
-            let panel = visual.debug_bounds("mermaid-panel").unwrap();
-            assert!(image.size.height <= px(MAX_PREVIEW_HEIGHT));
-            assert!(panel.contains(&image.origin));
-            assert!(image.bottom_right().x <= panel.bottom_right().x + px(0.1));
-            assert!(image.bottom_right().y <= panel.bottom_right().y + px(0.1));
-            let top_gap = image.origin.y - panel.origin.y - px(1.); // divider
-            let bottom_gap = panel.bottom_right().y - image.bottom_right().y;
-            assert!((top_gap - px(PREVIEW_PADDING)).abs() < px(0.1));
-            assert!((bottom_gap - px(PREVIEW_PADDING)).abs() < px(0.1));
+            for width in [400., 900., 600.] {
+                window
+                    .update(visual, |this, _, cx| {
+                        this.width = width;
+                        cx.notify();
+                    })
+                    .unwrap();
+                visual.run_until_parked();
+                let image = visual.debug_bounds("mermaid-image").unwrap();
+                let panel = visual.debug_bounds("mermaid-panel").unwrap();
+                assert!(image.size.height <= px(MAX_PREVIEW_HEIGHT - 2. * PREVIEW_PADDING));
+                assert!(panel.contains(&image.origin));
+                assert!(image.bottom_right().x <= panel.bottom_right().x + px(0.1));
+                let top_gap = image.origin.y - panel.origin.y - px(1.); // divider
+                let bottom_gap = panel.bottom_right().y - image.bottom_right().y;
+                assert!(
+                    (top_gap - px(PREVIEW_PADDING)).abs() < px(0.1),
+                    "{code}, width={width}, top={top_gap:?}"
+                );
+                assert!(
+                    (bottom_gap - px(PREVIEW_PADDING)).abs() < px(0.1),
+                    "{code}, width={width}, bottom={bottom_gap:?}"
+                );
+            }
         }
     }
 
