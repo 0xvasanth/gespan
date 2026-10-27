@@ -4056,11 +4056,14 @@ impl TranscriptView {
         })
         .detach();
     }
+    /// `row` is the transcript row that owns the fence. Fences nested in a
+    /// tool's markdown have none, so they skip search and text selection.
     fn code(
         &mut self,
         fence: Arc<Fence>,
         lines: std::ops::Range<usize>,
         ix: usize,
+        row: Option<usize>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         self.highlight(&fence, cx);
@@ -4203,15 +4206,19 @@ impl TranscriptView {
                         lines,
                         self.highlights.get(&key).and_then(|v| v.as_deref()),
                         self.search_match.as_ref().map_or("", |(_, q)| q.as_str()),
-                        self.search_match
-                            .as_ref()
-                            .is_some_and(|(start, _)| *start == self.rows[ix].key.0),
-                        self.text_selection(
-                            self.rows[ix].key,
-                            self.messages[self.rows[ix].message].start,
-                            self.messages[self.rows[ix].message].role == "assistant",
-                            cx,
-                        ),
+                        row.is_some_and(|row| {
+                            self.search_match
+                                .as_ref()
+                                .is_some_and(|(start, _)| *start == self.rows[row].key.0)
+                        }),
+                        row.and_then(|row| {
+                            self.text_selection(
+                                self.rows[row].key,
+                                self.messages[self.rows[row].message].start,
+                                self.messages[self.rows[row].message].role == "assistant",
+                                cx,
+                            )
+                        }),
                     )),
             )
             .into_any_element()
@@ -4733,7 +4740,7 @@ impl TranscriptView {
                     });
                 let md = resolved.as_ref().unwrap_or(md);
                 let body = if let Part::Code { fence, lines } = &md.part {
-                    self.code(fence.clone(), lines.clone(), ix, cx)
+                    self.code(fence.clone(), lines.clone(), ix, Some(ix), cx)
                 } else {
                     markdown::body_selected(
                         md,

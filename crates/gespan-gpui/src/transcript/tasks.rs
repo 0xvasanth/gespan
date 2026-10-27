@@ -1064,7 +1064,7 @@ fn markdown_text(
             markdown::resolve_file_links(&mut row, base);
         }
         let rendered = if let markdown::Part::Code { fence, lines } = &row.part {
-            view.code(fence.clone(), lines.clone(), fence.key as usize, cx)
+            view.code(fence.clone(), lines.clone(), fence.key as usize, None, cx)
         } else {
             markdown::body(
                 &row,
@@ -1273,6 +1273,28 @@ mod tests {
             .unwrap();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("subagent-meta-1").is_some());
+    }
+
+    // A fence key is a content hash, not a row index; using it as one
+    // aborted the app when a report with a code block was opened.
+    #[gpui::test]
+    fn an_opened_report_with_a_code_block_renders_without_indexing_rows(cx: &mut TestAppContext) {
+        let report = "Fixed it:\n\n```rust\nfn main() {}\n```\n\nDone.";
+        let window = open_view(
+            cx,
+            vec![
+                row("user", "Fix"),
+                agent_row("run", named("Fix build"), ToolState::Completed, report),
+            ],
+        );
+        window
+            .update(cx, |view, _, cx| {
+                view.toggle_agent_part("agent:1:run".into(), true, 1, cx);
+                // An active transcript search must not reach for a row either.
+                view.search_match = Some((0, "main".into()));
+            })
+            .unwrap();
+        cx.refresh().unwrap();
     }
 
     #[gpui::test]
