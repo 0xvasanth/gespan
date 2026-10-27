@@ -1,7 +1,7 @@
 use crate::migrate;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 5;
+pub const VERSION: i64 = 6;
 
 /// The tables as both apps created them before `board_schema` existed.
 pub(crate) const V2_TABLES: &str = "
@@ -192,6 +192,16 @@ pub(crate) const V5_COLUMNS: [(&str, &str, &str); 5] = [
     ("board_settings", "display_json", "TEXT"),
     ("board_settings", "priority_json", "TEXT"),
 ];
+
+/// Columns v6 adds. `title_from_ticket` is 1 when the card's title was
+/// copied from a ticket (made from one, or retitled from one) and the user
+/// has not edited it since. Third-party ticket text never reaches the
+/// "Run with…" prompt, so the prompt leaves such a title out.
+pub(crate) const V6_COLUMNS: [(&str, &str, &str); 1] = [(
+    "board_cards",
+    "title_from_ticket",
+    "INTEGER NOT NULL DEFAULT 0",
+)];
 
 /// Brings the board tables to the current version. Both apps call this on
 /// every open, so it is cheap once the database is current.

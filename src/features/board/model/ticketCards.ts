@@ -1,11 +1,11 @@
 import { fetchTicket } from "../../sessions/model/ticketLinks";
 import type { TicketRef } from "../../sessions/model/session";
 import {
-  createCard,
+  createCardFromTicketRef,
   getBoard,
   getCardTicket,
+  retitleCardFromTicket,
   setCardTicket,
-  updateCard,
   type BoardColumn,
 } from "./board";
 
@@ -44,7 +44,9 @@ export async function applyFetchedTicket(
     (candidate) => candidate.id === card.id,
   );
   if (found && found.title === requested.key) {
-    await updateCard(card.id, title, found.body);
+    // The store re-checks the title and the link in the same write, and
+    // marks the title as ticket text so the "Run with…" prompt leaves it out.
+    await retitleCardFromTicket(card.id, requested.key, title);
   }
   return true;
 }
@@ -59,8 +61,7 @@ export async function createCardFromTicket(
   column: BoardColumn,
   ticket: TicketRef,
 ): Promise<string> {
-  const card = await createCard(column.id, ticket.key);
-  await setCardTicket(card.id, ticket);
+  const card = await createCardFromTicketRef(column.id, ticket);
   let filled: TicketRef;
   try {
     filled = await fetchTicket(ticket);

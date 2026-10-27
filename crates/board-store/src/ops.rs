@@ -471,10 +471,23 @@ pub fn create_card(
     title: &str,
     body: &str,
 ) -> Result<Card, String> {
+    let tx = write_tx(conn)?;
+    let card = create_card_in(&tx, column_id, title, body)?;
+    tx.commit().map_err(db)?;
+    Ok(card)
+}
+
+/// [`create_card`] inside the caller's write transaction, which it leaves
+/// uncommitted.
+pub(crate) fn create_card_in(
+    tx: &Transaction<'_>,
+    column_id: &str,
+    title: &str,
+    body: &str,
+) -> Result<Card, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
-    let tx = write_tx(conn)?;
-    let column = get_column(&tx, column_id)?;
+    let column = get_column(tx, column_id)?;
     tx.execute(
         "UPDATE boards SET card_seq = card_seq + 1 WHERE id = ?1",
         [&column.board_id],
@@ -525,7 +538,7 @@ pub fn create_card(
     )
     .map_err(db)?;
     log_activity(
-        &tx,
+        tx,
         NewActivity {
             board_id: &card.board_id,
             card_id: Some(&card.id),
@@ -536,7 +549,6 @@ pub fn create_card(
             detail: None,
         },
     )?;
-    tx.commit().map_err(db)?;
     Ok(card)
 }
 
@@ -554,8 +566,12 @@ pub fn update_card(
     if card.title == title && card.body == body {
         return Ok(card.board_id);
     }
+    // A title the user edits is theirs, so it no longer counts as ticket
+    // text; a body-only edit leaves the mark as it was.
     tx.execute(
-        "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3,
+           title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END
+         WHERE id = ?4",
         params![title, body, now_millis(), card_id],
     )
     .map_err(db)?;

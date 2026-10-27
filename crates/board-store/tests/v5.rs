@@ -115,8 +115,8 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
     assert_eq!(migrate::version(&conn).unwrap(), 4);
 
     ensure_tables(&conn).unwrap();
-    assert_eq!(SCHEMA_VERSION, 5);
-    assert_eq!(migrate::version(&conn).unwrap(), 5);
+    const { assert!(SCHEMA_VERSION >= 5) };
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema"), 1);
     assert_eq!(
         list_views(&conn, &board.id).unwrap(),
@@ -139,7 +139,7 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
 
     ensure_tables(&conn).unwrap();
     migrate::run(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 5);
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert_eq!(list_views(&conn, &board.id).unwrap(), [view]);
     assert_eq!(
         board_settings(&conn, &board.id).unwrap().icon.as_deref(),
@@ -150,7 +150,7 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
 
     // A second connection opening the same file finds the work done.
     let other = open(path.path());
-    assert_eq!(migrate::version(&other).unwrap(), 5);
+    assert_eq!(migrate::version(&other).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&other, "SELECT COUNT(*) FROM board_templates"), 1);
 }
 

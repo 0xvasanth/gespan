@@ -258,13 +258,13 @@ fn make_card(
         .find(|column| column.role.as_deref() == Some("todo"))
         .or(detail.columns.first())
         .ok_or("The board has no steps")?;
-    let card = service.card_create(&column.id, &ticket.key, "")?;
-    service.set_card_ticket(&card.id, Some(ticket))?;
+    let card = service.card_create_from_ticket(&column.id, ticket)?;
     Ok(card.id)
 }
 
 /// The card is titled with the ticket's key until the title is known; a title
-/// the user has since changed is left alone.
+/// the user has since changed is left alone. The store marks the new title as
+/// ticket text, which keeps it out of the "Run with…" prompt.
 fn retitle_from_ticket(
     service: &mut Service,
     card_id: &str,
@@ -279,9 +279,7 @@ fn retitle_from_ticket(
     else {
         return Ok(());
     };
-    let card = service.card(card_id)?;
-    if card.title == key {
-        service.card_update(card_id, title, &card.body)?;
-    }
-    Ok(())
+    service
+        .card_retitle_from_ticket(card_id, key, title)
+        .map(drop)
 }

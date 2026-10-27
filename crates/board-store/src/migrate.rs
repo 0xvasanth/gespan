@@ -8,17 +8,21 @@
 //! - v4: the `board_views` table for saved views.
 //! - v5: board icon, colour, default view, display and priority settings;
 //!   `board_templates`; `board_session_settings`.
+//! - v6: `board_cards.title_from_ticket`, set when a card's title came from a
+//!   ticket.
 //!
 //! A step runs only when the stored version is below it, so a v3 database
 //! moving to v4 does not copy the native extras again (which would bring back
 //! labels or values removed since).
-use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, VERSION};
+use crate::schema::{
+    V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, V6_COLUMNS, VERSION,
+};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
 /// Each step with the version it brings the database to, oldest first.
-const STEPS: [(i64, Step); 4] = [(2, to_v2), (3, to_v3), (4, to_v4), (5, to_v5)];
+const STEPS: [(i64, Step); 5] = [(2, to_v2), (3, to_v3), (4, to_v4), (5, to_v5), (6, to_v6)];
 
 /// The stored board schema version; 0 when none was ever written.
 pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
@@ -75,6 +79,10 @@ fn to_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 fn to_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(V5_TABLES)?;
     add_columns(tx, &V5_COLUMNS)
+}
+
+fn to_v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    add_columns(tx, &V6_COLUMNS)
 }
 
 /// Adds each (table, column, declaration) the table does not have yet.

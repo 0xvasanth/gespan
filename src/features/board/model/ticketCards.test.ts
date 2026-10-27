@@ -61,8 +61,9 @@ describe("createCardFromTicket", () => {
     gate = null;
     release = null;
     invoke.mockImplementation(async (cmd: string, args: any) => {
-      if (cmd === "board_card_create")
-        return { id: "c1", boardId: "b1", title: args.title, body: "" };
+      if (cmd === "board_card_create_from_ticket")
+        return { id: "c1", boardId: "b1", title: args.ticket.key, body: "" };
+      if (cmd === "board_card_retitle_from_ticket") return true;
       if (cmd === "board_card_ticket") return linked;
       if (cmd === "ticket_fetch") {
         await gate;
@@ -79,22 +80,26 @@ describe("createCardFromTicket", () => {
     });
   });
 
-  it("creates the card titled with the key, links it, and retitles it once fetched", async () => {
+  it("creates the card from the ticket in one write and retitles it from the ticket once fetched", async () => {
     await createCardFromTicket(column("t", 0, "todo"), TICKET);
-    expect(calls("board_card_create")[0][1]).toMatchObject({
-      columnId: "t",
-      title: "ENG-7",
-    });
+    // One store write makes, links and marks the card; no plain create.
+    expect(calls("board_card_create")).toHaveLength(0);
+    expect(calls("board_card_create_from_ticket")).toEqual([
+      ["board_card_create_from_ticket", { columnId: "t", ticket: TICKET }],
+    ]);
     const links = calls("board_card_set_ticket");
-    expect(links[0][1]).toEqual({ cardId: "c1", ticket: TICKET });
-    expect(links[1][1]).toMatchObject({
+    expect(links).toHaveLength(1);
+    expect(links[0][1]).toMatchObject({
       cardId: "c1",
       ticket: { key: "ENG-7", title: "Fix login" },
     });
-    expect(calls("board_card_update")).toEqual([
+    // The retitle goes through the ticket path, which marks the title as
+    // ticket text, never through a user title edit (which clears the mark).
+    expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toEqual([
       [
-        "board_card_update",
-        { cardId: "c1", title: "Fix login", body: "notes" },
+        "board_card_retitle_from_ticket",
+        { cardId: "c1", key: "ENG-7", title: "Fix login" },
       ],
     ]);
   });
@@ -102,8 +107,9 @@ describe("createCardFromTicket", () => {
   it("leaves a title the user changed meanwhile", async () => {
     title = "My wording";
     await createCardFromTicket(column("t", 0, "todo"), TICKET);
-    expect(calls("board_card_set_ticket")).toHaveLength(2);
+    expect(calls("board_card_set_ticket")).toHaveLength(1);
     expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toHaveLength(0);
   });
 
   it("keeps the key as the title when the fetch fails", async () => {
@@ -111,8 +117,10 @@ describe("createCardFromTicket", () => {
     await expect(
       createCardFromTicket(column("t", 0, "todo"), TICKET),
     ).resolves.toBe("c1");
-    expect(calls("board_card_set_ticket")).toHaveLength(1);
+    expect(calls("board_card_create_from_ticket")).toHaveLength(1);
+    expect(calls("board_card_set_ticket")).toHaveLength(0);
     expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toHaveLength(0);
   });
 
   const holdFetch = () => {
@@ -128,8 +136,9 @@ describe("createCardFromTicket", () => {
     linked = null;
     release!();
     await made;
-    expect(calls("board_card_set_ticket")).toHaveLength(1);
+    expect(calls("board_card_set_ticket")).toHaveLength(0);
     expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toHaveLength(0);
   });
 
   it("keeps the second ticket when the user relinks while the fetch is out", async () => {
@@ -139,24 +148,26 @@ describe("createCardFromTicket", () => {
     linked = { ...TICKET, key: "ENG-8" };
     release!();
     await made;
-    expect(calls("board_card_set_ticket")).toHaveLength(1);
+    expect(calls("board_card_set_ticket")).toHaveLength(0);
     expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toHaveLength(0);
   });
 
   it("retitles on a later successful read of a card whose first fetch failed", async () => {
     fetchFails = true;
     await createCardFromTicket(column("t", 0, "todo"), TICKET);
-    expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toHaveLength(0);
     const saved = await applyFetchedTicket(
       { id: "c1", boardId: "b1" },
       TICKET,
       { ...TICKET, title: "Fix login" },
     );
     expect(saved).toBe(true);
-    expect(calls("board_card_update")[0][1]).toEqual({
+    expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")[0][1]).toEqual({
       cardId: "c1",
+      key: "ENG-7",
       title: "Fix login",
-      body: "notes",
     });
   });
 });
