@@ -378,6 +378,9 @@ fn local_day_chrono_counts_local_calendar_days() {
 /// Runs `local_day_chrono_counts_local_calendar_days` again in a child
 /// process whose clock skips local midnight on one of the tested days, so
 /// the test can't pass only because this machine's zone has no such gap.
+/// Unix only: Windows takes the local zone from the OS, not `TZ`, and has no
+/// zoneinfo files.
+#[cfg(unix)]
 #[test]
 fn local_day_chrono_counts_days_in_a_zone_that_skips_midnight() {
     for zone in ["America/Havana"] {
