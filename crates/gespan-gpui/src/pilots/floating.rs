@@ -17,8 +17,8 @@ impl gpui::Render for Floating {
         #[cfg(any(not(target_os = "macos"), test))]
         let _ = &window;
         #[cfg(all(target_os = "macos", not(test)))]
-        window.on_window_should_close(cx, |window, _| {
-            crate::traffic_lights::hide(window);
+        window.on_window_should_close(cx, |window, cx| {
+            crate::traffic_lights::hide(window, cx);
             false
         });
         let owner = self.owner.read(cx);
@@ -159,9 +159,9 @@ impl gpui::Render for Floating {
                                 )
                                 .child(
                                     icon_button("floating-close", "Close floating chat", "close")
-                                        .on_click(|_, window, _| {
+                                        .on_click(|_, window, _cx| {
                                             #[cfg(all(target_os = "macos", not(test)))]
-                                            crate::traffic_lights::hide(window);
+                                            crate::traffic_lights::hide(window, _cx);
                                             #[cfg(any(not(target_os = "macos"), test))]
                                             window.remove_window();
                                         }),

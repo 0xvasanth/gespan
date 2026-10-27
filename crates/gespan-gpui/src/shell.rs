@@ -7897,7 +7897,7 @@ impl Render for Shell {
                                 .is_some_and(|m| !m.read(cx).roster.pilots.is_empty())
                             && !shell.unsaved_files(cx)
                         {
-                            crate::traffic_lights::hide(window);
+                            crate::traffic_lights::hide(window, cx);
                             return false;
                         }
                         if shell.unsaved_files(cx) {
