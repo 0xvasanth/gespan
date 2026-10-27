@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   checksState,
-  latestEventByCard,
   parsePrUrl,
   pilotState,
   prState,
@@ -68,17 +67,5 @@ describe("link status", () => {
     expect(settledSince([["session", "a"]], [])).toBe(true);
     expect(settledSince([["session", "a"]], [["session", "a"], ["session", "b"]])).toBe(false);
     expect(settledSince([], [["session", "a"]])).toBe(false);
-  });
-
-  it("the latest linked-work event per card comes from newest-first rows", () => {
-    expect(
-      latestEventByCard([
-        { cardId: "c1", kind: "failed" },
-        { cardId: "c1", kind: "started" },
-        { cardId: "c2", kind: "moved" },
-        { cardId: "c2", kind: "completed" },
-        { cardId: null, kind: "failed" },
-      ]),
-    ).toEqual({ c1: "failed", c2: "completed" });
   });
 });

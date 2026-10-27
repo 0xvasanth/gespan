@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BoardSettings, PriorityScheme } from "../../model/board";
 import {
   DEFAULT_PRIORITY_SCHEME,
@@ -35,23 +35,48 @@ export function PrioritySection({
   storedScheme.current = scheme;
   const pending = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // Per level, bumped when a rename of it fails: that name field starts again
+  // from the saved scheme. Other fields (one being typed in, say) keep going.
+  const [resets, setResets] = useState<Record<number, number>>({});
+  const failedLevels = useRef(new Set<number>());
   useEffect(() => {
     // The board's read wins once nothing is in flight.
     if (pending.current === 0) latest.current = scheme;
   }, [scheme]);
-  const write = (patch: Partial<BoardSettings>, what: string) => {
+  /** `level` is the name field a rename came from, if it was one. */
+  const write = (
+    patch: Partial<BoardSettings>,
+    what: string,
+    level?: number,
+  ) => {
     pending.current += 1;
     queue.current = queue.current
       .then(() => onPatch(patch, what))
       .then((saved) => {
         pending.current -= 1;
+        if (!saved && level !== undefined) failedLevels.current.add(level);
         // A save that failed leaves what is stored; edits stop building on it.
-        if (!saved && pending.current === 0) latest.current = storedScheme.current;
+        if (!saved && pending.current === 0) {
+          latest.current = storedScheme.current;
+          const failed = [...failedLevels.current];
+          failedLevels.current.clear();
+          if (failed.length) {
+            setResets((current) => {
+              const next = { ...current };
+              for (const at of failed) next[at] = (next[at] ?? 0) + 1;
+              return next;
+            });
+          }
+        }
       });
   };
-  const save = (next: PriorityScheme) => {
+  const save = (next: PriorityScheme, level?: number) => {
     latest.current = next;
-    write({ priorityJson: serializePriorityScheme(next) }, "save the priorities");
+    write(
+      { priorityJson: serializePriorityScheme(next) },
+      "save the priorities",
+      level,
+    );
   };
   return (
     <SettingsSection
@@ -66,6 +91,7 @@ export function PrioritySection({
             className="flex items-center gap-3"
           >
             <CommitInput
+              key={resets[level] ?? 0}
               label="Priority name"
               value={scheme.names[level]}
               className="w-44"
@@ -77,7 +103,7 @@ export function PrioritySection({
                   return false;
                 }
                 if (text.trim() !== latest.current.names[level]) {
-                  save(withName(latest.current, level, text));
+                  save(withName(latest.current, level, text), level);
                 }
               }}
             />

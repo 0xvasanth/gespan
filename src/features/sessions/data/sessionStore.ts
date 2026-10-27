@@ -1077,9 +1077,7 @@ function sanitizeBlock(
   // Without this the transcript would show the app's orchestration turns as
   // the user's own after a reload.
   if (block.role === "user" && block.internal) next.internal = true;
-  const completion = sanitizePilotSessionCompletion(
-    block.pilotSessionCompletion,
-  );
+  const completion = sanitizePilotSessionCompletion(block.pilotSessionCompletion);
   if (block.role === "user" && block.internal && completion)
     next.pilotSessionCompletion = completion;
   const spawned = sanitizePilotSpawnedSessions(block.pilotSpawnedSessions);
@@ -1481,8 +1479,7 @@ function sanitizeAgentRun(value: unknown): AgentRunMeta | null {
   ]);
   const extra = Object.fromEntries(
     Object.entries(record).filter(
-      ([key, value]) =>
-        !known.has(key) && value !== undefined && value !== null,
+      ([key, value]) => !known.has(key) && value !== undefined && value !== null,
     ),
   );
   const text = (key: string) =>
@@ -1600,9 +1597,7 @@ function recordToSession(record: SessionRecord): Session {
     ...(queuedMessages.length
       ? { queuedMessages, queueStatus: "paused" as const }
       : {}),
-    ...(record.pilotTranscript
-      ? { pilotTranscript: record.pilotTranscript }
-      : {}),
+    ...(record.pilotTranscript ? { pilotTranscript: record.pilotTranscript } : {}),
     busy: false,
     orchestrationLeadId:
       record.orchestrationLeadId ??

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { SearchableSelect } from "../../../shared/ui/SearchableSelect";
 import { Plus, X } from "../../../shared/ui/icons";
@@ -44,6 +44,7 @@ import {
   PROPERTY_TRIGGER,
   PropertyRow,
   SMALL_BUTTON,
+  leaveDraftOnEscape,
   useAhead,
   useLive,
 } from "./CardDrawerParts";
@@ -100,6 +101,9 @@ export function StartAndEstimateRows({
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set by Escape: the blur that follows puts the saved estimate back
+  // instead of committing what was typed.
+  const cancelled = useRef(false);
   useEffect(() => {
     if (!editing) setText(minutes === null ? "" : formatEstimate(minutes));
   }, [minutes, editing]);
@@ -122,33 +126,39 @@ export function StartAndEstimateRows({
     });
   };
   const commitEstimate = () => {
-    setEditing(false);
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
     if (!text.trim()) {
+      setEditing(false);
       setError(null);
       if (minutes !== null) writeEstimate(null);
       return;
     }
     const parsed = parseEstimate(text);
     if (!parsed.ok) {
+      // Still editing: the typed text stays to be corrected, not replaced
+      // by the saved estimate.
       setError(parsed.error);
       return;
     }
+    setEditing(false);
     setError(null);
     setText(formatEstimate(parsed.minutes));
     if (parsed.minutes !== minutes) writeEstimate(parsed.minutes);
   };
 
+  const startText =
+    (startAt === null ? null : fieldText("date", String(startAt))) ?? "None";
+
   return (
     <>
       <PropertyRow name="start" label="Start">
         <MenuButton
-          label="Start"
+          label={`Start: ${startText}`}
           className={PROPERTY_TRIGGER}
-          trigger={
-            <span className="truncate">
-              {startAt === null ? "None" : fieldText("date", String(startAt))}
-            </span>
-          }
+          trigger={<span className="truncate">{startText}</span>}
         >
           {(closeMenu) => (
             <DueItems
@@ -180,8 +190,11 @@ export function StartAndEstimateRows({
               event.preventDefault();
               event.currentTarget.blur();
             } else if (event.key === "Escape" && editing) {
-              // Escape puts the saved estimate back instead of closing.
+              // Escape puts the saved estimate back instead of closing; the
+              // blur below must not commit the typed text.
+              event.preventDefault();
               event.stopPropagation();
+              cancelled.current = true;
               setError(null);
               setText(minutes === null ? "" : formatEstimate(minutes));
               setEditing(false);
@@ -473,6 +486,9 @@ function FieldRow({
         }}
         onBlur={commitText}
         onKeyDown={(event) => {
+          // Escape leaves the field for the drawer with the text kept (the
+          // blur commits it); it never closes the drawer over a draft.
+          if (leaveDraftOnEscape(event)) return;
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
             event.currentTarget.blur();
@@ -557,7 +573,7 @@ function FieldRow({
     editor = (
       <>
         <MenuButton
-          label={field.name}
+          label={`${field.name}: ${shown ?? "None"}`}
           className={PROPERTY_TRIGGER}
           trigger={<span className="truncate">{shown ?? "None"}</span>}
         >
@@ -587,11 +603,21 @@ type AddingLink = "session" | "pilot" | "pr" | "worktree";
 export function LinksSection({
   card,
   linkTargets,
+  resolveLinkTarget,
   onOpenLinkedWork,
   onError,
 }: {
   card: BoardCard;
   linkTargets: readonly BoardLinkTarget[];
+  /**
+   * The board's lookup of work `linkTargets` doesn't hold (sessions of
+   * projects not loaded this run, say): the target, null when it is gone,
+   * undefined while unknown.
+   */
+  resolveLinkTarget?: (
+    kind: "session" | "pilot",
+    id: string,
+  ) => BoardLinkTarget | null | undefined;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   onError: (message: string) => void;
 }) {
@@ -606,11 +632,19 @@ export function LinksSection({
   const [adding, setAdding] = useState<AddingLink | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const shown = visibleLinks(links ?? []);
-  const targetOf = (link: CardLinkRow) =>
-    linkTargets.find(
+  const shown = visibleLinks(links ?? [], {
+    kind: card.linkKind,
+    id: card.linkId,
+  });
+  /** The link's work: a target, null when it is gone, undefined while unknown. */
+  const targetOf = (link: CardLinkRow): BoardLinkTarget | null | undefined => {
+    const held = linkTargets.find(
       (target) => target.kind === link.kind && target.id === link.reference,
     );
+    if (held) return held;
+    if (link.kind !== "session" && link.kind !== "pilot") return undefined;
+    return resolveLinkTarget?.(link.kind, link.reference);
+  };
 
   const add = (kind: AddingLink, reference: string) => {
     addCardLink(card.id, kind, reference).then(
@@ -666,6 +700,7 @@ export function LinksSection({
   const label = (link: CardLinkRow) => {
     const target = targetOf(link);
     if (target) return target.label;
+    if (target === null) return "No longer exists";
     if (link.kind === "session" || link.kind === "pilot") {
       return `${kindLabel(link.kind)} ${link.reference.slice(0, 8)}`;
     }

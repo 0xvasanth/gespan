@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 /** The rows to render for a scroll position: [start, end) with `overscan` spare rows each side. */
 export function visibleRange(
@@ -15,6 +22,22 @@ export function visibleRange(
     start: Math.min(count, Math.max(0, first - overscan)),
     end: Math.min(count, Math.max(0, last + overscan)),
   };
+}
+
+/**
+ * The row indexes to render: `start..end`, plus each `pinned` index outside
+ * it (a focused row scrolled away), in order.
+ */
+export function rowsWithPinned(
+  start: number,
+  end: number,
+  pinned: readonly number[],
+): number[] {
+  const out: number[] = [];
+  for (let i = start; i < end; i++) out.push(i);
+  const extra = pinned.filter((i) => i >= 0 && (i < start || i >= end));
+  if (!extra.length) return out;
+  return [...new Set([...out, ...extra])].sort((a, b) => a - b);
 }
 
 /** Used until the scroller reports a height (it has none before layout). */
@@ -70,4 +93,313 @@ export function useWindowedRows({
     totalHeight: count * rowHeight,
     ...visibleRange(scrollTop - topOffset, viewport, rowHeight, count, overscan),
   };
+}
+
+/** One row of a variable-height window: a spacer for skipped items, or an item. */
+export type Slot =
+  | { kind: "gap"; height: number }
+  | { kind: "item"; index: number };
+
+/** First-guess card heights (px), replaced per card once it is measured. */
+export const CARD_ESTIMATE = { comfortable: 76, compact: 44 } as const;
+/** The space between two cards (the column body's `gap-1.5`). */
+export const CARD_GAP = 6;
+/** Cards rendered beyond each edge of the view. */
+export const CARD_OVERSCAN = 4;
+
+/** `offsets[i]` is the top of item i; `offsets[n]` is the total plus one trailing gap. */
+function itemOffsets(heights: readonly number[], gap: number): number[] {
+  const offsets = new Array<number>(heights.length + 1);
+  offsets[0] = 0;
+  for (let i = 0; i < heights.length; i += 1) {
+    offsets[i + 1] = offsets[i] + heights[i] + gap;
+  }
+  return offsets;
+}
+
+/** The index of the item under `y`: the first whose bottom is below it, clamped. */
+function itemAt(offsets: readonly number[], gap: number, y: number): number {
+  const count = offsets.length - 1;
+  let lo = 0;
+  let hi = count - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid + 1] - gap > y) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** The last item that starts above `y` (0 when none does). */
+function lastStartingBefore(offsets: readonly number[], y: number): number {
+  let lo = 0;
+  let hi = offsets.length - 2;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (offsets[mid] < y) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * The slots to render for a scroll position in a list of variable-height
+ * items laid out with `gap` between them: the items in view plus `overscan`
+ * each side, and every `pinned` index wherever it is, in order. Each run of
+ * skipped items becomes one gap whose height is the run's heights and the
+ * gaps inside it, so with `gap` between slots the list keeps its full height
+ * and every item keeps its offset.
+ */
+export function windowSlots(
+  heights: readonly number[],
+  gap: number,
+  scrollTop: number,
+  viewport: number,
+  overscan: number,
+  pinned: readonly number[],
+): Slot[] {
+  const count = heights.length;
+  if (count === 0) return [];
+  const offsets = itemOffsets(heights, gap);
+  const top = Math.max(0, scrollTop);
+  const first = itemAt(offsets, gap, top);
+  const last = Math.max(first, lastStartingBefore(offsets, top + viewport));
+  const start = Math.max(0, first - overscan);
+  const end = Math.min(count, last + 1 + overscan);
+  const shown = new Set<number>();
+  for (let i = start; i < end; i += 1) shown.add(i);
+  for (const index of pinned) {
+    if (Number.isInteger(index) && index >= 0 && index < count) shown.add(index);
+  }
+  const slots: Slot[] = [];
+  let next = 0;
+  const skip = (to: number) => {
+    if (to > next) {
+      slots.push({
+        kind: "gap",
+        height: offsets[to] - offsets[next] - gap,
+      });
+    }
+  };
+  for (const index of [...shown].sort((a, b) => a - b)) {
+    skip(index);
+    slots.push({ kind: "item", index });
+    next = index + 1;
+  }
+  skip(count);
+  return slots;
+}
+
+type Measured = { estimate: number; height: number };
+type Anchor = { id: string; offset: number };
+
+/**
+ * Variable-height windowing for one scroll container of keyed items (a board
+ * column). Heights start at `estimate` and are replaced per id once an item
+ * is measured; a new `estimate` (a density change) drops every measurement.
+ * Once scrolled, the item at the top of the view is the anchor: when ids or
+ * heights change above it (a reload, a card added above, a re-measure), the
+ * scroll moves with it so it stays where it was. `pinned` ids are always
+ * rendered (focus, a drag, an open drawer). `estimates` gives items their
+ * own first guess (by index) in place of `estimate`; `topOffset` is how far
+ * below the scroller's top the first item starts.
+ */
+export function useMeasuredWindow({
+  ids,
+  estimate,
+  estimates,
+  gap,
+  overscan,
+  pinned,
+  topOffset = 0,
+}: {
+  ids: readonly string[];
+  estimate: number;
+  estimates?: readonly number[];
+  gap: number;
+  overscan: number;
+  pinned: readonly string[];
+  topOffset?: number;
+}) {
+  const element = useRef<HTMLElement | null>(null);
+  const measured = useRef(new Map<string, Measured>());
+  const nodes = useRef(new Map<string, HTMLElement>());
+  const measureRefs = useRef(new Map<string, (node: HTMLElement | null) => void>());
+  const anchor = useRef<Anchor | null>(null);
+  const [version, setVersion] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
+
+  const indexById = useMemo(
+    () => new Map(ids.map((id, index) => [id, index])),
+    [ids],
+  );
+  const heights = useMemo(() => {
+    void version; // measurements live in a ref; `version` marks a change
+    return ids.map((id, index) => {
+      const guess = estimates?.[index] ?? estimate;
+      const entry = measured.current.get(id);
+      return entry && entry.estimate === guess ? entry.height : guess;
+    });
+  }, [ids, estimate, estimates, version]);
+  const offsets = useMemo(() => itemOffsets(heights, gap), [heights, gap]);
+  const pinnedIndexes = useMemo(
+    () => pinned.flatMap((id) => indexById.get(id) ?? []),
+    [pinned, indexById],
+  );
+  const slots = useMemo(
+    () =>
+      windowSlots(
+        heights,
+        gap,
+        scrollTop - topOffset,
+        viewport,
+        overscan,
+        pinnedIndexes,
+      ),
+    [heights, gap, scrollTop, topOffset, viewport, overscan, pinnedIndexes],
+  );
+
+  const isDragging = useCallback(
+    (id: string) => !!nodes.current.get(id)?.hasAttribute("data-dragging"),
+    [],
+  );
+
+  const latest = useRef({ ids, offsets, topOffset });
+  latest.current = { ids, offsets, topOffset };
+
+  /** The item at `top` and how far into it the view starts. */
+  const anchorAt = useCallback(
+    (top: number): Anchor | null => {
+      const { ids: list, offsets: at } = latest.current;
+      if (top <= 0 || list.length === 0) return null;
+      let index = itemAt(at, gap, top);
+      // The dragged card moves with the pointer; anchoring to it would
+      // scroll the column after it.
+      while (index + 1 < list.length && isDragging(list[index])) index += 1;
+      return { id: list[index], offset: top - at[index] };
+    },
+    [gap, isDragging],
+  );
+
+  const sync = useCallback(() => {
+    const node = element.current;
+    if (!node) return;
+    setViewport(node.clientHeight || FALLBACK_VIEWPORT);
+    setScrollTop(node.scrollTop);
+    anchor.current = anchorAt(node.scrollTop - latest.current.topOffset);
+  }, [anchorAt]);
+
+  // The scroller can come and go (a column collapsed, then expanded), so the
+  // observer follows the node the ref is given, never the first one.
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback(
+    (node: HTMLElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
+      element.current = node;
+      if (!node) return;
+      sync();
+      if (typeof ResizeObserver === "undefined") return;
+      observer.current = new ResizeObserver(() => {
+        if (element.current === node) {
+          setViewport(node.clientHeight || FALLBACK_VIEWPORT);
+        }
+      });
+      observer.current.observe(node);
+    },
+    [sync],
+  );
+  useEffect(
+    () => () => {
+      observer.current?.disconnect();
+      observer.current = null;
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    // Re-measure what is mounted: a density toggle, new labels or a longer
+    // title change a card's height after it was first measured. The dragged
+    // card's slot is measured as the line it shows, so the spacers match.
+    let changed = false;
+    for (const [id, node] of nodes.current) {
+      const height = node.getBoundingClientRect().height;
+      // Zero is "not laid out" (hidden, or no layout engine), not a height.
+      if (!(height > 0)) continue;
+      const index = indexById.get(id);
+      const guess =
+        (index === undefined ? undefined : estimates?.[index]) ?? estimate;
+      const entry = measured.current.get(id);
+      if (
+        !entry ||
+        entry.estimate !== guess ||
+        Math.abs(entry.height - height) > 0.5
+      ) {
+        measured.current.set(id, { estimate: guess, height });
+        changed = true;
+      }
+    }
+    if (changed) {
+      setVersion((v) => v + 1);
+      return;
+    }
+    // Keep the anchor where it was in the view.
+    const node = element.current;
+    const held = anchor.current;
+    if (!node || !held) return;
+    const index = indexById.get(held.id);
+    if (index === undefined || isDragging(held.id)) {
+      // The top card is gone (or lifted): stay at this offset, under the
+      // card now there.
+      anchor.current = anchorAt(node.scrollTop - topOffset);
+      return;
+    }
+    const wanted = offsets[index] + held.offset + topOffset;
+    if (Math.abs(node.scrollTop - wanted) > 0.5) {
+      node.scrollTop = wanted;
+      setScrollTop(node.scrollTop);
+    }
+  });
+
+  const measureRef = useCallback((id: string) => {
+    let callback = measureRefs.current.get(id);
+    if (!callback) {
+      callback = (node: HTMLElement | null) => {
+        if (node) {
+          nodes.current.set(id, node);
+          return;
+        }
+        // A card unmounted mid-drag was measured as its drop line, not its
+        // height: forget that so it comes back at its estimate.
+        if (nodes.current.get(id)?.hasAttribute("data-dragging")) {
+          measured.current.delete(id);
+        }
+        nodes.current.delete(id);
+      };
+      measureRefs.current.set(id, callback);
+    }
+    return callback;
+  }, []);
+
+  /** Scrolls the least distance that shows item `index` whole. */
+  const scrollToIndex = useCallback(
+    (index: number) => {
+      const node = element.current;
+      const { offsets: at, topOffset: above } = latest.current;
+      if (!node || index < 0 || index >= at.length - 1) return;
+      const top = at[index] + above;
+      const bottom = at[index + 1] - gap + above;
+      const view = node.clientHeight || FALLBACK_VIEWPORT;
+      let next = node.scrollTop;
+      if (top < next) next = top;
+      else if (bottom > next + view) next = bottom - view;
+      else return;
+      node.scrollTop = next;
+      sync();
+    },
+    [gap, sync],
+  );
+
+  return { ref, onScroll: sync, slots, measureRef, scrollToIndex };
 }

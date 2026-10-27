@@ -312,24 +312,6 @@ export function moveCards(
 }
 
 /**
- * Overwrites all three, including a colour or limit the native app set a
- * moment ago. For a change from the UI use `updateColumnDisplay`.
- */
-export function setColumnDisplay(
-  columnId: string,
-  color: string | null,
-  wipLimit: number | null,
-  collapsed: boolean,
-): Promise<void> {
-  return invoke("board_column_set_display", {
-    columnId,
-    color,
-    wipLimit,
-    collapsed,
-  });
-}
-
-/**
  * The column display fields to change. A key left out stays as it is; `null`
  * clears a colour or WIP limit.
  */

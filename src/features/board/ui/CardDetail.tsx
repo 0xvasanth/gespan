@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type MutableRefObject,
+  type ReactNode,
+} from "react";
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -67,6 +76,14 @@ const NO_LINK = "";
 
 type Tab = "comments" | "activity";
 
+/** What the board can ask of an open drawer. */
+export type CardDrawerHandle = {
+  /** Escape from the board: the drawer's own Escape (full page steps back first). */
+  escape: () => void;
+  /** Saves a typed but unsaved title or description; resolves once written. */
+  flushDrafts: () => Promise<void>;
+};
+
 /**
  * A card opened from the board, docked beside it: title, properties,
  * description, subtasks, and the comments and activity tabs. The board stays
@@ -94,7 +111,19 @@ export function CardDetail({
   onError,
   onRunWith,
   blockedBy = [],
+  handle,
+  isGone,
+  resolveLinkTarget,
 }: {
+  /** Filled with this drawer's handle while it is open. */
+  handle?: MutableRefObject<CardDrawerHandle | null>;
+  /**
+   * True once the card is off the board (deleted or archived elsewhere): a
+   * draft saved as the drawer goes then fails quietly, as the card is gone.
+   */
+  isGone?: () => boolean;
+  /** Looks up linked work `linkTargets` doesn't hold, for the links list. */
+  resolveLinkTarget?: ComponentProps<typeof LinksSection>["resolveLinkTarget"];
   /** Absent when the board turns "Run with…" off. */
   onRunWith?: () => void;
   /** Numbers of the open cards blocking this one. */
@@ -136,6 +165,7 @@ export function CardDetail({
   onError: (message: string) => void;
 }) {
   const scheme = usePriorityScheme();
+  const tabIds = useId();
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body);
   const [tab, setTab] = useState<Tab>("comments");
@@ -154,6 +184,7 @@ export function CardDetail({
   useEffect(() => {
     ticketRef.current = ticket;
   });
+  const asideRef = useRef<HTMLElement>(null);
   const titleField = useRef<HTMLInputElement>(null);
   const bodyField = useRef<HTMLTextAreaElement>(null);
   const linkRow = useRef<HTMLDivElement>(null);
@@ -183,11 +214,12 @@ export function CardDetail({
     }
   }, [card.title, card.body]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The drawer takes focus as it opens, unless a field asked for it.
   useEffect(() => {
     if (focus === "title") titleField.current?.select();
     else if (focus === "link") {
       linkRow.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    }
+    } else asideRef.current?.focus({ preventScroll: true });
   }, [focus]);
 
   useEffect(() => {
@@ -240,7 +272,7 @@ export function CardDetail({
   const failed = (what: string) => (error: unknown) =>
     onError(`Couldn't ${what} card #${card.number}: ${errorText(error)}`);
 
-  const saveFields = (): Promise<void> => {
+  const saveFields = (quietIfGone = false): Promise<void> => {
     // An emptied title goes back to the saved one; the notes still save.
     const nextTitle = draft.current.title.trim() || saved.current.title;
     const nextBody = draft.current.body;
@@ -255,8 +287,16 @@ export function CardDetail({
     saved.current = { title: nextTitle, body: nextBody };
     draft.current.title = nextTitle;
     setTitle(nextTitle);
-    return updateCard(card.id, nextTitle, nextBody).catch(failed("save"));
+    return updateCard(card.id, nextTitle, nextBody).catch((error) => {
+      // The card went while the drawer had a draft: there is nothing to say.
+      if (quietIfGone && isGoneRef.current?.()) return;
+      failed("save")(error);
+    });
   };
+  const isGoneRef = useRef(isGone);
+  useEffect(() => {
+    isGoneRef.current = isGone;
+  });
   const saveRef = useRef(saveFields);
   useEffect(() => {
     saveRef.current = saveFields;
@@ -264,12 +304,12 @@ export function CardDetail({
   // Closing, or opening another card, saves a pending draft.
   useEffect(
     () => () => {
-      if (!deleted.current) saveRef.current();
+      if (!deleted.current) saveRef.current(true);
     },
     [],
   );
 
-  const close = () => {
+  const escape = () => {
     // The ticket dialog owns Escape while it is open.
     if (linkingTicket) return;
     saveFields();
@@ -277,6 +317,25 @@ export function CardDetail({
     if (fullPage && onToggleFullPage) onToggleFullPage();
     else onClose();
   };
+  // The X closes the card, from the drawer or the full page.
+  const close = () => {
+    saveFields();
+    onClose();
+  };
+  const escapeRef = useRef(escape);
+  useEffect(() => {
+    escapeRef.current = escape;
+  });
+  useEffect(() => {
+    if (!handle) return;
+    handle.current = {
+      escape: () => escapeRef.current(),
+      flushDrafts: () => saveRef.current(),
+    };
+    return () => {
+      handle.current = null;
+    };
+  }, [handle]);
 
   const changeLink = (value: string) => {
     linkCard(card.id, value === NO_LINK ? null : parseLinkValue(value)).catch(
@@ -387,16 +446,18 @@ export function CardDetail({
 
   return (
     <aside
+      ref={asideRef}
+      tabIndex={-1}
       data-card-drawer=""
       aria-label={`Card #${card.number}`}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
           event.preventDefault();
-          close();
+          escape();
         }
       }}
       data-full-page={fullPage ? "" : undefined}
-      className={`flex min-h-0 flex-col bg-background-base/40 ${fullPage ? "min-w-0 flex-1" : "w-[380px] shrink-0 border-l border-stroke"}`}
+      className={`flex min-h-0 flex-col bg-background-base/40 outline-none ${fullPage ? "min-w-0 flex-1" : "w-[380px] shrink-0 border-l border-stroke"}`}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-stroke px-3">
         <span className="min-w-0 flex-1 truncate text-[12px] text-content/50">
@@ -419,7 +480,9 @@ export function CardDetail({
         ) : null}
         {renderMore ? (
           <MenuButton label="More actions" width={240}>
-            {(closeMenu) => renderMore(closeMenu, saveFields, dropDrafts)}
+            {(closeMenu) =>
+              renderMore(closeMenu, () => saveFields(), dropDrafts)
+            }
           </MenuButton>
         ) : null}
         <CloseButton onClick={close} />
@@ -435,7 +498,7 @@ export function CardDetail({
             draft.current.title = event.target.value;
             setTitle(event.target.value);
           }}
-          onBlur={saveFields}
+          onBlur={() => void saveFields()}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.nativeEvent.isComposing) {
               event.preventDefault();
@@ -447,7 +510,7 @@ export function CardDetail({
         <div className="flex flex-col">
           <PropertyRow name="status" label="Status">
             <MenuButton
-              label="Status"
+              label={`Status: ${columnName ?? "None"}`}
               className={PROPERTY_TRIGGER}
               trigger={<span className="truncate">{columnName ?? "None"}</span>}
             >
@@ -469,7 +532,7 @@ export function CardDetail({
           </PropertyRow>
           <PropertyRow name="priority" label="Priority">
             <MenuButton
-              label="Priority"
+              label={`Priority: ${priorityName(scheme, priority)}`}
               className={PROPERTY_TRIGGER}
               trigger={
                 <span className="truncate">
@@ -488,7 +551,7 @@ export function CardDetail({
           </PropertyRow>
           <PropertyRow name="due" label="Due">
             <MenuButton
-              label="Due"
+              label={`Due: ${due?.text ?? "None"}`}
               className={PROPERTY_TRIGGER}
               trigger={<span className="truncate">{due?.text ?? "None"}</span>}
             >
@@ -505,7 +568,7 @@ export function CardDetail({
           <StartAndEstimateRows card={card} onError={onError} />
           <PropertyRow name="projects" label="Projects">
             <MenuButton
-              label="Projects"
+              label={`Projects: ${cardProjects.length ? cardProjects.join(", ") : "None"}`}
               width={240}
               className={PROPERTY_TRIGGER}
               trigger={
@@ -538,7 +601,7 @@ export function CardDetail({
           </PropertyRow>
           <PropertyRow name="labels" label="Labels">
             <MenuButton
-              label="Labels"
+              label={`Labels: ${cardLabels.length ? cardLabels.map((label) => label.name).join(", ") : "None"}`}
               width={240}
               className={PROPERTY_TRIGGER}
               trigger={
@@ -666,6 +729,7 @@ export function CardDetail({
         <LinksSection
           card={card}
           linkTargets={linkTargets}
+          resolveLinkTarget={resolveLinkTarget}
           onOpenLinkedWork={onOpenLinkedWork}
           onError={onError}
         />
@@ -691,7 +755,7 @@ export function CardDetail({
               draft.current.body = event.target.value;
               setBody(event.target.value);
             }}
-            onBlur={saveFields}
+            onBlur={() => void saveFields()}
             className={`${FIELD} resize-y py-2`}
           />
         </div>
@@ -713,6 +777,8 @@ export function CardDetail({
                 key={id}
                 type="button"
                 role="tab"
+                id={`${tabIds}-${id}-tab`}
+                aria-controls={`${tabIds}-${id}-panel`}
                 aria-selected={tab === id}
                 onClick={() => setTab(id)}
                 className={`-mb-px h-8 border-b-2 px-2 text-[12px] ${tab === id ? "border-accent text-content" : "border-transparent text-content/50 hover:text-content"}`}
@@ -721,35 +787,41 @@ export function CardDetail({
               </button>
             ))}
           </div>
-          {tab === "comments" ? (
-            <Comments
-              cardId={card.id}
-              boardId={card.boardId}
-              number={card.number}
-              onError={onError}
-            />
-          ) : (
-            <div className="flex flex-col gap-1">
-              {activity?.rows.length ? (
-                <ol data-card-activity="" className="flex flex-col gap-1">
-                  {activity.rows.map((row) => (
-                    <li key={row.id} className="text-[12px] text-content/70">
-                      {activityText(row)}
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-              {activity?.failed ? (
-                <span className="text-[12px] text-diff-del-fg/80">
-                  Couldn't load activity
-                </span>
-              ) : activity && !activity.rows.length ? (
-                <span className="text-[12px] text-content/45">
-                  No activity yet
-                </span>
-              ) : null}
-            </div>
-          )}
+          <div
+            role="tabpanel"
+            id={`${tabIds}-${tab}-panel`}
+            aria-labelledby={`${tabIds}-${tab}-tab`}
+          >
+            {tab === "comments" ? (
+              <Comments
+                cardId={card.id}
+                boardId={card.boardId}
+                number={card.number}
+                onError={onError}
+              />
+            ) : (
+              <div className="flex flex-col gap-1">
+                {activity?.rows.length ? (
+                  <ol data-card-activity="" className="flex flex-col gap-1">
+                    {activity.rows.map((row) => (
+                      <li key={row.id} className="text-[12px] text-content/70">
+                        {activityText(row)}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+                {activity?.failed ? (
+                  <span className="text-[12px] text-diff-del-fg/80">
+                    Couldn't load activity
+                  </span>
+                ) : activity && !activity.rows.length ? (
+                  <span className="text-[12px] text-content/45">
+                    No activity yet
+                  </span>
+                ) : null}
+              </div>
+            )}
+          </div>
         </section>
       </div>
       <div className="flex h-11 shrink-0 items-center justify-end border-t border-stroke px-3">

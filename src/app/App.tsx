@@ -29,6 +29,15 @@ import { useIdleSessionDetach } from "./hooks/useIdleSessionDetach";
 import { HarnessEventQueue } from "./model/harnessFlush";
 import { noteStreamApplied } from "../features/sessions/model/streamingPerformance";
 import { updateSessionState } from "./model/sessionState";
+import {
+  getComposerDraft,
+  setComposerDraft,
+} from "../features/sessions/model/draftCache";
+import {
+  NEW_SESSION_FROM_TICKET_ACTION,
+  type TicketSessionHost,
+} from "../features/sessions/model/ticketSession";
+import { NewSessionFromTicketDialog } from "../features/sessions/ui/NewSessionFromTicketDialog";
 import { beginTabSwitch, commitTabSwitch } from "./model/navigationPerformance";
 import {
   SessionStateContext,
@@ -948,7 +957,9 @@ const AutomationsView = lazySurface(
   },
   { suspense: false },
 );
+const SESSION_PALETTE_ACTIONS = [NEW_SESSION_FROM_TICKET_ACTION] as const;
 const BOARD_PALETTE_ACTIONS = [
+  ...SESSION_PALETTE_ACTIONS,
   { id: "board-create-card", label: "Create card" },
   { id: "board-go-to", label: "Go to board" },
   { id: "board-switch", label: "Switch board…" },
@@ -6189,6 +6200,58 @@ function Workspace({
     },
     [history, invalidateLoadedSession, refreshHistory, sidebarCwd],
   );
+
+  // "New session from ticket…": a local session in the active project, its
+  // ticket linked through setSessionLinkedWorkItem and the key (later the
+  // title) as an unsent draft.
+  const [ticketSessionOpen, setTicketSessionOpen] = useState(false);
+  const ticketSessionHost = useMemo<TicketSessionHost>(() => {
+    const setSeed = (sessionId: string, composerSeed: string) =>
+      updateSessionState(sessionsRef, setSessions, (sessions) =>
+        sessions.map((session) =>
+          session.id === sessionId ? { ...session, composerSeed } : session,
+        ),
+      );
+    return {
+      createSession: (draft) => {
+        setSearchViewOpen(false);
+        setInboxViewOpen(false);
+        setNotesViewOpen(false);
+        setAutomationsViewOpen(false);
+        setBoardViewOpen(false);
+        const cwd = sidebarCwd;
+        const session = {
+          ...newWorkspaceSession(cwd, sessionDefaults?.runtimeMode),
+          composerSeed: draft,
+        };
+        const tab = newTab(session.id);
+        updateSessionState(sessionsRef, setSessions, (sessions) => [
+          ...sessions,
+          session,
+        ]);
+        setComposerDraft(session.id, draft);
+        appendTab(tab, cwd);
+        setActiveTabId(tab.id);
+        setComposerFocused(true);
+        return session.id;
+      },
+      link: (sessionId, item) =>
+        onSetHistorySessionLinkedWorkItem(sessionId, item),
+      linkedWorkItem: (sessionId) =>
+        sessionsRef.current.find((session) => session.id === sessionId)
+          ?.linkedWorkItem,
+      draft: (sessionId) => getComposerDraft(sessionId),
+      setDraft: (sessionId, text) => {
+        setComposerDraft(sessionId, text);
+        setSeed(sessionId, text);
+      },
+    };
+  }, [
+    appendTab,
+    onSetHistorySessionLinkedWorkItem,
+    sessionDefaults?.runtimeMode,
+    sidebarCwd,
+  ]);
 
   const onArchiveHistorySessions = useCallback(
     async (sessionIds: readonly string[], archived: boolean) => {
@@ -15259,14 +15322,26 @@ function Workspace({
               openPaths={openFilePaths}
               initialQuery={filePickerInitialQuery}
               onOpenFile={onOpenFile}
-              extraActions={boardEnabled ? BOARD_PALETTE_ACTIONS : undefined}
+              extraActions={
+                boardEnabled ? BOARD_PALETTE_ACTIONS : SESSION_PALETTE_ACTIONS
+              }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
+                else if (id === NEW_SESSION_FROM_TICKET_ACTION.id)
+                  setTicketSessionOpen(true);
                 else if (id === "board-create-card") onBoardCommand("new-card");
                 else if (id === "board-go-to") onOpenBoard();
                 else if (id === "board-switch") onBoardCommand("switch-board");
               }}
               onClose={() => setFilePickerOpen(false)}
+            />
+          ) : null}
+
+          {ticketSessionOpen ? (
+            <NewSessionFromTicketDialog
+              host={ticketSessionHost}
+              description={projectName(sidebarCwd)}
+              onClose={() => setTicketSessionOpen(false)}
             />
           ) : null}
 

@@ -3,17 +3,17 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  BoardCard,
-  BoardColumn,
-  BoardDetail,
-  BoardLabel,
-  CardExtras,
-  ColumnRole,
-  ViewSpec,
-} from "../model/board";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { BoardView } from "./BoardView";
+import { waitForSearch } from "./testBackend";
+import {
+  BOARD,
+  COLUMNS,
+  createTestBackend,
+  extra,
+  flush,
+  type TestBackend,
+} from "./testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const events = vi.hoisted(() => ({
@@ -32,128 +32,7 @@ vi.mock("../../../app/shell/WindowControls", () => ({
   WindowControls: () => null,
 }));
 
-const DAY = 86_400_000;
-const BOARD = { id: "b1", name: "Agents", createdAt: 1, updatedAt: 1 };
-const OTHER = { id: "b2", name: "Releases", createdAt: 2, updatedAt: 2 };
-
-const column = (
-  id: string,
-  name: string,
-  position: number,
-  role: ColumnRole | null,
-): BoardColumn => ({
-  id,
-  boardId: "b1",
-  name,
-  position,
-  role,
-  color: null,
-  wipLimit: null,
-  collapsed: false,
-});
-const COLUMNS = [
-  column("backlog", "Backlog", 0, "todo"),
-  column("progress", "In Progress", 1, "doing"),
-  column("review", "Review", 2, "review"),
-  column("done", "Done", 3, "done"),
-];
-const card = (
-  id: string,
-  columnId: string,
-  position: number,
-  number: number,
-  title: string,
-): BoardCard => ({
-  id,
-  boardId: "b1",
-  columnId,
-  number,
-  title,
-  body: "",
-  position,
-  linkKind: null,
-  linkId: null,
-  createdAt: 1,
-  updatedAt: Date.now(),
-});
-const extra = (over: Partial<CardExtras> = {}): CardExtras => ({
-  priority: 0,
-  dueAt: null,
-  projects: [],
-  labels: [],
-  subtasksDone: 0,
-  subtasksTotal: 0,
-  comments: 0,
-  ...over,
-});
-const LABELS: BoardLabel[] = [
-  { id: "l1", boardId: "b1", name: "Bug", color: "e5484d", position: 0 },
-  { id: "l2", boardId: "b1", name: "UI", color: "3e63dd", position: 1 },
-];
-
-type Handler = (args: Record<string, unknown>) => unknown;
-let handlers: Record<string, Handler>;
-// The backend's cards, extras and archived ids: tests change them to play the other app.
-let cards: BoardCard[];
-let extras: Record<string, CardExtras>;
-let archived: Set<string>;
-let savedViews: Record<string, unknown>[];
-
-const live = () => cards.filter((c) => !archived.has(c.id));
-
-/** Stands in for `board_query`: title text, status and label rows, priority and title sorts. */
-function fakeEngine(args: Record<string, unknown>): string[] {
-  const spec = args.spec as ViewSpec;
-  const order = new Map(COLUMNS.map((c) => [c.id, c.position]));
-  const manual = [...live()].sort(
-    (a, b) =>
-      (order.get(a.columnId) ?? 0) - (order.get(b.columnId) ?? 0) ||
-      a.position - b.position,
-  );
-  const q = spec.query.trim().toLowerCase();
-  const kept = manual.filter(
-    (c) =>
-      (!q || c.title.toLowerCase().includes(q)) &&
-      spec.rows.every((row) => {
-        const held =
-          row.field === "status"
-            ? [c.columnId]
-            : row.field === "labels"
-              ? (extras[c.id]?.labels ?? [])
-              : [String(extras[c.id]?.priority ?? 0)];
-        const hit = held.some((v) => row.values.includes(v));
-        return row.op === "is" ? hit : !hit;
-      }),
-  );
-  const { key, dir } = spec.sort;
-  if (key === "manual") return kept.map((c) => c.id);
-  const value = (c: BoardCard) =>
-    key === "title" ? c.title.toLowerCase() : (extras[c.id]?.priority ?? 0);
-  return kept
-    .map((c, index) => ({ c, index, v: value(c) }))
-    .sort((a, b) =>
-      a.v === b.v
-        ? a.index - b.index
-        : (a.v < b.v ? -1 : 1) * (dir === "desc" ? -1 : 1),
-    )
-    .map(({ c }) => c.id);
-}
-
-function seed() {
-  cards = [
-    card("c1", "backlog", 0, 1, "Fix login"),
-    card("c2", "backlog", 1, 2, "Write docs"),
-    card("c3", "progress", 0, 3, "Ship board"),
-    card("c4", "done", 0, 4, "Deploy"),
-  ];
-  extras = {
-    c1: extra({ priority: 3, labels: ["l1"], dueAt: Date.now() + 3 * DAY }),
-    c2: extra({ priority: 1, labels: ["l1", "l2"] }),
-    c4: extra({ priority: 2 }),
-  };
-  archived = new Set();
-}
-
+let backend: TestBackend;
 let container: HTMLDivElement;
 let root: Root;
 
@@ -167,92 +46,7 @@ beforeEach(() => {
     clear: () => stored.clear(),
   });
   events.listeners.clear();
-  seed();
-  savedViews = [];
-  handlers = {
-    board_query: fakeEngine,
-    board_views: () => savedViews,
-    board_list: () => [BOARD, OTHER],
-    board_get: (args) =>
-      args.boardId === "b2"
-        ? {
-            board: OTHER,
-            columns: [{ ...column("t2", "Todo", 0, "todo"), boardId: "b2" }],
-            cards: [],
-          }
-        : { board: BOARD, columns: COLUMNS, cards: live() },
-    board_activity: () => [],
-    board_card_extras: () => extras,
-    board_labels: () => LABELS,
-    board_subtasks: () => [],
-    board_comments: () => [],
-    board_card_meta: () => ({
-      priority: 0,
-      dueAt: null,
-      startAt: null,
-      estimateMinutes: null,
-      archivedAt: null,
-      completedAt: null,
-    }),
-    board_fields: () => [],
-    board_card_field_values: () => [],
-    board_card_relations: () => [],
-    board_card_links: () => [],
-    board_card_index: () => [],
-    board_card_archive: (args) => {
-      archived.add(String(args.cardId));
-    },
-    board_cards_archive: (args) => {
-      for (const id of args.cardIds as string[]) archived.add(id);
-    },
-    board_card_restore: (args) => {
-      archived.delete(String(args.cardId));
-    },
-    board_card_delete_archived: (args) => {
-      const id = String(args.cardId);
-      if (archived.has(id)) cards = cards.filter((c) => c.id !== id);
-    },
-    board_archived_cards: () => cards.filter((c) => archived.has(c.id)),
-    board_cards_set_priority: () => undefined,
-    board_cards_set_label: () => undefined,
-    board_cards_move: () => undefined,
-    board_card_update: () => undefined,
-    board_card_set_priority: () => undefined,
-    board_card_set_due: () => undefined,
-    board_card_set_labels: () => undefined,
-    board_card_move: () => undefined,
-    board_view_create: (args) => {
-      const view = {
-        id: `v${savedViews.length + 1}`,
-        boardId: "b1",
-        name: String(args.name),
-        position: savedViews.length,
-        specJson: String(args.specJson),
-        layoutJson: String(args.layoutJson),
-        createdAt: 1,
-        updatedAt: 1,
-      };
-      savedViews = [...savedViews, view];
-      return view;
-    },
-    board_view_update: (args) => {
-      savedViews = savedViews.map((view) =>
-        view.id === args.viewId
-          ? {
-              ...view,
-              layoutJson: (args.layoutJson as string | null) ?? view.layoutJson,
-              specJson: (args.specJson as string | null) ?? view.specJson,
-            }
-          : view,
-      );
-    },
-  };
-  vi.mocked(invoke).mockReset();
-  vi.mocked(invoke).mockImplementation(async (cmd, args) => {
-    const handler = handlers[cmd];
-    if (!handler) throw new Error(`unexpected command ${cmd}`);
-    return handler((args ?? {}) as Record<string, unknown>);
-  });
+  backend = createTestBackend(events.listeners);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -265,12 +59,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-async function flush() {
-  await act(async () => {
-    for (let i = 0; i < 6; i += 1) await Promise.resolve();
-  });
-}
 
 async function renderBoard() {
   const props: ComponentProps<typeof BoardView> = {
@@ -289,11 +77,7 @@ async function renderBoard() {
 const commands = (cmd: string) =>
   vi.mocked(invoke).mock.calls.filter(([name]) => name === cmd);
 
-function emitBoardChanged() {
-  for (const listener of [...events.listeners]) {
-    listener({ payload: { boardId: "b1" } });
-  }
-}
+const emitBoardChanged = () => backend.emitBoardChanged();
 
 const MOD: MouseEventInit = IS_MAC ? { metaKey: true } : { ctrlKey: true };
 
@@ -344,6 +128,7 @@ async function search(value: string) {
     container.querySelector<HTMLInputElement>('input[aria-label="Search cards"]')!,
     value,
   );
+  await waitForSearch();
   await flush();
 }
 
@@ -458,7 +243,7 @@ describe("List layout", () => {
 
 describe("layout state in the view", () => {
   it("marks the view dirty and saves layout, groupBy and collapsed, keeping unknown keys", async () => {
-    savedViews = [
+    backend.savedViews = [
       {
         id: "v1",
         boardId: "b1",
@@ -502,7 +287,7 @@ describe("layout state in the view", () => {
   });
 
   it("returning to the saved layout clears the dot", async () => {
-    savedViews = [
+    backend.savedViews = [
       {
         id: "v1",
         boardId: "b1",
@@ -645,8 +430,8 @@ describe("Table layout", () => {
     await click(q('button[aria-label="Edit title of #1"]'));
     typeInto(q('input[aria-label="Title of #1"]') as HTMLInputElement, "Half typed");
     // The other app changes the board.
-    cards = cards.map((c) => (c.id === "c2" ? { ...c, title: "Docs v2" } : c));
-    extras.c2 = extra({ priority: 4 });
+    backend.cards = backend.cards.map((c) => (c.id === "c2" ? { ...c, title: "Docs v2" } : c));
+    backend.extras.c2 = extra({ priority: 4 });
     emitBoardChanged();
     await flush();
     expect(
@@ -663,7 +448,7 @@ describe("Table layout", () => {
 
   it("an untouched Enter does not overwrite a remote rename", async () => {
     await click(q('button[aria-label="Edit title of #1"]'));
-    cards = cards.map((c) => (c.id === "c1" ? { ...c, title: "Renamed away" } : c));
+    backend.cards = backend.cards.map((c) => (c.id === "c1" ? { ...c, title: "Renamed away" } : c));
     emitBoardChanged();
     await flush();
     press(q('input[aria-label="Title of #1"]'), "Enter");
@@ -675,7 +460,7 @@ describe("Table layout", () => {
   it("closes the edit when its card is deleted remotely", async () => {
     await click(q('button[aria-label="Edit title of #1"]'));
     typeInto(q('input[aria-label="Title of #1"]') as HTMLInputElement, "Lost");
-    cards = cards.filter((c) => c.id !== "c1");
+    backend.cards = backend.cards.filter((c) => c.id !== "c1");
     emitBoardChanged();
     await flush();
     expect(q('input[aria-label="Title of #1"]')).toBeNull();
@@ -782,12 +567,12 @@ describe("bulk select", () => {
     await click(boardCard("c1"), MOD);
     await click(boardCard("c3"), MOD);
     expect(selectedCount()).toBe("2 selected");
-    handlers.board_get = () => ({
+    backend.handlers.board_get = () => ({
       board: BOARD,
       columns: COLUMNS.map((c) =>
         c.id === "progress" ? { ...c, collapsed: true } : c,
       ),
-      cards: live(),
+      cards: backend.live(),
     });
     emitBoardChanged();
     await flush();
@@ -822,7 +607,7 @@ describe("bulk select", () => {
     await renderBoard();
     await click(boardCard("c1"), MOD);
     await click(boardCard("c2"), MOD);
-    cards = cards.filter((c) => c.id !== "c1");
+    backend.cards = backend.cards.filter((c) => c.id !== "c1");
     emitBoardChanged();
     await flush();
     expect(selectedCount()).toBe("1 selected");
@@ -842,7 +627,7 @@ describe("bulk select", () => {
       ["board_cards_set_label", { cardIds: ["c1", "c3"], labelId: "l1", on: true }],
     ]);
     // When every selected card has it, choosing it removes it.
-    extras.c3 = extra({ labels: ["l1"] });
+    backend.extras.c3 = extra({ labels: ["l1"] });
     emitBoardChanged();
     await flush();
     await pick("Labels for selected", "Bug");
@@ -926,7 +711,7 @@ describe("bulk select", () => {
         { cardId: "c2" },
       ]);
       expect(toast().textContent).toContain("Deleted 2 cards");
-      expect(cards.map((c) => c.id)).toEqual(["c3", "c4"]);
+      expect(backend.cards.map((c) => c.id)).toEqual(["c3", "c4"]);
     });
 
     it("a single-card delete after a bulk one commits the bulk one", async () => {
@@ -1034,18 +819,14 @@ describe("Escape layering", () => {
 });
 
 describe("windowing", () => {
-  // The board layout is not windowed, so mounting it with 1,000 cards costs
-  // seconds and is not what these tests cover. Open the layout under test on
-  // the small seed first, then grow the backend to 1,000 cards and let the
-  // board-changed refresh feed them to the windowed layout.
+  // Open the layout under test on the small seed first, then grow the
+  // backend to 1,000 cards in one column and let the board-changed refresh
+  // feed them to the windowed layout.
   async function openWithThousand(layout: "List" | "Table") {
     await renderBoard();
     await pick("Layout", layout);
-    cards = Array.from({ length: 1000 }, (_, i) =>
-      card(`k${i}`, "backlog", i, i + 1, `Card ${i + 1}`),
-    );
-    extras = {};
-    expect(cards).toHaveLength(1000);
+    backend.seedThousand(1);
+    expect(backend.cards).toHaveLength(1000);
     emitBoardChanged();
     await flush();
     await flush();
@@ -1410,7 +1191,7 @@ describe("palette commands", () => {
   });
 
   it("drops a command when there are no boards", async () => {
-    handlers.board_list = () => [];
+    backend.handlers.board_list = () => [];
     const handled = await renderWith({ id: "new-card", nonce: 4 });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(handled).toHaveBeenCalledWith(4);

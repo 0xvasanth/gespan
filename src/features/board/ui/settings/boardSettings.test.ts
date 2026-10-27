@@ -16,6 +16,7 @@ import type {
 } from "../../model/board";
 import type { KanbanBoardProps } from "../kanban/KanbanBoard";
 import { BoardView } from "../BoardView";
+import { waitForSearch } from "../testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const events = vi.hoisted(() => ({
@@ -208,6 +209,7 @@ beforeEach(() => {
     board_column_move: () => undefined,
     board_column_delete: () => undefined,
     board_column_set_display: () => undefined,
+    board_column_update_display: () => undefined,
     board_column_card_count: () => ({ live: 0, archived: 0 }),
     board_cards_move: () => undefined,
     board_card_move: () => undefined,
@@ -525,15 +527,10 @@ describe("settings page: columns", () => {
     ]);
 
     await click(byLabel(byLabel(row("backlog"), "Column colour"), "Red"));
-    expect(commands("board_column_set_display")).toEqual([
+    expect(commands("board_column_update_display")).toEqual([
       [
-        "board_column_set_display",
-        {
-          columnId: "backlog",
-          color: "e5534b",
-          wipLimit: null,
-          collapsed: false,
-        },
+        "board_column_update_display",
+        { columnId: "backlog", patch: { color: "e5534b" } },
       ],
     ]);
 
@@ -574,7 +571,7 @@ describe("settings page: columns", () => {
     expect(buttonNamed(row("done"), "Move down").disabled).toBe(true);
   });
 
-  it("sets and clears a WIP limit, keeping colour and collapsed state", async () => {
+  it("sets and clears a WIP limit with a patch that leaves colour and collapsed state alone", async () => {
     detail.columns[1] = column("progress", "In Progress", 1, "doing", {
       color: "3fb950",
       collapsed: false,
@@ -583,19 +580,16 @@ describe("settings page: columns", () => {
     await openSettings();
     const input = byLabel<HTMLInputElement>(row("progress"), "WIP limit");
     await type(input, "3");
-    expect(lastArgs("board_column_set_display")).toEqual({
+    expect(lastArgs("board_column_update_display")).toEqual({
       columnId: "progress",
-      color: "3fb950",
-      wipLimit: 3,
-      collapsed: false,
+      patch: { wipLimit: 3 },
     });
     await type(input, "");
-    expect(lastArgs("board_column_set_display")).toEqual({
+    expect(lastArgs("board_column_update_display")).toEqual({
       columnId: "progress",
-      color: "3fb950",
-      wipLimit: null,
-      collapsed: false,
+      patch: { wipLimit: null },
     });
+    expect(commands("board_column_set_display")).toEqual([]);
   });
 
   it("refuses a limit of 0 or a non-number without writing", async () => {
@@ -604,6 +598,7 @@ describe("settings page: columns", () => {
     const input = byLabel<HTMLInputElement>(row("progress"), "WIP limit");
     await type(input, "0");
     await type(input, "abc");
+    expect(commands("board_column_update_display")).toEqual([]);
     expect(commands("board_column_set_display")).toEqual([]);
     expect(alertText()).toContain("WIP limit");
   });
@@ -731,10 +726,12 @@ describe("board columns", () => {
       'input[aria-label="Search cards"]',
     )!;
     await type(search, "card 1", false);
+    await waitForSearch();
     // One of three shown; the limit (2) still compares against the total (3).
     expect(countOf("backlog")).toBe("1/3");
     expect(columnEl("backlog").querySelector("[data-wip-over]")).not.toBeNull();
     await type(search, "", false);
+    await waitForSearch();
     expect(countOf("backlog")).toBe("3/2");
   });
 

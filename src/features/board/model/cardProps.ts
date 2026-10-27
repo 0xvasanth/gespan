@@ -6,13 +6,20 @@ const MAX_ESTIMATE = 6_000_000;
 export type Parsed<T extends object> =
   ({ ok: true } & T) | { ok: false; error: string };
 
-/** An estimate typed as `90`, `90m`, `1h`, `1h 30m` or `1.5h`, in minutes. */
+/** The one hint for an estimate that isn't a time, the same in both apps. */
+export const ESTIMATE_HELP = "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h";
+
+/** A number before an `h` or `m`: `1`, `1.5`, `.5`, never `1.` or `1.2.3`. */
+const UNIT_NUMBER = /^(\d+(\.\d+)?|\.\d+)$/;
+
+/**
+ * An estimate typed as `90`, `90m`, `1h`, `1h 30m`, `1.5h` or `.5h`, in
+ * minutes rounded to the minute. Hex, exponents, signs, a bare decimal and a
+ * unit with no number are refused with `ESTIMATE_HELP`.
+ */
 export function parseEstimate(input: string): Parsed<{ minutes: number }> {
   const text = input.trim().toLowerCase();
-  const bad = {
-    ok: false as const,
-    error: `“${text}” is not a time like 90m or 1h 30m`,
-  };
+  const bad = { ok: false as const, error: ESTIMATE_HELP };
   if (!text) return bad;
   let total = 0;
   if (/^\d+$/.test(text)) {
@@ -25,14 +32,8 @@ export function parseEstimate(input: string): Parsed<{ minutes: number }> {
       if ((c >= "0" && c <= "9") || c === ".") {
         number += c;
       } else if (c === "h" || c === "m") {
+        if (!UNIT_NUMBER.test(number)) return bad;
         const value = Number(number);
-        if (
-          !number ||
-          !Number.isFinite(value) ||
-          /^\.|\.$|\..*\./.test(number)
-        ) {
-          return bad;
-        }
         number = "";
         if (c === "h") {
           if (seenHours) return bad;
@@ -167,7 +168,8 @@ export function encodeField(
     return { ok: true, value: JSON.stringify(text) };
   }
   if (kind === "number") {
-    const number = Number(text);
+    // Plain decimals only: `Number` would also take `0x10`, `1e3` and `0b11`.
+    const number = FIELD_NUMBER.test(text) ? Number(text) : NaN;
     if (!Number.isFinite(number)) {
       return { ok: false, error: `“${text}” is not a number` };
     }
@@ -184,6 +186,9 @@ export function encodeField(
   }
   return { ok: false, error: `Can't type a ${kind} value` };
 }
+
+/** A typed number field value: an optional minus, then `42`, `2.5` or `.5`. */
+const FIELD_NUMBER = /^-?(\d+(\.\d+)?|\.\d+)$/;
 
 /** Text and URL values hold at most this many characters. */
 export const FIELD_TEXT_MAX = 2000;
@@ -286,7 +291,18 @@ export function validPrUrl(text: string): boolean {
   return /^https?:\/\/[^/\s]\S*$/i.test(text) && !/\s/.test(text);
 }
 
-/** The card's links but the primary one, which the Linked work row shows. */
-export function visibleLinks(links: readonly CardLinkRow[]): CardLinkRow[] {
-  return links.filter((link) => link.role !== "primary");
+/**
+ * The card's links but the primary one, which the Linked work row shows. An
+ * extra link that is also the primary (`primary` is the card's
+ * `linkKind`/`linkId`) is left out too, so it shows once.
+ */
+export function visibleLinks(
+  links: readonly CardLinkRow[],
+  primary: { kind: string | null; id: string | null } = { kind: null, id: null },
+): CardLinkRow[] {
+  return links.filter(
+    (link) =>
+      link.role !== "primary" &&
+      !(link.kind === primary.kind && link.reference === primary.id),
+  );
 }

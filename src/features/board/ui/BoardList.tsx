@@ -12,7 +12,7 @@ import {
   type Group,
   type GroupBy,
 } from "../model/layout";
-import { useWindowedRows } from "../model/windowing";
+import { rowsWithPinned, useWindowedRows } from "../model/windowing";
 import { dueChip } from "./boardFormat";
 import { priorityName } from "../model/boardSettings";
 import { usePriorityScheme } from "./priorityScheme";
@@ -35,6 +35,7 @@ export function BoardList({
   groupBy,
   collapsed,
   selected,
+  focusedCardId = null,
   onToggleGroup,
   onRowClick,
 }: {
@@ -47,6 +48,8 @@ export function BoardList({
   groupBy: GroupBy;
   collapsed: readonly string[];
   selected: ReadonlySet<string>;
+  /** The card whose row holds focus: kept mounted when scrolled away (R81). */
+  focusedCardId?: string | null;
   onToggleGroup: (key: string) => void;
   /** A click on a card row: the board decides between selecting and opening. */
   onRowClick: (event: MouseEvent<HTMLElement>, card: BoardCard) => void;
@@ -78,6 +81,15 @@ export function BoardList({
   }, [cards, columns, extras, labels, projects, groupBy, collapsed, scheme]);
 
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT });
+  const pinned = useMemo(
+    () =>
+      focusedCardId
+        ? rows.flatMap((row, i) =>
+            row.kind === "card" && row.card.id === focusedCardId ? [i] : [],
+          )
+        : [],
+    [rows, focusedCardId],
+  );
   const columnName = (id: string) =>
     columns.find((column) => column.id === id)?.name ?? "";
 
@@ -91,10 +103,11 @@ export function BoardList({
       className="h-full min-h-0 overflow-y-auto"
     >
       <div style={{ height: win.totalHeight, position: "relative" }}>
-        {rows.slice(win.start, win.end).map((row, offset) => {
+        {rowsWithPinned(win.start, win.end, pinned).map((index) => {
+          const row = rows[index];
           const style = {
             position: "absolute" as const,
-            top: (win.start + offset) * ROW_HEIGHT,
+            top: index * ROW_HEIGHT,
             height: ROW_HEIGHT,
             left: 0,
             right: 0,

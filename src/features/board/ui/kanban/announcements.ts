@@ -128,8 +128,12 @@ export function kanbanAnnouncements(
     return { column: found.column, place: { ...found.place, index } };
   }
 
+  // A drag starts over its own place: saying so would talk over "Picked up".
+  let quietOverSelf = false;
+
   return {
     onDragStart({ active }) {
+      quietOverSelf = true;
       const card = cardAt(startBoard(), active);
       if (card) return cardPickedUp(card.card, card.place);
       const column = columnAt(startBoard(), active);
@@ -137,6 +141,9 @@ export function kanbanAnnouncements(
       return undefined;
     },
     onDragOver({ active, over }) {
+      const first = quietOverSelf;
+      quietOverSelf = false;
+      if (first && over?.id === active.id) return undefined;
       const landed = cardLanding(active, over);
       if (landed)
         return over

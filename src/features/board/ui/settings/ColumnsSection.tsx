@@ -5,7 +5,7 @@ import {
   deleteColumn,
   moveCards,
   moveColumn,
-  setColumnDisplay,
+  updateColumnDisplay,
   updateColumn,
   type BoardCard,
   type BoardColumn,
@@ -171,13 +171,10 @@ export function ColumnsSection({
                       );
                       return false;
                     }
+                    // A patch: the colour and collapsed state stay as stored,
+                    // whatever this page last read.
                     void run("set the WIP limit", () =>
-                      setColumnDisplay(
-                        column.id,
-                        column.color,
-                        limit,
-                        column.collapsed,
-                      ),
+                      updateColumnDisplay(column.id, { wipLimit: limit }),
                     );
                   }}
                 />
@@ -205,12 +202,7 @@ export function ColumnsSection({
               value={column.color}
               onChange={(color) =>
                 void run("recolour the column", () =>
-                  setColumnDisplay(
-                    column.id,
-                    color,
-                    column.wipLimit ?? null,
-                    column.collapsed,
-                  ),
+                  updateColumnDisplay(column.id, { color }),
                 )
               }
             />

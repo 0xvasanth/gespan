@@ -67,7 +67,6 @@ import {
   listArchivedCards,
   moveCards,
   restoreCard,
-  setColumnDisplay,
   updateColumnDisplay,
   unarchiveCard,
   setCardDue,
@@ -211,12 +210,6 @@ describe("card extras wrappers", () => {
       () => moveCards(["c1"], "col1", 3, "system"),
       "board_cards_move",
       { cardIds: ["c1"], columnId: "col1", index: 3, actor: "system" },
-    ],
-    [
-      "setColumnDisplay",
-      () => setColumnDisplay("col1", null, 5, true),
-      "board_column_set_display",
-      { columnId: "col1", color: null, wipLimit: 5, collapsed: true },
     ],
     [
       "updateColumnDisplay collapsing only",

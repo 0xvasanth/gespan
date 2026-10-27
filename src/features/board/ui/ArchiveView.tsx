@@ -77,8 +77,9 @@ export function ArchiveView({
       );
   };
 
+  const held = new Set(pendingDeletes);
   const shown = (cards ?? []).filter(
-    (card) => card.id !== pendingDelete && !pendingDeletes.includes(card.id),
+    (card) => card.id !== pendingDelete && !held.has(card.id),
   );
 
   return (

@@ -40,9 +40,10 @@ import {
   fieldDistinctValues,
   getBlockedCards,
   getRunningCards,
-  listActivity,
+  getLatestRunEvents,
   listBoardLinks,
   type CardLinkRow,
+  type LinkedWorkEvent,
   type CardLinkKind,
   getBoardSettings,
   setFieldValue,
@@ -60,7 +61,7 @@ import {
   setCardPriority,
   setCardsLabel,
   setCardsPriority,
-  setColumnDisplay,
+  updateColumnDisplay,
   subscribeBoard,
   updateCard,
   updateColumn,
@@ -150,7 +151,7 @@ import {
   serializeDisplay,
   withLayoutDisplay,
 } from "../model/display";
-import { buildLanes, laneValue } from "../model/swimlanes";
+import { buildLanes, laneCells, laneOrder, laneValue } from "../model/swimlanes";
 import { fieldText } from "../model/cardProps";
 import { DisplayEditor } from "./settings/DisplayEditor";
 import { Swimlanes } from "./kanban/Swimlanes";
@@ -159,7 +160,6 @@ import { RunWithDialog } from "./RunWithDialog";
 import { agentValues, AGENT_FIELD_LABEL } from "../model/agentFields";
 import {
   extraKey,
-  latestEventByCard,
   pilotState,
   runningPairs,
   sessionState,
@@ -184,7 +184,8 @@ import {
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
-import { CardDetail } from "./CardDetail";
+import { CardDetail, type CardDrawerHandle } from "./CardDetail";
+import { SEARCH_DEBOUNCE_MS } from "../model/constants";
 import { NewCardModal } from "./NewCardModal";
 import { CardMoreItems, type MoreActions } from "./CardMoreMenu";
 import { KanbanBoard } from "./kanban/KanbanBoard";
@@ -211,7 +212,43 @@ function placeOf(
   return { place: [card.id, card.columnId, index], number: card.number };
 }
 
+/**
+ * Where each card sits now among its column's live cards, and its number:
+ * one pass over the board, so a bulk action on every card stays linear.
+ */
+function placesIn(
+  detail: BoardDetail,
+): Map<string, { place: Place; number: number }> {
+  const byColumn = new Map<string, BoardCard[]>();
+  for (const card of detail.cards) {
+    const list = byColumn.get(card.columnId);
+    if (list) list.push(card);
+    else byColumn.set(card.columnId, [card]);
+  }
+  const out = new Map<string, { place: Place; number: number }>();
+  for (const [columnId, list] of byColumn) {
+    list.sort((a, b) => a.position - b.position);
+    list.forEach((card, index) =>
+      out.set(card.id, { place: [card.id, columnId, index], number: card.number }),
+    );
+  }
+  return out;
+}
+
+
 const dragInProgress = () => !!document.querySelector("[data-dragging]");
+
+/** The card a focus event's target is, or sits in, in any layout. */
+function focusedRowOf(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const row = target.closest("[data-kanban-card], [data-card-id], [data-table-row]");
+  return (
+    row?.getAttribute("data-kanban-card") ??
+    row?.getAttribute("data-card-id") ??
+    row?.getAttribute("data-table-row") ??
+    null
+  );
+}
 
 const OPEN_BOARD_KEY = "gespan:open-board";
 
@@ -364,7 +401,11 @@ function BoardContent({
   const [tickets, setTickets] = useState<Record<string, TicketRef>>({});
   const [extras, setExtras] = useState<Record<string, CardExtras>>({});
   const [labels, setLabels] = useState<BoardLabel[]>([]);
+  // What the search box holds, and the search the board query runs: it
+  // catches up `SEARCH_DEBOUNCE_MS` after the last keystroke. Views, Escape
+  // and board switches set both at once.
   const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState("");
   const [rows, setRows] = useState<FilterRow[]>([]);
   const [sort, setSort] = useState<SortSpec>(EMPTY_SPEC.sort);
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
@@ -393,7 +434,9 @@ function BoardContent({
   // card's latest linked-work event, and what PR and worktree links report.
   const [boardLinks, setBoardLinks] = useState<CardLinkRow[]>([]);
   const [blocked, setBlocked] = useState<Record<string, number[]>>({});
-  const [latestEvent, setLatestEvent] = useState<Record<string, string>>({});
+  const [latestEvent, setLatestEvent] = useState<
+    Record<string, LinkedWorkEvent>
+  >({});
   const [linkExtra, setLinkExtra] = useState<Record<string, LinkExtra>>({});
   const [realRunning, setRealRunning] = useState<string[] | null>(null);
   const [settleTick, setSettleTick] = useState(0);
@@ -405,14 +448,49 @@ function BoardContent({
   const [newCardOpen, setNewCardOpen] = useState(false);
   const [switchSignal, setSwitchSignal] = useState(0);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  /** The card (board card, list or table row) holding keyboard focus. */
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [cardIndex, setCardIndex] = useState<ReadonlyMap<string, CardIndexRow>>(
     () => new Map(),
   );
   const rootRef = useRef<HTMLDivElement>(null);
+  /** The open drawer's handle: Escape from the board, draft flushes. */
+  const drawerHandle = useRef<CardDrawerHandle | null>(null);
+  /** The card whose drawer shows, as of the last render. */
+  const shownCardRef = useRef<BoardCard | null>(null);
+  /** The board whose last load failed (cleared when one succeeds). */
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
+  /** The card to give focus back to once its drawer has closed. */
+  const returnFocus = useRef<string | null>(null);
   const showCard = (next: { id: string; focus?: "title" | "link" }) => {
     setOpenCard(next);
     setPageCardId(loadBoardCardOpen() === "page" ? next.id : null);
   };
+  /**
+   * Closes the drawer (and its full page). Focus that was in the drawer, or
+   * nowhere, goes back to the card; focus elsewhere on the board stays put.
+   */
+  const closeDrawer = () => {
+    const id = openCard?.id ?? null;
+    const active = document.activeElement;
+    const focusWasInDrawer =
+      !active ||
+      active === document.body ||
+      active === rootRef.current ||
+      !!active.closest("[data-card-drawer]");
+    setOpenCard(null);
+    setPageCardId(null);
+    if (id && focusWasInDrawer) {
+      returnFocus.current = id;
+      // Pinned as the focused card, so it is mounted to take focus.
+      setFocusedId(id);
+    }
+  };
+
+  // The full page belongs to an open card: closing it any way ends it.
+  useEffect(() => {
+    if (!openCard) setPageCardId(null);
+  }, [openCard]);
 
   const detailRef = useRef(detail);
   const openIdRef = useRef(openId);
@@ -430,6 +508,7 @@ function BoardContent({
   });
   const applySpec = useCallback((spec: ViewSpec, nextLayout: string) => {
     setQuery(spec.query);
+    setSearched(spec.query);
     setRows(spec.rows);
     setSort(spec.sort);
     setLayout(nextLayout);
@@ -565,7 +644,7 @@ function BoardContent({
         boardSettings,
         links,
         blockers,
-        activity,
+        runEvents,
       ] = await Promise.all([
           getBoard(id),
           // A failed ticket read leaves the cards without chips, not the board unloaded.
@@ -580,10 +659,12 @@ function BoardContent({
           // Chips, locks and failed marks are left as they were if these fail.
           listBoardLinks(id).catch(() => null),
           getBlockedCards(id).catch(() => null),
-          listActivity(id, null, 200).catch(() => null),
+          // Each card's newest run event, board-wide, however old it is.
+          getLatestRunEvents(id).catch(() => null),
         ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
+      setLoadFailed(null);
       if (linked) setTickets(linked);
       if (cardExtras) setExtras(cardExtras);
       if (boardLabels) setLabels(boardLabels);
@@ -592,7 +673,7 @@ function BoardContent({
       if (boardSettings) setSettings(boardSettings);
       if (links) setBoardLinks(links);
       if (blockers) setBlocked(blockers);
-      if (activity) setLatestEvent(latestEventByCard(activity));
+      if (runEvents) setLatestEvent(runEvents);
       if (defaultViewSeen.current !== id) {
         defaultViewSeen.current = id;
         const wanted = boardViews?.find(
@@ -622,6 +703,7 @@ function BoardContent({
         setOpenId(pickBoard(list, null));
         return;
       }
+      setLoadFailed(id);
       fail("Couldn't load the board")(cause);
     }
   }, [fail, syncViews]);
@@ -751,7 +833,13 @@ function BoardContent({
     [rows, sources],
   );
   const sorted = sort.key !== "manual";
-  const narrowing = query.trim() !== "" || effectiveRows.length > 0;
+  // Typing settles first: one board query per pause, not one per keystroke.
+  useEffect(() => {
+    if (searched === query) return;
+    const timer = setTimeout(() => setSearched(query), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, searched]);
+  const narrowing = searched.trim() !== "" || effectiveRows.length > 0;
 
   // The cards whose linked work is running now. The store answers it for
   // every link on every card; the primary links alone stand in until it has.
@@ -759,7 +847,7 @@ function BoardContent({
     () => runningPairs([...linkStates.values()].flatMap((t) => (t ? [t] : []))),
     [linkStates],
   );
-  const runningKey = JSON.stringify(runningNow);
+  const runningKey = useMemo(() => JSON.stringify(runningNow), [runningNow]);
   const fallbackRunning = useMemo(
     () =>
       runningCardIds(
@@ -805,6 +893,29 @@ function BoardContent({
     }
     return held;
   }, [detail, boardLinks]);
+  // Each card's links and each card by id, built once per read: the card
+  // faces look theirs up instead of scanning every link for every card.
+  const linksByCard = useMemo(() => {
+    const out = new Map<string, CardLinkRow[]>();
+    for (const link of boardLinks) {
+      const list = out.get(link.cardId);
+      if (list) list.push(link);
+      else out.set(link.cardId, [link]);
+    }
+    return out;
+  }, [boardLinks]);
+  const cardsById = useMemo(
+    () => new Map((detail?.cards ?? []).map((card) => [card.id, card])),
+    [detail],
+  );
+  // Every column's live card count, in one pass over the board.
+  const columnCounts = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const card of detail?.cards ?? []) {
+      out.set(card.columnId, (out.get(card.columnId) ?? 0) + 1);
+    }
+    return out;
+  }, [detail]);
   const boardRunning = useMemo(
     () => runningNow.filter(([kind, id]) => boardWork.has(linkValue(kind, id))),
     [runningNow, boardWork],
@@ -830,7 +941,7 @@ function BoardContent({
       ),
     [boardLinks],
   );
-  const statusKey = JSON.stringify(statusLinks);
+  const statusKey = useMemo(() => JSON.stringify(statusLinks), [statusLinks]);
   useEffect(() => {
     const lookup = lookupStatusRef.current;
     const links = JSON.parse(statusKey) as typeof statusLinks;
@@ -850,8 +961,14 @@ function BoardContent({
 
   // Matching, filtering and ordering all come from the board query. A newer
   // request, a board switch or a new board read wins over a late answer.
-  const spec: ViewSpec = { query: query.trim(), rows: effectiveRows, sort };
-  const specKey = JSON.stringify([spec, runningIds]);
+  const spec: ViewSpec = useMemo(
+    () => ({ query: searched.trim(), rows: effectiveRows, sort }),
+    [searched, effectiveRows, sort],
+  );
+  const specKey = useMemo(
+    () => JSON.stringify([spec, runningIds]),
+    [spec, runningIds],
+  );
   const specRef = useRef({ spec, runningIds });
   useLayoutEffect(() => {
     specRef.current = { spec, runningIds };
@@ -1007,11 +1124,30 @@ function BoardContent({
       return out;
     }
     const shown = shownDetail ?? detail;
-    return [...shown.columns]
+    const columns = [...shown.columns]
       .sort((a, b) => a.position - b.position)
-      .filter((column) => !column.collapsed)
-      .flatMap((column) => columnCards(shown, column.id));
-  }, [detail, shownDetail, visibleCards, layoutState, extras, labels, projects]);
+      .filter((column) => !column.collapsed);
+    if (lanesBy) {
+      // Swimlanes read lane by lane, then column by column inside a lane.
+      const byId = new Map(shown.cards.map((card) => [card.id, card]));
+      return laneOrder(
+        lanes,
+        laneCells(lanes, shown.cards),
+        columns.map((column) => column.id),
+      ).flatMap((id) => byId.get(id) ?? []);
+    }
+    return columns.flatMap((column) => columnCards(shown, column.id));
+  }, [
+    detail,
+    shownDetail,
+    visibleCards,
+    layoutState,
+    extras,
+    labels,
+    projects,
+    lanesBy,
+    lanes,
+  ]);
   const displayOrderRef = useRef(displayOrder);
   useLayoutEffect(() => {
     displayOrderRef.current = displayOrder;
@@ -1040,12 +1176,15 @@ function BoardContent({
       .then((rows) => {
         if (!stale) setCardIndex(new Map(rows.map((row) => [row.cardId, row])));
       })
-      // The columns that need it stay empty; the rest of the table shows.
-      .catch(() => undefined);
+      // The columns that need it stay empty; the rest of the table shows,
+      // and the error says why.
+      .catch((cause) => {
+        if (!stale) fail("Couldn't load the card fields")(cause);
+      });
     return () => {
       stale = true;
     };
-  }, [needsIndex, openId, detail]);
+  }, [needsIndex, openId, detail, fail]);
 
   /** ⌘/Ctrl-click toggles a card, Shift-click selects a range; true when it was one. */
   const selectClick = (
@@ -1327,22 +1466,18 @@ function BoardContent({
   /** Where each card sits now, and the card numbers, read from the board. */
   const placesOf = (ids: readonly string[]) => {
     const current = detailRef.current;
-    const found = current
-      ? ids.flatMap((id) => placeOf(current, id) ?? [])
-      : [];
+    const places = current ? placesIn(current) : null;
+    const found = places ? ids.flatMap((id) => places.get(id) ?? []) : [];
     return {
       items: found.map((entry) => entry.place),
       numbers: found.map((entry) => entry.number),
     };
   };
 
+  // A patch: collapsing never resets a colour or WIP limit the other app
+  // set since this board last loaded.
   const setCollapsed = (column: BoardColumn, collapsed: boolean) =>
-    void setColumnDisplay(
-      column.id,
-      column.color,
-      column.wipLimit,
-      collapsed,
-    ).catch(
+    void updateColumnDisplay(column.id, { collapsed }).catch(
       fail(
         collapsed
           ? "Couldn't collapse the column"
@@ -1413,9 +1548,10 @@ function BoardContent({
     const moving = selectedCards().filter((card) => card.columnId !== column.id);
     if (!moving.length) return;
     const ids = moving.map((card) => card.id);
+    const movingIds = new Set(ids);
     const { items, numbers } = placesOf(ids);
     const staying = wholeColumn(column.id).filter(
-      (card) => !ids.includes(card.id),
+      (card) => !movingIds.has(card.id),
     ).length;
     void undo.commitPending();
     moveCards(ids, column.id, staying, "user")
@@ -1452,11 +1588,12 @@ function BoardContent({
     const { items, numbers } = placesOf(ids);
     if (!items.length) return;
     void undo.commitPending();
+    const removing = new Set(ids);
     setSelection(EMPTY_SELECTION);
-    setOpenCard((open) => (open && ids.includes(open.id) ? null : open));
+    setOpenCard((open) => (open && removing.has(open.id) ? null : open));
     setDetail({
       ...before,
-      cards: before.cards.filter((card) => !ids.includes(card.id)),
+      cards: before.cards.filter((card) => !removing.has(card.id)),
     });
     archiveCards(ids)
       .then(() =>
@@ -1671,15 +1808,35 @@ function BoardContent({
   const handledCommand = useRef<number | null>(null);
   useEffect(() => {
     if (!command || handledCommand.current === command.nonce) return;
-    if (boards && boards.length && command.id === "new-card" && !detail) return;
     if (!boards) return;
+    // A board that failed to load drops a "new card" command rather than
+    // keeping it to fire whenever the board loads later.
+    const boardFailed = !!openId && loadFailed === openId;
+    if (boards.length && command.id === "new-card" && !detail && !boardFailed) {
+      return;
+    }
     handledCommand.current = command.nonce;
-    if (boards.length) {
+    if (boards.length && !(command.id === "new-card" && !detail)) {
       if (command.id === "new-card") setNewCardOpen(true);
       else setSwitchSignal((n) => n + 1);
     }
     onCommandHandled?.(command.nonce);
-  }, [command, boards, detail, onCommandHandled]);
+  }, [command, boards, detail, openId, loadFailed, onCommandHandled]);
+
+  // Focus goes back to the card whose drawer just closed, scrolled into
+  // view (it is pinned as the focused card, so it is mounted).
+  useLayoutEffect(() => {
+    const id = returnFocus.current;
+    if (!id || openCard) return;
+    returnFocus.current = null;
+    const value = id.replace(/["\\]/g, "\\$&");
+    const element = rootRef.current?.querySelector<HTMLElement>(
+      `[data-kanban-card="${value}"], [data-card-id="${value}"], [data-table-row="${value}"]`,
+    );
+    if (!element) return;
+    element.scrollIntoView?.({ block: "nearest" });
+    element.focus({ preventScroll: true });
+  });
 
   if (!boards) return toast;
 
@@ -1714,6 +1871,7 @@ function BoardContent({
     : undefined;
 
   const fullPage = !!shownCard && pageCardId === shownCard.id;
+  shownCardRef.current = shownCard ?? null;
 
   const labelsOf = (cardId: string) => {
     const ids = extras[cardId]?.labels;
@@ -1725,9 +1883,16 @@ function BoardContent({
     (card: BoardCard) =>
     (
       close: () => void,
-      flush?: () => Promise<void>,
+      drawerFlush?: () => Promise<void>,
       dropDrafts?: () => void,
     ) => {
+      // From the card face (a right-click, say) while this card's drawer is
+      // open, its typed drafts are saved first all the same.
+      const flush =
+        drawerFlush ??
+        (openCard?.id === card.id
+          ? () => drawerHandle.current?.flushDrafts() ?? Promise.resolve()
+          : undefined);
       const mine = extras[card.id];
       const columnsOf = (detail?.columns ?? []).map((column) => ({
         id: column.id,
@@ -1806,8 +1971,12 @@ function BoardContent({
 
   /** One chip for each link besides the primary one. */
   const linkChipsOf = (card: BoardCard): LinkChipView[] =>
-    boardLinks.flatMap((link): LinkChipView[] => {
-      if (link.cardId !== card.id || link.role === "primary") return [];
+    (linksByCard.get(card.id) ?? []).flatMap((link): LinkChipView[] => {
+      if (link.role === "primary") return [];
+      // An extra link that is also the primary shows once, as the primary.
+      if (link.kind === card.linkKind && link.reference === card.linkId) {
+        return [];
+      }
       if (link.kind === "pr" || link.kind === "worktree") {
         const found = linkExtra[extraKey(link)];
         const base = {
@@ -1855,8 +2024,8 @@ function BoardContent({
   const agentFactsOf = (card: BoardCard) => {
     const ids = new Set<string>();
     if (card.linkKind === "session" && card.linkId) ids.add(card.linkId);
-    for (const link of boardLinks) {
-      if (link.cardId === card.id && link.kind === "session") ids.add(link.reference);
+    for (const link of linksByCard.get(card.id) ?? []) {
+      if (link.kind === "session") ids.add(link.reference);
     }
     return [...ids].flatMap((id) => {
       const facts = linkStates.get(linkValue("session", id))?.agent;
@@ -1864,7 +2033,7 @@ function BoardContent({
     });
   };
   const agentOf = (cardId: string) => {
-    const card = detail?.cards.find((other) => other.id === cardId);
+    const card = cardsById.get(cardId);
     return agentValues(card ? agentFactsOf(card) : []);
   };
   const faceChipsOf = (card: BoardCard) => {
@@ -1990,6 +2159,10 @@ function BoardContent({
         ? heldAction.items
         : [];
   const heldIds = heldPlaces.map(([cardId]) => cardId);
+  const heldByColumn = new Map<string, number>();
+  for (const [, columnId] of heldPlaces) {
+    heldByColumn.set(columnId, (heldByColumn.get(columnId) ?? 0) + 1);
+  }
 
   /**
    * A drop into a lane changes the column, and sets the lane's value only for
@@ -2080,10 +2253,7 @@ function BoardContent({
     <BoardColumnHeader
       column={column}
       count={
-        narrowing
-          ? (detail?.cards.filter((card) => card.columnId === column.id)
-              .length ?? shown)
-          : shown
+        narrowing && detail ? (columnCounts.get(column.id) ?? 0) : shown
       }
       shown={narrowing ? shown : undefined}
       takenRoles={
@@ -2104,7 +2274,7 @@ function BoardContent({
           fail("Couldn't set the column's role"),
         )
       }
-      heldCards={heldPlaces.filter(([, id]) => id === column.id).length}
+      heldCards={heldByColumn.get(column.id) ?? 0}
       onDelete={() =>
         // A delete held in this column is carried out first.
         void undo
@@ -2112,6 +2282,24 @@ function BoardContent({
           .then(() => deleteColumn(column.id))
           .catch(fail("Couldn't delete the column"))
       }
+      moveTargets={(detail?.columns ?? []).filter(
+        (other) => other.id !== column.id,
+      )}
+      onMoveAndDelete={(targetId) => {
+        // Every live card goes, in order, to the end of the target column;
+        // a delete held in this column is carried out first.
+        const moving = wholeColumn(column.id).map((card) => card.id);
+        const end = wholeColumn(targetId).length;
+        void undo
+          .commitPending()
+          .then(() =>
+            moving.length
+              ? moveCards(moving, targetId, end, "user")
+              : undefined,
+          )
+          .then(() => deleteColumn(column.id))
+          .catch(fail("Couldn't delete the column"));
+      }}
       onCollapse={() => setCollapsed(column, true)}
       onSort={(key) => sortColumn(column, key)}
       onMarkAllDone={
@@ -2175,18 +2363,25 @@ function BoardContent({
         tabIndex={-1}
         className="flex min-h-0 flex-1 flex-col outline-none"
         onKeyDown={(event) => {
-          // Escape's last layer: the drawer, menus and inline edits take it
-          // first (they mark it handled); what is left clears the selection.
+          // Escape's last layers: menus, inline edits and the drawer's own
+          // fields take it first (they mark it handled). What is left closes
+          // an open drawer, wherever focus is on the board, then clears the
+          // selection.
           if (
             event.key !== "Escape" ||
             event.defaultPrevented ||
             event.nativeEvent.isComposing ||
-            !selection.ids.length ||
             // A drag in progress is cancelled by its own Escape.
             dragInProgress()
           ) {
             return;
           }
+          if (drawerHandle.current && shownCardRef.current) {
+            event.preventDefault();
+            drawerHandle.current.escape();
+            return;
+          }
+          if (!selection.ids.length) return;
           event.preventDefault();
           setSelection(EMPTY_SELECTION);
         }}
@@ -2293,6 +2488,7 @@ function BoardContent({
                     if (event.key === "Escape" && query) {
                       event.preventDefault();
                       setQuery("");
+                      setSearched("");
                     }
                   }}
                   className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
@@ -2525,6 +2721,16 @@ function BoardContent({
         >
           <div
             className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
+            // The card or row holding keyboard focus, in any layout: each
+            // keeps it mounted when it is scrolled out of its window (R81).
+            onFocus={(event) => setFocusedId(focusedRowOf(event.target))}
+            onBlur={(event) => {
+              // The window losing focus (another app, a system dialog) blurs
+              // the card with nowhere to go; it gets focus back on return, so
+              // keep it pinned rather than let it scroll out and unmount.
+              if (!event.relatedTarget && !document.hasFocus()) return;
+              setFocusedId(focusedRowOf(event.relatedTarget));
+            }}
           >
             {detail && layoutState.layout === "list" ? (
               <BoardList
@@ -2536,6 +2742,7 @@ function BoardContent({
                 groupBy={layoutState.groupBy}
                 collapsed={layoutState.collapsed}
                 selected={selectedSet}
+                focusedCardId={focusedId}
                 onToggleGroup={(key) =>
                   editLayout((current) => ({
                     collapsed: current.collapsed.includes(key)
@@ -2558,6 +2765,7 @@ function BoardContent({
                 fields={fields}
                 projects={projects}
                 selected={selectedSet}
+                focusedCardId={focusedId}
                 onRowClick={rowClick}
                 onResize={(id, width) =>
                   editLayout((current) => ({
@@ -2601,8 +2809,12 @@ function BoardContent({
                 renderColumnHeader={renderColumnHeader}
                 onDrop={onLaneDrop}
                 onCardOpen={(card) => showCard({ id: card.id })}
+                onColumnExpand={(column) => setCollapsed(column, false)}
                 selectedIds={selectedSet}
                 trailing={trailing}
+                density={display.density}
+                focusedCardId={focusedId}
+                openCardId={shownCard?.id ?? null}
               />
             ) : shownDetail ? (
               <KanbanBoard
@@ -2617,6 +2829,10 @@ function BoardContent({
                 sorted={sorted}
                 selectedIds={selectedSet}
                 trailing={trailing}
+                density={display.density}
+                focusedCardId={focusedId}
+                openCardId={shownCard?.id ?? null}
+                columnTotals={narrowing ? columnCounts : undefined}
               />
             ) : null}
             {detail && selection.ids.length ? (
@@ -2644,9 +2860,7 @@ function BoardContent({
               columns={(detail?.columns ?? []).map((column) => ({
                 id: column.id,
                 name: column.name,
-                cardCount: (detail?.cards ?? []).filter(
-                  (other) => other.columnId === column.id,
-                ).length,
+                cardCount: columnCounts.get(column.id) ?? 0,
               }))}
               extras={extras[shownCard.id]}
               labels={labels}
@@ -2666,7 +2880,16 @@ function BoardContent({
                 setPageCardId(fullPage ? null : shownCard.id)
               }
               focus={openCard?.focus}
-              onClose={() => setOpenCard(null)}
+              onClose={closeDrawer}
+              handle={drawerHandle}
+              isGone={() =>
+                !detailRef.current?.cards.some(
+                  (other) => other.id === shownCard.id,
+                )
+              }
+              resolveLinkTarget={(kind, id) =>
+                linkStates.get(linkValue(kind, id))
+              }
               onOpenLinkedWork={(target) => {
                 setOpenCard(null);
                 openLinkedWork(target);
