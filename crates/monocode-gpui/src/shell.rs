@@ -8012,11 +8012,7 @@ impl Render for Shell {
         let glass = window_glass(p, system_light);
         if self.window_glass != Some(glass) {
             self.window_glass = Some(glass);
-            window.set_background_appearance(if glass {
-                gpui::WindowBackgroundAppearance::Blurred
-            } else {
-                gpui::WindowBackgroundAppearance::Opaque
-            });
+            window.set_background_appearance(crate::theme::window_backdrop(glass));
         }
         self.sync_settings(cx);
         self.sidebar_fraction = match &self.sidebar_slide {

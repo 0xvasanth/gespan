@@ -89,10 +89,7 @@ mod window_state;
 mod workspace;
 mod worktree_switcher;
 
-use gpui::{
-    App, KeyBinding, TitlebarOptions, WindowBackgroundAppearance, WindowOptions, actions, point,
-    prelude::*, px, size,
-};
+use gpui::{App, KeyBinding, TitlebarOptions, WindowOptions, actions, point, prelude::*, px, size};
 use monocode_core::{store::Store, transcript::Transcript};
 use std::{
     path::PathBuf,
@@ -449,11 +446,7 @@ fn main() {
                     // Linux desktops match this to the .desktop file's
                     // StartupWMClass to show the app icon.
                     app_id: Some("dev.usemono.gpui".into()),
-                    window_background: if cfg!(target_os = "macos") {
-                        WindowBackgroundAppearance::Blurred
-                    } else {
-                        WindowBackgroundAppearance::Opaque
-                    },
+                    window_background: theme::window_backdrop(true),
                     // GPUI owns the custom chrome. AppKit must not reinterpret
                     // its controls as native titlebar double-click/drag gestures.
                     app_owns_titlebar_drag: cfg!(target_os = "macos"),
