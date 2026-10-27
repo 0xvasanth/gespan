@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import {
   cp,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -34,6 +35,20 @@ export function previewVersion(version) {
     sequence,
     windows: numbers.join("."),
   };
+}
+// hdiutil's -srcfolder estimate fell short of the app on the macOS 15
+// runner ("No space left on device" inside the image), so the staging
+// image is sized from its contents, with headroom for file system metadata.
+export function dmgMegabytes(bytes) {
+  return Math.ceil((bytes * 1.2) / 2 ** 20) + 16;
+}
+async function folderBytes(path) {
+  const info = await lstat(path);
+  if (!info.isDirectory()) return info.isSymbolicLink() ? 0 : info.size;
+  let total = 0;
+  for (const entry of await readdir(path))
+    total += await folderBytes(join(path, entry));
+  return total;
 }
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -212,6 +227,8 @@ export async function packageNative({
       "Gespan Native",
       "-srcfolder",
       imageRoot,
+      "-size",
+      `${dmgMegabytes(await folderBytes(imageRoot))}m`,
       "-ov",
       "-format",
       "UDZO",

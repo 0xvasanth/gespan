@@ -11,7 +11,15 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { packageNative } from "./package-native.mjs";
+import { dmgMegabytes, packageNative } from "./package-native.mjs";
+
+test("the DMG staging image is sized from its contents with headroom", () => {
+  const MiB = 2 ** 20;
+  // hdiutil's own -srcfolder estimate fell short on the macOS 15 runner.
+  assert.equal(dmgMegabytes(0), 16);
+  assert.equal(dmgMegabytes(100 * MiB), 136);
+  assert.ok(dmgMegabytes(102 * MiB + 1) >= Math.ceil((102 * MiB + 1) / MiB));
+});
 
 test(
   "Mac preview packaging checks notarization, preserves preview identity and emits both download and updater packages",
@@ -200,6 +208,7 @@ if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
     assert.ok(artifacts.some((a) => !a.target && a.filename.endsWith(".dmg")));
     const log = await readFile(calls, "utf8");
     assert.match(log, /^codesign --verify --deep --strict /m, "the ad-hoc signature is still verified");
+    assert.match(log, /^hdiutil create .* -size \d+m /m, "the DMG is sized explicitly");
     for (const step of [/^xcrun notarytool/m, /^xcrun stapler/m, /^spctl /m, /^codesign --sign .*\.dmg$/m]) {
       assert.doesNotMatch(log, step);
     }
