@@ -12,6 +12,7 @@ mod input;
 const SOURCE_HEIGHT: f32 = 320.;
 const LOADING_HEIGHT: f32 = 128.;
 const MAX_PREVIEW_HEIGHT: f32 = 640.;
+const PREVIEW_PADDING: f32 = 16.;
 const CACHE_BYTES: usize = 32 * 1024 * 1024;
 const CACHE_ITEMS: usize = 32;
 const MAX_SOURCE_BYTES: usize = 32 * 1024;
@@ -365,9 +366,7 @@ impl RenderOnce for Diagram {
                 div()
                     .w_full()
                     .debug_selector(|| "mermaid-panel".into())
-                    .when_some(ratio, |d, ratio| {
-                        d.aspect_ratio(ratio).max_h(px(MAX_PREVIEW_HEIGHT))
-                    })
+                    .when(ratio.is_some(), |d| d.py(px(PREVIEW_PADDING)))
                     .when(ratio.is_none(), |d| {
                         d.h(px(if show_source {
                             SOURCE_HEIGHT
@@ -397,6 +396,12 @@ impl RenderOnce for Diagram {
                             .flex_1()
                             .min_h_0()
                             .min_w_0()
+                            .when_some(ratio, |d, ratio| {
+                                d.flex_none()
+                                    .w_full()
+                                    .aspect_ratio(ratio)
+                                    .max_h(px(MAX_PREVIEW_HEIGHT - 2. * PREVIEW_PADDING))
+                            })
                             .overflow_hidden()
                             .child(media),
                     ),
@@ -546,6 +551,10 @@ mod tests {
             assert!(panel.contains(&image.origin));
             assert!(image.bottom_right().x <= panel.bottom_right().x + px(0.1));
             assert!(image.bottom_right().y <= panel.bottom_right().y + px(0.1));
+            let top_gap = image.origin.y - panel.origin.y - px(1.); // divider
+            let bottom_gap = panel.bottom_right().y - image.bottom_right().y;
+            assert!((top_gap - px(PREVIEW_PADDING)).abs() < px(0.1));
+            assert!((bottom_gap - px(PREVIEW_PADDING)).abs() < px(0.1));
         }
     }
 
@@ -751,7 +760,9 @@ mod tests {
                 normal
                     .as_bytes(0)
                     .unwrap()
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .any(|pixel| pixel[3] != 0),
                 "control must load the harmless image"
             );
