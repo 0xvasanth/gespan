@@ -1,0 +1,33 @@
+crates/gespan-gpui/Cargo.lock
+  s_938a6e0c93b076::t_6a2c79e9ace2a2 2242
+crates/gespan-gpui/Cargo.toml
+  s_938a6e0c93b076::t_d8224ac28a7142 62-63
+crates/gespan-gpui/src/board.rs
+  s_938a6e0c93b076::t_88c4ed75dc3704 61-62,146-164,319-326,335-339,396-397,543-545,550-552,581,695-698,704,708,717-737,756,760,762,766-769,774,777,779-782,784,786,788,790,794,803,809,816,821,823,827,896-897,899,901-902,904-910,1684
+crates/gespan-gpui/src/board/column.rs
+  s_938a6e0c93b076::t_308359d4a9097c 12-16,26-27,35-60,66-70,72-78,84,173,176-183,380-381,383-384,387-445,604-607,610-617,623,627-631,681-685,745
+crates/gespan-gpui/src/board/link_status.rs
+  s_938a6e0c93b076::t_f969f1eedb32bf 8,395-396,403-423,425,432-434,439-441,447-458,462,485-486,491
+crates/gespan-gpui/src/board/list.rs
+  s_938a6e0c93b076::t_730b8df1115371 150-151,153-163
+crates/gespan-gpui/src/board/tests/scale.rs
+  s_938a6e0c93b076::t_ae6c5f3268e783 716-1272
+crates/gespan-gpui/src/board/views.rs
+  s_938a6e0c93b076::t_bfada2b4870615 141,146,149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69f121827911b275896d1d724aedd96955ec2e2e",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
