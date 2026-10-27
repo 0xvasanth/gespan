@@ -69,10 +69,10 @@ test("production tags and insecure download bases cannot create native releases"
     "0.16.0",
     "v0.16.0",
     "native-v0.16.0-preview.1",
-    "0.16.0-beta.1",
+    "0.16.0-rc.1",
     "0.16.0-preview.1/../latest.json",
   ]) {
-    assert.throws(() => manifest({ version }), /native preview version/);
+    assert.throws(() => manifest({ version }), /native prerelease version/);
   }
   for (const assetBaseUrl of [
     "http://dl.example.test",
@@ -85,4 +85,18 @@ test("production tags and insecure download bases cannot create native releases"
 test("preview sequence fits native Windows version resources", () => {
   assert.equal(previewVersion("0.16.0-preview.12").windows, "0.16.0.12");
   assert.throws(() => previewVersion("0.16.0-preview.65536"));
+});
+test("beta versions map to numeric Windows versions and their own label", () => {
+  assert.deepEqual(previewVersion("0.0.1-beta"), {
+    version: "0.0.1-beta",
+    label: "beta",
+    base: "0.0.1",
+    sequence: "0",
+    windows: "0.0.1.0",
+  });
+  assert.equal(previewVersion("0.0.1-beta.3").windows, "0.0.1.3");
+  assert.equal(previewVersion("0.16.0-preview.2").label, "preview");
+  for (const bad of ["0.0.1", "0.0.1-beta.", "0.0.1-alpha", "0.0.1-preview", "0.0.1-beta.65536"]) {
+    assert.throws(() => previewVersion(bad), bad);
+  }
 });

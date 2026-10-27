@@ -13,20 +13,26 @@ import { join, resolve, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+// A prerelease version: X.Y.Z-preview.N, X.Y.Z-beta or X.Y.Z-beta.N. Windows
+// version resources need four numbers, so the sequence (0 when absent) is
+// the fourth.
 export function previewVersion(version) {
   const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.(0|[1-9]\d*)$/.exec(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:preview\.(0|[1-9]\d*)|beta(?:\.(0|[1-9]\d*))?)$/.exec(
       version,
     );
-  if (!match || match.slice(1).some((n) => Number(n) > 65535))
+  const sequence = match && (match[4] ?? match[5] ?? "0");
+  const numbers = match ? [...match.slice(1, 4), sequence] : [];
+  if (!match || numbers.some((n) => Number(n) > 65535))
     throw new Error(
-      "Expected a native preview version such as 0.16.0-preview.1",
+      "Expected a native prerelease version such as 0.16.0-preview.1 or 0.0.1-beta",
     );
   return {
     version,
+    label: match[4] === undefined ? "beta" : "preview",
     base: match.slice(1, 4).join("."),
-    sequence: match[4],
-    windows: match.slice(1).join("."),
+    sequence,
+    windows: numbers.join("."),
   };
 }
 function run(command, args, options = {}) {
@@ -216,7 +222,7 @@ export async function packageNative({
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
-      `Package: gespan-native\nVersion: ${version.replace("-preview.", "~preview.")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: Gespan Native experimental preview\n`,
+      `Package: gespan-native\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: Gespan Native experimental preview\n`,
     );
     run("dpkg-deb", [
       "--build",
@@ -261,7 +267,7 @@ export async function packageNative({
     const spec = join(top, "SPECS/gespan-native.spec");
     await writeFile(
       spec,
-      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: 0.preview.${parsed.sequence}%{?dist}\nSummary: Gespan Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nGespan Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/gespan-native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
+      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: 0.${parsed.label}.${parsed.sequence}%{?dist}\nSummary: Gespan Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nGespan Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/gespan-native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
     );
     run("rpmbuild", [
       "--define",
