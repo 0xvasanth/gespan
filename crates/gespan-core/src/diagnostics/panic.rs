@@ -74,7 +74,7 @@ pub fn write_crash(crash_dir: &Path, record: &Value, at: DateTime<Utc>) -> io::R
 /// `kind = "panic"`, then runs the hook that was installed before. The hook
 /// itself never panics (a panic inside a panic hook aborts the process), so
 /// a crash folder it cannot write is skipped, not fatal.
-pub fn install_panic_hook(crash_dir: PathBuf, version: String) {
+pub fn install_panic_hook(crash_dir: PathBuf, version: String, build: String) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // A panic a `diagnostics::catch_unwind` recovers from is not a crash.
@@ -101,6 +101,7 @@ pub fn install_panic_hook(crash_dir: PathBuf, version: String) {
             "backtrace": std::backtrace::Backtrace::force_capture().to_string(),
             "app": "native",
             "version": version,
+            "build": build,
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
         });

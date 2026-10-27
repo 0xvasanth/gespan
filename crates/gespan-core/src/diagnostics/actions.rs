@@ -67,12 +67,12 @@ pub fn summary() -> String {
     };
     // The same home `log_dir` uses, so the `~` form always applies.
     let home = crate::scm::shell::dirs_home().map(PathBuf::from);
-    summary_for(
-        &config.log_dir,
-        &config.version,
-        config.channel,
-        home.as_deref(),
-    )
+    let version = if config.build.is_empty() {
+        config.version.clone()
+    } else {
+        format!("{} build {}", config.version, config.build)
+    };
+    summary_for(&config.log_dir, &version, config.channel, home.as_deref())
 }
 
 /// Reveals the log folder in Finder, Explorer or the file manager.

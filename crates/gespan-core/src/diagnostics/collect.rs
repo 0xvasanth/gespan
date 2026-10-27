@@ -466,6 +466,7 @@ pub fn build_channel(version: &str, channel: Channel) -> &'static str {
     match channel {
         Channel::Dev => "dev",
         Channel::Release if version.contains("-preview") => "preview",
+        Channel::Release if version.contains("-beta") => "beta",
         Channel::Release => "release",
     }
 }
@@ -1201,5 +1202,7 @@ mod tests {
             "preview"
         );
         assert_eq!(build_channel("0.1.0-preview.2", Channel::Dev), "dev");
+        assert_eq!(build_channel("0.0.1-beta", Channel::Release), "beta");
+        assert_eq!(build_channel("0.0.1-beta.2", Channel::Dev), "dev");
     }
 }

@@ -1,5 +1,7 @@
 //! One JSON object per line, in the shared diagnostics log schema:
-//! `{ ts, level, target, message, app, version, session_id?, span?, fields, event_id }`.
+//! `{ ts, level, target, message, app, version, build?, session_id?, span?, fields, event_id }`.
+//! `build` is the commit the app was built from, so a report can be matched
+//! to the builds before and after a fix.
 use serde_json::{Map, Value};
 use std::io::Write;
 use tracing::{
@@ -15,6 +17,7 @@ use tracing_subscriber::{
 pub struct JsonLayer<W> {
     writer: W,
     version: String,
+    build: String,
 }
 
 pub fn json_layer<W>(writer: W, version: &str) -> JsonLayer<W>
@@ -24,6 +27,15 @@ where
     JsonLayer {
         writer,
         version: version.to_owned(),
+        build: String::new(),
+    }
+}
+
+impl<W> JsonLayer<W> {
+    /// Stamps every line with the build commit; an empty one is left out.
+    pub fn with_build(mut self, build: &str) -> Self {
+        self.build = build.to_owned();
+        self
     }
 }
 
@@ -155,6 +167,9 @@ where
         line.insert("message".into(), fields.message.unwrap_or_default().into());
         line.insert("app".into(), "native".into());
         line.insert("version".into(), self.version.clone().into());
+        if !self.build.is_empty() {
+            line.insert("build".into(), self.build.clone().into());
+        }
         if let Some(session) = merged.remove("session_id") {
             line.insert("session_id".into(), session);
         }
@@ -252,6 +267,18 @@ pub(crate) mod tests {
         chrono::DateTime::parse_from_rfc3339(line["ts"].as_str().unwrap()).unwrap();
         assert!(line.get("span").is_none());
         assert!(line.get("session_id").is_none());
+        assert!(line.get("build").is_none(), "no build is set here");
+    }
+
+    #[test]
+    fn lines_carry_the_build_commit() {
+        let out = Capture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(json_layer(out.clone(), "0.0.1-beta").with_build("4f2a9c1e0b7d"));
+        tracing::subscriber::with_default(subscriber, || tracing::warn!("agent turn failed"));
+        let line = &out.lines()[0];
+        assert_eq!(line["version"], "0.0.1-beta");
+        assert_eq!(line["build"], "4f2a9c1e0b7d");
     }
 
     #[test]

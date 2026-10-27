@@ -59,7 +59,7 @@ fn panics_write_one_crash_file_and_keep_the_previous_hook() {
     }));
     let dir = tempfile::tempdir().unwrap();
     let crashes = dir.path().join("crashes");
-    install_panic_hook(crashes.clone(), "9.8.7".into());
+    install_panic_hook(crashes.clone(), "9.8.7".into(), "4f2a9c1e0b7d".into());
 
     let line = line!() + 3;
     let joined = std::thread::Builder::new()
@@ -77,6 +77,7 @@ fn panics_write_one_crash_file_and_keep_the_previous_hook() {
     assert_eq!(record["thread"], "worker");
     assert_eq!(record["app"], "native");
     assert_eq!(record["version"], "9.8.7");
+    assert_eq!(record["build"], "4f2a9c1e0b7d");
     assert_eq!(record["os"], std::env::consts::OS);
     assert_eq!(record["arch"], std::env::consts::ARCH);
     let location = record["location"].as_str().unwrap();
@@ -121,7 +122,7 @@ fn panics_write_one_crash_file_and_keep_the_previous_hook() {
     // stop the previous hook or turn the panic into an abort.
     let blocked = dir.path().join("blocked");
     std::fs::write(&blocked, "not a folder").unwrap();
-    install_panic_hook(blocked.clone(), "9.8.7".into());
+    install_panic_hook(blocked.clone(), "9.8.7".into(), String::new());
     let joined = std::thread::spawn(|| panic!("second")).join();
     assert!(joined.is_err());
     // The second hook wraps the first, which still writes its own file.
