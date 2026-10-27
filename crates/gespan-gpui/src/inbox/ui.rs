@@ -1,8 +1,9 @@
 use super::*;
 use crate::popover::{Align, Anchor, popover};
 use gpui::{
-    AnyElement, ClipboardItem, CursorStyle, Div, FontWeight, Hsla, MouseButton, Pixels, Role,
-    SharedString, Stateful, Window, canvas, div, list, prelude::*, px, rgb,
+    Animation, AnimationExt, AnyElement, ClipboardItem, CursorStyle, Div, FontWeight, Hsla,
+    MouseButton, Pixels, Role, SharedString, Stateful, Window, canvas, div, list, prelude::*, px,
+    rgb,
 };
 
 fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
@@ -89,6 +90,15 @@ fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> 
         .cursor_pointer()
         .child(label)
 }
+/// The green of the tick that confirms a copy.
+const COPIED: Hsla = Hsla {
+    h: 0.396,
+    s: 0.72,
+    l: 0.56,
+    a: 1.,
+};
+const COPIED_POP: Duration = Duration::from_millis(260);
+
 fn icon_action(id: impl Into<SharedString>, label: &str, name: &'static str) -> Stateful<Div> {
     icon_action_ink(id, label, name, content(0.7))
 }
@@ -96,6 +106,14 @@ fn icon_action_ink(
     id: impl Into<SharedString>,
     label: &str,
     name: &'static str,
+    ink: Hsla,
+) -> Stateful<Div> {
+    icon_action_with(id, label, action_icon(name, ink), ink)
+}
+fn icon_action_with(
+    id: impl Into<SharedString>,
+    label: &str,
+    glyph: impl IntoElement,
     ink: Hsla,
 ) -> Stateful<Div> {
     let id: SharedString = id.into();
@@ -120,7 +138,7 @@ fn icon_action_ink(
                 s.bg(content(0.07)).text_color(content(1.))
             }
         })
-        .child(action_icon(name, ink))
+        .child(glyph)
         .child(label.to_owned())
 }
 fn action_icon(name: &'static str, ink: Hsla) -> gpui::Svg {
@@ -1009,20 +1027,7 @@ impl Inbox {
                             .when(is_pr && item.provider == "github", |d| {
                                 d.child(self.pr_actions(&item, cx))
                             })
-                            .child(
-                                icon_action("inbox-copy-link", "Copy link", "response-copy")
-                                    .when(item.url.is_empty(), |d| d.opacity(0.4))
-                                    .on_click({
-                                        let url = item.url.clone();
-                                        move |_, _, cx| {
-                                            if !url.is_empty() {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.clone(),
-                                                ));
-                                            }
-                                        }
-                                    }),
-                            )
+                            .child(self.copy_link_button(&item, cx))
                             .child(
                                 icon_action(
                                     "inbox-open-external",
@@ -1131,6 +1136,33 @@ impl Inbox {
             .into_any_element()
     }
 
+    /// Copy link, which turns into a green tick reading "Copied link" for a
+    /// moment once the address is on the clipboard.
+    fn copy_link_button(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
+        let copied = self
+            .copied_link
+            .as_ref()
+            .filter(|(url, _)| *url == item.url)
+            .map(|(_, press)| *press);
+        let url = item.url.clone();
+        let on_click = cx.listener(move |this, _, _, cx| this.copy_link(url.clone(), cx));
+        let button = match copied {
+            Some(press) => icon_action_with(
+                "inbox-copy-link",
+                "Copied link",
+                action_icon("check", COPIED).with_animation(
+                    ("inbox-copied-tick", press),
+                    Animation::new(COPIED_POP).with_easing(|t| 1. - (1. - t).powi(3)),
+                    |svg, t| svg.size(px(14. * (0.5 + 0.5 * t))).opacity(t),
+                ),
+                COPIED,
+            )
+            .text_color(content(1.)),
+            None => icon_action("inbox-copy-link", "Copy link", "response-copy")
+                .when(item.url.is_empty(), |d| d.opacity(0.4)),
+        };
+        button.on_click(on_click).into_any_element()
+    }
     fn pr_actions(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
         let open = item.state.eq_ignore_ascii_case("open");
         let selected = self.merge_action.clone();
