@@ -130,3 +130,23 @@ describe("Gespan CLI tool calls", () => {
     ).toBeUndefined();
   });
 });
+
+describe("ticket and card tool calls", () => {
+  it("ticket_tool_calls_have_friendly_labels", () => {
+    for (const [action, label] of [
+      ["ticket.get", "Read ticket"],
+      ["ticket.comment", "Comment on ticket"],
+      ["ticket.status", "Change ticket status"],
+      ["card.subtasks", "List card subtasks"],
+      ["card.subtask_done", "Tick card subtask"],
+    ]) {
+      expect(
+        gespanToolCall(
+          shell(`/Applications/Gespan.app/Contents/MacOS/gespan app ${action} --json '{}'`),
+        ),
+      ).toMatchObject({ action, label });
+    }
+    expect(gespanToolCall(shell("gespan app ticket.delete --json '{}'"))).toBeUndefined();
+  });
+});
+

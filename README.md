@@ -212,6 +212,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | Guide | What's inside |
 | :-- | :-- |
 | [Provider setup](docs/providers.md) | Install and log in to each supported agent |
+| [Board](docs/board.md) | Cards, columns and tracker tickets, with sessions started from them |
 | [Linux installation](docs/install.md) | System dependencies and `.deb` / `.rpm` / AppImage packages |
 | [Agent access with `/operator`](docs/agent-access.md) | Let agents open sessions and manage worktrees and notes |
 | [Remote sessions](docs/remote-access.md) | Run agents on another machine over SSH *(experimental)* |

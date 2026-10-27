@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8ea10d9214fea411bd7e4e834bfd358210ace1c67f0a53b7eaaf97d9bbcee929 # shrinks to doc = Doc { blocks: [Paragraph([Text { text: "~", marks: Marks { strong: false, em: false, strike: false, code: false, link: None } }])] }
+cc 5fd692d8f9fd58454a362b2c431b1e77abbbf3ef522a4a2321430828dbc59424 # shrinks to doc = Doc { blocks: [Paragraph([Text { text: "_", marks: Marks { strong: false, em: false, strike: false, code: false, link: None } }])] }

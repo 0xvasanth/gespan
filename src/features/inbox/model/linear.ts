@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { recordInboxSelfActivity } from "./inboxSelfActivity";
+import { notifyTicketConnectionsChanged } from "../../sessions/model/ticketLinks";
 
 export type LinearTeam = {
   id: string;
@@ -74,12 +75,18 @@ export function linearConnected(): Promise<LinearStatus> {
   return invoke<LinearStatus>("linear_status");
 }
 
-export function saveLinearToken(token: string): Promise<LinearStatus> {
-  return invoke<LinearStatus>("linear_set_token", { token: token.trim() });
+export async function saveLinearToken(token: string): Promise<LinearStatus> {
+  const status = await invoke<LinearStatus>("linear_set_token", {
+    token: token.trim(),
+  });
+  notifyTicketConnectionsChanged();
+  return status;
 }
 
-export function disconnectLinear(): Promise<LinearStatus> {
-  return invoke<LinearStatus>("linear_set_token", { token: "" });
+export async function disconnectLinear(): Promise<LinearStatus> {
+  const status = await invoke<LinearStatus>("linear_set_token", { token: "" });
+  notifyTicketConnectionsChanged();
+  return status;
 }
 
 export function listLinearTeams(): Promise<LinearTeam[]> {

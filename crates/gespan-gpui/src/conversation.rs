@@ -152,6 +152,8 @@ struct OpenMenu {
 }
 use response_menu::ResponseMenu;
 pub(crate) struct SessionChanged;
+/// The agent changed the linked ticket through its ticket tools.
+pub(crate) struct TicketChanged(pub(crate) crate::runtime::TicketChange);
 pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
 /// The review card asked to open the session's recorded changes.
 pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
@@ -352,6 +354,12 @@ impl Conversation {
         } else {
             self.draft_hint
         }
+    }
+    pub(crate) fn draft_text(&self, cx: &gpui::App) -> String {
+        self.input.read(cx).content.to_string()
+    }
+    pub(crate) fn set_draft_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_text(text, cx));
     }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
@@ -1182,8 +1190,12 @@ impl Conversation {
                                 stopping,
                                 succeeded: update.succeeded,
                                 has_rows: !update.rows.is_empty(),
+                                reply: update.reply.clone(),
                             };
                             tracker.observe(store, *session, generation, turn, cx);
+                        }
+                        if let Some(change) = update.ticket {
+                            cx.emit(TicketChanged(change));
                         }
                         let source_selected = this.summary.provider == source_provider
                             && this.settings.account.id == source_account;
@@ -1529,6 +1541,7 @@ impl Conversation {
 }
 
 impl EventEmitter<SessionChanged> for Conversation {}
+impl EventEmitter<TicketChanged> for Conversation {}
 impl EventEmitter<ChooseFolder> for Conversation {}
 impl EventEmitter<OpenSessionChanges> for Conversation {}
 impl EventEmitter<Transfer> for Conversation {}

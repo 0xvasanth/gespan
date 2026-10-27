@@ -10,6 +10,8 @@ on:
       - 'crates/gespan-gpui/**'
       - 'crates/mobile-link/**'
       - 'crates/tracker-secrets/**'
+      - 'crates/tracker-client/**'
+      - 'crates/board-store/**'
       - 'crates/gespan-speech/**'
       - 'crates/gespan-models/**'
       - 'vendor/gpui-pre*/**'
@@ -27,6 +29,7 @@ on:
       - 'host/windows-acl.ps1'
       - 'host/package.mjs'
       - 'src-tauri/src/session_store.rs'
+      - 'src-tauri/src/board.rs'
       - 'src-tauri/src/pilot_transcript.rs'
       - 'src-tauri/src/codex_pilot_store.rs'
       - 'src-tauri/src/mobile_access.rs'
@@ -80,6 +83,9 @@ jobs:
       - run: bun run native:test:dev
       - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
+      # The shared ticket and board crates are root-workspace members, so their tests run there.
+      - run: cargo test --locked -p gespan-tracker-client
+      - run: cargo test --locked -p gespan-board-store
 
   desktop:
     name: Gespan Native (macOS)

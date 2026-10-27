@@ -5,12 +5,15 @@ mod media;
 pub use media::png as media_png;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
-mod github;
+pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
 pub mod linear;
+pub use gespan_tracker_client::credentials::plane;
 
-use crate::{desktop_preferences::DesktopPreferences, session_groups::WorkItem, store::Store};
+use crate::{
+    desktop_preferences::DesktopPreferences, session_groups::GithubWorkItem, store::Store,
+};
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -24,6 +27,7 @@ pub fn provider_label(provider: &str) -> &'static str {
     match provider {
         "linear" => "Linear",
         "jira" => "Jira",
+        "plane" => "Plane",
         "gitlab" => "GitLab",
         "azuredevops" => "ADO",
         _ => "GitHub",
@@ -134,8 +138,8 @@ impl Item {
             "Open"
         }
     }
-    pub fn work_item(&self) -> WorkItem {
-        WorkItem {
+    pub fn work_item(&self) -> GithubWorkItem {
+        GithubWorkItem {
             kind: self.kind.clone(),
             repo: self.repo.clone(),
             number: self.number.max(0) as u64,
@@ -267,6 +271,7 @@ pub struct Status {
     pub site: String,
     pub email: String,
     pub organization: String,
+    pub workspace: String,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct OptionRow {
@@ -584,6 +589,15 @@ pub struct Service {
     pub data_dir: PathBuf,
     pub cwd: PathBuf,
 }
+/// Plane is a connection only: tickets link to it, but it lists no issues.
+fn plane_connection(status: plane::PlaneStatus) -> Result<Status, String> {
+    Ok(Status {
+        connected: status.connected,
+        url: status.base_url,
+        workspace: status.workspace,
+        ..Default::default()
+    })
+}
 fn convert<T: Serialize, U: DeserializeOwned>(value: T) -> Result<U, String> {
     serde_json::from_value(serde_json::to_value(value).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
@@ -595,6 +609,7 @@ impl Service {
             "jira" => convert(jira::jira_status(self.data_dir.clone())?),
             "gitlab" => convert(gitlab::gitlab_status(self.data_dir.clone())?),
             "azuredevops" => convert(azure_devops::azure_devops_status(self.data_dir.clone())?),
+            "plane" => plane_connection(plane::plane_status(self.data_dir.clone())?),
             _ => {
                 let installed = crate::scm::resolve_gui_binary("gh").is_some();
                 let authenticated = installed
@@ -636,6 +651,13 @@ impl Service {
             "azuredevops" => convert(azure_devops::azure_devops_set_config(
                 self.data_dir.clone(),
                 url,
+                token,
+            )?),
+            // Plane takes a workspace as well, which rides in the email slot.
+            "plane" => plane_connection(plane::plane_set_config(
+                self.data_dir.clone(),
+                url,
+                email,
                 token,
             )?),
             _ => self.status("github"),
@@ -796,6 +818,14 @@ impl Service {
                 Err(error) => {
                     snapshot.errors.insert(provider.into(), error);
                 }
+            }
+        }
+        match self.status("plane") {
+            Ok(status) => {
+                snapshot.connections.insert("plane".into(), status);
+            }
+            Err(error) => {
+                snapshot.errors.insert("plane".into(), error);
             }
         }
         snapshot.items.sort_by(|a, b| {
@@ -1231,5 +1261,62 @@ mod notification_tests {
         linear.id = "stable-id".into();
         linear.identifier = "MON-7".into();
         assert_eq!(linear.key(), "linear:mon-7");
+    }
+}
+
+#[cfg(test)]
+mod plane_connection_tests {
+    use super::*;
+    use gespan_tracker_secrets::{self as secrets, testing, Tracker};
+
+    #[test]
+    fn plane_shows_as_a_connection_but_lists_no_issues_and_disconnects() {
+        testing::use_memory_keychain();
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service {
+            data_dir: dir.path().to_path_buf(),
+            cwd: dir.path().to_path_buf(),
+        };
+        assert!(!service.status("plane").unwrap().connected);
+        secrets::write(
+            Tracker::Plane,
+            dir.path(),
+            r#"{"base_url":"https://api.plane.so","workspace":"acme","api_key":"k"}"#,
+        )
+        .unwrap();
+        let status = service.status("plane").unwrap();
+        assert!(status.connected);
+        assert_eq!(status.url, "https://api.plane.so");
+        assert_eq!(status.workspace, "acme");
+
+        let snapshot = service.list(&[], &ViewState::default());
+        assert!(snapshot.connections["plane"].connected);
+        assert!(snapshot.items.iter().all(|item| item.provider != "plane"));
+        assert!(!PROVIDERS.contains(&"plane"));
+
+        let status = service
+            .connect("plane", String::new(), String::new(), "  ".into())
+            .unwrap();
+        assert!(!status.connected);
+        assert!(!service.status("plane").unwrap().connected);
+    }
+
+    #[test]
+    fn plane_connect_rejects_a_bad_workspace_before_any_request() {
+        testing::use_memory_keychain();
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service {
+            data_dir: dir.path().to_path_buf(),
+            cwd: dir.path().to_path_buf(),
+        };
+        let error = service
+            .connect(
+                "plane",
+                "https://api.plane.so".into(),
+                "bad/slug".into(),
+                "k".into(),
+            )
+            .unwrap_err();
+        assert!(error.contains("workspace"), "{error}");
     }
 }

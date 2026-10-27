@@ -432,6 +432,24 @@ impl Store {
             fallback.into()
         }
     }
+    /// One session's linked work item, read by its own row.
+    pub(super) fn shared_work_item(
+        &self,
+        id: i64,
+    ) -> Result<Option<crate::session_groups::WorkItem>, String> {
+        let original = self.persisted_session_id(id)?;
+        let column = self.shared_field("linked_work_item_json", "NULL");
+        let raw: Option<String> = sql(self
+            .conn
+            .query_row(
+                &format!("SELECT {column} FROM sessions WHERE id=?1"),
+                [&original],
+                |r| r.get(0),
+            )
+            .optional())?
+        .ok_or("Session no longer exists")?;
+        Ok(raw.and_then(|raw| parse(&raw).ok()))
+    }
     pub(super) fn shared_patch(&self, id: i64, fields: &[(&str, Value)]) -> Result<(), String> {
         self.shared_writable()?;
         let id = self.persisted_session_id(id)?;

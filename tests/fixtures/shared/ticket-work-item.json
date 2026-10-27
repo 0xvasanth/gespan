@@ -1,0 +1,12 @@
+{
+  "kind": "ticket",
+  "ticket": {
+    "tracker": "jira",
+    "key": "ENG-142",
+    "url": "https://acme.atlassian.net/browse/ENG-142",
+    "title": "Session list drops the linked ticket after restart",
+    "status": "In Progress",
+    "statusGroup": "started",
+    "fetchedAt": 1761350400000
+  }
+}

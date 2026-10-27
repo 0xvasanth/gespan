@@ -1,7 +1,7 @@
 //! Read-only GitHub polling for linked session notifications. No GitHub calls
 //! occur until the shell invokes poll; acknowledgment persistence stays in shell.
 use gespan_core::{
-    session_groups::WorkItem,
+    session_groups::{GithubWorkItem, WorkItem},
     store::{Session, Store},
 };
 use gpui::{Context, EventEmitter};
@@ -25,7 +25,7 @@ pub(crate) struct Entry {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Card {
     pub session: i64,
-    pub item: WorkItem,
+    pub item: GithubWorkItem,
     pub title: String,
     pub state: String,
     pub updated_at: i64,
@@ -270,6 +270,9 @@ fn api(endpoint: &str) -> Result<Value, String> {
 }
 /// Only canonical GitHub repository slugs enter a gh API endpoint or query.
 fn canonical(item: &WorkItem) -> bool {
+    let Some(item) = item.github() else {
+        return false;
+    };
     let parts = item.repo.split('/').collect::<Vec<_>>();
     item.number != 0
         && parts.len() == 2
@@ -343,7 +346,7 @@ fn fetch(
         .collect();
     let mut items: Vec<(String, u64)> = sessions
         .iter()
-        .filter_map(|s| s.work_item.as_ref())
+        .filter_map(|s| s.work_item.as_ref().and_then(|w| w.github()))
         .map(|item| (item.repo.clone(), item.number))
         .collect();
     items.sort();
@@ -351,7 +354,9 @@ fn fetch(
     let batched = summaries(&items);
     let mut cache: HashMap<String, Option<Value>> = HashMap::new();
     for session in sessions {
-        let item = session.work_item.clone().unwrap();
+        let Some(item) = session.work_item.as_ref().and_then(|w| w.github()).cloned() else {
+            continue;
+        };
         let base = format!(
             "repos/{}/{}s/{}",
             item.repo,

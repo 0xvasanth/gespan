@@ -242,6 +242,10 @@ impl Focusable for Input {
     }
 }
 impl Input {
+    /// Make this field a stop for Tab and Shift-Tab (fields are not by default).
+    pub(crate) fn tab_stop(&mut self) {
+        self.focus = self.focus.clone().tab_stop(true);
+    }
     /// Keep authentication text out of drawing, accessibility and clipboard.
     pub(crate) fn set_secret(&mut self, secret: bool) {
         self.secret = secret;
@@ -462,6 +466,10 @@ impl Input {
         let mut input = Self::memory_fact("Edit queued message", cx);
         input.max_height = input.min_height;
         input
+    }
+    /// The selected byte range, clamped to the current text.
+    pub(crate) fn selected_range(&self) -> Range<usize> {
+        self.clip_range(self.selection.clone())
     }
     /// `replace_text_in_range` without a window, for text that arrives from
     /// outside the platform's input handler (dictation).

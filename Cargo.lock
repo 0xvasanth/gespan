@@ -1882,10 +1882,12 @@ dependencies = [
  "arboard",
  "base64 0.23.1",
  "block2",
+ "gespan-board-store",
  "gespan-keep-awake",
  "gespan-mobile-link",
  "gespan-models",
  "gespan-speech",
+ "gespan-tracker-client",
  "gespan-tracker-secrets",
  "hostname",
  "if-addrs",
@@ -1930,6 +1932,18 @@ dependencies = [
  "windows",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "gespan-board-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -1992,6 +2006,23 @@ dependencies = [
  "sherpa-onnx",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gespan-tracker-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "gespan-tracker-secrets",
+ "proptest",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "url",
 ]
 
 [[package]]

@@ -1,4 +1,7 @@
+import { resolveModel } from "../../sessions/model/models";
+import { HARNESS_LABEL, type HarnessId } from "../../sessions/model/session";
 import { projectName } from "../../../shared/lib/paths";
+import type { AgentFacts } from "../model/agentFields";
 import type {
   BoardActivity,
   BoardCard,
@@ -22,7 +25,9 @@ export type BoardLinkTarget = {
   label: string;
   /** Shown after the label in the picker, e.g. the project. */
   detail?: string;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "waiting" | "completed" | "failed";
+  /** What the app knows of the session, for the card's agent fields. Never stored. */
+  agent?: AgentFacts;
   /**
    * Still the card's linked work, but not offered in the link picker
    * (an archived or draft session).
@@ -30,8 +35,35 @@ export type BoardLinkTarget = {
   unlisted?: boolean;
 };
 
+/** What "Run with…" asks the app to start. */
+export type RunRequest = {
+  cardId: string;
+  harness: HarnessId;
+  model: string;
+  /** The project folder to work in. */
+  cwd: string;
+  /** Work in a new worktree of that project. */
+  worktree: boolean;
+};
+
 /** A card's link as a lookup asks for it. */
 export type LinkRef = { kind: CardLinkKind; id: string };
+
+/** What a saved session tells the card's agent fields. Cost isn't recorded per session, so it stays unknown. */
+export function sessionAgentFacts(session: {
+  harness: HarnessId;
+  model: string;
+  createdAt?: number;
+  updatedAt?: number;
+}): AgentFacts {
+  return {
+    provider: HARNESS_LABEL[session.harness],
+    model: resolveModel(session.harness, session.model).name,
+    ...(session.createdAt !== undefined && session.updatedAt !== undefined
+      ? { runTimeMs: Math.max(0, session.updatedAt - session.createdAt) }
+      : {}),
+  };
+}
 
 /** A saved session as a link target; archived and draft ones are unlisted. */
 export function sessionLinkTarget(
@@ -41,6 +73,10 @@ export function sessionLinkTarget(
     cwd?: string;
     archived?: boolean;
     draft?: boolean;
+    harness?: HarnessId;
+    model?: string;
+    createdAt?: number;
+    updatedAt?: number;
   },
   status?: BoardLinkTarget["status"],
 ): BoardLinkTarget {
@@ -51,6 +87,14 @@ export function sessionLinkTarget(
     detail: session.cwd ? projectName(session.cwd) : undefined,
     status,
   };
+  if (session.harness && session.model) {
+    target.agent = sessionAgentFacts({
+      harness: session.harness,
+      model: session.model,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    });
+  }
   if (session.archived || session.draft) target.unlisted = true;
   return target;
 }
@@ -129,7 +173,7 @@ function activityAction(row: BoardActivity): string {
     case "created":
       return row.toColumn ? `Created in ${row.toColumn}` : "Created";
     case "edited":
-      return "Edited";
+      return row.detail ? `Changed ${row.detail}` : "Edited";
     case "moved":
       return `Moved from ${row.fromColumn ?? "?"} to ${row.toColumn ?? "?"}`;
     case "linked":
@@ -144,10 +188,122 @@ function activityAction(row: BoardActivity): string {
       return "Linked work completed";
     case "failed":
       return "Linked work failed";
+    case "needs_input":
+      return "Linked work needs input";
+    case "pr_opened":
+      return "Pull request opened";
+    case "pr_merged":
+      return "Pull request merged";
   }
 }
 
-/** One timeline row: "Moved from In Progress to Review · system · 2m ago". */
+/** Who did it: "You", "System", or "Agent" for any other writer. */
+export function actorLabel(actor: string): string {
+  if (actor === "user") return "You";
+  if (actor === "system") return "System";
+  return "Agent";
+}
+
+/** One timeline row: "Moved from In Progress to Review · System · 2m ago". */
 export function activityText(row: BoardActivity, now = Date.now()): string {
-  return `${activityAction(row)} · ${row.actor} · ${relativeTime(row.createdAt, now)}`;
+  return `${activityAction(row)} · ${actorLabel(row.actor)} · ${relativeTime(row.createdAt, now)}`;
+}
+
+/** Label colours (six hex digits), in the order new labels take them. Same as Native. */
+export const LABEL_COLORS = [
+  "8a867e",
+  "e5534b",
+  "e0823d",
+  "e8c547",
+  "3fb950",
+  "2bb3a8",
+  "4da3f5",
+  "a371f7",
+] as const;
+
+/** The colour a board's `count`-th label gets. */
+export function nextLabelColor(count: number): string {
+  return LABEL_COLORS[count % LABEL_COLORS.length];
+}
+
+/** Local midnight `days` days after the day of `now`, as epoch ms. */
+export function dayStart(days: number, now = Date.now()): number {
+  const today = new Date(now);
+  return new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() + days,
+  ).getTime();
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** A due date as a date input's value ("YYYY-MM-DD", local), or "". */
+export function dueInputValue(dueAt: number | null): string {
+  if (dueAt === null) return "";
+  const date = new Date(dueAt);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** A date input's value as local midnight; null when empty or not a real day. */
+export function parseDueInput(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date.getTime();
+}
+
+export type DueTone = "overdue" | "soon" | "later";
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * A due date as a card shows it, like Native: "Today", "Tomorrow",
+ * "Yesterday", a weekday within the week, else the date. Days are local;
+ * before today is overdue, today and tomorrow are soon.
+ */
+export function dueChip(
+  dueAt: number,
+  now = Date.now(),
+): { text: string; tone: DueTone } {
+  const due = new Date(dueAt);
+  const today = new Date(now);
+  const day = (date: Date) =>
+    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((day(due) - day(today)) / 86_400_000);
+  const tone: DueTone = days < 0 ? "overdue" : days <= 1 ? "soon" : "later";
+  if (days === 0) return { text: "Today", tone };
+  if (days === 1) return { text: "Tomorrow", tone };
+  if (days === -1) return { text: "Yesterday", tone };
+  if (days >= 2 && days <= 6) return { text: WEEKDAYS[due.getDay()], tone };
+  const date = `${MONTHS[due.getMonth()]} ${due.getDate()}`;
+  return {
+    text:
+      due.getFullYear() === today.getFullYear()
+        ? date
+        : `${date}, ${due.getFullYear()}`,
+    tone,
+  };
 }

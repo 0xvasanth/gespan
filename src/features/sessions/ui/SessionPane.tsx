@@ -46,7 +46,9 @@ import {
   type Session,
   type WorkspaceMode,
   type ComposerTurnOptions,
+  sessionTicket,
 } from "../model/session";
+import { SessionTicketChip } from "./SessionTicketChip";
 import { sessionHasBtwThreads, supportsBtwHarness } from "../model/btw";
 import { BtwSheet, useBtwConversation } from "./BtwSheet";
 import { AgentTranscript } from "./AgentTranscript";
@@ -220,6 +222,10 @@ export type SessionPaneProps = {
   onOpenArtifact?: (sessionId: string, id: string) => void;
   onHandoffCardDismiss?: (sessionId: string) => void;
   onOpenLinkedWorkItem?: (item: LinkedWorkItem, sessionId: string) => void;
+  onSetLinkedWorkItem?: (
+    sessionId: string,
+    item: LinkedWorkItem | undefined,
+  ) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<boolean>;
   onDeleteSession?: (sessionId: string) => Promise<boolean>;
   onApproval: (
@@ -358,6 +364,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
   onOpenArtifact,
   onHandoffCardDismiss,
   onOpenLinkedWorkItem,
+  onSetLinkedWorkItem,
   onArchiveSession,
   onDeleteSession,
   onApproval,
@@ -397,6 +404,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
   );
   const title = sessionDisplayTitle(session.title, session.harness);
   const isEmpty = session.blocks.length === 0;
+  const linkedTicket = sessionTicket(session.linkedWorkItem);
+  const latestLinkedWorkItem = useRef(session.linkedWorkItem);
+  latestLinkedWorkItem.current = session.linkedWorkItem;
   const editedPaths = useMemo(
     () => (session.busy ? undefined : sessionEditPaths(session.blocks)),
     [session.blocks, session.busy],
@@ -659,6 +669,14 @@ const LocalSessionPane = memo(function LocalSessionPane({
     (!draftBlock && (!isEmpty || inSplit || !!session.inboxAsk || !!agent));
   const composerDockMotion = useComposerDockMotion(dockComposer);
   const draftRef = useRef<string | undefined>(getComposerDraft(session.id));
+  // A seed replaced while the draft still holds the old one (a ticket's
+  // title arriving after its key) replaces the draft. Edited text stays.
+  const seedRef = useRef(session.composerSeed);
+  if (seedRef.current !== session.composerSeed) {
+    if (draftRef.current === undefined || draftRef.current === seedRef.current)
+      draftRef.current = session.composerSeed;
+    seedRef.current = session.composerSeed;
+  }
   const holdNotice = held ? (
     <div className="mb-1.5 flex items-center gap-2 rounded-[10px] bg-content/5 px-3 py-1.5 text-[12px] text-content/60">
       <Pause className="size-3.5" strokeWidth={1.75} aria-hidden />
@@ -889,6 +907,17 @@ const LocalSessionPane = memo(function LocalSessionPane({
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {linkedTicket && onSetLinkedWorkItem ? (
+            <div className="flex shrink-0 px-3 pt-2">
+              <SessionTicketChip
+                ticket={linkedTicket}
+                visible={visible}
+                onChange={(item) => onSetLinkedWorkItem(session.id, item)}
+                current={() => latestLinkedWorkItem.current}
+                sessionKey={session.id}
+              />
+            </div>
+          ) : null}
           <div
             ref={transcriptScope}
             className={`relative min-h-0 flex-1${

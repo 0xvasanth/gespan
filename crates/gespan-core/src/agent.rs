@@ -133,6 +133,9 @@ pub struct Settings {
     pub plan: bool,
     pub operator: bool,
     pub orchestrator: bool,
+    /// This session was started by an orchestration lead to do one task. It
+    /// stays set across turns, unlike `orchestrator`.
+    pub orchestration_worker: bool,
     pub new_worktree: bool,
     pub worktree_base: Option<String>,
     pub worktree_cwd: Option<String>,

@@ -46,3 +46,51 @@ it("keeps the textarea's text node when a parent re-renders with the latest draf
     vi.restoreAllMocks();
   }
 });
+
+it("takes a replaced parent draft as its own text, so the next render keeps it", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  // SessionPane hands back whatever the composer last reported.
+  let parentDraft = "ENG-7";
+  const onDraftChange = vi.fn((text: string) => {
+    parentDraft = text;
+  });
+  const render = () =>
+    root.render(
+      createElement(Composer, {
+        focused: false,
+        harness: "codex",
+        model: "",
+        runtimeMode: "supervised",
+        executionCwd: "~",
+        initialDraft: parentDraft,
+        hideTopBar: true,
+        onDraftChange,
+        onFocus: vi.fn(),
+        onCwdChange: vi.fn(),
+        onModelChange: vi.fn(),
+        onRuntimeModeChange: vi.fn(),
+        onSubmit: vi.fn(),
+      }),
+    );
+  try {
+    await act(async () => render());
+    const textarea = container.querySelector("textarea")!;
+    expect(textarea.value).toBe("ENG-7");
+    // A ticket's title arrives and replaces the untouched key.
+    parentDraft = "Fix login";
+    await act(async () => render());
+    expect(textarea.value).toBe("Fix login");
+    expect(onDraftChange).toHaveBeenLastCalledWith("Fix login");
+    // A later unrelated re-render must not bring the key back.
+    await act(async () => render());
+    expect(textarea.value).toBe("Fix login");
+    expect(parentDraft).toBe("Fix login");
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  }
+});

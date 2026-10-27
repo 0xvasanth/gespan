@@ -1041,6 +1041,18 @@ impl Menu {
             })
             .collect()
     }
+    /// Each row as tests see it: an action's label, or `---` for a separator.
+    #[cfg(test)]
+    pub(crate) fn item_shape(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action(action) => Some(action.label.to_string()),
+                MenuItem::Separator => Some("---".into()),
+                _ => None,
+            })
+            .collect()
+    }
     /// Activates the row labelled `label`, as a click on it would.
     #[cfg(test)]
     pub(crate) fn pick_label(&mut self, label: &str, window: &mut Window, cx: &mut Context<Self>) {

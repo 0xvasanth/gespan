@@ -24,18 +24,20 @@ export const noDrag = {
 } as const;
 
 /**
- * Asks before a card, its notes and its activity are deleted. A dialog that
- * can't open counts as "no": nothing is deleted without a yes.
+ * Asks before an archived card, its notes and its activity are deleted for
+ * good ("Delete forever" in the Archive view). A card delete on the board is
+ * held with an undo toast instead, so it never asks. A dialog that can't open
+ * counts as "no": nothing is deleted without a yes.
  */
 export function confirmDeleteCard(
   card: Pick<BoardCard, "number" | "title">,
 ): Promise<boolean> {
   return ask(
-    `Delete card #${card.number} “${card.title}”? Its notes and activity are removed.`,
+    `Delete card #${card.number} “${card.title}” forever? Its notes and activity are removed.`,
     {
-      title: "Delete card",
+      title: "Delete forever",
       kind: "warning",
-      okLabel: "Delete card",
+      okLabel: "Delete forever",
       cancelLabel: "Cancel",
     },
   ).catch(() => false);
@@ -47,17 +49,23 @@ export const ICON_BUTTON =
 const MENU_ITEM =
   "flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] text-content/85 hover:bg-content/8 hover:text-content disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 
-/** A "…" button with its menu. `children` gets a `close` callback. */
+/** A "…" button (or `trigger`) with its menu. `children` gets a `close` callback. */
 export function MenuButton({
   label,
   children,
   width = 200,
   className = ICON_BUTTON,
+  trigger,
+  openOnArrowDown = false,
 }: {
   label: string;
   children: (close: () => void) => ReactNode;
   width?: number;
   className?: string;
+  /** Replaces the "…" icon on the button. */
+  trigger?: ReactNode;
+  /** Down on the closed button opens the menu, as Enter and Space do. */
+  openOnArrowDown?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -74,13 +82,19 @@ export function MenuButton({
         data-menu-open={open ? "" : undefined}
         className={className}
         onPointerDown={stop}
-        onKeyDown={stop}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (openOnArrowDown && !open && event.key === "ArrowDown") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
         }}
       >
-        <MoreHorizontal className="size-3.5" strokeWidth={1.75} />
+        {trigger ?? <MoreHorizontal className="size-3.5" strokeWidth={1.75} />}
       </button>
       {open ? (
         <Popover
@@ -113,19 +127,28 @@ export function MenuItem({
   title,
   danger = false,
   checked,
+  kind = "radio",
 }: {
   children: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
   title?: string;
   danger?: boolean;
-  /** Set for a radio item. */
+  /** Set for a checkable item: a radio, or a checkbox with `kind`. */
   checked?: boolean;
+  /** What a checkable item is: one of an exclusive set, or an independent toggle. */
+  kind?: "radio" | "checkbox";
 }) {
   return (
     <button
       type="button"
-      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      role={
+        checked === undefined
+          ? "menuitem"
+          : kind === "checkbox"
+            ? "menuitemcheckbox"
+            : "menuitemradio"
+      }
       aria-checked={checked}
       disabled={disabled}
       title={title}

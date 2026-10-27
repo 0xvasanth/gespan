@@ -1079,7 +1079,7 @@ fn parse_github_pr_oids(json: &str) -> Result<(String, String), String> {
     Ok((base.to_string(), head.to_string()))
 }
 
-pub(super) fn git_github_pr_checks_for(
+pub(crate) fn git_github_pr_checks_for(
     root: &Path,
     repo: &str,
     number: i64,

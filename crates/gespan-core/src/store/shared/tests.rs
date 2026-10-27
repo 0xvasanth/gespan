@@ -1066,3 +1066,60 @@ fn desktop_steers_restore_the_original_turn_without_needing_model_metadata() {
     assert_eq!(turns[&3].joined_turn, Some(1));
     assert_eq!(turns[&5].joined_turn, None);
 }
+
+#[test]
+fn desktop_work_item_reads_one_session_by_its_desktop_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
+    let linked = store.create("codex", "/project").unwrap();
+    let plain = store.create("codex", "/project").unwrap();
+    let item = crate::session_groups::WorkItem::Ticket(Box::new(crate::tickets::TicketRef {
+        tracker: crate::tickets::Tracker::Jira,
+        key: "ENG-9".into(),
+        url: None,
+        title: None,
+        status: None,
+        status_group: None,
+        fetched_at: None,
+    }));
+    store.set_work_item(linked.id, Some(&item)).unwrap();
+    assert_eq!(store.work_item(linked.id).unwrap(), Some(item.clone()));
+    assert_eq!(store.work_item(plain.id).unwrap(), None);
+    let listed = store
+        .sessions()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == linked.id)
+        .unwrap();
+    assert_eq!(listed.work_item, Some(item));
+    store.set_work_item(linked.id, None).unwrap();
+    assert_eq!(store.work_item(linked.id).unwrap(), None);
+    // A session id the store never handed out is an error.
+    assert!(store.work_item(i64::MAX - 7).is_err());
+}
+
+#[test]
+fn desktop_work_item_reads_a_sidebar_hidden_session_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
+    let hidden = store.create("codex", "/project").unwrap();
+    let key = store.persisted_session_id(hidden.id).unwrap();
+    let item = crate::session_groups::WorkItem::Ticket(Box::new(crate::tickets::TicketRef {
+        tracker: crate::tickets::Tracker::Linear,
+        key: "ENG-7".into(),
+        url: None,
+        title: None,
+        status: None,
+        status_group: None,
+        fetched_at: None,
+    }));
+    store.set_work_item(hidden.id, Some(&item)).unwrap();
+    store
+        .conn
+        .execute("UPDATE sessions SET sidebar_hidden=1 WHERE id=?1", [&key])
+        .unwrap();
+    // A ticket tool's scope reads the link by id, not through the listing.
+    assert_eq!(store.work_item(hidden.id).unwrap(), Some(item));
+    store.set_work_item(hidden.id, None).unwrap();
+    assert_eq!(store.work_item(hidden.id).unwrap(), None);
+}

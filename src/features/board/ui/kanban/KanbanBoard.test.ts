@@ -6,7 +6,16 @@ import type { BoardCard, BoardColumn, BoardDetail } from "../../model/board";
 import { KanbanBoard, type KanbanBoardProps } from "./KanbanBoard";
 
 function column(id: string, name: string, position: number): BoardColumn {
-  return { id, boardId: "b1", name, position, role: null };
+  return {
+    id,
+    boardId: "b1",
+    name,
+    position,
+    role: null,
+    color: null,
+    wipLimit: null,
+    collapsed: false,
+  };
 }
 
 function card(
@@ -76,6 +85,15 @@ function render(overrides: Partial<KanbanBoardProps> = {}) {
   return props;
 }
 
+function collapsedDetail(): BoardDetail {
+  return {
+    ...detail,
+    columns: detail.columns.map((c) =>
+      c.id === "progress" ? { ...c, collapsed: true } : c,
+    ),
+  };
+}
+
 const attr = (selector: string, name: string) =>
   [...container.querySelectorAll(selector)].map((el) => el.getAttribute(name));
 
@@ -129,6 +147,44 @@ describe("KanbanBoard", () => {
     render();
     expect(container.querySelector("[data-dragging]")).toBeNull();
     expect(container.querySelector("[data-over]")).toBeNull();
+  });
+
+  describe("collapsed column", () => {
+    it("is a 36px strip with the name and count, and no cards or footer", () => {
+      render({ detail: collapsedDetail() });
+      const strip = container.querySelector<HTMLElement>(
+        "[data-column-collapsed]",
+      )!;
+      expect(strip.getAttribute("data-kanban-column")).toBe("progress");
+      expect(strip.className).toContain("w-9");
+      expect(strip.textContent).toContain("In Progress");
+      expect(strip.querySelector("[data-column-count]")?.textContent).toBe("1");
+      expect(strip.querySelector("[data-card]")).toBeNull();
+      expect(strip.querySelector("[data-footer]")).toBeNull();
+      expect(
+        container.querySelectorAll("[data-column-collapsed]"),
+      ).toHaveLength(1);
+    });
+
+    it("expands on click", () => {
+      const onColumnExpand = vi.fn();
+      render({ detail: collapsedDetail(), onColumnExpand });
+      act(() =>
+        container
+          .querySelector<HTMLElement>("[data-column-collapsed] button")!
+          .click(),
+      );
+      expect(onColumnExpand).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "progress" }),
+      );
+    });
+
+    it("keeps its drop target mounted", () => {
+      render({ detail: collapsedDetail() });
+      // The droppable is the strip's body: it fills the strip.
+      const strip = container.querySelector("[data-column-collapsed]")!;
+      expect(strip.querySelector("[data-column-drop]")).not.toBeNull();
+    });
   });
 
   describe("keyboard drag", () => {
@@ -343,6 +399,21 @@ describe("KanbanBoard", () => {
       expect(liveRegion()).toBe(
         "Dropped card #12 in In Progress, position 1 of 2.",
       );
+    });
+
+    it("drops a keyboard move onto a collapsed column at its end", async () => {
+      stubLayout({ collapse: true });
+      const props = render({ detail: collapsedDetail() });
+      const el = await pickUp("c12");
+      key(el, "ArrowRight", "ArrowRight");
+      await flush();
+      key(document, "Space", " ");
+      await flush();
+      expect(props.onCardMove).toHaveBeenCalledTimes(1);
+      expect(props.onCardMove).toHaveBeenCalledWith("c12", {
+        columnId: "progress",
+        index: 1,
+      });
     });
 
     it("shows a detail that arrived mid-drag after a same-place drop", async () => {

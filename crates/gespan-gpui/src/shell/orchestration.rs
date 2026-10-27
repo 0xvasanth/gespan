@@ -77,6 +77,7 @@ impl Shell {
         let mut settings = conversation.settings.clone();
         settings.plan = false;
         settings.orchestrator = false;
+        settings.orchestration_worker = true;
         settings.operator = false;
         settings.handoff = None;
         settings.turns.clear();

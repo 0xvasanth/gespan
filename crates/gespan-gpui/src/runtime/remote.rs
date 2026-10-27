@@ -40,6 +40,8 @@ fn update(status: impl Into<String>, finished: bool) -> Update {
         // Conversations skip Board settlement for remote turns, so this value
         // never moves a card.
         succeeded: false,
+        ticket: None,
+        reply: None,
         finished,
     }
 }

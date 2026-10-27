@@ -46,6 +46,7 @@ import type {
   TurnMetrics,
 } from "../model/session";
 
+import type { GithubLinkedWorkItem, TicketRef } from "../model/session";
 import { HARNESSES, RUNTIME_MODES } from "../model/session";
 
 import { restoreOrchestrationProposal } from "../../orchestration/model/orchestrationPlan";
@@ -301,13 +302,57 @@ function sanitizeQueuedMessages(value: unknown): QueuedMessage[] {
   });
 }
 
+const TICKET_TRACKERS = ["jira", "linear", "plane"] as const;
+const TICKET_STATUS_GROUPS = [
+  "triage",
+  "backlog",
+  "unstarted",
+  "started",
+  "completed",
+  "cancelled",
+  "unknown",
+] as const;
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function sanitizeTicketWorkItem(value: unknown): LinkedWorkItem | undefined {
+  const raw = (value as { ticket?: unknown }).ticket;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const ticket = raw as Record<string, unknown>;
+  const tracker = TICKET_TRACKERS.find((t) => t === ticket.tracker);
+  const key = typeof ticket.key === "string" ? ticket.key.trim() : "";
+  if (!tracker || !key) return undefined;
+  const statusGroup = TICKET_STATUS_GROUPS.find(
+    (g) => g === ticket.statusGroup,
+  );
+  const fetchedAt =
+    typeof ticket.fetchedAt === "number" && Number.isFinite(ticket.fetchedAt)
+      ? ticket.fetchedAt
+      : null;
+  const clean: TicketRef = {
+    tracker,
+    key,
+    url: optionalString(ticket.url),
+    title: optionalString(ticket.title),
+    status: optionalString(ticket.status),
+    statusGroup: statusGroup ?? null,
+    fetchedAt,
+  };
+  return { kind: "ticket", ticket: clean };
+}
+
 export function sanitizeLinkedWorkItem(
   value: unknown,
 ): LinkedWorkItem | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const item = value as Partial<LinkedWorkItem>;
+  if ((value as { kind?: unknown }).kind === "ticket") {
+    return sanitizeTicketWorkItem(value);
+  }
+  const item = value as Partial<GithubLinkedWorkItem>;
   const kind = item.kind;
   const repo = typeof item.repo === "string" ? item.repo.trim() : "";
   const number = item.number;

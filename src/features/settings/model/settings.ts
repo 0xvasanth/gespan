@@ -257,6 +257,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     label: "Board",
     keywords: "kanban cards columns tasks tickets track",
   },
+  {
+    id: "board-card-open",
+    section: "general",
+    label: "Open cards in",
+    keywords: "board card drawer full page expand detail",
+  },
   ...(IS_MAC
     ? [
         {
@@ -553,6 +559,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "inbox",
     label: "Linear",
     keywords: "api key issues teams connect",
+  },
+  {
+    id: "plane",
+    section: "inbox",
+    label: "Plane",
+    keywords: "api key work items workspace self-hosted ticket connect",
   },
   {
     id: "show-archived",
@@ -916,6 +928,46 @@ export function subscribeBoardEnabled(onStoreChange: () => void) {
   window.addEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
   return () =>
     window.removeEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
+}
+
+const BOARD_CARD_OPEN_KEY = "gespan.boardCardOpen";
+
+export type BoardCardOpen = "drawer" | "page";
+
+export const BOARD_CARD_OPEN_DEFAULT: BoardCardOpen = "drawer";
+
+/** Fired on `window` when "Open cards in" changes. */
+export const BOARD_CARD_OPEN_CHANGE_EVENT = "gespan:board-card-open-change";
+
+/** Where a board card opens: the side drawer or the whole board area. */
+export function loadBoardCardOpen(): BoardCardOpen {
+  try {
+    const raw = localStorage.getItem(BOARD_CARD_OPEN_KEY);
+    return raw === "page" || raw === "drawer" ? raw : BOARD_CARD_OPEN_DEFAULT;
+  } catch {
+    return BOARD_CARD_OPEN_DEFAULT;
+  }
+}
+
+export function saveBoardCardOpen(value: BoardCardOpen) {
+  try {
+    localStorage.setItem(BOARD_CARD_OPEN_KEY, value);
+  } catch {
+    // private mode / quota
+  }
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<BoardCardOpen>(BOARD_CARD_OPEN_CHANGE_EVENT, {
+      detail: value,
+    }),
+  );
+}
+
+export function subscribeBoardCardOpen(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(BOARD_CARD_OPEN_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(BOARD_CARD_OPEN_CHANGE_EVENT, onStoreChange);
 }
 
 const PILOTS_ENABLED_KEY = "gespan.pilotsEnabled";
@@ -1323,6 +1375,36 @@ export const KEYBINDINGS: KeybindingRow[] = [
   { command: "Terminal: New", keys: `${MOD}\``, when: "Always" },
   { command: "Terminal: New Tab", keys: `${MOD}${SHIFT}\``, when: "Always" },
   { command: "Terminal: Toggle Dock", keys: `${MOD}J`, when: "Always" },
+  {
+    command: "Board: New Card",
+    keys: `${MOD}N`,
+    when: "Board focused",
+    fixed: true,
+  },
+  {
+    command: "Board: New card (N, board focused)",
+    keys: "N",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Search",
+    keys: "/",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Open Card",
+    keys: "E",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Delete Card or Selection",
+    keys: "Delete / ⌫",
+    when: "Board focused, not typing, not in the drawer",
+    fixed: true,
+  },
   { command: "Editor: Find", keys: `${MOD}F`, when: "editorFocus" },
   { command: "Editor: Replace", keys: `${MOD}${ALT}F`, when: "editorFocus" },
 ];

@@ -544,7 +544,7 @@ pub(super) fn run(
                 Some(super::hold::Action::Settle(point)) => emit(vec![Event::HoldSettled(point)])?,
                 None => {}
             }
-            if crate::visual_bridge::configured(&request.settings.environment) {
+            if crate::tool_servers::configured(&request.settings.environment) {
                 emit(Vec::new())?;
             }
             if !connected && started.elapsed() >= Duration::from_secs(30) {

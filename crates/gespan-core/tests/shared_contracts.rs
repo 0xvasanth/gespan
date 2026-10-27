@@ -380,38 +380,11 @@ fn flow_ddl_is_pinned() {
     );
 }
 
-/// The native board source, as the Tauri board source is read with `tauri`.
-fn native_board() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
-}
-
-/// Every board table and index statement, whitespace-normalized.
-fn board_ddl(source: &str) -> Vec<String> {
-    regex::Regex::new(r"CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS board[^;]*;")
-        .unwrap()
-        .find_iter(source)
-        .map(|statement| {
-            statement
-                .as_str()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect()
-}
-
-#[test]
-fn board_tables_match_tauri() {
-    let tauri_ddl = board_ddl(&tauri("src-tauri/src/board.rs"));
-    // Four tables and five indexes; an empty match would pass vacuously.
-    assert_eq!(tauri_ddl.len(), 9, "{tauri_ddl:#?}");
-    assert_eq!(board_ddl(&native_board()), tauri_ddl);
-}
-
+/// Both apps call the shared board-store crate, so its error strings are the
+/// ones the React board and the native board show.
 #[test]
 fn board_error_strings_match_tauri() {
-    let tauri_source = tauri("src-tauri/src/board.rs");
-    let native_source = native_board();
+    let store_source = tauri("crates/board-store/src/ops.rs");
     for message in [
         "Column not on this board",
         "Column has {cards} {plural}",
@@ -419,13 +392,24 @@ fn board_error_strings_match_tauri() {
         "Unknown column role: {role}",
         "already has the {role} role",
     ] {
-        assert!(tauri_source.contains(message), "Tauri lacks {message}");
-        assert!(native_source.contains(message), "native lacks {message}");
+        assert!(
+            store_source.contains(message),
+            "board-store lacks {message}"
+        );
+    }
+    for app in [
+        "src-tauri/src/board.rs",
+        "crates/gespan-core/src/board/mod.rs",
+    ] {
+        assert!(
+            tauri(app).contains("use gespan_board_store::"),
+            "{app} does not use board-store"
+        );
     }
 }
 
 #[test]
-fn opening_the_gespan_store_then_the_board_service_creates_the_four_shared_board_tables() {
+fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
     drop(Store::open_gespan(&path).unwrap());
@@ -438,16 +422,165 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_four_shared_board
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    // The shared tables are exactly Tauri's four; anything else the native app
-    // adds is its own, prefixed so Tauri never mistakes it for shared data.
+    // The shared tables are board-store's, which the Tauri app creates too.
+    // The pre-v3 native tables stay for one release and nothing reads them.
     let (native, shared): (Vec<_>, Vec<_>) = names
         .iter()
         .partition(|name| name.starts_with("board_native_"));
     assert_eq!(
         shared,
-        ["board_activity", "board_cards", "board_columns", "boards"]
+        [
+            "board_activity",
+            "board_card_field_values",
+            "board_card_labels",
+            "board_card_links",
+            "board_card_meta",
+            "board_card_projects",
+            "board_card_relations",
+            "board_cards",
+            "board_columns",
+            "board_comments",
+            "board_fields",
+            "board_labels",
+            "board_schema",
+            "board_session_settings",
+            "board_settings",
+            "board_subtasks",
+            "board_templates",
+            "board_views",
+            "boards",
+        ]
     );
-    assert!(!native.is_empty());
+    assert_eq!(
+        native,
+        [
+            "board_native_card_labels",
+            "board_native_comments",
+            "board_native_labels",
+            "board_native_meta",
+            "board_native_projects",
+            "board_native_subtasks",
+        ]
+    );
+    let version: i64 = conn
+        .query_row("SELECT version FROM board_schema", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, gespan_board_store::SCHEMA_VERSION);
+    // v6: the mark that a card's title came from a ticket.
+    let marked: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('board_cards')
+                           WHERE name = 'title_from_ticket')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(marked);
+}
+
+/// Ruling C6-j: both apps make a card from a ticket, and retitle it from the
+/// ticket, through the board-store calls that mark the title as ticket text,
+/// so the "Run with…" prompt leaves it out. A plain create or title edit
+/// there would leave the title unmarked.
+#[test]
+fn both_apps_title_ticket_cards_through_the_marking_store_calls() {
+    let native = tauri("crates/gespan-gpui/src/board/tickets.rs");
+    for call in ["card_create_from_ticket(", "card_retitle_from_ticket("] {
+        assert!(native.contains(call), "native lacks {call}");
+    }
+    for plain in ["card_create(", "card_update("] {
+        assert!(!native.contains(plain), "native ticket cards use {plain}");
+    }
+    let service = tauri("crates/gespan-core/src/board/mod.rs");
+    let commands = tauri("src-tauri/src/board.rs");
+    for source in [&service, &commands] {
+        assert!(source.contains("gespan_board_store::create_card_from_ticket("));
+        assert!(source.contains("gespan_board_store::retitle_card_from_ticket("));
+    }
+    let web = tauri("src/features/board/model/ticketCards.ts");
+    for call in ["createCardFromTicketRef(", "retitleCardFromTicket("] {
+        assert!(web.contains(call), "Tauri lacks {call}");
+    }
+    for plain in ["createCard(", "updateCard("] {
+        assert!(!web.contains(plain), "Tauri ticket cards use {plain}");
+    }
+    let lib = tauri("src-tauri/src/lib.rs");
+    for command in [
+        "board::board_card_create_from_ticket",
+        "board::board_card_retitle_from_ticket",
+    ] {
+        assert!(lib.contains(command), "{command} is not registered");
+    }
+}
+
+/// A database board-store wrote (as the Tauri app does) opens in the native
+/// board service, which reads every v3 value back.
+#[test]
+fn a_database_written_by_board_store_opens_in_the_native_board_service() {
+    use gespan_board_store as store;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let (board, card, label) = {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+            .unwrap();
+        store::ensure_tables(&conn).unwrap();
+        let board = store::create_board(&conn, "Shared").unwrap();
+        let column = store::get_board(&conn, &board.id).unwrap().columns[0].clone();
+        let card = store::create_card(&conn, &column.id, "Task", "").unwrap();
+        store::set_priority(&conn, &card.id, 4).unwrap();
+        let label = store::create_label(&conn, &board.id, "Bug", "e5534b").unwrap();
+        store::set_card_labels(&conn, &card.id, std::slice::from_ref(&label.id)).unwrap();
+        store::add_subtask(&conn, &card.id, "Step").unwrap();
+        store::add_comment(&conn, &card.id, "From the other app", "agent").unwrap();
+        store::link_card(&conn, &card.id, Some("session"), Some("s-1")).unwrap();
+        (board.id, card.id, label.id)
+    };
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    assert_eq!(service.list().unwrap()[0].id, board);
+    let extras = service.extras(&board).unwrap();
+    let extras = &extras[&card];
+    assert_eq!(extras.priority, 4);
+    assert_eq!(extras.labels, [label]);
+    assert_eq!((extras.subtasks_total, extras.comments), (1, 1));
+    assert_eq!(service.comments(&card).unwrap()[0].author, "agent");
+    assert_eq!(
+        service.cards_for_link("session", "s-1").unwrap()[0].id,
+        card
+    );
+    service.set_priority(&card, 1).unwrap();
+}
+
+/// A native database from before v3 keeps every extra when the native app
+/// opens it after the upgrade.
+#[test]
+fn the_native_service_migrates_a_pre_v3_database_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, card_seq INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE board_columns (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL, role TEXT);
+             CREATE TABLE board_cards (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, column_id TEXT NOT NULL REFERENCES board_columns(id), number INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL, link_kind TEXT, link_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (board_id, number));
+             CREATE TABLE board_activity (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, card_id TEXT REFERENCES board_cards(id) ON DELETE CASCADE, kind TEXT NOT NULL, actor TEXT NOT NULL, from_column TEXT, to_column TEXT, detail TEXT, created_at INTEGER NOT NULL);
+             CREATE TABLE board_native_meta (card_id TEXT PRIMARY KEY REFERENCES board_cards(id) ON DELETE CASCADE, priority INTEGER NOT NULL DEFAULT 0, due_at INTEGER);
+             CREATE TABLE board_native_comments (id TEXT PRIMARY KEY, card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE, body TEXT NOT NULL, created_at INTEGER NOT NULL);
+             INSERT INTO boards VALUES ('b1', 'Work', 1, 1, 1);
+             INSERT INTO board_columns VALUES ('c1', 'b1', 'Backlog', 0, 'todo');
+             INSERT INTO board_cards VALUES ('k1', 'b1', 'c1', 1, 'Old', '', 0, NULL, NULL, 1, 1);
+             INSERT INTO board_native_meta VALUES ('k1', 2, 1793404800000);
+             INSERT INTO board_native_comments VALUES ('m1', 'k1', 'kept', 5);",
+        )
+        .unwrap();
+    }
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    let extras = &service.extras("b1").unwrap()["k1"];
+    assert_eq!(
+        (extras.priority, extras.due_at, extras.comments),
+        (2, Some(1_793_404_800_000), 1)
+    );
+    assert_eq!(service.comments("k1").unwrap()[0].body, "kept");
 }
 
 #[test]
@@ -459,4 +592,20 @@ fn board_setting_key_matches_tauri() {
     )
     .unwrap();
     assert!(native.contains("(\"board\", \"boardEnabled\", true)"));
+}
+
+/// The same file is parsed by `sessionWorkItem.test.ts`, so a drift in either
+/// app's ticket wire shape fails a test on one side.
+#[test]
+fn ticket_work_item_fixture_parses_and_serializes_back_to_itself() {
+    use gespan_core::{provider_boards::StateGroup, session_groups::WorkItem, tickets::Tracker};
+    let raw = tauri("tests/fixtures/shared/ticket-work-item.json");
+    let item: WorkItem = serde_json::from_str(&raw).unwrap();
+    let ticket = item.ticket().expect("a ticket variant");
+    assert_eq!(ticket.tracker, Tracker::Jira);
+    assert_eq!(ticket.key, "ENG-142");
+    assert_eq!(ticket.status_group, Some(StateGroup::Started));
+    assert_eq!(ticket.fetched_at, Some(1_761_350_400_000));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(serde_json::to_value(&item).unwrap(), fixture);
 }

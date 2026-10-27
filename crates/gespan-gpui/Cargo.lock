@@ -2328,6 +2328,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-board-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "gespan-core"
 version = "0.16.0"
 dependencies = [
@@ -2335,8 +2346,10 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "flate2",
+ "gespan-board-store",
  "gespan-mobile-link",
  "gespan-redact",
+ "gespan-tracker-client",
  "gespan-tracker-secrets",
  "hostname",
  "if-addrs",
@@ -2386,11 +2399,14 @@ dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
  "chrono",
+ "gespan-board-store",
  "gespan-core",
  "gespan-keep-awake",
  "gespan-models",
  "gespan-redact",
  "gespan-speech",
+ "gespan-tracker-client",
+ "gespan-tracker-secrets",
  "gpui-pre",
  "gpui-pre-apple",
  "gpui-pre-platform",
@@ -2495,6 +2511,21 @@ dependencies = [
  "serde_json",
  "sherpa-onnx",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gespan-tracker-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "gespan-tracker-secrets",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
+ "ureq",
+ "url",
 ]
 
 [[package]]

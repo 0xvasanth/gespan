@@ -1,20 +1,25 @@
-//! Task fields only the native app shows: priority, due date, projects,
-//! labels, subtasks and comments. They live beside the shared Tauri board
-//! tables, keyed to `board_cards`, so a card deleted in either app takes its
-//! extras with it and the shared DDL stays exactly as Tauri defines it.
-use super::{
-    clean_text, db, get_card, log_activity, new_id, now_millis, validate_id, write_tx, Board,
-    NewActivity, Service,
+//! Task fields beyond title and body: priority, due date, projects, labels,
+//! subtasks and comments. The storage is the shared board-store's v3 tables;
+//! these `Service` methods are the native app's handle on them.
+use super::{validate_id, Board, Card, Service};
+use gespan_board_store as store;
+use rusqlite::Connection;
+use std::collections::{HashMap, HashSet};
+
+pub use gespan_board_store::{
+    auto_move_rules, display_options, priority_scheme, AutoMoveRules, BoardSettings, CardExtras,
+    CardFace, CardIndexRow, CardLink, CardMeta, CardTool, ColumnDisplayPatch, Comment, Density,
+    Dir, DisplayOptions, Field, FieldValue, FilterRow, Label, Op, PriorityScheme, Relation,
+    RuleTarget, SettingsPatch, SortKey, SortSpec, Subtask, TemplateInfo, View, ViewSpec,
+    BOARD_ICONS, BUILT_IN_TEMPLATES, FIELD_KINDS, PRIORITIES,
 };
-use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeMap;
 
-const MAX_LABEL: usize = 40;
-const MAX_SUBTASK: usize = 500;
-const MAX_COMMENT: usize = 20_000;
-pub const PRIORITIES: [&str; 5] = ["None", "Low", "Medium", "High", "Urgent"];
-
-pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
+/// The pre-v3 native tables. Nothing reads them now that board-store has
+/// copied them into its v3 tables; they are still created, and never dropped,
+/// for one release so a build from before v3 opening this file finds what it
+/// expects.
+pub(crate) fn ensure_legacy_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS board_native_meta (
            card_id TEXT PRIMARY KEY REFERENCES board_cards(id) ON DELETE CASCADE,
@@ -59,127 +64,6 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct CardExtras {
-    pub priority: u8,
-    pub due_at: Option<i64>,
-    pub projects: Vec<String>,
-    /// Label ids.
-    pub labels: Vec<String>,
-    pub subtasks_done: usize,
-    pub subtasks_total: usize,
-    pub comments: usize,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Label {
-    pub id: String,
-    pub board_id: String,
-    pub name: String,
-    pub color: String,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Subtask {
-    pub id: String,
-    pub card_id: String,
-    pub title: String,
-    pub done: bool,
-    pub position: i64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Comment {
-    pub id: String,
-    pub card_id: String,
-    pub body: String,
-    pub created_at: i64,
-}
-
-/// One `edited` row saying which native field changed.
-fn log_edit(
-    tx: &rusqlite::Transaction<'_>,
-    board_id: &str,
-    card_id: &str,
-    detail: &str,
-) -> Result<(), String> {
-    log_activity(
-        tx,
-        NewActivity {
-            board_id,
-            card_id: Some(card_id),
-            kind: "edited",
-            actor: "user",
-            from_column: None,
-            to_column: None,
-            detail: Some(detail),
-        },
-    )
-}
-
-/// A card's stored priority and due date; a card without a meta row has neither.
-fn meta(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(u8, Option<i64>), String> {
-    let row: Option<(i64, Option<i64>)> = tx
-        .query_row(
-            "SELECT priority, due_at FROM board_native_meta WHERE card_id = ?1",
-            [card_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(db)?;
-    Ok(row.map_or((0, None), |(priority, due)| {
-        (priority.clamp(0, 4) as u8, due)
-    }))
-}
-
-/// The values one card holds in a native set table, such as its projects.
-fn card_set(
-    tx: &rusqlite::Transaction<'_>,
-    sql: &str,
-    card_id: &str,
-) -> Result<BTreeSet<String>, String> {
-    let mut statement = tx.prepare(sql).map_err(db)?;
-    let rows = statement
-        .query_map([card_id], |r| r.get::<_, String>(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()
-        .map_err(db);
-    rows
-}
-
-/// The card a subtask belongs to, if the subtask still exists.
-fn subtask_card(
-    tx: &rusqlite::Transaction<'_>,
-    subtask_id: &str,
-) -> Result<Option<String>, String> {
-    tx.query_row(
-        "SELECT card_id FROM board_native_subtasks WHERE id = ?1",
-        [subtask_id],
-        |r| r.get(0),
-    )
-    .optional()
-    .map_err(db)
-}
-
-fn touch(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(), String> {
-    tx.execute(
-        "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-        params![now_millis(), card_id],
-    )
-    .map(drop)
-    .map_err(db)
-}
-
-/// The local calendar day of a due date, as the user picked it, for the log.
-fn day_label(at: i64) -> String {
-    use chrono::TimeZone;
-    chrono::Local
-        .timestamp_millis_opt(at)
-        .single()
-        .map(|time| time.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| at.to_string())
-}
-
 impl Service {
     /// The one board the native app shows: the oldest, made on first use.
     pub fn default_board(&mut self) -> Result<Board, String> {
@@ -192,206 +76,118 @@ impl Service {
     /// Every card's extras on a board, keyed by card id. Cards with none are absent.
     pub fn extras(&mut self, board_id: &str) -> Result<HashMap<String, CardExtras>, String> {
         validate_id(board_id, "board")?;
-        let mut extras: HashMap<String, CardExtras> = HashMap::new();
-        let conn = &self.conn;
-        let scope = "SELECT id FROM board_cards WHERE board_id = ?1";
-        let mut meta = conn
-            .prepare(&format!(
-                "SELECT card_id, priority, due_at FROM board_native_meta WHERE card_id IN ({scope})"
-            ))
-            .map_err(db)?;
-        for row in meta
-            .query_map([board_id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, Option<i64>>(2)?,
-                ))
-            })
-            .map_err(db)?
-        {
-            let (card, priority, due_at) = row.map_err(db)?;
-            let entry = extras.entry(card).or_default();
-            entry.priority = priority.clamp(0, 4) as u8;
-            entry.due_at = due_at;
+        store::card_extras(&self.conn, board_id)
+    }
+
+    pub fn archive(&mut self, card_id: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::archive_card(&self.conn, card_id).map(drop)
+    }
+
+    pub fn archive_many(&mut self, card_ids: &[String]) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
         }
-        let mut projects = conn
-            .prepare(&format!(
-                "SELECT card_id, project FROM board_native_projects WHERE card_id IN ({scope}) ORDER BY project"
-            ))
-            .map_err(db)?;
-        for row in projects
-            .query_map([board_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
-            .map_err(db)?
-        {
-            let (card, project) = row.map_err(db)?;
-            extras.entry(card).or_default().projects.push(project);
+        store::archive_cards(&self.conn, card_ids).map(drop)
+    }
+
+    pub fn unarchive(&mut self, card_id: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::unarchive_card(&self.conn, card_id).map(drop)
+    }
+
+    /// Unarchives the card and places it at `index` in `column_id`.
+    pub fn restore(&mut self, card_id: &str, column_id: &str, index: usize) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(column_id, "column")?;
+        store::restore_card(&self.conn, card_id, column_id, index).map(drop)
+    }
+
+    /// Deletes the card only while it is still archived, in one write. Returns
+    /// the board id when it deleted, `None` when the card is live or gone.
+    pub fn delete_archived(&mut self, card_id: &str) -> Result<Option<String>, String> {
+        validate_id(card_id, "card")?;
+        store::delete_archived_card(&self.conn, card_id)
+    }
+
+    pub fn archived(&mut self, board_id: &str) -> Result<Vec<super::Card>, String> {
+        validate_id(board_id, "board")?;
+        store::archived_cards(&self.conn, board_id)
+    }
+
+    pub fn move_many(
+        &mut self,
+        card_ids: &[String],
+        column_id: &str,
+        index: usize,
+        actor: &str,
+    ) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
         }
-        let mut labels = conn
-            .prepare(&format!(
-                "SELECT cl.card_id, cl.label_id FROM board_native_card_labels cl
-                 JOIN board_native_labels l ON l.id = cl.label_id
-                 WHERE cl.card_id IN ({scope}) ORDER BY lower(l.name)"
-            ))
-            .map_err(db)?;
-        for row in labels
-            .query_map([board_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
-            .map_err(db)?
-        {
-            let (card, label) = row.map_err(db)?;
-            extras.entry(card).or_default().labels.push(label);
-        }
-        let mut subtasks = conn
-            .prepare(&format!(
-                "SELECT card_id, SUM(done), COUNT(*) FROM board_native_subtasks
-                 WHERE card_id IN ({scope}) GROUP BY card_id"
-            ))
-            .map_err(db)?;
-        for row in subtasks
-            .query_map([board_id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                ))
-            })
-            .map_err(db)?
-        {
-            let (card, done, total) = row.map_err(db)?;
-            let entry = extras.entry(card).or_default();
-            entry.subtasks_done = done.max(0) as usize;
-            entry.subtasks_total = total.max(0) as usize;
-        }
-        let mut comments = conn
-            .prepare(&format!(
-                "SELECT card_id, COUNT(*) FROM board_native_comments
-                 WHERE card_id IN ({scope}) GROUP BY card_id"
-            ))
-            .map_err(db)?;
-        for row in comments
-            .query_map([board_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-            })
-            .map_err(db)?
-        {
-            let (card, count) = row.map_err(db)?;
-            extras.entry(card).or_default().comments = count.max(0) as usize;
-        }
-        Ok(extras)
+        validate_id(column_id, "column")?;
+        store::move_cards(&self.conn, card_ids, column_id, index, actor).map(drop)
+    }
+
+    /// Overwrites colour, WIP limit and collapsed together; pass the current
+    /// colour and limit back to change only `collapsed`.
+    pub fn set_column_display(
+        &mut self,
+        column_id: &str,
+        color: Option<&str>,
+        wip_limit: Option<i64>,
+        collapsed: bool,
+    ) -> Result<(), String> {
+        validate_id(column_id, "column")?;
+        store::set_column_display(&self.conn, column_id, color, wip_limit, collapsed).map(drop)
+    }
+
+    /// Changes only the display fields `patch` names, so collapsing a column
+    /// here never resets a colour or WIP limit the other app just set.
+    /// Returns the column after the change.
+    pub fn update_column_display(
+        &mut self,
+        column_id: &str,
+        patch: &ColumnDisplayPatch,
+    ) -> Result<store::Column, String> {
+        validate_id(column_id, "column")?;
+        store::update_column_display(&self.conn, column_id, patch)
+    }
+
+    /// `(live, archived)` card counts of a column.
+    pub fn column_card_count(&mut self, column_id: &str) -> Result<(usize, usize), String> {
+        validate_id(column_id, "column")?;
+        store::column_card_count(&self.conn, column_id)
+    }
+
+    /// Every column's `(live, archived)` card counts on the board, by column
+    /// id, in one read.
+    pub fn column_card_counts(
+        &mut self,
+        board_id: &str,
+    ) -> Result<HashMap<String, (usize, usize)>, String> {
+        validate_id(board_id, "board")?;
+        store::column_card_counts(&self.conn, board_id)
     }
 
     pub fn set_priority(&mut self, card_id: &str, priority: u8) -> Result<(), String> {
         validate_id(card_id, "card")?;
-        let Some(name) = PRIORITIES.get(priority as usize) else {
-            return Err(format!("Unknown priority: {priority}"));
-        };
-        let tx = write_tx(&self.conn)?;
-        let card = get_card(&tx, card_id)?;
-        if meta(&tx, card_id)?.0 == priority {
-            return Ok(());
-        }
-        tx.execute(
-            "INSERT INTO board_native_meta (card_id, priority) VALUES (?1, ?2)
-             ON CONFLICT(card_id) DO UPDATE SET priority = excluded.priority",
-            params![card_id, priority],
-        )
-        .map_err(db)?;
-        touch(&tx, card_id)?;
-        log_edit(&tx, &card.board_id, card_id, &format!("priority: {name}"))?;
-        tx.commit().map_err(db)
+        store::set_priority(&self.conn, card_id, priority).map(drop)
     }
 
     pub fn set_due(&mut self, card_id: &str, due_at: Option<i64>) -> Result<(), String> {
         validate_id(card_id, "card")?;
-        let tx = write_tx(&self.conn)?;
-        let card = get_card(&tx, card_id)?;
-        if meta(&tx, card_id)?.1 == due_at {
-            return Ok(());
-        }
-        tx.execute(
-            "INSERT INTO board_native_meta (card_id, due_at) VALUES (?1, ?2)
-             ON CONFLICT(card_id) DO UPDATE SET due_at = excluded.due_at",
-            params![card_id, due_at],
-        )
-        .map_err(db)?;
-        touch(&tx, card_id)?;
-        let detail = match due_at {
-            Some(at) => format!("due: {}", day_label(at)),
-            None => "due: none".into(),
-        };
-        log_edit(&tx, &card.board_id, card_id, &detail)?;
-        tx.commit().map_err(db)
+        store::set_due(&self.conn, card_id, due_at).map(drop)
     }
 
     pub fn set_projects(&mut self, card_id: &str, projects: &[String]) -> Result<(), String> {
         validate_id(card_id, "card")?;
-        let projects: BTreeSet<&str> = projects
-            .iter()
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty())
-            .collect();
-        let tx = write_tx(&self.conn)?;
-        let card = get_card(&tx, card_id)?;
-        let current = card_set(
-            &tx,
-            "SELECT project FROM board_native_projects WHERE card_id = ?1",
-            card_id,
-        )?;
-        if current
-            .iter()
-            .map(String::as_str)
-            .eq(projects.iter().copied())
-        {
-            return Ok(());
-        }
-        tx.execute(
-            "DELETE FROM board_native_projects WHERE card_id = ?1",
-            [card_id],
-        )
-        .map_err(db)?;
-        for project in &projects {
-            tx.execute(
-                "INSERT INTO board_native_projects (card_id, project) VALUES (?1, ?2)",
-                params![card_id, project],
-            )
-            .map_err(db)?;
-        }
-        touch(&tx, card_id)?;
-        log_edit(
-            &tx,
-            &card.board_id,
-            card_id,
-            &format!("projects: {}", projects.len()),
-        )?;
-        tx.commit().map_err(db)
+        store::set_projects(&self.conn, card_id, projects).map(drop)
     }
 
     pub fn labels(&mut self, board_id: &str) -> Result<Vec<Label>, String> {
         validate_id(board_id, "board")?;
-        let mut statement = self
-            .conn
-            .prepare(
-                "SELECT id, board_id, name, color FROM board_native_labels
-                 WHERE board_id = ?1 ORDER BY lower(name)",
-            )
-            .map_err(db)?;
-        let rows = statement
-            .query_map([board_id], |r| {
-                Ok(Label {
-                    id: r.get(0)?,
-                    board_id: r.get(1)?,
-                    name: r.get(2)?,
-                    color: r.get(3)?,
-                })
-            })
-            .map_err(db)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(db);
-        rows
+        store::list_labels(&self.conn, board_id)
     }
 
     pub fn create_label(
@@ -401,241 +197,461 @@ impl Service {
         color: &str,
     ) -> Result<Label, String> {
         validate_id(board_id, "board")?;
-        let name = clean_text(name, "Label name", MAX_LABEL)?;
-        if color.len() != 6 || !color.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Label colour must be six hex digits".into());
-        }
-        let tx = write_tx(&self.conn)?;
-        // SQLite's lower() folds only ASCII, so compare names in Rust too.
-        let folded = name.to_lowercase();
-        let taken = {
-            let mut statement = tx
-                .prepare("SELECT name FROM board_native_labels WHERE board_id = ?1")
-                .map_err(db)?;
-            let names = statement
-                .query_map([board_id], |r| r.get::<_, String>(0))
-                .map_err(db)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(db)?;
-            names
-                .iter()
-                .any(|existing| existing.to_lowercase() == folded)
-        };
-        if taken {
-            return Err(format!("A label named {name} already exists"));
-        }
-        let label = Label {
-            id: new_id(),
-            board_id: board_id.to_string(),
-            name,
-            color: color.to_string(),
-        };
-        tx.execute(
-            "INSERT INTO board_native_labels (id, board_id, name, color) VALUES (?1, ?2, ?3, ?4)",
-            params![label.id, label.board_id, label.name, label.color],
-        )
-        .map_err(db)?;
-        tx.commit().map_err(db)?;
-        Ok(label)
+        store::create_label(&self.conn, board_id, name, color)
     }
 
     pub fn set_labels(&mut self, card_id: &str, label_ids: &[String]) -> Result<(), String> {
         validate_id(card_id, "card")?;
-        let ids: BTreeSet<&str> = label_ids.iter().map(String::as_str).collect();
-        let tx = write_tx(&self.conn)?;
-        let card = get_card(&tx, card_id)?;
-        let current = card_set(
-            &tx,
-            "SELECT label_id FROM board_native_card_labels WHERE card_id = ?1",
-            card_id,
-        )?;
-        if current.iter().map(String::as_str).eq(ids.iter().copied()) {
-            return Ok(());
-        }
-        tx.execute(
-            "DELETE FROM board_native_card_labels WHERE card_id = ?1",
-            [card_id],
+        store::set_card_labels(&self.conn, card_id, label_ids).map(drop)
+    }
+
+    /// Card ids matching `spec`, in display order. `running` holds the cards
+    /// whose linked session or Pilot runs now. The clock and the local day
+    /// are read here.
+    pub fn query(
+        &mut self,
+        board_id: &str,
+        spec: &ViewSpec,
+        running: &HashSet<String>,
+    ) -> Result<Vec<String>, String> {
+        validate_id(board_id, "board")?;
+        store::query_cards(
+            &self.conn,
+            board_id,
+            spec,
+            store::now_millis(),
+            &store::local_day_chrono,
+            running,
         )
-        .map_err(db)?;
-        let mut names = Vec::new();
-        for id in &ids {
-            let name: Option<String> = tx
-                .query_row(
-                    "SELECT name FROM board_native_labels WHERE id = ?1 AND board_id = ?2",
-                    params![id, card.board_id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(db)?;
-            let Some(name) = name else {
-                return Err("Label not on this board".into());
-            };
-            tx.execute(
-                "INSERT INTO board_native_card_labels (card_id, label_id) VALUES (?1, ?2)",
-                params![card_id, id],
-            )
-            .map_err(db)?;
-            names.push(name);
+    }
+
+    pub fn card_index(&mut self, board_id: &str) -> Result<Vec<CardIndexRow>, String> {
+        validate_id(board_id, "board")?;
+        store::card_index(&self.conn, board_id)
+    }
+
+    pub fn views(&mut self, board_id: &str) -> Result<Vec<View>, String> {
+        validate_id(board_id, "board")?;
+        store::list_views(&self.conn, board_id)
+    }
+
+    pub fn view_create(
+        &mut self,
+        board_id: &str,
+        name: &str,
+        spec_json: &str,
+        layout_json: &str,
+    ) -> Result<View, String> {
+        validate_id(board_id, "board")?;
+        store::create_view(&self.conn, board_id, name, spec_json, layout_json)
+    }
+
+    pub fn view_update(
+        &mut self,
+        view_id: &str,
+        name: Option<&str>,
+        spec_json: Option<&str>,
+        layout_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::update_view(&self.conn, view_id, name, spec_json, layout_json).map(drop)
+    }
+
+    pub fn view_delete(&mut self, view_id: &str) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::delete_view(&self.conn, view_id).map(drop)
+    }
+
+    pub fn view_move(&mut self, view_id: &str, index: usize) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::move_view(&self.conn, view_id, index).map(drop)
+    }
+
+    pub fn set_priority_many(&mut self, card_ids: &[String], priority: u8) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
         }
-        names.sort_by_key(|name| name.to_lowercase());
-        touch(&tx, card_id)?;
-        let detail = if names.is_empty() {
-            "labels: none".to_string()
-        } else {
-            format!("labels: {}", names.join(", "))
-        };
-        log_edit(&tx, &card.board_id, card_id, &detail)?;
-        tx.commit().map_err(db)
+        store::set_priority_many(&self.conn, card_ids, priority).map(drop)
+    }
+
+    pub fn set_label_many(
+        &mut self,
+        card_ids: &[String],
+        label_id: &str,
+        on: bool,
+    ) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
+        }
+        validate_id(label_id, "label")?;
+        store::set_label_many(&self.conn, card_ids, label_id, on).map(drop)
     }
 
     pub fn subtasks(&mut self, card_id: &str) -> Result<Vec<Subtask>, String> {
         validate_id(card_id, "card")?;
-        let mut statement = self
-            .conn
-            .prepare(
-                "SELECT id, card_id, title, done, position FROM board_native_subtasks
-                 WHERE card_id = ?1 ORDER BY position, rowid",
-            )
-            .map_err(db)?;
-        let rows = statement
-            .query_map([card_id], |r| {
-                Ok(Subtask {
-                    id: r.get(0)?,
-                    card_id: r.get(1)?,
-                    title: r.get(2)?,
-                    done: r.get::<_, i64>(3)? != 0,
-                    position: r.get(4)?,
-                })
-            })
-            .map_err(db)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(db);
-        rows
+        store::list_subtasks(&self.conn, card_id)
     }
 
     pub fn add_subtask(&mut self, card_id: &str, title: &str) -> Result<Subtask, String> {
         validate_id(card_id, "card")?;
-        let title = clean_text(title, "Subtask", MAX_SUBTASK)?;
-        let tx = write_tx(&self.conn)?;
-        get_card(&tx, card_id)?;
-        let position: i64 = tx
-            .query_row(
-                "SELECT COALESCE(MAX(position) + 1, 0) FROM board_native_subtasks WHERE card_id = ?1",
-                [card_id],
-                |r| r.get(0),
-            )
-            .map_err(db)?;
-        let subtask = Subtask {
-            id: new_id(),
-            card_id: card_id.to_string(),
-            title,
-            done: false,
-            position,
-        };
-        tx.execute(
-            "INSERT INTO board_native_subtasks (id, card_id, title, done, position)
-             VALUES (?1, ?2, ?3, 0, ?4)",
-            params![subtask.id, subtask.card_id, subtask.title, subtask.position],
-        )
-        .map_err(db)?;
-        touch(&tx, card_id)?;
-        tx.commit().map_err(db)?;
-        Ok(subtask)
+        store::add_subtask(&self.conn, card_id, title)
     }
 
     pub fn toggle_subtask(&mut self, subtask_id: &str, done: bool) -> Result<(), String> {
         validate_id(subtask_id, "subtask")?;
-        let tx = write_tx(&self.conn)?;
-        let Some(card_id) = subtask_card(&tx, subtask_id)? else {
-            return Err("Subtask not found".into());
-        };
-        let was_done: bool = tx
-            .query_row(
-                "SELECT done != 0 FROM board_native_subtasks WHERE id = ?1",
-                [subtask_id],
-                |r| r.get(0),
-            )
-            .map_err(db)?;
-        if was_done == done {
-            return Ok(());
-        }
-        tx.execute(
-            "UPDATE board_native_subtasks SET done = ?1 WHERE id = ?2",
-            params![i64::from(done), subtask_id],
-        )
-        .map_err(db)?;
-        touch(&tx, &card_id)?;
-        tx.commit().map_err(db)
+        store::toggle_subtask(&self.conn, subtask_id, done).map(drop)
     }
 
     pub fn delete_subtask(&mut self, subtask_id: &str) -> Result<(), String> {
         validate_id(subtask_id, "subtask")?;
-        let tx = write_tx(&self.conn)?;
-        let Some(card_id) = subtask_card(&tx, subtask_id)? else {
-            return Ok(());
-        };
-        tx.execute(
-            "DELETE FROM board_native_subtasks WHERE id = ?1",
-            [subtask_id],
-        )
-        .map_err(db)?;
-        touch(&tx, &card_id)?;
-        tx.commit().map_err(db)
+        store::delete_subtask(&self.conn, subtask_id).map(drop)
     }
 
     pub fn comments(&mut self, card_id: &str) -> Result<Vec<Comment>, String> {
         validate_id(card_id, "card")?;
-        let mut statement = self
-            .conn
-            .prepare(
-                "SELECT id, card_id, body, created_at FROM board_native_comments
-                 WHERE card_id = ?1 ORDER BY created_at, rowid",
-            )
-            .map_err(db)?;
-        let rows = statement
-            .query_map([card_id], |r| {
-                Ok(Comment {
-                    id: r.get(0)?,
-                    card_id: r.get(1)?,
-                    body: r.get(2)?,
-                    created_at: r.get(3)?,
-                })
-            })
-            .map_err(db)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(db);
-        rows
+        store::list_comments(&self.conn, card_id)
     }
 
     pub fn add_comment(&mut self, card_id: &str, body: &str) -> Result<Comment, String> {
         validate_id(card_id, "card")?;
-        if body.trim().is_empty() {
-            return Err("Comment is empty".into());
-        }
-        if body.len() > MAX_COMMENT {
-            return Err("Comment is too long".into());
-        }
-        let tx = write_tx(&self.conn)?;
-        get_card(&tx, card_id)?;
-        let comment = Comment {
-            id: new_id(),
-            card_id: card_id.to_string(),
-            body: body.trim().to_string(),
-            created_at: now_millis(),
-        };
-        tx.execute(
-            "INSERT INTO board_native_comments (id, card_id, body, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![comment.id, comment.card_id, comment.body, comment.created_at],
-        )
-        .map_err(db)?;
-        touch(&tx, card_id)?;
-        tx.commit().map_err(db)?;
-        Ok(comment)
+        store::add_comment(&self.conn, card_id, body, "user")
+    }
+
+    /// A comment written by an agent (write-back); the author is "agent".
+    pub fn add_agent_comment(&mut self, card_id: &str, body: &str) -> Result<Comment, String> {
+        validate_id(card_id, "card")?;
+        store::add_comment(&self.conn, card_id, body, "agent")
+    }
+
+    pub fn edit_comment(&mut self, comment_id: &str, body: &str) -> Result<(), String> {
+        validate_id(comment_id, "comment")?;
+        store::edit_comment(&self.conn, comment_id, body).map(drop)
+    }
+
+    pub fn card_meta(&mut self, card_id: &str) -> Result<CardMeta, String> {
+        validate_id(card_id, "card")?;
+        store::card_meta(&self.conn, card_id)
+    }
+
+    pub fn set_start(&mut self, card_id: &str, start_at: Option<i64>) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::set_start(&self.conn, card_id, start_at).map(drop)
+    }
+
+    pub fn set_estimate(&mut self, card_id: &str, minutes: Option<i64>) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::set_estimate(&self.conn, card_id, minutes).map(drop)
+    }
+
+    pub fn add_relation(&mut self, card_id: &str, related: &str, kind: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(related, "card")?;
+        store::add_relation(&self.conn, card_id, related, kind).map(drop)
+    }
+
+    pub fn remove_relation(
+        &mut self,
+        card_id: &str,
+        related: &str,
+        kind: &str,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(related, "card")?;
+        store::remove_relation(&self.conn, card_id, related, kind).map(drop)
+    }
+
+    pub fn card_relations(&mut self, card_id: &str) -> Result<Vec<Relation>, String> {
+        validate_id(card_id, "card")?;
+        store::card_relations(&self.conn, card_id)
+    }
+
+    pub fn list_fields(&mut self, board_id: &str) -> Result<Vec<Field>, String> {
+        validate_id(board_id, "board")?;
+        store::list_fields(&self.conn, board_id)
+    }
+
+    pub fn set_field_value(
+        &mut self,
+        card_id: &str,
+        field_id: &str,
+        value_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(field_id, "field")?;
+        store::set_field_value(&self.conn, card_id, field_id, value_json).map(drop)
+    }
+
+    pub fn field_values(&mut self, card_id: &str) -> Result<Vec<FieldValue>, String> {
+        validate_id(card_id, "card")?;
+        store::field_values(&self.conn, card_id)
+    }
+
+    pub fn add_link(
+        &mut self,
+        card_id: &str,
+        kind: &str,
+        reference: &str,
+        role: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::add_link(&self.conn, card_id, kind, reference, role).map(drop)
+    }
+
+    pub fn remove_link(
+        &mut self,
+        card_id: &str,
+        kind: &str,
+        reference: &str,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::remove_link(&self.conn, card_id, kind, reference).map(drop)
+    }
+
+    pub fn card_links(&mut self, card_id: &str) -> Result<Vec<CardLink>, String> {
+        validate_id(card_id, "card")?;
+        store::card_links(&self.conn, card_id)
+    }
+
+    pub fn move_subtask(&mut self, subtask_id: &str, index: usize) -> Result<(), String> {
+        validate_id(subtask_id, "subtask")?;
+        store::move_subtask(&self.conn, subtask_id, index).map(drop)
+    }
+
+    pub fn convert_subtask(&mut self, subtask_id: &str) -> Result<Card, String> {
+        validate_id(subtask_id, "subtask")?;
+        store::convert_subtask(&self.conn, subtask_id)
+    }
+
+    pub fn duplicate_card(&mut self, card_id: &str) -> Result<Card, String> {
+        validate_id(card_id, "card")?;
+        store::duplicate_card(&self.conn, card_id)
+    }
+
+    pub fn move_card_to_board(&mut self, card_id: &str, board_id: &str) -> Result<Card, String> {
+        validate_id(card_id, "card")?;
+        validate_id(board_id, "board")?;
+        store::move_card_to_board(&self.conn, card_id, board_id)
+    }
+}
+
+/// Settings, templates, label and field management, and the agent side of
+/// the board (auto-move events, write-back, blockers, link and run state).
+impl Service {
+    /// The board's settings; a board without a settings row reads as the
+    /// defaults.
+    pub fn settings(&mut self, board_id: &str) -> Result<BoardSettings, String> {
+        validate_id(board_id, "board")?;
+        store::board_settings(&self.conn, board_id)
+    }
+
+    /// Changes only the fields `patch` names, so a toggle the other app set
+    /// a moment ago survives. Returns the settings after the change.
+    pub fn update_settings(
+        &mut self,
+        board_id: &str,
+        patch: &SettingsPatch,
+    ) -> Result<BoardSettings, String> {
+        validate_id(board_id, "board")?;
+        store::update_board_settings(&self.conn, board_id, patch)
+    }
+
+    /// Built-in templates first, then saved ones by name.
+    pub fn templates(&mut self) -> Result<Vec<TemplateInfo>, String> {
+        store::list_templates(&self.conn)
+    }
+
+    pub fn create_from_template(&mut self, name: &str, template_id: &str) -> Result<Board, String> {
+        validate_id(template_id, "template")?;
+        store::create_board_from_template(&self.conn, name, template_id)
+    }
+
+    pub fn save_as_template(&mut self, board_id: &str, name: &str) -> Result<TemplateInfo, String> {
+        validate_id(board_id, "board")?;
+        store::save_board_as_template(&self.conn, board_id, name)
+    }
+
+    pub fn delete_template(&mut self, template_id: &str) -> Result<(), String> {
+        validate_id(template_id, "template")?;
+        store::delete_template(&self.conn, template_id)
+    }
+
+    /// Renames and/or recolours a label; `None` leaves that part alone.
+    pub fn label_update(
+        &mut self,
+        label_id: &str,
+        name: Option<&str>,
+        color: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::update_label(&self.conn, label_id, name, color).map(drop)
+    }
+
+    pub fn label_move(&mut self, label_id: &str, index: usize) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::move_label(&self.conn, label_id, index).map(drop)
+    }
+
+    pub fn label_delete(&mut self, label_id: &str) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::delete_label(&self.conn, label_id).map(drop)
+    }
+
+    /// Moves every card from `from_id` to `into_id`, then deletes `from_id`.
+    pub fn labels_merge(&mut self, from_id: &str, into_id: &str) -> Result<(), String> {
+        validate_id(from_id, "label")?;
+        validate_id(into_id, "label")?;
+        store::merge_labels(&self.conn, from_id, into_id).map(drop)
+    }
+
+    pub fn field_create(
+        &mut self,
+        board_id: &str,
+        name: &str,
+        kind: &str,
+        options_json: Option<&str>,
+    ) -> Result<Field, String> {
+        validate_id(board_id, "board")?;
+        store::create_field(&self.conn, board_id, name, kind, options_json)
+    }
+
+    /// Renames a field and/or replaces its options; `None` leaves that part
+    /// alone. A field's kind never changes.
+    pub fn field_update(
+        &mut self,
+        field_id: &str,
+        name: Option<&str>,
+        options_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::update_field(&self.conn, field_id, name, options_json).map(drop)
+    }
+
+    pub fn field_rename_option(
+        &mut self,
+        field_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::rename_field_option(&self.conn, field_id, from, to).map(drop)
+    }
+
+    pub fn field_move(&mut self, field_id: &str, index: usize) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::move_field(&self.conn, field_id, index).map(drop)
+    }
+
+    pub fn field_delete(&mut self, field_id: &str) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::delete_field(&self.conn, field_id).map(drop)
+    }
+
+    /// The values a text, number or url field holds on the board, for filter
+    /// pickers.
+    pub fn field_distinct_values(
+        &mut self,
+        board_id: &str,
+        field_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        validate_id(board_id, "board")?;
+        validate_id(field_id, "field")?;
+        store::field_distinct_values(&self.conn, board_id, field_id, limit)
+    }
+
+    /// Applies the auto-move rules for `event` to every card linked to
+    /// `kind`/`id`. Returns the ids of the boards written.
+    pub fn linked_event(
+        &mut self,
+        kind: &str,
+        id: &str,
+        event: store::LinkedEvent,
+    ) -> Result<Vec<String>, String> {
+        store::on_linked_work(&self.conn, kind, id, event)
+    }
+
+    /// Comments a finished turn's reply on every card linked to the session,
+    /// on boards with write-back on. Returns the card ids written.
+    pub fn write_back(&mut self, session_key: &str, summary: &str) -> Result<Vec<String>, String> {
+        store::write_back(&self.conn, session_key, summary)
+    }
+
+    /// Blocked cards on the board, by card id, to the numbers of their open
+    /// blockers.
+    pub fn blocked(&mut self, board_id: &str) -> Result<BTreeMap<String, Vec<i64>>, String> {
+        validate_id(board_id, "board")?;
+        store::blocked_cards(&self.conn, board_id)
+    }
+
+    /// Card id to the kind of its newest run event (`started`,
+    /// `needs_input`, `completed` or `failed`), in one read-only windowed
+    /// query, so newer comments or moves never hide a failure.
+    pub fn latest_run_events(&mut self, board_id: &str) -> Result<HashMap<String, String>, String> {
+        validate_id(board_id, "board")?;
+        store::latest_run_events(&self.conn, board_id)
+    }
+
+    /// Every link on every card of the board.
+    pub fn board_links(&mut self, board_id: &str) -> Result<Vec<CardLink>, String> {
+        validate_id(board_id, "board")?;
+        store::board_links(&self.conn, board_id)
+    }
+
+    /// The board's cards linked to one of `running` (`("session", key)` or
+    /// `("pilot", id)`, see `LinkedTurns::open_links`).
+    pub fn running_cards(
+        &mut self,
+        board_id: &str,
+        running: &[(String, String)],
+    ) -> Result<HashSet<String>, String> {
+        validate_id(board_id, "board")?;
+        store::running_card_ids(&self.conn, board_id, running)
+    }
+
+    /// The prompt "Run with..." starts a session with.
+    pub fn run_prompt(&mut self, card_id: &str) -> Result<String, String> {
+        validate_id(card_id, "card")?;
+        store::run_prompt(&self.conn, card_id)
+    }
+
+    /// The session's own "may change ticket status" override, if set
+    /// (`Ok(None)`: it follows its boards). A failed read is an error, so it
+    /// never shows as following the boards.
+    pub fn session_status_setting(&mut self, session_key: &str) -> Result<Option<bool>, String> {
+        store::session_status_setting(&self.conn, session_key)
+    }
+
+    /// Sets the session's override; `None` follows the boards again.
+    pub fn set_session_status_setting(
+        &mut self,
+        session_key: &str,
+        may_change: Option<bool>,
+    ) -> Result<(), String> {
+        store::set_session_status_setting(&self.conn, session_key, may_change)
+    }
+
+    /// Whether an agent in this session may move its ticket's status: the
+    /// session override, else the strictest board linking the session, else
+    /// yes. An unreadable override fails closed.
+    pub fn may_change_ticket_status(&mut self, session_key: &str) -> bool {
+        store::may_change_ticket_status(&self.conn, session_key)
+    }
+
+    /// Runs a card tool for an agent in `session_key`; the cards it may touch
+    /// are the ones linked to the session now.
+    pub fn answer_card(
+        &mut self,
+        session_key: &str,
+        tool: &CardTool,
+        read_only: bool,
+    ) -> Result<serde_json::Value, String> {
+        store::answer_card(&self.conn, session_key, tool, read_only)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::ColumnDisplayPatch;
     use crate::board::Service;
 
     fn service() -> (tempfile::TempDir, Service, std::path::PathBuf) {
@@ -656,6 +672,302 @@ mod tests {
         service.activity(board, Some(card), 1).unwrap()[0]
             .detail
             .clone()
+    }
+
+    #[test]
+    fn service_seed_and_column_counts() {
+        use gespan_board_store::seed::SeedSpec;
+        let (_dir, mut service, _) = service();
+        let board = service.create("Scale").unwrap();
+        let report = service.seed(&board.id, &SeedSpec::default()).unwrap();
+        assert_eq!(report.card_ids.len(), 1000);
+        assert_eq!(service.get(&board.id).unwrap().cards.len(), 1000);
+        service.archive(&report.card_ids[0]).unwrap();
+        let counts = service.column_card_counts(&board.id).unwrap();
+        assert_eq!(counts.len(), 4);
+        for column in &report.column_ids {
+            assert_eq!(
+                counts[column],
+                service.column_card_count(column).unwrap(),
+                "{column}"
+            );
+        }
+        assert_eq!(counts[&report.column_ids[0]], (249, 1));
+        assert_eq!(service.latest_run_events(&board.id).unwrap().len(), 1000);
+        assert!(service.column_card_counts("bad id").is_err());
+        assert!(service.seed("missing", &SeedSpec::default()).is_err());
+    }
+
+    #[test]
+    fn latest_run_events_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let (board, failed) = card(&mut service);
+        let (_, quiet) = card(&mut service);
+        service.card_record(&failed, "failed", None).unwrap();
+        for n in 0..60 {
+            service.add_comment(&failed, &format!("note {n}")).unwrap();
+        }
+        let events = service.latest_run_events(&board).unwrap();
+        assert_eq!(events.get(&failed).map(String::as_str), Some("failed"));
+        assert!(!events.contains_key(&quiet));
+        service.card_record(&failed, "started", None).unwrap();
+        assert_eq!(
+            service.latest_run_events(&board).unwrap()[&failed],
+            "started"
+        );
+        assert!(service.latest_run_events(" ").is_err());
+    }
+
+    #[test]
+    fn query_views_and_bulk_edits_go_through_the_service() {
+        use super::{Dir, FilterRow, Op, SortKey, SortSpec, ViewSpec};
+        use std::collections::HashSet;
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let backlog = service.get(&board.id).unwrap().columns[0].id.clone();
+        let ids: Vec<String> = ["Fix login", "Write docs", "Ship"]
+            .iter()
+            .map(|t| service.card_create(&backlog, t, "").unwrap().id)
+            .collect();
+        service.set_priority_many(&ids[1..], 3).unwrap();
+        let label = service.create_label(&board.id, "Bug", "e5534b").unwrap();
+        service.set_label_many(&ids[..2], &label.id, true).unwrap();
+        service.set_label_many(&ids[..1], &label.id, false).unwrap();
+
+        let spec = ViewSpec {
+            query: String::new(),
+            rows: vec![FilterRow {
+                field: "priority".into(),
+                op: Op::Is,
+                values: vec!["3".into()],
+            }],
+            sort: SortSpec {
+                key: SortKey::Title,
+                dir: Dir::Desc,
+            },
+        };
+        let none = HashSet::new();
+        assert_eq!(
+            service.query(&board.id, &spec, &none).unwrap(),
+            vec![ids[1].clone(), ids[2].clone()]
+        );
+        let running: HashSet<String> = [ids[0].clone()].into();
+        let linked = ViewSpec {
+            rows: vec![FilterRow {
+                field: "linked".into(),
+                op: Op::Is,
+                values: vec!["running".into()],
+            }],
+            ..ViewSpec::default()
+        };
+        assert_eq!(
+            service.query(&board.id, &linked, &running).unwrap(),
+            vec![ids[0].clone()]
+        );
+
+        let index = service.card_index(&board.id).unwrap();
+        let row = |id: &String| index.iter().find(|r| &r.card_id == id).unwrap();
+        assert_eq!(row(&ids[1]).labels, vec![label.id.clone()]);
+        assert!(row(&ids[0]).labels.is_empty());
+        assert_eq!(row(&ids[2]).priority, 3);
+
+        let view = service
+            .view_create(&board.id, "High", r#"{"query":"x"}"#, "{}")
+            .unwrap();
+        service
+            .view_update(&view.id, Some("Renamed"), None, None)
+            .unwrap();
+        assert_eq!(service.views(&board.id).unwrap()[0].name, "Renamed");
+        assert!(service
+            .view_update(&view.id, None, Some("not json"), None)
+            .is_err());
+        service.view_move(&view.id, 0).unwrap();
+        service.view_delete(&view.id).unwrap();
+        assert!(service.views(&board.id).unwrap().is_empty());
+        assert!(service.set_priority_many(&ids, 9).is_err());
+        assert!(service.query("bad id!", &spec, &none).is_err());
+    }
+
+    #[test]
+    fn archive_restore_and_bulk_operations_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let columns = service.get(&board.id).unwrap().columns;
+        let ids: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|t| service.card_create(&columns[0].id, t, "").unwrap().id)
+            .collect();
+
+        service.archive_many(&ids[..2]).unwrap();
+        assert_eq!(service.column_card_count(&columns[0].id).unwrap(), (1, 2));
+        assert_eq!(service.archived(&board.id).unwrap().len(), 2);
+        assert!(service.column_card_count(&columns[0].id).is_ok());
+
+        service.restore(&ids[1], &columns[1].id, 0).unwrap();
+        service.unarchive(&ids[0]).unwrap();
+        service.archive(&ids[2]).unwrap();
+        assert_eq!(service.archived(&board.id).unwrap().len(), 1);
+
+        service
+            .move_many(&ids[..2], &columns[1].id, 0, "user")
+            .unwrap();
+        let detail = service.get(&board.id).unwrap();
+        let in_doing: Vec<&str> = detail
+            .cards
+            .iter()
+            .filter(|c| c.column_id == columns[1].id)
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(in_doing, [ids[0].as_str(), ids[1].as_str()]);
+
+        service
+            .set_column_display(&columns[1].id, Some("ff0000"), Some(3), true)
+            .unwrap();
+        let col = &service.get(&board.id).unwrap().columns[1];
+        assert_eq!(
+            (col.color.as_deref(), col.wip_limit, col.collapsed),
+            (Some("ff0000"), Some(3), true)
+        );
+
+        assert!(service.archive("bad id!").is_err());
+        assert!(service.archive_many(&["bad id!".to_string()]).is_err());
+        assert!(service.restore(&ids[2], "bad id!", 0).is_err());
+    }
+
+    #[test]
+    fn column_display_patch_goes_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let column = service.get(&board.id).unwrap().columns[1].id.clone();
+        service
+            .set_column_display(&column, Some("ff0000"), Some(3), false)
+            .unwrap();
+
+        let collapsed = service
+            .update_column_display(
+                &column,
+                &ColumnDisplayPatch {
+                    collapsed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                collapsed.color.as_deref(),
+                collapsed.wip_limit,
+                collapsed.collapsed
+            ),
+            (Some("ff0000"), Some(3), true)
+        );
+        let cleared = service
+            .update_column_display(
+                &column,
+                &ColumnDisplayPatch {
+                    wip_limit: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                cleared.color.as_deref(),
+                cleared.wip_limit,
+                cleared.collapsed
+            ),
+            (Some("ff0000"), None, true)
+        );
+        let col = &service.get(&board.id).unwrap().columns[1];
+        assert_eq!((col.wip_limit, col.collapsed), (None, true));
+
+        assert_eq!(
+            service
+                .update_column_display("bad id!", &ColumnDisplayPatch::default())
+                .unwrap_err(),
+            "Invalid column id"
+        );
+        assert_eq!(
+            service
+                .update_column_display(
+                    &column,
+                    &ColumnDisplayPatch {
+                        wip_limit: Some(Some(0)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err(),
+            "A WIP limit must be at least 1"
+        );
+    }
+
+    #[test]
+    fn card_detail_operations_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let (board, card) = card(&mut service);
+        let backlog = service.get(&board).unwrap().columns[0].id.clone();
+        let other = service.card_create(&backlog, "Other", "").unwrap();
+
+        service.set_start(&card, Some(1_000)).unwrap();
+        service.set_estimate(&card, Some(90)).unwrap();
+        let meta = service.card_meta(&card).unwrap();
+        assert_eq!(
+            (meta.start_at, meta.estimate_minutes),
+            (Some(1_000), Some(90))
+        );
+        assert!(service.set_estimate(&card, Some(0)).is_err());
+
+        service.add_relation(&card, &other.id, "blocks").unwrap();
+        assert_eq!(service.card_relations(&card).unwrap().len(), 1);
+        assert!(service.add_relation(&other.id, &card, "blocks").is_err());
+        service.remove_relation(&card, &other.id, "blocks").unwrap();
+        assert!(service.card_relations(&card).unwrap().is_empty());
+
+        assert!(service.list_fields(&board).unwrap().is_empty());
+        assert!(service.field_values(&card).unwrap().is_empty());
+        assert!(service.set_field_value(&card, "nope", Some("1")).is_err());
+
+        service
+            .add_link(&card, "pr", "https://x/pr/1", None)
+            .unwrap();
+        assert_eq!(
+            service.card_links(&card).unwrap()[0].reference,
+            "https://x/pr/1"
+        );
+        service.remove_link(&card, "pr", "https://x/pr/1").unwrap();
+        assert!(service.card_links(&card).unwrap().is_empty());
+
+        let first = service.add_subtask(&card, "one").unwrap();
+        let second = service.add_subtask(&card, "two").unwrap();
+        service.move_subtask(&second.id, 0).unwrap();
+        assert_eq!(service.subtasks(&card).unwrap()[0].id, second.id);
+        let converted = service.convert_subtask(&first.id).unwrap();
+        assert_eq!(converted.title, "one");
+        assert_eq!(service.subtasks(&card).unwrap().len(), 1);
+
+        let copy = service.duplicate_card(&card).unwrap();
+        assert_eq!(copy.title, "Task (copy)");
+
+        let target = service.create("Target").unwrap();
+        let moved = service.move_card_to_board(&card, &target.id).unwrap();
+        assert_eq!(moved.board_id, target.id);
+        assert!(service.move_card_to_board("bad id!", &target.id).is_err());
+    }
+
+    #[test]
+    fn comments_edit_and_agent_author() {
+        let (_dir, mut service, _) = service();
+        let (_, card) = card(&mut service);
+        let user = service.add_comment(&card, "hi").unwrap();
+        let agent = service.add_agent_comment(&card, "done").unwrap();
+        assert_eq!(
+            (user.author.as_str(), agent.author.as_str()),
+            ("user", "agent")
+        );
+        service.edit_comment(&user.id, "hello").unwrap();
+        let comments = service.comments(&card).unwrap();
+        assert_eq!(comments[0].body, "hello");
+        assert!(comments[0].edited_at.is_some());
+        assert!(service.edit_comment("bad id!", "x").is_err());
     }
 
     #[test]
@@ -883,7 +1195,7 @@ mod tests {
         );
         rusqlite::Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE board_native_labels RENAME COLUMN name TO title;")
+            .execute_batch("ALTER TABLE board_labels RENAME COLUMN name TO title;")
             .unwrap();
         let error = service.set_labels(&card, &[bug.id]).unwrap_err();
         assert_ne!(error, "Label not on this board");
@@ -907,14 +1219,14 @@ mod tests {
         assert_eq!(service.extras(&board).unwrap()[&card].comments, 2);
     }
 
-    fn native_rows(path: &std::path::Path, card: &str) -> Vec<(&'static str, i64)> {
+    fn extra_rows(path: &std::path::Path, card: &str) -> Vec<(&'static str, i64)> {
         let conn = rusqlite::Connection::open(path).unwrap();
         [
-            "board_native_meta",
-            "board_native_projects",
-            "board_native_card_labels",
-            "board_native_subtasks",
-            "board_native_comments",
+            "board_card_meta",
+            "board_card_projects",
+            "board_card_labels",
+            "board_subtasks",
+            "board_comments",
         ]
         .into_iter()
         .map(|table| {
@@ -940,19 +1252,19 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_card_through_the_service_removes_its_native_rows() {
+    fn deleting_a_card_through_the_service_removes_its_extra_rows() {
         let (_dir, mut service, path) = service();
         let (board, card) = card(&mut service);
         with_every_extra(&mut service, &board, &card);
-        assert!(native_rows(&path, &card).iter().all(|(_, n)| *n == 1));
+        assert!(extra_rows(&path, &card).iter().all(|(_, n)| *n == 1));
         service.card_delete(&card).unwrap();
-        for (table, left) in native_rows(&path, &card) {
+        for (table, left) in extra_rows(&path, &card) {
             assert_eq!(left, 0, "{table}");
         }
     }
 
     #[test]
-    fn deleting_a_card_with_a_raw_delete_removes_its_native_rows() {
+    fn deleting_a_card_with_a_raw_delete_removes_its_extra_rows() {
         let (_dir, mut service, path) = service();
         let (board, card) = card(&mut service);
         service.set_priority(&card, 2).unwrap();
@@ -968,11 +1280,11 @@ mod tests {
             .execute("DELETE FROM board_cards WHERE id = ?1", [&card])
             .unwrap();
         for table in [
-            "board_native_meta",
-            "board_native_projects",
-            "board_native_card_labels",
-            "board_native_subtasks",
-            "board_native_comments",
+            "board_card_meta",
+            "board_card_projects",
+            "board_card_labels",
+            "board_subtasks",
+            "board_comments",
         ] {
             let left: i64 = tauri
                 .query_row(

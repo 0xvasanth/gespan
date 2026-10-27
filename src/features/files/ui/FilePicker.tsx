@@ -37,7 +37,9 @@ export function reloadActionHint(mod = MOD, shift = SHIFT) {
   return `${mod}${shift}R`;
 }
 
-const ACTIONS: Action[] = [
+export type PaletteAction = Action;
+
+const BASE_ACTIONS: Action[] = [
   { id: "reload", label: "Reload Gespan", hint: reloadActionHint() },
   { id: "hold", label: "Hold everything", hint: `${MOD}${SHIFT}H` },
 ];
@@ -51,6 +53,8 @@ type Props = {
   holdLabel?: string;
   onOpenFile: OpenFileFn;
   onRunAction: (id: string) => void;
+  /** Extra commands shown after the built-in ones. */
+  extraActions?: readonly PaletteAction[];
   onClose: () => void;
 };
 
@@ -62,8 +66,13 @@ export function FilePicker({
   holdLabel = "Hold everything",
   onOpenFile,
   onRunAction,
+  extraActions,
   onClose,
 }: Props) {
+  const ACTIONS = useMemo(
+    () => [...BASE_ACTIONS, ...(extraActions ?? [])],
+    [extraActions],
+  );
   const peekFiles = () => peekProjectFiles(cwd);
   const search = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
@@ -107,7 +116,7 @@ export function FilePicker({
       const hit = fuzzyMatch(actionQuery, action.label);
       return hit ? [{ ...action, ...hit }] : [];
     }).sort((a, b) => b.score - a.score);
-  }, [actionQuery, paletteMode, holdLabel]);
+  }, [ACTIONS, actionQuery, paletteMode, holdLabel]);
   const optionCount = paletteMode ? actionResults.length : results.length;
 
   useEffect(() => {

@@ -58,6 +58,27 @@ impl LinkedTurns {
     pub fn cancelled(&mut self, session_key: &str, gen: u64) {
         self.open.remove(&(session_key.to_string(), gen));
     }
+
+    /// The links whose work runs now: `("session", key)` for every session
+    /// with an open turn and `("pilot", id)` for the Pilot behind it, sorted
+    /// and without repeats. This is the running set board queries and link
+    /// chips read.
+    pub fn open_links(&self) -> Vec<(String, String)> {
+        let mut links: Vec<(String, String)> = self
+            .open
+            .iter()
+            .flat_map(|((session_key, _), pilot_id)| {
+                std::iter::once(("session".to_string(), session_key.clone())).chain(
+                    pilot_id
+                        .iter()
+                        .map(|pilot_id| ("pilot".to_string(), pilot_id.clone())),
+                )
+            })
+            .collect();
+        links.sort();
+        links.dedup();
+        links
+    }
 }
 
 fn calls(session_key: &str, pilot_id: Option<&str>, event: LinkedWorkEvent) -> Vec<LinkedCall> {
@@ -174,6 +195,38 @@ mod tests {
             turns.settled("s-1", 2, false),
             vec![call("session", "s-1", Failed)]
         );
+    }
+
+    #[test]
+    fn open_links_lists_open_session_and_pilot_turns() {
+        let link = |kind: &str, id: &str| (kind.to_string(), id.to_string());
+        let mut turns = LinkedTurns::default();
+        assert!(turns.open_links().is_empty());
+        turns.started("s-1", 1, Some("p-1".into()));
+        turns.started("s-2", 1, None);
+        // A superseded turn and a second session of the same Pilot list once.
+        turns.started("s-1", 2, Some("p-1".into()));
+        turns.started("s-3", 1, Some("p-1".into()));
+        assert_eq!(
+            turns.open_links(),
+            vec![
+                link("pilot", "p-1"),
+                link("session", "s-1"),
+                link("session", "s-2"),
+                link("session", "s-3"),
+            ]
+        );
+        // Settled and cancelled turns stop counting; the Pilot stays while
+        // any of its turns is open.
+        turns.settled("s-1", 1, true);
+        turns.cancelled("s-1", 2);
+        turns.settled("s-2", 1, false);
+        assert_eq!(
+            turns.open_links(),
+            vec![link("pilot", "p-1"), link("session", "s-3")]
+        );
+        turns.settled("s-3", 1, true);
+        assert!(turns.open_links().is_empty());
     }
 
     #[test]

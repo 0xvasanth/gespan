@@ -1,11 +1,12 @@
 //! The task drawer, laid out like gr8r's: a top bar of actions, the title, a
 //! grid of properties, the description, subtasks, then Comments and Activity.
 //! It docks beside the board instead of covering it.
+pub(super) mod more;
 mod view;
 #[cfg(test)]
-pub(crate) use view::SEND_HINT;
+pub(crate) use view::{SEND_HINT, comment_author};
 
-use super::{BoardView, Event, style, turns};
+use super::{BoardView, Event, quick, style, turns};
 use crate::{
     input::{self, Input},
     popover::{AnchorSlot, Menu, MenuAction, MenuEvent, MenuItem},
@@ -14,7 +15,7 @@ use crate::{
 };
 use gespan_core::board::{
     Activity,
-    extras::{Comment, PRIORITIES, Subtask},
+    extras::{CardLink, Comment, Field, Relation, Subtask},
 };
 use gpui::{ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
 use std::collections::HashMap;
@@ -34,6 +35,24 @@ pub(crate) enum Picker {
     Labels,
     Link,
     DueDate,
+    StartDate,
+    Estimate,
+    /// Search the board's other cards to relate this one to.
+    Relation(RelationKind),
+    /// A text, number or typed-date field, by its index in the board's fields.
+    Field(usize),
+    /// Add a session or Pilot to the links list.
+    AddLink(&'static str),
+    PrUrl,
+    WorktreePath,
+}
+
+/// How a picked card relates to the open one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RelationKind {
+    Blocks,
+    BlockedBy,
+    RelatesTo,
 }
 
 /// Which keyboard menu is open.
@@ -42,7 +61,13 @@ enum Choice {
     Status,
     Priority,
     Due,
-    More,
+    Start,
+    /// A subtask's menu, by its index in the list.
+    Subtask(usize),
+    /// A date field's quick picks, by field index.
+    FieldDate(usize),
+    FieldSelect(usize),
+    LinkAdd,
 }
 
 pub(crate) struct CardDetail {
@@ -67,11 +92,27 @@ pub(crate) struct CardDetail {
     subtask_submit: Option<Subscription>,
     comment: Entity<Input>,
     choice: Option<(Choice, Entity<Menu>, Subscription)>,
-    anchors: HashMap<&'static str, AnchorSlot>,
+    anchors: HashMap<String, AnchorSlot>,
+    /// Start date, estimate (minutes), relations, links and custom fields,
+    /// read with the other lists.
+    start_at: Option<i64>,
+    estimate: Option<i64>,
+    relations: Vec<Relation>,
+    links: Vec<CardLink>,
+    fields: Vec<Field>,
+    field_values: HashMap<String, String>,
+    /// Why the open pick list's last entry was refused, shown under it.
+    inline_error: Option<String>,
+    /// The detail fills the board area instead of docking beside it.
+    full_page: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl CardDetail {
+    pub(crate) fn full_page(&self) -> bool {
+        self.full_page
+    }
+
     /// The Activity tab's count: "50+" when the card has more than it loads.
     pub(crate) fn activity_badge(&self) -> String {
         let shown = self
@@ -95,6 +136,33 @@ impl CardDetail {
                 .as_ref()
                 .map(|input| input.read(cx).content.to_string()),
         )
+    }
+
+    /// Whether a pick list is open, its typed text, and the refusal under it.
+    #[cfg(test)]
+    pub(crate) fn picker_state(&self, cx: &gpui::App) -> (bool, String, Option<String>) {
+        (
+            self.picker.is_some(),
+            self.query.read(cx).content.to_string(),
+            self.inline_error.clone(),
+        )
+    }
+
+    /// The links the links list shows, in order.
+    #[cfg(test)]
+    pub(crate) fn link_rows<'a>(&'a self, card: &gespan_core::board::Card) -> Vec<&'a CardLink> {
+        let primary = (card.link_kind.as_deref(), card.link_id.as_deref());
+        self.links
+            .iter()
+            .filter(|link| shown_link(link, primary))
+            .collect()
+    }
+
+    /// The description's text and selection.
+    #[cfg(test)]
+    pub(crate) fn description_state(&self, cx: &gpui::App) -> (String, std::ops::Range<usize>) {
+        let input = self.body.read(cx);
+        (input.content.to_string(), input.selected_range())
     }
 
     /// What assistive tech calls the description and comment fields.
@@ -126,7 +194,17 @@ pub(crate) fn activity_text(row: &Activity) -> String {
                 .unwrap_or_default()
         }
     };
-    format!("{what} · {}", row.actor)
+    format!("{what} · {}", actor_label(&row.actor))
+}
+
+/// Who wrote an activity row, as Tauri's `actorLabel` names it: "You",
+/// "System", or "Agent" for any other writer (`agent`, `agent:<session>`).
+pub(crate) fn actor_label(actor: &str) -> &'static str {
+    match actor {
+        "user" => "You",
+        "system" => "System",
+        _ => "Agent",
+    }
 }
 
 /// Something a card can link to: link kind, link id, what to call it.
@@ -146,6 +224,7 @@ impl BoardView {
         if self.dragging {
             return;
         }
+        self.cancel_keyboard_drag(cx);
         self.close_card_detail(cx);
         if self.card_detail.is_some() {
             // The open task's edits could not be saved; it stays open.
@@ -210,15 +289,40 @@ impl BoardView {
             comment,
             choice: None,
             anchors: [
-                "status", "priority", "due", "projects", "labels", "linked", "more",
+                "status",
+                "priority",
+                "due",
+                "start",
+                "estimate",
+                "projects",
+                "labels",
+                "linked",
+                "ticket",
+                "more",
+                "blocks",
+                "blocked-by",
+                "relates",
+                "links-add",
             ]
             .into_iter()
-            .map(|key| (key, AnchorSlot::default()))
+            .map(|key| (key.to_string(), AnchorSlot::default()))
             .collect(),
+            start_at: None,
+            estimate: None,
+            relations: Vec::new(),
+            links: Vec::new(),
+            fields: Vec::new(),
+            field_values: HashMap::new(),
+            inline_error: None,
+            full_page: self.open_in_page,
             _subscriptions: subscriptions,
         });
         self.refresh_detail_lists();
         self.menu = None;
+        if self.card_tickets.contains_key(&card.id) {
+            self.load_connected_trackers(cx);
+            self.refresh_card_ticket(&card.id, false, false, cx);
+        }
         cx.notify();
     }
 
@@ -227,27 +331,105 @@ impl BoardView {
         if self.card_detail.is_none() {
             return false;
         }
-        // A save that fails keeps the drawer, and its text, open with the error.
+        // A save that fails keeps the drawer, and its text, open with the
+        // error. A card that no longer exists has nothing to keep it open for:
+        // the drawer closes, and any unsaved text shows in the error.
         if self.save_card_details(cx) {
             self.card_detail = None;
+        } else if self.card_detail.is_some()
+            && (self.detail_card().is_none() || self.error.as_deref() == Some("Card not found"))
+        {
+            self.drop_orphaned_detail(cx);
         }
         cx.notify();
         true
     }
 
+    /// The drawer's card is gone (deleted, archived or moved to another board
+    /// elsewhere): close the drawer, full page included, so the board, Escape,
+    /// a board switch and settings all work again. Text typed but not saved
+    /// shows in the error, with a Copy button, so the user can keep it.
+    fn drop_orphaned_detail(&mut self, cx: &mut Context<Self>) {
+        let Some(detail) = self.card_detail.take() else {
+            return;
+        };
+        let title = detail.title.read(cx).content.trim().to_string();
+        let body = detail.body.read(cx).content.to_string();
+        let mut unsaved = Vec::new();
+        if !title.is_empty() && title != detail.loaded_title {
+            unsaved.push(format!("Title: {title}"));
+        }
+        if body != detail.loaded_body && !body.trim().is_empty() {
+            unsaved.push(format!("Description: {body}"));
+        }
+        if unsaved.is_empty() {
+            self.orphaned_text = None;
+        } else {
+            let text = unsaved.join("\n");
+            let error = format!("This card was removed elsewhere. Your unsaved text:\n{text}");
+            self.error = Some(error.clone());
+            self.orphaned_text = Some((error, text));
+        }
+        cx.notify();
+    }
+
     /// Escape inside the drawer closes its innermost open thing first.
+    /// Escape in a custom text, number or URL field keeps what was typed:
+    /// leaving the field saves it, and the drawer stays. A value the field
+    /// refused stays with its reason; the next Escape drops it. Escape in
+    /// the estimate writes nothing and the saved value shows again.
     pub(crate) fn close_detail_layer(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some((index, typed)) = self.typed_field_on_escape(cx) {
+            self.submit_field(index, &typed, cx);
+            return true;
+        }
         let Some(detail) = &mut self.card_detail else {
             return false;
         };
         if detail.picker.take().is_some() || detail.subtask_input.take().is_some() {
+            detail.inline_error = None;
             cx.notify();
             return true;
         }
         false
     }
 
-    fn card(&self, card_id: &str) -> Option<&gespan_core::board::Card> {
+    /// The open custom field and its typed text, when Escape should save it:
+    /// a text, number or URL field whose text differs from the saved value
+    /// and was not just refused.
+    fn typed_field_on_escape(&self, cx: &gpui::App) -> Option<(usize, String)> {
+        let detail = self.card_detail.as_ref()?;
+        let Some(Picker::Field(index)) = detail.picker else {
+            return None;
+        };
+        if detail.inline_error.is_some() {
+            return None;
+        }
+        let saved = saved_field_text(detail, index)?;
+        let typed = detail.query.read(cx).content.trim().to_string();
+        (typed != saved.trim()).then_some((index, typed))
+    }
+
+    /// Escape in the full page goes back to the drawer. True when it did.
+    pub(crate) fn leave_full_page(&mut self, cx: &mut Context<Self>) -> bool {
+        match &mut self.card_detail {
+            Some(detail) if detail.full_page => {
+                detail.full_page = false;
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn toggle_full_page(&mut self, cx: &mut Context<Self>) {
+        if let Some(detail) = &mut self.card_detail {
+            detail.full_page = !detail.full_page;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn card(&self, card_id: &str) -> Option<&gespan_core::board::Card> {
         self.detail
             .as_ref()?
             .cards
@@ -275,9 +457,39 @@ impl BoardView {
             ),
             Err(error) => (Err(error.clone()), Err(error.clone()), Err(error)),
         };
+        let extra = match self.service() {
+            Ok(service) => (|| {
+                Ok::<_, String>((
+                    service.card_meta(&card.id)?,
+                    service.card_relations(&card.id)?,
+                    service.card_links(&card.id)?,
+                    service.list_fields(&card.board_id)?,
+                    service.field_values(&card.id)?,
+                ))
+            })(),
+            Err(error) => Err(error),
+        };
         let Some(detail) = &mut self.card_detail else {
             return;
         };
+        let mut failed = None;
+        match extra {
+            Ok((meta, relations, links, fields, values)) => {
+                detail.start_at = meta.start_at;
+                detail.estimate = meta.estimate_minutes;
+                detail.relations = relations;
+                detail.links = links;
+                for index in 0..fields.len() {
+                    detail.anchors.entry(format!("field-{index}")).or_default();
+                }
+                detail.fields = fields;
+                detail.field_values = values
+                    .into_iter()
+                    .map(|value| (value.field_id, value.value_json))
+                    .collect();
+            }
+            Err(error) => failed = Some(error),
+        }
         detail.activity_more = activity
             .as_ref()
             .is_ok_and(|rows| rows.len() > ACTIVITY_LIMIT);
@@ -285,9 +497,16 @@ impl BoardView {
             rows.truncate(ACTIVITY_LIMIT);
             rows
         }));
-        let mut failed = None;
         match subtasks {
-            Ok(subtasks) => detail.subtasks = subtasks,
+            Ok(subtasks) => {
+                for index in 0..subtasks.len() {
+                    detail
+                        .anchors
+                        .entry(format!("subtask-{index}"))
+                        .or_default();
+                }
+                detail.subtasks = subtasks
+            }
             Err(error) => failed = Some(error),
         }
         match comments {
@@ -351,6 +570,10 @@ impl BoardView {
     /// touched since the panel last loaded them.
     pub(super) fn sync_card_detail(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
+            // The board loaded and the drawer's card is not on it any more.
+            if self.card_detail.is_some() && self.load_error.is_none() && self.detail.is_some() {
+                self.drop_orphaned_detail(cx);
+            }
             return;
         };
         let Some(detail) = &mut self.card_detail else {
@@ -369,6 +592,20 @@ impl BoardView {
             detail
                 .body
                 .update(cx, |input, cx| input.set_text(card.body, cx));
+        }
+    }
+
+    /// Select a range of the description, as dragging over it would.
+    #[cfg(test)]
+    pub(crate) fn select_description(
+        &mut self,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(detail) = &self.card_detail {
+            detail
+                .body
+                .update(cx, |input, cx| input.select_range(range, cx));
         }
     }
 
@@ -407,19 +644,61 @@ impl BoardView {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Choice::Priority => (0..PRIORITIES.len())
-                .rev()
-                .map(|p| MenuAction::new(format!("priority-{p}"), PRIORITIES[p]).into())
-                .collect(),
-            Choice::Due => vec![
-                MenuAction::new("due-today", "Today").into(),
-                MenuAction::new("due-tomorrow", "Tomorrow").into(),
-                MenuAction::new("due-next-week", "Next week").into(),
-                MenuAction::new("due-pick", "Pick a date…").into(),
-                MenuItem::Separator,
-                MenuAction::new("due-clear", "Clear").into(),
+            Choice::Priority => quick::priority_items(&self.priority),
+            Choice::Due => quick::due_items(),
+            Choice::Start => quick::date_items("start"),
+            Choice::FieldDate(_) => quick::date_items("field"),
+            Choice::FieldSelect(index) => {
+                let options = self
+                    .card_detail
+                    .as_ref()
+                    .and_then(|detail| detail.fields.get(index))
+                    .map(|field| quick::field_options(field.options_json.as_deref()))
+                    .unwrap_or_default();
+                let mut items: Vec<MenuItem> = options
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, option)| MenuAction::new(format!("field-option-{n}"), option).into())
+                    .collect();
+                items.push(MenuItem::Separator);
+                items.push(MenuAction::new("field-clear", "Clear").into());
+                items
+            }
+            Choice::LinkAdd => vec![
+                MenuAction::new("link-session", "Session…").into(),
+                MenuAction::new("link-pilot", "Pilot…").into(),
+                MenuAction::new("link-pr", "PR URL…").into(),
+                MenuAction::new("link-worktree", "Worktree path…").into(),
             ],
-            Choice::More => vec![MenuAction::new("delete", "Delete task").danger().into()],
+            Choice::Subtask(index) => {
+                let Some(detail) = &self.card_detail else {
+                    return;
+                };
+                let Some(subtask) = detail.subtasks.get(index) else {
+                    return;
+                };
+                let last = detail.subtasks.len() - 1;
+                // Named by id, so a reload that reorders the list while the
+                // menu is open cannot change which subtask is picked.
+                let id = &subtask.id;
+                let mut items: Vec<MenuItem> = Vec::new();
+                if index > 0 {
+                    items.push(MenuAction::new(format!("subtask-up-{id}"), "Move up").into());
+                }
+                if index < last {
+                    items.push(MenuAction::new(format!("subtask-down-{id}"), "Move down").into());
+                }
+                items.push(
+                    MenuAction::new(format!("subtask-convert-{id}"), "Convert to card").into(),
+                );
+                items.push(MenuItem::Separator);
+                items.push(
+                    MenuAction::new(format!("subtask-delete-{id}"), "Delete subtask")
+                        .danger()
+                        .into(),
+                );
+                items
+            }
         };
         let menu = cx.new(|cx| Menu::new("Task", items, window, cx));
         let card_id = card.id.clone();
@@ -441,6 +720,7 @@ impl BoardView {
         );
         if let Some(detail) = &mut self.card_detail {
             detail.picker = None;
+            detail.inline_error = None;
             detail.choice = Some((choice, menu, events));
         }
         cx.notify();
@@ -464,41 +744,81 @@ impl BoardView {
                     .filter(|column| self.column(column).is_some())
                     .map(str::to_string);
                 let current = self.card(&card_id).map(|card| card.column_id.clone());
+                // A move from the drawer can be undone, as Mark complete can.
                 if let Some(column) = column
                     && current.as_ref() != Some(&column)
                 {
-                    self.write_task(cx, |service| {
-                        service.card_move(&card_id, &column, usize::MAX, "user")
-                    });
+                    self.move_with_undo(&card_id, &column, usize::MAX, cx);
+                    self.refresh_detail_lists();
+                    cx.notify();
                 }
             }
             Choice::Priority => {
-                if let Some(priority) = id.strip_prefix("priority-").and_then(|p| p.parse().ok()) {
+                if let Some(priority) = quick::parse_priority(id) {
                     self.write_task(cx, |service| service.set_priority(&card_id, priority));
                 }
             }
-            Choice::Due => {
-                let today = chrono::Local::now().date_naive();
-                let day = match id {
-                    "due-today" => Some(Some(today)),
-                    // A date past chrono's range is ignored, never a clear.
-                    "due-tomorrow" => today.succ_opt().map(Some),
-                    "due-next-week" => today.checked_add_days(chrono::Days::new(7)).map(Some),
-                    "due-clear" => Some(None),
-                    _ => None,
-                };
-                match day {
-                    Some(None) => {
-                        self.write_task(cx, |service| service.set_due(&card_id, None));
+            Choice::Due => match quick::parse_due(id, chrono::Local::now().date_naive()) {
+                Some(quick::DueChoice::Clear) => {
+                    self.write_task(cx, |service| service.set_due(&card_id, None));
+                }
+                Some(quick::DueChoice::Day(day)) => self.set_due_day(&card_id, day, cx),
+                Some(quick::DueChoice::Pick) => self.open_picker(Picker::DueDate, window, cx),
+                None => {}
+            },
+            Choice::Start => {
+                match quick::parse_date("start", id, chrono::Local::now().date_naive()) {
+                    Some(quick::DueChoice::Clear) => {
+                        self.write_task(cx, |service| service.set_start(&card_id, None));
                     }
-                    Some(Some(day)) => self.set_due_day(&card_id, day, cx),
-                    None if id == "due-pick" => self.open_picker(Picker::DueDate, window, cx),
+                    Some(quick::DueChoice::Day(day)) => self.set_start_day(&card_id, day, cx),
+                    Some(quick::DueChoice::Pick) => self.open_picker(Picker::StartDate, window, cx),
                     None => {}
                 }
             }
-            Choice::More => {
-                if id == "delete" {
-                    self.delete_card(window, cx);
+            Choice::FieldDate(index) => {
+                match quick::parse_date("field", id, chrono::Local::now().date_naive()) {
+                    Some(quick::DueChoice::Clear) => self.set_field(index, None, cx),
+                    Some(quick::DueChoice::Day(day)) => self.set_field_day(index, day, cx),
+                    Some(quick::DueChoice::Pick) => {
+                        self.open_picker(Picker::Field(index), window, cx)
+                    }
+                    None => {}
+                }
+            }
+            Choice::FieldSelect(index) => {
+                if id == "field-clear" {
+                    self.set_field(index, None, cx);
+                } else if let Some(option) = id
+                    .strip_prefix("field-option-")
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .and_then(|n| {
+                        let field = self.card_detail.as_ref()?.fields.get(index)?;
+                        quick::field_options(field.options_json.as_deref())
+                            .into_iter()
+                            .nth(n)
+                    })
+                {
+                    let value = serde_json::Value::String(option).to_string();
+                    self.set_field(index, Some(value), cx);
+                }
+            }
+            Choice::LinkAdd => match id {
+                "link-session" => self.open_picker(Picker::AddLink("session"), window, cx),
+                "link-pilot" => self.open_picker(Picker::AddLink("pilot"), window, cx),
+                "link-pr" => self.open_picker(Picker::PrUrl, window, cx),
+                "link-worktree" => self.open_picker(Picker::WorktreePath, window, cx),
+                _ => {}
+            },
+            Choice::Subtask(_) => {
+                if let Some(subtask) = id.strip_prefix("subtask-up-") {
+                    self.shift_subtask(subtask, -1, cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-down-") {
+                    self.shift_subtask(subtask, 1, cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-convert-") {
+                    self.convert_subtask(subtask.to_string(), cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-delete-") {
+                    self.delete_subtask(subtask.to_string(), cx);
                 }
             }
         }
@@ -506,7 +826,12 @@ impl BoardView {
 
     // ---- pick lists: projects, labels, linked work, a typed date ----
 
-    fn open_picker(&mut self, picker: Picker, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_picker(
+        &mut self,
+        picker: Picker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(detail) = &mut self.card_detail else {
             return;
         };
@@ -517,8 +842,9 @@ impl BoardView {
         }
         detail.picker = Some(picker);
         detail.choice = None;
+        detail.inline_error = None;
         detail.link_targets = Vec::new();
-        if picker == Picker::Link {
+        if matches!(picker, Picker::Link | Picker::AddLink(_)) {
             let targets = self.link_targets(cx);
             if let Some(detail) = &mut self.card_detail {
                 detail.link_targets = targets;
@@ -531,11 +857,34 @@ impl BoardView {
             Picker::Projects => "Find a project…",
             Picker::Labels => "Find or create a label…",
             Picker::Link => "Find a session or Pilot…",
-            Picker::DueDate => "YYYY-MM-DD, then Enter",
+            Picker::AddLink("pilot") => "Find a Pilot…",
+            Picker::AddLink(_) => "Find a session…",
+            Picker::DueDate | Picker::StartDate => "YYYY-MM-DD, then Enter",
+            Picker::Estimate => "90m or 1h 30m, then Enter",
+            Picker::Relation(_) => "Find a card by #number or title…",
+            Picker::Field(index) => match detail.fields.get(index).map(|f| f.kind.as_str()) {
+                Some("number") => "A number, then Enter",
+                Some("date") => "YYYY-MM-DD, then Enter",
+                Some("url") => "https://…, then Enter",
+                Some("multi-select") => "Pick options below",
+                _ => "Type a value, then Enter",
+            },
+            Picker::PrUrl => "https://…, then Enter",
+            Picker::WorktreePath => "/path/to/worktree, then Enter",
+        };
+        // Editing a text or number field, or the estimate, starts from its
+        // saved value.
+        let start = match picker {
+            Picker::Field(index) => saved_field_text(detail, index).unwrap_or_default(),
+            Picker::Estimate => detail
+                .estimate
+                .map(quick::format_estimate)
+                .unwrap_or_default(),
+            _ => String::new(),
         };
         let query = detail.query.clone();
         query.update(cx, |input, cx| {
-            input.set_text(String::new(), cx);
+            input.set_text(start, cx);
             input.set_placeholder(placeholder, cx);
         });
         window.focus(&query.focus_handle(cx), cx);
@@ -551,7 +900,12 @@ impl BoardView {
 
     /// Due at the start of `day`; a day the local zone skipped is an error,
     /// never a cleared due date.
-    fn set_due_day(&mut self, card_id: &str, day: chrono::NaiveDate, cx: &mut Context<Self>) {
+    pub(super) fn set_due_day(
+        &mut self,
+        card_id: &str,
+        day: chrono::NaiveDate,
+        cx: &mut Context<Self>,
+    ) {
         match style::day_start(day) {
             Some(due) => {
                 self.write_task(cx, |service| service.set_due(card_id, Some(due)));
@@ -587,8 +941,264 @@ impl BoardView {
                     }
                 }
             }
+            Picker::StartDate => {
+                let Some(card) = self.detail_card() else {
+                    return;
+                };
+                match chrono::NaiveDate::parse_from_str(&query, "%Y-%m-%d") {
+                    Ok(day) => {
+                        if let Some(detail) = &mut self.card_detail {
+                            detail.picker = None;
+                        }
+                        self.set_start_day(&card.id, day, cx);
+                    }
+                    Err(_) => {
+                        self.inline_error(format!("“{query}” is not a date like 2026-11-02"), cx)
+                    }
+                }
+            }
+            Picker::Estimate => self.submit_estimate(&query, cx),
+            Picker::Field(index) => self.submit_field(index, &query, cx),
+            Picker::PrUrl => {
+                if quick::valid_pr_url(&query) {
+                    self.add_link_ref("pr", query, cx);
+                } else {
+                    self.inline_error("A PR link must start with http:// or https://".into(), cx);
+                }
+            }
+            Picker::WorktreePath => {
+                if query.is_empty() {
+                    self.inline_error("Enter a folder path".into(), cx);
+                } else {
+                    self.add_link_ref("worktree", query, cx);
+                }
+            }
             Picker::Labels if !query.is_empty() => self.create_label(cx),
             _ => {}
+        }
+    }
+
+    /// Show a refusal under the open pick list; nothing is written.
+    fn inline_error(&mut self, message: String, cx: &mut Context<Self>) {
+        if let Some(detail) = &mut self.card_detail {
+            detail.inline_error = Some(message);
+        }
+        cx.notify();
+    }
+
+    /// Like `write_task`, but a refusal shows under the open pick list and
+    /// the list stays open. A write that lands closes it. True on success.
+    fn write_inline(
+        &mut self,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut gespan_core::board::Service) -> Result<(), String>,
+    ) -> bool {
+        match self.service().and_then(action) {
+            Ok(()) => {
+                self.error = None;
+                if let Some(detail) = &mut self.card_detail {
+                    detail.inline_error = None;
+                    detail.picker = None;
+                }
+                self.reload(cx);
+                self.refresh_detail_lists();
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.inline_error(error, cx);
+                false
+            }
+        }
+    }
+
+    pub(super) fn set_start_day(
+        &mut self,
+        card_id: &str,
+        day: chrono::NaiveDate,
+        cx: &mut Context<Self>,
+    ) {
+        match style::day_start(day) {
+            Some(start) => {
+                self.write_task(cx, |service| service.set_start(card_id, Some(start)));
+            }
+            None => {
+                self.error = Some(format!("{day} does not exist in this time zone"));
+                cx.notify();
+            }
+        }
+    }
+
+    fn submit_estimate(&mut self, query: &str, cx: &mut Context<Self>) {
+        let Some(card_id) = self.card_detail.as_ref().map(|d| d.card_id.clone()) else {
+            return;
+        };
+        // Empty clears the estimate.
+        let minutes = if query.is_empty() {
+            None
+        } else {
+            match quick::parse_estimate(query) {
+                Ok(minutes) => Some(minutes),
+                Err(error) => return self.inline_error(error, cx),
+            }
+        };
+        self.write_inline(cx, |service| service.set_estimate(&card_id, minutes));
+    }
+
+    // ---- relations, custom fields, links ----
+
+    fn relate(&mut self, kind: RelationKind, other_id: String, cx: &mut Context<Self>) {
+        let Some(card_id) = self.card_detail.as_ref().map(|d| d.card_id.clone()) else {
+            return;
+        };
+        // "Blocked by" is the other card blocking this one.
+        let (from, to, name) = match kind {
+            RelationKind::Blocks => (card_id, other_id, "blocks"),
+            RelationKind::BlockedBy => (other_id, card_id, "blocks"),
+            RelationKind::RelatesTo => (card_id, other_id, "relates"),
+        };
+        self.write_inline(cx, |service| service.add_relation(&from, &to, name));
+    }
+
+    fn unrelate(&mut self, relation: Relation, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| {
+            service.remove_relation(&relation.card_id, &relation.related_card_id, &relation.kind)
+        });
+    }
+
+    /// Write a field value (`None` clears it) for the field at `index`.
+    fn set_field(&mut self, index: usize, value: Option<String>, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(field) = detail.fields.get(index) else {
+            return;
+        };
+        let (card_id, field_id) = (detail.card_id.clone(), field.id.clone());
+        self.write_inline(cx, |service| {
+            service.set_field_value(&card_id, &field_id, value.as_deref())
+        });
+    }
+
+    fn set_field_day(&mut self, index: usize, day: chrono::NaiveDate, cx: &mut Context<Self>) {
+        match style::day_start(day) {
+            Some(at) => self.set_field(index, Some(at.to_string()), cx),
+            None => self.inline_error(format!("{day} does not exist in this time zone"), cx),
+        }
+    }
+
+    fn submit_field(&mut self, index: usize, query: &str, cx: &mut Context<Self>) {
+        let Some(kind) = self
+            .card_detail
+            .as_ref()
+            .and_then(|d| d.fields.get(index))
+            .map(|field| field.kind.clone())
+        else {
+            return;
+        };
+        if kind == "date" {
+            if query.is_empty() {
+                return self.set_field(index, None, cx);
+            }
+            return match chrono::NaiveDate::parse_from_str(query, "%Y-%m-%d") {
+                Ok(day) => self.set_field_day(index, day, cx),
+                Err(_) => self.inline_error(format!("“{query}” is not a date like 2026-11-02"), cx),
+            };
+        }
+        match quick::encode_field(&kind, query) {
+            Ok(value) => self.set_field(index, value, cx),
+            Err(error) => self.inline_error(error, cx),
+        }
+    }
+
+    /// Add or drop one option of a multi-select field; the pick list stays
+    /// open for the next one. Built on the value stored now.
+    fn toggle_multi_option(&mut self, index: usize, option: &str, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(field) = detail.fields.get(index) else {
+            return;
+        };
+        let (card_id, field_id) = (detail.card_id.clone(), field.id.clone());
+        let option = option.to_string();
+        let result = self.service().and_then(|service| {
+            let current = service
+                .field_values(&card_id)?
+                .into_iter()
+                .find(|value| value.field_id == field_id)
+                .map(|value| value.value_json);
+            let mut picks = quick::field_picks(current.as_deref());
+            match picks.iter().position(|pick| *pick == option) {
+                Some(at) => {
+                    picks.remove(at);
+                }
+                None => picks.push(option),
+            }
+            let value = (!picks.is_empty()).then(|| serde_json::json!(picks).to_string());
+            service.set_field_value(&card_id, &field_id, value.as_deref())
+        });
+        match result {
+            Ok(()) => {
+                self.error = None;
+                if let Some(detail) = &mut self.card_detail {
+                    detail.inline_error = None;
+                }
+                self.reload(cx);
+                self.refresh_detail_lists();
+                cx.notify();
+            }
+            Err(error) => self.inline_error(error, cx),
+        }
+    }
+
+    fn toggle_checkbox_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(field) = detail.fields.get(index) else {
+            return;
+        };
+        let on = quick::field_checked(detail.field_values.get(&field.id).map(String::as_str));
+        self.set_field(index, Some((!on).to_string()), cx);
+    }
+
+    fn add_link_ref(&mut self, kind: &'static str, reference: String, cx: &mut Context<Self>) {
+        let Some(card_id) = self.card_detail.as_ref().map(|d| d.card_id.clone()) else {
+            return;
+        };
+        self.write_inline(cx, |service| {
+            service.add_link(&card_id, kind, &reference, None)
+        });
+    }
+
+    fn remove_link_row(&mut self, link: CardLink, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| {
+            service.remove_link(&link.card_id, &link.kind, &link.reference)
+        });
+    }
+
+    /// Open what a links-list row points at.
+    fn open_link_row(&mut self, link: CardLink, cx: &mut Context<Self>) {
+        match link.kind.as_str() {
+            "pr" => cx.open_url(&link.reference),
+            "worktree" => cx.reveal_path(std::path::Path::new(&link.reference)),
+            "session" => self.open_session(&link.reference, cx),
+            "pilot" => cx.emit(Event::OpenPilot(link.reference)),
+            _ => {}
+        }
+    }
+
+    fn open_session(&mut self, id: &str, cx: &mut Context<Self>) {
+        let native = locked(&self.store)
+            .ok()
+            .and_then(|store| store.resolve_existing_session_id(id));
+        match native {
+            Some(native) => cx.emit(Event::OpenSession(native)),
+            None => {
+                self.error = Some("That session no longer exists".into());
+                cx.notify();
+            }
         }
     }
 
@@ -624,13 +1234,7 @@ impl BoardView {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let mut labels = self.card_labels(&card.id);
-        match labels.iter().position(|l| *l == label_id) {
-            Some(index) => {
-                labels.remove(index);
-            }
-            None => labels.push(label_id),
-        }
+        let labels = quick::toggled(&self.card_labels(&card.id), &label_id);
         self.write_task(cx, |service| service.set_labels(&card.id, &labels));
     }
 
@@ -716,18 +1320,7 @@ impl BoardView {
             return;
         };
         match (card.link_kind.as_deref(), card.link_id) {
-            (Some("session"), Some(id)) => {
-                let native = locked(&self.store)
-                    .ok()
-                    .and_then(|store| store.resolve_existing_session_id(&id));
-                match native {
-                    Some(native) => cx.emit(Event::OpenSession(native)),
-                    None => {
-                        self.error = Some("That session no longer exists".into());
-                        cx.notify();
-                    }
-                }
-            }
+            (Some("session"), Some(id)) => self.open_session(&id, cx),
             (Some("pilot"), Some(id)) => cx.emit(Event::OpenPilot(id)),
             _ => {}
         }
@@ -783,6 +1376,57 @@ impl BoardView {
         self.write_task(cx, |service| service.delete_subtask(&subtask_id));
     }
 
+    /// Move a subtask one place up (`-1`) or down (`1`). A subtask that is
+    /// already at that end, or is gone, is left alone.
+    fn shift_subtask(&mut self, subtask_id: &str, by: isize, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(index) = detail.subtasks.iter().position(|s| s.id == subtask_id) else {
+            return;
+        };
+        let Some(target) = index
+            .checked_add_signed(by)
+            .filter(|target| *target < detail.subtasks.len())
+        else {
+            return;
+        };
+        let subtask_id = subtask_id.to_string();
+        self.write_task(cx, |service| service.move_subtask(&subtask_id, target));
+    }
+
+    /// Turn a subtask into a card of its own, right after this one.
+    fn convert_subtask(&mut self, subtask_id: String, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| service.convert_subtask(&subtask_id).map(drop));
+    }
+
+    // ---- description toolbar ----
+
+    /// Apply a Markdown toolbar button to the description's selection. The
+    /// text saves on the same blur and close path as any other edit.
+    fn format_description(
+        &mut self,
+        format: super::markdown_toolbar::Format,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let body = detail.body.clone();
+        let (text, selection) = {
+            let input = body.read(cx);
+            (input.content.to_string(), input.selected_range())
+        };
+        let (text, selection) = super::markdown_toolbar::apply(format, &text, selection);
+        body.update(cx, |input, cx| {
+            input.set_text(text, cx);
+            input.select_range(selection, cx);
+        });
+        window.focus(&body.focus_handle(cx), cx);
+        cx.notify();
+    }
+
     fn send_comment(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
             return;
@@ -827,9 +1471,9 @@ impl BoardView {
         };
         match self.done_column() {
             Some(done) if done != card.column_id => {
-                self.write_task(cx, |service| {
-                    service.card_move(&card.id, &done, usize::MAX, "user")
-                });
+                self.move_with_undo(&card.id, &done, usize::MAX, cx);
+                self.refresh_detail_lists();
+                cx.notify();
             }
             Some(_) => {}
             None => {
@@ -841,34 +1485,77 @@ impl BoardView {
 
     fn copy_reference(&mut self, cx: &mut Context<Self>) {
         if let Some(card) = self.detail_card() {
-            cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                "#{} {}",
-                card.number, card.title
+            cx.write_to_clipboard(ClipboardItem::new_string(more::card_reference(
+                card.number,
+                &card.title,
             )));
         }
     }
 
-    fn delete_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(card) = self.detail_card() else {
+    /// Close the drawer when it shows `card_id`, saving its edits. False when
+    /// that save failed and the drawer stays open with its error.
+    fn close_detail_for(&mut self, card_id: &str, cx: &mut Context<Self>) -> bool {
+        if self
+            .card_detail
+            .as_ref()
+            .is_some_and(|detail| detail.card_id == card_id)
+        {
+            self.close_card_detail(cx);
+            return self.card_detail.is_none();
+        }
+        true
+    }
+
+    /// A held delete: the card is archived and the drawer closes at once; the
+    /// undo toast deletes it for good when it goes, or Undo puts it back.
+    pub(super) fn delete_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
+        let Some(card) = self.card(card_id).cloned() else {
             return;
         };
-        let answer = window.prompt(
-            gpui::PromptLevel::Warning,
-            &format!("Delete “{}”?", card.title),
-            Some("Its description, subtasks, comments and activity are removed."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if answer.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| {
-                    // The drawer closes only once the task is gone.
-                    if this.write(cx, |service| service.card_delete(&card.id)) {
-                        this.card_detail = None;
-                    }
-                });
-            }
-        })
-        .detach();
+        let Some(((_, column_id, index), number)) = self.place_of(&card.id) else {
+            return;
+        };
+        // Typed edits are saved first so Undo brings them back too; a failed
+        // save keeps the drawer open with its error and deletes nothing.
+        if !self.close_detail_for(&card.id, cx) {
+            return;
+        }
+        self.commit_pending(cx);
+        if self.write(cx, |service| service.archive(&card.id)) {
+            let undo = super::undo::Undo::Delete {
+                card_id: card.id,
+                column_id,
+                index,
+            };
+            self.push_undo(format!("Deleted #{number}"), undo, cx);
+        }
     }
+}
+
+/// The saved value of the text, number or URL field at `index`, as typed
+/// text (empty when unset); `None` for any other kind of field.
+fn saved_field_text(detail: &CardDetail, index: usize) -> Option<String> {
+    let field = detail
+        .fields
+        .get(index)
+        .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "url"))?;
+    Some(
+        detail
+            .field_values
+            .get(&field.id)
+            .and_then(|raw| quick::field_text(&field.kind, raw))
+            .unwrap_or_default(),
+    )
+}
+
+/// Whether the links list shows `link`: every PR, worktree, flow run,
+/// session and Pilot link but the primary one, which the Linked work row
+/// already shows (ruling C3-f), stored as role `primary` or as an extra row
+/// matching the card's link.
+pub(super) fn shown_link(link: &CardLink, primary: (Option<&str>, Option<&str>)) -> bool {
+    matches!(
+        link.kind.as_str(),
+        "session" | "pilot" | "flow-run" | "pr" | "worktree"
+    ) && link.role.as_deref() != Some("primary")
+        && (Some(link.kind.as_str()), Some(link.reference.as_str())) != primary
 }

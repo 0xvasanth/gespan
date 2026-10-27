@@ -29,6 +29,15 @@ import { useIdleSessionDetach } from "./hooks/useIdleSessionDetach";
 import { HarnessEventQueue } from "./model/harnessFlush";
 import { noteStreamApplied } from "../features/sessions/model/streamingPerformance";
 import { updateSessionState } from "./model/sessionState";
+import {
+  getComposerDraft,
+  setComposerDraft,
+} from "../features/sessions/model/draftCache";
+import {
+  NEW_SESSION_FROM_TICKET_ACTION,
+  type TicketSessionHost,
+} from "../features/sessions/model/ticketSession";
+import { NewSessionFromTicketDialog } from "../features/sessions/ui/NewSessionFromTicketDialog";
 import { beginTabSwitch, commitTabSwitch } from "./model/navigationPerformance";
 import {
   SessionStateContext,
@@ -148,6 +157,7 @@ import {
   type PilotActivitySelection,
 } from "../features/pilots/model/pilotActivity";
 import { MenuBar } from "./shell/MenuBar";
+import type { BoardCommand } from "../features/board/ui/BoardView";
 import { FilePicker } from "../features/files/ui/FilePicker";
 import {
   DeleteSessionDialog,
@@ -225,6 +235,9 @@ import {
 } from "../features/sessions/model/attachments";
 import {
   basename,
+  gitBranches,
+  gitDiffStats,
+  gitPrStatus,
   homeDir,
   notifyGitChanged,
   pickFolders,
@@ -531,6 +544,7 @@ import {
   type BtwThread,
   type ComposerTurnOptions,
   type HarnessId,
+  type GithubLinkedWorkItem,
   type LinkedWorkItem,
   type ModelTarget,
   type PlanBuildTarget,
@@ -539,10 +553,23 @@ import {
   type PlanStatus,
   type SecondOpinionMeta,
   type PilotSpawnedSession,
+  isGithubWorkItem,
   type Session,
+  type TicketRef,
+  type TurnIntent,
   type UsageLimit,
   type WorkspaceMode,
+  sessionTicket,
 } from "../features/sessions/model/session";
+import {
+  runCardTool,
+  runTicketTool,
+  needsTicketContext,
+  refreshTicketSnapshot,
+  ticketContextFor,
+  ticketMayChangeStatus,
+  withTicketContextReceipt,
+} from "../features/sessions/model/ticketContext";
 
 import {
   canDispatchQueuedHead,
@@ -730,7 +757,32 @@ import {
   sessionLinkTarget,
   type BoardLinkTarget,
   type LinkRef,
+  type RunRequest,
 } from "../features/board/ui/boardFormat";
+import { startRun } from "../features/board/model/runWith";
+import {
+  addCardLink,
+  boardWriteBack,
+  getCardTicket,
+  getRunPrompt,
+} from "../features/board/model/board";
+import {
+  createPrEvents,
+  type PrEvents,
+} from "../features/board/model/prEvents";
+import { writeBackReply } from "../features/board/model/writeBackReply";
+import {
+  checksState,
+  extraKey,
+  parsePrUrl,
+  prState,
+  type LinkExtra,
+} from "../features/board/model/linkStatus";
+import {
+  lookupLinkStatuses,
+  type LinkStatusCache,
+} from "../features/board/model/linkStatusLookup";
+import { fetchGithubPrChecks } from "../features/inbox/model/githubPrChecks";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
   createLinkedTurns,
@@ -925,6 +977,14 @@ const AutomationsView = lazySurface(
   },
   { suspense: false },
 );
+const SESSION_PALETTE_ACTIONS = [NEW_SESSION_FROM_TICKET_ACTION] as const;
+const BOARD_PALETTE_ACTIONS = [
+  ...SESSION_PALETTE_ACTIONS,
+  { id: "board-create-card", label: "Create card" },
+  { id: "board-go-to", label: "Go to board" },
+  { id: "board-switch", label: "Switch board…" },
+] as const;
+let boardCommandNonce = 0;
 const BoardView = lazySurface(
   async () => {
     const module = await import("../features/board/ui/BoardView");
@@ -934,7 +994,7 @@ const BoardView = lazySurface(
 );
 
 type LinkedWorkItemPanelState = {
-  item: LinkedWorkItem;
+  item: GithubLinkedWorkItem;
   sessionId: string;
   cwd: string;
 };
@@ -1451,6 +1511,7 @@ function Workspace({
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
   const [boardViewOpen, setBoardViewOpen] = useState(false);
+  const [boardCommand, setBoardCommand] = useState<BoardCommand | null>(null);
   const [openAppViews, setOpenAppViews] = useState<AppView[]>([]);
   // Pilots open as title tabs in the inset layout, by Pilot id.
   const [openPilotTabs, setOpenPilotTabs] = useState<string[]>([]);
@@ -1931,10 +1992,19 @@ function Workspace({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
-  // Moves board cards linked to a session (or its Pilot) as its turns run.
-  // Runs whether or not the Board is shown; failures only reach the console.
+  // Moves board cards linked to a session (or its Pilot) as its turns run,
+  // and comments a completed turn's reply on write-back boards. Runs whether
+  // or not the Board is shown; failures only reach the console.
   const linkedTurns = useRef<LinkedTurns | null>(null);
-  linkedTurns.current ??= createLinkedTurns(onLinkedWork);
+  linkedTurns.current ??= createLinkedTurns(
+    onLinkedWork,
+    undefined,
+    boardWriteBack,
+  );
+  // PR links report pr_opened / pr_merged when a board status read sees it.
+  const prEventsRef = useRef<PrEvents | null>(null);
+  prEventsRef.current ??= createPrEvents(onLinkedWork);
+  const prEvents = prEventsRef.current;
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -2514,6 +2584,20 @@ function Workspace({
     approvalSessionIdsRef.current = nextApprovalSessionIds;
   }
   const approvalSessionIds = approvalSessionIdsRef.current;
+  // A running session that starts waiting on the user reports needs_input.
+  const needsInputKey = useMemo(
+    () =>
+      sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n"),
+    [sessions],
+  );
+  useEffect(() => {
+    linkedTurns.current!.needsInput(
+      needsInputKey ? needsInputKey.split("\n") : [],
+    );
+  }, [needsInputKey]);
 
   const activeSessionId = inboxViewOpen
     ? inboxAskPortal?.sessionId
@@ -5047,7 +5131,7 @@ function Workspace({
       const session = sessionsRef.current.find(
         (entry) => entry.id === sessionId,
       );
-      if (!session?.linkedWorkItem) return;
+      if (!isGithubWorkItem(session?.linkedWorkItem)) return;
       if (
         session.linkedWorkItemUpdateCard?.updatedAt === update.updatedAt &&
         session.linkedWorkItemUpdateCard.status !== "error"
@@ -6248,6 +6332,58 @@ function Workspace({
     },
     [history, invalidateLoadedSession, refreshHistory, sidebarCwd],
   );
+
+  // "New session from ticket…": a local session in the active project, its
+  // ticket linked through setSessionLinkedWorkItem and the key (later the
+  // title) as an unsent draft.
+  const [ticketSessionOpen, setTicketSessionOpen] = useState(false);
+  const ticketSessionHost = useMemo<TicketSessionHost>(() => {
+    const setSeed = (sessionId: string, composerSeed: string) =>
+      updateSessionState(sessionsRef, setSessions, (sessions) =>
+        sessions.map((session) =>
+          session.id === sessionId ? { ...session, composerSeed } : session,
+        ),
+      );
+    return {
+      createSession: (draft) => {
+        setSearchViewOpen(false);
+        setInboxViewOpen(false);
+        setNotesViewOpen(false);
+        setAutomationsViewOpen(false);
+        setBoardViewOpen(false);
+        const cwd = sidebarCwd;
+        const session = {
+          ...newWorkspaceSession(cwd, sessionDefaults?.runtimeMode),
+          composerSeed: draft,
+        };
+        const tab = newTab(session.id);
+        updateSessionState(sessionsRef, setSessions, (sessions) => [
+          ...sessions,
+          session,
+        ]);
+        setComposerDraft(session.id, draft);
+        appendTab(tab, cwd);
+        setActiveTabId(tab.id);
+        setComposerFocused(true);
+        return session.id;
+      },
+      link: (sessionId, item) =>
+        onSetHistorySessionLinkedWorkItem(sessionId, item),
+      linkedWorkItem: (sessionId) =>
+        sessionsRef.current.find((session) => session.id === sessionId)
+          ?.linkedWorkItem,
+      draft: (sessionId) => getComposerDraft(sessionId),
+      setDraft: (sessionId, text) => {
+        setComposerDraft(sessionId, text);
+        setSeed(sessionId, text);
+      },
+    };
+  }, [
+    appendTab,
+    onSetHistorySessionLinkedWorkItem,
+    sessionDefaults?.runtimeMode,
+    sidebarCwd,
+  ]);
 
   const onArchiveHistorySessions = useCallback(
     async (sessionIds: readonly string[], archived: boolean) => {
@@ -8641,12 +8777,45 @@ function Workspace({
               `<gespan_app>\n${handAgent ? "App access is always enabled in this thread." : "The user's Operator command enables app access in this thread, including later turns without the command."} You can start sessions, list and create project worktrees, choose a new session's checkout, read, continue, stop, archive or delete other project sessions, save unsent drafts, organize session folders, and read or write saved notes through its local CLI. Run \`${cli} --help\` when you need the exact commands and JSON fields. When reading another session, start with its latest two or three user/assistant exchanges. Request older exchanges with nextBefore or a larger excerpt only if needed. The CLI uses a session credential already in your environment; never print it. New sessions inherit this session's permission mode unless runtimeMode is set explicitly. For a new session with a draft, call sessions.start with its prompt and draft:true; do not submit a seed prompt. Sessions you start appear in the user's sidebar under this session without opening; the user opens them when they want. Only set placement right or down, or reveal:true, when the user asks to see a session open or side by side. The returned ID can be used as besideSessionId to split its pane again or moved into a folder immediately. A normal sessions.start submits its prompt but returns after acceptance, so do not wait for that agent to finish before organizing it.\n</gespan_app>`,
             );
           }
+          // The linked ticket is introduced once per session and key, by
+          // tracker and key only; the agent reads the rest with ticket.get.
+          const ticketSession =
+            sessionsRef.current.find((session) => session.id === sessionId) ??
+            current;
+          const introTicket = sessionTicket(ticketSession.linkedWorkItem);
+          let ticketContext: { text: string; receipt: string } | undefined;
+          if (
+            introTicket &&
+            !rawCommand &&
+            intent !== "orchestrate" &&
+            !current.inboxAsk &&
+            needsTicketContext(ticketSession, intent === "plan")
+          ) {
+            ticketContext = ticketContextFor(ticketSession, {
+              mayChangeStatus: await ticketMayChangeStatus(sessionId).catch(
+                () => false,
+              ),
+              readOnly: intent === "plan",
+              cli: `${shellPath(await invoke<string>("app_cli_path"))} app`,
+            });
+            if (ticketContext) appContext.push(ticketContext.text);
+          }
+          turnIntents.current.set(sessionId, intent);
           // A Pilot reads who it is ahead of the message, so it never takes it
           // for something the user pasted. A command must stay first.
           if (pilot && !rawCommand) sendText = pilotTurn(sendText, appContext);
           else if (appContext.length)
             sendText += `\n\n${appContext.join("\n\n")}`;
           await sendTurn(sendText);
+          if (ticketContext) {
+            const { receipt } = ticketContext;
+            sessionsRef.current = sessionsRef.current.map((session) =>
+              session.id === sessionId
+                ? withTicketContextReceipt(session, receipt)
+                : session,
+            );
+            setSessions(sessionsRef.current);
+          }
           if (agentFiles) {
             recordAgentContext(
               sessionId,
@@ -8857,7 +9026,17 @@ function Workspace({
             turnGen.current.get(sessionId) !== gen
               ? { status: "cancelled", text: controlText }
               : controlOutcome;
-          linkedTurns.current!.settled(sessionId, gen, outcome.status);
+          linkedTurns.current!.settled(
+            sessionId,
+            gen,
+            outcome.status,
+            outcome.status === "completed"
+              ? writeBackReply(
+                  sessionsRef.current.find((s) => s.id === sessionId) ??
+                    current,
+                )
+              : undefined,
+          );
           // A held turn hasn't finished: its settlement waits for the turn
           // that really ends after Resume.
           const settle = options?.onSettled;
@@ -9428,6 +9607,8 @@ function Workspace({
   const appReceipts = useRef(
     new Map<string, { signature: string; promise: Promise<unknown> }>(),
   );
+  /** The intent each session's current turn started with, for ticket.*. */
+  const turnIntents = useRef(new Map<string, TurnIntent>());
 
   const ensureAutomationRecovery = useCallback(() => {
     if (!automationRecoveryRef.current) {
@@ -11474,6 +11655,21 @@ function Workspace({
       action: string;
       input: Record<string, unknown>;
     }>("gespan-control-request", ({ payload }) => {
+      // The store already saved the moved snapshot on the link: only the
+      // chip's copy changes (no second link write, open panels stay open).
+      const refreshTicketChip = (sessionId: string, ticket: TicketRef) => {
+        const next = refreshTicketSnapshot(
+          sessionsRef.current,
+          sessionId,
+          ticket,
+        );
+        if (next === sessionsRef.current) return;
+        setSessions(next);
+        setHistory((rows) => refreshTicketSnapshot(rows, sessionId, ticket));
+        setStoredLinkedSessions((rows) =>
+          refreshTicketSnapshot(rows, sessionId, ticket),
+        );
+      };
       const handle = async () => {
         if (payload.namespace === "control") {
           return orchestrator.handle(
@@ -11921,6 +12117,21 @@ function Workspace({
             readAgentFile: (pilotId, path) => readAgentFile(pilotId, path),
             writeAgentFile: (pilotId, path, text, hash) =>
               writeAgentFile(pilotId, path, text, hash),
+            ticketTool: async (sessionId, readOnly, tool, ticketKey) => {
+              const { result, ticket } = await runTicketTool(
+                sessionId,
+                readOnly,
+                tool,
+                ticketKey,
+              );
+              // A move was stored on the session; refresh its chip unless
+              // the user relinked meanwhile.
+              if (ticket) refreshTicketChip(sessionId, ticket);
+              return result;
+            },
+            cardTool: (sessionId, readOnly, tool) =>
+              runCardTool(sessionId, readOnly, tool),
+            turnIntent: (sessionId) => turnIntents.current.get(sessionId),
           },
         );
         appReceipts.current.set(key, { signature, promise });
@@ -12466,6 +12677,8 @@ function Workspace({
 
   const onOpenLinkedWorkItem = useCallback(
     (item: LinkedWorkItem, sessionId: string) => {
+      // Ticket items have no side panel yet.
+      if (!isGithubWorkItem(item)) return;
       const request = linkedWorkItemPanelRequest.current + 1;
       linkedWorkItemPanelRequest.current = request;
       setFilePickerOpen(false);
@@ -12621,6 +12834,17 @@ function Workspace({
       setAutomationsViewOpen(false);
       setBoardViewOpen(true);
     });
+  }, []);
+
+  const onBoardCommand = useCallback(
+    (id: BoardCommand["id"]) => {
+      onOpenBoard();
+      setBoardCommand({ id, nonce: ++boardCommandNonce });
+    },
+    [onOpenBoard],
+  );
+  const onBoardCommandHandled = useCallback((nonce: number) => {
+    setBoardCommand((current) => (current?.nonce === nonce ? null : current));
   }, []);
 
   const onLeaveBoard = useCallback(() => {
@@ -13838,6 +14062,7 @@ function Workspace({
     onNoteCardDismiss,
     onHandoffCardDismiss,
     onOpenLinkedWorkItem,
+    onSetLinkedWorkItem: onSetHistorySessionLinkedWorkItem,
     onArchiveSession: onArchiveHistorySession,
     onDeleteSession: onDeleteHistorySession,
     onApproval,
@@ -14150,9 +14375,17 @@ function Workspace({
         .map((session) => session.id)
         .join("\n")
     : "";
+  // Sessions waiting on an approval or a question, for the cards' "waiting" chips.
+  const waitingSessionKey = boardShown
+    ? sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n")
+    : "";
   const boardLinkTargets = useMemo((): BoardLinkTarget[] => {
     if (!boardShown) return [];
     const busy = new Set(busySessionKey.split("\n"));
+    const waiting = new Set(waitingSessionKey.split("\n"));
     // Archived and draft sessions stay targets (a card linked to one still
     // finds it) but are unlisted, so the picker leaves them out.
     const targets: BoardLinkTarget[] = history
@@ -14160,7 +14393,12 @@ function Workspace({
       .map((session) =>
         sessionLinkTarget(
           session,
-          busy.has(session.id) ? "running" : "completed",
+          // A turn waiting on the user is still open: it reads "waiting".
+          waiting.has(session.id)
+            ? "waiting"
+            : busy.has(session.id)
+              ? "running"
+              : "completed",
         ),
       );
     if (pilotsEnabled) {
@@ -14177,7 +14415,27 @@ function Workspace({
     return targets;
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  }, [
+    boardShown,
+    busySessionKey,
+    waitingSessionKey,
+    history,
+    pilotsEnabled,
+    pilotRail,
+    pilotsSnap,
+  ]);
+  const boardProjects = useMemo(
+    () =>
+      boardShown
+        ? projectRailItems(recents, normalizeProjectPath(projectCwd)).map(
+            (project) => ({
+              path: project.path,
+              name: projectName(project.path),
+            }),
+          )
+        : [],
+    [boardShown, recents, projectCwd],
+  );
   // `history` only holds projects visited this run, so the board asks for
   // the rest by id; a session the store doesn't return was deleted.
   const lookupBoardLinkTargets = useCallback(
@@ -14205,6 +14463,108 @@ function Workspace({
       return targets;
     },
     [],
+  );
+  // Last result per link, per project: a lookup soon after another (a settle
+  // right after the board opened) answers from it instead of asking again.
+  const linkStatusCache = useMemo<LinkStatusCache>(
+    () => new Map(),
+    [projectCwd],
+  );
+  // PR checks and diff stats for the board's PR and worktree links. Read when
+  // the board opens and when a linked turn settles; never on a timer. Remote
+  // workspaces refuse `gh` checks, so those read as unknown, not as an error.
+  const lookupBoardLinkStatus = useCallback(
+    async (
+      links: { kind: "pr" | "worktree"; reference: string }[],
+    ): Promise<Record<string, LinkExtra>> => {
+      const local = !remoteProjectFor(projectCwd);
+      // The current branch's PR, asked once however many PR links are read,
+      // and only when one is.
+      let branchPr: Promise<Awaited<ReturnType<typeof gitPrStatus>> | null> | null =
+        null;
+      const currentBranchPr = () =>
+        (branchPr ??= gitPrStatus(projectCwd).catch(() => null));
+      // At most four links are read at once: each is a few `gh` or `git` runs.
+      const out = await lookupLinkStatuses(links, {
+        cache: linkStatusCache,
+        read: async (link): Promise<LinkExtra> => {
+          if (link.kind === "worktree") {
+            const [branches, stats] = await Promise.allSettled([
+              gitBranches(link.reference),
+              gitDiffStats(link.reference),
+            ]);
+            return {
+              state: "idle",
+              ...(branches.status === "fulfilled" && branches.value.current
+                ? { branch: branches.value.current }
+                : {}),
+              ...(stats.status === "fulfilled"
+                ? {
+                    diff: {
+                      additions: stats.value.additions,
+                      deletions: stats.value.deletions,
+                    },
+                  }
+                : {}),
+            };
+          }
+          const pr = parsePrUrl(link.reference);
+          if (!pr || !local) return { state: "unknown" };
+          const [status, checks] = await Promise.allSettled([
+            currentBranchPr(),
+            fetchGithubPrChecks(projectCwd, pr.repo, pr.number),
+          ]);
+          const sameBranchPr =
+            status.status === "fulfilled" &&
+            status.value?.url === link.reference
+              ? status.value
+              : null;
+          return {
+            state: prState(sameBranchPr?.state),
+            ...(checks.status === "fulfilled" &&
+            checksState(checks.value.checks)
+              ? { checks: checksState(checks.value.checks) }
+              : {}),
+          };
+        },
+      });
+      prEvents.observe(
+        links.flatMap((link) =>
+          link.kind === "pr"
+            ? [{ reference: link.reference, state: out[extraKey(link)]?.state }]
+            : [],
+        ),
+      );
+      return out;
+    },
+    [linkStatusCache, prEvents, projectCwd],
+  );
+  // "Run with…": a session with the store's prompt for the card, linked to
+  // it, carrying the card's cached ticket (so a disconnected tracker still
+  // starts), then sent. Everything else about the card stays in the store.
+  const onBoardRunWith = useCallback(
+    async (request: RunRequest) => {
+      await startRun(request, {
+        getRunPrompt,
+        getCardTicket,
+        // The link goes in first, so a refused link leaves no empty session
+        // behind, and write-back finds the card once the turn runs.
+        link: (cardId, sessionId) => addCardLink(cardId, "session", sessionId),
+        open: (session, prompt) => {
+          const nextSessions = [...sessionsRef.current, session];
+          sessionsRef.current = nextSessions;
+          setSessions(nextSessions);
+          const tab = newTab(session.id);
+          appendTab(tab, request.cwd);
+          setBoardViewOpen(false);
+          setSidebarTab("sessions", session.cwd);
+          setActiveTabId(tab.id);
+          setComposerFocused(false);
+          submitSession(session.id, prompt, [], { refreshTitle: true });
+        },
+      });
+    },
+    [appendTab, submitSession],
   );
   // Rejections reach the board's error toast.
   const onOpenBoardLinkedWork = useCallback(
@@ -15081,6 +15441,11 @@ function Workspace({
                         linkTargets={boardLinkTargets}
                         onOpenLinkedWork={onOpenBoardLinkedWork}
                         lookupLinkTargets={lookupBoardLinkTargets}
+                        lookupLinkStatus={lookupBoardLinkStatus}
+                        onRunWith={onBoardRunWith}
+                        projects={boardProjects}
+                        command={boardCommand}
+                        onCommandHandled={onBoardCommandHandled}
                       />
                     </AppViewSurface>
                   ) : null}
@@ -15174,11 +15539,27 @@ function Workspace({
               holdLabel={
                 holdApi.phase === "onHold" ? "Resume everything" : "Hold everything"
               }
+              extraActions={
+                boardEnabled ? BOARD_PALETTE_ACTIONS : SESSION_PALETTE_ACTIONS
+              }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
-                if (id === "hold") holdFromMenu();
+                else if (id === NEW_SESSION_FROM_TICKET_ACTION.id)
+                  setTicketSessionOpen(true);
+                else if (id === "board-create-card") onBoardCommand("new-card");
+                else if (id === "board-go-to") onOpenBoard();
+                else if (id === "board-switch") onBoardCommand("switch-board");
+                else if (id === "hold") holdFromMenu();
               }}
               onClose={() => setFilePickerOpen(false)}
+            />
+          ) : null}
+
+          {ticketSessionOpen ? (
+            <NewSessionFromTicketDialog
+              host={ticketSessionHost}
+              description={projectName(sidebarCwd)}
+              onClose={() => setTicketSessionOpen(false)}
             />
           ) : null}
 

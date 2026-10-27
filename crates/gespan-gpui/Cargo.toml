@@ -11,6 +11,8 @@ serde_json.workspace = true
 gespan-core = { path = "../gespan-core" }
 gespan-redact = { path = "../gespan-redact" }
 gespan-keep-awake = { path = "../keep-awake" }
+# The ticket tools' refusal rules, shared with the bridge and the Tauri app.
+gespan-tracker-client = { path = "../tracker-client" }
 # Dictation: the shared speech helper and its model downloads.
 gespan-speech = { path = "../gespan-speech" }
 gespan-models = { path = "../gespan-models" }
@@ -56,13 +58,17 @@ tree-sitter-ruby = "0.23"
 qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
+# Board tests use raw SQL to stand in for the Tauri app or break a table.
+rusqlite.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["test-support"] }
 tempfile = "3"
+# Scale tests size the board seed (`SeedSpec`).
+gespan-board-store = { path = "../board-store" }
+# Seeds a saved tracker credential without touching the real keychain.
+gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 # Reading report bundles back in tests.
 url = "2"
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
-# Raw SQL in board tests, to stand in for the Tauri app or a broken schema.
-rusqlite.workspace = true
 # Test log capture: the real JSONL layer under a thread-local registry.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt"] }
 

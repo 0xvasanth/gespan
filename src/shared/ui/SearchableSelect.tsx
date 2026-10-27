@@ -31,6 +31,7 @@ export function SearchableSelect({
   variant = "field",
   searchable = true,
   align = "start",
+  openSignal = 0,
 }: {
   label: string;
   value: string;
@@ -44,6 +45,8 @@ export function SearchableSelect({
   variant?: "field" | "transparent" | "row" | "panel" | "pill";
   searchable?: boolean;
   align?: PopoverAlign;
+  /** Opens the menu each time this number changes (not on mount at 0). */
+  openSignal?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -98,6 +101,11 @@ export function SearchableSelect({
     );
     setOpen(true);
   };
+
+  useEffect(() => {
+    if (openSignal > 0) openMenu();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   useEffect(() => {
     if (!open) return;

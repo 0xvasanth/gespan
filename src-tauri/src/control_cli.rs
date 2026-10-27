@@ -82,7 +82,7 @@ const ACTIONS: [&str; 12] = [
     "list", "delegate", "get", "steer", "message", "retry", "cancel", "wait", "review", "finish",
     "respond", "answer",
 ];
-const APP_ACTIONS: [&str; 32] = [
+const APP_ACTIONS: [&str; 37] = [
     "models.list",
     "sessions.list",
     "sessions.read",
@@ -115,8 +115,14 @@ const APP_ACTIONS: [&str; 32] = [
     "habits.run",
     "habits.remove",
     "chat.card",
+    "ticket.get",
+    "ticket.comment",
+    "ticket.status",
+    "card.subtasks",
+    "card.subtask_done",
 ];
-const APP_USAGE: &str = r#"Gespan app access — use in a thread enabled by /operator.
+const APP_USAGE: &str = r#"Gespan app access — use in a thread enabled by /operator. The ticket.* and
+card.* actions work in any agent turn of this session, without /operator.
 
 Usage: {exe} app ACTION [--json JSON | --input FILE|-] [--request-id ID]
 
@@ -262,6 +268,20 @@ Actions:
                    "schedule":{"kind":"daily","time":"09:00"}}
                   choices accepts 1–4 options. A habit card is a suggestion;
                   the user must start it before it is scheduled.
+  ticket.get     {}  The ticket linked to this session: key, title, status,
+                  link and description (Markdown). Gespan picks the ticket;
+                  an optional "key" must be this session's own ticket key.
+  ticket.comment {"body":"Markdown"}  Post a comment on the linked ticket.
+  ticket.status  {}  The statuses the linked ticket can move to.
+                 {"target":"<status id or name>","fields":{"<key>":"value"}}
+                  Move the ticket. Some moves need fields, passed by field
+                  key; the error lists them. Changing status can be turned
+                  off for a session. Plan turns are read-only: they may read
+                  and list but not comment, move or tick.
+  card.subtasks  {}  Subtasks of the board cards linked to this session, with
+                  each subtask's id and whether it is done.
+  card.subtask_done {"subtaskId":"<id from card.subtasks>","done":true}
+                  Tick or untick a subtask on a card linked to this session.
 
 The output is one JSON line: {"ok":true,"result":...} or {"ok":false,"error":"..."}.
 Use --input - to pass JSON on stdin. Never print Gespan credentials.
@@ -610,12 +630,42 @@ mod tests {
     }
     #[test]
     fn help_names_every_action_and_the_real_executable() {
+        let exe = quoted(&std::env::current_exe().unwrap().to_string_lossy());
         let text = help();
         for action in ACTIONS {
             assert!(text.contains(action), "help omits {action}");
         }
         assert!(!text.contains("{exe}"));
+        assert!(text.contains(&format!("{exe} control ACTION")));
         assert!(text.contains("--request-id"));
+        let app = app_help();
+        for action in APP_ACTIONS {
+            assert!(
+                app.contains(&format!("  {action} ")),
+                "app help omits {action}"
+            );
+            assert!(matches!(
+                parse_args_for(&args(&[action]), true),
+                Ok(Parsed::Call(parsed, _, _)) if parsed == action
+            ));
+            assert!(parse_args_for(&args(&[action]), false).is_err());
+        }
+        assert!(!app.contains("{exe}"));
+        assert!(app.contains(&format!("{exe} app ACTION")));
+        assert!(app.contains("without /operator"));
+        for action in [
+            "ticket.get",
+            "ticket.comment",
+            "ticket.status",
+            "card.subtasks",
+            "card.subtask_done",
+        ] {
+            assert!(
+                APP_ACTIONS.contains(&action),
+                "{action} is not an app action"
+            );
+        }
+        assert!(parse_args_for(&args(&["ticket.delete"]), true).is_err());
     }
     #[test]
     fn quotes_the_control_path_only_when_the_shell_needs_it() {

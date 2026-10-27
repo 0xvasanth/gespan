@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CardLinkKind, LinkedWorkEvent } from "./board";
+
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+
+import { onLinkedWork } from "./autoMove";
+import { boardWriteBack, type CardLinkKind, type LinkedWorkEvent } from "./board";
 import {
   createLinkedTurns,
   settledTurnEvent,
@@ -223,5 +229,194 @@ describe("Pilot-driven turns on the board", () => {
       ["session", "s1", "started"],
       ["session", "s1", "completed"],
     ]);
+  });
+});
+
+describe("linked turns through onLinkedWork", () => {
+  it("sends each turn event to the store engine as board_linked_event", async () => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    const report = vi.fn();
+    const turns = createLinkedTurns(onLinkedWork, report);
+    turns.started("s1", 1, "p1");
+    turns.settled("s1", 1, "failed");
+    await flush();
+    expect(invoke.mock.calls).toEqual([
+      ["board_linked_event", { kind: "session", id: "s1", event: "started" }],
+      ["board_linked_event", { kind: "pilot", id: "p1", event: "started" }],
+      ["board_linked_event", { kind: "session", id: "s1", event: "failed" }],
+      ["board_linked_event", { kind: "pilot", id: "p1", event: "failed" }],
+    ]);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it("reports a store failure without throwing into the session", async () => {
+    invoke.mockReset();
+    invoke.mockRejectedValue("database is locked");
+    const report = vi.fn();
+    const turns = createLinkedTurns(onLinkedWork, report);
+    expect(() => turns.started("s1", 1)).not.toThrow();
+    await flush();
+    expect(report).toHaveBeenCalledWith("database is locked");
+  });
+});
+
+describe("write-back on a settled turn", () => {
+  function withWriteBack(
+    write: (key: string, reply: string) => Promise<unknown> = () =>
+      Promise.resolve([]),
+  ) {
+    const calls: Call[] = [];
+    const writes: [string, string][] = [];
+    const report = vi.fn();
+    const turns = createLinkedTurns(
+      (kind, id, event) => {
+        calls.push([kind, id, event]);
+        return Promise.resolve();
+      },
+      report,
+      (key, reply) => {
+        writes.push([key, reply]);
+        return write(key, reply);
+      },
+    );
+    return { turns, calls, writes, report };
+  }
+
+  it("hands a completed turn's final reply to write-back once, keyed by the session", () => {
+    const { turns, writes } = withWriteBack();
+    turns.started("s1", 1, "p1");
+    turns.settled("s1", 1, "completed", "Fixed the login bug.");
+    turns.settled("s1", 1, "completed", "Fixed the login bug.");
+    // One write for the session; a Pilot behind the turn is not a card author.
+    expect(writes).toEqual([["s1", "Fixed the login bug."]]);
+  });
+
+  it("passes the reply as is: the store trims, the app does not", () => {
+    const { turns, writes } = withWriteBack();
+    const long = `  ${"x".repeat(5_000)}\n\n`;
+    turns.started("s1", 1);
+    turns.settled("s1", 1, "completed", long);
+    expect(writes).toEqual([["s1", long]]);
+  });
+
+  it("keeps a remote session key as the store knows it", () => {
+    const { turns, writes, calls } = withWriteBack();
+    turns.started("remote:env-1:abc", 1);
+    turns.settled("remote:env-1:abc", 1, "completed", "Done");
+    expect(writes).toEqual([["remote:env-1:abc", "Done"]]);
+    expect(calls.at(-1)).toEqual(["session", "remote:env-1:abc", "completed"]);
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "writes nothing for a %s turn",
+    (status) => {
+      const { turns, writes } = withWriteBack();
+      turns.started("s1", 1);
+      turns.settled("s1", 1, status, "Partial reply before it broke");
+      expect(writes).toEqual([]);
+    },
+  );
+
+  it.each([undefined, "", "   \n"])(
+    "writes nothing for an empty reply (%j)",
+    (reply) => {
+      const { turns, writes, calls } = withWriteBack();
+      turns.started("s1", 1);
+      turns.settled("s1", 1, "completed", reply);
+      expect(writes).toEqual([]);
+      // The card still hears the turn completed.
+      expect(calls.at(-1)).toEqual(["session", "s1", "completed"]);
+    },
+  );
+
+  it("writes nothing for a turn that never started or settled twice", () => {
+    const { turns, writes } = withWriteBack();
+    turns.settled("s1", 7, "completed", "Stray");
+    expect(writes).toEqual([]);
+  });
+
+  it("reports a write-back failure without throwing into the session", async () => {
+    const { turns, report } = withWriteBack(() =>
+      Promise.reject("database is locked"),
+    );
+    turns.started("s1", 1);
+    expect(() => turns.settled("s1", 1, "completed", "Done")).not.toThrow();
+    await flush();
+    expect(report).toHaveBeenCalledWith("database is locked");
+  });
+
+  it("calls the store's board_write_back with the session key and reply", async () => {
+    invoke.mockReset();
+    invoke.mockResolvedValue([]);
+    const report = vi.fn();
+    const turns = createLinkedTurns(onLinkedWork, report, boardWriteBack);
+    turns.started("s1", 1);
+    turns.settled("s1", 1, "completed", "All green");
+    await flush();
+    expect(invoke).toHaveBeenCalledWith("board_write_back", {
+      sessionKey: "s1",
+      summary: "All green",
+    });
+    expect(report).not.toHaveBeenCalled();
+  });
+});
+
+describe("needs input", () => {
+  it("reports needs_input when a running session starts waiting, for it and its Pilot", () => {
+    const { turns, calls } = setup();
+    turns.started("s1", 1, "p1");
+    calls.length = 0;
+    turns.needsInput(["s1"]);
+    expect(calls).toEqual([
+      ["session", "s1", "needs_input"],
+      ["pilot", "p1", "needs_input"],
+    ]);
+  });
+
+  it("reports once while the session keeps waiting, and again on a new wait", () => {
+    const { turns, calls } = setup();
+    turns.started("s1", 1);
+    calls.length = 0;
+    turns.needsInput(["s1"]);
+    turns.needsInput(["s1"]);
+    turns.needsInput([]);
+    turns.needsInput(["s1"]);
+    expect(calls).toEqual([
+      ["session", "s1", "needs_input"],
+      ["session", "s1", "needs_input"],
+    ]);
+  });
+
+  it("ignores a session with no open turn (a restored or finished one)", () => {
+    const { turns, calls } = setup();
+    turns.needsInput(["restored"]);
+    turns.started("s1", 1);
+    turns.settled("s1", 1, "completed");
+    calls.length = 0;
+    turns.needsInput(["s1"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("reports only the sessions that newly wait", () => {
+    const { turns, calls } = setup();
+    turns.started("s1", 1);
+    turns.started("s2", 1);
+    turns.needsInput(["s1"]);
+    calls.length = 0;
+    turns.needsInput(["s1", "s2"]);
+    expect(calls).toEqual([["session", "s2", "needs_input"]]);
+  });
+
+  it("forgets a wait once its turn settles, so the next turn's wait reports", () => {
+    const { turns, calls } = setup();
+    turns.started("s1", 1);
+    turns.needsInput(["s1"]);
+    turns.settled("s1", 1, "completed");
+    turns.started("s1", 2);
+    calls.length = 0;
+    // Still in the waiting set when the new turn hits its own question.
+    turns.needsInput(["s1"]);
+    expect(calls).toEqual([["session", "s1", "needs_input"]]);
   });
 });

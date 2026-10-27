@@ -590,6 +590,19 @@ pub(crate) struct Shell {
     reminders: Vec<gespan_core::store::Reminder>,
     renaming: Option<session_groups::Renaming>,
     link_dialog: Option<session_groups::LinkDialog>,
+    tickets: Arc<dyn crate::tickets::TicketBackend>,
+    /// Trackers with saved credentials; `None` until the first off-thread read.
+    connected_trackers: Option<HashSet<gespan_core::tickets::Tracker>>,
+    /// Sessions whose last ticket read found the tracker disconnected.
+    stale_tickets: HashSet<i64>,
+    /// The newest ticket request per session: (sequence, tracker, key). An older
+    /// reply is dropped, so a relink or a manual refresh is never swallowed.
+    ticket_requests: HashMap<i64, (u64, gespan_core::tickets::Tracker, String)>,
+    /// The board store the session menu reads the ticket status setting from.
+    board_service: crate::board::turns::CachedService,
+    ticket_sequence: u64,
+    /// New-session composers holding only the ticket key until its title arrives.
+    ticket_drafts: HashMap<i64, String>,
     action_dialog: Option<actions::ActionDialog>,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
@@ -770,6 +783,8 @@ impl Shell {
             .unwrap_or_else(|| {
                 std::env::temp_dir().join(format!("gespan-remote-{}", std::process::id()))
             });
+        let tickets: Arc<dyn crate::tickets::TicketBackend> =
+            Arc::new(gespan_core::tickets::Tickets::new(remote_dir.clone()));
         let remote = Arc::new(gespan_core::remote::Connections::new(remote_dir));
         gespan_core::remote::set_default_connections(remote.clone());
         let quit_remote = remote.clone();
@@ -943,6 +958,13 @@ impl Shell {
             reminders: sidebar_metadata.reminders,
             renaming: None,
             link_dialog: None,
+            tickets,
+            connected_trackers: None,
+            stale_tickets: HashSet::new(),
+            ticket_requests: HashMap::new(),
+            board_service: Default::default(),
+            ticket_sequence: 0,
+            ticket_drafts: HashMap::new(),
             action_dialog: None,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
@@ -1175,6 +1197,9 @@ impl Shell {
         this.poll_reminders(cx);
         this.initialize_automations(cx);
         this.initialize_flows(cx);
+        // Tests install a fake backend instead of reading the real keychain.
+        #[cfg(not(test))]
+        this.refresh_connected_trackers(cx);
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {
                 let _ = this.update_in(cx, |this, window, cx| {
@@ -1272,6 +1297,10 @@ impl Shell {
                     this.git.update(cx, |git, cx| git.reload(cx));
                 }
                 this.sync_search_session(id, cx);
+                // The Board's link chips show a session waiting on the user.
+                let waiting = this.session_metadata(id, cx).needs_approval();
+                let store = this.store.clone();
+                crate::board::turns::set_waiting(&store, id, waiting, cx);
                 this.orchestration_session_changed(id, cx);
                 this.automation_session_changed(id, cx);
                 this.flow_session_changed(id, cx);
@@ -1284,6 +1313,12 @@ impl Shell {
                 this.invalidate_chrome(cx);
                 cx.notify();
             }));
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, event: &crate::conversation::TicketChanged, cx| {
+                this.agent_changed_ticket(id, event.0.clone(), cx)
+            },
+        ));
         self.observations
             .push(cx.subscribe(&view, |this, _, transfer: &Transfer, cx| {
                 this.transfer_response(transfer.clone(), cx)
@@ -3841,6 +3876,7 @@ impl Shell {
         self.leave_app_search(cx);
         self.close_preview(cx);
         self.dismiss_due_reminder(id, cx);
+        self.refresh_ticket(id, false, cx);
         let Some(view) = self.ensure_session(id, cx) else {
             return;
         };
@@ -4114,16 +4150,17 @@ impl Shell {
         self.create_session(kind, false, cx);
     }
     fn create_session(&mut self, kind: Kind, only_if_empty: bool, cx: &mut Context<Self>) {
-        self.create_session_target(kind, only_if_empty, None, cx);
+        self.create_session_target(kind, only_if_empty, None, None, cx);
     }
     fn create_in_folder(&mut self, folder: String, cx: &mut Context<Self>) {
-        self.create_session_target(self.default_kind(cx), false, Some(folder), cx);
+        self.create_session_target(self.default_kind(cx), false, Some(folder), None, cx);
     }
     fn create_session_target(
         &mut self,
         kind: Kind,
         only_if_empty: bool,
         folder: Option<String>,
+        ticket: Option<gespan_core::tickets::TicketRef>,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.clone();
@@ -4202,6 +4239,9 @@ impl Shell {
                     Ok((summary, settings)) => {
                         let id = summary.id;
                         this.add(summary, cx);
+                        if let Some(ticket) = ticket {
+                            this.start_ticket_session(id, ticket, cx);
+                        }
                         if let Some(folder) = &folder {
                             let groups = this.groups.entry(cwd.clone()).or_default();
                             groups.add_to_folder(folder, id);

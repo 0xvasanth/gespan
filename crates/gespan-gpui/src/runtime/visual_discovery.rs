@@ -4,6 +4,13 @@ use std::path::Path;
 
 const VERSION: u8 = 1;
 
+/// These providers never mount the app's MCP servers: some have no MCP
+/// client, and Grok and fx drop servers when resuming a session.
+pub(super) fn lacks_tool_servers(kind: Kind, provider_id: Option<&str>) -> bool {
+    matches!(kind, Kind::Pi | Kind::Omp | Kind::OpenCode)
+        || (provider_id.is_some() && matches!(kind, Kind::Grok | Kind::Fx))
+}
+
 pub(super) struct Discovery {
     key: String,
     executable: String,
@@ -18,9 +25,7 @@ impl Discovery {
         provider_id: Option<&str>,
         executable: &Path,
     ) -> Result<Option<Self>, String> {
-        let fallback = matches!(kind, Kind::Pi | Kind::Omp | Kind::OpenCode)
-            || (provider_id.is_some() && matches!(kind, Kind::Grok | Kind::Fx));
-        if !fallback {
+        if !lacks_tool_servers(kind, provider_id) {
             return Ok(None);
         }
         let discovery = Self {

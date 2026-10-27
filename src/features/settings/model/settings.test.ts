@@ -459,6 +459,15 @@ describe("workspace navigation keybindings", () => {
       fixed: true,
     });
   });
+  it("documents New card as a fixed binding scoped to the board", () => {
+    const rows = KEYBINDINGS.filter((row) => row.command === "Board: New Card");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ when: "Board focused", fixed: true });
+    expect(rows[0].keys.endsWith("N")).toBe(true);
+    // It must not shadow plain New Window (Shift+N) or any other row.
+    const keys = KEYBINDINGS.map((row) => row.keys);
+    expect(keys.filter((k) => k === rows[0].keys)).toHaveLength(1);
+  });
   it("ignores stored overrides for fixed bindings", () => {
     localStorage.setItem(
       KEYBINDING_OVERRIDES_KEY,

@@ -192,3 +192,56 @@ describe("column announcements", () => {
     ).toBe("Dropped column In Progress at position 2 of 4.");
   });
 });
+
+describe("announcements while sorted", () => {
+  const sortedSetup = (current: BoardDetail, snapshot: BoardDetail) =>
+    kanbanAnnouncements({
+      current: () => current,
+      snapshot: () => snapshot,
+      sorted: () => true,
+    });
+
+  it("says a drop inside the card's own column went back", () => {
+    const snapshot = board();
+    const preview = applyCardMove(snapshot, "c12", {
+      columnId: "backlog",
+      index: 3,
+    });
+    expect(
+      sortedSetup(preview, snapshot).onDragEnd({
+        active: cardActive("c12"),
+        over: cardOver("c14"),
+      }),
+    ).toBe(
+      "Moving card #12 was cancelled. It is back in Backlog, position 2 of 4.",
+    );
+  });
+
+  it("says a drop into another column goes to the end of it", () => {
+    const snapshot = board();
+    const preview = applyCardMove(snapshot, "c12", {
+      columnId: "progress",
+      index: 0,
+    });
+    expect(
+      sortedSetup(preview, snapshot).onDragEnd({
+        active: cardActive("c12"),
+        over: cardOver("c12"),
+      }),
+    ).toBe("Dropped card #12 in In Progress, position 3 of 3.");
+  });
+
+  it("keeps the plain drop announcement when not sorted", () => {
+    const snapshot = board();
+    const preview = applyCardMove(snapshot, "c12", {
+      columnId: "backlog",
+      index: 3,
+    });
+    expect(
+      setup(preview, snapshot).onDragEnd({
+        active: cardActive("c12"),
+        over: cardOver("c14"),
+      }),
+    ).toMatch(/^Dropped card #12 in Backlog, position \d of 4\.$/);
+  });
+});

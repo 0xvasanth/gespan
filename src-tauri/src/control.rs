@@ -13,6 +13,18 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 const APP_TURN_INACTIVE: &str = "Gespan app access is inactive. Use /operator once in this thread to enable it, then call the CLI during an active agent turn. Retrying this request now will not enable access.";
+const TOOL_TURN_INACTIVE: &str = "Ticket and card actions work only while this session's agent turn is running in Gespan. Retrying this request now will not enable access.";
+
+/// App actions on the session's own ticket and board cards. They need an
+/// active turn of the granted session but not /operator: the app reads the
+/// session's scope at call time and nothing here reaches other sessions.
+const SESSION_TOOL_ACTIONS: [&str; 5] = [
+    "ticket.get",
+    "ticket.comment",
+    "ticket.status",
+    "card.subtasks",
+    "card.subtask_done",
+];
 
 #[derive(Clone)]
 struct Grant {
@@ -158,7 +170,12 @@ struct Event {
     input: Value,
 }
 
-fn request_grant(host: &Inner, namespace: &str, token: &str) -> Result<Grant, String> {
+fn request_grant(
+    host: &Inner,
+    namespace: &str,
+    action: &str,
+    token: &str,
+) -> Result<Grant, String> {
     let grant = match namespace {
         "control" => host.grants.values().find(|grant| grant.token == token),
         "app" => host.app_grants.values().find(|grant| grant.token == token),
@@ -166,15 +183,23 @@ fn request_grant(host: &Inner, namespace: &str, token: &str) -> Result<Grant, St
     }
     .cloned()
     .ok_or("Connection revoked or unauthorized")?;
-    if namespace == "app"
-        && (host.grants.contains_key(&grant.session)
-            || host.workers.contains_key(&grant.session)
-            || !host
-                .active
-                .get(&grant.session)
-                .is_some_and(|turn| turn.window == grant.window && turn.app_allowed))
+    if namespace != "app" {
+        return Ok(grant);
+    }
+    let session_tool = SESSION_TOOL_ACTIONS.contains(&action);
+    if host.grants.contains_key(&grant.session)
+        || host.workers.contains_key(&grant.session)
+        || !host
+            .active
+            .get(&grant.session)
+            .is_some_and(|turn| turn.window == grant.window && (turn.app_allowed || session_tool))
     {
-        return Err(APP_TURN_INACTIVE.into());
+        return Err(if session_tool {
+            TOOL_TURN_INACTIVE
+        } else {
+            APP_TURN_INACTIVE
+        }
+        .into());
     }
     Ok(grant)
 }
@@ -238,7 +263,7 @@ fn serve(mut stream: TcpStream, app: &AppHandle, inner: &Arc<Mutex<Inner>>) {
         let (tx, rx) = mpsc::channel();
         let grant = {
             let mut host = inner.lock().map_err(|_| "Control service unavailable")?;
-            let grant = request_grant(&host, &request.namespace, &request.token)?;
+            let grant = request_grant(&host, &request.namespace, &request.action, &request.token)?;
             if host.pending.len() >= 24 {
                 return Err("Too many pending control requests".into());
             }
@@ -272,7 +297,7 @@ fn serve(mut stream: TcpStream, app: &AppHandle, inner: &Arc<Mutex<Inner>>) {
         result
     })();
     let response = result.unwrap_or_else(|error| {
-        if error == APP_TURN_INACTIVE {
+        if error == APP_TURN_INACTIVE || error == TOOL_TURN_INACTIVE {
             json!({"ok": false, "error": error, "retryable": false})
         } else {
             json!({"ok": false, "error": error})
@@ -637,7 +662,7 @@ mod tests {
             },
         );
         assert!(matches!(
-            request_grant(&inner, "app", "app-token"),
+            request_grant(&inner, "app", "notes.list", "app-token"),
             Err(error) if error == APP_TURN_INACTIVE
         ));
         inner.active.insert(
@@ -648,12 +673,12 @@ mod tests {
                 app_allowed: true,
             },
         );
-        assert!(request_grant(&inner, "app", "app-token").is_ok());
-        assert!(request_grant(&inner, "control", "app-token").is_err());
+        assert!(request_grant(&inner, "app", "notes.list", "app-token").is_ok());
+        assert!(request_grant(&inner, "control", "list", "app-token").is_err());
         inner.active.get_mut("ordinary").unwrap().app_allowed = false;
-        assert!(request_grant(&inner, "app", "app-token").is_err());
+        assert!(request_grant(&inner, "app", "notes.list", "app-token").is_err());
         inner.active.remove("ordinary");
-        assert!(request_grant(&inner, "app", "app-token").is_err());
+        assert!(request_grant(&inner, "app", "notes.list", "app-token").is_err());
     }
     #[test]
     fn app_token_survives_normal_turns_but_only_works_when_opted_in() {
@@ -668,7 +693,7 @@ mod tests {
                 app_allowed: false,
             },
         );
-        assert!(request_grant(&inner, "app", &token).is_err());
+        assert!(request_grant(&inner, "app", "notes.list", &token).is_err());
         assert!(inner.prepare_app_grant("ordinary", "main", "/repo"));
         assert_eq!(inner.app_grants["ordinary"].token, token);
         inner.grants.insert(
@@ -682,14 +707,129 @@ mod tests {
         );
         assert!(!inner.prepare_app_grant("ordinary", "main", "/repo"));
         inner.active.get_mut("ordinary").unwrap().app_allowed = true;
-        assert!(request_grant(&inner, "app", &token).is_err());
+        assert!(request_grant(&inner, "app", "notes.list", &token).is_err());
         inner.grants.remove("ordinary");
         assert!(inner.prepare_app_grant("ordinary", "main", "/repo"));
         assert_eq!(inner.app_grants["ordinary"].token, token);
         inner.active.get_mut("ordinary").unwrap().app_allowed = true;
-        assert!(request_grant(&inner, "app", &token).is_ok());
+        assert!(request_grant(&inner, "app", "notes.list", &token).is_ok());
         inner.active.remove("ordinary");
-        assert!(request_grant(&inner, "app", &token).is_err());
+        assert!(request_grant(&inner, "app", "notes.list", &token).is_err());
+    }
+
+    fn ordinary_session(inner: &mut Inner, app_allowed: Option<bool>) -> String {
+        assert!(inner.prepare_app_grant("ordinary", "main", "/repo"));
+        if let Some(app_allowed) = app_allowed {
+            inner.active.insert(
+                "ordinary".into(),
+                ActiveTurn {
+                    window: "main".into(),
+                    cwd: "/repo".into(),
+                    app_allowed,
+                },
+            );
+        }
+        inner.app_grants["ordinary"].token.clone()
+    }
+
+    #[test]
+    fn ticket_actions_work_in_active_turns_without_operator() {
+        let mut inner = Inner::default();
+        let token = ordinary_session(&mut inner, Some(false));
+        for action in SESSION_TOOL_ACTIONS {
+            let grant = request_grant(&inner, "app", action, &token).unwrap();
+            assert_eq!(grant.session, "ordinary");
+        }
+        // With /operator on as well, they still work.
+        inner.active.get_mut("ordinary").unwrap().app_allowed = true;
+        assert!(request_grant(&inner, "app", "ticket.comment", &token).is_ok());
+        // The app token never opens the orchestration namespace.
+        assert!(request_grant(&inner, "control", "ticket.get", &token).is_err());
+    }
+
+    #[test]
+    fn ticket_actions_refused_outside_an_active_turn() {
+        let mut inner = Inner::default();
+        let token = ordinary_session(&mut inner, None);
+        for action in SESSION_TOOL_ACTIONS {
+            assert!(matches!(
+                request_grant(&inner, "app", action, &token),
+                Err(error) if error == TOOL_TURN_INACTIVE
+            ));
+        }
+        // A turn of the same session in another window is not this grant's.
+        inner.active.insert(
+            "ordinary".into(),
+            ActiveTurn {
+                window: "other".into(),
+                cwd: "/repo".into(),
+                app_allowed: true,
+            },
+        );
+        assert!(request_grant(&inner, "app", "ticket.status", &token).is_err());
+        // Neither is another session's turn.
+        inner.active.remove("ordinary");
+        inner.active.insert(
+            "someone-else".into(),
+            ActiveTurn {
+                window: "main".into(),
+                cwd: "/repo".into(),
+                app_allowed: true,
+            },
+        );
+        assert!(request_grant(&inner, "app", "card.subtask_done", &token).is_err());
+        // Orchestration leads and workers stay out even mid-turn.
+        inner.active.insert(
+            "ordinary".into(),
+            ActiveTurn {
+                window: "main".into(),
+                cwd: "/repo".into(),
+                app_allowed: false,
+            },
+        );
+        assert!(request_grant(&inner, "app", "ticket.get", &token).is_ok());
+        inner.workers.insert("ordinary".into(), "lead".into());
+        assert!(request_grant(&inner, "app", "ticket.get", &token).is_err());
+        inner.workers.clear();
+        inner.grants.insert(
+            "ordinary".into(),
+            Grant {
+                window: "main".into(),
+                session: "ordinary".into(),
+                cwd: "/repo".into(),
+                token: "control-token".into(),
+            },
+        );
+        assert!(request_grant(&inner, "app", "ticket.get", &token).is_err());
+        // An unknown token is refused whatever it asks for.
+        inner.grants.clear();
+        assert!(request_grant(&inner, "app", "ticket.get", "forged").is_err());
+    }
+
+    #[test]
+    fn other_app_actions_still_need_operator() {
+        let mut inner = Inner::default();
+        let token = ordinary_session(&mut inner, Some(false));
+        // Names that only look like ticket or card actions get no exemption.
+        for action in [
+            "notes.list",
+            "sessions.start",
+            "sessions.send",
+            "ticket.delete",
+            "card.move",
+            "ticket",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    request_grant(&inner, "app", action, &token),
+                    Err(error) if error == APP_TURN_INACTIVE
+                ),
+                "{action} must need /operator"
+            );
+        }
+        inner.active.get_mut("ordinary").unwrap().app_allowed = true;
+        assert!(request_grant(&inner, "app", "notes.list", &token).is_ok());
     }
     #[cfg(not(windows))]
     #[test]

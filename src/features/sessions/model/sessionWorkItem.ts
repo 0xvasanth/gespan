@@ -5,7 +5,11 @@ import {
   type InboxItem,
   type GithubTaskKind,
 } from "../../inbox/model/githubTasks";
-import type { LinkedWorkItem } from "./session";
+import {
+  isGithubWorkItem,
+  type GithubLinkedWorkItem,
+  type LinkedWorkItem,
+} from "./session";
 import type { GeneratedWorkItemHint } from "./sessionTitle";
 
 const GITHUB_URL_RE =
@@ -136,7 +140,7 @@ export function linkedWorkItemFromAutomationEvent(run: {
 
 export function inboxItemMatchesLinkedWorkItem(
   item: InboxItem,
-  linked: LinkedWorkItem,
+  linked: GithubLinkedWorkItem,
 ): boolean {
   return (
     item.provider === "github" &&
@@ -147,7 +151,7 @@ export function inboxItemMatchesLinkedWorkItem(
 }
 
 /** Same key used by Inbox selection, without synthesizing a full Inbox item. */
-export function linkedWorkItemInboxKey(linked: LinkedWorkItem): string {
+export function linkedWorkItemInboxKey(linked: GithubLinkedWorkItem): string {
   return `github:${inboxIdentityKey(linked)}`;
 }
 
@@ -158,7 +162,7 @@ export function relatedSessionsForInboxItem<
   if (item.provider !== "github") return [];
   return sessions.filter(
     (session) =>
-      session.linkedWorkItem != null &&
+      isGithubWorkItem(session.linkedWorkItem) &&
       inboxItemMatchesLinkedWorkItem(item, session.linkedWorkItem),
   );
 }

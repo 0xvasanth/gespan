@@ -851,6 +851,31 @@ impl Store {
         }
         Ok(())
     }
+    /// The work item one session is linked to, read on its own instead of
+    /// listing every session ([`Self::sessions`]); for callers that poll a
+    /// single session. Reads the same place [`Self::set_work_item`] writes.
+    /// An error when the session doesn't exist.
+    pub fn work_item(&self, id: i64) -> Result<Option<crate::session_groups::WorkItem>, String> {
+        if let Some(remote) = self.remote_session(id)? {
+            return Ok(remote.summary.work_item);
+        }
+        if self.shared.is_some() {
+            return self.shared_work_item(id);
+        }
+
+        use rusqlite::OptionalExtension;
+        let text: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT work_item FROM native_sessions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("Session no longer exists")?;
+        Ok(text.and_then(|text| serde_json::from_str(&text).ok()))
+    }
     pub fn set_work_item(
         &self,
         id: i64,
@@ -1298,9 +1323,10 @@ mod tests {
         let keep = store.create("codex", "/project").unwrap();
         let gone = store.create("claude", "/project").unwrap();
         store.set_pinned(&[keep.id], true).unwrap();
-        let item =
+        let item = crate::session_groups::WorkItem::Github(
             crate::session_groups::parse_github_work_item("https://github.com/acme/app/pull/9")
-                .unwrap();
+                .unwrap(),
+        );
         store.set_work_item(keep.id, Some(&item)).unwrap();
         let mut groups = crate::session_groups::Groups::default();
         groups.create_folder(&[keep.id, gone.id], "f".into());
@@ -1343,6 +1369,70 @@ mod tests {
         store.set_pinned(&[keep.id], false).unwrap();
         let saved = &store.sessions().unwrap()[0];
         assert!(!saved.pinned && saved.work_item.is_none());
+    }
+    fn ticket(key: &str) -> crate::session_groups::WorkItem {
+        crate::session_groups::WorkItem::Ticket(Box::new(crate::tickets::TicketRef {
+            tracker: crate::tickets::Tracker::Linear,
+            key: key.into(),
+            url: None,
+            title: None,
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        }))
+    }
+    #[test]
+    fn work_item_reads_one_session_like_the_session_list_does() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&tmp.path().join("native.db")).unwrap();
+        let linked = store.create("codex", "/project").unwrap();
+        let plain = store.create("codex", "/project").unwrap();
+        store
+            .set_work_item(linked.id, Some(&ticket("ENG-1")))
+            .unwrap();
+        assert_eq!(store.work_item(linked.id).unwrap(), Some(ticket("ENG-1")));
+        assert_eq!(store.work_item(plain.id).unwrap(), None);
+        // A relink and an unlink show on the next read.
+        store
+            .set_work_item(linked.id, Some(&ticket("ENG-2")))
+            .unwrap();
+        assert_eq!(store.work_item(linked.id).unwrap(), Some(ticket("ENG-2")));
+        store.set_work_item(linked.id, None).unwrap();
+        assert_eq!(store.work_item(linked.id).unwrap(), None);
+        // Unreadable JSON reads as no link, as in the list.
+        store
+            .conn
+            .execute(
+                "UPDATE native_sessions SET work_item='{broken' WHERE id=?1",
+                [plain.id],
+            )
+            .unwrap();
+        assert_eq!(store.work_item(plain.id).unwrap(), None);
+        // A session that doesn't exist is an error, not "no link".
+        store.delete(plain.id).unwrap();
+        assert!(store.work_item(plain.id).is_err());
+
+        // A remote session reads from its saved binding.
+        let project = store
+            .remember_remote_project(
+                "env",
+                &serde_json::json!({"id":"project","cwd":"/host/repo"}),
+            )
+            .unwrap();
+        let remote = store.create("codex", &project.key).unwrap();
+        assert!(remote.id < 0);
+        assert_eq!(store.work_item(remote.id).unwrap(), None);
+        store
+            .set_work_item(remote.id, Some(&ticket("ENG-3")))
+            .unwrap();
+        assert_eq!(store.work_item(remote.id).unwrap(), Some(ticket("ENG-3")));
+        let listed = store
+            .sessions()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == remote.id)
+            .unwrap();
+        assert_eq!(listed.work_item, Some(ticket("ENG-3")));
     }
     #[test]
     fn old_native_schema_migrates_idempotently_and_recovers_recorded_times() {

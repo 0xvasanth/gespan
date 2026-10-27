@@ -942,7 +942,13 @@ export function Composer({
   useEffect(() => {
     const el = ref.current;
     if (!el || !initialDraft) return;
-    if (el.value !== initialDraft) el.value = initialDraft;
+    if (el.value !== initialDraft) {
+      el.value = initialDraft;
+      // Keep the draft state in step, or the next report hands the parent
+      // the old text and it comes back on the following render.
+      setDraft(initialDraft);
+      syncHasValue(initialDraft, attachmentsRef.current);
+    }
     if (!positionedInitialDraft.current) {
       const end = el.value.length;
       el.setSelectionRange(end, end);
