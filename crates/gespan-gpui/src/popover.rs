@@ -311,6 +311,8 @@ pub(crate) struct Popover {
     on_dismiss: Option<Dismiss>,
     consume_outside_press: bool,
     modal_classic: Option<bool>,
+    /// Paint an opaque card instead of frosting what is behind it.
+    solid: bool,
     animate: bool,
     /// Without a fixed width, the card hugs its content between these.
     fit: (Option<f32>, Option<f32>),
@@ -328,6 +330,7 @@ pub(crate) fn popover(id: impl Into<ElementId>, anchor: Anchor) -> Popover {
         on_dismiss: None,
         consume_outside_press: true,
         modal_classic: None,
+        solid: false,
         animate: true,
         fit: (None, None),
         children: Vec::new(),
@@ -348,6 +351,12 @@ impl Popover {
     /// rule and the dialog tint.
     pub(crate) fn modal_surface(mut self, classic: bool) -> Self {
         self.modal_classic = Some(classic);
+        self
+    }
+    /// An opaque card, for popovers that open over dense text where a
+    /// frosted backdrop would leave the text behind readable through it.
+    pub(crate) fn solid(mut self) -> Self {
+        self.solid = true;
         self
     }
     pub(crate) fn align(mut self, align: Align) -> Self {
@@ -484,7 +493,7 @@ impl Popover {
                     .blur_radius(px(10.))
                     .spread_radius(px(-6.)),
             ])
-            .child(glass(tint, radius))
+            .child(glass(tint, radius, self.solid))
             .child(
                 div()
                     .relative()
@@ -522,9 +531,9 @@ fn tint() -> Hsla {
 }
 // On macOS the renderer blurs what is already drawn behind this quad.
 // Light themes, and platforms without the blur, paint an opaque card.
-fn glass(tint: Hsla, radius: f32) -> impl IntoElement {
+fn glass(tint: Hsla, radius: f32, solid: bool) -> impl IntoElement {
     let opaque = crate::theme::floating_fill();
-    let light = crate::theme::is_light();
+    let light = crate::theme::is_light() || solid;
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
@@ -1811,6 +1820,61 @@ mod tests {
                     .child(div().size(px(20.)).bg(rgb(0x19734b)))
                     .render_at(self.progress, window.viewport_size()),
             )
+        }
+    }
+
+    struct SolidHost {
+        solid: bool,
+    }
+    impl Render for SolidHost {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                popover("solid-test", Anchor::Point(point(px(100.), px(100.))))
+                    .width(180.)
+                    .height(100.)
+                    .when(self.solid, |p| p.solid())
+                    .render_at(1., window.viewport_size()),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_solid_popover_paints_an_opaque_card_and_a_default_one_keeps_its_glass(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let card = |cx: &mut gpui::TestAppContext, solid: bool| {
+            let window = cx.update(|cx| {
+                cx.open_window(Default::default(), |_, cx| cx.new(|_| SolidHost { solid }))
+                    .unwrap()
+            });
+            cx.refresh().unwrap();
+            window
+                .update(cx, |_, window, _| {
+                    window
+                        .painted_quads()
+                        .iter()
+                        .map(|q| q.background)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap()
+        };
+        let opaque = gpui::Background::from(crate::theme::floating_fill());
+        let solid = card(cx, true);
+        assert!(
+            solid.contains(&opaque),
+            "a solid popover fills its card with the opaque floating fill"
+        );
+        assert!(
+            !solid.contains(&gpui::Background::from(tint())),
+            "a solid popover paints no see-through tint"
+        );
+        let glass = card(cx, false);
+        if cfg!(target_os = "macos") {
+            // The dark theme frosts what is behind a default popover.
+            assert!(glass.contains(&gpui::Background::from(tint())));
+            assert!(!glass.contains(&opaque));
+        } else {
+            assert!(glass.contains(&opaque));
         }
     }
 

@@ -1007,6 +1007,7 @@ impl BoardView {
                 "board-filter-menu",
                 Anchor::Slot(self.filter_anchor.clone()),
             )
+            .solid()
             .width(280.)
             .on_dismiss(move |_, cx| {
                 let _ = weak.update(cx, |this, cx| {
@@ -1078,6 +1079,7 @@ impl BoardView {
         }
         Some(
             popover("board-sort-menu", Anchor::Slot(self.sort_anchor.clone()))
+                .solid()
                 .width(200.)
                 .on_dismiss(move |_, cx| {
                     let _ = weak.update(cx, |this, cx| {
@@ -1127,6 +1129,7 @@ impl BoardView {
                 "board-open-in-menu",
                 Anchor::Slot(self.open_in_anchor.clone()),
             )
+            .solid()
             .width(200.)
             .on_dismiss(move |_, cx| {
                 let _ = weak.update(cx, |this, cx| {
