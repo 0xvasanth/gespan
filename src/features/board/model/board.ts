@@ -178,6 +178,38 @@ export function setCardTicket(
   return invoke("board_card_set_ticket", { cardId, ticket });
 }
 
+/**
+ * "New card from ticket": a card titled with the ticket's key, linked to it
+ * and marked as titled from a ticket, in one write. The mark keeps ticket
+ * text out of the "Run with…" prompt.
+ */
+export function createCardFromTicketRef(
+  columnId: string,
+  ticket: TicketRef,
+): Promise<BoardCard> {
+  return invoke<BoardCard>("board_card_create_from_ticket", {
+    columnId,
+    ticket,
+  });
+}
+
+/**
+ * Replaces the card's title with its ticket's fetched title while the card
+ * is still titled with `key` and still links that ticket, and marks it as
+ * titled from a ticket. Resolves to whether the title changed.
+ */
+export function retitleCardFromTicket(
+  cardId: string,
+  key: string,
+  title: string,
+): Promise<boolean> {
+  return invoke<boolean>("board_card_retitle_from_ticket", {
+    cardId,
+    key,
+    title,
+  });
+}
+
 export function deleteCard(cardId: string): Promise<void> {
   return invoke("board_card_delete", { cardId });
 }

@@ -5,7 +5,7 @@
 //! database at call time from the session key the app supplies, never from
 //! agent input.
 use crate::comments::{add_comment, list_comments};
-use crate::links::board_links;
+use crate::links::{board_links, title_from_ticket};
 use crate::ops::{cards_for_link, db, get_card, write_tx};
 use crate::settings::{board_settings, check_session_key};
 use crate::subtasks::{get_subtask, list_subtasks, toggle_subtask_in};
@@ -92,10 +92,15 @@ pub fn running_card_ids(
         .collect())
 }
 
-/// The card's title as agents may see it: `None` when any of the card's
-/// ticket links has a snapshot title that is the same text (ignoring case and
-/// surrounding space), since the title is then ticket content.
+/// The card's title as agents may see it: `None` when the title was copied
+/// from a ticket and not edited since (it stays marked through a ticket
+/// rename, an unlink and a duplicate), or when any of the card's ticket links
+/// has a snapshot title that is the same text (ignoring case and surrounding
+/// space), since the title is then ticket content.
 fn agent_title(conn: &Connection, card: &Card) -> Result<Option<String>, String> {
+    if title_from_ticket(conn, &card.id)? {
+        return Ok(None);
+    }
     let title = card.title.trim();
     let wanted = title.to_lowercase();
     let mut statement = conn

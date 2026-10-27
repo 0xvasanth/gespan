@@ -226,6 +226,47 @@ pub fn board_card_link(
     Ok(())
 }
 
+/// "New card from ticket": a card in the column titled with the ticket's key,
+/// linked to it and marked as titled from a ticket, in one write. The mark
+/// keeps ticket text out of the "Run with…" prompt.
+#[tauri::command(async)]
+pub fn board_card_create_from_ticket(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    column_id: String,
+    ticket: TicketRef,
+) -> Result<Card, String> {
+    validate_id(&column_id, "column")?;
+    let json = serde_json::to_string(&ticket).map_err(|e| e.to_string())?;
+    let conn = store.lock_conn()?;
+    let card = gespan_board_store::create_card_from_ticket(&conn, &column_id, &json)?;
+    drop(conn);
+    notify(&app, &card.board_id);
+    Ok(card)
+}
+
+/// Replaces the card's title with its ticket's fetched title while the card
+/// is still titled with the ticket's key and still links it, and marks it as
+/// titled from a ticket. Returns whether the title changed.
+#[tauri::command(async)]
+pub fn board_card_retitle_from_ticket(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    key: String,
+    title: String,
+) -> Result<bool, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let (board_id, changed) =
+        gespan_board_store::retitle_card_from_ticket(&conn, &card_id, &key, &title)?;
+    drop(conn);
+    if changed {
+        notify(&app, &board_id);
+    }
+    Ok(changed)
+}
+
 /// The ticket a card links to. A stored value that no longer parses reads as
 /// no ticket.
 #[tauri::command(async)]

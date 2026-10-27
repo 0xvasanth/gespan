@@ -8,17 +8,22 @@
 //! - v4: the `board_views` table for saved views.
 //! - v5: board icon, colour, default view, display and priority settings;
 //!   `board_templates`; `board_session_settings`.
+//! - v6: `board_cards.title_from_ticket`, set when a card's title came from a
+//!   ticket; existing cards titled with their ticket's key or snapshot title
+//!   are marked.
 //!
 //! A step runs only when the stored version is below it, so a v3 database
 //! moving to v4 does not copy the native extras again (which would bring back
 //! labels or values removed since).
-use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, VERSION};
+use crate::schema::{
+    V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, V6_COLUMNS, VERSION,
+};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
 /// Each step with the version it brings the database to, oldest first.
-const STEPS: [(i64, Step); 4] = [(2, to_v2), (3, to_v3), (4, to_v4), (5, to_v5)];
+const STEPS: [(i64, Step); 5] = [(2, to_v2), (3, to_v3), (4, to_v4), (5, to_v5), (6, to_v6)];
 
 /// The stored board schema version; 0 when none was ever written.
 pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
@@ -75,6 +80,48 @@ fn to_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 fn to_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(V5_TABLES)?;
     add_columns(tx, &V5_COLUMNS)
+}
+
+fn to_v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    add_columns(tx, &V6_COLUMNS)?;
+    mark_ticket_titles(tx)
+}
+
+/// Marks the cards made from a ticket before v6 as best it can tell: a card
+/// whose title is its ticket's key or its snapshot title (ignoring case and
+/// surrounding space). The mark then outlives a later ticket rename. Only
+/// ever sets the mark, so running it again changes nothing.
+fn mark_ticket_titles(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    let links: Vec<(String, String, String)> = {
+        let mut statement = tx.prepare(
+            "SELECT c.id, c.title, l.ref FROM board_cards c
+             JOIN board_card_links l ON l.card_id = c.id
+             WHERE l.role = 'ticket' AND l.kind IN ('jira', 'linear', 'plane')",
+        )?;
+        let rows = statement
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (card_id, title, reference) in links {
+        let Ok(ticket) = serde_json::from_str::<serde_json::Value>(&reference) else {
+            continue;
+        };
+        let wanted = title.trim().to_lowercase();
+        let copied = ["key", "title"].iter().any(|field| {
+            ticket
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| !wanted.is_empty() && text.trim().to_lowercase() == wanted)
+        });
+        if copied {
+            tx.execute(
+                "UPDATE board_cards SET title_from_ticket = 1 WHERE id = ?1",
+                [&card_id],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Adds each (table, column, declaration) the table does not have yet.

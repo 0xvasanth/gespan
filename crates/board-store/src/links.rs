@@ -1,9 +1,12 @@
 //! A card's links to sessions, pilots, runs, PRs, worktrees and tickets. The
 //! single link both apps show today (`link_card`) is the row with role
 //! `primary`; `board_cards.link_kind`/`link_id` mirror it for older readers.
-use crate::now_millis;
-use crate::ops::{db, get_card, log_activity, touch, write_tx, NewActivity, LINK_KINDS};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::ops::{
+    clean_text, create_card_in, db, get_card, log_activity, touch, write_tx, NewActivity,
+    LINK_KINDS, MAX_TITLE,
+};
+use crate::{now_millis, Card};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 
 const MAX_REF: usize = 10_000;
@@ -303,7 +306,20 @@ pub fn set_ticket(
 ) -> Result<String, String> {
     let wanted = ticket_json.map(ticket_identity).transpose()?;
     let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
+    let board_id = set_ticket_in(&tx, card_id, ticket_json, wanted)?;
+    tx.commit().map_err(db)?;
+    Ok(board_id)
+}
+
+/// [`set_ticket`] inside the caller's write transaction, which it leaves
+/// uncommitted. `wanted` is `ticket_json`'s (tracker, key).
+fn set_ticket_in(
+    tx: &Transaction<'_>,
+    card_id: &str,
+    ticket_json: Option<&str>,
+    wanted: Option<(String, String)>,
+) -> Result<String, String> {
+    let card = get_card(tx, card_id)?;
     let existing: Vec<(String, String)> = {
         let mut statement = tx
             .prepare(
@@ -353,7 +369,7 @@ pub fn set_ticket(
                 )
                 .map_err(db)?;
                 log_link(
-                    &tx,
+                    tx,
                     &card.board_id,
                     card_id,
                     "linked",
@@ -363,13 +379,95 @@ pub fn set_ticket(
             }
         }
     } else if changed {
-        log_link(&tx, &card.board_id, card_id, "unlinked", "ticket removed")?;
+        log_link(tx, &card.board_id, card_id, "unlinked", "ticket removed")?;
     }
     if changed {
-        touch(&tx, card_id)?;
+        touch(tx, card_id)?;
     }
-    tx.commit().map_err(db)?;
     Ok(card.board_id)
+}
+
+/// "New card from ticket": a card in `column_id` titled with the ticket's
+/// key, linked to the ticket and marked as titled from it, in one write.
+pub fn create_card_from_ticket(
+    conn: &Connection,
+    column_id: &str,
+    ticket_json: &str,
+) -> Result<Card, String> {
+    let (tracker, key) = ticket_identity(ticket_json)?;
+    let tx = write_tx(conn)?;
+    let card = create_card_in(&tx, column_id, &key, "")?;
+    set_ticket_in(&tx, &card.id, Some(ticket_json), Some((tracker, key)))?;
+    mark_title_from_ticket(&tx, &card.id)?;
+    let card = get_card(&tx, &card.id)?;
+    tx.commit().map_err(db)?;
+    Ok(card)
+}
+
+/// Replaces a card's title with its ticket's fetched `title` while the card
+/// is still titled with the ticket's `key` and still links that ticket, and
+/// marks it as titled from the ticket. A title the user has changed, or a
+/// card that no longer links the ticket, is left alone. Returns the owning
+/// board id and whether the title changed.
+pub fn retitle_card_from_ticket(
+    conn: &Connection,
+    card_id: &str,
+    key: &str,
+    title: &str,
+) -> Result<(String, bool), String> {
+    let title = clean_text(title, "Card title", MAX_TITLE)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
+    let linked = ticket(&tx, card_id)?
+        .and_then(|json| ticket_identity(&json).ok())
+        .is_some_and(|(_, linked_key)| linked_key == key);
+    if !linked || card.title != key {
+        return Ok((card.board_id, false));
+    }
+    if card.title != title {
+        tx.execute(
+            "UPDATE board_cards SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![title, now_millis(), card_id],
+        )
+        .map_err(db)?;
+        log_activity(
+            &tx,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind: "edited",
+                actor: "user",
+                from_column: None,
+                to_column: None,
+                detail: None,
+            },
+        )?;
+    }
+    mark_title_from_ticket(&tx, card_id)?;
+    tx.commit().map_err(db)?;
+    Ok((card.board_id, card.title != title))
+}
+
+/// Whether the card's title was copied from a ticket and not edited since.
+pub fn title_from_ticket(conn: &Connection, card_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT title_from_ticket FROM board_cards WHERE id = ?1",
+        [card_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()
+    .map_err(db)?
+    .map(|flag| flag != 0)
+    .ok_or_else(|| "Card not found".to_string())
+}
+
+fn mark_title_from_ticket(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {
+    tx.execute(
+        "UPDATE board_cards SET title_from_ticket = 1 WHERE id = ?1",
+        [card_id],
+    )
+    .map_err(db)
+    .map(drop)
 }
 
 #[cfg(test)]

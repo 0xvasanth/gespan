@@ -466,6 +466,51 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tabl
         .query_row("SELECT version FROM board_schema", [], |row| row.get(0))
         .unwrap();
     assert_eq!(version, gespan_board_store::SCHEMA_VERSION);
+    // v6: the mark that a card's title came from a ticket.
+    let marked: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('board_cards')
+                           WHERE name = 'title_from_ticket')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(marked);
+}
+
+/// Ruling C6-j: both apps make a card from a ticket, and retitle it from the
+/// ticket, through the board-store calls that mark the title as ticket text,
+/// so the "Run with…" prompt leaves it out. A plain create or title edit
+/// there would leave the title unmarked.
+#[test]
+fn both_apps_title_ticket_cards_through_the_marking_store_calls() {
+    let native = tauri("crates/gespan-gpui/src/board/tickets.rs");
+    for call in ["card_create_from_ticket(", "card_retitle_from_ticket("] {
+        assert!(native.contains(call), "native lacks {call}");
+    }
+    for plain in ["card_create(", "card_update("] {
+        assert!(!native.contains(plain), "native ticket cards use {plain}");
+    }
+    let service = tauri("crates/gespan-core/src/board/mod.rs");
+    let commands = tauri("src-tauri/src/board.rs");
+    for source in [&service, &commands] {
+        assert!(source.contains("gespan_board_store::create_card_from_ticket("));
+        assert!(source.contains("gespan_board_store::retitle_card_from_ticket("));
+    }
+    let web = tauri("src/features/board/model/ticketCards.ts");
+    for call in ["createCardFromTicketRef(", "retitleCardFromTicket("] {
+        assert!(web.contains(call), "Tauri lacks {call}");
+    }
+    for plain in ["createCard(", "updateCard("] {
+        assert!(!web.contains(plain), "Tauri ticket cards use {plain}");
+    }
+    let lib = tauri("src-tauri/src/lib.rs");
+    for command in [
+        "board::board_card_create_from_ticket",
+        "board::board_card_retitle_from_ticket",
+    ] {
+        assert!(lib.contains(command), "{command} is not registered");
+    }
 }
 
 /// A database board-store wrote (as the Tauri app does) opens in the native

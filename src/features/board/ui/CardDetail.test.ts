@@ -474,13 +474,14 @@ describe("CardDetail ticket link", () => {
     });
     await renderDetail({ card: { ...CARD, title: "ENG-7" }, ticket: FETCHED });
     await settle();
-    const updates = vi
-      .mocked(invoke)
-      .mock.calls.filter(([cmd]) => cmd === "board_card_update");
-    expect(updates).toEqual([
+    const calls = (name: string) =>
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === name);
+    // The ticket path marks the title as ticket text; a user edit would not.
+    expect(calls("board_card_update")).toHaveLength(0);
+    expect(calls("board_card_retitle_from_ticket")).toEqual([
       [
-        "board_card_update",
-        { cardId: "c3", title: "Fix login", body: "notes" },
+        "board_card_retitle_from_ticket",
+        { cardId: "c3", key: "ENG-7", title: "Fix login" },
       ],
     ]);
   });
@@ -495,11 +496,10 @@ describe("CardDetail ticket link", () => {
     });
     await renderDetail({ ticket: FETCHED });
     await settle();
-    expect(
-      vi
-        .mocked(invoke)
-        .mock.calls.filter(([cmd]) => cmd === "board_card_update"),
-    ).toHaveLength(0);
+    for (const name of ["board_card_update", "board_card_retitle_from_ticket"])
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === name),
+      ).toHaveLength(0);
   });
 });
 

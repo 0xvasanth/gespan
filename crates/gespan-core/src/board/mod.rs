@@ -162,6 +162,32 @@ impl Service {
         gespan_board_store::set_ticket(&self.conn, card_id, json.as_deref()).map(drop)
     }
 
+    /// "New card from ticket": a card in the column titled with the ticket's
+    /// key, linked to it and marked as titled from a ticket, in one write.
+    pub fn card_create_from_ticket(
+        &mut self,
+        column_id: &str,
+        ticket: &TicketRef,
+    ) -> Result<Card, String> {
+        validate_id(column_id, "column")?;
+        let json = serde_json::to_string(ticket).map_err(|e| e.to_string())?;
+        gespan_board_store::create_card_from_ticket(&self.conn, column_id, &json)
+    }
+
+    /// Replaces the card's title with the ticket's fetched title while the
+    /// card is still titled with the ticket's key and still links it, and
+    /// marks it as titled from a ticket. Returns whether the title changed.
+    pub fn card_retitle_from_ticket(
+        &mut self,
+        card_id: &str,
+        key: &str,
+        title: &str,
+    ) -> Result<bool, String> {
+        validate_id(card_id, "card")?;
+        gespan_board_store::retitle_card_from_ticket(&self.conn, card_id, key, title)
+            .map(|(_, changed)| changed)
+    }
+
     /// Every card on the board that links a ticket, by card id.
     pub fn board_tickets(
         &mut self,

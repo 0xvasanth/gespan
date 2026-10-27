@@ -71,6 +71,43 @@ fn new_card_from_ticket_lands_on_the_open_board_not_the_default_one(cx: &mut Tes
     assert_eq!(service.card_ticket(&id).unwrap().unwrap().key, "ENG-7");
 }
 
+// ---- C6-j: a ticket title never reaches the "Run with…" prompt ----
+
+#[gpui::test]
+fn new_card_from_ticket_keeps_its_title_out_of_the_prompt_through_rename_and_duplicate(
+    cx: &mut TestAppContext,
+) {
+    let f = with_board(cx);
+    let _fake: Arc<FakeTickets> = with_tickets(&f, cx, &[Tracker::Linear]);
+    let id = f
+        .window
+        .update(cx, |view, _, cx| {
+            view.create_card_from_ticket(ticket("ENG-7", None), cx)
+        })
+        .unwrap()
+        .expect("the card is created");
+    cx.run_until_parked();
+    let mut service = Service::open(&f.db).unwrap();
+    assert_eq!(service.card(&id).unwrap().title, "Fix login");
+    assert!(!service.run_prompt(&id).unwrap().contains("Fix login"));
+    // The ticket is renamed: the snapshot no longer matches the card title.
+    let mut renamed = service.card_ticket(&id).unwrap().unwrap();
+    renamed.title = Some("Something else".into());
+    service.set_card_ticket(&id, Some(&renamed)).unwrap();
+    assert!(!service.run_prompt(&id).unwrap().contains("Fix login"));
+    // The duplicate drops the ticket link but keeps the copied title out.
+    let copy = service.duplicate_card(&id).unwrap();
+    assert!(!service.run_prompt(&copy.id).unwrap().contains("Fix login"));
+    // A title the user edits is theirs again.
+    service.card_update(&id, "Fix login on Safari", "").unwrap();
+    assert!(
+        service
+            .run_prompt(&id)
+            .unwrap()
+            .contains("Fix login on Safari")
+    );
+}
+
 // ---- N4: a drawer whose card went away elsewhere ----
 
 #[gpui::test]
