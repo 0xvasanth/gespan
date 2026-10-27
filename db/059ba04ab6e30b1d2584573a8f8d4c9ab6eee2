@@ -1,0 +1,21 @@
+crates/gespan-speech/tests/helper.rs
+  s_4d58c2980ba6b7::t_7771becf286add 53-54,98,105,658,663-667,672-673
+  s_4d58c2980ba6b7::t_21de419dc14b12 668-671
+  s_4d58c2980ba6b7::t_72bca7d86641a4 662
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db059ba04ab6e30b1d2584573a8f8d4c9ab6eee2",
+  "prompts": {},
+  "sessions": {
+    "s_4d58c2980ba6b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "779852d9-f6ed-4c1f-af54-ee84b77f844b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
