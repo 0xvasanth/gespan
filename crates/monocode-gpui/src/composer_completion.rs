@@ -104,6 +104,8 @@ impl Completion {
                 "/compact",
                 "/mcp",
                 "/btw",
+                "/stage",
+                "/commit",
             ]
             .map(str::to_owned)
             .into_iter()
@@ -168,6 +170,8 @@ impl Completion {
             "/compact",
             "/mcp",
             "/btw",
+            "/stage",
+            "/commit",
         ]
         .map(str::to_owned)
         .into_iter()
@@ -221,6 +225,15 @@ impl Completion {
         self.highlight(cx);
         self.rank();
         cx.notify();
+    }
+    /// A skill or provider command already named `/{name}`, which wins over
+    /// MonoCode's own command of the same name.
+    pub(crate) fn has_user_command(&self, name: &str) -> bool {
+        self.skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .chain(self.native_commands.iter().map(|c| c.invocation.as_str()))
+            .any(|command| command.trim_start_matches('/').eq_ignore_ascii_case(name))
     }
     pub(crate) fn open_mcp(&mut self, cx: &mut Context<Self>) {
         let content = &self.input.read(cx).content;
@@ -440,6 +453,8 @@ impl Completion {
                     "/compact",
                     "/mcp",
                     "/btw",
+                    "/stage",
+                    "/commit",
                 ]
                 .map(str::to_owned)
                 .into_iter()
@@ -587,10 +602,19 @@ impl Completion {
                     "Place this session in an existing or new sidebar folder",
                 ),
                 ("mcp", "MCP server", "Find an MCP server for this message"),
+                ("stage", "Stage", "Stage only this session's changes"),
+                (
+                    "commit",
+                    "Commit",
+                    "Stage and commit this session's changes",
+                ),
             ]
             .into_iter()
             .enumerate()
             {
+                if matches!(id, "stage" | "commit") && self.has_user_command(id) {
+                    continue;
+                }
                 if id == "btw"
                     && matches!(
                         self.provider,
@@ -614,7 +638,8 @@ impl Completion {
                             label: label.into(),
                             detail: detail.into(),
                             insertion: format!("/{id}"),
-                            mode: (!matches!(id, "compact" | "btw")).then_some(id),
+                            mode: (!matches!(id, "compact" | "btw" | "stage" | "commit"))
+                                .then_some(id),
                             file: false,
                             server: None,
                         },
@@ -1085,6 +1110,8 @@ mod tests {
                         "/compact",
                         "/add-to-folder",
                         "/mcp",
+                        "/stage",
+                        "/commit",
                         "/alpha",
                         "/zebra",
                     ]
@@ -1111,6 +1138,38 @@ mod tests {
             .update(cx, |view, _, _| {
                 assert_eq!(view.choices[0].insertion, "/operator");
                 assert_eq!(view.choices[1].insertion, "/orchestrator");
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn a_users_skill_wins_over_the_git_command_of_its_name(cx: &mut TestAppContext) {
+        let window = window(cx);
+        window
+            .update(cx, |view, _, cx| {
+                assert!(!view.has_user_command("commit"));
+                view.skills = vec![DiscoveredSkill {
+                    name: "commit".into(),
+                    description: "My own commit flow".into(),
+                    path: "/skills/commit/SKILL.md".into(),
+                    scope: "project".into(),
+                    source: "claude".into(),
+                }];
+                assert!(view.has_user_command("Commit"));
+                assert!(!view.has_user_command("stage"));
+                view.input
+                    .update(cx, |input, cx| input.set_text("/commit".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, _| {
+                let commit: Vec<_> = view
+                    .choices
+                    .iter()
+                    .filter(|c| c.insertion == "/commit")
+                    .map(|c| c.detail.as_str())
+                    .collect();
+                assert_eq!(commit, ["My own commit flow"]);
             })
             .unwrap();
     }

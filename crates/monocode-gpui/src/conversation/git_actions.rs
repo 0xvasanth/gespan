@@ -236,8 +236,12 @@ impl Conversation {
     /// turns without edits leave the pill available until the work is pushed
     /// or the files are clean.
     fn git_actions_shown(&self) -> bool {
-        (self.session_git.uncommitted() || self.session_unpushed)
-            && self.history_loaded()
+        (self.session_git.uncommitted() || self.session_unpushed) && self.git_actions_ready()
+    }
+    /// Everything the pill needs except work to act on: `/stage` and
+    /// `/commit` may still ask, and the agent says when it changed nothing.
+    fn git_actions_ready(&self) -> bool {
+        self.history_loaded()
             && !self.busy
             && !self.stopping
             && !self.preparing_worktree
@@ -281,6 +285,45 @@ impl Conversation {
         if !self.git_actions_shown() {
             return;
         }
+        self.start_git_action(action, cx);
+    }
+    /// `/stage` or `/commit` typed in the composer: the pill's action, also
+    /// when the pill is hidden, unless a skill of that name claims it.
+    /// Returns true when `text` was handled here.
+    pub(super) fn git_action_command(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        let Some(action) = [GitAction::Stage, GitAction::Commit]
+            .into_iter()
+            .find(|action| text.eq_ignore_ascii_case(&format!("/{}", action.id())))
+        else {
+            return false;
+        };
+        if self.completion.read(cx).has_user_command(action.id()) {
+            return false;
+        }
+        if self.input.read(cx).is_composing() {
+            return true;
+        }
+        if !self.git_actions_ready() {
+            self.status = if self.busy || !self.follow_ups.state.messages.is_empty() {
+                format!(
+                    "Wait for the current turn and queued messages before /{}.",
+                    action.id()
+                )
+            } else {
+                format!("/{} is not available in this session.", action.id())
+            };
+            cx.notify();
+            return true;
+        }
+        self.input.update(cx, |input, cx| {
+            input.take(cx);
+        });
+        self.completion
+            .update(cx, |completion, cx| completion.dismiss(cx));
+        self.start_git_action(action, cx);
+        true
+    }
+    fn start_git_action(&mut self, action: GitAction, cx: &mut Context<Self>) {
         // Push is only ever the follow-up, never the pill's habit.
         if action != GitAction::Push {
             cx.set_global(LastGitAction(action));
@@ -729,6 +772,55 @@ mod tests {
                     GitAction::from_message("Push your commits"),
                     Some(GitAction::Push)
                 );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn slash_commands_run_the_pills_actions(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let mut summary = store.create("codex", "/missing/git-command").unwrap();
+        summary.provider = "fixture".into();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                    view.loaded = true;
+                    view.summary.has_messages = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |view, _, cx| {
+                view.busy = true;
+                view.input
+                    .update(cx, |input, cx| input.set_text("/commit".into(), cx));
+                view.send(cx);
+                assert!(view.follow_ups.state.messages.is_empty(), "never queued");
+                assert_eq!(view.input.read(cx).content, "/commit", "draft kept");
+
+                // Works without the pill: the agent finds its own changes.
+                view.busy = false;
+                assert!(!view.git_actions_shown());
+                view.input
+                    .update(cx, |input, cx| input.set_text("/Commit ".into(), cx));
+                view.send(cx);
+                assert!(view.busy);
+                assert!(view.input.read(cx).content.is_empty());
+                let rows = view.transcript.read(cx).source_rows();
+                assert_eq!(
+                    rows.iter()
+                        .filter(|row| row.is_prompt())
+                        .map(|row| row.text.as_str())
+                        .collect::<String>(),
+                    "Commit your changes"
+                );
+                assert_eq!(cx.global::<LastGitAction>().0, GitAction::Commit);
             })
             .unwrap();
     }
