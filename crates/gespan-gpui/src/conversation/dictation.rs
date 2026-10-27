@@ -844,6 +844,54 @@ impl super::Conversation {
         self.dictation
             .update(cx, |d, _| d.set_context(project, names));
     }
+
+    /// The composer's dictation keys: the shortcut (tap toggles, hold talks),
+    /// its release, and Escape to cancel. Shared by the session composer and
+    /// the Pilot chat.
+    pub(super) fn dictation_keys(
+        &self,
+        el: gpui::Stateful<gpui::Div>,
+        cx: &mut Context<super::Conversation>,
+    ) -> gpui::Stateful<gpui::Div> {
+        el.on_action(cx.listener(|this, _: &crate::input::Dictate, _, cx| {
+            this.dictation.update(cx, |d, cx| d.shortcut_down(cx));
+        }))
+        .on_key_up(cx.listener(|this, _: &gpui::KeyUpEvent, _, cx| {
+            this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+        }))
+        .on_modifiers_changed(
+            cx.listener(|this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                // macOS sends no key-up while Command is down, so
+                // letting go of the modifiers ends a hold too.
+                let held = event.modifiers.secondary() && event.modifiers.shift;
+                if !held && this.dictation.read(cx).chord_held() {
+                    this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+                }
+            }),
+        )
+        // Escape cancels dictation before the field or a menu sees
+        // it, and still works while the composer is disabled. The
+        // shell binds it to DismissMenu, an open menu to its Cancel; unbound,
+        // it is a key.
+        .capture_action(cx.listener(|this, _: &crate::shell::DismissMenu, _, cx| {
+            if this.dictation.read(cx).cancellable() {
+                this.dictation.update(cx, |d, cx| d.cancel(cx));
+                cx.stop_propagation();
+            }
+        }))
+        .capture_action(cx.listener(|this, _: &crate::popover::Cancel, _, cx| {
+            if this.dictation.read(cx).cancellable() {
+                this.dictation.update(cx, |d, cx| d.cancel(cx));
+                cx.stop_propagation();
+            }
+        }))
+        .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+            if event.keystroke.key == "escape" && this.dictation.read(cx).cancellable() {
+                this.dictation.update(cx, |d, cx| d.cancel(cx));
+                cx.stop_propagation();
+            }
+        }))
+    }
 }
 
 fn percent(p: Progress) -> u64 {

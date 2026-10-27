@@ -4,6 +4,8 @@ pub(crate) mod avatar;
 pub(crate) mod cards;
 mod changes;
 mod color_picker;
+#[cfg(test)]
+mod dictation_tests;
 mod files;
 mod filters;
 mod floating;
@@ -876,6 +878,12 @@ impl Pilots {
                         this.card_action(&source, &event.0, cx)
                     },
                 ));
+                if this.active.as_deref() == Some(&id) {
+                    // Opened before its chat loaded: `open` had no dictation
+                    // to keep, so other composers stop now.
+                    let dictation = view.read(cx).dictation.clone();
+                    crate::conversation::dictation::switched_to(&dictation, cx);
+                }
                 this.chats.insert(id.clone(), view);
                 if let Some(handle) = this.parent_window {
                     let owner = cx.weak_entity();
@@ -1139,6 +1147,11 @@ impl Pilots {
         self.active = Some(id.into());
         self.reload_roadmap(cx);
         self.ensure_chat(id, cx);
+        // One dictation at a time, as when switching sessions.
+        if let Some(chat) = self.chats.get(id) {
+            let dictation = chat.read(cx).dictation.clone();
+            crate::conversation::dictation::switched_to(&dictation, cx);
+        }
         self.reload_files(id, cx);
         cx.emit(TabOpened(id.into()));
         self.focus_active(window, cx);

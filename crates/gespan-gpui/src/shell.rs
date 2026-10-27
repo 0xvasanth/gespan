@@ -3771,6 +3771,10 @@ impl Shell {
             window.focus(&self.focus, cx);
         }
     }
+    #[cfg(test)]
+    pub(crate) fn session_view(&self, id: i64) -> Option<Entity<Conversation>> {
+        self.sessions.get(&id).cloned()
+    }
     pub(crate) fn open(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
