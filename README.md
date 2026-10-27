@@ -49,6 +49,7 @@ Gespan is still early. If something breaks, [report a bug](https://github.com/0x
 ## Guides
 
 - [Provider setup](docs/providers.md)
+- [Board](docs/board.md)
 - [Linux installation](docs/install.md)
 - [Agent access with /operator](docs/agent-access.md)
 - [Remote sessions, experimental](docs/remote-access.md)
