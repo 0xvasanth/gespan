@@ -1,0 +1,42 @@
+# Mermaid diagrams
+
+The GPUI app previews fenced `mermaid` blocks in conversations, Markdown files,
+notes, inbox documents, and skill documents. Rendering runs locally in Rust
+using mermaid-rs-renderer 0.3.1 and GPUI's SVG rasterizer; no browser or Node.js
+installation is needed.
+
+```mermaid
+flowchart LR
+    A[Read source] --> B{Valid diagram?}
+    B -->|Yes| C[Show preview]
+    B -->|No| D[Show source]
+```
+
+Use **Source** to inspect the diagram text, **Diagram** to return to its preview,
+and **Copy** to copy the original Mermaid source. The diagram follows the app's
+light or dark theme. Source remains searchable and can be selected in chat.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant App
+    User->>App: Open Markdown
+    App-->>User: Native diagram preview
+```
+
+Rendering waits briefly for streamed text to settle and runs off the UI thread.
+Incomplete or unsupported diagrams show their source and an error, and retry
+when the source changes. Preview and source share a fixed-height panel to keep
+document and transcript scrolling stable; the source scrolls within the panel.
+
+This renderer is a native implementation of Mermaid, so layout and syntax
+coverage can differ from Mermaid.js. Common flowchart, sequence, class, state,
+and entity relationship diagrams are covered by integration tests. Mermaid.js
+configuration directives, custom CSS, and interactive links are not applied by
+the preview.
+
+Previews accept at most 32 KiB of source, 512 source lines, and 256 combined
+graph nodes and edges. Raster images are capped at 2048 pixels per side. Larger
+diagrams retain their source and copy action. Preview work and pixels are
+released when a diagram leaves the rendered view. The source panel displays at
+most 32 KiB and 512 lines; Copy always includes the complete original source.
