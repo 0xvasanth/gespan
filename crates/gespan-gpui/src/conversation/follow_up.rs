@@ -108,11 +108,32 @@ impl Conversation {
         mode: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.enqueue_follow_up_inverted(prompt, mode, false, cx);
+    }
+    /// Whether a plain follow-up sent now steers the turn rather than queuing;
+    /// `invert` flips the preference, as Cmd+Enter does.
+    pub(super) fn steers_follow_up(&self, invert: bool, cx: &gpui::App) -> bool {
+        let prefers_steer = cx
+            .try_global::<crate::settings::Preferences>()
+            .is_none_or(|prefs| prefs.follow_up == "steer");
+        // Once the agent has answered and only background work is left, which
+        // may never end (a dev server), queuing would park the message behind
+        // it, so hand it to the agent now.
+        (prefers_steer != invert || !self.background.tasks.is_empty())
+            && Kind::from_id(&self.summary.provider).can_steer()
+    }
+    /// `invert` flips the follow-up preference for this message (Cmd+Enter).
+    pub(super) fn enqueue_follow_up_inverted(
+        &mut self,
+        prompt: String,
+        mode: Option<String>,
+        invert: bool,
+        cx: &mut Context<Self>,
+    ) {
         let attachments = std::mem::take(&mut self.attachments);
         let mut message = self.message(prompt, attachments, mode, cx);
-        message.steer = self.wants_steer(cx)
-            && Kind::from_id(&self.summary.provider).can_steer()
-            && message.can_steer()
+        message.steer = message.can_steer()
+            && self.steers_follow_up(invert, cx)
             // Held messages wait for Resume instead of joining a settling turn.
             && !crate::hold::active(cx);
         self.follow_ups.motion.insert(
@@ -908,6 +929,85 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    fn alternate_send(cx: &mut TestAppContext, follow_up: &str, text: &str) -> bool {
+        let window = conversation(cx);
+        cx.update(|cx| {
+            cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                prefs.follow_up = follow_up.into()
+            })
+        });
+        window
+            .update(cx, |view, window, cx| {
+                view.busy = true;
+                view.input
+                    .update(cx, |input, cx| input.set_text(text.into(), cx));
+                window.focus(&view.input.focus_handle(cx), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        cx.simulate_keystrokes(window.into(), &format!("{modifier}-enter"));
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                assert!(view.input.read(cx).content.is_empty());
+                let messages = &view.follow_ups.state.messages;
+                assert_eq!(messages.len(), 1);
+                assert!(text.ends_with(messages[0].text.as_str()));
+                messages[0].steer
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn the_submit_icon_shows_whether_enter_steers_or_queues(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        let action = |cx: &mut TestAppContext, follow_up: &str, alternate: bool| {
+            cx.update(|cx| {
+                cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                    prefs.follow_up = follow_up.into()
+                })
+            });
+            window
+                .update(cx, |view, _, cx| view.follow_up_action(alternate, cx))
+                .unwrap()
+                .map(|(label, _)| label)
+        };
+        assert_eq!(action(cx, "steer", false), None, "idle sends start a turn");
+        window.update(cx, |view, _, _| view.busy = true).unwrap();
+        assert_eq!(action(cx, "steer", false), Some("Steer"));
+        assert_eq!(action(cx, "steer", true), Some("Queue"));
+        assert_eq!(action(cx, "queue", false), Some("Queue"));
+        assert_eq!(action(cx, "queue", true), Some("Steer"));
+        window
+            .update(cx, |view, _, _| view.settings.plan = true)
+            .unwrap();
+        assert_eq!(
+            action(cx, "queue", true),
+            Some("Queue"),
+            "modes always queue"
+        );
+    }
+
+    #[gpui::test]
+    fn cmd_enter_queues_when_follow_ups_steer(cx: &mut TestAppContext) {
+        assert!(!alternate_send(cx, "steer", "after this turn"));
+    }
+
+    #[gpui::test]
+    fn cmd_enter_steers_when_follow_ups_queue(cx: &mut TestAppContext) {
+        assert!(alternate_send(cx, "queue", "change course"));
+    }
+
+    #[gpui::test]
+    fn cmd_enter_cannot_steer_a_mode_turn(cx: &mut TestAppContext) {
+        assert!(!alternate_send(cx, "queue", "/plan sketch it first"));
     }
 
     #[gpui::test]
