@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Bounds, CursorStyle, MouseButton, Pixels, ResizeEdge, Size, Window, div, point,
-    prelude::*, px, size,
+    AnyElement, Bounds, CursorStyle, MouseButton, Pixels, ResizeEdge, Size, Window,
+    WindowControlArea, div, point, prelude::*, px, size,
 };
 
 pub(super) const CONTROLS_WIDTH: f32 = 106.;
@@ -20,14 +20,13 @@ pub(super) fn controls(
         .flex()
         .items_center()
         .occlude()
-        .child(
-            crate::theme::icon_button("window-minimize", "Minimize window", "minus")
-                .debug_selector(|| "window-minimize".into())
-                .w(px(30.))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(|_, window, _| window.minimize_window()),
-        )
-        .child(
+        .child(caption_button(
+            crate::theme::icon_button("window-minimize", "Minimize window", "minus-sign")
+                .debug_selector(|| "window-minimize".into()),
+            WindowControlArea::Min,
+            |_, window, _| window.minimize_window(),
+        ))
+        .child(caption_button(
             crate::theme::icon_button(
                 "window-maximize",
                 if maximized {
@@ -35,21 +34,40 @@ pub(super) fn controls(
                 } else {
                     "Maximize window"
                 },
-                if maximized { "copy" } else { "square" },
+                if maximized {
+                    "window-restore"
+                } else {
+                    "window-maximize"
+                },
             )
-            .debug_selector(|| "window-maximize".into())
-            .w(px(30.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|_, window, _| window.zoom_window()),
-        )
-        .child(
-            crate::theme::icon_button("window-close", "Close window", "close")
-                .debug_selector(|| "window-close".into())
-                .w(px(30.))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(on_close),
-        )
+            .debug_selector(|| "window-maximize".into()),
+            WindowControlArea::Max,
+            |_, window, _| window.zoom_window(),
+        ))
+        .child(caption_button(
+            crate::theme::icon_button("window-close", "Close window", "cancel-01")
+                .debug_selector(|| "window-close".into()),
+            WindowControlArea::Close,
+            on_close,
+        ))
         .into_any_element()
+}
+
+/// On Windows the buttons hit-test as the system caption buttons. Windows
+/// then minimizes, toggles maximize and restore, shows Snap Layouts and
+/// closes through `WM_CLOSE`. GPUI's `zoom_window` can only maximize there.
+fn caption_button(
+    button: gpui::Stateful<gpui::Div>,
+    area: WindowControlArea,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let button = button.w(px(30.));
+    if cfg!(target_os = "windows") {
+        return button.window_control_area(area);
+    }
+    button
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(on_click)
 }
 
 // Keep the resize border narrow around controls, with larger corner targets.
@@ -191,6 +209,10 @@ mod tests {
             assert!(bounds.left() >= right);
             assert!(bounds.right() <= width);
             right = bounds.right();
+        }
+        // Windows sends these clicks to its caption buttons, not to GPUI.
+        if cfg!(target_os = "windows") {
+            return;
         }
         let close = visual.debug_bounds("window-close").unwrap();
         visual.simulate_click(close.center(), Default::default());

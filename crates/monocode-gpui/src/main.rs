@@ -452,7 +452,9 @@ fn main() {
                     app_owns_titlebar_drag: cfg!(target_os = "macos"),
                     titlebar: Some(TitlebarOptions {
                         title: Some("Monocode Native".into()),
-                        appears_transparent: cfg!(target_os = "macos"),
+                        // Windows also drops its caption: the app's drag areas
+                        // hit-test as the caption and the frame still resizes.
+                        appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
                         traffic_light_position: if cfg!(target_os = "macos") {
                             // Original macOS chrome: 12 pt left inset, with
                             // 14 pt native buttons centered in the 40 pt bar.

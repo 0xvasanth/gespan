@@ -40,7 +40,7 @@ mod sidebar_list;
 mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
 
@@ -259,6 +259,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// Windows has no caption of its own (`appears_transparent`), so the app
+/// draws the window controls. Test windows keep the captionless geometry
+/// that Linux tests get from server decorations.
+#[cfg(target_os = "windows")]
+const WINDOWS_CONTROLS: bool = cfg!(not(test));
+
 pub(crate) fn client_controls_width(window: &Window) -> f32 {
     #[cfg(target_os = "linux")]
     if !window.is_fullscreen()
@@ -269,6 +275,10 @@ pub(crate) fn client_controls_width(window: &Window) -> f32 {
     {
         return window_chrome::CONTROLS_WIDTH;
     }
+    #[cfg(target_os = "windows")]
+    if WINDOWS_CONTROLS && !window.is_fullscreen() {
+        return window_chrome::CONTROLS_WIDTH;
+    }
     let _ = window;
     0.
 }
@@ -276,6 +286,8 @@ pub(crate) fn client_controls_width(window: &Window) -> f32 {
 /// macOS must receive button clicks as app content. Only blank titlebar
 /// regions initiate native dragging or the system double-click action.
 /// Client-decorated Linux windows also need explicit native drag requests.
+/// Windows hit-tests the drag area as the caption, which drags, snaps and
+/// maximizes on double-click natively.
 pub(crate) fn titlebar_drag_area() -> gpui::Div {
     let bounds = AnchorSlot::default();
     div()
@@ -594,6 +606,11 @@ pub(crate) struct Shell {
     /// useTrafficLightsVisible: fullscreen hides the native buttons, so the
     /// title bar takes their room back.
     fullscreen: bool,
+    /// `client_controls_width` as of this render, for the corner's layout.
+    window_controls: f32,
+    /// The narrowest right panel whose header holds the corner's tools
+    /// beside client-drawn window controls.
+    right_panel_min: f32,
     #[cfg(target_os = "linux")]
     client_decorations: bool,
     tabs_frame: Entity<Chrome>,
@@ -954,6 +971,8 @@ impl Shell {
             peek_close: None,
             peek_toggle_bounds: AnchorSlot::default(),
             fullscreen: false,
+            window_controls: 0.,
+            right_panel_min: crate::right_panel::WIDTH_MIN,
             #[cfg(target_os = "linux")]
             client_decorations: false,
             tabs_frame,
@@ -3782,7 +3801,7 @@ impl Shell {
                 (self.workspace.sidebar_width, 200., max, 1.)
             }
             ResizeTarget::RightPanel => {
-                let (min, max) = (crate::right_panel::WIDTH_MIN, crate::right_panel::WIDTH_MAX);
+                let (min, max) = (self.right_panel_min, crate::right_panel::WIDTH_MAX);
                 let max = max.min((self.viewport_width * 0.5).floor()).max(min);
                 (self.workspace.right_panel_width, min, max, 1.)
             }
@@ -4694,25 +4713,13 @@ impl Shell {
         true
     }
 
-    fn titlebar_controls_space(&self, bar: AnyElement, window: &Window) -> AnyElement {
-        let room = client_controls_width(window);
-        if room == 0. {
-            return bar;
-        }
-        div()
-            .w_full()
-            .h(px(TITLE_BAR_HEIGHT))
-            .pr(px(room))
-            .child(bar)
-            .into_any_element()
-    }
     fn titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let bar = self.titlebar_content(window, cx);
-        self.titlebar_controls_space(bar, window)
-    }
-    fn titlebar_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
+        // Client-drawn window controls sit in the settings header's padding,
+        // so its bottom rule still runs beneath them. Session bars leave them
+        // to the corner (`toggle_room`, `corner_room`).
+        let controls = px(client_controls_width(window));
         if let Some(settings) = self.settings.clone() {
             let classic = self.workspace.boxy_layout();
             let lead = if classic {
@@ -4726,6 +4733,7 @@ impl Shell {
                 .flex_shrink_0()
                 .flex()
                 .items_center()
+                .pr(controls)
                 .when(classic, |d| d.border_b_1().border_color(content(0.1)))
                 .child(if classic {
                     titlebar_drag_area()
@@ -4796,7 +4804,11 @@ impl Shell {
         let tabs = if mono && panel_active {
             self.monos.clone().map(|m| {
                 m.update(cx, |m, cx| {
-                    m.overview_controls(self.workspace.right_panel_width >= 312., window, cx)
+                    m.overview_controls(
+                        self.workspace.right_panel_width >= 312. + self.window_controls,
+                        window,
+                        cx,
+                    )
                 })
             })
         } else {
@@ -4826,7 +4838,10 @@ impl Shell {
             .items_center()
             .map(|d| {
                 if !toggle {
-                    return d.pl_1p5().pr_3().child(self.file_search_button(cx));
+                    return d
+                        .pl_1p5()
+                        .pr(px(12. + self.window_controls))
+                        .child(self.file_search_button(cx));
                 }
                 let ink = if panel_off {
                     content(0.25)
@@ -4847,7 +4862,7 @@ impl Shell {
                         } else {
                             6.
                         }))
-                        .pr_3()
+                        .pr(px(12. + self.window_controls))
                         .when_some(tabs, |d, tabs| {
                             d.child(tabs)
                                 .when(!mono, |d| d.child(titlebar_drag_area().flex_1().min_w_0()))
@@ -4999,7 +5014,8 @@ impl Shell {
         let controls = crate::right_panel::tab_icons_width(self.right_tab_count(cx))
             + 6.
             + CORNER_BUTTONS_WIDTH
-            + 12.;
+            + 12.
+            + self.window_controls;
         natural.min((self.workspace.right_panel_width - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
@@ -5011,7 +5027,8 @@ impl Shell {
         (self.workspace.right_panel_width
             - self.diff_stat_room(cx)
             - CORNER_BUTTONS_WIDTH
-            - padding)
+            - padding
+            - self.window_controls)
             .clamp(
                 crate::right_panel::tab_icons_width(self.right_tab_count(cx)),
                 crate::right_panel::tabs_width(self.right_tab_count(cx)),
@@ -5027,15 +5044,17 @@ impl Shell {
         if self.workspace.boxy_layout() {
             return self.corner_room(cx);
         }
+        // Client-drawn window controls hold the corner's right end.
+        let controls = self.window_controls;
         if self.mono_active(cx) || self.git.read(cx).available() {
             if self.workspace.right_panel_open && !self.app_view_open() {
                 if self.mono_active(cx) {
-                    let minimum = if self.workspace.right_panel_width >= 312. {
+                    let minimum = if self.workspace.right_panel_width >= 312. + controls {
                         312.
                     } else {
                         252.
                     };
-                    return (self.right_drawn + 7.).max(minimum);
+                    return (self.right_drawn + 7.).max(minimum + controls);
                 }
                 // Follow the rounded panel's left edge, including the card's
                 // right inset, while keeping room for all controls when narrow.
@@ -5044,13 +5063,14 @@ impl Shell {
                         + self.project_tabs_width(cx)
                         + self.diff_stat_room(cx)
                         + CORNER_BUTTONS_WIDTH
-                        + 12.,
+                        + 12.
+                        + controls,
                 )
             } else {
-                6. + self.diff_stat_room(cx) + CORNER_BUTTONS_WIDTH + 12.
+                6. + self.diff_stat_room(cx) + CORNER_BUTTONS_WIDTH + 12. + controls
             }
         } else {
-            6. + 24. + 12.
+            6. + 24. + 12. + controls
         }
     }
     /// Classic: the strip's room after its tabs, wherever the toggle
@@ -7343,8 +7363,7 @@ impl Shell {
         } else {
             self.navigation_width()
         };
-        (window.viewport_size().width.as_f32() - lead - trailing - client_controls_width(window))
-            .max(0.)
+        (window.viewport_size().width.as_f32() - lead - trailing).max(0.)
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport = self.tabs_width(window, cx);
@@ -7980,6 +7999,19 @@ impl Render for Shell {
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();
+        self.window_controls = client_controls_width(window);
+        // The corner's tools share the panel's header with client-drawn
+        // window controls, so the panel keeps room for both. A Mono's icon
+        // tabs need 252px (`corner_room`).
+        let tools = if self.window_controls > 0. && self.mono_active(cx) {
+            252.
+        } else {
+            crate::right_panel::WIDTH_MIN
+        };
+        self.right_panel_min = tools + self.window_controls;
+        if self.workspace.right_panel_width < self.right_panel_min {
+            self.workspace.right_panel_width = self.right_panel_min;
+        }
         #[cfg(target_os = "linux")]
         {
             let client = matches!(
@@ -8616,8 +8648,14 @@ impl Render for Shell {
             )
             .map(|root| {
                 #[cfg(target_os = "linux")]
+                let caption = self.client_decorations;
+                // `resize_handles` stays empty on Windows: GPUI reports server
+                // decorations and the native frame does the resizing.
+                #[cfg(target_os = "windows")]
+                let caption = WINDOWS_CONTROLS;
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 let root = root
-                    .when(self.client_decorations && !self.fullscreen, |root| {
+                    .when(caption && !self.fullscreen, |root| {
                         root.child(window_chrome::controls(
                             window,
                             cx.listener(|this, _, window, cx| this.request_quit(window, cx)),
