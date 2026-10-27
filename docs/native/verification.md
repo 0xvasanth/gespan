@@ -68,7 +68,7 @@ personal storage. To run that read-only check explicitly:
 cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev installed_desktop_dir_reads -- --ignored
 ```
 
-## Board — October 24, 2026
+## Board #174 verification script
 
 Both apps read and write the same `boards`, `board_columns`, `board_cards`
 and `board_activity` tables, plus the shared label, project, subtask, comment
@@ -79,132 +79,109 @@ left in place for one release; after the one-time copy nothing reads them.
 Deleting a card in either app removes its own rows, including which labels it
 carries; the board's label definitions stay until the board is deleted. The
 Board setting is on by default in both apps.
-Automated coverage: storage, ordering, extras and concurrent writes (core);
-auto-move and turn rules (core); the setting and app view; the board switcher,
-search and filters; card and step styling; drag and drop, keyboard dragging and
-Move to…; the task drawer; card-face quick edits, the column menu, collapsed columns,
-undo, held deletes and the Archive view; and turn hooks (GPUI tests).
 
-These runtime checks are pending; none has been run by hand yet:
+Automated coverage: storage, ordering, extras, concurrent writes, statement
+counts per board-wide read and a 1,000-card query budget (board store and
+core); auto-move and turn rules (core); windowing, keyboard focus and
+announcements at 1,000 cards (Vitest and GPUI tests); and every feature in
+[Board details](parity.md#board-details).
 
-- Board is on by default; turning it off in Settings → General hides the rail,
-  sidebar and title-tab entries, and turning it on again shows the same board.
-- The header's board switcher creates, renames and deletes boards. Deleting
-  the open board opens another, and deleting the last one creates a new
-  default board. The board you opened last is still open after quitting and
-  reopening.
-- Search narrows cards (also by `#12`), Filter narrows by project, label and
-  priority, counts read `shown/total`, and New task opens the add field in
-  the first step.
-- Cards show label chips, subtask progress, priority, due date (red when
-  past), comment count and linked work; steps add, rename, reorder and delete.
-- Drag cards within a step, across steps and onto an empty step, including
-  while a filter is on.
-- Drag a card from the keyboard: Tab to a card, Space lifts it, arrows move
-  it, Space or Enter drops it, and Escape puts it back with nothing written.
-- Use a card's "Move to…" menu, both by clicking "…" and from the keyboard
-  (Tab to a card, Enter, arrow keys, Enter).
-- Open a task: the drawer sits beside the board and never covers the header.
-  Change status, priority, due date (including "Pick a date…"), projects,
-  labels (including creating one), linked work, description, subtasks and
-  comments; Mark complete, copy reference and Delete.
-- Card face: click priority, due or labels and a small menu opens in place
-  without dragging or opening the card; a card with no priority shows a faint
-  target on hover. In Native, "Pick a date…" opens the drawer's date picker.
-- Column menu: Collapse column, Sort by priority (Urgent first), Sort by due
-  date (soonest first, no date last) and Mark all as done (hidden on the done
-  column). Archive completed shows only on the done column. Sort with a filter
-  on still sorts the whole column.
-- Collapse a column: it becomes a thin strip with its name and count (Native
-  stacks the name top to bottom). Drop a card on it by mouse and from the
-  keyboard; the card lands at the end. Click or Enter expands it, and it stays
-  collapsed after reopening the board.
-- Quick add: type a title and press Enter; the field stays open for the next
-  card, and Escape closes it.
-- Undo a move: drag a card to another step, press Undo in the toast ("Moved #N
-  to {column}") within 8 s, and it returns to its old place. Do the same for a
-  multi-card move ("Moved N cards to {column}").
-- Undo a sort: sort a column and press Undo ("Sorted {column}"); the previous
-  order returns exactly.
-- Undo an archive: Archive completed ("Archived N cards"), then Undo; the cards
-  return to their columns and positions.
-- Undo a delete: delete a card ("Deleted #N"); it leaves the board but is not
-  in the Archive view. Undo brings it back at its old place. Let the toast
-  expire instead and the card is gone for good.
-- Quit during a held delete: delete a card, quit within 8 s and reopen. The
-  card is in the Archive view, not lost; Restore puts it back.
-- Move or delete the card in the other app during the 8 s, then press Undo:
-  the toast says what could not be undone and nothing is duplicated.
-- Archive view: open it from the board; archived cards are newest first.
-  Restore puts a card at the end of its column, and Delete forever asks first.
-- Delete column is disabled with "Move or delete its N cards first" while the
-  column holds live or archived cards, and works once both are gone.
-- Edit a board in Tauri and see the change in native within about 2 s. Both
-  apps show the same boards, tasks, labels, priority, due dates, subtasks,
-  comments and ticket links.
-- In Tauri, the same task carries priority, due date, projects, labels,
-  subtasks and comments in the docked drawer; search and filters show
-  `shown/total`, and cards drag with the keyboard (Space lifts, arrows move,
-  Space or Enter drops, Escape cancels).
-- Card detail: toggle Full page in the drawer's top bar (Escape or the toggle
-  goes back). Set "Open cards in" to Full page (Native: board header menu;
-  Tauri: Settings → General), click a card, and it opens full page; set it back
-  to Drawer.
-- Dates: set start and due with each quick pick (Today, Tomorrow, Next week,
-  In 2 weeks), pick one with the date input, and Clear.
-- Estimate: enter `90`, `90m`, `1h`, `1h 30m` and `1.5h`; each shows as `1h 30m`
-  style text. `0` and text that is not a duration are refused.
-- Relations: add Blocked by, Blocks and Relates to from the picker (cards show
-  as `#N Title`). Making a cycle (A blocks B, then B blocks A) shows the
-  refusal and writes nothing.
-- Custom fields: a board that already has text, number, date, select and
-  checkbox fields shows them in the drawer; edit each and reopen the card.
-- Links: add a session, a Pilot, a PR URL and a worktree path; Open and Remove
-  each. The ticket keeps its own row.
-- Markdown toolbar: bold, italic, heading, bulleted and numbered list, link and
-  code on a selection, on several lines and on an empty selection; the cursor
-  lands between the markers, and the saved description is plain Markdown.
-- Subtasks: Move up and Move down from the subtask menu (in Tauri also
-  Alt+↑ and Alt+↓); the first has no Move up and the last no Move down.
-  Convert to card puts a new card right after the parent, linked with Relates
-  to, and removes the subtask.
-- Comments show "You" for yours and "Agent" for an agent's, with different
-  avatars.
-- More menu: from the drawer's "…", a card's right-click and "More…" in the
-  card's "…" menu. Check Open, Status…, Priority…, Labels…, Move to board…,
-  Copy link, Copy `#N title`, Duplicate, Archive and Delete. Duplicate adds
-  "{title} (copy)" after the original without links, comments or relations.
-  Move to board… lands in the other board's first To do column. Archive and
-  Delete show the Undo toast. Copy link copies a `gespan://board/…/card/…`
-  link; the app does not open it yet.
-- New card: press ⌘N (Ctrl+N) with focus on the board, including in the search
-  box; the modal opens and no "n" is typed. A title is required; ⌘↵ creates,
-  Escape closes. With Create more on, the modal stays open with the title
-  cleared and the other fields kept.
-- Send a message to a Pilot with Board on and with Board off; a Pilot-linked
-  card moves when Board is on, and nothing breaks either way.
-- Link a card to a session, send a prompt, and watch the card move to In
-  Progress, then Review.
-- Filter builder: add Where and "and" rows (status, priority, labels, projects, due, created, updated, linked, a custom field) with is and is not; chips show, and Clear all empties them. Delete a label or custom field a saved view uses: the view still opens, never errors and does not go empty. `linked: running` matches a card with a running or waiting session in both apps.
-- Due filters: a card due today, tomorrow, in 8 days, yesterday and with no date land in Today, Next 7 days, Later, Overdue and None; a done card is never overdue. Check once around midnight or a DST change.
-- Sort: pick each key and both directions; the header reads "Sorted by {key}". Cards with no value sort last either way. In the board layout, dragging inside a column does nothing while sorted, and dragging to another column appends.
-- Saved views: "All cards" is first and has no Delete. Save a view, then Rename, Duplicate (with unsaved edits) and Delete. Change a saved view and the tab shows "•" with Save and Revert. Change the view in the other app: it re-applies, unless this app has unsaved edits.
-- List layout: group by status, priority, label, project and due; collapse a group, switch mode and back, and compare the other app (keys are `mode:value`). Check the "No status", "No label", "No project" and "No due date" groups.
-- Table layout: pick columns, resize one (it stops at 60 px), reopen the view. Edit title, status, priority, due and labels inline. Type in a title cell, change the card in the other app, and the draft stays; Enter on an untouched cell does not overwrite the remote rename; Escape drops the draft.
-- Large board: with several hundred cards, scrolling list and table stays smooth and only visible rows exist in the DOM or element tree.
-- Bulk select: ⌘-click (Ctrl-click) cards and Shift-click a range in board, list and table; change the sort, then Shift-click again and the range follows the new order. Selecting, then filtering, drops hidden cards. The bar shows "N selected" with Status…, Priority…, Labels…, Archive, Delete and Clear. Bulk Delete shows the Undo toast and Undo restores every card. Esc closes the drawer, then menus, then the selection.
-- Shortcuts: with no field focused, N opens New card, `/` focuses search, E opens the focused card and Delete or Backspace holds a delete of the card or the selection. Typing the same keys in search, the composer, a table cell and a comment box types normally, and none acts inside the open drawer.
-- Command palette: Create card opens the board and the New card modal; Go to board opens it; Switch board… lists the boards and opens the one picked.
-- Settings page: change name, icon, colour and default view and compare the other app. Give a column a colour and a WIP limit; the header shows `{total}/{limit}`, turns highlighted over the limit and reads `{shown}/{total}` while filtered. Drop a card over the limit: it moves and the toast reads "Over the WIP limit ({n}/{limit})". Delete a column with cards: "Move cards to…" moves them; with archived cards left it is refused up front.
-- Labels in both apps: create, rename (a name differing only in case is refused), recolour, reorder, merge (confirm first; cards and saved-view label rows follow) and delete. Rename and hide priority levels; a card on a hidden level still shows it.
-- Custom fields: add one of each of the 7 kinds, set values on cards, rename a select option (values keep), and delete a field (its filter rows and table columns go). Filter by each kind: text, number, date and url offer card values plus free-form; select and multi-select offer options.
-- Display and swimlanes: toggle card-face items and density, override them in a saved view and see "All cards" keep the board default. Group by priority, label, project and a field. Drop across lanes: priority and select lanes set the value, the others change only the column; value-setting drops have no Undo. No reorder inside a lane cell; in Tauri a collapsed column draws expanded.
-- Templates: create a board from Blank, Agent pipeline, Bug triage and Release checklist (Native: in the switcher; Tauri: also from the empty state). "Save as template" on a board, create from it (no cards), and try deleting a built-in: "Built-in templates can't be deleted".
-- Auto-move: for each event set default, stay and a chosen column; run a linked session through started, needs input, completed and failed, and check PR opened and merged. A deleted target column means stay.
-- Agent pipeline with "Run with…": on a card, pick provider, model and a local project; the card gets a session link and the card's ticket, and moves Queued, Running, Needs review. Link chips (session, Pilot, PR, worktree) refresh on board open and when the turn settles, not on a timer; the "running" filter counts a session waiting for input. Native: a remote project is refused. Cost stays empty.
-- Blocked cards: a card blocked by a live card shows a lock, and "Run with…" asks "#{n} is blocked by …. Run anyway?" with Run anyway and Cancel.
-- Write-back: with it on, a finished linked turn adds a comment marked Agent (a plan turn posts its plan); with it off, nothing. Agent card tools add subtasks. With ticket status changes off (board toggle or a session override), an agent's status change on the linked ticket is refused; an unreadable setting shows an error state.
-- Settings unreadable: make the settings read fail; the board still loads, sections show "Couldn't load settings" with Retry, and nothing is saved until Retry works.
+The steps below have not been run by hand yet. Record each result as pass or
+fail with the date and build. Run each step in the app or apps named; where it
+says both, run it once in each.
+
+### Setup
+
+1. Quit both apps. Back up `gespan.db` (paths are in the
+   [native guide](README.md#data-and-configuration): release is
+   `~/Library/Application Support/dev.gespan.desktop/gespan.db` on macOS,
+   development is under `Gespan Development/`).
+2. Add a 1,000-card board to it. This always creates a new board from the blank
+   template, never edits an existing one, and refuses a file that is not a
+   Gespan database (it has no `boards` table) without changing it. It prints the
+   new board's id.
+
+   ```sh
+   cargo run -p gespan-board-store --example seed_board -- --db "<path to gespan.db>"
+   ```
+
+   Optional flags: `--cards 1000` and `--name "<board>"`.
+3. Build both apps in release mode (`bun run native:build` for Native and a
+   Tauri release build) and open both. Delete the seeded board when you are
+   done.
+
+### Steps
+
+Result column: pass or fail, date, build.
+
+#### 1. The #174 manual checks
+
+| # | App | Action | Expected | Result |
+| --- | --- | --- | --- | --- |
+| 1.1 | Native, then Tauri | Set a label on a card in Native. | Within about 2 s the label shows on the card in Tauri. | |
+| 1.2 | Tauri, then Native | Set a label on a card in Tauri. | It shows in Native. | |
+| 1.3 | Both | Create a board from the "Agent pipeline" template. On a card, "Run with…" (pick a provider, model and a local project). | The card gets a session link and its ticket, and moves Queued, Running, Needs review. Link chips refresh on board open and when the turn settles, not on a timer. Native refuses a remote project. | |
+| 1.4 | Both | Collapse a column. Drop a card onto its strip with the mouse. Then lift another card with the keyboard (Space), move onto the strip and drop. | Each card lands at the end of the collapsed column. Click or Enter expands it, and it stays collapsed after reopening the board. | |
+| 1.5 | Both | Collapse a column in one app, then change its colour or WIP limit in the other. | The collapse does not reset the colour or WIP limit just set in the other app. | |
+
+#### 2. 1,000 cards, release builds
+
+Open the seeded board in each app. Use a screen recording or the app's frame
+timing.
+
+| # | App | Action | Expected | Result |
+| --- | --- | --- | --- | --- |
+| 2.1 | Both | Switch to the seeded board from another board. | The cards show within 300 ms. | |
+| 2.2 | Both | Type a search that has results. | Results show within 100 ms of the keystroke (Tauri waits 150 ms after the last keystroke before it queries; judge from the last key). | |
+| 2.3 | Both | Drag a card across columns, and within a scrolled column. | The drag stays smooth, with no visible stutter. The card lands where the line showed. | |
+| 2.4 | Both | Lift a card with the keyboard and move it down 50 places. | The view follows the card and the announcement reads "position 51 of 1000". | |
+| 2.5 | Both | Click a card, then Shift-click a card far below, scrolling between. | Exactly the cards in display order between them are selected, including cards that were off screen. | |
+| 2.6 | Both | Group by label (swimlanes). Scroll, drag a card between lanes, and open a card. | Scrolling and dragging stay smooth. A drop in a cell appends to it. | |
+| 2.7 | Both | Scroll deep into a column, then change a card in the other app. | The same card stays at the top of the view. It does not jump to the top or leave a gap. | |
+| 2.8 | Both | Toggle Comfortable and Compact density while scrolled. | Nothing overlaps and no gap appears. | |
+| 2.9 | Native | Press an arrow key on a card, then scroll away and back. | Focus lands on the right card, and stays on it after the wheel scroll. | |
+
+#### 3. Screen reader (VoiceOver)
+
+| # | App | Action | Expected | Result |
+| --- | --- | --- | --- | --- |
+| 3.1 | Both | With VoiceOver on, Tab to a card, press Space, move and drop. | VoiceOver reads "Picked up card #N, {title}. {column}, position i of 1000.", the "over" announcements as you move, and "Dropped card #N in {column}, position i of 1000.". Escape reads the "was cancelled" line. | |
+| 3.2 | Tauri | Focus a card in WebKit. | VoiceOver reads the card's `aria-description` ("{i} of {total} in {column}"). | |
+| 3.3 | Both | Open a card with E or Enter, then close it. | The drawer takes focus, and closing it gives focus back to the card. | |
+| 3.4 | Native | Focus a column. | It reads "{name}, {total} cards" ("1 card" for one). | |
+
+#### 4. Focus and scrolling in real WebKit
+
+| # | App | Action | Expected | Result |
+| --- | --- | --- | --- | --- |
+| 4.1 | Tauri | Press ⌘N, create a card, and let the New card modal close. | Focus returns to the board (R71), and a second ⌘N works. | |
+| 4.2 | Tauri | Scroll a long column with the trackpad (momentum), while cards measure in. | No scroll jitter. | |
+| 4.3 | Tauri | Keyboard-drag a card down a long column with Space and arrows. | The column scrolls to follow the drop line once, with no fight between dnd-kit's scrolling and ours. | |
+| 4.4 | Tauri | Drop a card with the mouse, then click a card within 50 ms. | The click right after a drop is swallowed (no drawer opens). A click after that opens it. | |
+| 4.5 | Tauri | Group by a label. Collapse a column. | The collapsed column draws as a 36 px strip showing only its count, and it takes drops. | |
+| 4.6 | Tauri | In swimlanes, keyboard-drag a card to a lane far below. | The view scrolls to the target lane as the line moves from header to header. | |
+| 4.7 | Tauri | Focus a card, then delete it or archive it from the other app. Click empty space on the board. | Focus does not fall to the page body, and arrow keys keep working from where it lands. | |
+| 4.8 | Native | Keyboard-drag or arrow to a card 50 places down, and across a swimlane band edge. | The card reveals on the first or a following frame, never a far jump, and focus lands on it. | |
+
+#### 5. Checks carried from C5
+
+| # | App | Action | Expected | Result |
+| --- | --- | --- | --- | --- |
+| 5.1 | Both | Board settings: change name, icon, colour and default view. Give a column a colour and WIP limit; drop a card over it. | Both apps show the changes. The header reads `{total}/{limit}` (`{shown}/{total}` while filtered). The toast reads "Over the WIP limit ({n}/{limit})". "Move cards to…" moves cards on delete; archived cards left refuse it up front. | |
+| 5.2 | Both | Labels: create, rename (a name differing only in case is refused), recolour, reorder, merge (confirm first) and delete. Rename and hide priority levels. | Cards and saved-view label rows follow a merge. A card on a hidden level still shows it. | |
+| 5.3 | Both | Custom fields: add all 7 kinds, set values, rename a select option, delete a field. Type an estimate `90`, `90m`, `1h`, `1h 30m`, `1.5h`, `.5h`. Then try `1.m`, `0x10`, `1e3`, `-5`. | Values stay after an option rename. Deleting a field removes its filter rows and table columns. The first set is accepted. The second is refused with "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h", and the typed text stays in the field. | |
+| 5.4 | Both | Display options: toggle card-face items and density, override them in a saved view. Group by priority, label, project and a field. Drop across lanes. | "All cards" keeps the board default. Priority and select lanes set the value; the others change only the column. Value-setting drops have no Undo. | |
+| 5.5 | Both | Create a board from Blank, Agent pipeline, Bug triage and Release checklist. "Save as template", create from it, then try to delete a built-in. | The new board has no cards. The error reads "Built-in templates can't be deleted". | |
+| 5.6 | Both | Auto-move: for each event set default, stay and a chosen column, and run a linked session through started, needs input, completed and failed. Check PR opened and merged. | The card follows each setting. A deleted target column means stay. | |
+| 5.7 | Both | Block a card with a live card, then "Run with…" it. | A lock shows, and the dialog asks "#{n} is blocked by …. Run anyway?" with Run anyway and Cancel. | |
+| 5.8 | Both | Write-back: with it on, finish a linked turn. With it off, finish another. Turn ticket status changes off (board toggle or session override) and have an agent change status. | A comment marked Agent appears only when it is on (a plan turn posts its plan). The status change is refused when off. Activity rows read You, Agent or System. | |
+| 5.9 | Both | Make the settings read fail. | The board still loads, the sections show "Couldn't load settings" with Retry, and nothing is saved until Retry works. | |
+| 5.10 | Tauri | Use the command palette's "New session from ticket…". | A local session opens in the active project with the ticket linked and its key (later its title) as an unsent draft. Nothing is sent. | |
+
+For the rest of the board (filters, saved views, list, table, bulk select,
+shortcuts, undo, the Archive view, relations, links and the drawer), run the
+features listed in [Board details](parity.md#board-details) in both apps and
+compare. Check due filters once around midnight or a DST change.
 
 ## Local checks
 
