@@ -774,7 +774,9 @@ impl BoardView {
         let weak = cx.weak_entity();
         let card = modal::card().w(px(520.)).child(body);
         let menu = form.menu.as_ref().map(|open| {
-            menu_popover(&open.menu, Anchor::Slot(anchor(open.property)), cx).into_any_element()
+            menu_popover(&open.menu, Anchor::Slot(anchor(open.property)), cx)
+                .solid()
+                .into_any_element()
         });
         Some(
             div()

@@ -95,7 +95,9 @@ impl BoardView {
                 Choice::FieldDate(index) | Choice::FieldSelect(index) => format!("field-{index}"),
                 Choice::LinkAdd => "links-add".to_string(),
             };
-            menu_popover(menu, Anchor::Slot(anchor(&key)), cx).into_any_element()
+            menu_popover(menu, Anchor::Slot(anchor(&key)), cx)
+                .solid()
+                .into_any_element()
         });
         let full_page = detail.full_page;
         let top_bar = div()
@@ -962,7 +964,7 @@ impl BoardView {
             .rounded(px(8.))
             .border_1()
             .border_color(content(0.1))
-            .bg(pane_fill())
+            .bg(floating_fill())
             .shadow(vec![
                 gpui::BoxShadow::new(px(0.), px(8.), gpui::rgba(0x00000040).into())
                     .blur_radius(px(16.))

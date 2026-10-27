@@ -618,6 +618,7 @@ impl BoardView {
         let name = view.name.clone();
         Some(
             popover("board-view-menu", Anchor::Slot(anchor))
+                .solid()
                 .width(180.)
                 .on_dismiss(move |_, cx| {
                     let _ = weak.update(cx, |this, cx| {

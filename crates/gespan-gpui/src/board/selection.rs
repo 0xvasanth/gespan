@@ -374,7 +374,11 @@ impl BoardView {
     pub(super) fn render_pop_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.pop.as_ref()?;
         let anchor = Anchor::Slot(self.pop_anchors.of(open.kind));
-        Some(menu_popover(&open.menu, anchor, cx).into_any_element())
+        Some(
+            menu_popover(&open.menu, anchor, cx)
+                .solid()
+                .into_any_element(),
+        )
     }
 
     /// The floating bar: "N selected" and what to do with them.

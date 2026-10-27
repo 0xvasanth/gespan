@@ -473,6 +473,7 @@ impl BoardView {
                 "board-switcher-menu",
                 Anchor::Slot(self.switcher_anchor.clone()),
             )
+            .solid()
             .width(260.)
             .on_dismiss(move |_, cx| {
                 let _ = weak.update(cx, |this, cx| {

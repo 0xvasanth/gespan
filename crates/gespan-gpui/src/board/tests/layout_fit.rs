@@ -147,6 +147,32 @@ fn an_open_drawer_picker_floats_over_the_rows_below_and_takes_clicks(cx: &mut Te
         picker.bottom() > before[0].top(),
         "the picker overlaps the row below it: {picker:?}"
     );
+    // An opaque card: the rows it covers never read through it.
+    let opaque = gpui::Background::from(crate::theme::floating_fill());
+    let painted = f
+        .window
+        .update(visual, |_, window, _| {
+            let scale = window.scale_factor();
+            window
+                .painted_quads()
+                .iter()
+                .filter(|q| q.background == opaque)
+                .map(|q| {
+                    (
+                        q.bounds.size.width.0 / scale,
+                        q.bounds.size.height.0 / scale,
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert!(
+        painted.iter().any(|&(w, h)| {
+            (w - f32::from(picker.size.width)).abs() <= 1.
+                && (h - f32::from(picker.size.height)).abs() <= 1.
+        }),
+        "the picker is filled with the opaque floating fill: {painted:?} for {picker:?}"
+    );
     for (row, was) in ["linked", "ticket", "blocks"].iter().zip(&before) {
         assert_eq!(
             bounds(visual, format!("board-drawer-{row}")).origin,
