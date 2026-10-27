@@ -605,7 +605,7 @@ impl BoardView {
     /// Summed again only when a painted height, the column's ids or the
     /// estimate changed since the last frame (`heights_version`), not on
     /// every frame.
-    fn column_body_height(&self, column_id: &str) -> Pixels {
+    pub(super) fn column_body_height(&self, column_id: &str) -> Pixels {
         let estimate = self.item_estimate(&self.display);
         let version = self.heights_version.get();
         if let Some(&(seen, seen_estimate, height)) = self.body_heights.borrow().get(column_id)

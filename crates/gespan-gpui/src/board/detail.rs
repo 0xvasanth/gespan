@@ -1,7 +1,7 @@
 //! The task drawer, laid out like gr8r's: a top bar of actions, the title, a
 //! grid of properties, the description, subtasks, then Comments and Activity.
 //! It docks beside the board instead of covering it.
-mod more;
+pub(super) mod more;
 mod view;
 #[cfg(test)]
 pub(crate) use view::{SEND_HINT, comment_author};
@@ -136,6 +136,26 @@ impl CardDetail {
                 .as_ref()
                 .map(|input| input.read(cx).content.to_string()),
         )
+    }
+
+    /// Whether a pick list is open, its typed text, and the refusal under it.
+    #[cfg(test)]
+    pub(crate) fn picker_state(&self, cx: &gpui::App) -> (bool, String, Option<String>) {
+        (
+            self.picker.is_some(),
+            self.query.read(cx).content.to_string(),
+            self.inline_error.clone(),
+        )
+    }
+
+    /// The links the links list shows, in order.
+    #[cfg(test)]
+    pub(crate) fn link_rows<'a>(&'a self, card: &gespan_core::board::Card) -> Vec<&'a CardLink> {
+        let primary = (card.link_kind.as_deref(), card.link_id.as_deref());
+        self.links
+            .iter()
+            .filter(|link| shown_link(link, primary))
+            .collect()
     }
 
     /// The description's text and selection.
@@ -320,7 +340,15 @@ impl BoardView {
     }
 
     /// Escape inside the drawer closes its innermost open thing first.
+    /// Escape in a custom text, number or URL field keeps what was typed:
+    /// leaving the field saves it, and the drawer stays. A value the field
+    /// refused stays with its reason; the next Escape drops it. Escape in
+    /// the estimate writes nothing and the saved value shows again.
     pub(crate) fn close_detail_layer(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some((index, typed)) = self.typed_field_on_escape(cx) {
+            self.submit_field(index, &typed, cx);
+            return true;
+        }
         let Some(detail) = &mut self.card_detail else {
             return false;
         };
@@ -330,6 +358,22 @@ impl BoardView {
             return true;
         }
         false
+    }
+
+    /// The open custom field and its typed text, when Escape should save it:
+    /// a text, number or URL field whose text differs from the saved value
+    /// and was not just refused.
+    fn typed_field_on_escape(&self, cx: &gpui::App) -> Option<(usize, String)> {
+        let detail = self.card_detail.as_ref()?;
+        let Some(Picker::Field(index)) = detail.picker else {
+            return None;
+        };
+        if detail.inline_error.is_some() {
+            return None;
+        }
+        let saved = saved_field_text(detail, index)?;
+        let typed = detail.query.read(cx).content.trim().to_string();
+        (typed != saved.trim()).then_some((index, typed))
     }
 
     /// Escape in the full page goes back to the drawer. True when it did.
@@ -662,12 +706,13 @@ impl BoardView {
                     .filter(|column| self.column(column).is_some())
                     .map(str::to_string);
                 let current = self.card(&card_id).map(|card| card.column_id.clone());
+                // A move from the drawer can be undone, as Mark complete can.
                 if let Some(column) = column
                     && current.as_ref() != Some(&column)
                 {
-                    self.write_task(cx, |service| {
-                        service.card_move(&card_id, &column, usize::MAX, "user")
-                    });
+                    self.move_with_undo(&card_id, &column, usize::MAX, cx);
+                    self.refresh_detail_lists();
+                    cx.notify();
                 }
             }
             Choice::Priority => {
@@ -789,15 +834,13 @@ impl BoardView {
             Picker::PrUrl => "https://…, then Enter",
             Picker::WorktreePath => "/path/to/worktree, then Enter",
         };
-        // Editing a text or number field starts from its saved value.
+        // Editing a text or number field, or the estimate, starts from its
+        // saved value.
         let start = match picker {
-            Picker::Field(index) => detail
-                .fields
-                .get(index)
-                .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "url"))
-                .and_then(|field| {
-                    quick::field_text(&field.kind, detail.field_values.get(&field.id)?)
-                })
+            Picker::Field(index) => saved_field_text(detail, index).unwrap_or_default(),
+            Picker::Estimate => detail
+                .estimate
+                .map(quick::format_estimate)
                 .unwrap_or_default(),
             _ => String::new(),
         };
@@ -1449,4 +1492,32 @@ impl BoardView {
             self.push_undo(format!("Deleted #{number}"), undo, cx);
         }
     }
+}
+
+/// The saved value of the text, number or URL field at `index`, as typed
+/// text (empty when unset); `None` for any other kind of field.
+fn saved_field_text(detail: &CardDetail, index: usize) -> Option<String> {
+    let field = detail
+        .fields
+        .get(index)
+        .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "url"))?;
+    Some(
+        detail
+            .field_values
+            .get(&field.id)
+            .and_then(|raw| quick::field_text(&field.kind, raw))
+            .unwrap_or_default(),
+    )
+}
+
+/// Whether the links list shows `link`: every PR, worktree, flow run,
+/// session and Pilot link but the primary one, which the Linked work row
+/// already shows (ruling C3-f), stored as role `primary` or as an extra row
+/// matching the card's link.
+pub(super) fn shown_link(link: &CardLink, primary: (Option<&str>, Option<&str>)) -> bool {
+    matches!(
+        link.kind.as_str(),
+        "session" | "pilot" | "flow-run" | "pr" | "worktree"
+    ) && link.role.as_deref() != Some("primary")
+        && (Some(link.kind.as_str()), Some(link.reference.as_str())) != primary
 }

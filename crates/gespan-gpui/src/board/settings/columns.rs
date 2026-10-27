@@ -1,6 +1,7 @@
 //! Columns: add, rename, recolour, role, WIP limit, reorder and delete.
 use super::{Edit, button, card_row, heading, palette_hexes, swatch, target};
 use crate::board::{BoardView, ROLES};
+use gespan_core::board::extras::ColumnDisplayPatch;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 
 const CANCELLED: (&str, &str) = ("cancelled", "Cancelled");
@@ -34,12 +35,17 @@ impl BoardView {
                 }
             }
         };
-        let Some(column) = self.column(id) else {
+        if self.column(id).is_none() {
             return true;
+        }
+        // Only the limit is written: a colour or collapse set in the other
+        // app since the last load stays.
+        let patch = ColumnDisplayPatch {
+            wip_limit: Some(limit),
+            ..Default::default()
         };
-        let (color, collapsed) = (column.color.clone(), column.collapsed);
         self.settings_write(cx, |service| {
-            service.set_column_display(id, color.as_deref(), limit, collapsed)
+            service.update_column_display(id, &patch).map(drop)
         })
     }
 
@@ -48,9 +54,12 @@ impl BoardView {
             return;
         };
         let color = (column.color.as_deref() != Some(hex)).then(|| hex.to_string());
-        let (limit, collapsed) = (column.wip_limit, column.collapsed);
+        let patch = ColumnDisplayPatch {
+            color: Some(color),
+            ..Default::default()
+        };
         self.settings_write(cx, |service| {
-            service.set_column_display(id, color.as_deref(), limit, collapsed)
+            service.update_column_display(id, &patch).map(drop)
         });
     }
 

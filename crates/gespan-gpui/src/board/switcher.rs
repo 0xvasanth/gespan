@@ -34,6 +34,10 @@ pub(super) struct Switcher {
     /// New board: the templates on offer and the one picked (Blank first).
     templates: Vec<TemplateInfo>,
     template: String,
+    /// A board this menu made but could not open (the drawer's edits would
+    /// not save): its id and name. Enter with that name opens it again
+    /// instead of making a second one.
+    created: Option<(String, String)>,
     _submit: Option<Subscription>,
 }
 
@@ -46,6 +50,7 @@ impl Switcher {
             error: None,
             templates: Vec::new(),
             template: BLANK.into(),
+            created: None,
             _submit: None,
         }
     }
@@ -136,6 +141,16 @@ impl BoardView {
         if name.is_empty() {
             return false;
         }
+        // The board was made by an earlier Enter that couldn't open it:
+        // open that one, never a duplicate.
+        if let Some((id, _)) = self
+            .switcher
+            .as_ref()
+            .and_then(|switcher| switcher.created.clone())
+            .filter(|(_, made)| made == name)
+        {
+            return self.open_made_board(id, name, cx);
+        }
         let made = self.service().and_then(|service| {
             if template == BLANK {
                 service.create(name)
@@ -144,12 +159,37 @@ impl BoardView {
             }
         });
         match made {
-            Ok(board) => self.open_board(board.id, cx),
+            Ok(board) => self.open_made_board(board.id, name, cx),
             Err(error) => {
                 self.switcher_error(error, cx);
                 false
             }
         }
+    }
+
+    /// Open a board the switcher just made. When the drawer's edits won't
+    /// save, the board stays made but closed: the name stays in the field,
+    /// the menu says why, and the next Enter tries to open it again.
+    fn open_made_board(&mut self, id: String, name: &str, cx: &mut Context<Self>) -> bool {
+        if self.open_board(id.clone(), cx) {
+            return true;
+        }
+        // The new board is in the list now, but nothing else changed.
+        if let Ok(boards) = self.service().and_then(|service| service.list()) {
+            self.boards = boards;
+        }
+        let reason = self
+            .error
+            .clone()
+            .unwrap_or_else(|| "the open card's edits weren't saved".into());
+        if let Some(switcher) = &mut self.switcher {
+            switcher.created = Some((id, name.to_string()));
+        }
+        self.switcher_error(
+            format!("Created \"{name}\" but couldn't open it: {reason}"),
+            cx,
+        );
+        false
     }
 
     fn rename_open_board(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
@@ -248,6 +288,7 @@ impl BoardView {
             error,
             templates,
             template: BLANK.into(),
+            created: None,
             _submit: Some(submit),
         });
         cx.notify();
@@ -451,6 +492,22 @@ impl BoardView {
             )
             .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+impl BoardView {
+    /// The text in the switcher's new or rename name field, if one is open.
+    pub(super) fn switcher_name_text(&self, cx: &gpui::App) -> Option<String> {
+        match &self.switcher.as_ref()?.mode {
+            Mode::New(input) | Mode::Rename(input) => Some(input.read(cx).content.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The reason the switcher shows, if any.
+    pub(super) fn switcher_error_text(&self) -> Option<String> {
+        self.switcher.as_ref()?.error.clone()
     }
 }
 

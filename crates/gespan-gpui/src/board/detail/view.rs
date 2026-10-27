@@ -13,7 +13,7 @@ use crate::{
     popover::{Anchor, menu_popover},
     theme::*,
 };
-use gespan_core::board::Card;
+use gespan_core::board::{Card, extras::CardLink};
 use gpui::{
     AnyElement, Context, Focusable, FontWeight, MouseButton, Role, SharedString, div, prelude::*,
     px,
@@ -1002,10 +1002,14 @@ impl BoardView {
             "worktree" => "Worktree",
             _ => "",
         };
+        // The primary link already shows in the Linked work row (ruling
+        // C3-f), whether stored as role `primary` or as an extra row that
+        // matches the card's link.
+        let primary = (card.link_kind.as_deref(), card.link_id.as_deref());
         let rows = detail
             .links
             .iter()
-            .filter(|link| !label(&link.kind).is_empty())
+            .filter(|link| super::shown_link(link, primary))
             .enumerate()
             .map(|(index, link)| {
                 let openable =
@@ -1052,7 +1056,7 @@ impl BoardView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(link.reference.clone()),
+                            .child(self.link_row_text(link)),
                     )
                     .when(openable, |d| {
                         d.child(small(open_id, "Open").text_color(accent_color()).on_click(
@@ -1113,6 +1117,19 @@ impl BoardView {
             .when(adding, |d| {
                 d.child(self.render_picker(detail, picker.unwrap_or(Picker::PrUrl), card, cx))
             })
+    }
+
+    /// What a links-list row shows: a session's or Pilot's name, "No longer
+    /// exists" for work that is gone, and the reference for a PR, worktree
+    /// or flow run.
+    pub(in crate::board) fn link_row_text(&self, link: &CardLink) -> String {
+        match link.kind.as_str() {
+            "session" | "pilot" => match self.link_target(&link.kind, &link.reference) {
+                LinkLabel::Found(name) => name,
+                LinkLabel::Missing => "No longer exists".into(),
+            },
+            _ => link.reference.clone(),
+        }
     }
 
     fn render_markdown_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {

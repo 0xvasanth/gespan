@@ -3620,8 +3620,9 @@ fn estimate_parses_hours_and_minutes_in_the_drawer(cx: &mut TestAppContext) {
     assert_eq!(meta_of(&f, &card).estimate_minutes, Some(90));
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    // Empty clears it.
+    // Empty clears it. The field opens on the saved value, so clear that.
     click(visual, "board-drawer-estimate");
+    visual.simulate_keystrokes("cmd-a backspace");
     visual.simulate_keystrokes("enter");
     assert_eq!(meta_of(&f, &card).estimate_minutes, None);
 }
@@ -8466,3 +8467,4 @@ mod keyboard_scale;
 mod lanes_scale;
 mod link_run;
 mod scale;
+mod ux_batch;

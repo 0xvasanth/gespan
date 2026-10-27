@@ -179,6 +179,9 @@ pub(crate) struct BoardView {
     pub(crate) detail: Option<BoardDetail>,
     pub(crate) dragging: bool,
     pub(crate) pending_reload: bool,
+    /// Set by a load that had to open another board because the open one
+    /// was deleted elsewhere; the reload then resets the board's UI.
+    fell_back: bool,
     pub(crate) last_data_version: i64,
     /// Every non-ticket link of the board's live cards.
     link_rows: Vec<CardLink>,
@@ -462,6 +465,7 @@ impl BoardView {
             detail: None,
             dragging: false,
             pending_reload: false,
+            fell_back: false,
             last_data_version: 0,
             link_rows: Vec::new(),
             chips: HashMap::new(),
@@ -663,6 +667,9 @@ impl BoardView {
         }
         self.pending_reload = false;
         self.load_error = self.load(cx).err();
+        if std::mem::take(&mut self.fell_back) {
+            self.reset_after_fallback(cx);
+        }
         if std::mem::take(&mut self.status_due) && self.load_error.is_none() {
             self.refresh_link_status(cx);
         }
@@ -680,6 +687,28 @@ impl BoardView {
             self.refresh_detail_lists();
         }
         cx.notify();
+    }
+
+    /// The open board was deleted elsewhere and `load` opened another: what
+    /// belonged to the old board goes, as on a board switch. The undo toast
+    /// goes too (a held delete went with the board), and so do the drawer,
+    /// the composer, menus, the selection, the filter and the search.
+    fn reset_after_fallback(&mut self, cx: &mut Context<Self>) {
+        self.commit_pending(cx);
+        self.card_detail = None;
+        self.switcher = None;
+        self.pop = None;
+        self.table_edit = None;
+        self.clear_selection();
+        self.reset_view(cx);
+        self.settings = None;
+        self.filter_open = false;
+        self.sort_open = false;
+        self.card_menu = None;
+        self.menu = None;
+        self.composer = None;
+        self.new_card = None;
+        self.renaming = None;
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
@@ -836,6 +865,13 @@ impl BoardView {
             hook();
         }
         self.last_data_version = version;
+        // The open board went away elsewhere and another one opens instead.
+        // A board the user picked (or a fresh start) is not a fallback.
+        self.fell_back = self
+            .open_board_id
+            .as_ref()
+            .is_some_and(|open| *open != board.id)
+            && self.selected_board_id.as_ref() != Some(&board.id);
         self.selected_board_id = Some(board.id.clone());
         self.open_board_id = Some(board.id);
         self.boards = boards;
@@ -926,6 +962,12 @@ impl BoardView {
     pub(crate) fn link_label(&self, card_id: &str) -> Option<LinkLabel> {
         let card = self.card(card_id)?;
         let (kind, id) = (card.link_kind.as_deref()?, card.link_id.as_deref()?);
+        Some(self.link_target(kind, id))
+    }
+
+    /// The session or Pilot a link names: its title, or missing when the
+    /// work is gone (or the link is of another kind).
+    pub(crate) fn link_target(&self, kind: &str, id: &str) -> LinkLabel {
         let found = match kind {
             "session" => self
                 .link_sessions
@@ -938,7 +980,7 @@ impl BoardView {
                 .map(|(_, name)| name.clone()),
             _ => None,
         };
-        Some(found.map_or(LinkLabel::Missing, LinkLabel::Found))
+        found.map_or(LinkLabel::Missing, LinkLabel::Found)
     }
 
     /// Why a column can't be deleted, or `None` when it can. Archived cards
@@ -1356,7 +1398,11 @@ impl BoardView {
                 crate::popover::MenuAction::new(id, format!("Move to {}", column.name)).into(),
             );
         }
-        items.push(crate::popover::MenuItem::Separator);
+        // With no Move rows (a one-column board) the separator after Open
+        // already divides it from More….
+        if !targets.is_empty() {
+            items.push(crate::popover::MenuItem::Separator);
+        }
         items.push(crate::popover::MenuAction::new("more", "More…").into());
         self.menu = None;
         let menu = cx.new(|cx| crate::popover::Menu::new("Card actions", items, window, cx));
@@ -1493,7 +1539,7 @@ impl BoardView {
             (column_id.clone(), column_id.clone(), column_id.clone());
         let (collapse_id, priority_id, due_id) =
             (column_id.clone(), column_id.clone(), column_id.clone());
-        let (done_id, archive_id) = (column_id.clone(), column_id);
+        let (done_id, archive_id, move_id) = (column_id.clone(), column_id.clone(), column_id);
         let divider = || {
             div()
                 .my(px(4.))
@@ -1569,7 +1615,100 @@ impl BoardView {
                 )
                 .into_any_element(),
         );
+        items.extend(self.move_then_delete_items(&move_id, cx));
         items
+    }
+
+    /// A column that holds only live cards offers "Move cards to…" each other
+    /// column, then deletes itself. Archived cards still block the delete
+    /// (C5-l), so nothing is offered then.
+    fn move_then_delete_items(&self, column_id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        let live = detail
+            .cards
+            .iter()
+            .filter(|card| card.column_id == column_id)
+            .count();
+        let held = self.undo.pending_delete_count_in(column_id);
+        let archived = self.column_counts.get(column_id).map_or(0, |c| c.1);
+        if live == 0 || archived > held {
+            return Vec::new();
+        }
+        let mut items = vec![
+            div()
+                .id("board-column-move-cards")
+                .debug_selector(|| "board-column-move-cards".into())
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(2.))
+                .text_size(px(12.))
+                .text_color(content(0.5))
+                .child("Move cards to…")
+                .into_any_element(),
+        ];
+        for (index, column) in detail.columns.iter().enumerate() {
+            if column.id == column_id {
+                continue;
+            }
+            let (from, to) = (column_id.to_string(), column.id.clone());
+            items.push(
+                menu_row(
+                    format!("board-column-move-delete-{index}").into(),
+                    column.name.clone(),
+                )
+                .pl(px(16.))
+                .aria_label(format!(
+                    "Move the cards to {}, then delete the column",
+                    column.name
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.header_delete_moving_cards(&from, &to, cx)
+                }))
+                .into_any_element(),
+            );
+        }
+        items
+    }
+
+    /// Move a column's live cards to the end of `target`, in their order,
+    /// then delete the column. A column with archived cards is refused
+    /// first, so nothing moves for a delete that can't happen.
+    fn header_delete_moving_cards(
+        &mut self,
+        column_id: &str,
+        target: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu = None;
+        let archived = self.column_counts.get(column_id).map_or(0, |c| c.1);
+        let held = self.undo.pending_delete_count_in(column_id);
+        if archived > held {
+            let left = archived - held;
+            let plural = if left == 1 { "card" } else { "cards" };
+            self.error = Some(format!(
+                "Couldn't delete the column: it has {left} archived {plural}. Delete them from the Archive first"
+            ));
+            cx.notify();
+            return;
+        }
+        if held > 0 {
+            self.commit_pending(cx);
+        }
+        let ids: Vec<String> = self.detail.as_ref().map_or_else(Vec::new, |detail| {
+            let mut cards: Vec<_> = detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column_id)
+                .collect();
+            cards.sort_by_key(|card| card.position);
+            cards.into_iter().map(|card| card.id.clone()).collect()
+        });
+        self.write(cx, |service| {
+            service.move_many(&ids, target, usize::MAX, "user")?;
+            service.column_delete(column_id)
+        });
     }
 }
 
