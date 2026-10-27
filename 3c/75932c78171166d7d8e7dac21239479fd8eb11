@@ -1,0 +1,23 @@
+docs/native/parity.md
+  s_938a6e0c93b076::t_d975ac0ac30479 118
+docs/native/verification.md
+  s_938a6e0c93b076::t_d975ac0ac30479 123,135,137,148,157
+docs/board.md
+  s_938a6e0c93b076::t_d975ac0ac30479 11,57,89,140,147-148,160,165,172-174,180,187-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c75932c78171166d7d8e7dac21239479fd8eb11",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
