@@ -1,0 +1,22 @@
+scripts/package-native.mjs
+  s_4d58c2980ba6b7::t_78c6eb61115008 39-52,230-231
+  s_4d58c2980ba6b7::t_8cead3363e9f3c 6
+scripts/package-native.test.mjs
+  s_4d58c2980ba6b7::t_1aa77c552203fb 14-22,211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8387fade9e21c9db045ce1079966ea1632eef2eb",
+  "prompts": {},
+  "sessions": {
+    "s_4d58c2980ba6b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "779852d9-f6ed-4c1f-af54-ee84b77f844b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
