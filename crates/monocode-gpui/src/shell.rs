@@ -3875,7 +3875,14 @@ impl Shell {
         self.save_state(cx);
     }
     fn save_window_state(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.workspace.window.update(window.inner_window_bounds()) {
+        let bounds = window.inner_window_bounds();
+        // X11 can report Windowed bounds while tracking fullscreen separately.
+        let bounds = if window.is_fullscreen() {
+            gpui::WindowBounds::Fullscreen(bounds.get_bounds())
+        } else {
+            bounds
+        };
+        if self.workspace.window.update(bounds) {
             self.save_state(cx);
         }
     }
@@ -8627,6 +8634,36 @@ mod tests {
                 assert_eq!(*shell.latest_state.lock().unwrap(), saved);
                 let restored = Workspace::restore(Some(&saved), &[], "/work/monocode");
                 assert_eq!(restored.window.bounds(cx).get_bounds().size, dimensions);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn window_state_preserves_fullscreen_when_backend_bounds_report_windowed(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        let normal_size = gpui::size(px(1440.), px(900.));
+        cx.simulate_window_resize(window.into(), normal_size);
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| window.toggle_fullscreen())
+            .unwrap();
+        cx.simulate_window_resize(window.into(), gpui::size(px(1920.), px(1080.)));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, window, cx| {
+                // The test backend reproduces X11: fullscreen is tracked separately from bounds.
+                assert!(window.is_fullscreen());
+                assert!(matches!(
+                    window.inner_window_bounds(),
+                    gpui::WindowBounds::Windowed(_)
+                ));
+                let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                assert_eq!(*shell.latest_state.lock().unwrap(), saved);
+                let restored = Workspace::restore(Some(&saved), &[], "/work/monocode");
+                let bounds = restored.window.bounds(cx);
+                assert!(matches!(bounds, gpui::WindowBounds::Fullscreen(_)));
+                assert_eq!(bounds.get_bounds().size, normal_size);
             })
             .unwrap();
     }
