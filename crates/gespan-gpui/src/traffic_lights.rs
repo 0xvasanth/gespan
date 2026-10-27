@@ -4,9 +4,10 @@
 //! toggle. Auto Layout pins the buttons, so GPUI's frame updates on resize,
 //! focus and fullscreen don't move them back.
 
-use gpui::Window;
+use gpui::{App, Window};
 use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::time::Duration;
 
 const BUTTON_SIZE: f64 = 14.;
 const LEFT_MARGIN: f64 = 12.;
@@ -76,9 +77,108 @@ pub(crate) fn focus_content(window: &Window) {
         window.makeFirstResponder(Some(view));
     }
 }
+/// Orders the window out; the app keeps running in the menu bar. A
+/// full-screen window leaves full screen first: ordered out there, it leaves
+/// its Space behind as a black screen that only a force quit clears.
 #[cfg(not(test))]
-pub(crate) fn hide(window: &Window) {
-    if let Some(window) = ns_window(window) {
-        window.orderOut(None);
+pub(crate) fn hide(window: &Window, cx: &App) {
+    hide_then(window, cx, |window| {
+        if let Some(window) = ns_window(window) {
+            window.orderOut(None);
+        }
+    });
+}
+
+/// How long `hide` waits for AppKit's full-screen exit animation, which
+/// takes about half a second, before ordering the window out anyway.
+const FULL_SCREEN_EXIT_POLL: Duration = Duration::from_millis(50);
+const FULL_SCREEN_EXIT_POLLS: usize = 60;
+
+/// `hide` with the final ordering out passed in, so tests can watch for it.
+fn hide_then(window: &Window, cx: &App, order_out: fn(&Window)) {
+    if !window.is_fullscreen() {
+        order_out(window);
+        return;
+    }
+    window.toggle_fullscreen();
+    window
+        .spawn(cx, async move |cx| {
+            for _ in 0..FULL_SCREEN_EXIT_POLLS {
+                cx.background_executor().timer(FULL_SCREEN_EXIT_POLL).await;
+                if !matches!(cx.update(|window, _| window.is_fullscreen()), Ok(true)) {
+                    break;
+                }
+            }
+            let _ = cx.update(|window, _| order_out(window));
+        })
+        .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, Context, IntoElement, Render, TestAppContext, div};
+    use std::cell::Cell;
+
+    struct Blank;
+    impl Render for Blank {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    thread_local! {
+        static ORDERED_OUT: Cell<usize> = const { Cell::new(0) };
+    }
+    fn record(_: &Window) {
+        ORDERED_OUT.with(|count| count.set(count.get() + 1));
+    }
+    fn ordered_out() -> usize {
+        ORDERED_OUT.with(Cell::get)
+    }
+
+    fn open(cx: &mut TestAppContext, fullscreen: bool) -> gpui::WindowHandle<Blank> {
+        ORDERED_OUT.with(|count| count.set(0));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|_| Blank))
+                .unwrap()
+        });
+        if fullscreen {
+            window
+                .update(cx, |_, window, _| window.toggle_fullscreen())
+                .unwrap();
+        }
+        window
+    }
+
+    #[gpui::test]
+    fn a_full_screen_window_leaves_full_screen_before_it_is_ordered_out(cx: &mut TestAppContext) {
+        let window = open(cx, true);
+        window
+            .update(cx, |_, window, cx| hide_then(window, cx, record))
+            .unwrap();
+        window
+            .update(cx, |_, window, _| assert!(!window.is_fullscreen()))
+            .unwrap();
+        assert_eq!(ordered_out(), 0, "not while the exit animation runs");
+        cx.executor().advance_clock(FULL_SCREEN_EXIT_POLL * 2);
+        cx.run_until_parked();
+        assert_eq!(ordered_out(), 1, "ordered out once full screen has ended");
+        cx.executor()
+            .advance_clock(FULL_SCREEN_EXIT_POLL * FULL_SCREEN_EXIT_POLLS as u32);
+        cx.run_until_parked();
+        assert_eq!(ordered_out(), 1, "only once");
+    }
+
+    #[gpui::test]
+    fn a_window_that_is_not_full_screen_is_ordered_out_at_once(cx: &mut TestAppContext) {
+        let window = open(cx, false);
+        window
+            .update(cx, |_, window, cx| hide_then(window, cx, record))
+            .unwrap();
+        assert_eq!(ordered_out(), 1);
+        window
+            .update(cx, |_, window, _| assert!(!window.is_fullscreen()))
+            .unwrap();
     }
 }
