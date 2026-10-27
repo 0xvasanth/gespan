@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The first Gespan beta. Version numbering restarts here, so installs of 0.16.0 or
 earlier do not update to it automatically; install it fresh.
 
+This beta is not signed with an Apple Developer ID or a Windows code-signing
+certificate yet. On macOS, open it the first time with Control-click → Open; on
+Windows, choose **More info → Run anyway** in SmartScreen. Later betas update
+automatically.
+
 ### Added
 
 - Gespan Native diagnostics log lines and crash reports record the commit the
@@ -36,6 +41,9 @@ earlier do not update to it automatically; install it fresh.
   accepting shows an error instead of being sent again.
 - The Pilot chat's send button becomes **Stop** while a turn runs and nothing is
   typed.
+- Closing a full-screen Gespan Native window no longer leaves a black screen
+  that only a force quit cleared; the window leaves full screen, then hides to
+  the menu bar.
 
 ### Changed
 

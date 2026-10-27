@@ -8,8 +8,11 @@ function releaseChannel(tag) {
 }
 
 // GitHub's /releases/latest skips prereleases, so the stable feed can live on
-// GitHub Releases. The beta feed (beta/latest.json) stays R2-only.
+// GitHub Releases. The beta feed lives on R2 when R2 is configured; otherwise
+// on the fixed beta-latest release, which holds only that feed (as
+// native-latest does for Gespan Native), so it never becomes releases/latest.
 const GITHUB_STABLE_FEED = "https://github.com/0xvasanth/gespan/releases/latest/download/latest.json";
+const GITHUB_BETA_FEED = "https://github.com/0xvasanth/gespan/releases/download/beta-latest/latest.json";
 
 function updaterEndpoint(env) {
   const { prerelease, feedKey } = releaseChannel(env.GITHUB_REF_NAME);
@@ -17,9 +20,8 @@ function updaterEndpoint(env) {
   const configured = (env.TAURI_UPDATER_ENDPOINT || "").trim();
   // Beta builds must never retain a configured production endpoint.
   let endpoint;
-  if (prerelease) endpoint = base ? `${base}/${feedKey}` : "";
+  if (prerelease) endpoint = base ? `${base}/${feedKey}` : GITHUB_BETA_FEED;
   else endpoint = configured || GITHUB_STABLE_FEED;
-  if (!endpoint) throw new Error("R2_PUBLIC_BASE_URL is required for beta updates; stable builds default to GitHub Releases");
   if (new URL(endpoint).protocol !== "https:") throw new Error("Release updater endpoints must use HTTPS");
   return endpoint;
 }
@@ -37,13 +39,14 @@ function updaterPubkey(env) {
 
 const R2_REQUIRED = ["R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
 
-// R2 is optional for stable releases (GitHub Releases is the default feed) but
-// required for beta, whose feed is R2-only. One rule shared by every step.
+// R2 is optional: without it every feed is on GitHub Releases. A partial R2
+// setup is a mistake for a beta, whose builds would point at the R2 feed, so
+// it fails fast. One rule shared by every step.
 function r2Status(env) {
   const { prerelease } = releaseChannel(env.GITHUB_REF_NAME);
   const missing = R2_REQUIRED.filter((name) => !(env[name] || "").trim());
-  if (prerelease && missing.length) {
-    throw new Error(`Beta releases require all R2 secrets; missing: ${missing.join(", ")}`);
+  if (prerelease && missing.length && missing.length < R2_REQUIRED.length) {
+    throw new Error(`Beta releases need all R2 secrets or none; missing: ${missing.join(", ")}`);
   }
   return { enabled: missing.length === 0, missing };
 }
@@ -149,7 +152,7 @@ function verifyRecoveredFeed({ latestJson, sigs, tag, expected }) {
 
 module.exports = {
   verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
-  releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED,
+  releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
   GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
 };
 

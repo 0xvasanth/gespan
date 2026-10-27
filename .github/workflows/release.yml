@@ -6,6 +6,11 @@ on:
   # Use workflow from -> Tags -> vX.Y.Z): the tag name picks the channel and
   # version, and scripts/release-channel.cjs rejects any other ref.
   workflow_dispatch:
+    inputs:
+      allow_unsigned:
+        description: "Publish an ad-hoc signed, unnotarized macOS build when the Apple signing secrets are missing (prereleases only)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +52,10 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
+          if [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_KEY_P8" ]; then
+            echo "No Apple API key: the macOS build is not notarized."
+            exit 0
+          fi
           mkdir -p "$HOME/private_keys"
           printf '%s\n' "$APPLE_API_KEY_P8" > "$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8"
           echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8" >> "$GITHUB_ENV"
@@ -85,13 +94,19 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_ENDPOINT: ${{ secrets.TAURI_UPDATER_ENDPOINT }}
           R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
         run: |
           node <<'NODE'
           const { writeFileSync } = require("node:fs");
-          const identity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
+          let identity = (process.env.APPLE_SIGNING_IDENTITY || "").trim();
           if (!identity || identity === "-") {
-            console.error("APPLE_SIGNING_IDENTITY is required and must not be ad-hoc '-'");
-            process.exit(1);
+            // Ad-hoc signing is only for prereleases, and only when asked for.
+            if (process.env.ALLOW_UNSIGNED !== "true" || process.env.RELEASE_PRERELEASE !== "true") {
+              console.error("APPLE_SIGNING_IDENTITY is required. A prerelease can run with allow_unsigned to publish an ad-hoc signed build.");
+              process.exit(1);
+            }
+            console.log("No Developer ID: building an ad-hoc signed, unnotarized macOS app.");
+            identity = "-";
           }
           const { updaterEndpoint, updaterPubkey } = require("./scripts/release-channel.cjs");
           const pubkey = updaterPubkey(process.env);
@@ -125,6 +140,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          # An empty secret is still a set variable, and Tauri would try to
+          # import or notarize with it.
+          for name in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH; do
+            if [ -z "${!name:-}" ]; then unset "$name"; fi
+          done
           bunx tauri build --target aarch64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
           bunx tauri build --target x86_64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
 
@@ -433,12 +453,21 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Stable feed is also a GitHub Release asset; the beta feed
-          # (beta/latest.json) is R2-only because /releases/latest skips prereleases.
+          # The stable feed is a GitHub Release asset. /releases/latest skips
+          # prereleases, so without R2 the beta feed is the only file on the
+          # fixed beta-latest release (scripts/release-channel.cjs GITHUB_BETA_FEED).
           if [[ "$R2_ENABLED" != true ]]; then
-            echo "R2 secrets not set; skipping R2 feed publication."
+            if [[ "$RELEASE_PRERELEASE" == true ]]; then
+              if ! gh release view beta-latest >/dev/null 2>&1; then
+                gh release create beta-latest --prerelease --latest=false --target "$GITHUB_SHA" \
+                  --title "Gespan beta update feed" \
+                  --notes "Update feed for Gespan betas. Contains only latest.json; packages live on the v*-beta releases."
+              fi
+              gh release upload beta-latest latest.json --clobber
+            fi
             exit 0
           fi
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"

@@ -145,12 +145,17 @@ export async function packageNative({
       },
     );
     const app = join(dirname(binary), "Gespan Native.app");
-    if (
-      !process.env.APPLE_SIGNING_IDENTITY ||
-      process.env.APPLE_SIGNING_IDENTITY === "-"
-    )
+    const identity = process.env.APPLE_SIGNING_IDENTITY || "";
+    // Without a Developer ID the app keeps the bundle script's ad-hoc
+    // signature and is not notarized; only an explicit opt-in publishes that.
+    const developerId = identity !== "" && identity !== "-";
+    if (!developerId && process.env.GESPAN_ALLOW_UNSIGNED !== "1")
       throw new Error(
-        "Public previews require a Developer ID signing identity",
+        "Public previews require a Developer ID signing identity; run the release with allow_unsigned to publish an ad-hoc signed build",
+      );
+    if (!developerId)
+      console.warn(
+        "No Developer ID: packaging an ad-hoc signed, unnotarized build",
       );
     const submit = async (file, staple) => {
       const result = run(
@@ -180,11 +185,14 @@ export async function packageNative({
         run("xcrun", ["stapler", "validate", staple]);
       }
     };
-    const zip = join(work, "notarize.zip");
-    run("ditto", ["-c", "-k", "--keepParent", app, zip]);
-    await submit(zip, app);
+    if (developerId) {
+      const zip = join(work, "notarize.zip");
+      run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+      await submit(zip, app);
+    }
     run("codesign", ["--verify", "--deep", "--strict", app]);
-    run("spctl", ["--assess", "--type", "execute", app]);
+    // Gatekeeper only accepts notarized Developer ID apps.
+    if (developerId) run("spctl", ["--assess", "--type", "execute", app]);
     const name = arch === "aarch64" ? "aarch64" : "x64";
     const archive = add(
       `GespanNative_${version}_${name}.app.tar.gz`,
@@ -209,13 +217,10 @@ export async function packageNative({
       "UDZO",
       dmg,
     ]);
-    run("codesign", [
-      "--sign",
-      process.env.APPLE_SIGNING_IDENTITY,
-      "--timestamp",
-      dmg,
-    ]);
-    await submit(dmg, dmg);
+    if (developerId) {
+      run("codesign", ["--sign", identity, "--timestamp", dmg]);
+      await submit(dmg, dmg);
+    }
   } else if (kind === "linux") {
     const debRoot = join(work, "deb");
     await linuxTree(debRoot, binary, "deb");
