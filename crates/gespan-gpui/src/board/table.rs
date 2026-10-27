@@ -67,6 +67,9 @@ struct Column {
     width: i64,
 }
 
+/// Space between the table's edges and its first and last columns.
+pub(super) const TABLE_INSET: f32 = 8.;
+
 impl BoardView {
     /// The columns the view shows, left to right. Title always leads, and a
     /// custom field deleted since the view was saved is dropped.
@@ -242,6 +245,7 @@ impl BoardView {
             .w(px(column.width as f32))
             .h_full()
             .flex_shrink_0()
+            .px(px(8.))
             .flex()
             .items_center()
             .overflow_hidden()
@@ -419,8 +423,8 @@ impl BoardView {
             .map(|column| self.table_cell(card, column, cx))
             .collect();
         self.row_shell(card, 0, cx)
-            .w(px(total))
-            .px_0()
+            .min_w(px(total + TABLE_INSET * 2.))
+            .px(px(TABLE_INSET))
             .gap_0()
             .children(cells)
             .into_any_element()
@@ -530,7 +534,8 @@ impl BoardView {
                     .overflow_x_scroll()
                     .child(
                         div()
-                            .w(px(total + 32.))
+                            .w_full()
+                            .min_w(px(total + TABLE_INSET * 2.))
                             .h_full()
                             .flex()
                             .flex_col()
@@ -539,7 +544,8 @@ impl BoardView {
                                     .id("board-table-header")
                                     .debug_selector(|| "board-table-header".into())
                                     .h(px(ROW_HEIGHT))
-                                    .w(px(total))
+                                    .w_full()
+                                    .px(px(TABLE_INSET))
                                     .flex_shrink_0()
                                     .flex()
                                     .items_center()

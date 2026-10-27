@@ -20,6 +20,10 @@ use gpui::{
 };
 
 const DRAWER_WIDTH: f32 = 440.;
+/// The drawer body's side padding; only used before the first layout.
+const DRAWER_PADDING: f32 = 20.;
+/// Pickers open under the value column, past the property labels.
+const PICKER_INDENT: f32 = 126.;
 /// The comment field sends on the platform's secondary submit chord.
 pub(crate) const SEND_HINT: &str = if cfg!(target_os = "macos") {
     "⌘Enter"
@@ -939,16 +943,31 @@ impl BoardView {
             | Picker::PrUrl
             | Picker::WorktreePath => {}
         }
-        div()
+        // The picker floats over the rows below it instead of pushing them
+        // down: a zero-height slot marks where it opens and how wide it may be.
+        let slot = detail.anchors.get("picker").cloned().unwrap_or_default();
+        let width = slot
+            .get()
+            .map_or(DRAWER_WIDTH - 2. * DRAWER_PADDING, |bounds| {
+                f32::from(bounds.size.width)
+            })
+            - PICKER_INDENT;
+        let panel = div()
             .id("board-picker")
             .debug_selector(|| "board-picker".into())
-            .ml(px(126.))
-            .mb_1()
+            .occlude()
+            .ml(px(PICKER_INDENT))
+            .w(px(width.max(160.)))
             .p(px(4.))
             .rounded(px(8.))
             .border_1()
             .border_color(content(0.1))
-            .bg(content(0.02))
+            .bg(pane_fill())
+            .shadow(vec![
+                gpui::BoxShadow::new(px(0.), px(8.), gpui::rgba(0x00000040).into())
+                    .blur_radius(px(16.))
+                    .spread_radius(px(-4.)),
+            ])
             .flex()
             .flex_col()
             .child(
@@ -982,7 +1001,20 @@ impl BoardView {
                     .flex()
                     .flex_col()
                     .children(rows),
-            )
+            );
+        // The slot takes no room: it gives back the gap its column puts
+        // before it (the links list's, or the property rows').
+        let gap = match picker {
+            Picker::AddLink(_) | Picker::PrUrl | Picker::WorktreePath => 4.,
+            _ => 2.,
+        };
+        div()
+            .relative()
+            .w_full()
+            .h_0()
+            .mt(px(-gap))
+            .child(slot.layout_probe())
+            .child(gpui::deferred(panel).with_priority(1))
             .into_any_element()
     }
 

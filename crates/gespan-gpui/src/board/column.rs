@@ -17,7 +17,7 @@ use std::{
 
 pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 /// The space above each card in a column, and around the composer.
-const ITEM_GAP: f32 = 6.;
+pub(super) const ITEM_GAP: f32 = 6.;
 /// How many frames a reveal keeps checking that its item is fully in view.
 pub(super) const SETTLE_FRAMES: u8 = 6;
 /// The composer's "Add card" row, until it has been measured.
@@ -689,6 +689,7 @@ impl BoardView {
             let done = column.role.as_deref() == Some("done");
             return div()
                 .relative()
+                .w_full()
                 .px(px(ITEM_GAP))
                 .pt(px(ITEM_GAP))
                 .flex()
