@@ -232,8 +232,22 @@ pub fn answer_card(
     check_session_key(session_key)?;
     match tool {
         CardTool::Subtasks => {
+            // Only boards with write-back on share their cards with agents,
+            // the same scope ticking a subtask has (ruling C6-k).
+            let mut write_back_by_board = std::collections::HashMap::new();
             let mut cards = Vec::new();
             for card in cards_for_link(conn, "session", session_key)? {
+                let write_back = match write_back_by_board.get(&card.board_id) {
+                    Some(on) => *on,
+                    None => {
+                        let on = board_settings(conn, &card.board_id)?.write_back;
+                        write_back_by_board.insert(card.board_id.clone(), on);
+                        on
+                    }
+                };
+                if !write_back {
+                    continue;
+                }
                 let subtasks: Vec<Value> = list_subtasks(conn, &card.id)?
                     .into_iter()
                     .map(|task| json!({ "id": task.id, "title": task.title, "done": task.done }))

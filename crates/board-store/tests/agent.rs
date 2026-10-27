@@ -607,13 +607,13 @@ fn subtask_tool_refuses_read_only_unlinked_cards_and_write_back_off() {
     let (_, theirs) = linked_card(&conn, "Theirs", 1, "s-2");
     let their_task = add_subtask(&conn, &theirs.id, "Not yours").unwrap();
 
-    // Listing: only cards linked to this session, read-only allowed.
+    // Listing: only cards linked to this session on boards with write-back
+    // on (ruling C6-k), read-only allowed.
     let listed = answer_card(&conn, "s-1", &CardTool::Subtasks, true).unwrap();
     let cards = listed["cards"].as_array().unwrap();
-    assert_eq!(cards.len(), 2);
-    // Cards come grouped by board, in no fixed board order; subtasks keep
-    // their order within a card.
-    let mut per_card: Vec<Vec<&str>> = cards
+    assert_eq!(cards.len(), 1);
+    // Subtasks keep their order within a card.
+    let per_card: Vec<Vec<&str>> = cards
         .iter()
         .map(|card| {
             card["subtasks"]
@@ -624,14 +624,9 @@ fn subtask_tool_refuses_read_only_unlinked_cards_and_write_back_off() {
                 .collect()
         })
         .collect();
-    per_card.sort();
-    let mut want = vec![
-        vec![first.id.as_str(), second.id.as_str()],
-        vec![off_task.id.as_str()],
-    ];
-    want.sort();
-    assert_eq!(per_card, want);
+    assert_eq!(per_card, vec![vec![first.id.as_str(), second.id.as_str()]]);
     assert!(!listed.to_string().contains(&their_task.id));
+    assert!(!listed.to_string().contains(&off_task.id));
 
     let done = |id: &str, flag: bool| CardTool::SubtaskDone {
         subtask_id: id.into(),
@@ -704,6 +699,41 @@ fn subtask_tool_refuses_read_only_unlinked_cards_and_write_back_off() {
     assert!(CardTool::from_call("card_subtasks", &json!({"sessionKey": "s-2"})).is_err());
     assert!(CardTool::from_call("card_subtasks", &json!({"tool": "card_subtasks"})).is_err());
     assert!(CardTool::from_call("card_delete", &json!({})).is_err());
+}
+
+#[test]
+fn card_subtasks_lists_only_boards_with_write_back_on() {
+    let conn = fresh();
+    let (on, on_card) = linked_card(&conn, "On", 1, "s-1");
+    let on_task = add_subtask(&conn, &on_card.id, "Visible").unwrap();
+    let (off, off_card) = linked_card(&conn, "Off", 1, "s-1");
+    let off_task = add_subtask(&conn, &off_card.id, "Hidden").unwrap();
+    write_back_on(&conn, &off, false);
+    let listed_ids = || -> Vec<String> {
+        let listed = answer_card(&conn, "s-1", &CardTool::Subtasks, false).unwrap();
+        listed["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|card| card["subtasks"].as_array().unwrap().clone())
+            .map(|task| task["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(listed_ids(), std::slice::from_ref(&on_task.id));
+    let listed = answer_card(&conn, "s-1", &CardTool::Subtasks, true).unwrap();
+    assert!(!listed.to_string().contains("Off card"), "{listed}");
+    assert!(!listed.to_string().contains("Hidden"), "{listed}");
+    // The scope is read at call time, both ways.
+    write_back_on(&conn, &off, true);
+    write_back_on(&conn, &on, false);
+    assert_eq!(listed_ids(), std::slice::from_ref(&off_task.id));
+    write_back_on(&conn, &off, false);
+    assert!(
+        answer_card(&conn, "s-1", &CardTool::Subtasks, false).unwrap()["cards"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
