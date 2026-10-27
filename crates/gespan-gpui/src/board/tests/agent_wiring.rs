@@ -190,6 +190,38 @@ fn needs_input_event_moves_card_per_custom_rule(cx: &mut TestAppContext) {
     assert_eq!(kinds(&f, &card, "needs_input"), 2);
 }
 
+/// R93: a session restored while it still waits on the user reports
+/// `needs_input` again when the app starts. A card whose newest run event is
+/// already that wait gets no second row; a card that ran since does.
+#[gpui::test]
+fn needs_input_at_app_start_writes_no_extra_activity_row(cx: &mut TestAppContext) {
+    let f = open(cx);
+    install_turns(&f, cx);
+    let (session, key) = new_session(&f);
+    let (_, card) = rule_to_review(&f, "Ask", "needs_input");
+    add_link(&f, &card, "session", &key);
+    waiting(&f, cx, session, true);
+    assert_eq!(kinds(&f, &card, "needs_input"), 1);
+    // The app quits while the session waits, then starts again.
+    install_turns(&f, cx);
+    waiting(&f, cx, session, true);
+    assert_eq!(
+        kinds(&f, &card, "needs_input"),
+        1,
+        "no row for the same wait"
+    );
+    assert_eq!(column_of(&f, &card), "Review");
+    // A new wait in this run is a new row.
+    waiting(&f, cx, session, false);
+    waiting(&f, cx, session, true);
+    assert_eq!(kinds(&f, &card, "needs_input"), 2);
+    // After a run event that isn't the wait, the next start's wait is new.
+    super::link_run::started(&f, cx, session, None);
+    install_turns(&f, cx);
+    waiting(&f, cx, session, true);
+    assert_eq!(kinds(&f, &card, "needs_input"), 3);
+}
+
 #[gpui::test]
 fn pr_merged_moves_card_once(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Shown"]);

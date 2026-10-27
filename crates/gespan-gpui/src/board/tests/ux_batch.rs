@@ -521,6 +521,12 @@ fn estimate_grammar_matches_the_shared_rule() {
         "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h"
     );
     assert!(parse_estimate("0m").is_err());
+    // A lone 0 parses but is refused with the shared (Tauri `cardProps.ts`)
+    // minimum message.
+    assert_eq!(
+        parse_estimate("0"),
+        Err("An estimate must be at least 1 minute".to_string())
+    );
 }
 
 #[test]
@@ -589,7 +595,7 @@ fn escape_in_the_estimate_puts_the_saved_value_back_without_a_write(cx: &mut Tes
     visual.run_until_parked();
     assert_eq!(meta_of(&f, &card).estimate_minutes, Some(90));
     assert_eq!(activity_details(&f, &card).len(), before, "Escape wrote");
-    assert!(!picker_state(&f, visual).0, "the field stayed open");
+    assert!(!picker_state(&f, visual).0, "Escape closes the field");
     drawer(&f, visual, |view, _| assert!(view.card_detail.is_some()));
     // The saved value is what shows when it opens again.
     click(visual, "board-drawer-estimate");

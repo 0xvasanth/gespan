@@ -509,7 +509,11 @@ impl Shell {
                         .disabled(ticket.url.is_none())
                         .into(),
                     MenuAction::new("ticket-refresh", "Refresh ticket").into(),
-                    ticket_status_menu(crate::board::turns::status_setting(&self.store, id)),
+                    ticket_status_menu(crate::board::turns::status_setting(
+                        &self.store,
+                        id,
+                        &self.board_service,
+                    )),
                     MenuAction::new("ticket-unlink", "Unlink ticket").into(),
                 ]);
             }
@@ -3571,6 +3575,62 @@ mod tests {
         assert_eq!(fake.fetch_count(), 1);
     }
 
+    /// R27: an agent's move is saved through `set_work_item`, which must
+    /// redraw the sidebar; the chip's status changes without anything else
+    /// touching the shell.
+    #[gpui::test]
+    fn agent_ticket_move_redraws_the_sidebar_chip(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        fake_tickets(window, cx, &[Tracker::Linear]);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.compact_session_cards = false;
+                shell.invalidate_chrome(cx);
+            })
+            .unwrap();
+        submit_link(window, cx, a, "ENG-7");
+        // Drawn once with the fetched status, whatever the link path redraws.
+        window
+            .update(cx, |shell, _, cx| shell.invalidate_chrome(cx))
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let status = sel(format!("ticket-chip-status-{a}"));
+        let width = |visual: &mut VisualTestContext| {
+            visual
+                .debug_bounds(status)
+                .map(|bounds| f32::from(bounds.size.width))
+        };
+        let before = width(visual).expect("the fetched status shows");
+        let moved = window
+            .update(visual, |shell, _, _| saved_ticket(shell, a))
+            .unwrap()
+            .map(|ticket| TicketRef {
+                status: Some("Done".into()),
+                status_group: Some(StateGroup::Completed),
+                ..ticket
+            })
+            .unwrap();
+        window
+            .update(visual, |shell, _, cx| {
+                let view = shell.sessions.get(&a).unwrap().clone();
+                view.update(cx, |_, cx| {
+                    cx.emit(crate::conversation::TicketChanged(TicketChange::Moved(
+                        moved,
+                    )))
+                });
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let after = width(visual).expect("the moved status shows");
+        assert!(
+            after < before,
+            "the chip should redraw \"In Progress\" as \"Done\" ({before} -> {after})"
+        );
+    }
+
     #[gpui::test]
     fn relinking_while_a_fetch_is_in_flight_still_fetches_the_new_ticket(cx: &mut TestAppContext) {
         let (window, a, _) = setup(cx);
@@ -3800,6 +3860,67 @@ mod tests {
                 })
                 .unwrap();
         }
+    }
+
+    /// R93: building the session menu reads the status setting through one
+    /// board store the shell keeps, not a new one per build.
+    #[gpui::test]
+    fn session_menu_opens_no_new_service_per_build(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let store = {
+            let store = gespan_core::store::Store::open(&path).unwrap();
+            while store.create("codex", "/work/gespan").unwrap().id < a {}
+            Arc::new(Mutex::new(store))
+        };
+        window
+            .update(cx, |shell, _, _| shell.store = store.clone())
+            .unwrap();
+        fake_tickets(window, cx, &[Tracker::Linear]);
+        submit_link(window, cx, a, "ENG-7");
+        let opens = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, _| shell.board_service.opens())
+                .unwrap()
+        };
+        let before = opens(cx);
+        for _ in 0..3 {
+            window
+                .update(cx, |shell, _, cx| {
+                    assert_eq!(status_choices(shell, a, cx).len(), 3);
+                })
+                .unwrap();
+        }
+        assert_eq!(opens(cx) - before, 1, "one board store for every build");
+        // A setting saved from the menu shows in the next build.
+        window
+            .update(cx, |shell, w, cx| {
+                shell.run_menu(MenuTarget::Session(a), "ticket-status:off", None, w, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let choices = status_choices(shell, a, cx);
+                assert!(choices[2].0 == "Off" && choices[2].1, "{choices:?}");
+            })
+            .unwrap();
+        assert_eq!(opens(cx) - before, 1);
+        // Another database (the store was swapped) gets its own board store.
+        let other = dir.path().join("other.db");
+        let store = {
+            let store = gespan_core::store::Store::open(&other).unwrap();
+            while store.create("codex", "/work/gespan").unwrap().id < a {}
+            Arc::new(Mutex::new(store))
+        };
+        window
+            .update(cx, |shell, _, cx| {
+                shell.store = store.clone();
+                status_choices(shell, a, cx);
+            })
+            .unwrap();
+        assert_eq!(opens(cx) - before, 2);
     }
 
     #[gpui::test]
