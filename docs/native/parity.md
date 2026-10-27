@@ -113,10 +113,9 @@ Known differences:
 | List and table rows | Rows have no keyboard focus | Rows are focusable |
 | Swimlane card in two lanes | Focus follows the card by id (its first appearance); arrows skip the other copy | Focus follows the copy that has focus |
 | A reload moves the focused card to another lane | Focus stays on the card | Focus passes to a neighbour in the old cell |
-| Escape in a custom text, number or URL field | Saves or keeps the typed text and closes the field; the drawer stays, and a second Escape does not close it | Leaves the field with the text kept; the next Escape closes the drawer |
 | Header "Move cards to…" before Delete column | Moves the cards, then deletes the column as two separate writes; not atomic and no Undo | Moves, then deletes, in two steps; no Undo |
 | Keyboard drag in swimlanes | Steps one lane at a time | Hops between lane headers' drop targets |
-| "New session from ticket…" | Links a ticket through the session's Link dialog | A new blank session; its ticket link is saved with the first message |
+| "New session from ticket…" | Asks for the ticket, then opens a new session linked to it and drafts its key | Same, but the session is saved with its first message |
 | Creating a board from a template | In the switcher; no empty-state creation | Also from the empty state |
 
 ## Platform and distribution

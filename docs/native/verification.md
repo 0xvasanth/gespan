@@ -120,7 +120,7 @@ Result column: pass or fail, date, build.
 | --- | --- | --- | --- | --- |
 | 1.1 | Native, then Tauri | Set a label on a card in Native. | Within about 2 s the label shows on the card in Tauri. | |
 | 1.2 | Tauri, then Native | Set a label on a card in Tauri. | It shows in Native. | |
-| 1.3 | Both | Create a board from the "Agent pipeline" template. On a card, "Run with…" (pick a provider, model and a local project). | The card gets a session link and its ticket, and moves Queued, Running, Needs review. Link chips refresh on board open and when the turn settles, not on a timer. Native refuses a remote project. | |
+| 1.3 | Both | Create a board from the "Agent pipeline" template. On a card, "Run with…" (pick a provider, model and a local project). | The card gets a session link and inherits its ticket, if it has one, and moves Queued, Running, Needs review. Link chips refresh on board open and when the turn settles, not on a timer. Native refuses a remote project. | |
 | 1.4 | Both | Collapse a column. Drop a card onto its strip with the mouse. Then lift another card with the keyboard (Space), move onto the strip and drop. | Each card lands at the end of the collapsed column. Click or Enter expands it, and it stays collapsed after reopening the board. | |
 | 1.5 | Both | Collapse a column in one app, then change its colour or WIP limit in the other. | The collapse does not reset the colour or WIP limit just set in the other app. | |
 
@@ -132,9 +132,9 @@ timing.
 | # | App | Action | Expected | Result |
 | --- | --- | --- | --- | --- |
 | 2.1 | Both | Switch to the seeded board from another board. | The cards show within 300 ms. | |
-| 2.2 | Both | Type a search that has results. | Results show within 100 ms of the keystroke (Tauri waits 150 ms after the last keystroke before it queries; judge from the last key). | |
+| 2.2 | Both | Type a search that has results. | Results show within 100 ms (in Tauri, within 100 ms after its 150 ms wait, so about 250 ms after the last key). | |
 | 2.3 | Both | Drag a card across columns, and within a scrolled column. | The drag stays smooth, with no visible stutter. The card lands where the line showed. | |
-| 2.4 | Both | Lift a card with the keyboard and move it down 50 places. | The view follows the card and the announcement reads "position 51 of 1000". | |
+| 2.4 | Both | Lift a card with the keyboard and move it down 50 places. | The view follows the card and the announcement reads "position 51 of 250". | |
 | 2.5 | Both | Click a card, then Shift-click a card far below, scrolling between. | Exactly the cards in display order between them are selected, including cards that were off screen. | |
 | 2.6 | Both | Group by label (swimlanes). Scroll, drag a card between lanes, and open a card. | Scrolling and dragging stay smooth. A drop in a cell appends to it. | |
 | 2.7 | Both | Scroll deep into a column, then change a card in the other app. | The same card stays at the top of the view. It does not jump to the top or leave a gap. | |
@@ -145,7 +145,7 @@ timing.
 
 | # | App | Action | Expected | Result |
 | --- | --- | --- | --- | --- |
-| 3.1 | Both | With VoiceOver on, Tab to a card, press Space, move and drop. | VoiceOver reads "Picked up card #N, {title}. {column}, position i of 1000.", the "over" announcements as you move, and "Dropped card #N in {column}, position i of 1000.". Escape reads the "was cancelled" line. | |
+| 3.1 | Both | With VoiceOver on, Tab to a card, press Space, move and drop. | VoiceOver reads "Picked up card #N, {title}. {column}, position i of 250 (the column's count).", the "over" announcements as you move, and "Dropped card #N in {column}, position i of 250.". Escape reads the "was cancelled" line. | |
 | 3.2 | Tauri | Focus a card in WebKit. | VoiceOver reads the card's `aria-description` ("{i} of {total} in {column}"). | |
 | 3.3 | Both | Open a card with E or Enter, then close it. | The drawer takes focus, and closing it gives focus back to the card. | |
 | 3.4 | Native | Focus a column. | It reads "{name}, {total} cards" ("1 card" for one). | |
@@ -154,7 +154,7 @@ timing.
 
 | # | App | Action | Expected | Result |
 | --- | --- | --- | --- | --- |
-| 4.1 | Tauri | Press ⌘N, create a card, and let the New card modal close. | Focus returns to the board (R71), and a second ⌘N works. | |
+| 4.1 | Tauri | Press ⌘N, create a card, and let the New card modal close. | Focus returns to the board, and a second ⌘N works. | |
 | 4.2 | Tauri | Scroll a long column with the trackpad (momentum), while cards measure in. | No scroll jitter. | |
 | 4.3 | Tauri | Keyboard-drag a card down a long column with Space and arrows. | The column scrolls to follow the drop line once, with no fight between dnd-kit's scrolling and ours. | |
 | 4.4 | Tauri | Drop a card with the mouse, then click a card within 50 ms. | The click right after a drop is swallowed (no drawer opens). A click after that opens it. | |

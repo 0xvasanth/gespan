@@ -8,7 +8,7 @@ Boards are global. A board is not tied to one project. Each card is tagged with 
 
 - **Switcher.** The board header lists your boards. Pick one to open it.
 - **New board.** Choose "New board", give it a name and pick a template (see [Templates](#templates)). Gespan Native does not offer a template picker on the empty state; use the switcher there.
-- **Rename and delete.** "Rename board" and "Delete board" are in the board header menu. Deleting a board asks first. If it still has cards, you can move them to another board.
+- **Rename and delete.** "Rename board" and "Delete board" are in the board actions menu (the switcher in Native). Deleting a board asks first, then removes it with its columns, cards and activity. To keep cards, move them first with Move to board… in the card's More menu.
 - **Board settings.** Also in the header menu. See [Board settings](#board-settings).
 - **Open cards in.** Choose whether a card opens in a side drawer or on a full page. In Native it is in the board header menu. In the Tauri app it is under Settings, General.
 
@@ -54,7 +54,7 @@ A board has three layouts.
 
 ### Swimlanes
 
-In the board layout, group rows by priority, label, project or a custom field. Dropping a card into another lane changes its column, and sets the lane value too for priority and select lanes (those drops have no Undo). You can't reorder cards inside a lane cell; a drop appends.
+In the board layout, group rows by priority, label, project or a select field. Dropping a card into another lane changes its column, and sets the lane value too for priority and select lanes (those drops have no Undo). You can't reorder cards inside a lane cell; a drop appends.
 
 ### Saved views
 
@@ -86,7 +86,7 @@ Sort by manual order, priority, due, start, title, created or updated, ascending
 | ⌘-click / Ctrl-click | Add or remove a card from the selection |
 | Shift-click | Select a range, in on-screen order |
 
-Single-letter shortcuts do nothing while you type in a field and do nothing inside the open drawer. With cards selected, a bar offers Status…, Priority…, Labels…, Archive, Delete and Clear. The command palette has Create card, Go to board, Switch board… and "New session from ticket…".
+Single-letter shortcuts do nothing while you type in a field and do nothing inside the open drawer. With cards selected, a bar offers Status…, Priority…, Labels…, Archive, Delete and Clear. The command palette has Create card, Go to board, Switch board… and "New session from ticket…". In Native it also has "New card from ticket…" and "Link ticket…".
 
 Keyboard drags announce each step to screen readers, for example "Picked up card #12, Fix login. Todo, position 3 of 40." and "Dropped card #12 in Done, position 1 of 8."
 
@@ -137,15 +137,15 @@ A session linked to a card can list the card's subtasks (`card_subtasks`) and ti
 
 ## Ticket links
 
-A card, or a session, can link to one ticket in Jira, Linear or Plane. The link is one way: Gespan reads the ticket's key, title and status and never copies edits from your board to the tracker, and never syncs back.
+A card, or a session, can link to one ticket in Jira, Linear or Plane. The link is one way: Gespan reads the ticket's key, title and status. Board edits are never copied to the tracker. Only an agent's ticket tools write there (see Agents and tickets).
 
 Connect a tracker first in Settings, Inbox. [Jira setup](jira.md) shows how for Jira; Linear and Plane connect from the same Settings, Inbox page. Gespan keeps your tracker tokens in the system keychain.
 
 - **Link.** "Link ticket…" in the card drawer, or on a session's ticket chip. Paste a key or a URL. A URL for a different site than the one you connected is refused. A saved `http://` site and a pasted `https://` URL count as different sites.
 - **Chip.** Shows the tracker, key, title and status, and opens the ticket in the tracker. A chip that says the tracker is disconnected means its token is missing; reconnect in Settings.
 - **Refresh and unlink.** The chip menu has Open, Refresh and Unlink. Tickets are read when linked, when a card opens and when you refresh, never on a timer.
-- **New card from ticket…** is a button in the board header. It makes a card in the first To do column (or the first column) and fills in the title.
-- **New session from ticket…** is in the command palette. It starts a local session in the current project, links the ticket and puts the title in the message box as a draft. Nothing is sent until you send it. In the Tauri app a blank session saves its ticket link with its first message.
+- **New card from ticket…** is a button in the board header in the Tauri app and a command-palette entry in Native. It makes a card in the first To do column (or the first column) and fills in the title.
+- **New session from ticket…** is in the command palette. It starts a local session in the current project, links the ticket and puts the ticket key, then its title, in the message box as a draft. Nothing is sent until you send it. In the Tauri app a blank session saves its ticket link with its first message.
 
 ### Agents and tickets
 
@@ -157,31 +157,35 @@ Ticket titles are not put into the prompts Gespan sends automatically. They carr
 
 ## Large boards
 
-Boards stay responsive with 1,000 cards. Each expanded column draws only the cards you can see, with a few extra above and below. Search, filters and sort run in the database, not card by card. Focus, drags, selections and screen-reader positions still count from the whole board. A card you focus, drag or have open is never taken off the screen. Reloads from the other app keep your place in a scrolled column.
+Boards are built and tested to stay responsive with 1,000 cards. Each expanded column draws only the cards you can see, with a few extra above and below. Search, filters and sort run in one shared query engine over a single board-wide read, never one read per card. Focus, drags, selections and screen-reader positions still count from the whole board. A card you focus, drag or have open is never taken off the screen. Reloads from the other app keep your place in a scrolled column.
 
 ## Known limits
 
 - Cost is not recorded.
-- "Run with…" and write-back are for local projects and sessions only. In the Tauri app write-back covers local sessions only.
+- "Run with…" and write-back are for local projects and sessions only.
 - Pull request state is known for the current branch's pull request only.
 - Cards can't be reordered inside a swimlane cell.
 - In Native, list and table rows don't take keyboard focus. Tauri rows do.
 - In Native, a card shown in two lanes is focused by its id, so the arrows skip its other copy.
 - `gespan://` links are copied but not opened yet.
 - Remote sessions don't show a ticket's title and status.
+- Two apps editing the same display settings or saved-view layout at the same moment can lose one edit.
+- A Linear URL from another workspace links the ticket with the same key in the connected workspace.
+- The Archive panel is not windowed.
 
 ## Security
 
 - Tracker tokens stay in the system keychain. They are never in the board, in prompts or in the agent's environment.
 - An agent only reaches the ticket linked to its own session, with a token that belongs to that session alone.
-- Read-only and plan sessions can read tickets and cards but can't write to them.
+- Read-only and plan sessions can read tickets and cards but can't write to them (Gespan's write-back may still post a plan turn's plan as a card comment).
 - Ticket titles and descriptions are never added to automatic prompts.
 
 ## Upgrading
 
 Both apps share one database, so a newer build can leave data an older build doesn't know about.
 
-- **Ticket links on sessions.** A build from before ticket links doesn't know a session's linked ticket. It drops the link when it saves that session and may clear it on its next save. If you switch between builds, use the newer one for sessions you've linked, and re-link a ticket if it disappears.
-- **Archived cards.** Builds from before board version 3 show archived cards with colliding positions for one release. Nothing is lost, and the order settles once you upgrade both apps.
+- **Ticket links on sessions.** A build from before ticket links doesn't know a session's linked ticket. It drops the link the next time it saves that session. If you switch between builds, use the newer one for sessions you've linked, and re-link a ticket if it disappears.
+- **Board data from before version 3.** Anything an older (pre-v3) build writes to its old board tables after the upgrade is not carried over.
+- **Unlinking in an older build.** While an older build is still in use, unlinking a card there doesn't remove an agent's access granted through the newer build's link.
 
 Opening the board in a newer build upgrades the board data in place. Keep a copy of `gespan.db` first if you plan to go back to an older build.
