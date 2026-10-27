@@ -581,6 +581,48 @@ fn linked_running_comes_from_the_caller_and_failed_from_activity() {
 }
 
 #[test]
+fn linked_none_counts_a_link_kept_only_in_the_legacy_card_columns() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["legacy", "half", "ticket", "plain"]);
+    // An older build wrote the link only into the card's own columns, after
+    // the v3 migration had copied them.
+    conn.execute(
+        "UPDATE board_cards SET link_kind = 'session', link_id = 's-9' WHERE id = ?1",
+        params![cards[0].id],
+    )
+    .unwrap();
+    // A kind without an id is no link.
+    conn.execute(
+        "UPDATE board_cards SET link_kind = 'session', link_id = NULL WHERE id = ?1",
+        params![cards[1].id],
+    )
+    .unwrap();
+    set_ticket(
+        &conn,
+        &cards[2].id,
+        Some(r#"{"tracker":"jira","key":"ABC-1"}"#),
+    )
+    .unwrap();
+    let none = spec("", vec![row("linked", Op::Is, &["none"])]);
+    assert_eq!(run(&conn, &board, &none), ids(&[&cards[1], &cards[3]]));
+    // The same legacy link is one `board_links` and `cards_for_link` see.
+    assert!(board_links(&conn, &board.id)
+        .unwrap()
+        .iter()
+        .any(|link| link.card_id == cards[0].id));
+    assert_eq!(
+        cards_for_link(&conn, "session", "s-9").unwrap()[0].id,
+        cards[0].id
+    );
+    // Clearing the columns makes it unlinked again.
+    link_card(&conn, &cards[0].id, None, None).unwrap();
+    assert_eq!(
+        run(&conn, &board, &none),
+        ids(&[&cards[0], &cards[1], &cards[3]])
+    );
+}
+
+#[test]
 fn needs_review_is_the_review_column() {
     let conn = fresh();
     let (board, columns, cards) = board_with_cards(&conn, &["a", "b"]);

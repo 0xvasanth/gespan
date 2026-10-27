@@ -252,12 +252,18 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
         }
     }
     if with_runs {
+        // A link an older build wrote only into the card's legacy
+        // `link_kind`/`link_id` columns counts too, as it does for
+        // `board_links` and `cards_for_link`.
         let mut linked = Vec::new();
         pairs(
             conn,
             &format!(
                 "SELECT card_id, kind FROM board_card_links
-                 WHERE card_id IN ({scope}) GROUP BY card_id"
+                 WHERE card_id IN ({scope})
+                 UNION
+                 SELECT id, link_kind FROM board_cards
+                 WHERE board_id = ?1 AND link_kind IS NOT NULL AND link_id IS NOT NULL"
             ),
             board_id,
             |card, _| linked.push(card),
