@@ -203,6 +203,9 @@ pub struct Input {
     focus: FocusHandle,
     height: f32,
     single_line: bool,
+    /// Wraps and grows like a textarea but holds one line of text: Enter
+    /// submits, and line breaks typed or pasted become spaces.
+    flat: bool,
     read_only: bool,
     secret: bool,
     max_chars: Option<usize>,
@@ -256,6 +259,7 @@ impl Input {
             focus: cx.focus_handle(),
             height: MIN_HEIGHT,
             single_line: false,
+            flat: false,
             read_only: false,
             secret: false,
             max_chars: None,
@@ -307,6 +311,26 @@ impl Input {
         input.placeholder_alpha = Some(placeholder_color.a);
         // Picker search fields are `text-[13px]`.
         input.font_size = 13.;
+        input
+    }
+    /// A title that wraps onto more lines instead of scrolling sideways, at
+    /// `font_size` with lines `line_height` tall. Enter submits.
+    pub(crate) fn wrapping_title(
+        label: impl Into<SharedString>,
+        font_size: f32,
+        line_height: f32,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut input = Self::new(cx);
+        input.flat = true;
+        input.label = label.into();
+        input.placeholder = input.label.clone();
+        input.placeholder_alpha = Some(0.4);
+        input.font_size = font_size;
+        input.line_height = line_height;
+        input.height = line_height;
+        input.min_height = line_height;
+        input.max_height = f32::MAX;
         input
     }
     /// GitChangesPanel's commit message: a one-row `text-[13px] leading-5`
@@ -859,7 +883,7 @@ impl Input {
         }
     }
     fn normalized<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if self.single_line && text.contains(['\r', '\n']) {
+        if (self.single_line || self.flat) && text.contains(['\r', '\n']) {
             Cow::Owned(text.replace("\r\n", " ").replace(['\r', '\n'], " "))
         } else {
             Cow::Borrowed(text)
@@ -1080,7 +1104,7 @@ impl Input {
         self.replace_text_in_range(None, "", w, cx);
     }
     fn newline(&mut self, _: &Newline, w: &mut Window, cx: &mut Context<Self>) {
-        if !self.single_line {
+        if !self.single_line && !self.flat {
             self.replace_text_in_range(None, "\n", w, cx);
         }
     }
@@ -1787,6 +1811,7 @@ mod tests {
 mod native_input_tests {
     use super::*;
     use gpui::{TestAppContext, WindowBounds, WindowHandle, WindowOptions};
+    use std::{cell::Cell, rc::Rc};
 
     fn field(cx: &mut TestAppContext, single_line: bool) -> WindowHandle<Input> {
         let window = cx.update(|cx| {
@@ -1884,6 +1909,56 @@ mod native_input_tests {
                 assert_eq!(input.content.encode_utf16().count(), 47)
             })
             .unwrap();
+    }
+    #[gpui::test]
+    fn a_wrapping_title_wraps_a_long_word_and_never_holds_a_line_break(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            bind(cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(260.), px(300.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|cx| Input::wrapping_title("Task title", 18., 24., cx)),
+            )
+            .unwrap()
+        });
+        window
+            .update(cx, |input, w, cx| w.focus(&input.focus, cx))
+            .unwrap();
+        let input = window.root(cx).unwrap();
+        let submitted = Rc::new(Cell::new(0));
+        cx.update({
+            let submitted = submitted.clone();
+            |cx| {
+                cx.subscribe(&input, move |_, _: &Submitted, _| {
+                    submitted.set(submitted.get() + 1)
+                })
+                .detach()
+            }
+        });
+        // One unbroken word far wider than the field.
+        replace(window, &"dummy".repeat(12), cx);
+        let (rows, scroll_x) = input.read_with(cx, |i, _| {
+            let breaks: usize = i.lines.iter().map(|l| l.wrap_boundaries().len()).sum();
+            (i.lines.len() + breaks, i.scroll_x)
+        });
+        assert!(rows > 1, "the word wraps onto more rows, got {rows}");
+        assert_eq!(scroll_x, px(0.), "the start of the title stays in view");
+        // Shift-Enter adds no line break and Enter submits.
+        cx.simulate_keystrokes(window.into(), "shift-enter");
+        assert!(!input.read_with(cx, |i, _| i.content.contains('\n')));
+        cx.simulate_keystrokes(window.into(), "enter");
+        assert_eq!(submitted.get(), 1);
+        // Pasted line breaks become spaces.
+        replace(window, "fix the\r\nlogin\nflow", cx);
+        assert_eq!(
+            input.read_with(cx, |i, _| i.content.to_string()),
+            "fix the login flow"
+        );
     }
     fn replace(window: WindowHandle<Input>, text: &str, cx: &mut TestAppContext) {
         window

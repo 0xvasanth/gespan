@@ -233,11 +233,8 @@ impl BoardView {
         let Some(card) = self.card(&card_id).cloned() else {
             return;
         };
-        let title = cx.new(|cx| Input::field("Task title", "Task title", content(0.4), cx));
-        title.update(cx, |input, cx| {
-            input.set_font_size(18.);
-            input.set_text(card.title.clone(), cx)
-        });
+        let title = cx.new(|cx| Input::wrapping_title("Task title", 18., 24., cx));
+        title.update(cx, |input, cx| input.set_text(card.title.clone(), cx));
         let body = cx.new(|cx| {
             let mut input = Input::commit_message(cx);
             input.set_label("Description");
@@ -303,6 +300,7 @@ impl BoardView {
                 "blocked-by",
                 "relates",
                 "links-add",
+                "picker",
             ]
             .into_iter()
             .map(|key| (key.to_string(), AnchorSlot::default()))

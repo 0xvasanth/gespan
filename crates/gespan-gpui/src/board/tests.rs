@@ -8466,6 +8466,7 @@ mod agent_wiring;
 mod final_review;
 mod keyboard_scale;
 mod lanes_scale;
+mod layout_fit;
 mod link_run;
 mod scale;
 mod ux_batch;
