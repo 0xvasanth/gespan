@@ -707,6 +707,8 @@ pub(crate) struct Shell {
     shortcuts: Option<shortcuts::Shortcuts>,
     window_active: bool,
     window_glass: Option<bool>,
+    /// The project whose colors were last painted; leaving it blends colors.
+    theme_project: Option<String>,
     quit_prompted: bool,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
@@ -1061,6 +1063,7 @@ impl Shell {
             shortcuts: None,
             window_active: false,
             window_glass: None,
+            theme_project: None,
             quit_prompted: false,
             menu: None,
             background_dialog: None,
@@ -4192,7 +4195,12 @@ impl Shell {
         self.open_app_search(window, cx);
     }
 
-    fn select_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn select_project(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_sessions.clear();
         self.selection_anchor = None;
         self.sidebar_target = None;
@@ -5516,6 +5524,9 @@ impl Shell {
                 let mut items: Vec<MenuItem> = vec![
                     MenuItem::Custom(controls.clone().into(), controls.read(cx).focus(cx)),
                     MenuItem::Separator,
+                    MenuAction::new("project-theme", "Theme colors")
+                        .icon("palette")
+                        .into(),
                     MenuAction::new("background", "Background image")
                         .icon("image-add")
                         .into(),
@@ -5668,6 +5679,8 @@ impl Shell {
                     } else {
                         cx.reveal_path(std::path::Path::new(&path));
                     }
+                } else if action == "project-theme" {
+                    self.open_project_theme(path, window, cx);
                 } else if action == "background" {
                     self.open_background_dialog(path, window, cx);
                 } else if action == "archive" {
@@ -8073,8 +8086,26 @@ impl Render for Shell {
             cx.window_appearance(),
             gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
         );
-        if configure(p, system_light) {
+        let project = &self.workspace.project;
+        let animate = !cx.reduce_motion()
+            && self
+                .theme_project
+                .as_ref()
+                .is_some_and(|previous| previous != project);
+        let project_theme = self
+            .workspace
+            .project_appearance
+            .get(project)
+            .and_then(|a| a.theme.as_ref());
+        // Repainting bypasses cached views, so every surface follows the blend.
+        if configure_project(p, project_theme, system_light, animate) {
             cx.refresh_windows();
+        }
+        if tweening() {
+            window.request_animation_frame();
+        }
+        if self.theme_project.as_ref() != Some(project) {
+            self.theme_project = Some(project.clone());
         }
         let glass = window_glass(p, system_light);
         if self.window_glass != Some(glass) {
@@ -9682,6 +9713,59 @@ mod tests {
         assert!(compact.top() >= px(16.));
         assert!(compact.bottom() <= px(504.));
         assert!(body.bottom() <= compact.bottom());
+    }
+    #[gpui::test]
+    fn theme_colors_dialog_saves_a_project_theme_and_can_return_to_app_colors(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            cx.set_reduce_motion(true);
+        });
+        let project = window
+            .update(cx, |shell, w, cx| {
+                let project = shell.workspace.project.clone();
+                shell.open_project_theme(project.clone(), w, cx);
+                project
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let theme = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, _| shell.appearance(&project).theme)
+                .unwrap()
+        };
+        assert_eq!(theme(cx), None, "opening the dialog alone changes nothing");
+        // The modal centers itself once its height is measured.
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let dialog = visual.debug_bounds("project-theme-dialog").unwrap();
+        assert!(dialog.top() >= px(16.));
+        let harbor = visual.debug_bounds("project-theme-palette-harbor").unwrap();
+        visual.simulate_click(harbor.center(), gpui::Modifiers::none());
+        let red = visual.debug_bounds("project-theme-accent-4").unwrap();
+        visual.simulate_click(red.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        let saved = theme(visual).expect("the first pick gives the project its colors");
+        assert_eq!(saved.workspace_theme, "harbor");
+        assert_eq!(saved.accent_color.as_deref(), Some("#ef4444"));
+        assert_eq!(crate::theme::accent_color(), gpui::rgb(0xef4444).into());
+        let reset = visual
+            .debug_bounds("project-settings-Use app colors")
+            .unwrap();
+        visual.simulate_click(reset.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert_eq!(theme(visual), None);
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert!(shell.background_dialog.is_none())
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn backgrounds_survive_tab_and_notes_switches_until_the_tab_closes(cx: &mut TestAppContext) {
