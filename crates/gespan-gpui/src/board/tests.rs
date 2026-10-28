@@ -3668,6 +3668,28 @@ fn blocks_and_blocked_by_write_the_right_direction(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_relation_cycle_shows_the_refusal_inline(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let (a, b, c) = (
+        card_id(&f, cx, "A"),
+        card_id(&f, cx, "B"),
+        card_id(&f, cx, "C"),
+    );
+    let mut service = Service::open(&f.db).unwrap();
+    service.add_relation(&a, &b, "blocks").unwrap();
+    service.add_relation(&b, &c, "blocks").unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-3");
+    // C blocking A would close the loop A → B → C → A.
+    click(visual, "board-drawer-blocks");
+    visual.simulate_input("A");
+    click(visual, "board-pick-relation-0");
+    assert!(shown(visual, "board-inline-error"));
+    assert_eq!(relations_of(&f, &c), [(b, c, "blocks".into())]);
+}
+
+#[gpui::test]
+fn a_card_already_linked_is_not_offered_again(cx: &mut TestAppContext) {
     let f = seeded(cx, &["A", "B"]);
     let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
     Service::open(&f.db)
@@ -3677,11 +3699,18 @@ fn a_relation_cycle_shows_the_refusal_inline(cx: &mut TestAppContext) {
     reload(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-2");
-    // B blocking A would close a loop.
-    click(visual, "board-drawer-blocks");
-    visual.simulate_input("A");
-    click(visual, "board-pick-relation-0");
-    assert!(shown(visual, "board-inline-error"));
+    // B is blocked by A, so no other relation offers A.
+    for row in [
+        "board-drawer-relates",
+        "board-drawer-blocks",
+        "board-drawer-blocked-by",
+    ] {
+        click(visual, row);
+        visual.simulate_input("A");
+        assert!(!shown(visual, "board-pick-relation-0"), "{row} offers A");
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+    }
     assert_eq!(relations_of(&f, &b), [(a, b, "blocks".into())]);
 }
 
