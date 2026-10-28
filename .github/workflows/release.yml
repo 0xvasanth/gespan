@@ -401,12 +401,20 @@ jobs:
           if [[ "$RELEASE_PRERELEASE" != true ]]; then
             RELEASE_FILES+=(latest.json)
           fi
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          # One release per version holds both apps' files; Gespan Native's
+          # workflow adds its own. Published files are never replaced; see
+          # releasePlan in scripts/release-channel.cjs.
+          printf '%s\n' "${RELEASE_FILES[@]##*/}" > "$RUNNER_TEMP/tauri-files.txt"
+          RELEASE_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)"
+          PLAN="$(RELEASE_JSON="$RELEASE_JSON" node scripts/release-channel.cjs release-plan "$RUNNER_TEMP/tauri-files.txt")"
+          read -r CREATE_RELEASE UPLOAD_PACKAGES <<< "$PLAN"
+          if [[ "$CREATE_RELEASE" == true ]]; then
+            node scripts/release-channel.cjs release-notes "$VERSION" > "$RUNNER_TEMP/release-notes.md"
             gh release create "$GITHUB_REF_NAME" \
               --draft \
               --prerelease="$RELEASE_PRERELEASE" \
               --title "Gespan $VERSION" \
-              --notes "See CHANGELOG.md for details."
+              --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           verify_release() {
             local expected_draft="$1"
@@ -433,11 +441,12 @@ jobs:
           }
           NODE
           }
+          if [[ "$UPLOAD_PACKAGES" == true ]]; then
+            # A draft, or a published release without any of these files yet.
+            gh release upload "$GITHUB_REF_NAME" "${RELEASE_FILES[@]}" --clobber
+          fi
           IS_DRAFT=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)
           if [[ "$IS_DRAFT" == true ]]; then
-            # Draft assets can be replaced after an interrupted upload. A
-            # published release is immutable, so only resume drafts.
-            gh release upload "$GITHUB_REF_NAME" "${RELEASE_FILES[@]}" --clobber
             verify_release true
             gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease="$RELEASE_PRERELEASE"
           elif [[ "$IS_DRAFT" != false ]]; then
@@ -463,8 +472,8 @@ jobs:
             if [[ "$RELEASE_PRERELEASE" == true ]]; then
               if ! gh release view beta-latest >/dev/null 2>&1; then
                 gh release create beta-latest --prerelease --latest=false --target "$GITHUB_SHA" \
-                  --title "Gespan beta update feed" \
-                  --notes "Update feed for Gespan betas. Contains only latest.json; packages live on the v*-beta releases."
+                  --title "Update feed: Gespan betas (do not delete)" \
+                  --notes "This is not a release. It holds only latest.json, the update feed that installed Gespan betas check for new versions. Packages live on the vX.Y.Z releases."
               fi
               gh release upload beta-latest latest.json --clobber
             fi

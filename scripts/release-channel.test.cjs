@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -165,11 +165,13 @@ test("the native endpoint can be overridden, but only with HTTPS", () => {
   assert.throws(() => nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "http://mirror.example.com/native.json" }), /HTTPS/);
 });
 
-test("native packages are referenced from the versioned native-v release, not the feed release", () => {
+test("native packages are referenced from the version's shared release, not the feed release", () => {
+  assert.equal(nativeReleaseTag({ GITHUB_REF_NAME: "native-v0.0.1-beta" }), "v0.0.1-beta");
   assert.equal(
     nativeAssetBase({ GITHUB_REF_NAME: "native-v0.16.0-preview.2" }),
-    "https://github.com/0xvasanth/gespan/releases/download/native-v0.16.0-preview.2",
+    "https://github.com/0xvasanth/gespan/releases/download/v0.16.0-preview.2",
   );
+  assert.throws(() => nativeReleaseTag({ GITHUB_REF_NAME: "v0.0.1-beta" }), /native-v/);
   for (const ref of ["v0.9.1", "native-latest", "native-v", "", undefined]) {
     assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /native-v/);
   }
@@ -225,27 +227,73 @@ test("native releases only run from a native-v* tag", () => {
 test("expected native files are each package plus its signature", () => {
   assert.deepEqual(
     nativeExpectedFiles([{ filename: "a.dmg", target: "darwin-aarch64-app" }, { filename: "b.deb" }]),
-    ["latest.json", "a.dmg", "a.dmg.sig", "b.deb"],
+    [NATIVE_FEED_ASSET, "a.dmg", "a.dmg.sig", "b.deb"],
+  );
+  // Never latest.json, which a stable Tauri release keeps on the same release.
+  assert.equal(NATIVE_FEED_ASSET, "native-latest.json");
+  assert.ok(!nativeExpectedFiles([{ filename: "a.dmg", target: "x" }]).includes("latest.json"),
   );
 });
 
 test("a missing or draft versioned release uploads packages", () => {
-  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
+  const expected = [NATIVE_FEED_ASSET, "a.dmg", "a.dmg.sig"];
   assert.deepEqual(nativePublishPlan({ release: null, expected }), { createRelease: true, uploadPackages: true });
   assert.deepEqual(nativePublishPlan({ release: { isDraft: true, assets: [{ name: "a.dmg" }] }, expected }), { createRelease: false, uploadPackages: true });
 });
 
 test("a published versioned release keeps its packages and only the feed is refreshed", () => {
-  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
-  const release = { isDraft: false, assets: [{ name: "latest.json" }, { name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
+  const expected = [NATIVE_FEED_ASSET, "a.dmg", "a.dmg.sig"];
+  const release = { isDraft: false, assets: [{ name: NATIVE_FEED_ASSET }, { name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
   assert.deepEqual(nativePublishPlan({ release, expected }), { createRelease: false, uploadPackages: false });
 });
 
-test("a published release with missing assets is an error naming them", () => {
+test("a published release with only some of this build's files is an error naming the rest", () => {
   const release = { isDraft: false, assets: [{ name: "a.dmg" }] };
-  assert.throws(() => nativePublishPlan({ release, expected: ["a.dmg", "a.dmg.sig"] }), /missing assets: a\.dmg\.sig/);
-  assert.throws(() => nativePublishPlan({ release: { isDraft: false, assets: [{ name: "a.dmg" }] }, expected: ["latest.json", "a.dmg"] }), /missing assets: latest\.json/);
-  assert.throws(() => nativePublishPlan({ release: { isDraft: false }, expected: ["a.dmg"] }), /missing assets: a\.dmg/);
+  assert.throws(() => nativePublishPlan({ release, expected: ["a.dmg", "a.dmg.sig"] }), /is missing: a\.dmg\.sig\. Published files are never replaced/);
+  assert.throws(() => nativePublishPlan({ release, expected: [NATIVE_FEED_ASSET, "a.dmg"] }), /is missing: native-latest\.json/);
+});
+
+test("the second app to publish a version adds its files to the published release", () => {
+  // Tauri published v0.0.1-beta first; the native packages go onto the same release.
+  const tauriFirst = { isDraft: false, assets: [{ name: "Gespan_0.0.1-beta_x64-setup.exe" }, { name: "Gespan.app.tar.gz.sig" }] };
+  assert.deepEqual(
+    releasePlan({ release: tauriFirst, expected: [NATIVE_FEED_ASSET, "GespanNative_0.0.1-beta_x64.dmg"] }),
+    { createRelease: false, uploadPackages: true },
+  );
+  // ...and the other way round; a published release with no assets at all too.
+  const nativeFirst = { isDraft: false, assets: [{ name: NATIVE_FEED_ASSET }, { name: "GespanNative_0.0.1-beta_x64.dmg" }] };
+  assert.deepEqual(
+    releasePlan({ release: nativeFirst, expected: ["Gespan_0.0.1-beta_x64.dmg", "Gespan.app.tar.gz"] }),
+    { createRelease: false, uploadPackages: true },
+  );
+  assert.deepEqual(releasePlan({ release: { isDraft: false }, expected: ["a.dmg"] }), { createRelease: false, uploadPackages: true });
+});
+
+test("the release-plan CLI prints whether to create and upload", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-plan-"));
+  try {
+    const list = path.join(dir, "files.txt");
+    fs.writeFileSync(list, "Gespan.dmg\nGespan.dmg.sig\n\n");
+    const run = (RELEASE_JSON) => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "release-plan", list], {
+      env: { PATH: process.env.PATH, RELEASE_JSON }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    assert.equal(run(""), "true true");
+    assert.equal(run(JSON.stringify({ isDraft: false, assets: [{ name: "GespanNative.dmg" }] })), "false true");
+    assert.equal(run(JSON.stringify({ isDraft: false, assets: [{ name: "Gespan.dmg" }, { name: "Gespan.dmg.sig" }] })), "false false");
+    assert.throws(() => run(JSON.stringify({ isDraft: false, assets: [{ name: "Gespan.dmg" }] })), /Command failed/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("release notes are the version's CHANGELOG section", () => {
+  const changelog = "# Changelog\n\n## [Unreleased]\n\n## [0.0.1-beta] - 2026-10-27\n\nFirst beta.\n\n### Fixed\n\n- A fix.\n\n## [0.0.1] - 2026-11-01\n\nLater.\n";
+  const notes = releaseNotes(changelog, "0.0.1-beta");
+  assert.match(notes, /^First beta\.\n\n### Fixed\n\n- A fix\.\n\nFull details are in the \[CHANGELOG\]/);
+  assert.doesNotMatch(notes, /Later|Unreleased/);
+  // 0.0.1 does not match the 0.0.1-beta heading, and the last section runs to the end.
+  assert.match(releaseNotes(changelog, "0.0.1"), /^Later\.\n/);
+  assert.throws(() => releaseNotes(changelog, "9.9.9"), /no section for 9\.9\.9/);
 });
 
 const TAG = "native-v0.16.0-preview.2";
@@ -291,4 +339,25 @@ test("recovery rejects a feed that points elsewhere, at an unknown file, or is u
   assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("evil.dmg"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /not a published package/);
   assert.throws(() => verifyRecoveredFeed({ latestJson: "not json", sigs, tag: TAG, expected: [] }), /unreadable/);
   assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({}), sigs, tag: TAG, expected: [] }), /lists no packages/);
+});
+
+test("the recovery CLI checks the native feed copy against the shared release", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-recovery-"));
+  try {
+    const name = "GespanNative_0.0.1-beta_x64.app.tar.gz";
+    fs.writeFileSync(path.join(dir, `${name}.sig`), "sig-original\n");
+    const run = () => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-verify-recovery", dir], {
+      env: { PATH: process.env.PATH, GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.0.1-beta" },
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+    const write = (tag) => fs.writeFileSync(path.join(dir, NATIVE_FEED_ASSET),
+      feedFor({ "darwin-x86_64-app": { url: url(name, tag), signature: "sig-original" } }));
+    write("v0.0.1-beta");
+    assert.match(run(), /matches the published signatures/);
+    // A feed still pointing at a separate native-v release is refused.
+    write("native-v0.0.1-beta");
+    assert.throws(run, (error) => /does not point at the v0\.0\.1-beta release/.test(error.stderr));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

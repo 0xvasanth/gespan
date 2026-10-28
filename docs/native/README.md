@@ -75,20 +75,24 @@ never publishes anything. To cut a preview:
 The workflow builds and signs every platform package, then publishes to GitHub
 Releases:
 
-- The versioned `native-v<version>` release (a prerelease, never marked latest)
-  holds the packages and their `.sig` files. It is immutable once published; use
-  a new preview tag to ship a fix.
+- The packages and their `.sig` files go on the version's one GitHub release,
+  `v<version>` (a prerelease, never marked latest), which the Gespan (Tauri)
+  release shares. Whichever workflow runs first creates it, titled
+  `Gespan <version>` with that version's CHANGELOG section as its notes; the
+  other adds its files. The signed feed is kept there as `native-latest.json`.
+  Published files are never replaced; use a new tag to ship a fix. Run the two
+  workflows one after the other, not at the same time.
 - A fixed `native-latest` release holds only `latest.json`. The workflow creates
   it if missing and overwrites the asset on every native release. The signed
   feed's package URLs point at the versioned release's assets.
 
 If a run fails after the versioned release was published but before the feed was
 updated, run the workflow again from the same tag. Nothing is signed and no
-package is re-uploaded on a rerun. When `native-v<version>` already has all of its
-packages, `.sig` files and `latest.json`, the run downloads the original signed
-`latest.json` and the `.sig` files, checks that they match, and republishes that
-same `latest.json` to `native-latest`. If any of those assets is missing, the run
-fails and names them; use a new preview tag then.
+package is re-uploaded on a rerun. When `v<version>` already has all of the
+native packages, `.sig` files and `native-latest.json`, the run downloads the
+original signed feed and the `.sig` files, checks that they match, and
+republishes that same feed to `native-latest`. If only some of those assets are
+there, the run fails and names the missing ones; use a new tag then.
 
 Keep the signing secrets in a GitHub Environment with required reviewers, so a
 release run needs an approval before it can use the signing key. If you move
