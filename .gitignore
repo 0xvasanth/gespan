@@ -58,3 +58,6 @@ Desktop.ini
 
 # Local document preview mockup
 /work/pilot-document-preview.html
+
+# Local planning notes from agent skills (plans, specs); never committed
+docs/superpowers/
