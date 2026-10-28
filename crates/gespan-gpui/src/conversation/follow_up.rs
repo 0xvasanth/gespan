@@ -136,6 +136,9 @@ impl Conversation {
             && self.steers_follow_up(invert, cx)
             // Held messages wait for Resume instead of joining a settling turn.
             && !crate::hold::active(cx);
+        if invert && self.busy && message.steer {
+            self.follow_ups.requested = Some(message.id.clone());
+        }
         self.follow_ups.motion.insert(
             &message.id,
             self.follow_ups.state.messages.is_empty(),
@@ -993,6 +996,75 @@ mod tests {
             Some("Queue"),
             "modes always queue"
         );
+    }
+
+    #[gpui::test]
+    fn alternate_steer_delivers_past_queued_message(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        let (controls, received) = std::sync::mpsc::channel();
+        window
+            .update(cx, |view, _, cx| {
+                view.busy = true;
+                view.controls = Some(controls);
+                view.follow_ups.ready = true;
+                view.input
+                    .update(cx, |input, cx| input.set_text("queued".into(), cx));
+                view.send(cx);
+                view.input
+                    .update(cx, |input, cx| input.set_text("steering".into(), cx));
+                view.send_follow_up(true, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let control = received
+            .try_recv()
+            .expect("steering message must be delivered");
+        let Decision::Steer(message) = control.decision else {
+            panic!("expected steering")
+        };
+        assert_eq!(message.text, "steering");
+        window
+            .update(cx, |view, _, cx| {
+                view.follow_up_delivered(&message.id, cx);
+                assert_eq!(view.follow_ups.state.messages[0].text, "queued");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn modifier_click_inverts_both_follow_up_preferences(cx: &mut TestAppContext) {
+        for (preference, expected) in [("steer", false), ("queue", true)] {
+            let window = conversation(cx);
+            cx.update(|cx| {
+                cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                    prefs.follow_up = preference.into()
+                })
+            });
+            window
+                .update(cx, |view, _, cx| {
+                    view.summary.has_messages = true;
+                    view.busy = true;
+                    view.input
+                        .update(cx, |input, cx| input.set_text("message".into(), cx));
+                    cx.notify();
+                })
+                .unwrap();
+            let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            visual.refresh().unwrap();
+            let bounds = visual.debug_bounds("send-or-stop").unwrap();
+            let modifiers = gpui::Modifiers {
+                platform: cfg!(target_os = "macos"),
+                control: !cfg!(target_os = "macos"),
+                ..Default::default()
+            };
+            visual.simulate_click(bounds.center(), modifiers);
+            visual.run_until_parked();
+            window
+                .update(visual, |view, _, _| {
+                    assert_eq!(view.follow_ups.state.messages[0].steer, expected)
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
