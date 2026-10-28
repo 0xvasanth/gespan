@@ -379,13 +379,18 @@ pub(crate) fn pane_fill() -> Hsla {
         rgb(CHAT).into()
     }
 }
+/// `--color-background-base`: the theme's opaque surface, also the ink on
+/// solid `bg-content` buttons.
+pub(crate) fn background_base() -> Hsla {
+    let mut base = shell_fill();
+    base.a = 1.;
+    base
+}
 /// `--zen-rail`: ink 14% over the opaque base, the tree rails under tool
 /// phases and orchestrator/operator rows. Opaque, so the curve and spine
 /// overlapping where they meet don't stack into a brighter pixel.
 pub(crate) fn rail_color() -> Hsla {
-    let mut base = shell_fill();
-    base.a = 1.;
-    let (base, ink) = (base.to_rgb(), content(1.).to_rgb());
+    let (base, ink) = (background_base().to_rgb(), content(1.).to_rgb());
     let mix = |b: f32, i: f32| b + (i - b) * 0.14;
     gpui::Rgba {
         r: mix(base.r, ink.r),
