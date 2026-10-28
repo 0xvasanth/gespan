@@ -47,6 +47,16 @@ pub(super) enum Property {
     Projects,
 }
 
+impl Property {
+    const ALL: [Property; 5] = [
+        Property::Column,
+        Property::Priority,
+        Property::Due,
+        Property::Labels,
+        Property::Projects,
+    ];
+}
+
 struct OpenMenu {
     property: Property,
     menu: Entity<Menu>,
@@ -197,17 +207,17 @@ impl BoardView {
             create_more: false,
             title_missing: false,
             error: None,
-            anchors: HashMap::new(),
-            focus: [
-                Property::Column,
-                Property::Priority,
-                Property::Due,
-                Property::Labels,
-                Property::Projects,
-            ]
-            .into_iter()
-            .map(|property| (property, cx.focus_handle().tab_stop(true)))
-            .collect(),
+            // One slot per chip, shared by the chip's probe and its menu. A
+            // slot made on demand would be a fresh one each time, so the menu
+            // would never see where the chip was painted.
+            anchors: Property::ALL
+                .into_iter()
+                .map(|property| (property, AnchorSlot::default()))
+                .collect(),
+            focus: Property::ALL
+                .into_iter()
+                .map(|property| (property, cx.focus_handle().tab_stop(true)))
+                .collect(),
             more_focus: cx.focus_handle().tab_stop(true),
             create_focus: cx.focus_handle().tab_stop(true),
             menu: None,

@@ -8545,3 +8545,39 @@ fn a_real_space_press_lifts_the_card_instead_of_opening_it(cx: &mut TestAppConte
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn new_card_menus_open_under_their_chip(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    for (chip, first_item) in [
+        ("new-card-column", "menu-action-column-0"),
+        ("new-card-priority", "menu-action-priority-0"),
+        ("new-card-due", "menu-action-due-today"),
+    ] {
+        click(visual, chip);
+        visual.refresh().unwrap();
+        let chip_bounds = visual.debug_bounds(chip).unwrap();
+        let item = visual
+            .debug_bounds(first_item)
+            .unwrap_or_else(|| panic!("{first_item} is not on screen"));
+        // The list opens below the chip, starting at its left edge (the
+        // item may be any row of it, so allow the list's height).
+        let below = item.top() - chip_bounds.bottom();
+        assert!(
+            below > gpui::px(0.) && below < gpui::px(200.),
+            "{chip}: menu {item:?}, chip {chip_bounds:?}"
+        );
+        assert!(
+            (item.left() - chip_bounds.left()).abs() < gpui::px(24.),
+            "{chip}: menu {item:?}, chip {chip_bounds:?}"
+        );
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        assert!(
+            shown(visual, "new-card"),
+            "Escape closes the menu, not the form"
+        );
+    }
+}
