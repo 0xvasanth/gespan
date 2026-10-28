@@ -8470,3 +8470,99 @@ mod layout_fit;
 mod link_run;
 mod scale;
 mod ux_batch;
+
+/// A right click as the mouse makes it: press and release.
+fn full_right_click(visual: &mut VisualTestContext, target: &'static str) {
+    visual.refresh().unwrap();
+    let at = visual.debug_bounds(target).unwrap().center();
+    visual.simulate_mouse_down(at, gpui::MouseButton::Right, Default::default());
+    visual.simulate_mouse_up(at, gpui::MouseButton::Right, Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+}
+
+#[gpui::test]
+fn undo_brings_back_a_card_deleted_from_its_menu_with_the_archive_open(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let b = card_id(&f, cx, "B");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-archive");
+    full_right_click(visual, "board-card-2");
+    click(visual, "menu-action-delete");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #2"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+    click(visual, "board-undo");
+    assert!(card_exists(&f, &b), "Undo must not finish the held delete");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    assert_eq!(toast(&f, visual), None);
+}
+
+#[gpui::test]
+fn the_card_menu_archives_while_the_archive_view_is_open(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-archive");
+    full_right_click(visual, "board-card-2");
+    click(visual, "menu-action-archive");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived #2"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+    let listed: Vec<String> = f
+        .window
+        .read_with(visual, |view, _| {
+            view.archived_cards()
+                .iter()
+                .map(|c| c.title.clone())
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(listed, ["B"], "the open Archive view lists it at once");
+}
+
+/// Keys as a real keyboard sends them: each one pressed, then released.
+/// `simulate_keystrokes` only presses, so it misses what GPUI does on release
+/// (a focused element turns an Enter or Space release into a click).
+fn press_and_release(visual: &mut VisualTestContext, keys: &str) {
+    use gpui::InputEvent as _;
+    for key in keys.split_whitespace() {
+        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        visual.update(|window, cx| {
+            window.dispatch_event(
+                gpui::KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(gpui::KeyUpEvent { keystroke }.to_platform_input(), cx);
+        });
+        visual.run_until_parked();
+    }
+}
+
+#[gpui::test]
+fn a_real_space_press_lifts_the_card_instead_of_opening_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let c = card_id(&f, visual, "C");
+    focus_card(&f, visual, &c);
+    press_and_release(visual, "space");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.card_detail.is_none(), "Space must not open the drawer");
+            assert!(view.kb_drag.is_some(), "Space lifts the card");
+        })
+        .unwrap();
+    press_and_release(visual, "up up enter");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "A", "B"]);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none(), "Enter drops the card");
+            assert!(
+                view.card_detail.is_none(),
+                "dropping must not open the drawer"
+            );
+        })
+        .unwrap();
+}

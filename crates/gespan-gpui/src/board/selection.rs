@@ -135,6 +135,12 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A focused card's Space and Enter are handled as keys (lift, open).
+        // GPUI also turns their release into a click, which would open the
+        // drawer over a lifted card and cancel the move.
+        if event.is_keyboard() {
+            return;
+        }
         let modifiers = event.modifiers();
         if modifiers.secondary() {
             self.toggle_select(card_id, cx);
