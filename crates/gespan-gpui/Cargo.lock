@@ -2399,6 +2399,7 @@ dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
  "chrono",
+ "embed-resource",
  "gespan-board-store",
  "gespan-core",
  "gespan-keep-awake",
@@ -2412,6 +2413,7 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "libc",
+ "mermaid-rs-renderer",
  "mimalloc",
  "notify",
  "objc2 0.6.5",
@@ -3688,6 +3690,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "json5"
+version = "1.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1628f14e201e5d6683248a22736547a083c2c176652d65b1068be73dab213a28"
+dependencies = [
+ "serde",
+ "ucd-trie",
+]
+
+[[package]]
 name = "keyring"
 version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4067,6 +4079,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mermaid-rs-renderer"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cb5b469222ce6b9896edf0a969cf68464f5a028ef394fd6643f00bd943df117"
+dependencies = [
+ "anyhow",
+ "fontdb",
+ "json5",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -7494,6 +7523,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ucd-trie"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
 name = "uds_windows"

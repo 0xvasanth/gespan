@@ -90,7 +90,10 @@ impl Video {
             let Ok(handle) = HasWindowHandle::window_handle(window) else { return; };
             let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return; };
             let parent = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
-            let clipped = bounds.intersect(&window.content_mask().bounds);
+            // AppKit frames are in window points; GPUI's are divided by the interface zoom.
+            let zoom = window.content_zoom();
+            let clipped = bounds.intersect(&window.content_mask().bounds).map(|v| v * zoom);
+            let bounds = bounds.map(|v| v * zoom);
             let mut host = host.borrow_mut();
             if clipped.size.width <= gpui::px(0.) || clipped.size.height <= gpui::px(0.) {
                 if let Some(host) = host.as_ref() { host.clip.setHidden(true); }

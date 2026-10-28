@@ -677,7 +677,7 @@ impl DiffView {
             return width;
         }
         let mut font = window.text_style().font();
-        font.family = crate::markdown::PILOT.into();
+        font.family = crate::fonts::monospace().into();
         let run = gpui::TextRun {
             len: 10,
             font,
@@ -1100,7 +1100,7 @@ impl DiffView {
                         .min_w_0()
                         .truncate()
                         .px_3()
-                        .font_family(crate::markdown::PILOT)
+                        .font_family(crate::fonts::monospace())
                         .text_size(px(11.))
                         .text_color(content(0.5))
                         .child(text),
@@ -1282,7 +1282,7 @@ impl DiffView {
                                     .pl_3()
                                     .pr_6()
                                     .whitespace_nowrap()
-                                    .font_family(crate::markdown::PILOT)
+                                    .font_family(crate::fonts::monospace())
                                     .text_size(px(CODE_SIZE))
                                     .text_color(content(0.92))
                                     .child(StyledText::new(text).with_highlights(styles)),
@@ -1378,13 +1378,12 @@ fn blur() -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             // Keep the tint on the blur quad itself. GPUI treats a fully
             // transparent fill as border-only and strips its interior.
-            let quad = gpui::fill(bounds, content(0.02)).border_color(
-                gpui_apple::metal_renderer::backdrop_blur_marker(24. * window.scale_factor()),
-            );
-            #[cfg(not(target_os = "macos"))]
+            let quad = gpui::fill(bounds, content(0.02))
+                .border_color(gpui::backdrop_blur_marker(24. * window.scale_factor()));
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let quad = gpui::fill(bounds, rgb(CHAT));
             window.paint_quad(quad);
         },
@@ -1521,7 +1520,7 @@ impl Render for DiffView {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .font_family(crate::markdown::PILOT)
+                                    .font_family(crate::fonts::monospace())
                                     .text_size(px(11.))
                                     .text_color(content(0.55))
                                     .child(location),
@@ -1879,8 +1878,7 @@ mod tests {
         cx.refresh().unwrap();
         window
             .update(cx, |_, window, _| {
-                let marker =
-                    gpui_apple::metal_renderer::backdrop_blur_marker(24. * window.scale_factor());
+                let marker = gpui::backdrop_blur_marker(24. * window.scale_factor());
                 let quads = window.painted_quads();
                 let glass = quads.iter().find(|q| q.border_color == marker).expect(
                     "the sticky header's blur must survive GPUI's transparent-quad culling",

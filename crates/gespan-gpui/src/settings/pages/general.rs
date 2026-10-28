@@ -1,5 +1,9 @@
 //! GeneralPage and UpdateRow.
-use crate::settings::{SettingsView, widgets::secondary_button};
+use crate::notifications::updater::{self, Action};
+use crate::settings::{
+    SettingsView,
+    widgets::{primary_button, secondary_button},
+};
 use crate::theme::*;
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
 
@@ -174,6 +178,20 @@ impl SettingsView {
                 |this, on, cx| this.update(cx, |p| p.action_opens_terminal = on),
             )],
         ));
+        workspace.push(self.row(
+            Some("terminal-in-panel"),
+            false,
+            "Terminal in side panel",
+            Some("In the Focused layout, open the terminal as a tab in the right panel instead of below the chat.".into()),
+            vec![self.toggle(
+                "terminal-in-panel",
+                "Terminal in side panel",
+                p.terminal_in_panel,
+                false,
+                cx,
+                |this, on, cx| this.update(cx, |p| p.terminal_in_panel = on),
+            )],
+        ));
         if cfg!(target_os = "windows") {
             workspace.push(self.row(
                 Some("close-to-tray"),
@@ -202,13 +220,20 @@ impl SettingsView {
                     .child("Version")
                     .child(
                         div()
-                            .font_family(crate::markdown::PILOT)
+                            .font_family(crate::fonts::monospace())
                             .text_size(px(12.))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(content(0.45))
                             .child(version),
                     ),
-                Some("View release notes and check for app and agent updates.".into()),
+                Some(
+                    cx.try_global::<updater::Shared>()
+                        .and_then(|shared| updater::status(&shared.0, cx))
+                        .unwrap_or_else(|| {
+                            "View release notes and check for app and agent updates.".into()
+                        })
+                        .into(),
+                ),
                 vec![
                     div()
                         .flex()
@@ -233,23 +258,7 @@ impl SettingsView {
                                 cx.emit(crate::settings::SettingsEvent::CheckHarnessUpdates)
                             })),
                         )
-                        .child(
-                            secondary_button("check-updates", "Check for updates", false, false)
-                                .child(icon("refresh-cw", 14.).text_color(content(0.7)))
-                                .child("Check for updates")
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(crate::settings::SettingsEvent::CheckAppUpdates)
-                                })),
-                        )
-                        .into_any_element(),
-                    div()
-                        .w_full()
-                        .children(
-                            cx.try_global::<crate::notifications::updater::Shared>()
-                                .map(|shared| {
-                                    crate::notifications::updater::row(shared.0.clone(), cx)
-                                }),
-                        )
+                        .child(self.app_update_button(cx))
                         .into_any_element(),
                 ],
             ),
@@ -259,5 +268,44 @@ impl SettingsView {
             self.group(None, false, "Workspace", None, None, workspace),
             self.group(None, false, "About", None, None, about),
         ]
+    }
+}
+impl SettingsView {
+    /// Check for updates, or once one is found, install it in place.
+    fn app_update_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let updater = cx
+            .try_global::<updater::Shared>()
+            .map(|shared| shared.0.clone());
+        match updater.as_ref().map(|u| updater::action(u, cx)) {
+            Some(Action::Install(version)) => {
+                let label = format!("Update to {version}");
+                let mut ink = shell_fill();
+                ink.a = 1.;
+                primary_button("check-updates", label.clone(), false)
+                    .child(icon("arrow-down-circle", 14.).text_color(ink))
+                    .child(label)
+                    .on_click(move |_, _, cx| {
+                        if let Some(updater) = &updater {
+                            updater::install(updater, cx)
+                        }
+                    })
+                    .into_any_element()
+            }
+            Some(Action::Busy(label)) => {
+                secondary_button("check-updates", label.clone(), false, true)
+                    .child(icon("loader", 14.).text_color(content(0.7)))
+                    .child(label)
+                    .into_any_element()
+            }
+            Some(Action::Check) | None => {
+                secondary_button("check-updates", "Check for updates", false, false)
+                    .child(icon("refresh-cw", 14.).text_color(content(0.7)))
+                    .child("Check for updates")
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(crate::settings::SettingsEvent::CheckAppUpdates)
+                    }))
+                    .into_any_element()
+            }
+        }
     }
 }

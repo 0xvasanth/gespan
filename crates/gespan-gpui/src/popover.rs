@@ -3,7 +3,7 @@
 // src/features/files/ui/ExplorerMenu.tsx.
 use crate::theme::*;
 use gpui::{
-    AnyElement, AnyView, App, Bounds, BoxShadow, Context, DispatchPhase, Display, Element,
+    AnyElement, AnyView, App, Bounds, BoxShadow, Context, Corners, DispatchPhase, Display, Element,
     ElementId, Entity, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
     InspectorElementId, KeyBinding, LayoutId, MouseDownEvent, Pixels, Point,
     Position as CssPosition, Role, SharedString, Style, Toggled, Window, actions, canvas, deferred,
@@ -239,6 +239,8 @@ impl AnchorSlot {
 pub(crate) enum Anchor {
     Slot(AnchorSlot),
     Point(Point<Pixels>),
+    /// Centre the measured card in the window, for modals.
+    Center,
     /// Follow the row vertically, but always measure the gap from the parent
     /// card's edge, regardless of its row padding or menu style.
     Submenu {
@@ -251,6 +253,7 @@ impl Anchor {
         match self {
             Self::Slot(slot) => slot.get().unwrap_or_default(),
             Self::Point(p) => Bounds::new(*p, size(px(0.), px(0.))),
+            Self::Center => Bounds::default(),
             Self::Submenu { row, surface } => {
                 let row = row.get().unwrap_or_default();
                 let surface = surface.get().unwrap_or(row);
@@ -273,7 +276,7 @@ const MENU_TRAVEL: f32 = 8.;
 const SUBMENU_GAP: f32 = 4.;
 const RADIUS: f32 = 12.;
 // GlassBackdrop's backdrop-blur-xl.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const BLUR: f32 = 24.;
 
 fn entrance(elapsed: f32, reduced: bool) -> f32 {
@@ -485,14 +488,7 @@ impl Popover {
             })
             .rounded(px(radius))
             .opacity(enter)
-            .shadow(vec![
-                BoxShadow::new(px(0.), px(20.), rgba(0x0000001a).into())
-                    .blur_radius(px(25.))
-                    .spread_radius(px(-5.)),
-                BoxShadow::new(px(0.), px(8.), rgba(0x0000001a).into())
-                    .blur_radius(px(10.))
-                    .spread_radius(px(-6.)),
-            ])
+            .shadow(shadow())
             .child(glass(tint, radius, self.solid))
             .child(
                 div()
@@ -532,29 +528,76 @@ fn tint() -> Hsla {
 // On macOS the renderer blurs what is already drawn behind this quad.
 // Light themes, and platforms without the blur, paint an opaque card.
 fn glass(tint: Hsla, radius: f32, solid: bool) -> impl IntoElement {
-    let opaque = crate::theme::floating_fill();
-    let light = crate::theme::is_light() || solid;
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
-            #[cfg(target_os = "macos")]
-            let quad = if light {
-                gpui::fill(bounds, opaque)
-            } else {
-                gpui::fill(bounds, tint).border_color(
-                    gpui_apple::metal_renderer::backdrop_blur_marker(BLUR * window.scale_factor()),
-                )
-            };
-            #[cfg(not(target_os = "macos"))]
-            let quad = {
-                let _ = (light, tint);
-                gpui::fill(bounds, opaque)
-            };
-            window.paint_quad(quad.corner_radii(px(radius)));
+            paint_glass_solid(bounds, Corners::all(px(radius)), tint, solid, window)
         },
     )
     .absolute()
     .size_full()
+}
+/// The popover surface: `tint` over a backdrop blur, or the opaque card.
+pub(crate) fn paint_glass(
+    bounds: Bounds<Pixels>,
+    corners: Corners<Pixels>,
+    tint: Hsla,
+    window: &mut Window,
+) {
+    paint_glass_solid(bounds, corners, tint, false, window);
+}
+/// `paint_glass`, or always the opaque card when `solid`.
+fn paint_glass_solid(
+    bounds: Bounds<Pixels>,
+    corners: Corners<Pixels>,
+    tint: Hsla,
+    solid: bool,
+    window: &mut Window,
+) {
+    let opaque = crate::theme::floating_fill();
+    let light = crate::theme::is_light() || solid;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let quad = if light {
+        gpui::fill(bounds, opaque)
+    } else {
+        gpui::fill(bounds, tint)
+            .border_color(gpui::backdrop_blur_marker(BLUR * window.scale_factor()))
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let quad = {
+        let _ = (light, tint);
+        gpui::fill(bounds, opaque)
+    };
+    window.paint_quad(quad.corner_radii(corners));
+}
+/// A whole popover surface painted directly, for cards drawn inside a
+/// canvas such as chart readouts: shadow, glass (or the light theme's opaque
+/// card) and the 10% border, at the popover's radius.
+pub(crate) fn paint_surface(bounds: Bounds<Pixels>, window: &mut Window) {
+    let corners = Corners::all(px(RADIUS));
+    window.paint_drop_shadows(bounds, corners, &shadow());
+    paint_glass(bounds, corners, tint(), window);
+    window.paint_quad(
+        gpui::fill(bounds, gpui::transparent_black())
+            .corner_radii(corners)
+            .border_widths(px(1.))
+            .border_color(content(0.1)),
+    );
+}
+/// The default popover glass tint.
+pub(crate) fn glass_tint() -> Hsla {
+    tint()
+}
+/// The popover's two-layer drop shadow.
+pub(crate) fn shadow() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(20.), rgba(0x0000001a).into())
+            .blur_radius(px(25.))
+            .spread_radius(px(-5.)),
+        BoxShadow::new(px(0.), px(8.), rgba(0x0000001a).into())
+            .blur_radius(px(10.))
+            .spread_radius(px(-6.)),
+    ]
 }
 
 struct Placed {
@@ -619,7 +662,14 @@ impl Element for Placed {
         let top = placed.top.unwrap_or_else(|| {
             viewport.1 - placed.bottom.unwrap_or(0.) - height.min(placed.max_height)
         });
-        let target = point(px(placed.left).round(), px(top).round());
+        let target = if matches!(self.anchor, Anchor::Center) {
+            point(
+                px(((viewport.0 - f32::from(surface.width)) / 2.).max(0.)).round(),
+                px(((viewport.1 - height) / 2.).max(0.)).round(),
+            )
+        } else {
+            point(px(placed.left).round(), px(top).round())
+        };
         let moving = target + entrance_offset(placed.side, self.progress);
         // One offset moves the glass, frame, content, clipping and hitboxes.
         window.with_element_offset(moving - bounds.origin, |window| {

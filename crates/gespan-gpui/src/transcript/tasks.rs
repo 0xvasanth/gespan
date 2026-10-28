@@ -539,7 +539,7 @@ fn agent(
         if let Some(report) = report {
             let report = if failed {
                 div()
-                    .font_family(markdown::PILOT)
+                    .font_family(crate::fonts::monospace())
                     .text_size(px(12.))
                     .line_height(px(20.))
                     .text_color({

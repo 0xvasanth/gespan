@@ -398,7 +398,7 @@ mod tests {
     #[gpui::test]
     fn help_menu_reports_an_issue(cx: &mut TestAppContext) {
         let menus = cx.update(|cx| {
-            crate::file_editor::menus(&crate::settings::Preferences::default(), cx);
+            crate::app_menu::install(&crate::settings::Preferences::default(), cx);
             cx.get_menus().unwrap()
         });
         let help = menus

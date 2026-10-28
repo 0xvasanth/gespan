@@ -135,15 +135,20 @@ fn age_label(updated_at: u64, now: u64) -> &'static str {
     }
 }
 
-// Match sidebar-session-scroll: 40px below, and 28px above scrolled inset rows.
+// Match sidebar-session-scroll: 40px below, and 28px above scrolled Focused rows.
 // Mask only the edge bands so the virtual list never needs a full-pane copy.
-fn sidebar_edge_mask(state: ListState, inset: bool, begin: bool) -> impl IntoElement {
+fn sidebar_edge_mask(
+    state: ListState,
+    top_fade: bool,
+    #[cfg_attr(target_os = "macos", allow(unused_variables))] inset: bool,
+    begin: bool,
+) -> impl IntoElement {
     gpui::canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
             let offset = state.logical_scroll_top();
             let bottom_height = px(40.).min(bounds.size.height);
-            let top_height = if inset && (offset.item_ix > 0 || offset.offset_in_item > px(0.)) {
+            let top_height = if top_fade && (offset.item_ix > 0 || offset.offset_in_item > px(0.)) {
                 px(28.).min((bounds.size.height - bottom_height).max(px(0.)))
             } else {
                 px(0.)
@@ -186,6 +191,12 @@ fn sidebar_edge_mask(state: ListState, inset: bool, begin: bool) -> impl IntoEle
                     } else {
                         shell_fill()
                     };
+                    // Without a mask the fade paints the background over the
+                    // rows. Over Windows' glass that becomes an opaque band,
+                    // so a translucent background keeps the list's hard edge.
+                    if cfg!(target_os = "windows") && background.a < 1. {
+                        continue;
+                    }
                     for y in 0..height.as_f32().ceil() as usize {
                         let mut color = background;
                         color.a = (1. - (y as f32 + 0.5) / height.as_f32()).clamp(0., 1.);
@@ -442,6 +453,7 @@ impl Shell {
             .on_scroll_wheel(cx.listener(|this, _, _, cx| this.sidebar_scrolled(cx)))
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
+                !self.workspace.classic_layout,
                 !self.workspace.boxy_layout(),
                 true,
             ))
@@ -454,6 +466,7 @@ impl Shell {
             )
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
+                !self.workspace.classic_layout,
                 !self.workspace.boxy_layout(),
                 false,
             ))

@@ -449,12 +449,11 @@ fn empty_state() -> AnyElement {
                                         |_, _, _| (),
                                         |bounds, _, window, _| {
                                             let quad = fill(bounds, content(0.06));
-                                            #[cfg(target_os = "macos")]
-                                            let quad = quad.border_color(
-                                                gpui_apple::metal_renderer::backdrop_blur_marker(
+                                            #[cfg(any(target_os = "macos", target_os = "windows"))]
+                                            let quad =
+                                                quad.border_color(gpui::backdrop_blur_marker(
                                                     4. * window.scale_factor(),
-                                                ),
-                                            );
+                                                ));
                                             window.paint_quad(quad.corner_radii(px(16.)));
                                         },
                                     )
@@ -480,7 +479,7 @@ fn empty_state() -> AnyElement {
         .into_any_element()
 }
 impl Render for SearchView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows: Vec<_> = self
             .hits
             .iter()
@@ -618,7 +617,12 @@ impl Render for SearchView {
                     .border_b_1()
                     .border_color(stroke)
                     .pl(px(self.original_header.unwrap_or(12.)))
-                    .pr_3()
+                    .pr(px(12.
+                        + if self.original_header.is_some() {
+                            crate::shell::client_controls_width(window)
+                        } else {
+                            0.
+                        }))
                     .flex()
                     .items_center()
                     .gap_2()

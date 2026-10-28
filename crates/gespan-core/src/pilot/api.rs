@@ -5,7 +5,7 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
         "models.list"|"soul.read"|"habits.list"=>"",
         "sessions.list"|"folders.list"|"worktrees.list"=>"project",
         "sessions.read"=>"sessionId project before limit maxChars",
-        "sessions.start"=>"prompt project harness model modelSettings runtimeMode title draft reveal workspaceMode worktreeBase worktreeCwd notifyOnComplete",
+        "sessions.start"=>"prompt project harness model modelSettings effort runtimeMode title draft reveal workspaceMode worktreeBase worktreeCwd placement besideSessionId notifyOnComplete",
         "sessions.send"=>"sessionId prompt project notifyOnComplete",
         "sessions.draft"=>"sessionId prompt project",
         "sessions.stop"|"sessions.archive"|"sessions.delete"=>"sessionId project",
@@ -30,10 +30,19 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
         {
             return Err(format!("{key} must be true or false"));
         }
-        if ["before", "limit", "offset", "maxChars", "number"].contains(&key.as_str())
+        if ["limit", "offset", "maxChars", "number"].contains(&key.as_str())
             && value.as_u64().is_none()
         {
             return Err(format!("{key} must be a non-negative integer"));
+        }
+        if key == "before" && !value.is_string() && value.as_u64().is_none() {
+            return Err("before must be a turn ID".into());
+        }
+        if matches!(key.as_str(), "id" | "sessionId" | "besideSessionId")
+            && !value.is_string()
+            && value.as_u64().is_none()
+        {
+            return Err(format!("{key} must be an ID"));
         }
         if ![
             "draft",
@@ -48,6 +57,7 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
             "number",
             "id",
             "sessionId",
+            "besideSessionId",
             "modelSettings",
             "schedule",
             "tags",
@@ -60,6 +70,16 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
         {
             return Err(format!("{key} must be text"));
         }
+    }
+    if input.get("modelSettings").is_some_and(|value| {
+        value
+            .as_object()
+            .is_none_or(|values| values.values().any(|v| !v.is_string()))
+    }) {
+        return Err("modelSettings must be an object of strings".into());
+    }
+    if input["draft"] == true && input["notifyOnComplete"] == true {
+        return Err("An unsent draft cannot send a completion notification".into());
     }
     if input.get("runtimeMode").is_some_and(|v| {
         !matches!(
@@ -84,12 +104,27 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
     }) {
         return Err("inputs must be an object of text values".into());
     }
+    if input
+        .get("placement")
+        .is_some_and(|v| !matches!(v.as_str(), Some("tab" | "right" | "down")))
+    {
+        return Err("placement must be tab, right or down".into());
+    }
+    if input.get("besideSessionId").is_some()
+        && !matches!(input["placement"].as_str(), Some("right" | "down"))
+    {
+        return Err("besideSessionId requires placement right or down".into());
+    }
     if input.get("tags").is_some_and(|v| {
         v.as_array().is_none_or(|a| {
-            a.len() > 32 || a.iter().any(|v| v.as_str().is_none_or(|s| s.len() > 160))
+            a.len() > crate::notes::MAX_TAGS
+                || a.iter().any(|v| {
+                    v.as_str()
+                        .is_none_or(|s| s.len() > crate::notes::MAX_TAG_LENGTH)
+                })
         })
     }) {
-        return Err("tags must be an array of up to 32 short strings".into());
+        return Err("tags must be an array of up to 20 short strings".into());
     }
     Ok(())
 }

@@ -211,14 +211,14 @@ impl SettingsView {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .font_family(crate::markdown::PILOT)
+                                .font_family(crate::fonts::monospace())
                                 .text_color(content(0.9))
                                 .child(row.name.clone()),
                         )
                         .child(
                             div()
                                 .w(px(110.))
-                                .font_family(crate::markdown::PILOT)
+                                .font_family(crate::fonts::monospace())
                                 .text_color(content(0.55))
                                 .child(row.kind),
                         )
@@ -327,7 +327,7 @@ mod tests {
         assert!(Section::ALL.contains(&Section::Diagnostics));
         assert_eq!(Section::Diagnostics.label(), "Diagnostics");
         for query in ["diagnostics", "crash", "logs folder", "report issue"] {
-            let hit = crate::settings::model::search(query).into_iter().next();
+            let hit = crate::settings::model::search(query, "").into_iter().next();
             assert_eq!(
                 hit.map(|r| r.section),
                 Some(Section::Diagnostics),

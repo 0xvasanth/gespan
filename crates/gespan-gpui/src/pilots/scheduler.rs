@@ -1,4 +1,4 @@
-use super::panels::button;
+use super::panels::{button, empty_state, matches_query, search_bar};
 use super::*;
 use gespan_core::pilot::habits::{Run, Schedule};
 use gespan_core::time::now_ms;
@@ -206,10 +206,32 @@ impl Pilots {
             || habit.run_requested
             || habit.enabled && habit.next_run_at <= now_ms()
     }
-    pub(super) fn habits_list(&self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let groups = grouped_habits(&self.habits, now_ms(), |h| self.habit_running_since(h));
-        div().id("pilot-habits-list").debug_selector(|| "pilot-habits-list".into())
-            .size_full().min_w_0().overflow_y_scroll().p_2().flex().flex_col().gap_4()
+    pub(super) fn habits_list(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
+        let filter = self.field(
+            "pilot-habit-search",
+            "Search habits…",
+            String::new(),
+            false,
+            cx,
+        );
+        let query = filter.read(cx).content.to_string();
+        let groups =
+            grouped_habits(&self.habits, now_ms(), |h| self.habit_running_since(h)).map(|items| {
+                items
+                    .into_iter()
+                    .filter(|ix| {
+                        let h = &self.habits[*ix];
+                        matches_query(
+                            &query,
+                            &format!("{} {} {}", h.name, h.instructions, h.schedule.label()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+        let no_matches = !self.habits.is_empty() && groups.iter().all(|items| items.is_empty());
+        let list = div().id("pilot-habits-list").debug_selector(|| "pilot-habits-list".into())
+            .flex_1().min_h_0().min_w_0().overflow_y_scroll().p_2().flex().flex_col().gap_4()
+            .when(no_matches, |d| d.child(empty_state("search-01", "No habits match this search.")))
             .when(self.habits.is_empty(), |d| d.child(
                 div().flex_1().min_h(px(160.)).flex().flex_col().items_center().justify_center()
                     .gap_3().px_6().py_10().text_center().text_size(px(12.)).line_height(px(18.))
@@ -219,7 +241,15 @@ impl Pilots {
                 div().flex_shrink_0().w_full().min_w_0().flex().flex_col().gap_1p5()
                     .child(div().px_2().text_size(px(11.)).text_color(content(0.4)).child(title))
                     .children(items.into_iter().map(|ix| self.habit_row(&self.habits[ix], pilot, cx)))
-            })).into_any_element()
+            }));
+        div()
+            .size_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .when(!self.habits.is_empty(), |d| d.child(search_bar(filter)))
+            .child(list)
+            .into_any_element()
     }
     fn habit_row(&self, h: &Habit, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
         let id = h.id.clone();

@@ -32,7 +32,7 @@ pub(crate) fn apply(prefs: &Preferences, cx: &mut App) {
             continue;
         };
         if let Some(shortcut) = override_
-            && rebound.insert(command)
+            && rebound.insert((command, binding.action().name()))
             && let Ok(custom) = KeyBinding::load(
                 shortcut,
                 binding.action().boxed_clone(),
@@ -70,6 +70,7 @@ fn command(binding: &KeyBinding) -> Option<&'static str> {
         "workspace::VisitBack" => "Tab: Back",
         "workspace::VisitForward" => "Tab: Forward",
         "workspace::CloseTab" => "Pane: Close",
+        "workspace::ArchiveSession" => "Session: Archive",
         "workspace::PreviousSession" => "Session: Previous",
         "workspace::NextSession" => "Session: Next",
         "workspace::PreviousSessionInTab" => "Session: Previous in Current Tab",
@@ -87,9 +88,10 @@ fn command(binding: &KeyBinding) -> Option<&'static str> {
         "composer::Dictate" => "Composer: Dictate",
         "file_editor::Find" => "Editor: Find",
         "file_editor::Replace" => "Editor: Replace",
-        "image_lightbox::ZoomIn" => "View: Zoom In",
-        "image_lightbox::ZoomOut" => "View: Zoom Out",
-        "image_lightbox::ResetZoom" => "View: Reset Zoom",
+        "workspace::ZoomIn" | "image_lightbox::ZoomIn" => "View: Zoom In",
+        "workspace::ZoomOut" | "image_lightbox::ZoomOut" => "View: Zoom Out",
+        "workspace::ResetZoom" | "image_lightbox::ResetZoom" => "View: Reset Zoom",
+        "workspace::Reload" => "View: Reload",
         _ => return None,
     })
 }

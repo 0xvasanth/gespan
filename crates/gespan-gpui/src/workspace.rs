@@ -91,6 +91,7 @@ pub(crate) struct ProjectRailGroup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Workspace {
+    pub window: crate::window_state::WindowState,
     pub tabs: Vec<i64>,
     #[serde(serialize_with = "save_title_order")]
     pub title_order: Vec<TitleTab>,
@@ -133,6 +134,9 @@ pub(crate) struct Workspace {
     /// Independent file panes use negative IDs in the layout tree. Their
     /// originating session supplies project/worktree scope and Add to Chat.
     pub review_owners: HashMap<i64, i64>,
+    /// Pilots dragged into a split, by their negative pane IDs. Each keeps the
+    /// Pilot tab it came from, which it becomes again once it stands alone.
+    pub pilot_panes: HashMap<i64, TitleTab>,
     /// Split trees of tabs with more than one pane, by tab key.
     pub layouts: HashMap<i64, PaneNode>,
     /// The pane each split tab returns to when it is activated.
@@ -315,6 +319,7 @@ impl TerminalDock {
 impl Default for Workspace {
     fn default() -> Self {
         Self {
+            window: Default::default(),
             tabs: Vec::new(),
             title_order: Vec::new(),
             scope_focus: HashMap::new(),
@@ -341,6 +346,7 @@ impl Default for Workspace {
             changes_view: Default::default(),
             reviews: Default::default(),
             review_owners: Default::default(),
+            pilot_panes: Default::default(),
             layouts: Default::default(),
             focused: Default::default(),
             docks: Default::default(),
@@ -471,6 +477,11 @@ impl Workspace {
                 && state.reviews.get(id).is_some_and(|r| !r.tabs.is_empty())
         });
         known.extend(state.review_owners.keys().copied());
+        let owners = &state.review_owners;
+        state.pilot_panes.retain(|id, pilot| {
+            *id < 0 && !owners.contains_key(id) && matches!(pilot, TitleTab::Pilot { .. })
+        });
+        known.extend(state.pilot_panes.keys().copied());
         let mut seen = HashSet::new();
         let mut layouts = std::mem::take(&mut state.layouts);
         let mut focused = std::mem::take(&mut state.focused);
@@ -502,6 +513,7 @@ impl Workspace {
                 state.layouts.insert(key, layout);
             }
         }
+        state.settle_pilot_panes();
         state.normalize_title_order();
         if state
             .desktop_project_preferences
@@ -592,6 +604,35 @@ impl Workspace {
     pub fn session_for_pane(&self, id: i64) -> i64 {
         self.review_owners.get(&id).copied().unwrap_or(id)
     }
+    /// File and Pilot panes share the negative IDs below every session.
+    pub fn next_pane_id(&self) -> i64 {
+        self.review_owners
+            .keys()
+            .chain(self.pilot_panes.keys())
+            .copied()
+            .min()
+            .unwrap_or(0)
+            .min(0)
+            - 1
+    }
+    pub fn pilot_pane(&self, pilot: &str) -> Option<i64> {
+        self.pilot_panes.iter().find_map(|(pane, tab)| {
+            matches!(tab, TitleTab::Pilot { id, .. } if id == pilot).then_some(*pane)
+        })
+    }
+    /// The pane that scopes a tab to a project: its focus, unless that is a
+    /// Pilot, which works across projects.
+    pub fn scope_pane(&self, tab: i64) -> i64 {
+        let focus = self.tab_focus(tab);
+        if !self.pilot_panes.contains_key(&focus) {
+            return focus;
+        }
+        self.layout(tab)
+            .leaf_ids()
+            .into_iter()
+            .find(|id| !self.pilot_panes.contains_key(id))
+            .unwrap_or(focus)
+    }
     /// Focus a session, opening it as its own tab unless a tab holds it.
     pub fn open(&mut self, id: i64) {
         match self.tab_of(id) {
@@ -673,10 +714,16 @@ impl Workspace {
         };
         let focus = self.focused.remove(&tab);
         self.layouts.remove(&tab);
-        let key = if layout.contains(tab) {
+        // A tab is keyed by a conversation when it holds one, never a Pilot.
+        let key = if layout.contains(tab) && !self.pilot_panes.contains_key(&tab) {
             tab
         } else {
-            layout.first_leaf()
+            let leaves = layout.leaf_ids();
+            leaves
+                .iter()
+                .copied()
+                .find(|id| !self.pilot_panes.contains_key(id))
+                .unwrap_or(leaves[0])
         };
         self.tabs[ix] = key;
         if key != tab
@@ -794,6 +841,77 @@ impl Workspace {
         );
         self.focused.insert(key, focus);
         self.active = Some(focus);
+    }
+    /// A Pilot tab dropped on a pane edge leaves the strip for the split.
+    pub fn place_pilot(&mut self, pilot: TitleTab, target: i64, edge: Edge) -> Option<i64> {
+        if !matches!(pilot, TitleTab::Pilot { .. }) || self.tab_of(target).is_none() {
+            return None;
+        }
+        let pane = self.next_pane_id();
+        self.title_order.retain(|entry| *entry != pilot);
+        self.scope_focus.retain(|_, entry| *entry != pilot);
+        self.pilot_panes.insert(pane, pilot);
+        self.place(pane, target, edge);
+        Some(pane)
+    }
+    /// The visible Pilot becomes a split's first pane, its tab keeping its
+    /// slot, so a tab or pane can be dropped beside it.
+    pub fn pilot_tab_pane(&mut self, pilot: TitleTab) -> i64 {
+        let pane = self.next_pane_id();
+        self.tabs.push(pane);
+        for entry in self
+            .title_order
+            .iter_mut()
+            .chain(self.scope_focus.values_mut())
+        {
+            if *entry == pilot {
+                *entry = TitleTab::Session(pane);
+            }
+        }
+        if !self.title_order.contains(&TitleTab::Session(pane)) {
+            self.title_order.push(TitleTab::Session(pane));
+        }
+        self.pilot_panes.insert(pane, pilot);
+        self.active = Some(pane);
+        pane
+    }
+    /// A Pilot pane left alone in its tab becomes its Pilot tab again, in the
+    /// same slot; one no tab holds is forgotten. Returns the Pilot when it
+    /// had focus, for the caller to show.
+    pub fn settle_pilot_panes(&mut self) -> Option<TitleTab> {
+        let mut focused = None;
+        let panes: Vec<_> = self.pilot_panes.keys().copied().collect();
+        for pane in panes {
+            match self.tab_of(pane) {
+                Some(tab) if self.layout(tab).is_split() => continue,
+                Some(tab) => {
+                    let pilot = self.pilot_panes[&pane].clone();
+                    self.tabs.retain(|t| *t != tab);
+                    self.tab_workspaces.remove(&tab);
+                    self.layouts.remove(&tab);
+                    self.focused.remove(&tab);
+                    let present = self.title_order.contains(&pilot);
+                    self.title_order
+                        .retain(|entry| !(present && *entry == TitleTab::Session(tab)));
+                    for entry in self
+                        .title_order
+                        .iter_mut()
+                        .chain(self.scope_focus.values_mut())
+                    {
+                        if *entry == TitleTab::Session(tab) {
+                            *entry = pilot.clone();
+                        }
+                    }
+                    if self.active == Some(pane) {
+                        self.active = None;
+                        focused = Some(pilot);
+                    }
+                }
+                None => {}
+            }
+            self.pilot_panes.remove(&pane);
+        }
+        focused
     }
     /// A pane dragged onto the tab strip becomes its own tab at `to`.
     pub fn detach(&mut self, id: i64, to: usize) {
@@ -1066,6 +1184,76 @@ mod tests {
             h.record(id);
         }
         assert_eq!(h.back.len(), 50);
+    }
+    fn pilot(id: &str) -> TitleTab {
+        TitleTab::Pilot {
+            id: id.into(),
+            project: "/work".into(),
+            worktree: "/work".into(),
+        }
+    }
+    #[test]
+    fn a_pilot_joins_a_split_and_becomes_its_tab_again_when_alone() {
+        let mut s = Workspace::default();
+        s.open(1);
+        s.title_order.push(pilot("m"));
+        s.open(2);
+        let pane = s.place_pilot(pilot("m"), 1, Edge::Right).unwrap();
+        assert!(pane < 0);
+        assert_eq!(s.layout(1).leaf_ids(), vec![1, pane]);
+        assert_eq!(s.active, Some(pane));
+        assert_eq!(s.scope_pane(1), 1, "a Pilot never scopes its tab");
+        assert_eq!(
+            s.title_order,
+            vec![TitleTab::Session(1), TitleTab::Session(2)]
+        );
+        assert_eq!(s.pilot_pane("m"), Some(pane));
+        assert_eq!(s.settle_pilot_panes(), None);
+        // Restarting keeps the Pilot in its split.
+        let saved = serde_json::to_string(&s).unwrap();
+        let restored = Workspace::restore(
+            Some(&saved),
+            &[(1, "/work".into()), (2, "/work".into())],
+            "/work",
+        );
+        assert_eq!(restored.layout(1).leaf_ids(), vec![1, pane]);
+        assert_eq!(restored.pilot_pane("m"), Some(pane));
+        // Detached to the strip, it is the Pilot tab again in the same slot.
+        s.detach(pane, 1);
+        assert_eq!(s.settle_pilot_panes(), Some(pilot("m")));
+        assert_eq!(
+            s.title_order,
+            vec![TitleTab::Session(1), pilot("m"), TitleTab::Session(2)]
+        );
+        assert!(s.pilot_panes.is_empty());
+        assert_eq!(s.tabs, vec![1, 2]);
+    }
+    #[test]
+    fn a_tab_dropped_on_the_visible_pilot_splits_beside_it() {
+        let mut s = Workspace::default();
+        s.open(1);
+        s.title_order.push(pilot("m"));
+        let pane = s.pilot_tab_pane(pilot("m"));
+        assert_eq!(
+            s.title_order,
+            vec![TitleTab::Session(1), TitleTab::Session(pane)]
+        );
+        s.place_tab(1, pane, Edge::Left);
+        assert_eq!(s.tabs, vec![1], "the conversation keys the tab");
+        assert_eq!(s.layout(1).leaf_ids(), vec![1, pane]);
+        assert_eq!(s.title_order, vec![TitleTab::Session(1)]);
+        assert_eq!(s.settle_pilot_panes(), None);
+        // Closing the conversation's pane leaves the Pilot on its own.
+        assert!(s.close_pane(1));
+        assert_eq!(s.settle_pilot_panes(), Some(pilot("m")));
+        assert_eq!(s.title_order, vec![pilot("m")]);
+        assert!(s.tabs.is_empty());
+        // A closed tab forgets its Pilot pane.
+        s.open(1);
+        s.place_pilot(pilot("m"), 1, Edge::Bottom);
+        s.close(1);
+        assert_eq!(s.settle_pilot_panes(), None);
+        assert!(s.pilot_panes.is_empty());
     }
     #[test]
     fn close_and_reopen_keep_session_identity() {

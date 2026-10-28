@@ -57,7 +57,7 @@ impl FileEditor {
                 div()
                     .min_w(px(40.))
                     .text_center()
-                    .font_family(crate::markdown::PILOT)
+                    .font_family(crate::fonts::monospace())
                     .text_size(px(10.5))
                     .text_color(content(0.55))
                     .child(if total == 0 {

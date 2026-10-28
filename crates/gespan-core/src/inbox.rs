@@ -546,6 +546,15 @@ struct RepoFetch {
 /// repository, such as a fork with issues disabled, must not hide the rest;
 /// like Tauri's collectInboxResults, the provider fails only when no fetch
 /// succeeded.
+/// Puts the active checkout first. Several checkouts of the same repository
+/// share its rows, and the first one visited fetches them, so the active
+/// checkout keeps them when the inbox is scoped to it.
+fn active_first(projects: &[PathBuf], cwd: &Path) -> Vec<PathBuf> {
+    let mut ordered = projects.to_vec();
+    ordered.sort_by_key(|project| project.as_path() != cwd);
+    ordered
+}
+
 fn collect_repo_items(
     provider: &str,
     projects: &[PathBuf],
@@ -833,7 +842,7 @@ impl Service {
                 }
                 let fetch = collect_repo_items(
                     provider,
-                    projects,
+                    &active_first(projects, &self.cwd),
                     |project| match provider {
                         "github" => github::git_github_repositories_for(project),
                         "gitlab" => gitlab::gitlab_repo(
@@ -1048,6 +1057,42 @@ impl Service {
 }
 pub(super) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
     run_command("git", root, args, true)
+}
+/// githubWorkItem: one GitHub issue or pull request a message links to,
+/// looked up with `gh` from `cwd` (any folder, when the session's is gone).
+pub fn github_work_item(cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
+    let mut item: Item = convert(github::git_github_work_item_for(
+        &gh_root(cwd),
+        repo,
+        kind,
+        number,
+    )?)?;
+    item.provider = "github".into();
+    Ok(item)
+}
+/// githubWorkItemDetails for [`github_work_item`]'s item.
+pub fn github_work_item_details(
+    cwd: &Path,
+    repo: &str,
+    kind: &str,
+    number: i64,
+) -> Result<Details, String> {
+    convert(github::git_github_work_item_details_for(
+        &gh_root(cwd),
+        repo,
+        kind,
+        number,
+    )?)
+}
+fn gh_root(cwd: &Path) -> PathBuf {
+    let cwd = crate::scm::expand_home(cwd);
+    if cwd.is_dir() {
+        cwd
+    } else {
+        crate::scm::shell::dirs_home()
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+    }
 }
 pub(super) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
     run_command("gh", root, args, allow_empty)
@@ -1463,6 +1508,46 @@ mod notification_tests {
         linear.id = "stable-id".into();
         linear.identifier = "MON-7".into();
         assert_eq!(linear.key(), "linear:mon-7");
+    }
+
+    #[test]
+    fn two_checkouts_of_one_repository_fetch_it_through_the_active_one() {
+        let first = PathBuf::from("/work/app");
+        let second = PathBuf::from("/work/app-review");
+        let other = PathBuf::from("/work/site");
+        let projects = [first.clone(), second.clone(), other.clone()];
+        let repos = |project: &Path| {
+            Ok(vec![if project == other {
+                "acme/site".to_string()
+            } else {
+                "Acme/App".to_string()
+            }])
+        };
+        for (cwd, owner) in [(&first, &first), (&second, &second), (&other, &first)] {
+            let mut fetched = Vec::new();
+            collect_repo_items(
+                "github",
+                &active_first(&projects, cwd),
+                repos,
+                |project, repo, _| {
+                    fetched.push((project.to_path_buf(), repo.to_string()));
+                    Ok(vec![])
+                },
+            )
+            .unwrap();
+            fetched.dedup();
+            assert_eq!(
+                fetched.len(),
+                2,
+                "each repository is fetched once: {fetched:?}"
+            );
+            assert!(
+                fetched
+                    .iter()
+                    .any(|(project, repo)| project == owner && repo == "Acme/App"),
+                "from {cwd:?}: {fetched:?}"
+            );
+        }
     }
 }
 

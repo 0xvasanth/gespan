@@ -1,4 +1,5 @@
 //! Session storage. Desktop launches use Gespan's existing schema directly.
+mod app_access;
 mod gespan_import;
 mod managed_sessions;
 mod notes;
@@ -22,6 +23,7 @@ pub use edit::EditSnapshot;
 pub use gespan_import::native_model;
 pub use gespan_import::{gespan_database, ImportReport};
 use rusqlite::{params, Connection};
+pub use shared::{HistoryPage, PAGE_TURNS};
 pub use side_threads::DesktopSideThread;
 use std::path::Path;
 
@@ -699,6 +701,21 @@ impl Store {
         } else {
             result
         }
+    }
+    /// The cursor for the turns before `load`'s rows, when a Pilot's history
+    /// is paged rather than loaded whole.
+    pub fn history_before(&self, session: i64) -> Result<Option<i64>, String> {
+        if self.shared.is_none() || self.remote_session(session)?.is_some() {
+            return Ok(None);
+        }
+        self.shared_history_before(session)
+    }
+    /// The page of turns before `before`, or with `all` every older turn.
+    pub fn load_before(&self, session: i64, before: i64, all: bool) -> Result<HistoryPage, String> {
+        if self.shared.is_none() {
+            return Ok(HistoryPage::default());
+        }
+        self.shared_load_before(session, before, all)
     }
     pub fn load(&self, session: i64) -> Result<Transcript, String> {
         if let Some(remote) = self.remote_session(session)? {

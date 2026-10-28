@@ -54,7 +54,7 @@ Section "Gespan Native"
   WriteRegStr HKCU "Software\Gespan Native" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayName" "Gespan Native"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayVersion" "@VERSION@"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "UninstallString" '$"$INSTDIR\Uninstall.exe$"'
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   CreateShortcut "$SMPROGRAMS\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
   CreateShortcut "$DESKTOP\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
   Delete "$INSTDIR\gespan-gpui.previous.exe"
@@ -71,12 +71,12 @@ SectionEnd
 Function .onInstFailed
   StrCmp $UpdatePID "" failed_done
   IfFileExists "$INSTDIR\gespan-gpui.exe" 0 failed_done
-  Exec '$"$INSTDIR\gespan-gpui.exe$"'
+  Exec '"$INSTDIR\gespan-gpui.exe"'
   failed_done:
 FunctionEnd
 Function .onInstSuccess
   StrCmp $UpdatePID "" done
-  Exec '$"$INSTDIR\gespan-gpui.exe$"'
+  Exec '"$INSTDIR\gespan-gpui.exe"'
   done:
 FunctionEnd
 Section "Uninstall"

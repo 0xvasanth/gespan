@@ -1152,7 +1152,8 @@ impl Shell {
         )
     }
 
-    /// SessionCard's linked issue or PR; Cmd/Ctrl-click and click both open it.
+    /// SessionCard's linked issue or PR, opened on GitHub. Hover underlines
+    /// it as a link; with no number shown, the line runs under the icon.
     pub(super) fn work_item_badge(
         &self,
         id: i64,
@@ -1198,11 +1199,26 @@ impl Shell {
                     .text_color(rgb(ACCENT)),
                 )
                 .when(!compact, |d| d.child(format!("#{}", item.number)))
+                .cursor_pointer()
+                .when(compact, |d| {
+                    d.border_b_1()
+                        .border_color(gpui::transparent_black())
+                        .hover(|s| s.border_color(rgb(ACCENT)))
+                })
+                .when(!compact, |d| d.hover(|s| s.underline()))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |_, _, _, cx| {
+                .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
+                .on_mouse_up(MouseButton::Middle, {
+                    let url = url.clone();
+                    move |_, _, cx| {
+                        cx.stop_propagation();
+                        cx.open_url(&url);
+                    }
+                })
+                .on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url(&url);
-                }))
+                })
                 .into_any(),
         )
     }
@@ -2196,10 +2212,7 @@ impl Shell {
             .unwrap_or_default();
         let viewport = window.viewport_size();
         let width = 384f32.min(viewport.width.as_f32() - 24.);
-        let anchor = Anchor::Point(gpui::point(
-            px((viewport.width.as_f32() - width) / 2.),
-            px((viewport.height.as_f32() / 2. - 120.).max(16.)),
-        ));
+        let anchor = Anchor::Center;
         let weak = cx.weak_entity();
         let button = |id: &'static str, label: &'static str| {
             div()

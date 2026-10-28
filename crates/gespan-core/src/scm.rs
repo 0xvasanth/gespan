@@ -418,6 +418,14 @@ pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String
     crate::inbox::github::git_github_pr_checks_for(&expand_home(cwd), repo, number)
 }
 
+/// The working copy's GitHub `owner/name`, via `gh` (Tauri's git_github_repo).
+pub fn github_repo(cwd: &Path) -> Result<String, String> {
+    if remote_workspace::is_remote(cwd) {
+        return Err("GitHub repository lookup is local only".into());
+    }
+    github_repo_for(&expand_home(cwd))
+}
+
 /// Create a GitHub pull request with `gh` and return its URL.
 pub fn pr_create(
     cwd: &Path,

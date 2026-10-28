@@ -1,15 +1,30 @@
 //! BtwSheet.tsx's isolated side threads. Their transcript and cancellation never
 //! share the parent provider session, turn queue, or main transcript rows.
 use super::*;
+use crate::transcript::burst::{self as fx, Bubble, Halo};
 use gespan_core::{
     provider::{self, Event, Request},
     transcript::{Row, Transcript},
 };
-use gpui::{AnyElement, App, Render};
+use gpui::{
+    AnyElement, App, Bounds, Corners, Hsla, Pixels, Point, Render, Window, point, rgb, size,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const SNAPSHOT_CHARS: usize = 64_000;
+/// BtwSheet's `max-w-4xl`.
+const SHEET_WIDTH: f32 = 896.;
+/// The composer box radius the morph starts and ends on.
+const BOX_RADIUS: f32 = 12.;
+/// `--radius-lg`, the sheet's resting top corners.
+const SHEET_RADIUS: f32 = 8.;
+const OPEN_MS: f32 = 360.;
+const CLOSE_MS: f32 = 260.;
+const OPEN_EASE: fx::Ease = (0.22, 1., 0.36, 1.);
+const CLOSE_EASE: fx::Ease = (0.4, 0., 0.2, 1.);
+const BURST_MS: f32 = 1900.;
+const MODEL_NOTE: &str = "Answer side questions with another model.";
 const BLOCK_CHARS: usize = 8_000;
 
 fn supported(kind: Kind) -> bool {
@@ -97,13 +112,26 @@ pub(super) struct Btw {
     threads: Vec<Thread>,
     active: Option<String>,
     open: bool,
+    /// Still on screen: open, or folding back into the composer.
+    rendered: bool,
+    morph: Option<Morph>,
+    /// When the panel last started opening or closing, for the body's
+    /// entrance and exit.
+    shown_at: Option<Instant>,
+    question_burst: Option<(Instant, u64)>,
+    /// The session composer's box, the sheet's own composer box, and the
+    /// overlay, each in window coordinates.
+    home: AnchorSlot,
+    side_box: AnchorSlot,
+    overlay: AnchorSlot,
     focus_pending: bool,
     loading: bool,
     error: Option<String>,
     revision: u64,
     pending_submit: Option<String>,
     cancel: HashMap<String, Arc<AtomicBool>>,
-    models: Option<Entity<ModelList>>,
+    /// The handoff-style model menu, while open.
+    models: Option<Entity<Menu>>,
     model_subscription: Option<Subscription>,
     model_anchor: AnchorSlot,
     _submit: Subscription,
@@ -122,6 +150,7 @@ impl Btw {
         session: i64,
         store: Database,
         parent_input: Entity<input::Input>,
+        home: AnchorSlot,
         target: Target,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -237,6 +266,13 @@ impl Btw {
             threads: Vec::new(),
             active: None,
             open: false,
+            rendered: false,
+            morph: None,
+            shown_at: None,
+            question_burst: None,
+            home,
+            side_box: AnchorSlot::default(),
+            overlay: AnchorSlot::default(),
             focus_pending: false,
             loading: true,
             error: None,
@@ -253,6 +289,139 @@ impl Btw {
     }
     pub(super) fn is_open(&self) -> bool {
         self.open
+    }
+    /// Esc: close the model menu if it is up, else fold the sheet away.
+    /// False leaves the key to others (closed sheet, or IME composition).
+    pub(super) fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.open || self.input.read(cx).is_composing() {
+            return false;
+        }
+        if self.models.take().is_some() {
+            window.focus(&self.input.focus_handle(cx), cx);
+            cx.notify();
+        } else {
+            self.close(window, cx);
+        }
+        true
+    }
+    /// How much of the session composer shows: it steps aside under an open
+    /// sheet and returns as the sheet folds back into it.
+    pub(super) fn home_opacity(&self, now: Instant) -> f32 {
+        if !self.rendered {
+            return 1.;
+        }
+        match self.morph {
+            Some(morph) if morph.opening => {
+                let e = morph.eased(now);
+                (1. - e / 0.3).max(0.)
+            }
+            Some(morph) => ((morph.eased(now) - 0.55) / 0.45).max(0.),
+            None => 0.,
+        }
+    }
+    fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.open == open && self.rendered {
+            return;
+        }
+        let was_rendered = self.rendered;
+        self.open = open;
+        if !open && !self.rendered {
+            return;
+        }
+        self.rendered = true;
+        if cx.reduce_motion() {
+            self.morph = None;
+            self.rendered = open;
+            self.shown_at = None;
+            return;
+        }
+        // A quick reopen or close reverses from where the panel is now.
+        let reversing = was_rendered && self.morph.is_some();
+        let from = match self.morph.filter(|_| was_rendered) {
+            Some(morph) => {
+                let ease = if open { OPEN_EASE } else { CLOSE_EASE };
+                invert(ease, 1. - morph.eased(Instant::now()))
+            }
+            None => 0.,
+        };
+        self.morph = Some(Morph {
+            opening: open,
+            from,
+            start: None,
+            reversing,
+        });
+        self.shown_at = None;
+    }
+    /// Advance the open or close motion, starting it once the boxes it moves
+    /// between have been measured.
+    fn step_motion(&mut self, now: Instant, window: &mut Window, cx: &mut Context<Self>) {
+        let before = (self.rendered, self.morph.is_some());
+        if let Some(morph) = self.morph.as_mut()
+            && morph.start.is_none()
+        {
+            if self.home.get().is_some() && self.side_box.get().is_some() {
+                morph.start = Some(now);
+                self.shown_at = Some(now);
+                if morph.opening && !morph.reversing {
+                    self.question_burst = Some((now, gespan_core::time::now_ms()));
+                }
+            } else if self.overlay.get().is_some() {
+                // Nothing to grow out of (the composer is not on screen).
+                let opening = morph.opening;
+                self.morph = None;
+                self.shown_at = Some(now);
+                if !opening {
+                    self.rendered = false;
+                }
+            }
+        }
+        if let Some(morph) = self.morph
+            && morph.start.is_some()
+            && morph.progress(now) >= 1.
+        {
+            self.morph = None;
+            if !morph.opening {
+                self.rendered = false;
+                self.shown_at = None;
+            }
+        }
+        if self
+            .question_burst
+            .is_some_and(|(at, _)| now.duration_since(at).as_secs_f32() * 1000. >= BURST_MS)
+        {
+            self.question_burst = None;
+        }
+        // Notify rather than only redraw, so the conversation can fade its
+        // composer in step, including on the frame the motion settles.
+        if self.morph.is_some()
+            || self.question_burst.is_some()
+            || self.body_moving(now)
+            || before != (self.rendered, self.morph.is_some())
+        {
+            let view = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                let _ = view.update(cx, |_, cx| cx.notify());
+            });
+        }
+    }
+    fn body_moving(&self, now: Instant) -> bool {
+        self.shown_at.is_some_and(|at| {
+            now.duration_since(at).as_secs_f32() * 1000. < if self.open { 340. } else { 120. }
+        })
+    }
+    /// btw-body-in on open, btw-fade-out on close: (opacity, rise).
+    fn body_motion(&self, now: Instant) -> (f32, f32) {
+        let Some(at) = self.shown_at else {
+            return (if self.open { 1. } else { 0. }, 0.);
+        };
+        let t = now.duration_since(at).as_secs_f32() * 1000.;
+        if self.open {
+            let e = fx::ease(fx::progress(t, 100., 240.), OPEN_EASE);
+            (e, 10. * (1. - e))
+        } else {
+            let e = fx::ease(fx::progress(t, 0., 120.), (0.42, 0., 1., 1.));
+            (1. - e, 0.)
+        }
     }
     pub(super) fn is_running(&self) -> bool {
         !self.cancel.is_empty()
@@ -276,7 +445,7 @@ impl Btw {
     ) {
         self.target = target;
         self.new_thread(cx);
-        self.open = true;
+        self.set_open(true, cx);
         self.focus_pending = true;
         self.pending_submit =
             (!draft && !text.trim().is_empty() && self.loading).then(|| text.clone());
@@ -346,7 +515,7 @@ impl Btw {
         }
     }
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open = false;
+        self.set_open(false, cx);
         self.pending_submit = None;
         self.threads.retain(|thread| !thread.rows.is_empty());
         if self.active().is_none() {
@@ -542,7 +711,7 @@ impl Btw {
                     }
                     settings.account.root = store.data_dir().map(std::path::Path::to_path_buf);
                 }
-                let binary = provider::resolve(provider).ok_or_else(|| provider.missing_binary_or(format!("{} CLI not found.", provider.label())))?;
+                let binary = provider::resolve(provider).ok_or_else(|| provider.missing_binary_or(provider.unavailable_hint()))?;
                 provider::run(Request { kind:provider, binary, cwd:cwd.into(), prompt, provider_id:None, model, settings }, cancel.clone(), |events| {
                     for event in events {
                         match event {
@@ -651,11 +820,72 @@ impl Btw {
                 self.select(&id, cx);
             } else {
                 self.active = None;
-                self.open = false;
+                self.set_open(false, cx);
             }
         }
         self.save(cx);
         cx.notify();
+    }
+    /// The response menu's model rows for the side thread's own provider:
+    /// each model, with its reasoning efforts in a submenu.
+    fn model_items(&self, result: Result<Vec<Model>, String>) -> Vec<MenuItem> {
+        let mut items = vec![MenuItem::Note(MODEL_NOTE.into())];
+        let Some(thread) = self.active() else {
+            return items;
+        };
+        let provider = Kind::from_id(&thread.provider);
+        let models = match result {
+            Ok(models) => models,
+            Err(error) => {
+                items.push(MenuItem::Note(
+                    format!("Couldn't load models: {error}").into(),
+                ));
+                return items;
+            }
+        };
+        let current = thread.model.as_deref();
+        for model in models {
+            let selected = current.is_some_and(|id| {
+                super::response_menu::model_ids_match(provider, id, &model.id)
+                    || model.alias_target.as_deref().is_some_and(|alias| {
+                        super::response_menu::model_ids_match(provider, id, alias)
+                    })
+            });
+            let target = |effort: Option<String>| {
+                serde_json::to_string(&gespan_core::response::Target {
+                    provider: provider.id().into(),
+                    model: Some(model.id.clone()),
+                    effort,
+                    settings: model
+                        .controls
+                        .iter()
+                        .map(|control| (control.id.clone(), control.current.clone()))
+                        .collect(),
+                })
+                .unwrap_or_default()
+            };
+            let mut option = MenuAction::new(
+                target(None),
+                crate::pickers::model_display_name(provider, &model.id, &model.name),
+            )
+            .checked(selected);
+            if !model.efforts.is_empty() {
+                let mut efforts = vec![
+                    MenuAction::new(target(None), "Default")
+                        .checked(selected && thread.effort.is_none()),
+                ];
+                efforts.extend(model.efforts.iter().map(|effort| {
+                    MenuAction::new(target(Some(effort.clone())), effort_name(effort))
+                        .checked(selected && thread.effort.as_deref() == Some(effort))
+                }));
+                option = option.submenu(efforts);
+            }
+            items.push(option.into());
+        }
+        if items.len() == 1 {
+            items.push(MenuItem::Note("No models are available.".into()));
+        }
+        items
     }
     fn model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.models.is_some() {
@@ -670,115 +900,333 @@ impl Btw {
             return;
         }
         let provider = Kind::from_id(&thread.provider);
-        let model = thread.model.clone();
-        let cwd = thread.cwd.clone();
         let mut account = thread.account.clone();
         if account.id != gespan_core::accounts::DEFAULT {
             account.root = crate::accounts::get(cx).map(|center| center.read(cx).root.clone());
         }
-        let picker = cx.new(|cx| {
-            ModelList::new_for(provider, model, &cwd, account, cx).allow_provider_switch(false)
+        // Cached rows show at once; the fresh catalog replaces them.
+        let cached = catalog::cached_models_for(provider, &account);
+        let items = match cached {
+            Some(models) => self.model_items(Ok(models)),
+            None => vec![
+                MenuItem::Note(MODEL_NOTE.into()),
+                MenuItem::Note("Loading models…".into()),
+            ],
+        };
+        let menu = cx.new(|cx| {
+            Menu::new(provider.label(), items, window, cx)
+                .width(240.)
+                .style(MenuStyle::Settings)
         });
         self.model_subscription = Some(cx.subscribe_in(
-            &picker,
+            &menu,
             window,
-            |this, _, event: &ModelPicked, window, cx| {
-                if let Some(thread) = this.active_mut()
-                    && thread.provider == event.0.id()
+            |this, _, event: &MenuEvent, window, cx| {
+                if let MenuEvent::Picked(id, _) = event
+                    && let Ok(target) = serde_json::from_str::<gespan_core::response::Target>(id)
+                    && let Some(thread) = this.active_mut()
+                    && thread.provider == target.provider
                 {
-                    thread.model = event.1.clone();
+                    thread.model = target.model;
+                    thread.effort = target.effort;
+                    thread.model_settings.extend(target.settings);
+                    this.save(cx);
+                    this.refresh(cx);
                 }
                 this.models = None;
-                this.save(cx);
-                this.refresh(cx);
                 window.focus(&this.input.focus_handle(cx), cx);
+                cx.notify();
             },
         ));
-        window.focus(&picker.read(cx).search_focus(cx), cx);
-        self.models = Some(picker);
+        if !cfg!(test) {
+            let work = cx
+                .background_executor()
+                .spawn(async move { catalog::models_for(provider, &account) });
+            let weak_menu = menu.downgrade();
+            cx.spawn(async move |this, cx| {
+                let result = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    // A closed or reopened menu keeps its own rows.
+                    if this.models.as_ref().map(|m| m.downgrade()) != Some(weak_menu.clone()) {
+                        return;
+                    }
+                    let items = this.model_items(result);
+                    if let Some(menu) = &this.models {
+                        menu.update(cx, |menu, cx| menu.set_items(items, cx));
+                    }
+                });
+            })
+            .detach();
+        }
+        self.models = Some(menu);
         cx.notify();
+    }
+    /// The model pill's effort, as the session composer shows it.
+    fn effort_label(&self) -> Option<String> {
+        self.active()
+            .and_then(|thread| thread.effort.as_deref())
+            .map(effort_name)
     }
 }
 
-impl Render for Btw {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.open {
-            return div().into_any_element();
+#[derive(Clone, Copy)]
+struct Morph {
+    opening: bool,
+    /// Where the motion starts, so a reversal continues from the current frame.
+    from: f32,
+    /// `None` holds the first frame until the boxes have been measured.
+    start: Option<Instant>,
+    reversing: bool,
+}
+impl Morph {
+    fn progress(&self, now: Instant) -> f32 {
+        let ms = if self.opening { OPEN_MS } else { CLOSE_MS };
+        self.start.map_or(self.from, |start| {
+            (self.from + now.duration_since(start).as_secs_f32() * 1000. / ms).min(1.)
+        })
+    }
+    fn eased(&self, now: Instant) -> f32 {
+        fx::ease(
+            self.progress(now),
+            if self.opening { OPEN_EASE } else { CLOSE_EASE },
+        )
+    }
+}
+/// The progress at which `ease` reaches `value`.
+fn invert(ease: fx::Ease, value: f32) -> f32 {
+    let (mut low, mut high) = (0f32, 1f32);
+    for _ in 0..24 {
+        let middle = (low + high) * 0.5;
+        if fx::ease(middle, ease) < value {
+            low = middle;
+        } else {
+            high = middle;
         }
-        if self.response_subscription.is_none() {
-            self.response_subscription = Some(cx.subscribe_in(
-                &self.transcript,
-                window,
-                |this, _, request: &ResponseRequest, window, cx| {
-                    this.response_request(request, window, cx)
+    }
+    (low + high) * 0.5
+}
+fn lerp(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
+}
+fn lerp_rect(from: Bounds<Pixels>, to: Bounds<Pixels>, t: f32) -> Bounds<Pixels> {
+    let at = |a: Pixels, b: Pixels| px(lerp(f32::from(a), f32::from(b), t));
+    Bounds::new(
+        point(
+            at(from.origin.x, to.origin.x),
+            at(from.origin.y, to.origin.y),
+        ),
+        size(
+            at(from.size.width, to.size.width),
+            at(from.size.height, to.size.height),
+        ),
+    )
+}
+/// The keyframe opacity of the composer-shaped frame carried between boxes.
+fn outline_opacity(e: f32) -> f32 {
+    if e < 0.15 {
+        e / 0.15
+    } else if e < 0.8 {
+        1.
+    } else {
+        (1. - e) / 0.2
+    }
+}
+/// BtwSheet's `compactQuestion`.
+fn compact_question(text: Option<&str>) -> String {
+    let compact = text
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "New question".into());
+    if compact.chars().count() > 48 {
+        format!("{}…", bounded(&compact, 45))
+    } else {
+        compact
+    }
+}
+fn status_color(status: &str) -> Option<Hsla> {
+    match status {
+        "draft" => None,
+        "running" => Some(rgb(0xfcd34d).into()),
+        "error" => Some(rgb(0xfca5a5).into()),
+        _ => Some(rgb(0x6ee7b7).into()),
+    }
+}
+fn red(hex: u32, alpha: f32) -> Hsla {
+    let mut color: Hsla = rgb(hex).into();
+    color.a = alpha;
+    color
+}
+fn header_button(
+    id: &'static str,
+    label: &'static str,
+    glyph: &'static str,
+    side: f32,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .cursor_pointer()
+        .flex_shrink_0()
+        .size(px(28.))
+        .rounded_md()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(content(0.45))
+        .hover(|s| s.bg(content(0.08)).text_color(content(1.)))
+        .child(icon(glyph, side))
+}
+
+/// The /btw panel's frame for one moment of its open or close motion.
+struct Shape {
+    clip: Bounds<Pixels>,
+    corners: Corners<Pixels>,
+    /// The glass and content layers' opacity.
+    layer: f32,
+    /// The composer outline carried between the two composer boxes.
+    outline: Option<(Bounds<Pixels>, f32)>,
+    /// The side composer's own fade.
+    composer: f32,
+}
+
+impl Btw {
+    fn shape(&self, sheet: Bounds<Pixels>, now: Instant) -> Shape {
+        let rest = |top: f32, bottom: f32| Corners {
+            top_left: px(top),
+            top_right: px(top),
+            bottom_left: px(bottom),
+            bottom_right: px(bottom),
+        };
+        let (Some(morph), Some(home)) = (self.morph, self.home.get()) else {
+            return Shape {
+                clip: sheet,
+                corners: rest(SHEET_RADIUS, 0.),
+                layer: if self.morph.is_some_and(|m| m.start.is_none()) {
+                    0.
+                } else {
+                    1.
                 },
-            ));
+                outline: None,
+                composer: 1.,
+            };
+        };
+        let e = morph.eased(now);
+        // Openness: 0 is the composer box, 1 the full sheet.
+        let open = if morph.opening { e } else { 1. - e };
+        let layer = if morph.opening {
+            (e / 0.3).min(1.)
+        } else if e < 0.2 {
+            1.
+        } else {
+            1. - (e - 0.2) / 0.8
+        };
+        let outline = self.side_box.get().map(|away| {
+            (
+                lerp_rect(home, away, open),
+                if morph.start.is_some() {
+                    outline_opacity(e)
+                } else {
+                    0.
+                },
+            )
+        });
+        Shape {
+            clip: lerp_rect(home, sheet, open),
+            corners: rest(
+                lerp(BOX_RADIUS, SHEET_RADIUS, open),
+                lerp(BOX_RADIUS, 0., open),
+            ),
+            layer,
+            outline,
+            composer: if !morph.opening {
+                self.body_motion(now).0
+            } else if e < 0.45 {
+                0.
+            } else {
+                (e - 0.45) / 0.55
+            },
         }
-        if self.focus_pending {
-            window.focus(&self.input.focus_handle(cx), cx);
-            self.focus_pending = false;
-        }
-        let running = self
-            .active()
-            .is_some_and(|thread| thread.status == "running");
-        let can_submit =
-            !self.loading && !running && !self.input.read(cx).content.trim().is_empty();
-        let failure = self
-            .active()
-            .and_then(|thread| thread.error.clone())
-            .or_else(|| self.error.clone());
-        let model = self
-            .active()
-            .map(|thread| {
-                crate::pickers::model_name(Kind::from_id(&thread.provider), thread.model.as_deref())
-            })
-            .unwrap_or_else(|| "Model".into());
+    }
+
+    fn header(&self, cx: &mut Context<Self>) -> gpui::Div {
         let tabs: Vec<AnyElement> = self
             .threads
             .iter()
             .map(|thread| {
                 let id = thread.id.clone();
                 let remove_id = id.clone();
+                let group: SharedString = format!("btw-tab-group-{id}").into();
                 let selected = self.active.as_ref() == Some(&id);
                 let question = thread
                     .rows
                     .iter()
                     .find(|row| row.role == "user")
-                    .map(|row| row.text.split_whitespace().collect::<Vec<_>>().join(" "))
-                    .unwrap_or_else(|| "New question".into());
-                let label = bounded(&question, 48);
+                    .map(|row| row.text.as_str());
+                let label = compact_question(question);
+                let persisted = !thread.rows.is_empty();
                 div()
+                    .id(group.clone())
+                    .group(group.clone())
                     .flex()
                     .items_center()
                     .flex_shrink_0()
+                    .h(px(28.))
+                    .max_w(px(240.))
                     .rounded_md()
-                    .bg(content(if selected { 0.1 } else { 0. }))
+                    .map(|d| {
+                        if selected {
+                            d.bg(content(0.1)).text_color(content(1.))
+                        } else {
+                            d.text_color(content(0.5))
+                                .hover(|s| s.bg(content(0.05)).text_color(content(0.8)))
+                        }
+                    })
                     .child(
                         div()
                             .id(format!("btw-tab-{id}"))
                             .role(Role::Tab)
-                            .aria_label(question)
+                            .aria_label(question.unwrap_or("New question").to_owned())
                             .aria_selected(selected)
-                            .px_2()
-                            .py_1()
-                            .max_w(px(240.))
-                            .truncate()
+                            .cursor_pointer()
+                            .h_full()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .rounded_md()
+                            .pl(px(10.))
+                            .pr(px(4.))
                             .text_size(px(12.))
-                            .child(label)
+                            .children(status_color(&thread.status).map(|color| {
+                                div().size(px(6.)).flex_shrink_0().rounded_full().bg(color)
+                            }))
+                            .child(div().min_w_0().truncate().child(label.clone()))
                             .on_click(cx.listener(move |this, _, _, cx| this.select(&id, cx))),
                     )
                     .child(
                         div()
                             .id(format!("btw-remove-{remove_id}"))
                             .role(Role::Button)
-                            .aria_label("Delete side question")
+                            .aria_label(if persisted {
+                                format!("Delete “{label}”")
+                            } else {
+                                "Discard new question".into()
+                            })
+                            .cursor_pointer()
+                            .mr(px(4.))
                             .size(px(20.))
+                            .flex_shrink_0()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_md()
-                            .hover(|style| style.bg(content(0.1)))
-                            .child(icon("x-mark", 12.))
+                            .rounded(px(4.))
+                            .text_color(content(0.4))
+                            .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
+                            .when(!selected, |d| {
+                                d.opacity(0.).group_hover(group, |s| s.opacity(1.))
+                            })
+                            .child(icon("close", 12.))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.remove(&remove_id, cx)),
                             ),
@@ -786,13 +1234,14 @@ impl Render for Btw {
                     .into_any_element()
             })
             .collect();
-        let header = div()
+        div()
             .h(px(44.))
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap_1()
-            .px_2()
+            .pl(px(10.))
+            .pr_2()
             .border_b_1()
             .border_color(content(0.08))
             .child(
@@ -809,153 +1258,538 @@ impl Render for Btw {
                     .children(tabs),
             )
             .child(
-                icon_button("btw-new", "New side question", "plus")
+                header_button("btw-new", "New side question", "plus", 14.)
                     .on_click(cx.listener(|this, _, _, cx| this.new_thread(cx))),
             )
             .child(
-                icon_button(
+                header_button(
                     "btw-close",
                     "Back to the conversation (Esc)",
                     "chevron-down",
+                    16.,
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
-            );
-        let model_button = div().child(self.model_anchor.probe()).child(
-            div()
-                .id("btw-model")
-                .role(Role::Button)
-                .aria_label("Side question model")
-                .px_2()
-                .py_1()
-                .text_size(px(11.))
-                .text_color(content(0.6))
-                .child(model)
-                .on_click(cx.listener(|this, _, window, cx| this.model_picker(window, cx))),
-        );
-        let send = icon_button_enabled(
-            "btw-send",
-            if running {
-                "Stop side question"
-            } else {
-                "Send side question"
-            },
-            if running { "stop" } else { "arrow-up" },
-            running || can_submit,
+            )
+    }
+
+    /// `.btw-error`: the red "Couldn't finish" card with its Retry.
+    fn error_card(&self, running: bool, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let thread_error = self
+            .active()
+            .filter(|thread| thread.status == "error")
+            .map(|thread| {
+                thread
+                    .error
+                    .clone()
+                    .filter(|e| !e.is_empty())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{} could not answer this side question.",
+                            Kind::from_id(&thread.provider).label()
+                        )
+                    })
+            });
+        let retry = thread_error.is_some();
+        let message = thread_error.or_else(|| self.error.clone())?;
+        Some(
+            div().flex_shrink_0().px_5().pb_3().child(
+                div()
+                    .id("btw-error")
+                    .role(Role::Alert)
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .px(px(11.))
+                    .py(px(10.))
+                    .border_1()
+                    .border_color(red(0xf87171, 0.24))
+                    .rounded(px(10.))
+                    .bg(red(0xf87171, 0.07))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(red(0xfecaca, 0.7))
+                                    .child("COULDN’T FINISH"),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(12.))
+                                    .line_height(px(18.))
+                                    .text_color(red(0xfee2e2, 0.75))
+                                    .child(message),
+                            ),
+                    )
+                    .when(retry, |d| {
+                        d.child(
+                            div()
+                                .id("btw-retry")
+                                .role(Role::Button)
+                                .aria_label("Retry side question")
+                                .cursor_pointer()
+                                .flex_shrink_0()
+                                .h(px(24.))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .rounded_md()
+                                .text_size(px(11.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(red(0xfee2e2, 0.8))
+                                .hover(|s| s.bg(red(0xfecaca, 0.1)).text_color(red(0xfef2f2, 1.)))
+                                .when(running, |d| d.opacity(0.5))
+                                .child(icon("refresh-cw", 12.))
+                                .child("Retry")
+                                .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+                        )
+                    }),
+            ),
         )
-        .on_click(cx.listener(|this, _, _, cx| {
-            if this
-                .active()
-                .is_some_and(|thread| thread.status == "running")
-            {
-                this.stop(cx);
-            } else {
-                this.submit(cx);
-            }
-        }));
-        let composer = div().p_1p5().flex_shrink_0().child(
+    }
+
+    /// The side composer: the session composer's box with only its model
+    /// picker and send button (Composer `compact` and `hideTopBar`).
+    fn composer_box(&self, running: bool, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let can_submit =
+            !self.loading && !running && !self.input.read(cx).content.trim().is_empty();
+        let (provider, model) = self
+            .active()
+            .map(|thread| {
+                (
+                    thread.provider.clone(),
+                    crate::pickers::model_name(
+                        Kind::from_id(&thread.provider),
+                        thread.model.as_deref(),
+                    ),
+                )
+            })
+            .unwrap_or_else(|| (self.target.provider.id().into(), "Model".into()));
+        let focused = self.input.focus_handle(cx).is_focused(window);
+        div().flex_shrink_0().px(px(6.)).pb(px(6.)).child(
             div()
-                .rounded_lg()
+                .id("btw-composer-box")
+                .relative()
+                .rounded(px(BOX_RADIUS))
                 .border_1()
-                .border_color(content(0.12))
-                .bg(content(0.025))
-                .p_2()
-                .child(self.input.clone())
+                .border_color(composer_border(focused))
+                .shadow(composer_shadow())
+                .flex()
+                .flex_col()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        window.focus(&this.input.focus_handle(cx), cx)
+                    }),
+                )
+                .child(self.side_box.probe())
+                .child(composer_surface(BOX_RADIUS))
+                .child(
+                    div()
+                        .px_3()
+                        .pt(px(14.))
+                        .pb(px(14.))
+                        .child(self.input.clone()),
+                )
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap_2()
-                        .child(model_button)
+                        .gap_1()
+                        .px_2()
+                        .pb(px(10.))
+                        .child(
+                            tool_pill("btw-model", "Model")
+                                .min_w_0()
+                                .max_w(px(220.))
+                                .flex_shrink(1.)
+                                .aria_label(format!(
+                                    "{}, {}",
+                                    Kind::from_id(&provider).label(),
+                                    model
+                                ))
+                                .aria_expanded(self.models.is_some())
+                                .when(running, |d| d.opacity(0.5))
+                                .child(self.model_anchor.probe())
+                                .child(provider_icon(&provider, 16.))
+                                .child(pill_label(model))
+                                .when_some(self.effort_label(), |d, effort| {
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(11.))
+                                            .text_color(content(0.5))
+                                            .child(effort),
+                                    )
+                                })
+                                .child(icon("chevron-down", 12.))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.model_picker(window, cx)
+                                    }),
+                                ),
+                        )
                         .child(div().flex_1())
-                        .child(send),
+                        .child(
+                            send_button(
+                                "btw-send",
+                                if running { "Stop" } else { "Send" },
+                                running,
+                                running || can_submit,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if this
+                                    .active()
+                                    .is_some_and(|thread| thread.status == "running")
+                                {
+                                    this.stop(cx);
+                                } else {
+                                    this.submit(cx);
+                                }
+                            })),
+                        ),
                 ),
-        );
-        let mut fill = shell_fill();
-        fill.a = 1.;
-        let mut sheet = div()
+        )
+    }
+}
+
+impl Render for Btw {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = Instant::now();
+        self.step_motion(now, window, cx);
+        if !self.rendered {
+            return div().into_any_element();
+        }
+        if self.response_subscription.is_none() {
+            self.response_subscription = Some(cx.subscribe_in(
+                &self.transcript,
+                window,
+                |this, _, request: &ResponseRequest, window, cx| {
+                    this.response_request(request, window, cx)
+                },
+            ));
+        }
+        if self.focus_pending && self.open {
+            window.focus(&self.input.focus_handle(cx), cx);
+            self.focus_pending = false;
+        }
+        let open = self.open;
+        let running = self
+            .active()
+            .is_some_and(|thread| thread.status == "running");
+        let (body, rise) = self.body_motion(now);
+        let body_in = |d: gpui::Div| d.relative().top(px(rise)).opacity(body);
+        let overlay = self.overlay.get();
+        // `top: clamp(2.5rem, 18%, 12rem)` under BtwSheet's max width.
+        let sheet = overlay.map(|o| {
+            let (w, h) = (f32::from(o.size.width), f32::from(o.size.height));
+            let width = w.min(SHEET_WIDTH);
+            let top = (h * 0.18).clamp(40., 192.);
+            Bounds::new(
+                point(o.origin.x + px((w - width) * 0.5), o.origin.y + px(top)),
+                size(px(width), px(h - top)),
+            )
+        });
+        let shape = sheet.map(|sheet| self.shape(sheet, now));
+        let sheet_content = div()
             .id("btw-sheet")
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .top(gpui::relative(0.18))
-            .mx_auto()
-            .w_full()
-            .max_w(px(COMPOSER_COLUMN))
-            .rounded_t_lg()
-            .border_1()
-            .border_color(content(0.1))
-            .bg(fill)
+            .size_full()
             .flex()
             .flex_col()
-            .overflow_hidden()
             .role(Role::Dialog)
             .aria_label("By-the-way conversations")
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(header)
-            .child(div().flex_1().min_h_0().child(self.transcript.clone()));
-        if let Some(error) = failure {
-            sheet = sheet.child(
-                div()
-                    .px_4()
-                    .py_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(12.))
-                            .text_color(content(0.7))
-                            .child(error),
-                    )
-                    .child(
-                        icon_button_enabled(
-                            "btw-retry",
-                            "Retry side question",
-                            "arrow-path",
-                            !running,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
-                    ),
+            .when(open, |d| {
+                d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            })
+            .child(body_in(self.header(cx)))
+            .child(
+                body_in(div().flex_1().min_h_0()).child(
+                    self.transcript
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                ),
+            )
+            .children(self.error_card(running, cx).map(body_in))
+            .child(
+                self.composer_box(running, window, cx)
+                    .opacity(shape.as_ref().map_or(1., |shape| shape.composer)),
             );
-        }
-        sheet = sheet.child(composer);
-        if let Some(models) = &self.models {
-            let weak = cx.weak_entity();
-            sheet = sheet.child(
-                popover("btw-model-picker", Anchor::Slot(self.model_anchor.clone()))
-                    .side(Side::Top)
-                    .width(430.)
-                    .on_dismiss(move |window, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.models = None;
-                            window.focus(&this.input.focus_handle(cx), cx);
-                            cx.notify();
-                        });
-                    })
-                    .child(models.clone()),
-            );
-        }
-        div()
+        let models = self.models.as_ref().map(|menu| {
+            menu_popover(menu, Anchor::Slot(self.model_anchor.clone()), cx).side(Side::Top)
+        });
+        let mut root = div()
             .absolute()
             .inset_0()
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" && !this.input.read(cx).is_composing() {
-                    if this.models.take().is_none() {
-                        this.close(window, cx);
-                    }
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .child(div().absolute().inset_0().on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.close(window, cx)),
-            ))
-            .child(sheet)
-            .into_any_element()
+            .child(self.overlay.layout_probe())
+            .when(open, |d| {
+                d.child(div().absolute().inset_0().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| this.close(window, cx)),
+                ))
+            });
+        match (overlay, sheet, shape) {
+            (Some(overlay), Some(sheet), Some(shape)) => {
+                let clip = shape.clip;
+                let corners = shape.corners;
+                let local = |at: Point<Pixels>, from: Point<Pixels>| at - from;
+                root = root
+                    .child(
+                        div().absolute().inset_0().opacity(shape.layer).child(
+                            canvas(
+                                |_, _, _| {},
+                                move |_, _, window, _| {
+                                    window.paint_drop_shadows(
+                                        clip,
+                                        corners,
+                                        &crate::popover::shadow(),
+                                    );
+                                    crate::popover::paint_glass(
+                                        clip,
+                                        corners,
+                                        crate::popover::glass_tint(),
+                                        window,
+                                    );
+                                    // `.btw-sheet-glass`: no bottom border.
+                                    window.paint_quad(
+                                        gpui::fill(clip, gpui::transparent_black())
+                                            .corner_radii(corners)
+                                            .border_widths(gpui::Edges {
+                                                top: px(1.),
+                                                right: px(1.),
+                                                bottom: px(0.),
+                                                left: px(1.),
+                                            })
+                                            .border_color(content(0.1)),
+                                    );
+                                },
+                            )
+                            .size_full(),
+                        ),
+                    )
+                    .child({
+                        let at = local(clip.origin, overlay.origin);
+                        let inner = local(sheet.origin, clip.origin);
+                        div()
+                            .absolute()
+                            .left(at.x)
+                            .top(at.y)
+                            .w(clip.size.width)
+                            .h(clip.size.height)
+                            .overflow_hidden()
+                            .opacity(shape.layer)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(inner.x)
+                                    .top(inner.y)
+                                    .w(sheet.size.width)
+                                    .h(sheet.size.height)
+                                    .child(sheet_content),
+                            )
+                    })
+                    .when_some(shape.outline, |d, (outline, opacity)| {
+                        d.child(
+                            canvas(
+                                |_, _, _| {},
+                                move |_, _, window, _| paint_outline(outline, opacity, window),
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
+                    });
+            }
+            // The first frame, before the overlay has been measured.
+            _ => {
+                root = root.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .top(gpui::relative(0.18))
+                        .mx_auto()
+                        .w_full()
+                        .max_w(px(SHEET_WIDTH))
+                        .opacity(if self.morph.is_some() { 0. } else { 1. })
+                        .child(sheet_content),
+                );
+            }
+        }
+        if let (Some((born, seed)), Some(away)) = (self.question_burst, self.side_box.get()) {
+            root = root.child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, cx| paint_question_burst(away, born, seed, window, cx),
+                )
+                .absolute()
+                .size_full(),
+            );
+        }
+        root.children(models).into_any_element()
+    }
+}
+
+/// `.btw-morph-frame`: the composer's outline between its two boxes.
+fn paint_outline(bounds: Bounds<Pixels>, opacity: f32, window: &mut Window) {
+    if opacity <= 0. {
+        return;
+    }
+    let corners = Corners::all(px(BOX_RADIUS));
+    if crate::theme::is_light() {
+        let shadows: Vec<_> = composer_shadow()
+            .into_iter()
+            .map(|mut shadow| {
+                shadow.color.a *= opacity;
+                shadow
+            })
+            .collect();
+        window.paint_drop_shadows(bounds, corners, &shadows);
+    }
+    let mut fill = composer_fill();
+    fill.a *= opacity;
+    let mut border = content(0.12);
+    border.a *= opacity;
+    window.paint_quad(
+        gpui::fill(bounds, fill)
+            .corner_radii(corners)
+            .border_widths(px(1.))
+            .border_color(border),
+    );
+}
+
+/// BtwQuestionBurst: question marks drift up out of the side composer while
+/// its box glows and a sheen crosses it, in the picked accent.
+fn paint_question_burst(
+    away: Bounds<Pixels>,
+    born: Instant,
+    seed: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    const MARKS: usize = 16;
+    let t = born.elapsed().as_secs_f32() * 1000.;
+    let accent = crate::theme::picked_accent();
+    let (color, glow) = if crate::theme::is_light() {
+        (accent, fx::mix(accent, 0.45))
+    } else {
+        // `color-mix(in srgb, accent 70%, white)`.
+        let rgb = accent.to_rgb();
+        let tint = |v: f32| v * 0.7 + 0.3;
+        let mixed = gpui::Rgba {
+            r: tint(rgb.r),
+            g: tint(rgb.g),
+            b: tint(rgb.b),
+            a: 1.,
+        };
+        (mixed.into(), fx::mix(accent, 0.75))
+    };
+    let bubble = Bubble {
+        bounds: away,
+        corners: Corners::all(px(BOX_RADIUS)),
+    };
+    Halo {
+        delay: 60.,
+        duration: 1100.,
+        peak: 0.3,
+        blur: 28.,
+        spread: 4.,
+    }
+    .paint(&bubble, t, glow, fx::mix(glow, 0.45), window);
+    window.with_content_mask(Some(gpui::ContentMask { bounds: away }), |window| {
+        fx::paint_sweep(
+            &bubble,
+            fx::progress(t, 140., 900.),
+            &[
+                (0.3, fx::mix(color, 0.)),
+                (0.5, fx::mix(color, 0.3)),
+                (0.7, fx::mix(color, 0.)),
+            ],
+            window,
+        );
+    });
+    let mut rng = seed | 1;
+    let mut next = move || {
+        rng ^= rng >> 12;
+        rng ^= rng << 25;
+        rng ^= rng >> 27;
+        (rng.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 40) as f32 / (1u64 << 24) as f32
+    };
+    let (x0, y0) = (f32::from(away.origin.x), f32::from(away.origin.y));
+    let (w, h) = (f32::from(away.size.width), f32::from(away.size.height));
+    let mut font = window.text_style().font();
+    font.weight = gpui::FontWeight::BOLD;
+    for i in 0..MARKS {
+        let glyph = i % 4 != 3;
+        let x = (((i as f32 + next()) / MARKS as f32) * 100.).clamp(5., 95.) / 100. * w;
+        let size = if glyph {
+            11. + next() * 9.
+        } else {
+            4. + next() * 3.
+        };
+        let delay = 120. + next() * 520.;
+        let duration = 900. + next() * 500.;
+        let drift = (next() - 0.5) * 36.;
+        let rise = 110. + next() * 130.;
+        let p = fx::progress(t, delay, duration);
+        let lift = fx::ease(p, (0.2, 0.7, 0.3, 1.));
+        let opacity = fx::frames(
+            p,
+            &[(0., 0.), (0.15, 1.), (0.7, 0.9), (1., 0.)],
+            fx::EASE_IN_OUT,
+        );
+        if opacity <= 0.01 {
+            continue;
+        }
+        let scale = fx::frames(
+            p,
+            &[(0., 0.3), (0.15, 1.15), (0.45, 0.9), (0.7, 1.), (1., 0.6)],
+            fx::EASE_IN_OUT,
+        );
+        // `.btw-burst-mark` sits 45% up the box; its glyph stands on it and
+        // scales about a point 80% down the glyph.
+        let (ax, ay) = (x0 + x + drift * lift, y0 + h * 0.55 - rise * lift);
+        let pivot = ay - size * 0.2;
+        let center = point(px(ax), px(pivot - size * 0.3 * scale));
+        if glyph {
+            let font_size = size * scale;
+            fx::paint_glow(center, font_size * 0.6, 6., fx::mix(glow, opacity), window);
+            let line = window.text_system().shape_line(
+                "?".into(),
+                px(font_size),
+                &[gpui::TextRun {
+                    len: 1,
+                    font: font.clone(),
+                    color: fx::mix(color, opacity),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            );
+            let origin = center - point(line.width * 0.5, px(font_size * 0.5));
+            let _ = line.paint(
+                origin,
+                px(font_size),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        } else {
+            let diameter = size * scale;
+            fx::paint_glow(center, diameter, 6., fx::mix(glow, opacity), window);
+            fx::paint_orb(
+                center,
+                diameter,
+                (fx::mix(gpui::white(), opacity), fx::mix(color, opacity)),
+                window,
+            );
+        }
     }
 }
 
@@ -1021,15 +1855,25 @@ impl Conversation {
             return false;
         };
         if self.btw.is_none() {
-            self.btw = Some(cx.new(|cx| {
+            let btw = cx.new(|cx| {
                 Btw::new(
                     self.summary.id,
                     self.store.clone(),
                     self.input.clone(),
+                    self.btw_home.0.clone(),
                     target.clone(),
                     cx,
                 )
+            });
+            // Only the composer's fade needs this view to redraw with the sheet.
+            self._btw_observer = Some(cx.observe(&btw, |this, btw, cx| {
+                let home = btw.read(cx).home_opacity(Instant::now());
+                if home != this.btw_home.1 {
+                    this.btw_home.1 = home;
+                    cx.notify();
+                }
             }));
+            self.btw = Some(btw);
         }
         if let Some(btw) = &self.btw {
             btw.update(cx, |btw, cx| btw.open_with(target, text, draft, cx));
@@ -1070,6 +1914,24 @@ mod tests {
             first,
             sent_at: None,
         }
+    }
+    #[test]
+    fn btw_tabs_label_and_motion_match_the_sheet() {
+        assert_eq!(compact_question(None), "New question");
+        assert_eq!(compact_question(Some("  a\n  b ")), "a b");
+        let long = "x".repeat(60);
+        assert_eq!(
+            compact_question(Some(&long)),
+            format!("{}…", "x".repeat(45))
+        );
+        assert_eq!(status_color("draft"), None);
+        assert!(status_color("stopped").is_some());
+        for value in [0., 0.3, 0.75, 1.] {
+            assert!((fx::ease(invert(OPEN_EASE, value), OPEN_EASE) - value).abs() < 1e-3);
+        }
+        assert_eq!(outline_opacity(0.), 0.);
+        assert_eq!(outline_opacity(0.5), 1.);
+        assert!(outline_opacity(1.) <= 1e-6);
     }
     #[test]
     fn snapshots_exclude_private_reasoning_and_keep_utf8_bounds() {

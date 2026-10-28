@@ -420,7 +420,7 @@ impl Render for Arcade {
                     .left(px((bubble.x * 7.).max(4.)))
                     .top(px((bubble.y * 7. - 24.).max(4.)))
                     .text_size(px(9.))
-                    .font_family(crate::markdown::PILOT)
+                    .font_family(crate::fonts::monospace())
                     .text_color(content(bubble.alpha * 0.9 * self.frame.dim))
                     .child(bubble.text.clone()),
             );
@@ -462,7 +462,7 @@ impl Render for Arcade {
                     .items_center()
                     .justify_between()
                     .text_size(px(11.))
-                    .font_family(crate::markdown::PILOT)
+                    .font_family(crate::fonts::monospace())
                     .child(match index {
                         0 => format!(
                             "score {} {}",
@@ -486,7 +486,7 @@ impl Render for Arcade {
                 .opacity(0.)
                 .group_hover("empty-session-arcade", |s| s.opacity(1.))
                 .cursor_pointer()
-                .font_family(crate::markdown::PILOT)
+                .font_family(crate::fonts::monospace())
                 .text_size(px(11.))
                 .child(format!(
                     "[ take control · {} ]",

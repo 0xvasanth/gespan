@@ -5,23 +5,31 @@ use alacritty_terminal::{
     event::{Event as TermEvent, EventListener, WindowSize},
     event_loop::{EventLoop, EventLoopSender, Msg},
     grid::{Dimensions, Scroll},
-    index::{Column, Point as GridPoint, Side},
+    index::{Boundary, Column, Direction, Point as GridPoint, Side},
     selection::{Selection, SelectionType},
     sync::FairMutex,
     term::{
-        Config, Term, TermMode, cell::Flags, color::Colors, point_to_viewport, viewport_to_point,
+        Config, Term, TermMode,
+        cell::Flags,
+        color::Colors,
+        point_to_viewport,
+        search::{RegexIter, RegexSearch},
+        viewport_to_point,
     },
     tty,
     vte::ansi::{Color as AnsiColor, CursorShape, CursorStyle as TermCursorStyle, NamedColor, Rgb},
 };
 use gpui::{
     App, Bounds, ClipboardItem, Context, Element, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, KeyBinding,
+    Focusable, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, KeyBinding,
     KeyDownEvent, Keystroke, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StrikethroughStyle, Style, Task, TextAlign,
     TextRun, UnderlineStyle, Window, actions, div, point, prelude::*, px, rgb, size,
 };
-use std::{borrow::Cow, cell::Cell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow, cell::Cell, collections::HashMap, ops::RangeInclusive, rc::Rc, sync::Arc,
+    time::Duration,
+};
 
 actions!(
     terminal,
@@ -50,6 +58,8 @@ const FONT_SIZE: f32 = 13.;
 /// TerminalView's `scrollback`, retained for every open terminal.
 const SCROLLBACK: usize = 2000;
 const PADDING: f32 = 8.;
+/// The web build's WebLinksAddon URL pattern.
+const URL_PATTERN: &str = r#"(https?|HTTPS?)://[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~\[\]`()<>]"#;
 
 /// Wakeups, titles and replies from the PTY thread.
 #[derive(Clone)]
@@ -89,6 +99,13 @@ struct Geometry {
     cell: Size<gpui::Pixels>,
 }
 
+/// An HTTP(S) link in the grid: an OSC 8 hyperlink or a plain URL.
+#[derive(Clone, PartialEq, Debug)]
+struct Link {
+    range: RangeInclusive<GridPoint>,
+    uri: String,
+}
+
 pub(crate) struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
     sender: Option<EventLoopSender>,
@@ -107,6 +124,11 @@ pub(crate) struct Terminal {
     selection_pointer: Option<gpui::Point<gpui::Pixels>>,
     selection_scroll: Option<Task<()>>,
     scroll_remainder: f32,
+    url_regex: Option<RegexSearch>,
+    /// The pointer over the grid, for underlining the link beneath it.
+    hover: Option<gpui::Point<gpui::Pixels>>,
+    /// The link a plain click pressed; releasing on it opens it.
+    pressed_link: Option<Link>,
     pub(crate) visible: bool,
     _events: Task<()>,
     _poll: Task<()>,
@@ -295,6 +317,9 @@ impl Terminal {
             selection_pointer: None,
             selection_scroll: None,
             scroll_remainder: 0.,
+            url_regex: RegexSearch::new(URL_PATTERN).ok(),
+            hover: None,
+            pressed_link: None,
             visible: true,
             _events: events,
             _poll: poll,
@@ -359,6 +384,19 @@ impl Terminal {
         self.title = label.clone().unwrap_or_else(|| default_title(&self.cwd));
         self.foreground = label;
         cx.emit(TerminalEvent::Changed);
+    }
+    /// Hangs up the job holding the terminal, leaving the shell at its prompt.
+    pub(crate) fn stop_foreground(&mut self, cx: &mut Context<Self>) {
+        #[cfg(unix)]
+        if self.master_fd >= 0 && !self.exited {
+            let pgrp = unsafe { libc::tcgetpgrp(self.master_fd) };
+            if pgrp > 1 && pgrp != self.shell_pid as i32 {
+                unsafe {
+                    libc::kill(-pgrp, libc::SIGHUP);
+                }
+            }
+        }
+        self.set_foreground(None, cx);
     }
     fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
         if let Some(sender) = &self.sender {
@@ -452,6 +490,18 @@ impl Terminal {
     }
 
     /// The cell under a window position, and which half of it.
+    /// The zero-based viewport line and column under a pointer.
+    fn viewport_cell(&self, position: gpui::Point<gpui::Pixels>) -> (usize, usize) {
+        let Some(g) = self.geometry.get() else {
+            return (0, 0);
+        };
+        let x = ((position.x - g.origin.x) / g.cell.width).max(0.);
+        let y = ((position.y - g.origin.y) / g.cell.height).max(0.);
+        (
+            (y as usize).min(self.size.lines.saturating_sub(1)),
+            (x as usize).min(self.size.columns.saturating_sub(1)),
+        )
+    }
     fn grid_point(&self, position: gpui::Point<gpui::Pixels>) -> Option<(GridPoint, Side)> {
         let g = self.geometry.get()?;
         let x = ((position.x - g.origin.x) / g.cell.width).max(0.);
@@ -469,8 +519,26 @@ impl Terminal {
             side,
         ))
     }
+    /// The HTTP(S) link under a window position, if the pointer is on a cell.
+    fn link_at(&mut self, position: gpui::Point<gpui::Pixels>) -> Option<Link> {
+        let g = self.geometry.get()?;
+        let x = (position.x - g.origin.x) / g.cell.width;
+        let y = (position.y - g.origin.y) / g.cell.height;
+        if x < 0. || y < 0. || x >= self.size.columns as f32 || y >= self.size.lines as f32 {
+            return None;
+        }
+        let term = self.term.lock();
+        let at = viewport_to_point(
+            term.grid().display_offset(),
+            GridPoint::new(y as usize, Column(x as usize)),
+        );
+        link_at(&term, self.url_regex.as_mut()?, at)
+    }
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        self.pressed_link = (event.click_count == 1 && !event.modifiers.shift)
+            .then(|| self.link_at(event.position))
+            .flatten();
         let Some((at, side)) = self.grid_point(event.position) else {
             return;
         };
@@ -510,6 +578,23 @@ impl Terminal {
             }
         }));
         cx.notify();
+    }
+    /// A click that pressed and released on the same link, without
+    /// dragging out a selection, opens it as the web build's xterm does.
+    fn mouse_up(&mut self, event: &gpui::MouseUpEvent, cx: &mut Context<Self>) {
+        self.stop_selection();
+        let Some(link) = self.pressed_link.take() else {
+            return;
+        };
+        let selected = self
+            .term
+            .lock()
+            .selection
+            .as_ref()
+            .is_some_and(|selection| !selection.is_empty());
+        if !selected && self.link_at(event.position).as_ref() == Some(&link) {
+            cx.open_url(&link.uri);
+        }
     }
     fn stop_selection(&mut self) {
         self.selecting = false;
@@ -586,8 +671,13 @@ impl Terminal {
             return;
         }
         let mode = *self.term.lock().mode();
+        // A program tracking the mouse gets the wheel itself.
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            let (line, column) = self.viewport_cell(event.position);
+            let report = wheel_report(lines > 0, line, column, mode);
+            self.write(report.repeat(lines.unsigned_abs() as usize));
         // A full-screen program scrolls itself; the shell scrolls history.
-        if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
             let key: &[u8] = match (lines > 0, mode.contains(TermMode::APP_CURSOR)) {
                 (true, true) => b"\x1bOA",
                 (true, false) => b"\x1b[A",
@@ -627,6 +717,17 @@ impl Render for Terminal {
             .track_focus(&self.focus)
             .size_full()
             .cursor(gpui::CursorStyle::IBeam)
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if this.hover != Some(event.position) {
+                    this.hover = Some(event.position);
+                    cx.notify();
+                }
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !hovered && this.hover.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event, _, cx| this.key_down(event, cx)))
             .on_action(cx.listener(|this, _: &SendTab, _, cx| this.input(b"\t".to_vec(), cx)))
             .on_action(
@@ -654,6 +755,8 @@ struct Painted {
     rects: Vec<(Bounds<gpui::Pixels>, Hsla)>,
     cursor: Option<(Bounds<gpui::Pixels>, Hsla, bool)>,
     line_height: gpui::Pixels,
+    /// Set while the pointer is over a link, for the pointing hand.
+    link_hitbox: Option<gpui::Hitbox>,
 }
 
 struct Grid {
@@ -707,7 +810,7 @@ impl Element for Grid {
         cx: &mut App,
     ) -> Painted {
         let font_size = px(FONT_SIZE);
-        let base = pilot_font();
+        let base = crate::fonts::terminal(cx);
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&base);
         let cell_width = text_system
@@ -722,11 +825,12 @@ impl Element for Grid {
             (((bounds.size.width - px(PADDING * 2.)) / cell_width).floor() as usize).max(2);
         let lines = (((bounds.size.height - px(PADDING)) / line_height).floor() as usize).max(1);
         let cell = size(cell_width, line_height);
-        let (term, geometry) = self.terminal.update(cx, |t, _| {
+        let (term, link) = self.terminal.update(cx, |t, _| {
             t.resize(columns, lines, cell);
-            (t.term.clone(), t.geometry.clone())
+            t.geometry.set(Some(Geometry { origin, cell }));
+            let link = t.hover.and_then(|position| t.link_at(position));
+            (t.term.clone(), link)
         });
-        geometry.set(Some(Geometry { origin, cell }));
 
         let term = term.lock();
         let content = term.renderable_content();
@@ -773,7 +877,10 @@ impl Element for Grid {
                     fg,
                     bold: cell.flags.contains(Flags::BOLD),
                     italic: cell.flags.contains(Flags::ITALIC),
-                    underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
+                    underline: cell.flags.intersects(Flags::ALL_UNDERLINES)
+                        || link
+                            .as_ref()
+                            .is_some_and(|link| link.range.contains(&indexed.point)),
                     strike: cell.flags.contains(Flags::STRIKEOUT),
                 },
                 bg,
@@ -790,6 +897,7 @@ impl Element for Grid {
             rects: Vec::new(),
             cursor: None,
             line_height,
+            link_hitbox: link.map(|_| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)),
         };
         for (line, cells) in rows.iter().enumerate() {
             let y = origin.y + line_height * line as f32;
@@ -923,9 +1031,12 @@ impl Element for Grid {
         let terminal = self.terminal.downgrade();
         window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, _, cx| {
             if phase == gpui::DispatchPhase::Capture && event.button == MouseButton::Left {
-                let _ = terminal.update(cx, |terminal, _| terminal.stop_selection());
+                let _ = terminal.update(cx, |terminal, cx| terminal.mouse_up(event, cx));
             }
         });
+        if let Some(hitbox) = &painted.link_hitbox {
+            window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+        }
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             for (rect, fill) in &painted.rects {
                 window.paint_quad(gpui::fill(*rect, *fill));
@@ -967,8 +1078,50 @@ fn cell_rect(
     )
 }
 
-fn pilot_font() -> Font {
-    gpui::font(crate::markdown::PILOT)
+/// The HTTP(S) link covering `at`: the OSC 8 hyperlink on its cells, else
+/// a plain URL on its logical line.
+fn link_at<T>(term: &Term<T>, regex: &mut RegexSearch, at: GridPoint) -> Option<Link> {
+    let start = term.line_search_left(at);
+    let end = term.line_search_right(at);
+    if let Some(hyperlink) = term.grid()[at].hyperlink() {
+        let same = |point: GridPoint| term.grid()[point].hyperlink().as_ref() == Some(&hyperlink);
+        let mut first = at;
+        while first > start && same(first.sub(term, Boundary::None, 1)) {
+            first = first.sub(term, Boundary::None, 1);
+        }
+        let mut last = at;
+        while last < end && same(last.add(term, Boundary::None, 1)) {
+            last = last.add(term, Boundary::None, 1);
+        }
+        let uri = hyperlink.uri();
+        return is_web_link(uri).then(|| Link {
+            range: first..=last,
+            uri: uri.to_owned(),
+        });
+    }
+    RegexIter::new(start, end, Direction::Right, term, regex)
+        .find(|found| found.contains(&at))
+        .map(|range| {
+            let mut uri = String::new();
+            let mut point = *range.start();
+            loop {
+                let cell = &term.grid()[point];
+                if !cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    uri.push(cell.c);
+                }
+                if point >= *range.end() {
+                    break;
+                }
+                point = point.add(term, Boundary::None, 1);
+            }
+            Link { range, uri }
+        })
+        .filter(|link| is_web_link(&link.uri))
+}
+/// Only HTTP(S) opens, as TerminalView's `openTerminalLink` allows.
+fn is_web_link(uri: &str) -> bool {
+    let lower = uri.get(..8).unwrap_or(uri).to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
 }
 fn selection_fill() -> Hsla {
     crate::theme::text_selection()
@@ -1291,11 +1444,41 @@ pub(crate) fn command_label(args: &str) -> Option<String> {
     }
     Some(base)
 }
+/// The supported agent CLI a foreground label names, as a provider id, so
+/// its tab can show the provider's mark instead of the terminal icon.
+pub(crate) fn agent_cli(label: &str) -> Option<&'static str> {
+    // Script launchers report the script: `codex.js` is Codex.
+    let name = label.split('.').next()?;
+    match name {
+        "cursor-agent" | "agent" => return Some("cursor"),
+        "pi-coding-agent" => return Some("pi"),
+        _ => {}
+    }
+    gespan_core::provider::Kind::parse(name).map(|kind| kind.id())
+}
+impl Terminal {
+    /// The agent CLI holding this terminal, if any.
+    pub(crate) fn agent(&self) -> Option<&'static str> {
+        agent_cli(self.foreground.as_deref()?)
+    }
+}
 fn is_shell_name(name: &str) -> bool {
     matches!(
         name,
         "zsh" | "bash" | "sh" | "fish" | "nu" | "dash" | "ksh" | "tcsh" | "zsh5"
     )
+}
+
+/// One wheel notch as a mouse report, SGR when asked for, else the legacy
+/// X10 encoding (which cannot address past column or line 223).
+fn wheel_report(up: bool, line: usize, column: usize, mode: TermMode) -> Vec<u8> {
+    let button = if up { 64 } else { 65 };
+    if mode.contains(TermMode::SGR_MOUSE) {
+        format!("\x1b[<{button};{};{}M", column + 1, line + 1).into_bytes()
+    } else {
+        let cell = |n: usize| (n.min(222) + 33) as u8;
+        vec![0x1b, b'[', b'M', button + 32, cell(column), cell(line)]
+    }
 }
 
 #[cfg(test)]
@@ -1304,11 +1487,64 @@ mod tests {
     use alacritty_terminal::index::Line;
     use gpui::{AppContext, Modifiers};
 
+    #[test]
+    fn wheel_reports_match_the_requested_encoding() {
+        let sgr = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert_eq!(wheel_report(true, 4, 9, sgr), b"\x1b[<64;10;5M");
+        assert_eq!(wheel_report(false, 0, 0, sgr), b"\x1b[<65;1;1M");
+        assert_eq!(
+            wheel_report(true, 4, 9, TermMode::MOUSE_REPORT_CLICK),
+            [0x1b, b'[', b'M', 96, 42, 37]
+        );
+    }
+
     fn key(spec: &str) -> Keystroke {
         Keystroke::parse(spec).unwrap()
     }
     fn bytes(spec: &str) -> Option<Vec<u8>> {
         key_bytes(&key(spec), TermMode::empty())
+    }
+
+    #[gpui::test]
+    fn links_cover_plain_urls_and_osc8_hyperlinks(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), cx));
+        view.update(cx, |terminal, _| {
+            let cell = size(px(8.), px(16.));
+            terminal.resize(20, 4, cell);
+            terminal.geometry.set(Some(Geometry {
+                origin: point(px(0.), px(0.)),
+                cell,
+            }));
+            // A URL wrapping onto the next row, trailing punctuation
+            // excluded; then an OSC 8 link and a file:// one.
+            write_note(
+                &terminal.term,
+                "see https://example.com/a/b. ok\r\n\x1b]8;;https://x.dev\x1b\\docs\x1b]8;;\x1b\\ \
+                 \x1b]8;;file:///tmp\x1b\\tmp\x1b]8;;\x1b\\ ftp://a.b",
+            );
+            let at = |line: usize, column: usize| {
+                point(px(column as f32 * 8. + 1.), px(line as f32 * 16. + 1.))
+            };
+            let url = terminal.link_at(at(1, 2)).expect("wrapped URL");
+            assert_eq!(url.uri, "https://example.com/a/b");
+            assert_eq!(
+                url.range,
+                GridPoint::new(Line(0), Column(4))..=GridPoint::new(Line(1), Column(6))
+            );
+            assert_eq!(terminal.link_at(at(0, 4)), Some(url));
+            assert_eq!(terminal.link_at(at(0, 1)), None);
+            assert_eq!(terminal.link_at(at(1, 7)), None);
+
+            let docs = terminal.link_at(at(2, 1)).expect("OSC 8 link");
+            assert_eq!(docs.uri, "https://x.dev");
+            assert_eq!(
+                docs.range,
+                GridPoint::new(Line(2), Column(0))..=GridPoint::new(Line(2), Column(3))
+            );
+            assert_eq!(terminal.link_at(at(2, 6)), None, "file:// stays inert");
+            assert_eq!(terminal.link_at(at(2, 10)), None, "ftp:// stays inert");
+            assert_eq!(terminal.link_at(point(px(-4.), px(1.))), None);
+        });
     }
 
     #[gpui::test]
@@ -1397,6 +1633,14 @@ mod tests {
         assert_eq!(key_bytes(&typed, TermMode::empty()), Some(b"a".to_vec()));
     }
 
+    #[test]
+    fn agent_clis_map_to_their_provider() {
+        assert_eq!(agent_cli("claude"), Some("claude"));
+        assert_eq!(agent_cli("codex.js"), Some("codex"));
+        assert_eq!(agent_cli("cursor-agent"), Some("cursor"));
+        assert_eq!(agent_cli("pi-coding-agent"), Some("pi"));
+        assert_eq!(agent_cli("vim"), None);
+    }
     #[test]
     fn foreground_labels_name_the_script_an_interpreter_runs() {
         assert_eq!(
