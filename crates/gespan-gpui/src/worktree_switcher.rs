@@ -56,7 +56,7 @@ fn rows(cwd: &str, state: Option<&Snapshot>, query: &str) -> Vec<Row> {
             detail: "Every checkout · all sessions".into(),
         },
         Row {
-            path: main.map_or_else(|| cwd.to_owned(), |t| t.path.clone()),
+            path: cwd.to_owned(),
             branch: main.and_then(|t| t.branch.clone()),
             all: false,
             label: main
