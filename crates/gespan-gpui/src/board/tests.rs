@@ -739,6 +739,32 @@ fn dragging_a_card_onto_another_column_moves_it_there(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_card_dropped_on_the_empty_board_below_a_column_lands_at_its_end(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["First", "Second", "Third"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let column = visual.debug_bounds("board-column-0").unwrap();
+    let below = visual.debug_bounds("board-column-below-0").unwrap();
+    assert!(below.top() >= column.bottom(), "the zone starts under the column");
+    assert!(
+        below.size.height > px(100.),
+        "a short column leaves the rest of the board to drop on"
+    );
+    // Lift the first card, drop it well below the column's last card.
+    let from = center(visual, "board-card-1");
+    let to = gpui::point(below.center().x, below.top() + px(80.));
+    drag(visual, from, to);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Second", "Third", "First"]);
+    // Below another column it moves there, at the end.
+    let below = visual.debug_bounds("board-column-below-2").unwrap();
+    let from = center(visual, "board-card-2");
+    drag(visual, from, gpui::point(below.center().x, below.top() + px(80.)));
+    assert_eq!(column_of(&f, visual, "Second"), "Review");
+    f.window
+        .read_with(visual, |view, _| assert!(view.drop_target.is_none()))
+        .unwrap();
+}
+
+#[gpui::test]
 fn dropping_a_card_back_in_its_place_writes_nothing(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Stay"]);
     let board = detail(&f, cx).board.id.clone();

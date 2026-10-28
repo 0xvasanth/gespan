@@ -767,7 +767,46 @@ impl BoardView {
             .into_any_element()
     }
 
+    /// A column plus the empty board below it, which takes a dropped card
+    /// too: it lands at the end of that column.
     pub(super) fn render_column(
+        &self,
+        index: usize,
+        column: &Column,
+        detail: &BoardDetail,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (move_over_id, drop_over_id) = (column.id.clone(), column.id.clone());
+        div()
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .child(self.render_column_box(index, column, detail, cx))
+            .child(
+                div()
+                    .id(("board-column-below", index))
+                    .debug_selector(move || format!("board-column-below-{index}"))
+                    .flex_1()
+                    .min_h(px(ITEM_GAP))
+                    .on_drag_move::<DraggedCard>(cx.listener(
+                        move |this, event: &gpui::DragMoveEvent<DraggedCard>, _, cx| {
+                            this.card_drag_over(
+                                &move_over_id,
+                                event.bounds,
+                                event.event.position,
+                                cx,
+                            )
+                        },
+                    ))
+                    .on_drop::<DraggedCard>(cx.listener(move |this, card: &DraggedCard, _, cx| {
+                        this.drop_card(card, &drop_over_id, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_column_box(
         &self,
         index: usize,
         column: &Column,
