@@ -1,0 +1,19 @@
+vendor/gpui-pre/src/svg_renderer.rs
+  s_a5cee28439a8cc::t_0299d87dc4612f 340-342,354-363,365,367-370,391-421,427-442
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c0e547b332778eebdafe2f8ea2fb378a5ee1ea1",
+  "prompts": {},
+  "sessions": {
+    "s_a5cee28439a8cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4985fc8-80f1-4d45-8544-930443fa0533",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
