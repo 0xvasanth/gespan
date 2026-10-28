@@ -1,0 +1,21 @@
+scripts/readme/how-it-works.html
+  s_a5cee28439a8cc::t_4c942c6762e69b 193
+scripts/readme/how_it_works.py
+  s_a5cee28439a8cc::t_286ff67ff6c957 36-38,81-82,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30fddc44b3777ac51aa00f898cc4055c8623332f",
+  "prompts": {},
+  "sessions": {
+    "s_a5cee28439a8cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4985fc8-80f1-4d45-8544-930443fa0533",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
