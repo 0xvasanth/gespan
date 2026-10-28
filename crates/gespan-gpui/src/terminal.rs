@@ -188,7 +188,9 @@ fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
         cell_width: 8,
         cell_height: 16,
     };
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut master_fd = -1;
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut shell_pid = 0;
     let sender = match tty::new(&options, window, id) {
         Ok(pty) => {
@@ -1462,6 +1464,7 @@ impl Terminal {
         agent_cli(self.foreground.as_deref()?)
     }
 }
+#[cfg_attr(not(unix), allow(dead_code))]
 fn is_shell_name(name: &str) -> bool {
     matches!(
         name,

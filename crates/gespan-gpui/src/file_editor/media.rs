@@ -200,6 +200,8 @@ impl MediaPreview {
                             this.failed = failed;
                             cx.notify();
                         }
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = (this, cx);
                     })
                     .is_err()
                 {
@@ -336,6 +338,8 @@ impl MediaPreview {
 impl gpui::Render for MediaPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_image = self.image.is_some();
+        #[cfg(not(target_os = "macos"))]
+        let _ = window;
         #[cfg(target_os = "macos")]
         if self.failed
             && let Some(video) = &self.video
