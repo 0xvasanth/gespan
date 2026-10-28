@@ -429,14 +429,26 @@ mod tests {
         let installed = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
         // The bundled family wins when present.
         let all = installed(&["DejaVu Sans", "IBM Plex Sans"]);
-        assert_eq!(fallback_family(&all, SANS_FALLBACKS).as_deref(), Some("IBM Plex Sans"));
+        assert_eq!(
+            fallback_family(&all, SANS_FALLBACKS).as_deref(),
+            Some("IBM Plex Sans")
+        );
         // Without it, the next preferred family that is installed.
         let linux = installed(&["Noto Sans", "DejaVu Sans Mono", "DejaVu Sans"]);
-        assert_eq!(fallback_family(&linux, SANS_FALLBACKS).as_deref(), Some("DejaVu Sans"));
-        assert_eq!(fallback_family(&linux, MONO_FALLBACKS).as_deref(), Some("DejaVu Sans Mono"));
+        assert_eq!(
+            fallback_family(&linux, SANS_FALLBACKS).as_deref(),
+            Some("DejaVu Sans")
+        );
+        assert_eq!(
+            fallback_family(&linux, MONO_FALLBACKS).as_deref(),
+            Some("DejaVu Sans Mono")
+        );
         // With none preferred, any installed family beats a missing one.
         let odd = installed(&["Some Font"]);
-        assert_eq!(fallback_family(&odd, SANS_FALLBACKS).as_deref(), Some("Some Font"));
+        assert_eq!(
+            fallback_family(&odd, SANS_FALLBACKS).as_deref(),
+            Some("Some Font")
+        );
         assert_eq!(fallback_family(&[], SANS_FALLBACKS), None);
     }
 

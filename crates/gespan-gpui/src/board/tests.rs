@@ -200,7 +200,10 @@ fn assert_check_then_label(visual: &mut VisualTestContext, row: &str) {
     let whole = bounds(visual, row.to_string());
     let check = bounds(visual, format!("{row}-check"));
     let label = bounds(visual, format!("{row}-label"));
-    assert!(check.right() <= label.left(), "{row}: the check sits before the label");
+    assert!(
+        check.right() <= label.left(),
+        "{row}: the check sits before the label"
+    );
     assert!(
         label.right() <= whole.right() && label.right() > whole.right() - px(12.),
         "{row}: the label runs to the row's end, with nothing after it"
@@ -218,14 +221,25 @@ fn every_checked_menu_shows_the_check_then_the_name_once(cx: &mut TestAppContext
     let menu = visual.debug_bounds("board-switcher-list").unwrap();
     for row in ["board-switch-0", "board-switch-1"] {
         assert_check_then_label(visual, row);
-        let label = visual.debug_bounds(selector(format!("{row}-label"))).unwrap();
-        assert!(label.right() <= menu.right(), "{row}: a long name stays inside the menu");
+        let label = visual
+            .debug_bounds(selector(format!("{row}-label")))
+            .unwrap();
+        assert!(
+            label.right() <= menu.right(),
+            "{row}: a long name stays inside the menu"
+        );
     }
     // Every row's check lines up, open board or not.
     let left = |visual: &mut VisualTestContext, row: &str| {
-        visual.debug_bounds(selector(format!("{row}-check"))).unwrap().left()
+        visual
+            .debug_bounds(selector(format!("{row}-check")))
+            .unwrap()
+            .left()
     };
-    assert_eq!(left(visual, "board-switch-0"), left(visual, "board-switch-1"));
+    assert_eq!(
+        left(visual, "board-switch-0"),
+        left(visual, "board-switch-1")
+    );
     click(visual, "board-new");
     assert_check_then_label(visual, "board-template-blank");
     visual.simulate_keystrokes("escape");
@@ -744,7 +758,10 @@ fn a_card_dropped_on_the_empty_board_below_a_column_lands_at_its_end(cx: &mut Te
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     let column = visual.debug_bounds("board-column-0").unwrap();
     let below = visual.debug_bounds("board-column-below-0").unwrap();
-    assert!(below.top() >= column.bottom(), "the zone starts under the column");
+    assert!(
+        below.top() >= column.bottom(),
+        "the zone starts under the column"
+    );
     assert!(
         below.size.height > px(100.),
         "a short column leaves the rest of the board to drop on"
@@ -753,11 +770,18 @@ fn a_card_dropped_on_the_empty_board_below_a_column_lands_at_its_end(cx: &mut Te
     let from = center(visual, "board-card-1");
     let to = gpui::point(below.center().x, below.top() + px(80.));
     drag(visual, from, to);
-    assert_eq!(titles_in(&f, visual, "Backlog"), ["Second", "Third", "First"]);
+    assert_eq!(
+        titles_in(&f, visual, "Backlog"),
+        ["Second", "Third", "First"]
+    );
     // Below another column it moves there, at the end.
     let below = visual.debug_bounds("board-column-below-2").unwrap();
     let from = center(visual, "board-card-2");
-    drag(visual, from, gpui::point(below.center().x, below.top() + px(80.)));
+    drag(
+        visual,
+        from,
+        gpui::point(below.center().x, below.top() + px(80.)),
+    );
     assert_eq!(column_of(&f, visual, "Second"), "Review");
     f.window
         .read_with(visual, |view, _| assert!(view.drop_target.is_none()))
@@ -1192,7 +1216,10 @@ fn an_arrow_from_the_empty_board_focuses_the_first_card(cx: &mut TestAppContext)
     assert_eq!(focused_card(&f, visual), Some(card_id(&f, visual, "First")));
     // From there the arrows move between cards as usual.
     visual.simulate_keystrokes("down");
-    assert_eq!(focused_card(&f, visual), Some(card_id(&f, visual, "Second")));
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(card_id(&f, visual, "Second"))
+    );
     // Typing in the search field keeps its arrows.
     click(visual, "board-search");
     visual.simulate_keystrokes("down");
@@ -1207,7 +1234,9 @@ fn an_arrow_on_an_empty_board_does_nothing(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("right");
     assert_eq!(focused_card(&f, visual), None);
     f.window
-        .update(visual, |view, window, _| assert!(view.focus.is_focused(window)))
+        .update(visual, |view, window, _| {
+            assert!(view.focus.is_focused(window))
+        })
         .unwrap();
 }
 
