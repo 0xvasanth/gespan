@@ -69,44 +69,6 @@ pub(crate) fn bind(cx: &mut App) {
         KeyBinding::new("escape", DismissSearch, Some("FileEditor")),
     ]);
 }
-pub(crate) fn menus(prefs: &crate::settings::Preferences, cx: &mut App) {
-    use gpui::{Menu, MenuItem};
-    cx.set_menus(vec![
-        Menu::new("Gespan Native").items([
-            MenuItem::action("Hold Everything", crate::shell::ToggleHold),
-            MenuItem::separator(),
-            MenuItem::action("Quit Gespan Native", crate::Quit),
-        ]),
-        Menu::new("File").items([
-            MenuItem::action("Save", Save),
-            MenuItem::action("Reload file", ReloadFile),
-            MenuItem::action("Autosave", ToggleAutosave).checked(prefs.autosave),
-        ]),
-        Menu::new("Edit").items([
-            MenuItem::action("Undo", input::Undo),
-            MenuItem::action("Redo", input::Redo),
-            MenuItem::separator(),
-            MenuItem::action("Cut", input::Cut),
-            MenuItem::action("Copy", input::Copy),
-            MenuItem::action("Paste", input::Paste),
-            MenuItem::action("Select All", input::SelectAll),
-            MenuItem::separator(),
-            MenuItem::action("Find", Find),
-            MenuItem::action("Replace", Replace),
-            MenuItem::action("Format Document", Format),
-            MenuItem::action("Word wrap", ToggleWordWrap).checked(prefs.file_word_wrap),
-            MenuItem::separator(),
-            MenuItem::action("Fold", input::FoldCode),
-            MenuItem::action("Unfold", input::UnfoldCode),
-            MenuItem::action("Fold All", input::FoldAll),
-            MenuItem::action("Unfold All", input::UnfoldAll),
-        ]),
-        Menu::new("Help").items([MenuItem::action(
-            "Report an issue…",
-            crate::report::ReportIssue,
-        )]),
-    ]);
-}
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = file_editor, no_json)]
 pub(crate) struct OpenPath(pub String);

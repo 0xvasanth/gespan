@@ -122,6 +122,9 @@ impl Shell {
                         })
                         .detach();
                     }
+                    Command::WorkspaceStyle => {
+                        window.dispatch_action(Box::new(ToggleWorkspaceStyle), cx)
+                    }
                     Command::Plan | Command::Operator | Command::Orchestrator => {
                         if let Some(view) =
                             this.workspace.active.and_then(|id| this.sessions.get(&id))

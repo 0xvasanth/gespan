@@ -22,8 +22,11 @@ pub(crate) struct Preferences {
     pub close_to_tray: bool,
     /// Running an action shows the terminal it runs in.
     pub action_opens_terminal: bool,
+    /// The new layout opens the terminal as a right panel tab, not a dock.
+    pub terminal_in_panel: bool,
     // Appearance
     pub theme: String,
+    pub wayland_window_decorations: bool,
     pub workspace_theme: String,
     // Retain the legacy inset-only key when reading and saving preferences.
     // Window materials now use the shared opacity and main-pane glass values.
@@ -122,7 +125,9 @@ impl Default for Preferences {
             working_agents: true,
             close_to_tray: true,
             action_opens_terminal: true,
+            terminal_in_panel: false,
             theme: "dark".into(),
+            wayland_window_decorations: true,
             workspace_theme: "default".into(),
             inset_glass: true,
             accent_color: None,
@@ -146,7 +151,7 @@ impl Default for Preferences {
             paced_reveal: true,
             follow_up: "steer".into(),
             model_controls: "menu".into(),
-            autocorrect: true,
+            autocorrect: false,
             format_on_save: true,
             autosave: false,
             diff_view: "editor".into(),
@@ -191,10 +196,30 @@ impl Preferences {
         self.workspace_theme = id;
     }
 
+    /// The color settings a project copies when it gets its own theme.
+    pub(crate) fn project_theme(&self) -> gespan_core::project_appearance::ProjectTheme {
+        gespan_core::project_appearance::ProjectTheme {
+            workspace_theme: self.workspace_theme.clone(),
+            accent_color: self.accent_color.clone(),
+            hue: self.theme_hue,
+            saturation: self.theme_saturation,
+            dark_lightness: self.theme_dark_lightness,
+        }
+    }
+
+    pub(crate) fn wayland_decorations(&self, compositor: &str) -> Option<gpui::WindowDecorations> {
+        (compositor == "Wayland").then_some(if self.wayland_window_decorations {
+            gpui::WindowDecorations::Server
+        } else {
+            gpui::WindowDecorations::Client
+        })
+    }
+
     /// SettingsView's Restore defaults: the Appearance page only.
     pub(crate) fn restore_appearance(&mut self) {
         let d = Self::default();
         self.theme = d.theme;
+        self.wayland_window_decorations = d.wayland_window_decorations;
         self.accent_color = d.accent_color;
         self.workspace_theme = d.workspace_theme;
         self.sidebar_opacity = d.sidebar_opacity;
@@ -462,5 +487,43 @@ mod last_controls_tests {
         // A level-valued thinking (Pi, Omp) is not Claude's boolean.
         let pi = model(false, &[], &[("thinking", &["low", "high"])]);
         assert!(apply(Kind::Pi, Some(&pi)).model_settings.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod decoration_tests {
+    use super::Preferences;
+
+    #[test]
+    fn decoration_requests_are_scoped_to_the_wayland_backend() {
+        for enabled in [true, false] {
+            let prefs = Preferences {
+                wayland_window_decorations: enabled,
+                ..Default::default()
+            };
+            for compositor in ["X11", "Headless", ""] {
+                assert_eq!(prefs.wayland_decorations(compositor), None);
+            }
+            assert_eq!(
+                prefs.wayland_decorations("Wayland"),
+                Some(if enabled {
+                    gpui::WindowDecorations::Server
+                } else {
+                    gpui::WindowDecorations::Client
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn decorations_default_persist_and_restore() {
+        let mut prefs: Preferences = serde_json::from_str("{}").unwrap();
+        assert!(prefs.wayland_window_decorations);
+        prefs.wayland_window_decorations = false;
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let mut restored: Preferences = serde_json::from_str(&saved).unwrap();
+        assert!(!restored.wayland_window_decorations);
+        restored.restore_appearance();
+        assert!(restored.wayland_window_decorations);
     }
 }

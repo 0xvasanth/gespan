@@ -59,6 +59,8 @@ impl Shell {
                 (t.foreground.is_none() && !t.exited).then_some((ix, terminal))
             });
         let reveal = self.workspace.preferences.action_opens_terminal;
+        // The right panel shows the terminal instead of the dock.
+        let in_panel = self.terminal_in_panel(cx);
         let viewport = self.viewport();
         let dock = self.workspace.docks.entry(project.clone()).or_default();
         let was_open = dock.open && !dock.terminals.is_empty();
@@ -66,7 +68,7 @@ impl Shell {
             Some((ix, terminal)) => {
                 if reveal {
                     dock.active = ix;
-                    dock.open = true;
+                    dock.open |= !in_panel;
                 }
                 terminal
             }
@@ -76,7 +78,7 @@ impl Shell {
                 dock.size = dock.side.clamp(dock.size, viewport);
                 dock.add(cwd.clone());
                 // `add` opens the dock; a background run leaves it as it was.
-                dock.open = reveal || was_open;
+                dock.open = (reveal && !in_panel) || was_open;
                 let terminal = self.spawn_terminal(cwd, cx);
                 self.terminals
                     .entry(project.clone())
@@ -87,7 +89,9 @@ impl Shell {
             }
         };
         terminal.update(cx, |t, cx| t.run(&action.command, cx));
-        if reveal {
+        if reveal && in_panel {
+            self.show_panel_terminal(window, cx);
+        } else if reveal {
             if let Some(dock) = self.workspace.docks.get(&project) {
                 self.dock_tab_scroll.scroll_to_item(dock.active);
             }
@@ -358,10 +362,7 @@ impl Shell {
         let editing = dialog.editing.is_some();
         let viewport = window.viewport_size();
         let width = 420f32.min(viewport.width.as_f32() - 24.);
-        let anchor = Anchor::Point(gpui::point(
-            px((viewport.width.as_f32() - width) / 2.),
-            px((viewport.height.as_f32() / 2. - 180.).max(16.)),
-        ));
+        let anchor = Anchor::Center;
         let weak = cx.weak_entity();
         let label = |text: &'static str| {
             div()
@@ -450,10 +451,24 @@ impl Shell {
                                 .text_size(px(12.))
                                 .child(
                                     div()
-                                        .text_size(px(14.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(content(1.))
-                                        .child(title),
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1p5()
+                                        .child(
+                                            div()
+                                                .text_size(px(14.))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(content(1.))
+                                                .child(title),
+                                        )
+                                        .when(!editing, |d| {
+                                            d.child(
+                                                div()
+                                                    .line_height(px(18.))
+                                                    .text_color(content(0.6))
+                                                    .child("Save a project command to run with one click."),
+                                            )
+                                        }),
                                 )
                                 .child(
                                     div()

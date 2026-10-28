@@ -1789,7 +1789,7 @@ impl Changes {
                             .flex_shrink_0()
                             .flex()
                             .justify_end()
-                            .font_family(crate::markdown::PILOT)
+                            .font_family(crate::fonts::monospace())
                             .text_size(px(11.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(status_color(&file.status))

@@ -194,7 +194,13 @@ impl gpui::Render for Html {
                     };
                     // GPUI keeps its AppKit content view alive throughout paint.
                     let parent = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
-                    let clipped = bounds.intersect(&window.content_mask().bounds);
+                    // AppKit frames are in window points; GPUI's are divided
+                    // by the interface zoom.
+                    let zoom = window.content_zoom();
+                    let clipped = bounds
+                        .intersect(&window.content_mask().bounds)
+                        .map(|v| v * zoom);
+                    let bounds = bounds.map(|v| v * zoom);
                     let mut view = view.borrow_mut();
                     if clipped.size.width <= gpui::px(0.) || clipped.size.height <= gpui::px(0.) {
                         if let Some(view) = view.as_ref() {
@@ -279,6 +285,7 @@ impl gpui::Render for Html {
                         view.clip.ivars().set(interactive);
                         view.clip.setFrame(rect);
                         view.web.setFrame(web_rect);
+                        unsafe { view.web.setPageZoom(f64::from(zoom)) };
                         view.clip.setHidden(false);
                     }
                 },

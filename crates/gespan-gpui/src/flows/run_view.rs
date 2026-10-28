@@ -492,7 +492,7 @@ impl FlowsView {
                         div()
                             .min_w_0()
                             .truncate()
-                            .font_family(crate::markdown::PILOT)
+                            .font_family(crate::fonts::monospace())
                             .text_color(content(0.8))
                             .child(path.clone()),
                     )
@@ -773,7 +773,7 @@ impl FlowsView {
                         .p(px(8.))
                         .rounded(px(6.))
                         .bg(content(0.04))
-                        .font_family(crate::markdown::PILOT)
+                        .font_family(crate::fonts::monospace())
                         .text_size(px(11.))
                         .text_color(content(0.8))
                         .child(text),

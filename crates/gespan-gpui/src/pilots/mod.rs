@@ -258,22 +258,22 @@ impl Pilots {
                             cx.quit();
                         }
                     } else if id == "composer" {
+                        // The composer is its own panel: the workspace window
+                        // stays where it is, as in the Tauri menu.
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
                             let app: &mut App = cx;
                             app.defer(move |cx| {
                                 let _ = handle.update(cx, |_, window, cx| {
-                                    window.activate_window();
-                                    let _ = owner.update(cx, |o, cx| o.pilot_quick_compose(cx));
+                                    let _ =
+                                        owner.update(cx, |o, cx| o.pilot_quick_compose(window, cx));
                                 });
                             });
                         }
                     } else if this.roster.get(id).is_some() {
-                        this.active = Some(id.into());
-                        this.reload_roadmap(cx);
-                        this.ensure_chat(id, cx);
-                        this.open_floating(cx);
-                        this.changed(cx);
+                        // Only the floating chat opens; the workspace keeps
+                        // whichever Pilot or session it was showing.
+                        this.open_floating(id.into(), cx);
                     }
                 });
             });
@@ -606,6 +606,14 @@ impl Pilots {
         id: &str,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Conversation>> {
+        self.pane_chat(id, cx)
+    }
+    /// A Pilot's chat for a split pane, loading it when it is not open yet.
+    pub(crate) fn pane_chat(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Conversation>> {
         self.ensure_chat(id, cx);
         self.chats.get(id).cloned()
     }
@@ -920,6 +928,14 @@ impl Pilots {
     }
     fn configure_chat(&mut self, id: &str, cx: &mut Context<Self>) {
         self.refresh_work(id, cx);
+        if let Some(pilot) = self.roster.get(id) {
+            // The shell may be mid-update when this runs; reach it afterwards.
+            let launches = pilot.launches.iter().map(|l| l.session_id).collect();
+            let owner = self.owner.clone();
+            cx.defer(move |cx| {
+                let _ = owner.update(cx, |shell, cx| shell.pilot_track_sessions(launches, cx));
+            });
+        }
         if let (Some(pilot), Some(view)) =
             (self.roster.get(id).cloned(), self.chats.get(id).cloned())
         {
@@ -1708,8 +1724,14 @@ impl gpui::Render for Pilots {
                             .into_iter()
                             .map(|view| view.update(cx, |v, cx| v.pilot_attention(window, cx))),
                     )
-                    .when_some(self.chat(), |d, chat| {
-                        d.child(div().flex_1().min_h_0().child(chat))
+                    .map(|d| {
+                        if self.floating_shows(&pilot.id, cx) {
+                            d.child(self.floating_placeholder(&pilot, cx))
+                        } else if let Some(chat) = self.chat() {
+                            d.child(div().flex_1().min_h_0().child(chat))
+                        } else {
+                            d
+                        }
                     })
                     .when(!self.original_chrome, |d| d.child(self.topbar(&pilot, cx))),
             )

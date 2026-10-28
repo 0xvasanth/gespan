@@ -1,5 +1,6 @@
 //! Sidebar.tsx's inset `RightPanel`: the project tools beside the card, with
-//! reorderable Explorer / Changes / History tabs in the title bar.
+//! reorderable Explorer / Changes / History tabs in the title bar, and a
+//! trailing Terminal tab when the terminal lives in the panel.
 use crate::{
     changes::Changes,
     explorer::Explorer,
@@ -19,14 +20,18 @@ use std::sync::Arc;
 pub(crate) const WIDTH_MIN: f32 = 220.;
 pub(crate) const WIDTH_MAX: f32 = 640.;
 pub(crate) const WIDTH_DEFAULT: f32 = 288.;
-/// Three 26px icon tabs, one unfolded label with 4px extra padding, and two gaps.
-pub(crate) const TABS_WIDTH: f32 = 3. * 26. + 64. + 4. + 2. * 2.;
-pub(crate) const TAB_ICONS_WIDTH: f32 = 3. * 26. + 2. * 2.;
+/// `count` 26px icon tabs, one unfolded label with 4px extra padding, and the gaps.
+pub(crate) fn tabs_width(count: usize) -> f32 {
+    tab_icons_width(count) + 64. + 4.
+}
+pub(crate) fn tab_icons_width(count: usize) -> f32 {
+    count as f32 * 26. + count.saturating_sub(1) as f32 * 2.
+}
 
-pub(crate) fn tab_label_width(width: f32) -> f32 {
+pub(crate) fn tab_label_width(width: f32, count: usize) -> f32 {
     // The selected tab adds 2px of padding per side. Below 30px there is
     // insufficient room for a useful abbreviated label and its 6px gap.
-    let available = (width - TAB_ICONS_WIDTH - 4.).max(0.);
+    let available = (width - tab_icons_width(count) - 4.).max(0.);
     if available < 30. { 0. } else { available }
 }
 
@@ -57,6 +62,9 @@ pub(crate) enum RightTab {
     Files,
     Changes,
     Graph,
+    /// The project's terminal, when it opens in the panel. Always last and
+    /// never part of the saved order.
+    Terminal,
 }
 impl RightTab {
     fn label(self) -> &'static str {
@@ -64,16 +72,15 @@ impl RightTab {
             Self::Files => "Explorer",
             Self::Changes => "Changes",
             Self::Graph => "History",
+            Self::Terminal => "Terminal",
         }
     }
     /// loadRightPanelTabOrder: unique known tabs, the missing ones appended.
+    /// Changes has no tab; the title bar's diff stat opens it.
     pub(crate) fn normalize(order: &[RightTab]) -> Vec<RightTab> {
         let mut out = Vec::new();
-        for tab in order
-            .iter()
-            .chain(&[Self::Files, Self::Changes, Self::Graph])
-        {
-            if !out.contains(tab) {
+        for tab in order.iter().chain(&[Self::Files, Self::Graph]) {
+            if !matches!(tab, Self::Terminal | Self::Changes) && !out.contains(tab) {
                 out.push(*tab);
             }
         }
@@ -223,8 +230,8 @@ struct TabDrag {
     active: bool,
 }
 
-/// The title-bar strip observes the panel so selection, drag motion, and git
-/// updates repaint independently of the cached pane and session tabs.
+/// The title-bar strip observes the panel so selection and drag motion
+/// repaint independently of the cached pane and session tabs.
 pub(crate) struct ProjectTabs {
     panel: WeakEntity<RightPanel>,
     _subscription: Subscription,
@@ -240,7 +247,6 @@ impl Render for ProjectTabs {
 
 pub(crate) struct RightPanel {
     pub tabs: Entity<ProjectTabs>,
-    pub git: Entity<ProjectGit>,
     pub explorer: Entity<Explorer>,
     pub changes: Entity<Changes>,
     pub history: Entity<History>,
@@ -249,6 +255,8 @@ pub(crate) struct RightPanel {
     order: Vec<RightTab>,
     shown: bool,
     sidebar_tab: Option<RightTab>,
+    /// Whether the Terminal tab follows the others; the shell draws its pane.
+    terminal_tab: bool,
     /// Classic reserves the title bar's height; rounded content starts at
     /// the card's top edge, below the window-wide title bar.
     top_inset: f32,
@@ -288,7 +296,6 @@ impl RightPanel {
         });
         Self {
             tabs,
-            git,
             focus: cx.focus_handle(),
             explorer,
             changes,
@@ -297,21 +304,45 @@ impl RightPanel {
             order: RightTab::normalize(&order),
             shown: false,
             sidebar_tab: None,
+            terminal_tab: false,
             top_inset: 0.,
-            tab_width: TABS_WIDTH,
+            tab_width: tabs_width(3),
             drag: None,
             reveal: None,
             skip_click: false,
-            tab_bounds: (0..3).map(|_| Default::default()).collect(),
+            tab_bounds: (0..4).map(|_| Default::default()).collect(),
             _subscriptions: subscriptions,
         }
     }
     pub(crate) fn tab(&self) -> RightTab {
         self.tab
     }
+    /// The tabs in strip order: the saved two, with Terminal between them
+    /// when enabled.
+    pub(crate) fn tabs(&self) -> Vec<RightTab> {
+        let mut tabs = self.order.clone();
+        if self.terminal_tab {
+            tabs.insert(1.min(tabs.len()), RightTab::Terminal);
+        }
+        tabs
+    }
+    /// Adds or removes the Terminal tab; Explorer takes over when it goes.
+    pub(crate) fn set_terminal_tab(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.terminal_tab == enabled {
+            return;
+        }
+        self.terminal_tab = enabled;
+        if !enabled && self.tab == RightTab::Terminal {
+            self.select(RightTab::Files, cx);
+        }
+        cx.notify();
+    }
     pub(crate) fn set_show_excluded(&mut self, show: bool, cx: &mut Context<Self>) {
         self.explorer
             .update(cx, |explorer, cx| explorer.set_show_excluded(show, cx));
+    }
+    pub(crate) fn top_inset(&self) -> f32 {
+        self.top_inset
     }
     pub(crate) fn set_top_inset(&mut self, height: f32, cx: &mut Context<Self>) {
         if self.top_inset != height {
@@ -386,6 +417,7 @@ impl RightPanel {
         });
     }
     fn move_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let tabs = self.tabs();
         let Some(drag) = &mut self.drag else {
             return;
         };
@@ -399,9 +431,15 @@ impl RightPanel {
         }
         drag.active = true;
         // Swap with a neighbour once the dragged tab's centre crosses its centre.
-        let from = self.order.iter().position(|t| *t == drag.tab).unwrap_or(0);
-        let bounds: Vec<Option<Bounds<Pixels>>> =
-            self.tab_bounds.iter().map(|slot| slot.get()).collect();
+        // Terminal holds its slot, outside the reorderable tabs.
+        let Some(from) = tabs.iter().position(|t| *t == drag.tab) else {
+            return;
+        };
+        let bounds: Vec<Option<Bounds<Pixels>>> = tabs
+            .iter()
+            .zip(&self.tab_bounds)
+            .map(|(tab, slot)| slot.get().filter(|_| *tab != RightTab::Terminal))
+            .collect();
         if let Some(Some(own)) = bounds.get(from) {
             let centre = own.center().x + drag.offset;
             let target = bounds
@@ -428,7 +466,13 @@ impl RightPanel {
                 } else {
                     other.left() - own.left()
                 };
-                self.order.swap(from, to);
+                let (a, b) = (
+                    self.order.iter().position(|t| *t == tabs[from]),
+                    self.order.iter().position(|t| *t == tabs[to]),
+                );
+                if let (Some(a), Some(b)) = (a, b) {
+                    self.order.swap(a, b);
+                }
                 drag.origin += shift;
                 drag.offset -= shift;
             }
@@ -446,7 +490,6 @@ impl RightPanel {
     }
 
     fn tab_strip(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let changes = self.git.read(cx).has_changes();
         let progress = self
             .reveal
             .as_ref()
@@ -456,9 +499,9 @@ impl RightPanel {
             .as_ref()
             .filter(|d| d.active)
             .map(|d| (d.tab, d.offset));
+        let count = self.tabs().len();
         let tabs: Vec<AnyElement> = self
-            .order
-            .clone()
+            .tabs()
             .into_iter()
             .enumerate()
             .map(|(ix, tab)| {
@@ -467,6 +510,7 @@ impl RightPanel {
                     RightTab::Files => ("right-panel-tab-Explorer", "file-script"),
                     RightTab::Changes => ("right-panel-tab-Changes", "git-branch"),
                     RightTab::Graph => ("right-panel-tab-History", "clock"),
+                    RightTab::Terminal => ("right-panel-tab-Terminal", "terminal"),
                 };
                 let unfolded = match progress {
                     Some((_, p)) if active => p,
@@ -486,10 +530,11 @@ impl RightPanel {
                     .child(
                         tab_button(
                             id,
-                            TabLabel::from(tab.label()).max_width(tab_label_width(self.tab_width)),
+                            TabLabel::from(tab.label())
+                                .max_width(tab_label_width(self.tab_width, count)),
                             path,
                             active,
-                            tab == RightTab::Changes && changes && !active,
+                            false,
                             unfolded,
                             window,
                         )
@@ -562,6 +607,8 @@ impl Render for RightPanel {
                 .clone()
                 .cached(StyleRefinement::default().flex_1().min_h_0().w_full())
                 .into_any_element(),
+            // The shell paints the terminal over this pane.
+            RightTab::Terminal => div().into_any_element(),
         };
         div()
             .id("right-panel")
@@ -592,7 +639,11 @@ mod tests {
     fn tab_order_keeps_known_tabs_once() {
         assert_eq!(
             RightTab::normalize(&[RightTab::Graph, RightTab::Graph]),
-            [RightTab::Graph, RightTab::Files, RightTab::Changes]
+            [RightTab::Graph, RightTab::Files]
+        );
+        assert_eq!(
+            RightTab::normalize(&[RightTab::Changes, RightTab::Graph]),
+            [RightTab::Graph, RightTab::Files]
         );
         assert_eq!(format_integer(1234567), "1,234,567");
         assert_eq!(format_integer(12), "12");

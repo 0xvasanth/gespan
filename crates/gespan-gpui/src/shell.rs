@@ -23,6 +23,7 @@ mod open_in_editor;
 mod orchestration;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
+mod pilot_panes;
 pub(crate) mod pilots;
 mod project_rail;
 mod project_removal;
@@ -39,12 +40,15 @@ mod session_folders;
 mod session_groups;
 mod session_loading;
 mod session_preview;
+mod session_shortcuts;
 mod settings;
 mod shortcuts;
 mod sidebar_list;
 mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod window_chrome;
 mod worktrees;
 
 use crate::{
@@ -93,6 +97,7 @@ actions!(
         OpenProject,
         CloseTab,
         CloseAllTabs,
+        ArchiveSession,
         VisitBack,
         VisitForward,
         DismissMenu,
@@ -121,11 +126,23 @@ actions!(
         ToggleTerminal,
         NewTerminal,
         ToggleLayout,
+        ToggleWorkspaceStyle,
         OpenSettings,
         GoToFile,
         OpenCommandPalette,
         ToggleHold,
-        HoldFromMenu
+        HoldFromMenu,
+        OpenInbox,
+        OpenNotes,
+        CheckForUpdates,
+        MinimizeWindow,
+        ZoomWindow,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
+        Reload,
+        SidebarAppearance,
+        About
     ]
 );
 
@@ -148,10 +165,7 @@ impl Render for Chrome {
             .update(cx, |shell, cx| match kind {
                 ChromeKind::Sidebar => {
                     let sidebar = shell.sidebar(cx);
-                    if shell.space_slide.is_some()
-                        || shell.spaces_nudge.is_some()
-                        || shell.classic_tabs.animating()
-                    {
+                    if shell.spaces_nudge.is_some() || shell.classic_tabs.animating() {
                         window.request_animation_frame();
                     }
                     sidebar
@@ -198,6 +212,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, context),
         KeyBinding::new(&format!("{modifier}-w"), CloseTab, context),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllTabs, context),
+        KeyBinding::new(
+            &format!("{modifier}-shift-a"),
+            ArchiveSession,
+            Some("Session > (Composer || TranscriptSelection) && !CodeEditor && !Completion && !PopoverMenu && !Prompt"),
+        ),
         KeyBinding::new(&format!("{modifier}-["), VisitBack, context),
         KeyBinding::new(&format!("{modifier}-]"), VisitForward, context),
         KeyBinding::new("escape", DismissMenu, context),
@@ -231,7 +250,14 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-`"), NewTerminal, context),
         // Switch between the original two-sidebar layout and the new layout.
         KeyBinding::new(&format!("{modifier}-shift-l"), ToggleLayout, context),
+        // Switch the Focused layout between its rounded and boxy workspace.
+        KeyBinding::new(&format!("{modifier}-alt-l"), ToggleWorkspaceStyle, context),
         KeyBinding::new(&format!("{modifier}-shift-d"), SplitDown, context),
+        KeyBinding::new(&format!("{modifier}-="), ZoomIn, context),
+        KeyBinding::new(&format!("{modifier}-+"), ZoomIn, context),
+        KeyBinding::new(&format!("{modifier}--"), ZoomOut, context),
+        KeyBinding::new(&format!("{modifier}-0"), ResetZoom, context),
+        KeyBinding::new(&format!("{modifier}-shift-r"), Reload, context),
         KeyBinding::new(&format!("{modifier}-alt-left"), FocusPaneLeft, context),
         KeyBinding::new(&format!("{modifier}-alt-right"), FocusPaneRight, context),
         KeyBinding::new(&format!("{modifier}-alt-up"), FocusPaneUp, context),
@@ -243,8 +269,46 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// Windows has no caption of its own (`appears_transparent`), so the app
+/// draws the window controls. Test windows keep the captionless geometry
+/// that Linux tests get from server decorations.
+#[cfg(target_os = "windows")]
+const WINDOWS_CONTROLS: bool = cfg!(not(test));
+
+pub(crate) fn client_controls_width(window: &Window) -> f32 {
+    #[cfg(target_os = "linux")]
+    if !window.is_fullscreen()
+        && matches!(
+            window.window_decorations(),
+            gpui::Decorations::Client { .. }
+        )
+    {
+        return window_chrome::CONTROLS_WIDTH;
+    }
+    #[cfg(target_os = "windows")]
+    if WINDOWS_CONTROLS && !window.is_fullscreen() {
+        return window_chrome::CONTROLS_WIDTH;
+    }
+    let _ = window;
+    0.
+}
+
+/// Client-drawn window controls that hold the corner's right end, inside the
+/// bar: Windows only. Client-decorated Linux shifts the whole bar left of its
+/// controls instead (`titlebar_controls_space`).
+pub(crate) fn corner_controls_width(window: &Window) -> f32 {
+    if cfg!(target_os = "windows") {
+        client_controls_width(window)
+    } else {
+        0.
+    }
+}
+
 /// macOS must receive button clicks as app content. Only blank titlebar
 /// regions initiate native dragging or the system double-click action.
+/// Client-decorated Linux windows also need explicit native drag requests.
+/// Windows hit-tests the drag area as the caption, which drags, snaps and
+/// maximizes on double-click natively.
 pub(crate) fn titlebar_drag_area() -> gpui::Div {
     let bounds = AnchorSlot::default();
     div()
@@ -253,7 +317,12 @@ pub(crate) fn titlebar_drag_area() -> gpui::Div {
         .child(bounds.probe())
         .window_control_area(WindowControlArea::Drag)
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            if cfg!(target_os = "macos")
+            if (cfg!(target_os = "macos")
+                || (cfg!(target_os = "linux")
+                    && matches!(
+                        window.window_decorations(),
+                        gpui::Decorations::Client { .. }
+                    )))
                 && bounds.get().is_some_and(|b| b.contains(&event.position))
             {
                 // Check the measured spacer as well as GPUI's cached hit test:
@@ -397,6 +466,8 @@ enum DragSource {
     Review(i64),
     Tab(i64),
     Session(i64),
+    /// A Pilot tab pulled down out of the strip; it has no pane yet.
+    PilotTab,
 }
 impl DragSource {
     fn session(self) -> i64 {
@@ -405,6 +476,7 @@ impl DragSource {
             | DragSource::Review(id)
             | DragSource::Tab(id)
             | DragSource::Session(id) => id,
+            DragSource::PilotTab => i64::MIN,
         }
     }
 }
@@ -473,6 +545,8 @@ enum PaneMark {
     Session(String, Option<i64>),
     /// A file's name, or `None` for changes and commits.
     File(Option<String>),
+    /// A Pilot's mascot and colour.
+    Pilot(String, u32),
 }
 /// A split tab's headline rolling to the newly focused pane: the next pane
 /// rises from below, the previous one drops from above.
@@ -523,7 +597,7 @@ pub(crate) struct Shell {
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
     app_bridge: Option<gespan_core::pilot::bridge::Server>,
     mobile: mobile_host::Mobile,
-    app_results: HashMap<(i64, String), Result<serde_json::Value, String>>,
+    app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
     orchestrations: HashMap<i64, orchestration::Run>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
@@ -556,6 +630,13 @@ pub(crate) struct Shell {
     /// useTrafficLightsVisible: fullscreen hides the native buttons, so the
     /// title bar takes their room back.
     fullscreen: bool,
+    /// `corner_controls_width` as of this render, for the corner's layout.
+    window_controls: f32,
+    /// The narrowest right panel whose header holds the corner's tools
+    /// beside client-drawn window controls.
+    right_panel_min: f32,
+    #[cfg(target_os = "linux")]
+    client_decorations: bool,
     tabs_frame: Entity<Chrome>,
     store: Database,
     remote: Arc<gespan_core::remote::Connections>,
@@ -584,6 +665,7 @@ pub(crate) struct Shell {
     quick: crate::quick_composer::Controller,
     unseen_finished: HashSet<i64>,
     archiving: HashSet<i64>,
+    archive_shortcut_held: bool,
     /// Editors offered by a project's "Open in editor"; `None` while scanning.
     external_editors: Option<Vec<gespan_core::external_editor::ExternalEditor>>,
     groups: HashMap<String, gespan_core::session_groups::Groups>,
@@ -659,6 +741,8 @@ pub(crate) struct Shell {
     shortcuts: Option<shortcuts::Shortcuts>,
     window_active: bool,
     window_glass: Option<bool>,
+    /// The project whose colors were last painted; leaving it blends colors.
+    theme_project: Option<String>,
     quit_prompted: bool,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
@@ -687,9 +771,6 @@ pub(crate) struct Shell {
     pane_ticks: HashMap<i64, PaneTick>,
     skip_tab_click: bool,
     spaces_start: usize,
-    /// Sidebar.tsx's space push: which way the incoming project slides in
-    /// (1 from the right, -1 from the left) and when it set off.
-    space_slide: Option<(f32, std::time::Instant)>,
     /// The spaces bar's short nudge after a chevron pages it.
     spaces_nudge: Option<(f32, std::time::Instant)>,
     /// The space under the pointer, whose name and shortcuts show above it.
@@ -702,6 +783,8 @@ pub(crate) struct Shell {
     pub(crate) git: Entity<crate::git_status::ProjectGit>,
     pub(crate) right_panel: Option<Entity<RightPanel>>,
     right_resize: Option<(Pixels, f32)>,
+    /// Either right-panel handle is hovered; both of its hairlines light up.
+    right_resize_hovered: bool,
     right_slide: Option<PaneSlide>,
     reviews: HashMap<i64, Entity<crate::review::ReviewPane>>,
     /// A review sliding in or out: its session and pane.
@@ -713,6 +796,8 @@ pub(crate) struct Shell {
     review_drag: bool,
     split_bounds: HashMap<i64, AnchorSlot>,
     pane_bounds: AnchorSlot,
+    /// The visible Pilot's view, a drop target for tabs and panes.
+    pilot_bounds: AnchorSlot,
     pane_drag: Option<PaneDrag>,
     pane_sash: Option<SashDrag>,
     pane_motion: Option<PaneMotion>,
@@ -738,6 +823,8 @@ pub(crate) struct Shell {
     live_mark: Option<Entity<terminal_dock::LiveMark>>,
     /// The sidebar collapsed itself to make room; it returns with the room.
     sidebar_auto_hidden: bool,
+    /// The room the sidebar was last fitted to; a change refits it.
+    sidebar_fitted_room: Option<(i32, bool)>,
     viewport_width: f32,
     viewport_height: f32,
     observations: Vec<Subscription>,
@@ -868,7 +955,13 @@ impl Shell {
         });
         let git_project = workspace.project.clone();
         let git = cx.new(|cx| crate::git_status::ProjectGit::new(git_project, cx));
-        let git_observation = cx.observe(&git, |this, _, cx| {
+        let git_observation = cx.observe(&git, |this, git, cx| {
+            let cwd = git.read(cx).root.clone();
+            for view in this.sessions.values() {
+                if view.read(cx).review.read(cx).session().1 == cwd {
+                    view.update(cx, |view, cx| view.refresh_git_actions(cx));
+                }
+            }
             // The title bar's dot and the panel's tab label follow its stats.
             this.sync_project_rail_git_stats(cx);
             if this.workspace.classic_layout {
@@ -929,6 +1022,10 @@ impl Shell {
             peek_close: None,
             peek_toggle_bounds: AnchorSlot::default(),
             fullscreen: false,
+            window_controls: 0.,
+            right_panel_min: crate::right_panel::WIDTH_MIN,
+            #[cfg(target_os = "linux")]
+            client_decorations: false,
             tabs_frame,
             store,
             remote,
@@ -953,6 +1050,7 @@ impl Shell {
             quick: Default::default(),
             unseen_finished: HashSet::new(),
             archiving: HashSet::new(),
+            archive_shortcut_held: false,
             external_editors: None,
             groups: sidebar_metadata.groups,
             reminders: sidebar_metadata.reminders,
@@ -1017,6 +1115,7 @@ impl Shell {
             shortcuts: None,
             window_active: false,
             window_glass: None,
+            theme_project: None,
             quit_prompted: false,
             menu: None,
             background_dialog: None,
@@ -1039,7 +1138,6 @@ impl Shell {
             pane_ticks: HashMap::new(),
             skip_tab_click: false,
             spaces_start: 0,
-            space_slide: None,
             spaces_nudge: None,
             hovered_space: None,
             space_anchor: AnchorSlot::default(),
@@ -1050,6 +1148,7 @@ impl Shell {
             git,
             right_panel: None,
             right_resize: None,
+            right_resize_hovered: false,
             right_slide: None,
             reviews: HashMap::new(),
             review_slide: None,
@@ -1059,11 +1158,13 @@ impl Shell {
             review_drag: false,
             split_bounds: HashMap::new(),
             pane_bounds: AnchorSlot::default(),
+            pilot_bounds: AnchorSlot::default(),
             pane_drag: None,
             pane_sash: None,
             pane_motion: None,
             skip_session_click: false,
             sidebar_auto_hidden: false,
+            sidebar_fitted_room: None,
             terminals: HashMap::new(),
             dock_slide: None,
             dock_resize: None,
@@ -1604,9 +1705,11 @@ impl Shell {
                 && self.settings.is_none())
             .then(|| self.classic_sidebar_tab.tool_tab())
             .flatten();
+            let terminal_tab = self.terminal_in_panel(cx);
             panel.update(cx, |p, cx| {
                 p.set_shown(shown, cx);
                 p.set_sidebar_tab(sidebar_tab, cx);
+                p.set_terminal_tab(terminal_tab, cx);
             });
         }
     }
@@ -1627,6 +1730,7 @@ impl Shell {
             .classic_sidebar_tabs
             .insert(self.workspace.project.clone(), tab.id().into());
         self.close_preview(cx);
+        self.sidebar_auto_hidden = false;
         self.set_sidebar_visible(true, cx);
         self.sync_right_panel(cx);
         self.notify_sidebar(cx);
@@ -1675,7 +1779,7 @@ impl Shell {
         {
             self.focus_active(window, cx);
         }
-        let full = self.workspace.right_panel_width;
+        let full = self.right_panel_width();
         let to = if open { full } else { 0. };
         self.workspace.right_panel_open = open;
         let previous = self.right_slide.take();
@@ -1704,7 +1808,12 @@ impl Shell {
             self.workspace.right_panel_tabs.clone(),
             self.workspace.changes_view,
         );
-        let panel = cx.new(|cx| RightPanel::new(git, tab, order, window, cx));
+        let terminal_tab = self.terminal_in_panel(cx);
+        let panel = cx.new(|cx| {
+            let mut panel = RightPanel::new(git, tab, order, window, cx);
+            panel.set_terminal_tab(terminal_tab, cx);
+            panel
+        });
         let explorer = panel.read(cx).explorer.clone();
         self.observations.push(cx.subscribe(
             &explorer,
@@ -1758,7 +1867,12 @@ impl Shell {
         self.observations
             .push(cx.subscribe(&panel, |this, _, event: &PanelEvent, cx| {
                 match event {
-                    PanelEvent::Tab(tab) => this.workspace.right_panel_tab = *tab,
+                    PanelEvent::Tab(tab) => {
+                        this.workspace.right_panel_tab = *tab;
+                        if *tab == crate::right_panel::RightTab::Terminal {
+                            this.ensure_panel_terminal(cx);
+                        }
+                    }
                     PanelEvent::Reordered(order) => this.workspace.right_panel_tabs = order.clone(),
                 }
                 this.persist(cx);
@@ -1815,6 +1929,73 @@ impl Shell {
         self.reviews
             .values()
             .any(|pane| pane.read(cx).unsaved_files(cx))
+    }
+    /// Steps the interface scale one notch up or down, or resets it with 0.
+    fn step_ui_scale(&mut self, step: i32, cx: &mut Context<Self>) {
+        use crate::settings::UI_SCALE_PERCENTS;
+        let current = self.workspace.preferences.ui_scale;
+        let next = match step {
+            0 => Some(100),
+            1 => UI_SCALE_PERCENTS.into_iter().find(|&p| p > current),
+            _ => UI_SCALE_PERCENTS.into_iter().rev().find(|&p| p < current),
+        }
+        .unwrap_or(current);
+        if next == current {
+            return;
+        }
+        self.workspace.preferences.ui_scale = next;
+        self.apply_preferences(cx);
+        self.sync_settings(cx);
+        self.persist(cx);
+        cx.notify();
+    }
+    /// The interface scale as a window zoom, applied after the frame that
+    /// noticed it so layout never runs against a viewport that changes mid-draw.
+    fn sync_ui_scale(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let zoom = self.workspace.preferences.ui_scale.clamp(50, 200) as f32 / 100.;
+        if (window.content_zoom() - zoom).abs() < f32::EPSILON {
+            return;
+        }
+        window.defer(cx, move |window, cx| {
+            window.set_content_zoom(zoom, cx);
+            #[cfg(target_os = "macos")]
+            {
+                let height = crate::theme::TITLE_BAR_HEIGHT;
+                window.set_traffic_light_position(crate::traffic_lights::position(zoom, height));
+                crate::traffic_lights::pin(window, height);
+            }
+        });
+    }
+    /// The native stand-in for the web app's Reload: restart the process.
+    /// Unlike a webview reload this stops running agents and terminals, so it
+    /// always asks first.
+    fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quit_prompted {
+            return;
+        }
+        self.quit_prompted = true;
+        let detail = if self.unsaved_files(cx) {
+            "Running agents and terminals will stop, and unsaved file edits will be lost."
+        } else {
+            "Running agents and terminals will stop."
+        };
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Reload Gespan Native?",
+            Some(detail),
+            &["Reload", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = answer.await;
+            let _ = this.update(cx, |this, cx| {
+                this.quit_prompted = false;
+                if matches!(answer, Ok(0)) {
+                    crate::restart(cx);
+                }
+            });
+        })
+        .detach();
     }
     fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.quit_prompted && !self.settling_sessions(cx).is_empty() {
@@ -2133,6 +2314,7 @@ impl Shell {
             .sessions
             .get(&id)
             .map(|s| s.read(cx).display_title())
+            .or_else(|| self.pilot_pane_title(id, cx))
             .unwrap_or_default();
         let focused = self.workspace.active == Some(id) && !self.review_focused;
         div()
@@ -2512,6 +2694,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.workspace.pilot_panes.contains_key(&id) {
+            return self.pilot_pane_surface(id, split, cx);
+        }
         let in_split = split.is_some();
         let chat = self.sessions.get(&id).cloned();
         let now = std::time::Instant::now();
@@ -2729,7 +2914,7 @@ impl Shell {
             main -= self.workspace.sidebar_width;
         }
         if self.right_panel_shown(cx) {
-            main -= self.workspace.right_panel_width;
+            main -= self.right_panel_width();
         }
         if self.pilot_active(cx) {
             return main;
@@ -2783,6 +2968,40 @@ impl Shell {
             self.set_sidebar_visible(true, cx);
             self.sidebar_auto_hidden = false;
         }
+    }
+    /// Refit the sidebar whenever the room around the chats changes, however
+    /// it changed: a window resize, a tab or project switch, a review or pane
+    /// closed from inside, a panel's slide settling. Room is measured without
+    /// the sidebar so showing or hiding it by hand never counts as a change,
+    /// and drags refit once they let go.
+    fn refit_sidebar_to_room(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.resize.is_some()
+            || self.right_resize.is_some()
+            || self.review_drag
+            || self.pane_sash.is_some()
+            || self.dock_resize.is_some()
+            || self.project_resize.is_some()
+        {
+            return;
+        }
+        let room = (
+            self.narrowest_chat(false, cx).round() as i32,
+            self.session_sidebar_available(cx),
+        );
+        if self.sidebar_fitted_room.replace(room) == Some(room) {
+            return;
+        }
+        let this = cx.entity();
+        window.defer(cx, move |_, cx| {
+            this.update(cx, |this, cx| {
+                let visible = this.workspace.sidebar_visible;
+                this.fit_sidebar(cx);
+                if visible != this.workspace.sidebar_visible {
+                    this.persist(cx);
+                    cx.notify();
+                }
+            });
+        });
     }
     /// newTerminalCwd: the focused session's worktree, else its folder, else
     /// the project.
@@ -2883,6 +3102,14 @@ impl Shell {
         self.dock_tab_scroll.scroll_to_item(added);
         let terminal = self.spawn_terminal(cwd, cx);
         self.terminals.entry(project).or_default().push(terminal);
+        if self.terminal_in_panel(cx) {
+            if let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project) {
+                dock.open = false;
+            }
+            self.show_panel_terminal(window, cx);
+            self.persist(cx);
+            return;
+        }
         if !was_open {
             self.slide_dock(true, cx);
         }
@@ -2896,6 +3123,14 @@ impl Shell {
         if self.workspace.project.starts_with("remote://") {
             self.error = Some("Terminals are not available on remote projects.".into());
             cx.notify();
+            return;
+        }
+        if self.terminal_in_panel(cx) {
+            if self.panel_terminal_shown(cx) {
+                self.set_right_panel_open(false, window, cx);
+            } else {
+                self.show_panel_terminal(window, cx);
+            }
             return;
         }
         let project = self.workspace.project.clone();
@@ -2945,6 +3180,32 @@ impl Shell {
             let t = terminal.read(cx);
             (t.foreground.clone(), project_name(&t.cwd))
         };
+        // The panel's last terminal stays: closing it hides the panel, and
+        // stops whatever it was running.
+        if self.terminal_in_panel(cx) && self.terminals.get(&project).is_some_and(|t| t.len() == 1)
+        {
+            let Some(process) = process else {
+                self.set_right_panel_open(false, window, cx);
+                return;
+            };
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                &format!("\"{process}\" is still running in {label}. Stop it and close the panel?"),
+                None,
+                &["Stop", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                if matches!(answer.await, Ok(0)) {
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        terminal.update(cx, |t, cx| t.stop_foreground(cx));
+                        this.set_right_panel_open(false, window, cx);
+                    });
+                }
+            })
+            .detach();
+            return;
+        }
         let Some(process) = process else {
             self.remove_terminal(&project, ix, window, cx);
             return;
@@ -3058,6 +3319,10 @@ impl Shell {
                 terminal.update(cx, |t, _| t.visible = shown);
             }
         }
+        // The right panel's Terminal tab hosts the shells instead.
+        if self.terminal_in_panel(cx) {
+            return body;
+        }
         let Some(dock) = self.workspace.docks.get(&project).cloned() else {
             return body;
         };
@@ -3100,7 +3365,7 @@ impl Shell {
                 DockSide::Bottom => d.top_0(),
                 DockSide::Right => d.left_0(),
             })
-            .child(self.dock_header(&dock, window, cx))
+            .child(self.dock_header(&dock, false, window, cx))
             .child(
                 div().flex_1().min_h_0().min_w_0().children(
                     self.terminals
@@ -3195,6 +3460,12 @@ impl Shell {
             self.open_file_pane(id, window, cx);
             return;
         }
+        if self.workspace.pilot_panes.contains_key(&id) {
+            if self.workspace.active != Some(id) {
+                self.open_pilot_pane(id, window, cx);
+            }
+            return;
+        }
         if self.workspace.active == Some(id) {
             return;
         }
@@ -3243,6 +3514,11 @@ impl Shell {
         self.navigation_revision += 1;
         self.begin_pane_motion(before, cx);
         self.fit_sidebar(cx);
+        // A Pilot left alone becomes its tab again, and shows when focused.
+        self.settle_pilot_panes(window, cx);
+        if self.pilot_active(cx) {
+            return;
+        }
         if self.workspace.active != active {
             if let Some(active) = self.workspace.active {
                 self.open(active, window, cx);
@@ -3400,9 +3676,13 @@ impl Shell {
         });
     }
     /// The pane under a point and the edge it would take, in the active tab.
-    fn pane_hit(&self, position: Point<Pixels>) -> Option<(i64, Edge)> {
+    fn pane_hit(&self, position: Point<Pixels>, cx: &App) -> Option<(i64, Edge)> {
         if self.app_view_open() {
             return None;
+        }
+        // The visible Pilot hides the tab's panes and stands in for them.
+        if self.pilot_active(cx) {
+            return self.pilot_view_hit(position, cx);
         }
         let bounds = self.pane_bounds.get()?;
         if !bounds.contains(&position) {
@@ -3473,7 +3753,7 @@ impl Shell {
         let over = if insert.is_some() {
             None
         } else {
-            self.pane_hit(event.position)
+            self.pane_hit(event.position, cx)
                 .and_then(|(id, edge)| {
                     if id != source.session()
                         || matches!(source, DragSource::Review(id) if self.workspace.reviews.get(&id).is_some_and(|r| !r.chat_hidden))
@@ -3530,9 +3810,15 @@ impl Shell {
             self.apply_sidebar_drop(drag.source.session(), target, window, cx);
             return;
         }
+        let pilot = match drag.source {
+            DragSource::Pane(pane) => self.workspace.pilot_panes.get(&pane).cloned(),
+            _ => None,
+        };
+        let mut over = drag
+            .over
+            .map(|(target, edge)| (self.resolve_pilot_target(target, cx), edge));
         let mut before = self.active_leaves();
         let id = drag.source.session();
-        let mut over = drag.over;
         if matches!(drag.source, DragSource::Pane(_))
             && (over.is_some() || drag.insert.is_some())
             && let Some(review) = self.separate_session_review(id, cx)
@@ -3587,6 +3873,17 @@ impl Shell {
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.fit_sidebar(cx);
+        // A Pilot pulled out of its split onto the strip is its tab again.
+        self.settle_pilot_panes(window, cx);
+        if let (Some(pilot), Some(to)) = (pilot, drag.insert)
+            && self.workspace.title_order.contains(&pilot)
+        {
+            self.reorder_title_tab(&pilot, to, cx);
+        }
+        if self.pilot_active(cx) {
+            self.persist(cx);
+            return;
+        }
         if let Some(active) = self.workspace.active {
             self.open(active, window, cx);
         }
@@ -3642,9 +3939,9 @@ impl Shell {
                 (self.workspace.sidebar_width, 200., max, 1.)
             }
             ResizeTarget::RightPanel => {
-                let (min, max) = (crate::right_panel::WIDTH_MIN, crate::right_panel::WIDTH_MAX);
+                let (min, max) = (self.right_panel_min, crate::right_panel::WIDTH_MAX);
                 let max = max.min((self.viewport_width * 0.5).floor()).max(min);
-                (self.workspace.right_panel_width, min, max, 1.)
+                (self.right_panel_width(), min, max, 1.)
             }
             ResizeTarget::Dock(project) => {
                 let dock = self.workspace.docks.get(project)?;
@@ -3731,7 +4028,23 @@ impl Shell {
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
         self.sync_board_projects(cx);
+        self.sync_right_panel(cx);
         self.invalidate_chrome(cx);
+        self.save_state(cx);
+    }
+    fn save_window_state(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let bounds = window.inner_window_bounds();
+        // X11 can report Windowed bounds while tracking fullscreen separately.
+        let bounds = if window.is_fullscreen() {
+            gpui::WindowBounds::Fullscreen(bounds.get_bounds())
+        } else {
+            bounds
+        };
+        if self.workspace.window.update(bounds) {
+            self.save_state(cx);
+        }
+    }
+    fn save_state(&mut self, cx: &mut Context<Self>) {
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
         let revision = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -3792,6 +4105,9 @@ impl Shell {
             pilots.update(cx, |m, cx| m.focus_active(window, cx));
             return;
         }
+        if self.focus_pilot_pane(window, cx) {
+            return;
+        }
         if let Some(review) = self
             .active_review(cx)
             .filter(|review| review.read(cx).state.chat_hidden)
@@ -3813,6 +4129,10 @@ impl Shell {
     pub(crate) fn open(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
+            return;
+        }
+        if self.workspace.pilot_panes.contains_key(&id) {
+            self.open_pilot_pane(id, window, cx);
             return;
         }
         if !self.session_summaries.contains_key(&id) || self.deleting.contains(&id) {
@@ -3867,6 +4187,10 @@ impl Shell {
     fn activate_session(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
+            return;
+        }
+        if self.workspace.pilot_panes.contains_key(&id) {
+            self.open_pilot_pane(id, window, cx);
             return;
         }
         if let Some(pilots) = &self.pilots {
@@ -3929,6 +4253,14 @@ impl Shell {
         self.close_title_tabs(&tabs, preferred, window, cx);
     }
     fn visit(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        // Settings sit over the history: Back leaves them, and Forward
+        // leaves them on its way to the next visit.
+        if self.settings.is_some() {
+            self.close_settings(window, cx);
+            if step < 0 {
+                return;
+            }
+        }
         if let Some(id) = self.history.step(step) {
             self.open(id, window, cx);
         }
@@ -3994,7 +4326,12 @@ impl Shell {
         self.open_app_search(window, cx);
     }
 
-    fn select_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn select_project(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_sessions.clear();
         self.selection_anchor = None;
         self.sidebar_target = None;
@@ -4005,23 +4342,9 @@ impl Shell {
         if let Some(pilots) = self.pilots.clone() {
             pilots.update(cx, |m, cx| m.close(cx));
         }
-        let from = self
-            .workspace
-            .projects
-            .iter()
-            .position(|p| *p == self.workspace.project);
-        let changed = self.workspace.project != path;
         self.workspace.project = path.clone();
         self.workspace.active = None;
         if let Some(ix) = self.workspace.projects.iter().position(|p| p == &path) {
-            // Switching projects slides the sidebar the way the spaces run:
-            // moving right, the new project comes in from the right.
-            if changed && !self.workspace.classic_layout && !cx.reduce_motion() {
-                self.space_slide = from.map(|from| {
-                    let direction = if ix > from { 1. } else { -1. };
-                    (direction, std::time::Instant::now())
-                });
-            }
             if ix < self.spaces_start {
                 self.spaces_start = ix;
             } else if ix >= self.spaces_start + 5 {
@@ -4067,17 +4390,17 @@ impl Shell {
                         self.session_summaries.contains_key(
                             &self
                                 .workspace
-                                .session_for_pane(self.workspace.tab_focus(**id)),
+                                .session_for_pane(self.workspace.scope_pane(**id)),
                         ) && self
                             .session_metadata(
                                 self.workspace
-                                    .session_for_pane(self.workspace.tab_focus(**id)),
+                                    .session_for_pane(self.workspace.scope_pane(**id)),
                                 cx,
                             )
                             .summary
                             .cwd
                             == path
-                            && self.in_worktree_scope(self.workspace.tab_focus(**id), cx)
+                            && self.in_worktree_scope(self.workspace.scope_pane(**id), cx)
                     })
                     .map(|tab| self.workspace.tab_focus(*tab))
             });
@@ -4339,28 +4662,15 @@ impl Shell {
                     .w(px(self.traffic_lights()))
                     .flex_shrink_0(),
             )
-            .child(
-                icon_button("toggle-sidebar", TOGGLE_SIDEBAR_LABEL, "sidebar")
-                    .debug_selector(|| "toggle-sidebar".into())
-                    .child(self.peek_toggle_bounds.probe())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    // Hovering the toggle peeks a collapsed sidebar out.
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        if !this.workspace.classic_layout {
-                            this.hover_peek_toggle(*hovered, cx)
-                        }
-                    }))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.toggle_primary_sidebar(window, cx)),
-                    ),
-            )
+            .child(self.sidebar_toggle(cx))
             .child(titlebar_drag_area().flex_1())
             .child(
                 icon_button_enabled(
                     "visit-back",
                     BACK_LABEL,
                     "chevron-left",
-                    (self.workspace.classic_layout && self.pilot_active(cx))
+                    self.settings.is_some()
+                        || (self.workspace.classic_layout && self.pilot_active(cx))
                         || !self.history.back.is_empty(),
                 )
                 .debug_selector(|| "visit-back".into())
@@ -4385,13 +4695,37 @@ impl Shell {
                 .on_click(cx.listener(|this, _, window, cx| this.visit(1, window, cx))),
             )
     }
+    /// Settings fill the sidebar's place, so its toggle steps aside. Its
+    /// slot stays, so nothing beside it moves.
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        if self.settings.is_some() {
+            return div()
+                .id("toggle-sidebar")
+                .debug_selector(|| "toggle-sidebar".into())
+                .flex_shrink_0()
+                .size(px(24.))
+                .child(self.peek_toggle_bounds.probe());
+        }
+        icon_button("toggle-sidebar", TOGGLE_SIDEBAR_LABEL, "sidebar")
+            .debug_selector(|| "toggle-sidebar".into())
+            .child(self.peek_toggle_bounds.probe())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            // Hovering the toggle peeks a collapsed sidebar out.
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                if !this.workspace.classic_layout {
+                    this.hover_peek_toggle(*hovered, cx)
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_primary_sidebar(window, cx)))
+    }
     /// Part of the card: the project tools beside the workspace, behind a
     /// hairline. Its contents keep their full width while it slides.
     fn right_panel_frame(
-        &self,
+        &mut self,
         panel: Entity<RightPanel>,
         width: f32,
         full: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let content =
@@ -4408,6 +4742,10 @@ impl Shell {
                         .cached(StyleRefinement::default().size_full())
                         .into_any_element()
                 }
+            } else if self.terminal_in_panel(cx)
+                && panel.read(cx).tab() == crate::right_panel::RightTab::Terminal
+            {
+                self.panel_terminal(window, cx)
             } else {
                 panel
                     .cached(StyleRefinement::default().size_full())
@@ -4443,7 +4781,10 @@ impl Shell {
                     .top_0()
                     .bottom_0()
                     .left(px(-3.5))
-                    .child(resize_border(true, self.right_resize.is_some())),
+                    .child(resize_border(
+                        true,
+                        self.right_resize.is_some() || self.right_resize_hovered,
+                    )),
             )
             .into_any_element()
     }
@@ -4461,10 +4802,16 @@ impl Shell {
             .aria_label("Resize right sidebar")
             .w(px(6.))
             .cursor(CursorStyle::ResizeLeftRight)
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if this.right_resize_hovered != *hovered {
+                    this.right_resize_hovered = *hovered;
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    this.right_resize = Some((event.position.x, this.workspace.right_panel_width));
+                    this.right_resize = Some((event.position.x, this.right_panel_width()));
                     cx.stop_propagation();
                     cx.notify();
                 }),
@@ -4525,9 +4872,36 @@ impl Shell {
         true
     }
 
+    /// Client-decorated Linux: the bar ends left of the window controls.
+    /// The panel's width as drawn: the user's width, widened while Windows'
+    /// controls need room beside the corner's tools. The stored width stays
+    /// as the user set it, so closing a Pilot gives it back.
+    pub(super) fn right_panel_width(&self) -> f32 {
+        self.workspace.right_panel_width.max(self.right_panel_min)
+    }
+    fn titlebar_controls_space(&self, bar: AnyElement, window: &Window) -> AnyElement {
+        let room = client_controls_width(window) - corner_controls_width(window);
+        if room == 0. {
+            return bar;
+        }
+        div()
+            .w_full()
+            .h(px(TITLE_BAR_HEIGHT))
+            .pr(px(room))
+            .child(bar)
+            .into_any_element()
+    }
     fn titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let bar = self.titlebar_content(window, cx);
+        self.titlebar_controls_space(bar, window)
+    }
+    fn titlebar_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
+        // Windows' controls sit in the settings header's padding, so its
+        // bottom rule still runs beneath them. Session bars leave them to the
+        // corner (`toggle_room`, `corner_room`).
+        let controls = px(self.window_controls);
         if let Some(settings) = self.settings.clone() {
             let classic = self.workspace.boxy_layout();
             let lead = if classic {
@@ -4541,6 +4915,7 @@ impl Shell {
                 .flex_shrink_0()
                 .flex()
                 .items_center()
+                .pr(controls)
                 .when(classic, |d| d.border_b_1().border_color(content(0.1)))
                 .child(if classic {
                     titlebar_drag_area()
@@ -4624,7 +4999,11 @@ impl Shell {
         let tabs = if pilot && panel_active {
             self.pilots.clone().map(|m| {
                 m.update(cx, |m, cx| {
-                    m.overview_controls(self.workspace.right_panel_width >= 312., window, cx)
+                    m.overview_controls(
+                        self.right_panel_width() >= 312. + self.window_controls,
+                        window,
+                        cx,
+                    )
                 })
             })
         } else {
@@ -4656,7 +5035,7 @@ impl Shell {
                 if !toggle {
                     return d
                         .pl_1p5()
-                        .pr_3()
+                        .pr(px(12. + self.window_controls))
                         .children(
                             self.open_in_editor_button(cx)
                                 .map(|b| b.mr(px(CORNER_CONTROL_GAP))),
@@ -4682,7 +5061,7 @@ impl Shell {
                         } else {
                             6.
                         }))
-                        .pr_3()
+                        .pr(px(12. + self.window_controls))
                         .when_some(tabs, |d, tabs| {
                             d.child(tabs)
                                 .when(!pilot, |d| d.child(titlebar_drag_area().flex_1().min_w_0()))
@@ -4770,7 +5149,10 @@ impl Shell {
                                 .w(px(1.))
                                 .h(px(16.))
                                 .bg(crate::right_panel::stroke())
-                                .when(self.right_resize.is_some(), |d| d.bg(content(0.16)))
+                                .when(
+                                    self.right_resize.is_some() || self.right_resize_hovered,
+                                    |d| d.bg(content(0.16)),
+                                )
                                 .group_hover("resize-handle", |s| s.bg(content(0.16))),
                         ),
                 )
@@ -4779,8 +5161,16 @@ impl Shell {
     }
     fn project_diff_stat(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let width = self.diff_stat_room(cx);
+        // With no Changes tab, the stat marks the open Changes pane.
+        let selected = self.workspace.right_panel_open
+            && !self.app_view_open()
+            && self
+                .right_panel
+                .as_ref()
+                .is_some_and(|p| p.read(cx).tab() == crate::right_panel::RightTab::Changes);
         (width > 0.).then(|| {
             crate::right_panel::diff_stat(self.git.read(cx).stats.as_ref(), width)
+                .when(selected, |d| d.bg(content(0.1)))
                 .when(!self.app_view_open(), |d| {
                     d.cursor_pointer()
                         .hover(|s| s.bg(content(0.1)))
@@ -4824,9 +5214,12 @@ impl Shell {
         if !self.workspace.right_panel_open || self.app_view_open() {
             return natural;
         }
-        let controls =
-            crate::right_panel::TAB_ICONS_WIDTH + 6. + self.corner_buttons_width(cx) + 12.;
-        natural.min((self.workspace.right_panel_width - controls).max(48.))
+        let controls = crate::right_panel::tab_icons_width(self.right_tab_count(cx))
+            + 6.
+            + self.corner_buttons_width(cx)
+            + 12.
+            + self.window_controls;
+        natural.min((self.right_panel_width() - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
         let padding = if self.workspace.boxy_layout() {
@@ -4834,29 +5227,37 @@ impl Shell {
         } else {
             12.
         };
-        (self.workspace.right_panel_width
+        (self.right_panel_width()
             - self.diff_stat_room(cx)
             - self.corner_buttons_width(cx)
-            - padding)
+            - padding
+            - self.window_controls)
             .clamp(
-                crate::right_panel::TAB_ICONS_WIDTH,
-                crate::right_panel::TABS_WIDTH,
+                crate::right_panel::tab_icons_width(self.right_tab_count(cx)),
+                crate::right_panel::tabs_width(self.right_tab_count(cx)),
             )
+    }
+    /// Explorer and History, and Terminal when it lives in the panel. Changes
+    /// opens from the diff stat instead.
+    fn right_tab_count(&self, cx: &App) -> usize {
+        2 + usize::from(self.terminal_in_panel(cx))
     }
     /// The toggle's room at the end of the strip: `pl-1.5`, the button, `pr-3`.
     fn toggle_room(&self, cx: &App) -> f32 {
         if self.workspace.boxy_layout() {
             return self.corner_room(cx);
         }
+        // Client-drawn window controls hold the corner's right end.
+        let controls = self.window_controls;
         if self.pilot_active(cx) || self.git.read(cx).available() {
             if self.workspace.right_panel_open && !self.app_view_open() {
                 if self.pilot_active(cx) {
-                    let minimum = if self.workspace.right_panel_width >= 312. {
+                    let minimum = if self.right_panel_width() >= 312. + controls {
                         312.
                     } else {
                         252.
                     };
-                    return (self.right_drawn + 7.).max(minimum);
+                    return (self.right_drawn + 7.).max(minimum + controls);
                 }
                 // Follow the rounded panel's left edge, including the card's
                 // right inset, while keeping room for all controls when narrow.
@@ -4865,13 +5266,14 @@ impl Shell {
                         + self.project_tabs_width(cx)
                         + self.diff_stat_room(cx)
                         + self.corner_buttons_width(cx)
-                        + 12.,
+                        + 12.
+                        + controls,
                 )
             } else {
-                6. + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12.
+                6. + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12. + controls
             }
         } else {
-            6. + 24. + self.open_in_editor_room(cx) + 12.
+            6. + 24. + self.open_in_editor_room(cx) + 12. + controls
         }
     }
     /// Classic: the strip's room after its tabs, wherever the toggle
@@ -5299,6 +5701,9 @@ impl Shell {
                 let mut items: Vec<MenuItem> = vec![
                     MenuItem::Custom(controls.clone().into(), controls.read(cx).focus(cx)),
                     MenuItem::Separator,
+                    MenuAction::new("project-theme", "Theme colors")
+                        .icon("palette")
+                        .into(),
                     MenuAction::new("background", "Background image")
                         .icon("image-add")
                         .into(),
@@ -5452,6 +5857,8 @@ impl Shell {
                     } else {
                         cx.reveal_path(std::path::Path::new(&path));
                     }
+                } else if action == "project-theme" {
+                    self.open_project_theme(path, window, cx);
                 } else if action == "background" {
                     self.open_background_dialog(path, window, cx);
                 } else if action == "archive" {
@@ -5822,8 +6229,6 @@ impl Shell {
                 )
             });
         let suffix = self.session_suffix(id, &session, compact, cx);
-        let archive = (!compact && self.session_hover == Some(id))
-            .then(|| self.session_archive_button(id, &session, cx));
         let body = if compact {
             div()
                 .w_full()
@@ -5885,7 +6290,6 @@ impl Shell {
                                         .child(workspace_label),
                                 ),
                         )
-                        .children(archive)
                         .when(has_badges, |d| d.child(badges))
                         .child(
                             div()
@@ -6053,7 +6457,7 @@ impl Shell {
         cx: &Context<Self>,
     ) -> AnyElement {
         let detailed = !compact;
-        if !detailed && self.session_hover == Some(id) {
+        if self.session_hover == Some(id) {
             return self.session_archive_button(id, session, cx);
         }
         div()
@@ -6217,10 +6621,6 @@ impl Shell {
             && next != self.workspace.project
         {
             self.select_project(next, window, cx);
-            // A step past either end wraps around but keeps moving the same way.
-            if let Some((direction, _)) = &mut self.space_slide {
-                *direction = step.signum() as f32;
-            }
         }
     }
     fn close_other_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6265,22 +6665,6 @@ impl Shell {
         }
         self.refresh_sidebar_structure(cx);
         let live_agents = self.live_agents_preview(cx);
-        // The incoming project's header and list push in across the full
-        // width, fading in as they come.
-        let (slide_x, slide_opacity) = match self.space_slide {
-            Some((direction, start)) => {
-                let t = start.elapsed().as_secs_f32() / 0.44;
-                if t >= 1. {
-                    self.space_slide = None;
-                    (0., 1.)
-                } else {
-                    let eased = crate::reveal::bezier(t, 0.4, 0., 0.2, 1.);
-                    let width = self.workspace.sidebar_width;
-                    (direction * width * (1. - eased), eased)
-                }
-            }
-            None => (0., 1.),
-        };
         div()
             .id("gespan-sidebar")
             .debug_selector(|| "sidebar-content".into())
@@ -6302,139 +6686,131 @@ impl Shell {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .when(self.space_slide.is_some(), |d| d.overflow_hidden())
-                    .child(
-                        div()
-                            .relative()
-                            .left(px(slide_x))
-                            .opacity(slide_opacity)
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .h(px(39.))
-                                    .flex_shrink_0()
-                                    .px_3()
-                                    .pb_px()
-                                    .relative()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div().flex_1().min_w_0().flex().items_center().child(
-                                            div()
-                                                .id("workspace-project")
-                                                .debug_selector(|| "sidebar-project-button".into())
-                                                .relative()
-                                                .role(Role::Button)
-                                                .aria_label(format!(
-                                                    "Switch project, {}",
-                                                    self.project_label(&self.workspace.project)
-                                                ))
-                                                .aria_description(self.workspace.project.clone())
-                                                .aria_expanded(self.menu_open(&MenuTarget::Header))
-                                                .cursor_pointer()
-                                                .h(px(28.))
-                                                // The whole picker shares Search's left edge.
-                                                .px_1p5()
-                                                .ml(px(-4.))
-                                                .rounded_md()
-                                                .max_w_full()
-                                                .hover(|s| s.bg(content(0.08)))
-                                                .when(self.menu_open(&MenuTarget::Header), |d| {
-                                                    d.bg(content(0.08))
-                                                })
-                                                .min_w_0()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1p5()
-                                                .text_size(px(13.))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(
-                                                    crate::project_settings::header_project_icon(
-                                                        &self.appearance(&self.workspace.project),
-                                                        &self.workspace.project,
-                                                    ),
-                                                )
-                                                .child(div().min_w_0().truncate().child(
+                div().flex_1().min_h_0().child(
+                    div()
+                        .relative()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .h(px(39.))
+                                .flex_shrink_0()
+                                .px_3()
+                                .pb_px()
+                                .relative()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div().flex_1().min_w_0().flex().items_center().child(
+                                        div()
+                                            .id("workspace-project")
+                                            .debug_selector(|| "sidebar-project-button".into())
+                                            .relative()
+                                            .role(Role::Button)
+                                            .aria_label(format!(
+                                                "Switch project, {}",
+                                                self.project_label(&self.workspace.project)
+                                            ))
+                                            .aria_description(self.workspace.project.clone())
+                                            .aria_expanded(self.menu_open(&MenuTarget::Header))
+                                            .cursor_pointer()
+                                            .h(px(28.))
+                                            // The whole picker shares Search's left edge.
+                                            .px_1p5()
+                                            .ml(px(-4.))
+                                            .rounded_md()
+                                            .max_w_full()
+                                            .hover(|s| s.bg(content(0.08)))
+                                            .when(self.menu_open(&MenuTarget::Header), |d| {
+                                                d.bg(content(0.08))
+                                            })
+                                            .min_w_0()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(crate::project_settings::header_project_icon(
+                                                &self.appearance(&self.workspace.project),
+                                                &self.workspace.project,
+                                            ))
+                                            .child(
+                                                div().min_w_0().truncate().child(
                                                     self.project_label(&self.workspace.project),
-                                                ))
-                                                .when_some(
-                                                    self.worktree_focus
-                                                        .get(&self.workspace.project),
-                                                    |d, focus| {
-                                                        d.child(
-                                                            div()
-                                                                .min_w_0()
-                                                                .truncate()
-                                                                .font_weight(FontWeight::NORMAL)
-                                                                .text_color(content(0.45))
-                                                                .child(
-                                                                    focus
-                                                                        .branch
-                                                                        .clone()
-                                                                        .unwrap_or_else(|| {
-                                                                            "detached".into()
-                                                                        }),
-                                                                ),
-                                                        )
-                                                    },
-                                                )
-                                                .child(icon("chevron-down", 14.))
-                                                .child(self.project_anchor.probe())
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    if this.menu_open(&MenuTarget::Header) {
-                                                        this.close_menu(cx);
-                                                    } else {
-                                                        let anchor = Anchor::Slot(
-                                                            this.project_anchor.clone(),
-                                                        );
-                                                        this.open_menu(
-                                                            MenuTarget::Header,
-                                                            anchor,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                })),
-                                        ),
-                                    )
-                                    .child(
-                                        icon_button(
-                                            "sidebar-options",
-                                            "Sidebar options",
-                                            "more-horizontal",
-                                        )
-                                        .debug_selector(|| "sidebar-options".into())
-                                        .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
-                                        .relative()
-                                        .child(self.sidebar_options_anchor.probe())
-                                        .on_click(
-                                            cx.listener(|this, _, window, cx| {
-                                                if this.menu_open(&MenuTarget::SidebarOptions) {
+                                                ),
+                                            )
+                                            .when_some(
+                                                self.worktree_focus.get(&self.workspace.project),
+                                                |d, focus| {
+                                                    d.child(
+                                                        div()
+                                                            .min_w_0()
+                                                            .truncate()
+                                                            .font_weight(FontWeight::NORMAL)
+                                                            .text_color(content(0.45))
+                                                            .child(
+                                                                focus
+                                                                    .branch
+                                                                    .clone()
+                                                                    .unwrap_or_else(|| {
+                                                                        "detached".into()
+                                                                    }),
+                                                            ),
+                                                    )
+                                                },
+                                            )
+                                            .child(icon("chevron-down", 14.))
+                                            .child(self.project_anchor.probe())
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                if this.menu_open(&MenuTarget::Header) {
                                                     this.close_menu(cx);
                                                 } else {
+                                                    let anchor =
+                                                        Anchor::Slot(this.project_anchor.clone());
                                                     this.open_menu(
-                                                        MenuTarget::SidebarOptions,
-                                                        Anchor::Slot(
-                                                            this.sidebar_options_anchor.clone(),
-                                                        ),
+                                                        MenuTarget::Header,
+                                                        anchor,
                                                         window,
                                                         cx,
                                                     );
                                                 }
-                                            }),
-                                        ),
+                                            })),
                                     ),
-                            )
-                            .child(self.virtual_sidebar(cx))
-                            .children(live_agents)
-                            .child(self.app_update_footer(cx)),
-                    ),
+                                )
+                                .child(
+                                    icon_button(
+                                        "sidebar-options",
+                                        "Sidebar options",
+                                        "more-horizontal",
+                                    )
+                                    .debug_selector(|| "sidebar-options".into())
+                                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
+                                    .relative()
+                                    .child(self.sidebar_options_anchor.probe())
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            if this.menu_open(&MenuTarget::SidebarOptions) {
+                                                this.close_menu(cx);
+                                            } else {
+                                                this.open_menu(
+                                                    MenuTarget::SidebarOptions,
+                                                    Anchor::Slot(
+                                                        this.sidebar_options_anchor.clone(),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    )),
+                                ),
+                        )
+                        .child(self.virtual_sidebar(cx))
+                        .children(live_agents)
+                        .child(self.app_update_footer(cx)),
+                ),
             )
             .when(!self.workspace.classic_layout, |d| {
                 d.child(self.project_spaces(cx))
@@ -6704,7 +7080,11 @@ impl Shell {
             }
         }
         let file_panes = leaves.iter().filter(|id| review(id).is_some()).count();
-        let multi_pane = sessions.len() + file_panes > 1;
+        let pilot_panes = leaves
+            .iter()
+            .filter(|id| self.workspace.pilot_panes.contains_key(id))
+            .count();
+        let multi_pane = sessions.len() + file_panes + pilot_panes > 1;
         let session_focused = sessions.first() == Some(&focus);
         let file_focused =
             !session_focused || (self.tab_review_focused(tab, cx) && review(&focus).is_some());
@@ -6719,7 +7099,10 @@ impl Shell {
         let conversation = sessions.first().map(title).unwrap_or_default();
         let file = files.first().cloned().unwrap_or_default();
         let untitled = "New session".to_owned();
-        let headline = if multi_pane && file_focused && !file.is_empty() {
+        let pilot = self.pilot_pane_title(focus, cx);
+        let headline = if let Some(pilot) = pilot {
+            pilot
+        } else if multi_pane && file_focused && !file.is_empty() {
             file
         } else {
             [conversation, file]
@@ -6731,6 +7114,15 @@ impl Shell {
         // right or down rolls the headline up.
         let mut panes = Vec::new();
         for id in self.workspace.layout(tab).leaf_ids() {
+            if let (Some(title), Some(mark)) =
+                (self.pilot_pane_title(id, cx), self.pilot_pane_mark(id, cx))
+            {
+                panes.push(TabPane {
+                    key: (id, false),
+                    title,
+                    mark,
+                });
+            }
             if sessions.contains(&id) {
                 let session = self.session_metadata(id, cx);
                 let lit = session.responding()
@@ -6785,6 +7177,12 @@ impl Shell {
                 crate::file_icons::file_type_icon(name, false, false, 14.)
             }
             PaneMark::File(None) => icon("git-compare", 14.).text_color(ink).into_any_element(),
+            PaneMark::Pilot(mascot, color) => div()
+                .opacity(if active { 1. } else { 0.55 })
+                .child(crate::pilots::avatar::avatar(
+                    mascot, *color, "idle", 14., true,
+                ))
+                .into_any_element(),
         };
         div()
             .size(px(14.))
@@ -7033,17 +7431,22 @@ impl Shell {
         let (id, armed) = (drag.id.clone(), drag.armed);
         // The active tab has no other pane to land on, but its title still
         // follows the pointer.
-        let own = self.workspace.active_tab() == id.session();
+        let own = self.active_title_tab(cx).as_ref() == Some(&id);
+        let source = match &id {
+            TitleTab::Session(tab) => Some(DragSource::Tab(*tab)),
+            TitleTab::Pilot { .. } => Some(DragSource::PilotTab),
+            TitleTab::Search | TitleTab::App(_) => None,
+        };
         let was = self.pane_drag.is_some();
-        self.pane_drag = id.session().filter(|_| armed).map(|id| PaneDrag {
-            source: DragSource::Tab(id),
+        self.pane_drag = source.filter(|_| armed).map(|source| PaneDrag {
+            source,
             start: event.position,
             position: event.position,
             active: true,
             over: if own {
                 None
             } else {
-                self.pane_hit(event.position)
+                self.pane_hit(event.position, cx)
             },
             insert: None,
         });
@@ -7055,13 +7458,20 @@ impl Shell {
     fn finish_tab_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(drag) = self.tab_drag.take() {
             let onto_pane = self.pane_drag.as_ref().is_some_and(|d| {
-                Some(d.source.session()) == drag.id.session()
-                    && matches!(d.source, DragSource::Tab(_))
-                    && d.over.is_some()
+                d.over.is_some()
+                    && match d.source {
+                        DragSource::Tab(tab) => drag.id.session() == Some(tab),
+                        DragSource::PilotTab => matches!(drag.id, TitleTab::Pilot { .. }),
+                        _ => false,
+                    }
             });
             if onto_pane {
                 self.skip_tab_click = true;
-                self.finish_pane_drag(window, cx);
+                if matches!(drag.id, TitleTab::Pilot { .. }) {
+                    self.drop_pilot_tab(drag.id, window, cx);
+                } else {
+                    self.finish_pane_drag(window, cx);
+                }
             } else if drag.active {
                 self.cancel_pane_drag(cx);
                 // Each tab glides from where it is drawn into its new slot.
@@ -7182,7 +7592,11 @@ impl Shell {
         } else {
             self.navigation_width()
         };
-        (window.viewport_size().width.as_f32() - lead - trailing).max(0.)
+        (window.viewport_size().width.as_f32()
+            - lead
+            - trailing
+            - (client_controls_width(window) - self.window_controls))
+            .max(0.)
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport = self.tabs_width(window, cx);
@@ -7789,6 +8203,13 @@ fn enter_from(leaf: &LayoutLeaf) -> (Edge, Rect) {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.keep_visible_idle_agents(cx);
+        self.sync_ui_scale(window, cx);
+        if self.pilot_panes_unsettled(cx) {
+            let this = cx.entity();
+            window.defer(cx, move |window, cx| {
+                this.update(cx, |this, cx| this.settle_pilot_panes(window, cx));
+            });
+        }
         if let Some(id) = self.pending_composer_focus.take()
             && self
                 .workspace
@@ -7813,6 +8234,27 @@ impl Render for Shell {
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();
+        self.window_controls = corner_controls_width(window);
+        // The corner's tools share the panel's header with client-drawn
+        // window controls, so the panel keeps room for both. A Pilot's icon
+        // tabs need 252px (`corner_room`).
+        let tools = if self.window_controls > 0. && self.pilot_active(cx) {
+            252.
+        } else {
+            crate::right_panel::WIDTH_MIN
+        };
+        self.right_panel_min = tools + self.window_controls;
+        #[cfg(target_os = "linux")]
+        {
+            let client = matches!(
+                window.window_decorations(),
+                gpui::Decorations::Client { .. }
+            );
+            if self.client_decorations != client {
+                self.client_decorations = client;
+                self.invalidate_chrome(cx);
+            }
+        }
         if cx.reduce_motion()
             && (self.sidebar_slide.is_some()
                 || self.right_slide.is_some()
@@ -7828,17 +8270,31 @@ impl Render for Shell {
             cx.window_appearance(),
             gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
         );
-        if configure(p, system_light) {
+        let project = &self.workspace.project;
+        let animate = !cx.reduce_motion()
+            && self
+                .theme_project
+                .as_ref()
+                .is_some_and(|previous| previous != project);
+        let project_theme = self
+            .workspace
+            .project_appearance
+            .get(project)
+            .and_then(|a| a.theme.as_ref());
+        // Repainting bypasses cached views, so every surface follows the blend.
+        if configure_project(p, project_theme, system_light, animate) {
             cx.refresh_windows();
+        }
+        if tweening() {
+            window.request_animation_frame();
+        }
+        if self.theme_project.as_ref() != Some(project) {
+            self.theme_project = Some(project.clone());
         }
         let glass = window_glass(p, system_light);
         if self.window_glass != Some(glass) {
             self.window_glass = Some(glass);
-            window.set_background_appearance(if glass {
-                gpui::WindowBackgroundAppearance::Blurred
-            } else {
-                gpui::WindowBackgroundAppearance::Opaque
-            });
+            window.set_background_appearance(crate::theme::window_backdrop(glass));
         }
         self.sync_settings(cx);
         self.sidebar_fraction = match &self.sidebar_slide {
@@ -7888,6 +8344,7 @@ impl Render for Shell {
             window.on_window_should_close(cx, move |window, cx| {
                 shell
                     .update(cx, |shell, cx| {
+                        shell.save_window_state(window, cx);
                         #[cfg(all(target_os = "macos", not(test)))]
                         if shell.workspace.preferences.close_to_tray
                             && shell.workspace.preferences.pilot_menu_bar_icon
@@ -7919,12 +8376,16 @@ impl Render for Shell {
                     }
                 }));
             self.observations
-                .push(cx.observe_window_bounds(window, |this, _, cx| this.close_preview(cx)));
+                .push(cx.observe_window_bounds(window, |this, window, cx| {
+                    this.save_window_state(window, cx);
+                    this.close_preview(cx);
+                }));
         }
         self.viewport_width = window.viewport_size().width.as_f32();
         self.viewport_height = window.viewport_size().height.as_f32();
+        self.refit_sidebar_to_room(window, cx);
         self.ensure_right_panel(window, cx);
-        let full = self.workspace.right_panel_width;
+        let full = self.right_panel_width();
         let right_width = match &self.right_slide {
             Some(slide) => {
                 let (width, done) = slide.at(std::time::Instant::now());
@@ -7988,10 +8449,15 @@ impl Render for Shell {
         self.sync_notices(window, cx);
         div()
             .id("gespan-workspace")
+            .relative()
             .role(Role::Application)
             .aria_label("Gespan Native")
             .key_context("Workspace")
             .track_focus(&self.focus)
+            .capture_key_up(cx.listener(|this, _, _, _| this.archive_shortcut_held = false))
+            .on_action(cx.listener(|this, _: &ArchiveSession, window, cx| {
+                this.archive_active_session(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, open: &crate::image_lightbox::Open, window, cx| {
                     let view = cx.new(|cx| {
@@ -8069,6 +8535,32 @@ impl Render for Shell {
                     this.open_settings(crate::settings::Section::Providers, window, cx)
                 },
             ))
+            .on_action(cx.listener(|this, _: &OpenInbox, window, cx| this.open_inbox(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenNotes, window, cx| this.open_notes(window, cx)))
+            .on_action(cx.listener(|this, _: &CheckForUpdates, _, cx| {
+                this.notification_state
+                    .updater
+                    .update(cx, |updater, cx| updater.check(true, cx));
+            }))
+            .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.step_ui_scale(1, cx)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.step_ui_scale(-1, cx)))
+            .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.step_ui_scale(0, cx)))
+            .on_action(cx.listener(|this, _: &Reload, window, cx| this.request_reload(window, cx)))
+            .on_action(cx.listener(|this, _: &SidebarAppearance, window, cx| {
+                this.open_settings(crate::settings::Section::Appearance, window, cx)
+            }))
+            .on_action(|_: &About, window, cx| {
+                let detail = format!("Version {}", crate::notifications::updater::version());
+                drop(window.prompt(
+                    gpui::PromptLevel::Info,
+                    "Gespan Native",
+                    Some(&detail),
+                    &["OK"],
+                    cx,
+                ));
+            })
+            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(
                 cx.listener(|this, _: &session_groups::RenameSidebarItem, window, cx| {
                     this.rename_sidebar_item(window, cx)
@@ -8293,6 +8785,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &ToggleLayout, _, cx| this.toggle_layout(cx)))
             .on_action(
+                cx.listener(|this, _: &ToggleWorkspaceStyle, _, cx| {
+                    this.toggle_workspace_style(cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, _: &SplitRight, _, cx| this.split_session(SplitDir::Right, cx)),
             )
             .on_action(
@@ -8417,6 +8914,24 @@ impl Render for Shell {
                     .as_ref()
                     .map(|(view, _)| crate::image_lightbox::overlay(view)),
             )
+            .map(|root| {
+                #[cfg(target_os = "linux")]
+                let caption = self.client_decorations;
+                // `resize_handles` stays empty on Windows: GPUI reports server
+                // decorations and the native frame does the resizing.
+                #[cfg(target_os = "windows")]
+                let caption = WINDOWS_CONTROLS;
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                let root = root
+                    .when(caption && !self.fullscreen, |root| {
+                        root.child(window_chrome::controls(
+                            window,
+                            cx.listener(|this, _, window, cx| this.request_quit(window, cx)),
+                        ))
+                    })
+                    .children(window_chrome::resize_handles(window));
+                root
+            })
     }
 }
 
@@ -8425,6 +8940,53 @@ mod tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{EntityInputHandler, TestAppContext, WindowHandle};
+    #[gpui::test]
+    fn window_state_is_saved_on_resize_and_restored_with_the_workspace(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let dimensions = gpui::size(px(1440.), px(900.));
+        cx.simulate_window_resize(window.into(), dimensions);
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                assert_eq!(*shell.latest_state.lock().unwrap(), saved);
+                let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
+                assert_eq!(restored.window.bounds(cx).get_bounds().size, dimensions);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn window_state_preserves_fullscreen_when_backend_bounds_report_windowed(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        let normal_size = gpui::size(px(1440.), px(900.));
+        cx.simulate_window_resize(window.into(), normal_size);
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| window.toggle_fullscreen())
+            .unwrap();
+        cx.simulate_window_resize(window.into(), gpui::size(px(1920.), px(1080.)));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, window, cx| {
+                // The test backend reproduces X11: fullscreen is tracked separately from bounds.
+                assert!(window.is_fullscreen());
+                assert!(matches!(
+                    window.inner_window_bounds(),
+                    gpui::WindowBounds::Windowed(_)
+                ));
+                let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                assert_eq!(*shell.latest_state.lock().unwrap(), saved);
+                let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
+                let bounds = restored.window.bounds(cx);
+                assert!(matches!(bounds, gpui::WindowBounds::Fullscreen(_)));
+                assert_eq!(bounds.get_bounds().size, normal_size);
+            })
+            .unwrap();
+    }
     #[gpui::test]
     fn hovering_archive_preserves_history_and_does_not_select_the_row(cx: &mut TestAppContext) {
         let (window, a, b) = window(cx);
@@ -9406,6 +9968,59 @@ mod tests {
         assert!(body.bottom() <= compact.bottom());
     }
     #[gpui::test]
+    fn theme_colors_dialog_saves_a_project_theme_and_can_return_to_app_colors(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            cx.set_reduce_motion(true);
+        });
+        let project = window
+            .update(cx, |shell, w, cx| {
+                let project = shell.workspace.project.clone();
+                shell.open_project_theme(project.clone(), w, cx);
+                project
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let theme = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, _| shell.appearance(&project).theme)
+                .unwrap()
+        };
+        assert_eq!(theme(cx), None, "opening the dialog alone changes nothing");
+        // The modal centers itself once its height is measured.
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let dialog = visual.debug_bounds("project-theme-dialog").unwrap();
+        assert!(dialog.top() >= px(16.));
+        let harbor = visual.debug_bounds("project-theme-palette-harbor").unwrap();
+        visual.simulate_click(harbor.center(), gpui::Modifiers::none());
+        let red = visual.debug_bounds("project-theme-accent-4").unwrap();
+        visual.simulate_click(red.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        let saved = theme(visual).expect("the first pick gives the project its colors");
+        assert_eq!(saved.workspace_theme, "harbor");
+        assert_eq!(saved.accent_color.as_deref(), Some("#ef4444"));
+        assert_eq!(crate::theme::accent_color(), gpui::rgb(0xef4444).into());
+        let reset = visual
+            .debug_bounds("project-settings-Use app colors")
+            .unwrap();
+        visual.simulate_click(reset.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert_eq!(theme(visual), None);
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert!(shell.background_dialog.is_none())
+            })
+            .unwrap();
+    }
+    #[gpui::test]
     fn backgrounds_survive_tab_and_notes_switches_until_the_tab_closes(cx: &mut TestAppContext) {
         use gespan_core::project_appearance::{Background, Effect, ProjectAppearance};
         let (window, a, b) = window(cx);
@@ -9841,7 +10456,7 @@ mod tests {
         );
         for (selector, header) in [
             ("right-panel-tab-History", "history-toolbar"),
-            ("right-panel-tab-Changes", "changes-header"),
+            ("project-diff-stat", "changes-header"),
             ("right-panel-tab-Explorer", "explorer-header"),
         ] {
             let tab = cx.debug_bounds(selector).unwrap();
@@ -10399,12 +11014,11 @@ mod tests {
                 w.draw(cx).clear(cx);
             })
             .unwrap();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             window
                 .update(cx, |_, w, _| {
                     let (blur, radius) = (24., 11.);
-                    let marker =
-                        gpui_apple::metal_renderer::backdrop_blur_marker(blur * w.scale_factor());
+                    let marker = gpui::backdrop_blur_marker(blur * w.scale_factor());
                     assert!(
                         w.painted_quads().iter().any(|q| q.border_color == marker
                             && q.corner_radii.top_left.0 == radius * w.scale_factor()),
@@ -10473,14 +11087,12 @@ mod tests {
             let (_, main, tabs) = frames(cx);
             let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
             let explorer = visual.debug_bounds("right-panel-explorer").unwrap();
-            let changes = visual.debug_bounds("right-panel-changes").unwrap();
+            assert!(visual.debug_bounds("right-panel-changes").is_none());
             let history = visual.debug_bounds("right-panel-history").unwrap();
             assert_eq!(explorer.left(), main.right() + px(6.));
             assert_eq!(explorer.center().y, closed_corner.center().y);
-            assert_eq!(changes.top(), explorer.top());
             assert_eq!(history.top(), explorer.top());
-            assert!(explorer.right() <= changes.left());
-            assert!(changes.right() <= history.left());
+            assert!(explorer.right() <= history.left());
             assert!(history.right() <= closed_corner.left());
             assert!(tabs.right() <= explorer.left());
             assert_eq!(corner(cx), closed_corner);
@@ -11154,6 +11766,64 @@ mod tests {
             })
             .unwrap();
     }
+    #[gpui::test]
+    fn workspace_style_shortcut_only_switches_the_focused_layout(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = false;
+                shell.toggle_workspace_style(cx);
+                assert!(shell.workspace.new_layout_boxy);
+                shell.toggle_workspace_style(cx);
+                assert!(!shell.workspace.new_layout_boxy);
+
+                shell.workspace.classic_layout = true;
+                shell.toggle_workspace_style(cx);
+                assert!(!shell.workspace.new_layout_boxy);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn slash_menu_stays_below_tabs_with_centered_and_docked_input(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, id) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        for boxy in [false, true] {
+            for height in [700., 500.] {
+                visual.simulate_resize(gpui::size(px(1200.), px(height)));
+                for has_messages in [false, true] {
+                    window
+                        .update(visual, |shell, window, cx| {
+                            shell.workspace.new_layout_boxy = boxy;
+                            shell.layout_changed(cx);
+                            shell.open(id, window, cx);
+                            shell.sessions[&id].update(cx, |view, cx| {
+                                view.summary.has_messages = has_messages;
+                                window.focus(&view.input.focus_handle(cx), cx);
+                                view.input
+                                    .update(cx, |input, cx| input.set_text("/".into(), cx));
+                                cx.notify();
+                            });
+                        })
+                        .unwrap();
+                    visual.run_until_parked();
+                    visual.refresh().unwrap();
+                    let tabs = visual.debug_bounds("title-tab-strip").unwrap();
+                    let menu = visual.debug_bounds("composer-completion-list").unwrap();
+                    let composer = visual.debug_bounds("composer-box").unwrap();
+                    assert!(
+                        menu.top() >= tabs.bottom(),
+                        "slash menu must leave the tabs visible"
+                    );
+                    assert!(menu.bottom() <= composer.top() - px(6.));
+                    assert!((menu.left() - composer.left()).abs() <= px(2.));
+                    assert!((menu.right() - composer.right()).abs() <= px(2.));
+                }
+            }
+        }
+    }
+
     #[gpui::test]
     fn pane_surfaces_follow_the_edge_at_a_constant_width(cx: &mut TestAppContext) {
         use std::time::Duration;
@@ -11933,6 +12603,56 @@ mod tests {
                 shell.close_pane(pane, w, cx);
             })
             .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| assert!(!shell.workspace.sidebar_visible))
+            .unwrap();
+    }
+    #[gpui::test]
+    fn the_sidebar_follows_the_room_however_it_changes(cx: &mut TestAppContext) {
+        let (window, _, b) = window(cx);
+        cx.update(|cx| {
+            bind_keys(cx);
+            cx.set_reduce_motion(true);
+        });
+        cx.simulate_window_resize(window.into(), gpui::size(px(1400.), px(800.)));
+        window
+            .update(cx, |shell, w, cx| {
+                shell.open(b, w, cx);
+                shell.focus_active(w, cx);
+            })
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        // Wide enough for two panes beside the sidebar.
+        cx.simulate_keystrokes("cmd-d");
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
+            .unwrap();
+        // Narrowing the window crowds the panes; the sidebar makes room.
+        cx.simulate_resize(gpui::size(px(1000.), px(800.)));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| assert!(!shell.workspace.sidebar_visible))
+            .unwrap();
+        // Widening it again brings the sidebar back.
+        cx.simulate_resize(gpui::size(px(1400.), px(800.)));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
+            .unwrap();
+        // Shown by hand while crowded, it stays until the room changes again.
+        cx.simulate_resize(gpui::size(px(1000.), px(800.)));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-b");
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
+            .unwrap();
+        // Hidden by hand, it stays hidden however wide the window grows.
+        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_resize(gpui::size(px(1600.), px(800.)));
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(!shell.workspace.sidebar_visible))

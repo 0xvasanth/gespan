@@ -1,21 +1,27 @@
 pub(crate) mod attachments;
+pub(crate) mod burst;
 pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]
 mod follow_tests;
+pub(crate) mod git_turns;
 mod history;
-pub(crate) use history::PreparedHistory;
+pub(crate) use history::{HistoryPager, PreparedHistory};
 mod links;
 mod live_phase;
 mod mascot;
 mod measurements;
 mod outline;
 pub(crate) mod phases;
+mod provider_switch;
 mod remote_plans;
 pub(crate) mod selection;
 pub(crate) mod tasks;
 mod tools;
+mod user_links;
 mod visuals;
+#[cfg(test)]
+pub(crate) use visuals::placements;
 
 use crate::markdown_model::MarkdownParser;
 use crate::popover::{Anchor, AnchorSlot, Side, popover};
@@ -28,6 +34,7 @@ use crate::{
 };
 use gespan_core::tool::{ToolCall, ToolState, tasks::Panel};
 use gespan_core::transcript::Row;
+use gespan_core::user_links::{UserMessageLink, parse_user_message_link};
 use gpui::{
     AvailableSpace, Bounds, ClipboardItem, Context, FollowMode, ListAlignment, ListOffset,
     ListState, Pixels, Role, SharedString, Transformation, Window, canvas, div, list, percentage,
@@ -116,17 +123,28 @@ struct Message {
     display_start: usize,
     role: String,
     parser: MarkdownParser,
+    markdown_blocks: Vec<RenderedBlock>,
     under_line: bool,
     /// The turn this message belongs to, as `Body::Actions` numbers it.
     turn: usize,
     attachments: Arc<[attachments::Attachment]>,
+    /// A user message's displayed chunks and attachments, which its cached
+    /// bubble width depends on.
+    prompt_fingerprint: u64,
+    /// parseUserMessageLink: the prompt's first web link, with the index of
+    /// the text chunk that holds it.
+    user_link: Option<(usize, Arc<UserMessageLink>)>,
+}
+struct RenderedBlock {
+    source: Arc<crate::markdown_model::TopBlock>,
+    rows: Vec<Arc<MarkdownRow>>,
+    words: usize,
 }
 #[derive(Clone)]
 enum Body {
     RemotePlan(crate::conversation::remote_plans::Plan),
-    OlderHistory,
     SavedDraft,
-    Markdown(MarkdownRow),
+    Markdown(Arc<MarkdownRow>),
     Visual(Arc<gespan_core::visual::VisualDocument>),
     Plain(SharedString),
     Interjection(gespan_core::transcript::Interjection),
@@ -139,10 +157,14 @@ enum Body {
     Review {
         turn: usize,
     },
+    /// A commit pill turn's status line, then its card.
+    GitAction(Arc<git_turns::GitCard>),
     Tool {
         call: Box<ToolCall>,
         group: Option<usize>,
         tail: bool,
+        /// Its phase is still the live end of the turn.
+        live: bool,
     },
     Phase {
         title: String,
@@ -186,12 +208,19 @@ impl UiRow {
     }
 }
 const TOP_INSET: f32 = 20.;
-/// Streamed text reveals and fades on this cadence (30fps).
-const STREAM_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 // Saved drafts are presentation rows, outside the provider transcript.
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
+#[cfg(target_os = "macos")]
 const TOP_FADE: f32 = 24.;
+/// AgentTranscript.tsx's user bubble: `text-sm`, `max-w-[36rem]` and `px-3`.
+/// Measurement, line counting and render share these.
+const PROMPT_TEXT_SIZE: Pixels = px(14.);
+const PROMPT_BUBBLE_MAX: Pixels = px(576.);
+/// Horizontal padding on both sides together.
+const PROMPT_PAD_X: Pixels = px(24.);
+/// Text width that leaves room for "Show less" on a blank last chunk.
+const PROMPT_DISCLOSURE_MIN: Pixels = px(72.);
 /// `.turn-actions-hover`'s 120ms opacity transition, in seconds.
 const HOVER_FADE: f32 = 0.12;
 
@@ -399,13 +428,14 @@ pub(crate) fn pilot_work_label(source: &[Row], group: usize) -> String {
     }) else {
         return THINKING[thought.saturating_sub(1) % THINKING.len()].into();
     };
-    if tool.is_compaction() {
-        return if tool.state == ToolState::Running {
-            "Compacting context…"
+    if tool.is_milestone() {
+        return if tool.state != ToolState::Running {
+            "Thinking…".into()
+        } else if tool.is_handoff() {
+            format!("{}…", tool.summary().0)
         } else {
-            "Thinking…"
-        }
-        .into();
+            "Compacting context…".into()
+        };
     }
     match tool.summary().0.as_str() {
         "Run" => "Running command…",
@@ -457,14 +487,26 @@ pub(crate) struct TranscriptView {
     selection: selection::Selection,
     selection_focus: Option<gpui::FocusHandle>,
     links: links::State,
+    work_item_cards: user_links::Cards,
     source: Vec<Row>,
     source_bytes: usize,
     attachment_images: HashMap<String, gpui::Entity<attachments::Photo>>,
     visuals: HashMap<usize, visuals::CachedVisual>,
+    /// Visual ids the answers place in their prose.
+    placed: HashSet<String>,
+    /// Placed visuals by id: their message's start and document.
+    published: HashMap<String, (usize, Arc<gespan_core::visual::VisualDocument>)>,
     history_position: Option<history::HistoryPosition>,
     history_start: usize,
     history_loading: bool,
     history_requested: bool,
+    /// Rows of older pages above the store's window. Store row `i` is `base + i`.
+    base: usize,
+    /// The store cursor for the turns above the loaded rows, if any.
+    history_before: Option<i64>,
+    history_pager: Option<history::HistoryPager>,
+    /// The last page read failed; only a scroll retries it.
+    history_failed: bool,
     history_search: Option<(usize, String)>,
     /// A sub-agent block (source row, tool id) older than the loaded window,
     /// revealed once paging reaches it.
@@ -510,6 +552,7 @@ pub(crate) struct TranscriptView {
     /// short of a fast disclosure, so an anchored prompt bounces.
     frame_now: Instant,
     measurements: measurements::Measurements,
+    markdown_cache: markdown::RenderCache,
     messages: Vec<Message>,
     rows: Vec<UiRow>,
     streaming: bool,
@@ -556,9 +599,16 @@ pub(crate) struct TranscriptView {
     viewport: Bounds<Pixels>,
     anchor_turn: Option<usize>,
     prompt_rise: Option<(usize, Instant)>,
+    /// The /operator, Plan or Orchestrator burst inside a just-sent prompt.
+    burst: Option<burst::Burst>,
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,
     show_jump: bool,
+    commit_files: git_turns::CommitFiles,
+    copied_commit: Option<(String, Instant)>,
+    /// The conversation's git action pill holds the column's left end, so the
+    /// jump button moves from the center to the right end.
+    jump_beside_pill: bool,
     jump_anchor: crate::popover::AnchorSlot,
     scroll_bound: bool,
     fold_targets: HashMap<usize, Option<usize>>,
@@ -712,11 +762,7 @@ impl TranscriptView {
                 row.key.0 == at
                     && matches!(&row.body, Body::Tool { call, .. } if call.id == tool_id)
             })
-            .or_else(|| {
-                self.rows
-                    .iter()
-                    .position(|row| row.key.0 >= at && !matches!(row.body, Body::OlderHistory))
-            });
+            .or_else(|| self.rows.iter().position(|row| row.key.0 >= at));
         if let Some(item_ix) = target {
             self.list.scroll_to(ListOffset {
                 item_ix,
@@ -730,12 +776,26 @@ impl TranscriptView {
     pub(crate) fn agent_open_for_test(&self, key: &str) -> bool {
         self.agent_panels.part_open(key, false)
     }
+    /// The rows of the store's window, numbered as the store numbers them.
+    /// Older pages above it are read-only and never part of a save.
     pub(crate) fn source_rows(&self) -> &[Row] {
+        &self.source[self.base..]
+    }
+    /// Every loaded row, older pages included, numbered as this view's turns
+    /// and response actions are.
+    pub(crate) fn history_rows(&self) -> &[Row] {
         &self.source
+    }
+    /// Whether `history_rows` holds every turn, not only the newest pages.
+    pub(crate) fn history_complete(&self) -> bool {
+        self.history_before.is_none()
     }
     pub(crate) fn document(text: String, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
         view.document = true;
+        // A document reads from its top. Chat's tail-follow would open it
+        // scrolled to the end and keep it pinned there on every rebuild.
+        view.list.set_follow_mode(FollowMode::Normal);
         view.patch(
             0,
             vec![Row {
@@ -746,6 +806,10 @@ impl TranscriptView {
             }],
             cx,
         );
+        view.list.scroll_to(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.),
+        });
         view
     }
     /// liveAgents.ts's toLiveAgent: the last turn's latest tool, as "Read
@@ -1143,6 +1207,7 @@ impl TranscriptView {
             .collect();
         let copied = self.copied.is_some_and(|id| id == start as u64);
         let sent_at = self.source[start].sent_at;
+        let base = self.base;
         let stamp_anchor = self
             .action_anchors
             .entry((start, "sent-at"))
@@ -1187,6 +1252,7 @@ impl TranscriptView {
                     && gespan_core::provider::supports_rewind(
                         gespan_core::provider::Kind::from_id(&self.provider),
                     )
+                    && start >= base
                     && self
                         .source
                         .iter()
@@ -1202,7 +1268,7 @@ impl TranscriptView {
                             false,
                         )
                         .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(ResponseRequest::EditLastTurn { turn: start })
+                            cx.emit(ResponseRequest::EditLastTurn { turn: start - base })
                         })),
                     )
                 },
@@ -2325,14 +2391,21 @@ impl TranscriptView {
             selection: Default::default(),
             selection_focus: None,
             links: Default::default(),
+            work_item_cards: Default::default(),
             source: Vec::new(),
             source_bytes: 0,
             attachment_images: HashMap::new(),
             visuals: HashMap::new(),
+            placed: HashSet::new(),
+            published: HashMap::new(),
             history_position: None,
             history_start: 0,
             history_loading: false,
             history_requested: false,
+            base: 0,
+            history_before: None,
+            history_pager: None,
+            history_failed: false,
             history_search: None,
             history_tool: None,
             prepared_parsers: HashMap::new(),
@@ -2357,6 +2430,7 @@ impl TranscriptView {
             started_at: Instant::now(),
             frame_now: Instant::now(),
             measurements: Default::default(),
+            markdown_cache: Default::default(),
             messages: Vec::new(),
             rows: Vec::new(),
             streaming: false,
@@ -2402,8 +2476,12 @@ impl TranscriptView {
             anchor_turn: None,
             prompt_rise: None,
             prompt_rise_pending: false,
+            burst: None,
             introduced_prompt: None,
             show_jump: false,
+            commit_files: HashMap::new(),
+            copied_commit: None,
+            jump_beside_pill: false,
             jump_anchor: Default::default(),
             scroll_bound: false,
             fold_targets: HashMap::new(),
@@ -2445,6 +2523,7 @@ impl TranscriptView {
         self.chat_layout = chat;
         self.anchor_prompts = anchor_prompts;
         self.smooth_reveal = p.paced_reveal;
+        self.measurements.clear();
         if !self.anchor_prompts {
             self.anchor_turn = None;
         }
@@ -2612,6 +2691,7 @@ impl TranscriptView {
         }
         self.prompt_rise = None;
         self.prompt_rise_pending = false;
+        self.burst = None;
         self.entrances.clear();
         self.follow = Follow::default();
         for reveal in self.reveals.values_mut() {
@@ -2703,13 +2783,21 @@ impl TranscriptView {
             });
         }
         submitted.begin("assistant");
+        if !settings.internal_message && !self.pilot && self.visible && !cx.reduce_motion() {
+            self.burst = burst::Kind::from_settings(settings)
+                .map(|kind| burst::Burst::new(self.source.len(), kind));
+        }
         if self.pilot {
             self.submitted_pilot_message = settings.pilot_message_id.clone();
         }
-        self.patch(self.source.len(), submitted.rows, cx);
+        self.patch_view(self.source.len(), submitted.rows, cx);
     }
 
+    /// Patch the store's window from `start`, a row of `source_rows`.
     pub(crate) fn patch(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
+        self.patch_view(self.base + start, rows, cx);
+    }
+    fn patch_view(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
         if rows.is_empty() {
             return;
         }
@@ -2737,6 +2825,17 @@ impl TranscriptView {
                 .get(start)
                 .is_some_and(|row| row.role == "visual")
         });
+        if start == 0 {
+            self.placed.clear();
+        }
+        self.published.retain(|_, (at, _)| *at < start);
+        let placed = self.placed.len();
+        for row in &self.source[start..] {
+            if row.role == "assistant" {
+                visuals::placements(&row.text, &mut self.placed);
+            }
+        }
+        let placed = self.placed.len() != placed;
         if known == 0 && self.pilot && !self.streaming {
             self.history_start = history::page_start(&self.source, self.source.len());
         }
@@ -2867,10 +2966,19 @@ impl TranscriptView {
             }
         }
         self.outline.patched(&self.source, start);
+        // A newly placed visual leaves its own row earlier in the turn, so the
+        // whole turn rebuilds rather than just the changed suffix.
+        let start = if placed {
+            self.source[..start]
+                .iter()
+                .rposition(|r| r.is_prompt())
+                .map_or(0, |i| i + 1)
+        } else {
+            start
+        };
         self.rebuild(start, cx);
     }
     fn rebuild(&mut self, start: usize, cx: &mut Context<Self>) {
-        self.measurements.clear();
         #[cfg(test)]
         {
             self.rebuild_passes += 1;
@@ -3013,6 +3121,16 @@ impl TranscriptView {
         };
         let old_count = self.rows.len();
         let old_rows = self.rows[display_start..].to_vec();
+        let old_layouts: Vec<_> = old_rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| {
+                (
+                    row.clone(),
+                    measurements::after_receipt(&self.rows, &self.messages, display_start + ix),
+                )
+            })
+            .collect();
         let mut previous: HashMap<_, _> = self
             .messages
             .split_off(message_ix)
@@ -3020,18 +3138,6 @@ impl TranscriptView {
             .map(|m| (m.start, m))
             .collect();
         self.rows.truncate(display_start);
-        if display_start == 0 && self.history_start > 0 {
-            self.rows.push(UiRow {
-                key: (self.history_start, 8),
-                body: Body::OlderHistory,
-                message: 0,
-                first: false,
-                last: false,
-                work: false,
-                work_tail: false,
-                thought_phase: None,
-            });
-        }
         let activity = if self.pilot {
             phases::Phases::default()
         } else {
@@ -3044,6 +3150,8 @@ impl TranscriptView {
         let mut awaiting_answer = None;
         let mut has_work = false;
         let mut ready = false;
+        let mut git_card: Option<Arc<git_turns::GitCard>> = None;
+        let mut git_live_shown = false;
         while at < self.source.len() {
             let mut end = at + 1;
             while end < self.source.len() && !self.source[end].first {
@@ -3062,12 +3170,16 @@ impl TranscriptView {
             } else {
                 (None, Arc::default())
             };
-            let mut parser = previous
-                .remove(&at)
-                .filter(|p| p.role == role)
-                .map(|p| p.parser)
-                .or_else(|| self.prepared_parsers.remove(&at))
-                .unwrap_or_default();
+            let old = previous.remove(&at).filter(|p| p.role == role);
+            let mut user_link = None;
+            let (mut parser, mut markdown_blocks) = old
+                .map(|p| (p.parser, p.markdown_blocks))
+                .unwrap_or_else(|| {
+                    (
+                        self.prepared_parsers.remove(&at).unwrap_or_default(),
+                        Vec::new(),
+                    )
+                });
             let message = self.messages.len();
             let first = self.rows.len();
             if at >= turn_end {
@@ -3101,6 +3213,8 @@ impl TranscriptView {
                 ready = final_answer.is_some_and(|answer| self.answer_visible(answer));
                 self.fold_targets
                     .insert(turn, final_answer.filter(|_| has_work && ready));
+                git_card = self.git_card(turn, turn_end, final_answer);
+                git_live_shown = false;
             }
             let folded = !is_prompt
                 && !activity.pinned.contains(&at)
@@ -3128,7 +3242,10 @@ impl TranscriptView {
                         .iter()
                         .rev()
                         .find(|row| row.role != gespan_core::transcript::attachments::ROLE)
-                        .is_some_and(Row::is_prompt))
+                        .is_some_and(Row::is_prompt)
+                    // A run on a later day, such as a habit report, signs
+                    // again under its own day.
+                    || (self.pilot && dates::opens_later_day(&self.source, at)))
                 && !(self.pilot
                     && self.pilot_group_start(turn) != turn
                     && !(self.history_start > 0 && self.prompt_start(turn) == self.history_start))
@@ -3156,7 +3273,38 @@ impl TranscriptView {
             let phase_open = phase.is_none_or(|group| {
                 !grouped || self.phases.get(&group.start).copied().unwrap_or(active)
             });
-            if !self.pilot && !folded && grouped && phase.is_some_and(|group| group.start == at) {
+            // A running pill turn shows one status line in place of its work
+            // and prose; a settled one's card leads its reply.
+            let git_stand_in = git_card.clone().filter(|card| {
+                !is_prompt
+                    && if card.live() {
+                        matches!(role.as_str(), "tool" | "reasoning" | "assistant")
+                    } else {
+                        card.answer == Some(at)
+                    }
+            });
+            if let Some(card) = &git_stand_in
+                && !(card.live() && git_live_shown)
+            {
+                git_live_shown = true;
+                self.rows.push(UiRow {
+                    key: (0, 0),
+                    body: Body::GitAction(card.clone()),
+                    message,
+                    first: false,
+                    last: false,
+                    work: false,
+                    work_tail: false,
+                    thought_phase: None,
+                });
+            }
+            let git_hidden = git_stand_in.as_ref().is_some_and(|card| card.live());
+            if !self.pilot
+                && !folded
+                && !git_hidden
+                && grouped
+                && phase.is_some_and(|group| group.start == at)
+            {
                 let group = phase.unwrap();
                 let (title, icon) = if group.calls.is_empty() {
                     (if active { "Thinking…" } else { "Thought" }.into(), "minus")
@@ -3181,7 +3329,11 @@ impl TranscriptView {
             }
             let reaction =
                 self.pilot && role == "assistant" && text.trim().starts_with("<reaction>");
-            if role == "interjection" {
+            if git_hidden {
+                if role == "tool" {
+                    self.seen_steps.insert(at);
+                }
+            } else if role == "interjection" {
                 if let Ok(note) = serde_json::from_str(&text) {
                     self.rows.push(UiRow {
                         key: (0, 0),
@@ -3211,20 +3363,28 @@ impl TranscriptView {
                 let document = serde_json::from_str::<gespan_core::visual::VisualDocument>(&text)
                     .ok()
                     .filter(|document| document.validate().is_ok());
-                let body = match document {
-                    Some(document) => Body::Visual(Arc::new(document)),
-                    None => Body::Plain("This visual could not be loaded.".into()),
-                };
-                self.rows.push(UiRow {
-                    key: (0, 0),
-                    body,
-                    message,
-                    first: false,
-                    last: false,
-                    work: false,
-                    work_tail: false,
-                    thought_phase: None,
+                // An answer that places the visual draws it in its prose. While
+                // the turn runs, the call that published it stands for it, so
+                // it never appears above the answer and then jumps into it.
+                let elsewhere = document.as_ref().is_some_and(|document| {
+                    self.placed.contains(&document.id) || (self.streaming && at >= self.live_start)
                 });
+                if !elsewhere {
+                    let body = match document {
+                        Some(document) => Body::Visual(Arc::new(document)),
+                        None => Body::Plain("This visual could not be loaded.".into()),
+                    };
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body,
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
             } else if matches!(role.as_str(), "pilot-card" | "pilot-note") {
                 if let Ok(value) = serde_json::from_str(&text) {
                     self.rows.push(UiRow {
@@ -3296,6 +3456,7 @@ impl TranscriptView {
                             call: Box::new(tool),
                             group: phase.filter(|_| grouped).map(|group| group.start),
                             tail: phase.is_none_or(|group| group.last == at),
+                            live: active,
                         },
                         message,
                         first: false,
@@ -3319,36 +3480,67 @@ impl TranscriptView {
                     });
                 }
                 self.prepare_reveal(at, end, &text, role == "assistant", now, cx.reduce_motion());
-                let paced = self.reveals.get_mut(&at).unwrap();
-                parser.set_text(paced.text());
-                let tree = if paced.behind() || (self.streaming && end == self.source.len()) {
+                parser.set_text(self.reveals.get(&at).map_or(text.as_str(), PacedText::text));
+                let tree = if self.reveals.get(&at).is_some_and(PacedText::behind)
+                    || (self.streaming && end == self.source.len())
+                {
                     parser.display_tree()
                 } else {
+                    parser.finish_display();
                     parser.tree().clone()
                 };
                 let mut word_cursor = 0;
-                for block in tree
+                let mut cached = Vec::new();
+                for (block_ix, block) in tree
                     .blocks
                     .iter()
                     .filter(|_| role != "reasoning" || self.expanded.contains(&at))
+                    .enumerate()
                 {
-                    self.rows
-                        .extend(markdown::rows(&block.block).into_iter().map(|mut row| {
-                            row.word_start = word_cursor;
-                            word_cursor += markdown::word_count(&row);
-                            UiRow {
-                                key: (0, 0),
-                                body: Body::Markdown(row),
-                                message,
-                                first: false,
-                                last: false,
-                                work: false,
-                                work_tail: false,
-                                thought_phase: None,
-                            }
-                        }));
+                    let (rows, words) = if let Some(old) = markdown_blocks
+                        .get(block_ix)
+                        .filter(|old| Arc::ptr_eq(&old.source, block))
+                        .filter(|old| {
+                            old.rows
+                                .first()
+                                .is_none_or(|row| row.word_start == word_cursor)
+                        }) {
+                        (old.rows.clone(), old.words)
+                    } else {
+                        let mut base = word_cursor;
+                        let rows = markdown::rows(&block.block)
+                            .into_iter()
+                            .map(|mut row| {
+                                row.word_start = base;
+                                base += markdown::word_count(&row);
+                                Arc::new(row)
+                            })
+                            .collect();
+                        (rows, base - word_cursor)
+                    };
+                    for row in &rows {
+                        self.rows.push(UiRow {
+                            key: (0, 0),
+                            body: Body::Markdown(row.clone()),
+                            message,
+                            first: false,
+                            last: false,
+                            work: false,
+                            work_tail: false,
+                            thought_phase: None,
+                        });
+                    }
+                    word_cursor += words;
+                    cached.push(RenderedBlock {
+                        source: block.clone(),
+                        rows,
+                        words,
+                    });
                 }
-                paced.words(word_cursor, now);
+                markdown_blocks = cached;
+                if let Some(paced) = self.reveals.get_mut(&at) {
+                    paced.words(word_cursor, now);
+                }
             } else {
                 let text_rows = if let Some(text) = display_text {
                     let mut transcript = gespan_core::transcript::Transcript::default();
@@ -3366,9 +3558,17 @@ impl TranscriptView {
                         .map(|row| row.text.clone())
                         .collect()
                 };
+                if role == "user" {
+                    user_link = text_rows.iter().enumerate().find_map(|(chunk, text)| {
+                        parse_user_message_link(text).map(|link| (chunk, Arc::new(link)))
+                    });
+                }
                 // `line-clamp-4`: a collapsed message shows its first lines only.
-                let clamped =
-                    role == "user" && !self.expanded_prompts.contains(&at) && text_rows.len() > 1;
+                // A message with a link preview is never clamped, as in React.
+                let clamped = role == "user"
+                    && user_link.is_none()
+                    && !self.expanded_prompts.contains(&at)
+                    && text_rows.len() > 1;
                 if clamped {
                     self.clamped_prompts.insert(at);
                 } else {
@@ -3420,11 +3620,18 @@ impl TranscriptView {
             if self.rows.len() > first {
                 self.rows.last_mut().unwrap().last = true;
             }
+            let prompt_fingerprint = if role == "user" {
+                measurements::prompt_fingerprint(&self.rows[first..], &attachments)
+            } else {
+                0
+            };
             self.messages.push(Message {
                 start: at,
                 display_start: first,
                 role,
                 parser,
+                markdown_blocks,
+                user_link,
                 under_line: has_work && final_answer == Some(at),
                 turn: if self.pilot {
                     self.pilot_group_start(turn)
@@ -3432,6 +3639,7 @@ impl TranscriptView {
                     turn
                 },
                 attachments,
+                prompt_fingerprint,
             });
             let last_prompt = self.source.iter().rposition(|r| r.is_prompt());
             if self.pilot
@@ -3657,8 +3865,14 @@ impl TranscriptView {
         self.index_messages();
         // Preserve surviving indices and scroll offsets while the tail reflows.
         let common = old_count.min(self.rows.len());
-        if display_start < common {
-            self.list.remeasure_items(display_start..common);
+        self.measurements.rows_changed();
+        for ix in display_start..common {
+            let (old, after_receipt) = &old_layouts[ix - display_start];
+            if !measurements::same_layout(old, &self.rows[ix])
+                || *after_receipt != measurements::after_receipt(&self.rows, &self.messages, ix)
+            {
+                self.list.remeasure_items(ix..ix + 1);
+            }
         }
         if old_count != self.rows.len() {
             self.list
@@ -3685,7 +3899,16 @@ impl TranscriptView {
                 offset_in_item: offset.offset_in_item,
             });
         }
+        self.prune_reveals(now);
         cx.notify();
+    }
+    fn prune_reveals(&mut self, now: Instant) {
+        let latest = self
+            .streaming
+            .then(|| self.source.iter().rposition(|row| row.first))
+            .flatten();
+        self.reveals
+            .retain(|at, reveal| Some(*at) == latest || reveal.active(now));
     }
     fn prepare_reveal(
         &mut self,
@@ -3696,6 +3919,17 @@ impl TranscriptView {
         now: Instant,
         reduced: bool,
     ) {
+        if !self.reveals.contains_key(&at)
+            && !(self.visible
+                && self.smooth_reveal
+                && !reduced
+                && self.streaming
+                && end == self.source.len()
+                && at >= self.live_start
+                && assistant)
+        {
+            return;
+        }
         let paced = self.reveals.entry(at).or_insert_with(|| {
             PacedText::new(
                 text,
@@ -3723,7 +3957,7 @@ impl TranscriptView {
         }
         self.reveals
             .get(&answer)
-            .map_or(!self.streaming, |r| !r.text().trim().is_empty())
+            .is_none_or(|r| !r.text().trim().is_empty())
     }
     fn index_messages(&mut self) {
         let mut first = HashMap::new();
@@ -3894,6 +4128,7 @@ impl TranscriptView {
             || self
                 .prompt_rise
                 .is_some_and(|(_, born)| born.elapsed().as_secs_f32() < 0.88)
+            || self.burst.is_some_and(|burst| burst.active(now))
             || self.chat_animating();
         if smooth {
             self.frame_scheduled = true;
@@ -3902,14 +4137,13 @@ impl TranscriptView {
                 let _ = view.update(cx, |this, cx| this.animate_frame(cx));
             });
         } else if self.stream_animating(now) {
-            // Each step re-lays out the live tail of a long transcript, so
-            // streamed text reveals at 30fps rather than the display's rate.
+            // Stream presentation keeps the shared 30Hz budget. Pure fade
+            // frames reuse the parsed blocks, prepared text and measured rows.
             self.frame_scheduled = true;
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(STREAM_FRAME).await;
-                let _ = this.update(cx, |this, cx| this.animate_frame(cx));
-            })
-            .detach();
+            let view = cx.entity().downgrade();
+            crate::pulse::request_frame(crate::pulse::Rate::Smooth, window, cx, move |cx| {
+                let _ = view.update(cx, |this, cx| this.animate_frame(cx));
+            });
         }
     }
     fn animate_frame(&mut self, cx: &mut Context<Self>) {
@@ -3973,10 +4207,12 @@ impl TranscriptView {
             });
         }
         self.motions.retain(|_, motion| !motion.finished(now));
+        self.burst = self.burst.filter(|burst| burst.active(now));
         self.entrances
             .retain(|_, born| now.duration_since(*born).as_secs_f32() < 0.4);
         self.pending_entrances
             .retain(|_, born| now.duration_since(*born).as_secs_f32() < 0.4);
+        self.prune_reveals(now);
         for (_, born) in self.reactions.values_mut() {
             if born.is_some_and(|b| now.duration_since(b).as_secs_f32() >= 0.4) {
                 *born = None;
@@ -4239,7 +4475,6 @@ impl TranscriptView {
             return self.phase_window(ix, group, active, window, cx);
         }
         match self.rows[ix].body {
-            Body::OlderHistory => return self.older_history_row(cx),
             Body::SavedDraft => return self.saved_draft_row(cx),
             Body::Pending(i) => return self.pending_row(i, cx),
             Body::Launch(id) => return self.launch_row(ix, id, cx),
@@ -4349,6 +4584,7 @@ impl TranscriptView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let row = self.rows[ix].clone();
+        let prompt_width = self.split_prompt_width(ix, window);
         let message = &self.messages[row.message];
         let user = message.role == "user";
         let stacked = user && self.pilot && self.stacks_on_next(message.start);
@@ -4382,6 +4618,7 @@ impl TranscriptView {
             _ => None,
         };
         let body = match row.body {
+            Body::GitAction(card) => self.git_card_row(&card, message_start, cx),
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
             Body::Interjection(_) if marker.is_some() => {
@@ -4476,11 +4713,9 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::PilotCard(ref value) => crate::pilots::cards::render(value, cx),
-            Body::OlderHistory
-            | Body::Pending(_)
-            | Body::Launch(_)
-            | Body::Review { .. }
-            | Body::SavedDraft => div().into_any_element(),
+            Body::Pending(_) | Body::Launch(_) | Body::Review { .. } | Body::SavedDraft => {
+                div().into_any_element()
+            }
             Body::Actions { turn, complete } => self.response_actions(turn, complete, cx),
             Body::WorkLine { turn, .. } if self.pilot => self.pilot_turn_header(turn, cx),
             Body::WorkLine { turn, expandable } => {
@@ -4642,7 +4877,7 @@ impl TranscriptView {
                                     .group_hover("activity-phase", |s| s.opacity(0.))
                                     .into_any_element()
                             } else {
-                                icon(glyph, 14.)
+                                crate::activity::glyph(glyph, 14.)
                                     .group_hover("activity-phase", |s| s.opacity(0.))
                                     .into_any_element()
                             })
@@ -4674,18 +4909,57 @@ impl TranscriptView {
                     }))
                     .into_any_element()
             }
-            Body::Tool { call, group, tail } => div()
-                .relative()
-                .w_full()
-                .when(group.is_some(), |d| {
-                    d.pl(px(20.)).child(crate::activity::rail(tail))
-                })
-                .child(
-                    div()
-                        .opacity(step_opacity)
-                        .child(self.tool(*call, message_start, cx)),
-                )
-                .into_any_element(),
+            Body::Tool {
+                call,
+                group,
+                tail,
+                live,
+            } => {
+                // A lone step leads with the spinner its phase header shows once
+                // a second step joins it. It keeps spinning after it settles,
+                // until whatever comes next arrives, so the hand-off to the
+                // group header never drops the loader.
+                let loading = group.is_none()
+                    && (call.state == ToolState::Running || live)
+                    && !call.is_milestone()
+                    && call.panel().is_none()
+                    && !cx.reduce_motion();
+                div()
+                    .relative()
+                    .w_full()
+                    .when(group.is_some(), |d| {
+                        d.pl(px(20.)).child(crate::activity::rail(tail))
+                    })
+                    .when(loading, |d| {
+                        d.flex().items_start().gap_1p5().child(
+                            div()
+                                .h(px(28.))
+                                .flex_shrink_0()
+                                .opacity(step_opacity)
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .size(px(14.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_color(content(0.5))
+                                        .child(crate::session_mark::spinner(
+                                            ("tool-loader", message_start),
+                                            crate::pulse::Rate::Half,
+                                        )),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .when(loading, |d| d.min_w_0().flex_1())
+                            .opacity(step_opacity)
+                            .child(self.tool(*call, message_start, cx)),
+                    )
+                    .into_any_element()
+            }
             Body::Reasoning => {
                 let summary = self.messages[row.message]
                     .parser
@@ -4727,20 +5001,12 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::Markdown(ref md) => {
-                let resolved =
-                    (self.file_link_base.is_some() || self.search_match.is_some()).then(|| {
-                        let mut md = md.clone();
-                        if let Some(base) = &self.file_link_base {
-                            markdown::resolve_file_links(&mut md, base);
-                        }
-                        if let Some((current, query)) = &self.search_match {
-                            markdown::mark_row(&mut md, query, *current == message_start);
-                        }
-                        md
-                    });
-                let md = resolved.as_ref().unwrap_or(md);
+                let prepared = self.markdown_cache.get(row.key, md);
+                let md = &prepared.row;
                 let body = if let Part::Code { fence, lines } = &md.part {
                     self.code(fence.clone(), lines.clone(), ix, Some(ix), cx)
+                } else if let Part::Visual { id, caption } = &md.part {
+                    self.placed_visual(id, caption, cx)
                 } else {
                     markdown::body_selected(
                         md,
@@ -4752,15 +5018,14 @@ impl TranscriptView {
                         } else {
                             markdown::Tone::Normal
                         },
-                        self.reveals
-                            .get(&message_start)
-                            .map(|r| r.births.as_slice()),
+                        self.reveals.get(&message_start).map(|r| &r.fades),
                         self.frame_now,
                         if reasoning {
                             None
                         } else {
                             self.text_selection(row.key, message_start, !user && !error, cx)
                         },
+                        Some(&prepared),
                     )
                     .into_any_element()
                 };
@@ -4808,10 +5073,18 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::Plain(text) => {
+                // UserLinkPreview: the prompt's first link, drawn in its chunk.
+                let message_link = self.messages[row.message].user_link.clone();
+                let link = message_link
+                    .as_ref()
+                    .filter(|(chunk, _)| user && *chunk + 16 == row.key.1)
+                    .map(|(_, link)| link.clone());
                 let collapsed = !self.expanded_prompts.contains(&message_start);
-                let clamp = user && first && collapsed;
+                let clamp = user && first && collapsed && message_link.is_none();
                 // `overflows`: hidden chunks, or more than four wrapped lines.
+                // React never clamps a message that shows a link preview.
                 let overflows = user
+                    && message_link.is_none()
                     && last
                     && (!first
                         || self.clamped_prompts.contains(&message_start)
@@ -4828,8 +5101,11 @@ impl TranscriptView {
                     })
                     .when(user, |d| {
                         // AgentTranscript.tsx: text-sm (14px / 20px), px-3 py-2.
-                        d.line_height(px(20.))
-                            .px_3()
+                        // Measurement shapes this font at the same size.
+                        d.font(gpui::font(crate::fonts::UI))
+                            .text_size(PROMPT_TEXT_SIZE)
+                            .line_height(px(20.))
+                            .px(PROMPT_PAD_X * 0.5)
                             .pt(px(if first { 8. } else { 0. }))
                             .pb(px(if last { 8. } else { 0. }))
                             .child(
@@ -4871,33 +5147,84 @@ impl TranscriptView {
                             .map(|body| div().when(!text.is_empty(), |d| d.mb_2()).child(body)),
                     )
                     .when(!text.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .when(clamp, |d| d.line_clamp(4).text_ellipsis())
-                                .child({
-                                    let styled = gpui::StyledText::new(text.clone())
-                                        .with_highlights(markdown::mark_styles(
-                                            &text,
-                                            vec![],
-                                            self.search_match
-                                                .as_ref()
-                                                .map_or("", |(_, q)| q.as_str()),
-                                            self.search_match
-                                                .as_ref()
-                                                .is_some_and(|(start, _)| *start == message_start),
-                                        ));
-                                    let layout = styled.layout().clone();
-                                    let child = styled.into_any_element();
-                                    if let Some(selection) =
-                                        self.text_selection(row.key, message_start, false, cx)
-                                    {
-                                        selection.wrap(text.clone(), layout, child)
-                                    } else {
-                                        child
-                                    }
-                                }),
-                        )
+                        // A commit pill's message leads with that action's icon.
+                        let action_icon = (user && first && last)
+                            .then(|| {
+                                crate::conversation::git_actions::GitAction::message_icon(&text)
+                            })
+                            .flatten();
+                        d.when_some(action_icon, |d, path| {
+                            d.flex_row()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(icon(path, 14.).flex_shrink_0().text_color(content(0.6)))
+                        })
+                        .when_some(link.clone(), |d, link| {
+                            d.child(self.user_link_text(&text, &link, row.key, message_start, cx))
+                        })
+                        .when(link.is_none(), |d| {
+                            d.child(
+                                div()
+                                    .when(clamp, |d| d.line_clamp(4).text_ellipsis())
+                                    .child({
+                                        let styled = gpui::StyledText::new(text.clone())
+                                            .with_highlights(markdown::mark_styles(
+                                                &text,
+                                                vec![],
+                                                self.search_match
+                                                    .as_ref()
+                                                    .map_or("", |(_, q)| q.as_str()),
+                                                self.search_match.as_ref().is_some_and(
+                                                    |(start, _)| *start == message_start,
+                                                ),
+                                            ));
+                                        let layout = styled.layout().clone();
+                                        let child = styled.into_any_element();
+                                        if let Some(selection) =
+                                            self.text_selection(row.key, message_start, false, cx)
+                                        {
+                                            selection.wrap(text.clone(), layout, child)
+                                        } else {
+                                            child
+                                        }
+                                    }),
+                            )
+                        })
                     })
+                    .children(
+                        self.burst
+                            .filter(|burst| {
+                                user && first
+                                    && burst.prompt == message_start
+                                    && burst.active(self.frame_now)
+                            })
+                            .map(|burst| {
+                                let now = self.frame_now;
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, cx| {
+                                        // The same corners the bubble's fill paints.
+                                        let radius = if last && bounds.size.height <= px(37.) {
+                                            f32::from(bounds.size.height) * 0.5
+                                        } else {
+                                            12.
+                                        };
+                                        let bottom = px(if last { radius } else { 0. });
+                                        let corners = gpui::Corners {
+                                            top_left: px(radius),
+                                            top_right: px(radius),
+                                            bottom_left: bottom,
+                                            bottom_right: bottom,
+                                        };
+                                        burst.paint(bounds, corners, now, window, cx);
+                                    },
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                            }),
+                    )
                     .when(overflows, |d| {
                         d.child(
                             div().flex().child(
@@ -4982,7 +5309,9 @@ impl TranscriptView {
             0.
         } else if receipt || (last && is_tool) {
             4.
-        } else if last && !user {
+        } else if last {
+            // A prompt sits between two turns: match the room above it, so it
+            // doesn't read as part of the reply below.
             8.
         } else {
             0.
@@ -4995,6 +5324,11 @@ impl TranscriptView {
             .flex_col()
             .children(if first {
                 self.pilot_separator(message_start)
+            } else {
+                None
+            })
+            .children(if first {
+                self.provider_separator(message_start)
             } else {
                 None
             })
@@ -5043,7 +5377,8 @@ impl TranscriptView {
                                 div()
                                     .relative()
                                     .min_w_0()
-                                    .when(user && self.chat_layout, |d| d.max_w(px(576.)))
+                                    .when(user && self.chat_layout, |d| d.max_w(PROMPT_BUBBLE_MAX))
+                                    .when_some(prompt_width, |d, width| d.w(width))
                                     .when(user && !self.chat_layout, |d| d.w_full())
                                     .when(!user, |d| d.w_full())
                                     .when(row.work, |d| {
@@ -5194,6 +5529,12 @@ impl TranscriptView {
             cx.notify();
         }
     }
+    pub(crate) fn set_jump_beside_pill(&mut self, beside: bool, cx: &mut Context<Self>) {
+        if self.jump_beside_pill != beside {
+            self.jump_beside_pill = beside;
+            cx.notify();
+        }
+    }
     pub(crate) fn jump_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
         self.show_jump.then(|| self.jump_anchor.get()).flatten()
     }
@@ -5225,28 +5566,14 @@ impl TranscriptView {
         // Row padding (`pl-14 pr-4` in the chat layout, `px-4` otherwise),
         // the bubble's 36rem cap and its `px-3`.
         let bubble = if self.chat_layout {
-            (column - px(72.)).min(px(576.))
+            (column - px(72.)).min(PROMPT_BUBBLE_MAX)
         } else {
             column - px(32.)
         };
         let text = SharedString::from(text.trim_end().to_owned());
-        let run = gpui::TextRun {
-            len: text.len(),
-            font: window.text_style().font(),
-            color: Default::default(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        window
-            .text_system()
-            .shape_text(text, px(14.), &[run], Some(bubble - px(24.)), None)
-            .map_or(0, |lines| {
-                lines
-                    .iter()
-                    .map(|line| line.wrap_boundaries.len() + 1)
-                    .sum()
-            })
+        measurements::shape_prompt(text, Some(bubble - PROMPT_PAD_X), window)
+            .map(|line| line.wrap_boundaries.len() + 1)
+            .sum()
     }
     fn toggle_phase(&mut self, group: usize, open: bool, cx: &mut Context<Self>) {
         self.phase_toggle = Some(group);
@@ -5258,9 +5585,18 @@ impl TranscriptView {
 impl gpui::EventEmitter<ResponseRequest> for TranscriptView {}
 impl Render for TranscriptView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if std::mem::take(&mut self.history_requested)
+        let top = self.list.logical_scroll_top();
+        // Rows that don't fill the viewport can't scroll, so their top being
+        // on screen asks for older turns too. Layout must have run first.
+        let short = top.item_ix == 0
+            && top.offset_in_item <= px(0.)
+            && !self.history_failed
+            && (self.history_start > 0 || self.history_before.is_some())
+            && self.list.bounds_for_item(0).is_some();
+        if (std::mem::take(&mut self.history_requested)
             && !self.list.is_following_tail()
-            && self.list.logical_scroll_top().item_ix <= 2
+            && top.item_ix <= 2)
+            || short
         {
             self.load_older_history(cx);
         }
@@ -5270,6 +5606,11 @@ impl Render for TranscriptView {
         self.selection.begin_frame();
         self.phase_max_height = live_phase::max_height(window);
         self.frame_now = Instant::now();
+        for reveal in self.reveals.values_mut() {
+            reveal.fades.advance(self.frame_now);
+        }
+        self.markdown_cache
+            .begin_frame(&self.file_link_base, &self.search_match);
         self.begin_measurements(window, cx);
         if !self.scroll_bound {
             self.scroll_bound = true;
@@ -5278,7 +5619,8 @@ impl Render for TranscriptView {
                 // Read the final scroll geometry in our trailing layout probe.
                 .set_scroll_handler(cx.listener(|this, _, _, cx| {
                     this.selection.clear();
-                    this.history_requested = this.history_start > 0;
+                    this.history_requested =
+                        this.history_start > 0 || this.history_before.is_some();
                     cx.notify()
                 }));
         }
@@ -5300,43 +5642,69 @@ impl Render for TranscriptView {
             .track_focus(self.selection_focus.as_ref().unwrap())
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::open_link_menu))
-            .capture_any_mouse_down(cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
-                    window.focus(this.selection_focus.as_ref().unwrap(), cx);
+            .capture_any_mouse_down(cx.listener(
+                |this, event: &gpui::MouseDownEvent, window, cx| {
+                    if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
+                        window.focus(this.selection_focus.as_ref().unwrap(), cx);
+                    }
+                },
+            ))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.selection.clear_if_not_dragging();
+                    cx.notify();
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && this.selection.active() {
+                    this.selection.clear();
+                    cx.notify();
+                    cx.stop_propagation()
                 }
             }))
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.selection.clear_if_not_dragging();
-                cx.notify();
-            }))
-            .on_key_down(cx.listener(|this,event:&gpui::KeyDownEvent,_,cx|{if event.keystroke.key=="escape" && this.selection.active(){this.selection.clear();cx.notify();cx.stop_propagation()}}))
             .on_mouse_move(cx.listener(Self::move_selection))
-            .on_mouse_up(gpui::MouseButton::Left,cx.listener(Self::finish_selection))
-            .on_mouse_up_out(gpui::MouseButton::Left,cx.listener(Self::finish_selection))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::finish_selection))
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::finish_selection))
             .role(Role::Log)
-            .aria_label(if self.document{"Note body"}else{"Conversation transcript"})
+            .aria_label(if self.document {
+                "Note body"
+            } else {
+                "Conversation transcript"
+            })
             .relative()
             .size_full()
             .overflow_hidden()
-            .child(canvas(move |bounds, window, cx| {
-                let _ = view.update(cx, |this, cx| {
-                    if this.viewport != bounds {
-                        this.selection.clear();
-                        this.viewport = bounds;
-                        this.list.remeasure_items(this.footer_ix()..this.footer_ix() + 1);
-                    }
-                    let resized = this.update_follow_viewport(bounds, window);
-                    // Refresh the row-height baseline after a real resize even
-                    // when the chat is idle, ready for the next send.
-                    this.schedule_frame(resized, window, cx);
-                });
-            }, |bounds, _, window, _| paint_edge_fade(bounds, true, window)).absolute().top_0().left_0().size_full())
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            if this.viewport != bounds {
+                                this.selection.clear();
+                                this.viewport = bounds;
+                                this.list
+                                    .remeasure_items(this.footer_ix()..this.footer_ix() + 1);
+                            }
+                            let resized = this.update_follow_viewport(bounds, window);
+                            // Refresh the row-height baseline after a real resize even
+                            // when the chat is idle, ready for the next send.
+                            this.schedule_frame(resized, window, cx);
+                        });
+                    },
+                    |bounds, _, window, _| paint_edge_fade(bounds, true, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .child(
                 list(
                     self.list.clone(),
                     cx.processor(|this, ix: usize, window, cx| {
-                        if ix == this.footer_ix() { this.footer(window, cx) }
-                        else {
+                        if ix == this.footer_ix() {
+                            this.footer(window, cx)
+                        } else {
                             let row = this.row(ix, window, cx);
                             this.reflow.wrap(this.rows[ix].key, row, this.follow.offset)
                         }
@@ -5345,36 +5713,101 @@ impl Render for TranscriptView {
                 .pt(px(TOP_INSET))
                 .size_full(),
             )
-            .child(canvas(move |_, _, cx| {
-                let _ = after.update(cx, |this, cx| {
-                    this.update_jump(cx);
-                    this.update_outline(cx);
-                });
-            }, |bounds, _, window, _| paint_edge_fade(bounds, false, window)).absolute().top_0().left_0().size_full())
+            .child(
+                canvas(
+                    move |_, _, cx| {
+                        let _ = after.update(cx, |this, cx| {
+                            this.update_jump(cx);
+                            this.update_outline(cx);
+                        });
+                    },
+                    |bounds, _, window, _| paint_edge_fade(bounds, false, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .children(self.outline(window, cx))
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
+            .children(self.work_item_card(window, cx))
             .when(self.show_jump, |d| {
-                d.child(div().absolute().bottom(px(8.)).left_0().w_full().flex().justify_center().child(
-                    div().id("jump-to-bottom").child(self.jump_anchor.probe()).role(Role::Button).aria_label("Scroll to bottom")
-                        .relative().flex().items_center().gap(px(6.)).h(px(30.)).px(px(10.))
-                        .rounded_full().border_1().border_color(content(0.1))
-                        .text_size(px(12.)).line_height(px(16.)).text_color(content(0.8))
-                        .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
-                        .child(canvas(|_, _, _| {}, |bounds, _, window, _| {
-                            #[cfg(target_os = "macos")]
-                            window.paint_quad(gpui::fill(bounds, content(0.04)).corner_radii(px(15.)).border_color(
-                                gpui_apple::metal_renderer::backdrop_blur_marker(12. * window.scale_factor())));
-                            #[cfg(not(target_os = "macos"))]
-                            window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(px(15.)));
-                        }).absolute().top_0().left_0().size_full())
-                        .child(icon("arrow-down", 14.).text_color(content(0.5)))
-                        .child("Scroll to bottom")
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)))
-                ))
+                // Centered, or the column's right end when the commit pill
+                // takes the left.
+                let beside_pill = self.jump_beside_pill;
+                d.child(
+                    div()
+                        .absolute()
+                        .bottom(px(8.))
+                        .left_0()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(crate::theme::COLUMN))
+                                .px(px(16.))
+                                .flex()
+                                .map(|d| {
+                                    if beside_pill {
+                                        d.justify_end()
+                                    } else {
+                                        d.justify_center()
+                                    }
+                                })
+                                .child(
+                                    div()
+                                        .id("jump-to-bottom")
+                                        .child(self.jump_anchor.probe())
+                                        .role(Role::Button)
+                                        .aria_label("Scroll to bottom")
+                                        .relative()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(30.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(content(0.1))
+                                        .text_color(content(0.7))
+                                        .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
+                                        .child(floating_surface())
+                                        .child(icon("chevron-down", 16.))
+                                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)),
+                                        ),
+                                ),
+                        ),
+                )
             })
     }
+}
+
+/// The frosted fill behind the round controls floating over the transcript.
+pub(crate) fn floating_surface() -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        |bounds, _, window, _| {
+            let radius = bounds.size.height / 2.;
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            window.paint_quad(
+                gpui::fill(bounds, content(0.04))
+                    .corner_radii(radius)
+                    .border_color(gpui::backdrop_blur_marker(12. * window.scale_factor())),
+            );
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(radius));
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }
 
 fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {
@@ -5386,28 +5819,10 @@ fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {
             BOTTOM_INSET * window.scale_factor(),
         ),
     ));
+    // A color overlay cannot mask text without tinting the pane and creating
+    // a seam above the composer. Only the Metal backend supports a real mask.
     #[cfg(not(target_os = "macos"))]
-    if !begin {
-        // Other native backends use an opaque chat pane.
-        for (top, height) in [(true, TOP_FADE as usize), (false, BOTTOM_INSET as usize)] {
-            for y in 0..height {
-                let mut color: gpui::Hsla = rgb(CHAT).into();
-                color.a = 1. - (y as f32 + 0.5) / height as f32;
-                let origin = gpui::point(
-                    bounds.left(),
-                    if top {
-                        bounds.top() + px(y as f32)
-                    } else {
-                        bounds.bottom() - px(y as f32 + 1.)
-                    },
-                );
-                window.paint_quad(gpui::fill(
-                    Bounds::new(origin, size(bounds.size.width, px(1.))),
-                    color,
-                ));
-            }
-        }
-    }
+    let _ = (bounds, begin, window);
 }
 
 #[cfg(test)]
@@ -5430,6 +5845,115 @@ mod scroll_tests {
         view.prompt_rise = None;
         view.motions.clear();
         view.rebuild(0, cx);
+    }
+
+    #[gpui::test]
+    fn expanded_user_chunks_paint_one_aligned_bubble(cx: &mut TestAppContext) {
+        // Compare settled bubble geometry rather than per-row resize glides.
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let window = cx.update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(900.), px(1000.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| TranscriptView::new()),
+            )
+            .unwrap()
+        });
+        // Newline splitting produces three rows, with the widest text in the
+        // middle. Check both natural-width and capped, wrapped messages.
+        for (wide, width) in [
+            ("a medium length line".to_owned(), 900.),
+            ("wide text ".repeat(20), 900.),
+            ("wide text ".repeat(20), 400.),
+        ] {
+            cx.simulate_window_resize(window.into(), size(px(width), px(1000.)));
+            let mut transcript = gespan_core::transcript::Transcript::default();
+            transcript.begin("user");
+            transcript.append(&format!(
+                "{}\n{wide}\n{}",
+                "x\n".repeat(12),
+                "y\n".repeat(12)
+            ));
+            assert!(transcript.rows.len() >= 3);
+            window
+                .update(cx, |view, _, cx| {
+                    view.patch(0, transcript.rows, cx);
+                    if !view.expanded_prompts.contains(&0) {
+                        view.toggle_prompt(0, cx);
+                    }
+                    settle(view, cx);
+                })
+                .unwrap();
+            // The viewport probe invalidates retained list heights after a
+            // resize; draw again to inspect the resulting geometry.
+            for _ in 0..2 {
+                window.update(cx, |_, _, cx| cx.notify()).unwrap();
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+            }
+            window
+                .update(cx, |view, window, _| {
+                    let mut bubbles: Vec<_> = window
+                        .painted_quads()
+                        .into_iter()
+                        .filter(|quad| quad.background == user_bubble_fill().into())
+                        .collect();
+                    bubbles.sort_by(|a, b| a.bounds.top().0.total_cmp(&b.bounds.top().0));
+                    assert_eq!(bubbles.len(), view.rows.len());
+                    assert!(bubbles.len() >= 3);
+                    let first = &bubbles[0];
+                    let last = bubbles.last().unwrap();
+                    assert!(first.corner_radii.top_left.0 > 0.);
+                    assert!(last.corner_radii.bottom_left.0 > 0.);
+                    for pair in bubbles.windows(2) {
+                        let (a, b) = (&pair[0], &pair[1]);
+                        assert_eq!(a.bounds.left(), b.bounds.left(), "shared left edge");
+                        assert_eq!(a.bounds.size.width, b.bounds.size.width, "shared width");
+                        assert_eq!(a.bounds.bottom(), b.bounds.top(), "no gaps between chunks");
+                        assert_eq!(a.corner_radii.bottom_left.0, 0.);
+                        assert_eq!(b.corner_radii.top_left.0, 0.);
+                    }
+                    assert!(first.bounds.size.width.0 / window.scale_factor() <= 576.);
+                })
+                .unwrap();
+        }
+        window
+            .update(cx, |view, _, cx| {
+                // A source patch updates rows in place; it does not truncate
+                // the previous prompt's continuation rows.
+                *view = TranscriptView::new();
+                view.patch(0, vec![row("user", "Hi")], cx);
+                settle(view, cx);
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                let bubble = window
+                    .painted_quads()
+                    .into_iter()
+                    .find(|quad| quad.background == user_bubble_fill().into())
+                    .unwrap();
+                assert!(
+                    bubble.bounds.size.width.0 / window.scale_factor() < 96.,
+                    "short messages still shrink to their text"
+                );
+                assert_eq!(
+                    bubble.corner_radii.top_left.0 * 2.,
+                    bubble.bounds.size.height.0
+                );
+                assert_eq!(
+                    bubble.corner_radii.top_left,
+                    bubble.corner_radii.bottom_left
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]

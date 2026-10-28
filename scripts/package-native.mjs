@@ -38,9 +38,14 @@ export function previewVersion(version) {
 }
 // hdiutil's -srcfolder estimate fell short of the app on the macOS 15
 // runner ("No space left on device" inside the image), so the staging
-// image is sized from its contents, with headroom for file system metadata.
+// image is sized from its contents, with headroom for file system metadata:
+// a fifth more plus 16 MiB, and never less than 64 MiB over the contents.
 export function dmgMegabytes(bytes) {
-  return Math.ceil((bytes * 1.2) / 2 ** 20) + 16;
+  const MiB = 2 ** 20;
+  return Math.max(
+    Math.ceil((bytes * 1.2) / MiB) + 16,
+    Math.ceil(bytes / MiB) + 64,
+  );
 }
 async function folderBytes(path) {
   const info = await lstat(path);
@@ -57,16 +62,43 @@ function run(command, args, options = {}) {
     ...options,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0)
-    throw new Error(`${command} failed (${result.status})`);
+  if (result.status !== 0) {
+    const error = new Error(`${command} failed (${result.status})`);
+    error.status = result.status;
+    throw error;
+  }
   return result;
 }
+
+// stapler's EX_NOHOST (68) can indicate a ticket-service/network failure.
+// Retry it boundedly; every other status still stops packaging immediately.
+export async function runStapler(
+  action,
+  file,
+  { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {},
+) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      run("xcrun", ["stapler", action, file]);
+      return;
+    } catch (error) {
+      if (error.status !== 68 || attempt === 5) throw error;
+      const delay = attempt * 10_000;
+      console.warn(
+        `Apple ticket service unavailable during ${action}; retrying in ${delay / 1000}s (${attempt}/5)`,
+      );
+      await wait(delay);
+    }
+  }
+}
+
 async function notices(directory) {
   await mkdir(directory, { recursive: true });
   for (const file of [
     "LICENSE",
     "NOTICE",
     "docs/native/LICENSE-GPUI-APACHE",
+    "docs/native/LICENSE-MERMAID-MIT",
     "crates/gespan-gpui/assets/hugeicons.LICENSE",
     "crates/gespan-gpui/assets/dark-plus.LICENSE",
     "crates/gespan-gpui/assets/native-editor.LICENSE.txt",
@@ -196,8 +228,8 @@ export async function packageNative({
           `Apple did not accept ${basename(file)} for notarization`,
         );
       if (staple) {
-        run("xcrun", ["stapler", "staple", staple]);
-        run("xcrun", ["stapler", "validate", staple]);
+        await runStapler("staple", staple);
+        await runStapler("validate", staple);
       }
     };
     if (developerId) {
@@ -232,6 +264,8 @@ export async function packageNative({
       "-ov",
       "-format",
       "UDZO",
+      "-fs",
+      "HFS+",
       dmg,
     ]);
     if (developerId) {

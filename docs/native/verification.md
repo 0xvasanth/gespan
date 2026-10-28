@@ -1,7 +1,8 @@
 # Native verification
 
 Status recorded on October 22, 2026, on macOS Apple Silicon. These are local
-results, not a release certification. See [preview limitations](parity.md) for
+results, not a release certification. Later dated sections supplement this
+snapshot. See [preview limitations](parity.md) for
 remaining runtime and platform work.
 
 ## Recorded results

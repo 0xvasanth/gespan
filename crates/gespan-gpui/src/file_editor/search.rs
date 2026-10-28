@@ -77,7 +77,7 @@ impl FileEditor {
             .py_1()
             .border_b_1()
             .border_color(stroke())
-            .font_family(crate::markdown::PILOT)
+            .font_family(crate::fonts::monospace())
             .child(
                 icon_action(
                     "toggle-replace",

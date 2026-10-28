@@ -73,7 +73,7 @@ impl Shell {
                 }
                 TitleTab::Session(tab) => {
                     self.workspace.tabs.contains(tab) && {
-                        let id = self.workspace.tab_focus(*tab);
+                        let id = self.workspace.scope_pane(*tab);
                         self.session_summaries
                             .contains_key(&self.workspace.session_for_pane(id))
                             && self
@@ -144,6 +144,7 @@ impl Shell {
             .pilots
             .as_ref()
             .is_none_or(|m| m.read(cx).active.as_deref() != Some(&id))
+            || self.redirect_pilot_to_pane(&id, cx)
         {
             return;
         }
@@ -344,6 +345,7 @@ impl Shell {
             self.workspace.active =
                 session_active.filter(|id| self.workspace.tab_of(*id).is_some());
         }
+        self.settle_pilot_panes(window, cx);
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);

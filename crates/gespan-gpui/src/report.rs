@@ -5,7 +5,6 @@
 //! reads is what is saved.
 use crate::{
     input::{self, Input},
-    markdown::PILOT,
     theme::*,
 };
 use gespan_core::diagnostics::{
@@ -695,7 +694,7 @@ impl ReportSheet {
                                 .h(px(PREVIEW_LINE))
                                 .text_size(px(11.))
                                 .line_height(px(PREVIEW_LINE))
-                                .font_family(PILOT)
+                                .font_family(crate::fonts::monospace())
                                 .text_color(content(0.8))
                                 .whitespace_nowrap()
                                 .child(text[ix].clone())

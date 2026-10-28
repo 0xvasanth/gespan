@@ -11,6 +11,7 @@ mod edit_last_turn;
 #[cfg(test)]
 mod empty_arcade_tests;
 mod follow_up;
+pub(crate) mod git_actions;
 mod history;
 mod hold;
 pub(crate) use hold::HoldChanged;
@@ -144,6 +145,8 @@ enum ComposerMenu {
     Workspace,
     /// A Pilot's model setting pill: 0 is effort, then each model control.
     Setting(usize),
+    /// The commit pill's chevron above the composer.
+    GitActions,
 }
 struct OpenMenu {
     kind: ComposerMenu,
@@ -160,6 +163,10 @@ pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
 pub(crate) struct Conversation {
     editing_last_turn: edit_last_turn::State,
     btw: Option<Entity<btw::Btw>>,
+    /// The composer box the /btw sheet morphs out of, and how visible the
+    /// composer is under the sheet.
+    btw_home: (AnchorSlot, f32),
+    _btw_observer: Option<Subscription>,
     pub(crate) summary: Session,
     remote_state: remote::State,
     remote_plans: remote_plans::State,
@@ -190,6 +197,8 @@ pub(crate) struct Conversation {
     file_drag: bool,
     attachment_error: Option<String>,
     app_environment: std::collections::HashMap<String, String>,
+    /// The running turn's policy, independent of the next composer's mode.
+    pub(crate) app_read_only: bool,
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
     orchestration_error: Option<String>,
@@ -249,6 +258,14 @@ pub(crate) struct Conversation {
     access_anchor: AnchorSlot,
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
+    git_action_anchor: AnchorSlot,
+    /// Files this session's edit tools changed, across its whole history.
+    session_edits: Vec<String>,
+    /// Where `session_edits` stand in Git: uncommitted ones show the pill.
+    session_git: gespan_core::git::SessionChanges,
+    /// The session's latest action commit is on no remote yet: the pill offers Push.
+    session_unpushed: bool,
+    session_edits_generation: u64,
     branch_anchor: AnchorSlot,
     context_anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
@@ -360,6 +377,13 @@ impl Conversation {
     }
     pub(crate) fn set_draft_text(&mut self, text: String, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
+    }
+    pub(crate) fn archive_shortcut_blocked(&self, cx: &gpui::App) -> bool {
+        self.menu.is_some()
+            || self.response_menu.is_some()
+            || self.git_picker.is_some()
+            || self.needs_approval()
+            || self.input.read(cx).is_composing()
     }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
@@ -577,6 +601,7 @@ impl Conversation {
             let shown = review.read(cx).shown();
             this.transcript
                 .update(cx, |view, cx| view.set_review_shown(shown, cx));
+            cx.notify();
         });
         let transcript = cx.new(|_| {
             let mut view = TranscriptView::new();
@@ -612,6 +637,8 @@ impl Conversation {
         Self {
             editing_last_turn: Default::default(),
             btw: None,
+            btw_home: (AnchorSlot::default(), 1.),
+            _btw_observer: None,
             store,
             pilot_turn: 0,
             submission_generation: 0,
@@ -639,6 +666,7 @@ impl Conversation {
             file_drag: false,
             attachment_error: None,
             app_environment: Default::default(),
+            app_read_only: false,
             planning_orchestration: false,
             orchestration_plan: None,
             orchestration_error: None,
@@ -693,6 +721,11 @@ impl Conversation {
             access_anchor: AnchorSlot::default(),
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
+            git_action_anchor: AnchorSlot::default(),
+            session_edits: Vec::new(),
+            session_git: Default::default(),
+            session_unpushed: false,
+            session_edits_generation: 0,
             branch_anchor: AnchorSlot::default(),
             context_anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
@@ -723,7 +756,13 @@ impl Conversation {
             return;
         }
         self.transcript
-            .update(cx, |view, cx| view.reveal_search(row, &query, cx));
+            .update(cx, |view, cx| view.reveal_saved_search(row, &query, cx));
+    }
+    /// Reads this conversation's older turns for the transcript as it scrolls.
+    pub(crate) fn history_pager(&self) -> crate::transcript::HistoryPager {
+        let store = self.store.clone();
+        let id = self.summary.id;
+        Arc::new(move |before, all| locked(&store)?.load_before(id, before, all))
     }
     /// Scrolls the transcript to a sub-agent block and opens it.
     pub(crate) fn reveal_tool(&mut self, tool_id: &str, cx: &mut Context<Self>) {
@@ -773,16 +812,30 @@ impl Conversation {
             let git = crate::git_cache::load(Path::new(execution_cwd)).ok();
             (
                 locked(&store)
-                    .and_then(|s| s.load(id))
-                    .map(|history| crate::transcript::PreparedHistory::new(history.rows, pilot)),
+                    .and_then(|s| {
+                        let history = s.load(id)?;
+                        let edits = if pilot {
+                            Vec::new()
+                        } else {
+                            git_actions::restored_session_edits(&s, id, &history.rows)?
+                        };
+                        Ok((history, edits))
+                    })
+                    .map(|(history, edits)| {
+                        (
+                            crate::transcript::PreparedHistory::new(history.rows, pilot),
+                            edits,
+                        )
+                    }),
                 git,
                 settings,
                 locked(&store).and_then(|s| s.context_usage(id)),
                 locked(&store).and_then(|s| s.follow_ups(id)),
+                locked(&store).and_then(|s| s.history_before(id)),
             )
         });
         cx.spawn(async move |this, cx| {
-            let (result, git, settings, context, follow_ups) = work.await;
+            let (result, git, settings, context, follow_ups, before) = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 this.branch = git.as_ref().and_then(|s| s.current.clone());
@@ -808,7 +861,7 @@ impl Conversation {
                 // historical turn provenance still belongs to the loaded rows.
                 if let Ok(Some(settings)) = &settings {
                     this.transcript
-                        .update(cx, |view, _| view.turns = settings.turns.clone());
+                        .update(cx, |view, _| view.set_turns(settings.turns.clone()));
                     this.settings.turns = settings.turns.clone();
                 }
                 if let Ok(Some(mut settings)) = settings
@@ -836,9 +889,13 @@ impl Conversation {
                     this.settings.environment = environment;
                 }
                 match result {
-                    Ok(history) => {
-                        this.transcript
-                            .update(cx, |v, cx| v.install_prepared_history(history, cx));
+                    Ok((history, edits)) => {
+                        this.remember_session_edits(edits);
+                        let pager = this.history_pager();
+                        this.transcript.update(cx, |v, cx| {
+                            v.install_prepared_history(history, cx);
+                            v.set_history_pager(before.ok().flatten(), Some(pager));
+                        });
                         this.status = "Ready".into();
                         this.loaded = true;
                         this.finish_pending_reveals(cx);
@@ -854,6 +911,12 @@ impl Conversation {
             });
         })
         .detach();
+    }
+    /// The quick composer's files, sent with its prompt.
+    pub(crate) fn quick_attach(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
+        if !paths.is_empty() {
+            self.add_attachments(paths, cx);
+        }
     }
     pub(crate) fn quick_submit(
         &mut self,
@@ -1073,6 +1136,12 @@ impl Conversation {
         let summary = self.summary.clone();
         let store = self.store.clone();
         let cancel = self.cancel.clone();
+        // Composer modes reset after Send; the thread grant and running turn's
+        // access policy must outlive that reset and edits to the next draft.
+        self.settings.operator_enabled |= self.settings.operator;
+        self.app_read_only = self.settings.plan
+            || self.settings.orchestrator
+            || self.settings.access == AccessMode::ReadOnly;
         let mut settings = self.settings.clone();
         if let Some(model) = self.model_info() {
             for control in &model.controls {
@@ -1479,7 +1548,7 @@ impl Conversation {
                             } else {
                                 this.finish_orchestration_plan(cx);
                             }
-                            this.settings.turns = this.transcript.read(cx).turns.clone();
+                            this.settings.turns = this.transcript.read(cx).window_turns();
                             this.save_settings(cx);
                             this.refresh_git(cx);
                             this.run_history_actions(cx);
@@ -1754,6 +1823,7 @@ impl Conversation {
         if self.settings.pilot.is_some() || self.is_remote() {
             return;
         }
+        self.collect_session_edits(cx);
         let cwd = self.execution_cwd().to_owned();
         self.review.update(cx, |review, cx| {
             if review.session().1 == cwd {
@@ -1996,6 +2066,9 @@ impl Conversation {
             .detach();
     }
     fn menu_choice(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.git_action_choice(id, cx) {
+            return;
+        }
         if let Some(choice) = id.strip_prefix("recent-model:") {
             if let Ok((provider, model)) = serde_json::from_str::<(String, Option<String>)>(choice)
                 && let Some(kind) = Kind::parse(&provider)
@@ -2012,7 +2085,7 @@ impl Conversation {
                 let kind = Kind::from_id(&self.summary.provider);
                 if center.read(cx).book.exists(kind, id) {
                     let profile = center.read(cx).profile(id);
-                    self.switch_usage_account(profile, cx);
+                    self.switch_account(profile, cx);
                 }
             }
             return;
@@ -2283,6 +2356,7 @@ impl Conversation {
                     self.settings.pending_provider_switch =
                         Some(gespan_core::agent::ProviderSwitch {
                             from: self.summary.provider.clone(),
+                            model_label: self.model_label().to_string(),
                             cwd: self.execution_cwd().to_owned(),
                             model: self.model.clone(),
                             model_settings: self.settings.model_settings.clone(),
@@ -2359,6 +2433,7 @@ impl Conversation {
             ComposerMenu::Access => &self.access_anchor,
             ComposerMenu::Account => &self.account_anchor,
             ComposerMenu::Workspace => &self.workspace_anchor,
+            ComposerMenu::GitActions => &self.git_action_anchor,
             ComposerMenu::Setting(ix) => self
                 .pilot_ui
                 .setting_anchors
@@ -2570,6 +2645,12 @@ impl Conversation {
                 );
                 ("Add to message", items, 250., MenuStyle::Composer)
             }
+            ComposerMenu::GitActions => (
+                "Git actions",
+                self.git_action_menu_items(cx),
+                250.,
+                MenuStyle::Composer,
+            ),
             // ModelPicker: a "Model" row whose flyout lists the models.
             ComposerMenu::Model => {
                 let list = cx.new(|cx| {
@@ -2780,8 +2861,6 @@ impl Conversation {
     }
     fn composer(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let radius = 12.;
-        let blur = composer_blur();
-        let fill = composer_fill();
         let command = if self.follow_ups.draft_selected {
             Some(input::Command::Draft)
         } else if self.settings.orchestrator {
@@ -2923,31 +3002,8 @@ impl Conversation {
                         }),
                     )
                     .child(self.completion.read(cx).composer_probe())
-                    .child(
-                        canvas(
-                            |_, _, _| {},
-                            move |bounds, _, window, _| {
-                                let surface = gpui::fill(bounds, fill).corner_radii(px(radius - 1.));
-                                #[cfg(target_os = "macos")]
-                                let surface = if blur > 0. {
-                                    surface.border_color(
-                                        gpui_apple::metal_renderer::backdrop_blur_marker(
-                                            blur * window.scale_factor(),
-                                        ),
-                                    )
-                                } else {
-                                    surface
-                                };
-                                #[cfg(not(target_os = "macos"))]
-                                let _ = blur;
-                                window.paint_quad(surface);
-                            },
-                        )
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full(),
-                    )
+                    .child(self.btw_home.0.probe())
+                    .child(composer_surface(radius))
                     .children(self.attachment_chips(cx))
                     .children(dictation::bar(&self.dictation, &self.input, cx))
                     .child(
@@ -3337,56 +3393,33 @@ impl Conversation {
         let draft = self.draft_active(cx);
         let enabled = self.send_allowed(has_value, cx);
         let no_agent = (!busy).then(|| self.no_agent_hint(cx)).flatten();
-        let accent = primary_action(enabled);
-        div()
-            .id("send-or-stop")
-            .role(Role::Button)
-            .aria_label(if busy {
+        send_button(
+            "send-or-stop",
+            if busy {
                 "Stop"
             } else if draft {
                 "Save draft"
             } else {
                 "Send"
-            })
-            .debug_selector(|| "send-or-stop".into())
-            .when_some(no_agent, |d, hint| {
-                d.aria_description(hint)
-                    .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
-            })
-            .cursor_pointer()
-            .flex_shrink_0()
-            .size(px(26.))
-            .rounded_md()
-            .flex()
-            .items_center()
-            .justify_center()
-            .map(|d| match accent {
-                Some((fill, _)) => d
-                    .bg(fill)
-                    .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
-                None => d
-                    .bg(white(if enabled { 1. } else { 0.3 }))
-                    .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
-            })
-            .map(|d| {
-                let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
-                if busy {
-                    d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
-                } else {
-                    d.child(icon("send", 14.).text_color(ink))
-                }
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !enabled {
-                    return;
-                }
-                if busy {
-                    this.stop(cx);
-                } else {
-                    this.send(cx);
-                }
-            }))
+            },
+            busy,
+            enabled,
+        )
+        .debug_selector(|| "send-or-stop".into())
+        .when_some(no_agent, |d, hint| {
+            d.aria_description(hint)
+                .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !enabled {
+                return;
+            }
+            if busy {
+                this.stop(cx);
+            } else {
+                this.send(cx);
+            }
+        }))
     }
     // EmptySession.tsx: the composer centred under its question, or resting
     // where it will dock once a neighbouring pane squeezes it narrower than
@@ -3506,7 +3539,7 @@ pub(crate) fn preferred_effort(provider: &str, cx: &gpui::App) -> Option<String>
     cx.try_global::<crate::settings::Preferences>()
         .and_then(|prefs| prefs.provider_efforts.get(provider).cloned())
 }
-fn effort_name(value: &str) -> String {
+pub(crate) fn effort_name(value: &str) -> String {
     match value {
         "default" => "Default",
         "none" => "None",
@@ -3654,12 +3687,12 @@ mod composer_motion_tests {
                                             <= 2.
                                 })
                                 .expect("the composer paints React's content-3% surface");
-                            #[cfg(target_os = "macos")]
+                            #[cfg(any(target_os = "macos", target_os = "windows"))]
                             assert_eq!(
                                 surface.border_color,
-                                gpui_apple::metal_renderer::backdrop_blur_marker(24. * scale)
+                                gpui::backdrop_blur_marker(24. * scale)
                             );
-                            #[cfg(not(target_os = "macos"))]
+                            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                             let _ = surface;
                             assert!(window.painted_quads().iter().any(|quad| {
                                 quad.border_color == content(0.2)
@@ -3815,11 +3848,20 @@ impl Render for Conversation {
         }
         self.attachment_drop_target("session-chat", cx)
             .relative()
-            .capture_action(cx.listener(|this, _: &crate::shell::DismissMenu, _, cx| {
-                if this.close_remote_plan(cx) {
-                    cx.stop_propagation();
-                }
-            }))
+            .capture_action(
+                cx.listener(|this, _: &crate::shell::DismissMenu, window, cx| {
+                    if this.close_remote_plan(cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // BtwSheet: Esc anywhere in this pane folds an open sheet away.
+                    if let Some(btw) = this.btw.clone()
+                        && btw.update(cx, |btw, cx| btw.dismiss(window, cx))
+                    {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .flex()
             .flex_col()
             .size_full()
@@ -3833,13 +3875,40 @@ impl Render for Conversation {
                         .fold(panel, |panel, region| panel.ignore(region.clone())),
                 )
             })
-            .child(
-                div().flex_1().min_h_0().child(
-                    self.transcript
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                ),
-            )
+            .child({
+                let pill = self.git_action_pill(cx);
+                let beside = pill.is_some();
+                self.transcript
+                    .update(cx, |t, cx| t.set_jump_beside_pill(beside, cx));
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        self.transcript
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    )
+                    // Level with the transcript's jump button, which moves to
+                    // the column's other end.
+                    .children(pill.map(|pill| {
+                        div()
+                            .absolute()
+                            .bottom(px(8.))
+                            .left_0()
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(COMPOSER_COLUMN))
+                                    .px(px(16.))
+                                    .flex()
+                                    .child(pill),
+                            )
+                    }))
+            })
             .child(
                 div()
                     .flex_shrink_0()
@@ -3850,6 +3919,7 @@ impl Render for Conversation {
                         div()
                             .w_full()
                             .max_w(px(COMPOSER_COLUMN))
+                            .opacity(self.btw_home.1)
                             .flex()
                             .flex_col()
                             .px(px(10.))
@@ -3912,6 +3982,68 @@ fn tool_pill(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div>
         .bg(content(0.1))
         .text_color(content(1.))
         .hover(|s| s.bg(content(0.15)))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+/// `[data-composer-box]::before`: the frosted (or, in light themes, solid)
+/// surface inside the composer's border.
+fn composer_surface(radius: f32) -> impl IntoElement {
+    let blur = composer_blur();
+    let fill = composer_fill();
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let surface = gpui::fill(bounds, fill).corner_radii(px(radius - 1.));
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            let surface = if blur > 0. {
+                surface.border_color(gpui::backdrop_blur_marker(blur * window.scale_factor()))
+            } else {
+                surface
+            };
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let _ = blur;
+            window.paint_quad(surface);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+/// ComposerAction: the solid send button, or a stop square while busy.
+fn send_button(
+    id: &'static str,
+    label: &'static str,
+    busy: bool,
+    enabled: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let accent = primary_action(enabled);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .cursor_pointer()
+        .flex_shrink_0()
+        .size(px(26.))
+        .rounded_md()
+        .flex()
+        .items_center()
+        .justify_center()
+        .map(|d| match accent {
+            Some((fill, _)) => d
+                .bg(fill)
+                .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
+            None => d
+                .bg(white(if enabled { 1. } else { 0.3 }))
+                .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
+        })
+        .map(|d| {
+            let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
+            if busy {
+                d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
+            } else {
+                d.child(icon("send", 14.).text_color(ink))
+            }
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 // GitPickerTrigger: the quiet `h-6` controls in the bar under the box.

@@ -1263,6 +1263,9 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    /// Interface zoom over the display scale: layout sees a viewport this many
+    /// times smaller and paints this many times larger, like browser zoom.
+    content_zoom: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -2042,7 +2045,10 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .update(&mut cx, |_, window, cx| {
+                        let event = event.unzoomed(window.content_zoom);
+                        window.dispatch_event(event, cx)
+                    })
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
             })
@@ -2163,6 +2169,7 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            content_zoom: 1.,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2789,9 +2796,10 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.mouse_position = self.platform_window.mouse_position();
+        let zoom = self.content_zoom;
+        self.scale_factor = self.platform_window.scale_factor() * zoom;
+        self.viewport_size = self.platform_window.content_size().map(|v| v / zoom);
+        self.mouse_position = self.platform_window.mouse_position().map(|v| v / zoom);
 
         self.refresh();
 
@@ -2890,7 +2898,8 @@ impl Window {
 
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
-        self.platform_window.resize(size);
+        self.platform_window
+            .resize(size.map(|v| v * self.content_zoom));
     }
 
     /// Returns whether or not the window is currently fullscreen
@@ -2996,7 +3005,8 @@ impl Window {
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
-        self.platform_window.show_window_menu(position)
+        self.platform_window
+            .show_window_menu(position.map(|v| v * self.content_zoom))
     }
 
     /// Handle window movement for Linux and macOS.
@@ -3097,6 +3107,24 @@ impl Window {
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
         self.scale_factor = scale_factor;
         self.refresh();
+    }
+
+    /// The interface zoom set by [`Window::set_content_zoom`].
+    pub fn content_zoom(&self) -> f32 {
+        self.content_zoom
+    }
+
+    /// Zooms everything the window draws, including hard-coded pixel sizes:
+    /// layout runs against a viewport `zoom` times smaller, painting runs at a
+    /// scale factor `zoom` times larger, and platform coordinates are mapped
+    /// both ways.
+    pub fn set_content_zoom(&mut self, zoom: f32, cx: &mut App) {
+        let zoom = zoom.clamp(0.25, 4.);
+        if (zoom - self.content_zoom).abs() < f32::EPSILON {
+            return;
+        }
+        self.content_zoom = zoom;
+        self.bounds_changed(cx);
     }
 
     /// The size of an em for the base font of the application. Adjusting this value allows the

@@ -353,7 +353,7 @@ impl SettingsView {
                             .bg(content(0.03))
                             .text_size(px(10.))
                             .child(
-                                div().font_family(crate::markdown::PILOT).child(
+                                div().font_family(crate::fonts::monospace()).child(
                                     inspection
                                         .as_ref()
                                         .map(|i| i.path.display().to_string())
@@ -771,7 +771,7 @@ impl SettingsView {
     }
     pub(super) fn management_overlay(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let target = self.management.as_ref()?.target.clone();
@@ -809,66 +809,64 @@ impl SettingsView {
                     .into_any_element(),
             );
         }
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .occlude()
-                .child(crate::modal::scrim("settings-management-scrim"))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    div()
-                        .id("settings-management-dialog")
-                        .debug_selector(|| "settings-management-dialog".into())
-                        .role(Role::Dialog)
-                        .aria_label(title.clone())
-                        .w(px(if matches!(target, Target::Mcp) {
-                            560.
-                        } else {
-                            448.
-                        }))
-                        .max_w_full()
-                        .relative()
-                        .rounded(px(crate::modal::RADIUS))
-                        .border_1()
-                        .border_color(content(crate::modal::BORDER))
-                        .child(crate::modal::surface(crate::modal::RADIUS - 1.))
-                        .child(
-                            div()
-                                .p_4()
-                                .border_b_1()
-                                .border_color(content(0.1))
-                                .text_size(px(14.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_3()
-                                .child(title)
-                                .child(
-                                    secondary_button(
-                                        "close-management",
-                                        "Close dialog",
-                                        false,
-                                        self.management.as_ref().is_some_and(|e| e.busy),
-                                    )
-                                    .border_0()
-                                    .size_6()
-                                    .p_0()
-                                    .justify_center()
-                                    .child(icon("x", 14.))
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| this.close_management(window, cx),
-                                    )),
-                                ),
-                        )
-                        .child(div().p_4().child(form)),
-                )
-                .into_any_element(),
-        )
+        let overlay = div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .child(crate::modal::scrim("settings-management-scrim"))
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .id("settings-management-dialog")
+                    .debug_selector(|| "settings-management-dialog".into())
+                    .role(Role::Dialog)
+                    .aria_label(title.clone())
+                    .w(px(if matches!(target, Target::Mcp) {
+                        560.
+                    } else {
+                        448.
+                    }))
+                    .max_w_full()
+                    .relative()
+                    .rounded(px(crate::modal::RADIUS))
+                    .border_1()
+                    .border_color(content(crate::modal::BORDER))
+                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
+                    .child(
+                        div()
+                            .p_4()
+                            .border_b_1()
+                            .border_color(content(0.1))
+                            .text_size(px(14.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(title)
+                            .child(
+                                secondary_button(
+                                    "close-management",
+                                    "Close dialog",
+                                    false,
+                                    self.management.as_ref().is_some_and(|e| e.busy),
+                                )
+                                .border_0()
+                                .size_6()
+                                .p_0()
+                                .justify_center()
+                                .child(icon("x", 14.))
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| this.close_management(window, cx),
+                                )),
+                            ),
+                    )
+                    .child(div().p_4().child(form)),
+            );
+        Some(crate::modal::window_overlay(window, overlay).into_any_element())
     }
 }
 fn scopes(provider: &str) -> &'static [&'static str] {
@@ -896,7 +894,7 @@ fn form_field(label: &str, input: Entity<Input>, height: f32) -> AnyElement {
                 .border_color(content(0.1))
                 .bg(content(0.04))
                 .when(label == "JSON configuration", |d| {
-                    d.font_family(crate::markdown::PILOT)
+                    d.font_family(crate::fonts::monospace())
                 })
                 .child(input),
         )

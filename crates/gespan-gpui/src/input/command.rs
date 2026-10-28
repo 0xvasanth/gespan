@@ -109,9 +109,9 @@ impl Input {
         let mut input = Self::new(cx);
         input.label = "By-the-way question".into();
         input.placeholder = "Ask a side question…".into();
-        input.min_height = 48.;
-        input.height = 48.;
-        input.max_height = 152.;
+        // `rows={1}`: the side composer has no workspace bar under it.
+        input.min_height = 22.;
+        input.height = 22.;
         input
     }
 

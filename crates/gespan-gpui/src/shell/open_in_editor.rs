@@ -117,7 +117,7 @@ impl Shell {
             12.
         };
         self.workspace.right_panel_width
-            >= crate::right_panel::TAB_ICONS_WIDTH
+            >= crate::right_panel::tab_icons_width(self.right_tab_count(cx))
                 + crate::right_panel::diff_stat_width(git.stats.as_ref())
                 + CORNER_BUTTONS_WIDTH
                 + OPEN_IN_EDITOR_WIDTH
@@ -874,9 +874,15 @@ mod tests {
             .unwrap();
         for boxy in [false, true] {
             set_layout(window, visual, false, boxy);
-            for (width, shown) in [(crate::right_panel::WIDTH_MIN, false), (420., true)] {
+            // Two tool tabs leave room for the button even at the minimum
+            // width; a docked terminal adds a third tab and squeezes it out.
+            let min = crate::right_panel::WIDTH_MIN;
+            for (terminal, width, shown) in
+                [(true, min, false), (false, min, true), (true, 420., true)]
+            {
                 window
                     .update(visual, |shell, _, cx| {
+                        shell.workspace.preferences.terminal_in_panel = terminal;
                         shell.workspace.right_panel_width = width;
                         shell.invalidate_chrome(cx);
                         cx.notify();
@@ -887,7 +893,7 @@ mod tests {
                 assert_eq!(
                     visual.debug_bounds("titlebar-open-in-editor").is_some(),
                     shown,
-                    "boxy {boxy}, panel {width}px"
+                    "boxy {boxy}, terminal tab {terminal}, panel {width}px"
                 );
                 assert!(visual.debug_bounds("toggle-right-panel").is_some());
             }
