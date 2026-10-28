@@ -2,7 +2,7 @@
 
 The native app is still experimental. A feature being present in source does not
 establish runtime or platform parity with the production React/Tauri app. See
-[verification](verification.md) for recorded checks.
+[native checks](verification.md) for the commands to check it locally.
 
 ## Providers
 
@@ -42,7 +42,7 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
 | Notes | Runtime/visual checks and composer note-card presentation |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
-| Board | Runtime/visual checks in `bun run native:dev` and the Tauri app (see the [Board #174 verification script](verification.md#board-174-verification-script)). Both apps read and write the same board tables, so boards, cards and everything on them show in both. Details and known differences are listed under the table in [Board details](#board-details) |
+| Board | Runtime/visual checks in `bun run native:dev` and the Tauri app. Both apps read and write the same board tables, so boards, cards and everything on them show in both. Details and known differences are listed under the table in [Board details](#board-details) |
 | Pilots | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |

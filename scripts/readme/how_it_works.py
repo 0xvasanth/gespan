@@ -33,6 +33,9 @@ ASSETS = ROOT / "docs" / "assets"
 FPS = 20
 SCALE = 1.2  # device pixels per CSS pixel: 1040x660 -> 1248x792
 COLOURS = 256
+# Small, exact colours the eye checks first (the window's traffic lights).
+# They cover too few pixels to be sure of a palette entry, so keep them fixed.
+PINNED = np.array([[255, 95, 87], [254, 188, 46], [40, 200, 64]], dtype=np.float32)
 
 
 def capture(theme: str, frames: list[int] | None = None) -> list[Image.Image]:
@@ -75,13 +78,15 @@ def build_palette(colours: np.ndarray, counts: np.ndarray) -> np.ndarray:
     pts = colours.astype(np.float32)
     weight = np.sqrt(counts).astype(np.float32)
     rng = np.random.default_rng(0)
-    centres = pts[rng.choice(len(pts), COLOURS, replace=False, p=weight / weight.sum())]
+    free = COLOURS - len(PINNED)
+    centres = np.concatenate([PINNED, pts[rng.choice(len(pts), free, replace=False, p=weight / weight.sum())]])
     for _ in range(16):
         label = nearest(pts, centres)
         total = np.zeros_like(centres)
         np.add.at(total, label, pts * weight[:, None])
         mass = np.bincount(label, weights=weight, minlength=COLOURS)[:, None]
         used = mass[:, 0] > 0
+        used[: len(PINNED)] = False
         centres[used] = total[used] / mass[used]
     return np.clip(np.rint(centres), 0, 255).astype(np.float32)
 
