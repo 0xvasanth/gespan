@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-core"
-version = "0.0.1-beta"
+version = "0.0.2-beta"
 dependencies = [
  "async-channel",
  "base64 0.23.1",
@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-gpui"
-version = "0.0.1-beta"
+version = "0.0.2-beta"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-models"
-version = "0.0.1-beta"
+version = "0.0.2-beta"
 dependencies = [
  "dirs 7.0.0",
  "sha2 0.11.1",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-speech"
-version = "0.0.1-beta"
+version = "0.0.2-beta"
 dependencies = [
  "cpal",
  "gespan-models",

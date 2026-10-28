@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2-beta] - 2026-10-29
+
+This beta is still not signed with an Apple Developer ID or a Windows
+code-signing certificate. On macOS, open it the first time with Control-click →
+Open; on Windows, choose **More info → Run anyway** in SmartScreen.
+
+### Added
+
+- Gespan Native on Windows draws its title bar in the tab row, with backdrop
+  blur, its app icon and no console windows.
+- Gespan Native on Linux has Wayland window chrome with client-side controls,
+  X11 window modes and its app icon.
+- Real monospace fonts on Windows and Linux, and a Nerd Font in the terminal.
+- Mermaid diagrams render in Markdown and conversations.
+- Gespan Native remembers its window size and display mode, and has a full
+  menu bar, per-project theme colours, and `/stage` and `/commit`.
+
+### Fixed
+
+- On the Board in Gespan Native, Space lifts a focused card for a keyboard move
+  instead of opening its drawer.
+- Escape on the Board closes the innermost open layer (a field, a menu, the
+  drawer, the selection) and no longer leaves the Board.
+- The New card form's Column, Priority, Due date, Labels and Projects menus open
+  under their chips instead of the window's top-left corner.
+- Two cards can no longer be linked twice, for example as both "blocked by" and
+  "related to".
+- The Gespan Native macOS DMG no longer fails to package on macOS 15.
+
 ## [0.0.1-beta] - 2026-10-27
 
 The first Gespan beta. Version numbering restarts here, so installs of 0.16.0 or

@@ -102,7 +102,7 @@ resolver = "2"
 members = [".", "../gespan-core"]
 
 [workspace.package]
-version = "0.0.1-beta"
+version = "0.0.2-beta"
 edition = "2021"
 license = "MIT"
 
