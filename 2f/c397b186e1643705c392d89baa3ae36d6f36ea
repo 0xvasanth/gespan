@@ -1,0 +1,46 @@
+crates/gespan-core/src/flow/fixtures/deliver_a_ticket.json
+  s_a5cee28439a8cc::t_af6328f6357765 1
+docs/building.md
+  s_a5cee28439a8cc::t_af6328f6357765 98-99
+docs/native/parity.md
+  s_a5cee28439a8cc::t_af6328f6357765 5,45
+.gitignore
+  s_a5cee28439a8cc::t_af6328f6357765 61-63
+scripts/readme/how_it_works.py
+  s_a5cee28439a8cc::t_af6328f6357765 36-38,81-82,89
+.github/workflows/native-release.yml
+  s_a5cee28439a8cc::t_af6328f6357765 282-284,290,301,321-325,327-330,332-333,336-337,345-351,353,357,359
+docs/native/README.md
+  s_a5cee28439a8cc::t_af6328f6357765 82-88,95-99,173,192-193
+README.md
+  s_a5cee28439a8cc::t_af6328f6357765 11-12,30,35,41-42,51-65,78,95-97,105-115,193-205,207-208,210-218,247,289,291-293,295-300,312-313,320-374
+  s_a5cee28439a8cc::t_5b80d1d1ea8cf0 375
+scripts/release-channel.cjs
+  s_a5cee28439a8cc::t_af6328f6357765 67-69,72-76,97-100,102,106,114-121,123,128-144,183,199-214,216,221-222
+docs/native/verification.md
+  s_a5cee28439a8cc::t_af6328f6357765 1,3
+.github/workflows/release.yml
+  s_a5cee28439a8cc::t_af6328f6357765 404-412,417,444-447,475-476
+scripts/readme/how-it-works.html
+  s_a5cee28439a8cc::t_af6328f6357765 193
+scripts/release-channel.test.cjs
+  s_a5cee28439a8cc::t_af6328f6357765 7,168-169,172,174,230-234,239,245-246,250,252-296,343-363
+docs/native/migration.md
+  s_a5cee28439a8cc::t_af6328f6357765 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fc397b186e1643705c392d89baa3ae36d6f36ea",
+  "prompts": {},
+  "sessions": {
+    "s_a5cee28439a8cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4985fc8-80f1-4d45-8544-930443fa0533",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
