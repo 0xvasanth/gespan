@@ -1,0 +1,29 @@
+docs/native/README.md
+  s_a5cee28439a8cc::t_fb21bc969695f9 165,184-185
+crates/gespan-core/src/flow/fixtures/deliver_a_ticket.json
+  s_a5cee28439a8cc::t_cf10e7962587d8 1
+docs/native/verification.md
+  s_a5cee28439a8cc::t_fb21bc969695f9 1,3
+docs/native/parity.md
+  s_a5cee28439a8cc::t_7f616ecf20b0aa 5,45
+docs/native/migration.md
+  s_a5cee28439a8cc::t_fb21bc969695f9 44
+.gitignore
+  s_a5cee28439a8cc::t_b21e30a5f3d616 61-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8e1cb75f1234417c8987a552934b5f2c79b8776",
+  "prompts": {},
+  "sessions": {
+    "s_a5cee28439a8cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4985fc8-80f1-4d45-8544-930443fa0533",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
