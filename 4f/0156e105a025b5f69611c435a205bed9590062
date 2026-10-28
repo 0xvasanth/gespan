@@ -1,0 +1,29 @@
+README.md
+  s_a5cee28439a8cc::t_a2e5b081fee87c 289,291-293,295-300
+  s_a5cee28439a8cc::t_5f000922ec18bc 95-97
+  s_a5cee28439a8cc::t_d3e522b2b03508 193-205,207-208,210-216,218
+  s_a5cee28439a8cc::t_3320db0d11df4d 312-313,320-374
+  s_a5cee28439a8cc::t_888a2fc4a8039a 11-12
+  s_a5cee28439a8cc::t_3d1a2e00431f41 35,41-42,51-64
+  s_a5cee28439a8cc::t_4ad58d4717fd78 30
+  s_a5cee28439a8cc::t_4222992114bbe1 78,247
+  s_a5cee28439a8cc::t_5590672288aa63 105-115
+  s_a5cee28439a8cc::t_687eee946d4cfa 217
+  s_a5cee28439a8cc::t_f20d6e30f84042 65,375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f0156e105a025b5f69611c435a205bed9590062",
+  "prompts": {},
+  "sessions": {
+    "s_a5cee28439a8cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4985fc8-80f1-4d45-8544-930443fa0533",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
