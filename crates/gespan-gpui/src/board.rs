@@ -1469,6 +1469,9 @@ impl BoardView {
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key != "escape" {
+            if self.arrow_into_cards(event, window, cx) {
+                cx.stop_propagation();
+            }
             return;
         }
         cx.stop_propagation();

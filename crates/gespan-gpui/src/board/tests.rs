@@ -1182,6 +1182,36 @@ fn arrows_move_focus_between_cards_and_columns(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn an_arrow_from_the_empty_board_focuses_the_first_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["First", "Second"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // A click on empty board space leaves the board itself focused.
+    click(visual, "board-column-below-1");
+    assert_eq!(focused_card(&f, visual), None);
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused_card(&f, visual), Some(card_id(&f, visual, "First")));
+    // From there the arrows move between cards as usual.
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused_card(&f, visual), Some(card_id(&f, visual, "Second")));
+    // Typing in the search field keeps its arrows.
+    click(visual, "board-search");
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused_card(&f, visual), None);
+}
+
+#[gpui::test]
+fn an_arrow_on_an_empty_board_does_nothing(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-column-below-0");
+    visual.simulate_keystrokes("right");
+    assert_eq!(focused_card(&f, visual), None);
+    f.window
+        .update(visual, |view, window, _| assert!(view.focus.is_focused(window)))
+        .unwrap();
+}
+
+#[gpui::test]
 fn space_lifts_arrows_move_and_space_drops_the_card(cx: &mut TestAppContext) {
     let f = seeded(cx, &["A", "B", "C"]);
     let a = card_id(&f, cx, "A");
