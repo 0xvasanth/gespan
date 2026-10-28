@@ -4097,6 +4097,14 @@ fn send_button(
     enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let accent = primary_action(enabled);
+    // Without an accent the button is the inverse of the surface: white with
+    // black ink on dark, black with white ink on light.
+    let light = crate::theme::is_light();
+    let (solid, ink): (fn(f32) -> gpui::Hsla, fn(f32) -> gpui::Hsla) = if light {
+        (black, white)
+    } else {
+        (white, black)
+    };
     div()
         .id(id)
         .role(Role::Button)
@@ -4113,11 +4121,11 @@ fn send_button(
                 .bg(fill)
                 .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
             None => d
-                .bg(white(if enabled { 1. } else { 0.3 }))
-                .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
+                .bg(solid(if enabled { 1. } else { 0.3 }))
+                .when(enabled, |d| d.hover(|s| s.bg(solid(0.9)))),
         })
         .map(|d| {
-            let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
+            let ink = accent.map_or(ink(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
             if busy {
                 d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
             } else {
