@@ -324,6 +324,11 @@ impl Conversation {
             .requested
             .as_ref()
             .and_then(|id| self.follow_ups.state.messages.iter().find(|m| &m.id == id))
+            .or_else(|| {
+                self.busy
+                    .then(|| self.follow_ups.state.messages.iter().find(|m| m.steer))
+                    .flatten()
+            })
             .or_else(|| self.follow_ups.state.messages.first());
         let Some(message) = message.cloned() else {
             return;
@@ -1013,6 +1018,44 @@ mod tests {
                 view.input
                     .update(cx, |input, cx| input.set_text("steering".into(), cx));
                 view.send_follow_up(true, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let control = received
+            .try_recv()
+            .expect("steering message must be delivered");
+        let Decision::Steer(message) = control.decision else {
+            panic!("expected steering")
+        };
+        assert_eq!(message.text, "steering");
+        window
+            .update(cx, |view, _, cx| {
+                view.follow_up_delivered(&message.id, cx);
+                assert_eq!(view.follow_ups.state.messages[0].text, "queued");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn plain_steer_delivers_past_queued_message(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        cx.update(|cx| {
+            cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                prefs.follow_up = "steer".into()
+            })
+        });
+        let (controls, received) = std::sync::mpsc::channel();
+        window
+            .update(cx, |view, _, cx| {
+                view.busy = true;
+                view.controls = Some(controls);
+                view.follow_ups.ready = true;
+                view.input
+                    .update(cx, |input, cx| input.set_text("queued".into(), cx));
+                view.send_follow_up(true, cx);
+                view.input
+                    .update(cx, |input, cx| input.set_text("steering".into(), cx));
+                view.send(cx);
             })
             .unwrap();
         cx.run_until_parked();
