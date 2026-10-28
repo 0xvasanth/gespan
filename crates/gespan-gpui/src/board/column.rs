@@ -828,6 +828,7 @@ impl BoardView {
             .role(Role::Group)
             .aria_label(self.column_label(&column.id))
             .w(px(COLUMN_WIDTH))
+            .relative()
             .flex_shrink_0()
             .max_h_full()
             .flex()
@@ -854,14 +855,17 @@ impl BoardView {
             .on_drop::<DraggedColumn>(
                 cx.listener(|this, column: &DraggedColumn, _, cx| this.drop_column(column, cx)),
             )
+            // Drawn over the column's top edge, so a coloured column's header
+            // lines up with its neighbours'.
             .children(column.color.as_deref().map(|color| {
                 div()
                     .id(("board-column-stripe", index))
                     .debug_selector(move || format!("board-column-stripe-{index}"))
+                    .absolute()
+                    .top(px(2.))
+                    .left(px(8.))
+                    .right(px(8.))
                     .h(px(3.))
-                    .mx(px(8.))
-                    .mt(px(2.))
-                    .flex_shrink_0()
                     .rounded_full()
                     .bg(super::style::label_color(color))
             }))

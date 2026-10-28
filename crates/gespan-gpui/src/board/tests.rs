@@ -190,6 +190,53 @@ fn the_board_switcher_lists_boards_and_opens_one(cx: &mut TestAppContext) {
     assert_eq!(open_id(&f, visual), first);
 }
 
+/// A checked menu row: its check slot, then one label filling the rest.
+fn assert_check_then_label(visual: &mut VisualTestContext, row: &str) {
+    let bounds = |visual: &mut VisualTestContext, part: String| {
+        visual
+            .debug_bounds(selector(part.clone()))
+            .unwrap_or_else(|| panic!("{part} is drawn"))
+    };
+    let whole = bounds(visual, row.to_string());
+    let check = bounds(visual, format!("{row}-check"));
+    let label = bounds(visual, format!("{row}-label"));
+    assert!(check.right() <= label.left(), "{row}: the check sits before the label");
+    assert!(
+        label.right() <= whole.right() && label.right() > whole.right() - px(12.),
+        "{row}: the label runs to the row's end, with nothing after it"
+    );
+}
+
+#[gpui::test]
+fn every_checked_menu_shows_the_check_then_the_name_once(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let long = "A board name long enough that it has to be cut short in the menu";
+    Service::open(&f.db).unwrap().create(long).unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    let menu = visual.debug_bounds("board-switcher-list").unwrap();
+    for row in ["board-switch-0", "board-switch-1"] {
+        assert_check_then_label(visual, row);
+        let label = visual.debug_bounds(selector(format!("{row}-label"))).unwrap();
+        assert!(label.right() <= menu.right(), "{row}: a long name stays inside the menu");
+    }
+    // Every row's check lines up, open board or not.
+    let left = |visual: &mut VisualTestContext, row: &str| {
+        visual.debug_bounds(selector(format!("{row}-check"))).unwrap().left()
+    };
+    assert_eq!(left(visual, "board-switch-0"), left(visual, "board-switch-1"));
+    click(visual, "board-new");
+    assert_check_then_label(visual, "board-template-blank");
+    visual.simulate_keystrokes("escape");
+    click(visual, "board-sort");
+    assert_check_then_label(visual, "board-sort-manual");
+    visual.simulate_keystrokes("escape");
+    click(visual, "board-open-in");
+    assert_check_then_label(visual, "board-open-in-drawer");
+    assert_check_then_label(visual, "board-open-in-page");
+}
+
 #[gpui::test]
 fn a_new_board_opens_and_is_remembered_after_reload(cx: &mut TestAppContext) {
     let f = with_board(cx);
@@ -6677,6 +6724,18 @@ fn wip_count_shows_3_of_4_and_highlights_over_limit(cx: &mut TestAppContext) {
     reload(&f, visual);
     assert!(shown(visual, "board-column-stripe-0"));
     assert_gone(visual, "board-column-stripe-1");
+    // The stripe sits on the column's top edge: the coloured column's header
+    // stays level with its plain neighbour's.
+    let header = |visual: &mut VisualTestContext, i: usize| {
+        visual
+            .debug_bounds(selector(format!("board-column-header-{i}")))
+            .unwrap()
+    };
+    assert_eq!(header(visual, 0).top(), header(visual, 1).top());
+    let stripe = visual.debug_bounds("board-column-stripe-0").unwrap();
+    let column = visual.debug_bounds("board-column-0").unwrap();
+    assert!(stripe.top() >= column.top() && stripe.bottom() <= header(visual, 0).top() + px(6.));
+    assert!(stripe.left() > column.left() && stripe.right() < column.right());
 }
 
 #[gpui::test]
