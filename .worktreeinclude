@@ -1,0 +1,9 @@
+# Gitignored files Claude Code copies from the main checkout into each new
+# worktree (.gitignore syntax; only files that are also gitignored are copied).
+# Dependencies and build output are not listed here: node_modules is installed
+# by scripts/worktree-setup.sh and target/ is rebuilt per worktree.
+
+CLAUDE.local.md
+.claude/settings.local.json
+.env
+.env.*
