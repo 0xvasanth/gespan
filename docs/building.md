@@ -95,6 +95,8 @@ The release workflow runs only when started by hand, so pushing a tag never publ
 3. Tag the merge commit as `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta) and push the tag.
 4. In the Actions tab, open **Release**, choose **Run workflow**, set **Use workflow from** to that tag, and run it. Any other ref fails immediately.
 
+Each version is one GitHub release, `vX.Y.Z`, holding both apps. Gespan Native's workflow runs from `native-vX.Y.Z` and adds its packages to the same release. Whichever runs first creates the release with the version's CHANGELOG section as its notes; run them one after the other. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
+
 | Secret | Needed for |
 | --- | --- |
 | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | Signing the macOS app |

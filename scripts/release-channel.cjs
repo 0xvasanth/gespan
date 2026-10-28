@@ -64,10 +64,16 @@ function nativeUpdaterEndpoint(env) {
   return endpoint;
 }
 
-function nativeAssetBase(env) {
+// Each version is one GitHub release, vX.Y.Z, holding both apps' packages.
+// The native workflow runs from native-vX.Y.Z and publishes into vX.Y.Z.
+function nativeReleaseTag(env) {
   const tag = env.GITHUB_REF_NAME || "";
   if (!/^native-v.+/.test(tag)) throw new Error("Expected a native release tag such as native-v0.16.0-preview.2");
-  return `${GITHUB_RELEASES}/${tag}`;
+  return tag.slice("native-".length);
+}
+
+function nativeAssetBase(env) {
+  return `${GITHUB_RELEASES}/${nativeReleaseTag(env)}`;
 }
 
 // R2 only mirrors the native packages; it is optional and enabled when complete.
@@ -88,12 +94,16 @@ function requireNativeTagRef(env) {
   return name;
 }
 
+// The signed native feed, kept on the versioned release under its own name so
+// it never collides with the stable Tauri feed (latest.json) on the same release.
+const NATIVE_FEED_ASSET = "native-latest.json";
+
 // Files the versioned release must hold: every package and its .sig, plus the
-// signed latest.json the original run produced. Recovery republishes that exact
+// signed feed the original run produced. Recovery republishes that exact
 // file; it never signs anything, so the signing key cannot be used as an oracle
 // to certify assets someone replaced on the release.
 function nativeExpectedFiles(records) {
-  const files = ["latest.json"];
+  const files = [NATIVE_FEED_ASSET];
   for (const record of records) {
     files.push(record.filename);
     if (record.target) files.push(`${record.filename}.sig`);
@@ -101,21 +111,37 @@ function nativeExpectedFiles(records) {
   return files;
 }
 
-// A published native-v* release is immutable, but the native-latest feed can
-// be rewritten. So a rerun after a failure between the two steps may repair the
-// feed without touching the published packages.
+// One release per version holds both apps' files, and each workflow handles
+// only its own (`expected`). Whichever runs first creates the release. A
+// published file is never replaced, and a workflow's files go up together, so
+// an update feed never points at packages from another build:
+// - no release, or a draft: upload them all
+// - published without any of them (the other app published first): add them
+// - published with all of them: a rerun; keep the packages, refresh feeds only
+// - published with only some: an error; use a new version
 //   release: null (absent) or { isDraft, assets: [{ name }] } from `gh release view`.
-function nativePublishPlan({ release, expected }) {
+function releasePlan({ release, expected }) {
   if (!release) return { createRelease: true, uploadPackages: true };
   if (release.isDraft) return { createRelease: false, uploadPackages: true };
   const have = new Set((release.assets || []).map((asset) => asset.name));
   const missing = expected.filter((name) => !have.has(name));
-  if (missing.length) {
-    throw new Error(
-      `The published release is immutable but is missing assets: ${missing.join(", ")}. Use a new preview tag.`,
-    );
-  }
-  return { createRelease: false, uploadPackages: false };
+  if (!missing.length) return { createRelease: false, uploadPackages: false };
+  if (missing.length === expected.length) return { createRelease: false, uploadPackages: true };
+  throw new Error(
+    `The published release has only some of this build's files and is missing: ${missing.join(", ")}. Published files are never replaced; use a new version.`,
+  );
+}
+const nativePublishPlan = releasePlan;
+
+// A version's CHANGELOG section, as release notes.
+function releaseNotes(changelog, version) {
+  const lines = changelog.split("\n");
+  const heading = new RegExp(`^## \\[${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]`);
+  const start = lines.findIndex((line) => heading.test(line));
+  if (start < 0) throw new Error(`CHANGELOG.md has no section for ${version}`);
+  const end = lines.findIndex((line, ix) => ix > start && /^## \[/.test(line));
+  const body = lines.slice(start + 1, end < 0 ? undefined : end).join("\n").trim();
+  return `${body}\n\nFull details are in the [CHANGELOG](https://github.com/0xvasanth/gespan/blob/main/CHANGELOG.md).\n`;
 }
 
 // Checks a latest.json taken from a published versioned release against that
@@ -154,6 +180,7 @@ module.exports = {
   verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
   GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
+  nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes,
 };
 
 if (require.main === module && process.argv[2] === "native-ref") {
@@ -169,14 +196,30 @@ if (require.main === module && process.argv[2] === "native-ref") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   fs.writeFileSync(process.argv[4], expected.filter((n) => !n.endsWith(".sig")).join("\n") + "\n");
   fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_CREATE_RELEASE=${plan.createRelease}\nNATIVE_UPLOAD_PACKAGES=${plan.uploadPackages}\n`);
-  console.log(plan.uploadPackages ? "Uploading packages to the versioned release" : "Versioned release already published: keeping its packages, refreshing the feed only");
+  console.log(plan.uploadPackages ? "Uploading packages to the versioned release" : "Versioned release already has these packages: keeping them, refreshing the feed only");
+} else if (require.main === module && process.argv[2] === "release-plan") {
+  // usage: release-plan <file listing this build's asset names>; RELEASE_JSON is empty when the release is absent.
+  // Prints "<create> <upload>" for the calling step.
+  const expected = fs.readFileSync(process.argv[3], "utf8").split("\n").map((n) => n.trim()).filter(Boolean);
+  const raw = (process.env.RELEASE_JSON || "").trim();
+  const plan = releasePlan({ release: raw ? JSON.parse(raw) : null, expected });
+  console.log(`${plan.createRelease} ${plan.uploadPackages}`);
+} else if (require.main === module && process.argv[2] === "release-notes") {
+  // usage: release-notes <version>; prints that version's CHANGELOG section.
+  process.stdout.write(releaseNotes(fs.readFileSync("CHANGELOG.md", "utf8"), process.argv[3]));
+} else if (require.main === module && process.argv[2] === "native-release-tag") {
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
+  const tag = nativeReleaseTag(process.env);
+  fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_RELEASE_TAG=${tag}\n`);
+  console.log(`Publishing into the ${tag} release`);
 } else if (require.main === module && process.argv[2] === "native-verify-recovery") {
-  // usage: native-verify-recovery <dir holding the downloaded latest.json and *.sig>
+  // usage: native-verify-recovery <dir holding the downloaded native-latest.json and *.sig>
   const dir = process.argv[3];
   const sigs = {};
   for (const name of fs.readdirSync(dir)) if (name.endsWith(".sig")) sigs[name.slice(0, -4)] = fs.readFileSync(`${dir}/${name}`, "utf8");
   const expected = Object.keys(sigs);
-  verifyRecoveredFeed({ latestJson: fs.readFileSync(`${dir}/latest.json`, "utf8"), sigs, tag: requireNativeTagRef(process.env), expected });
+  requireNativeTagRef(process.env);
+  verifyRecoveredFeed({ latestJson: fs.readFileSync(`${dir}/${NATIVE_FEED_ASSET}`, "utf8"), sigs, tag: nativeReleaseTag(process.env), expected });
   console.log("Recovered feed matches the published signatures");
 } else if (require.main === module && process.argv[2] === "native-config") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
