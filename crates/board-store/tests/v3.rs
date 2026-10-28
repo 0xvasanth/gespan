@@ -303,9 +303,39 @@ fn relation_cycle_is_refused() {
     // A card on another board can't be related.
     let (_, _, other) = board_with_cards(&conn, &["x"]);
     assert!(add_relation(&conn, a, &other[0].id, "relates").is_err());
-    // Once the chain is broken the reverse edge is fine.
+    // Once the chain is broken the reverse edge is fine (after the pair's
+    // other relation goes: two cards have one relation at most).
     remove_relation(&conn, b, c, "blocks").unwrap();
+    remove_relation(&conn, a, c, "relates").unwrap();
     add_relation(&conn, c, a, "blocks").unwrap();
+}
+
+#[test]
+fn two_cards_have_one_relation_at_most() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["a", "b"]);
+    let (a, b) = (&cards[0].id, &cards[1].id);
+    add_relation(&conn, b, a, "blocks").unwrap();
+    // Any other kind, in either direction, is refused while one exists.
+    for (from, to, kind) in [
+        (a, b, "relates"),
+        (b, a, "relates"),
+        (a, b, "duplicates"),
+        (b, a, "duplicates"),
+    ] {
+        assert_eq!(
+            add_relation(&conn, from, to, kind).unwrap_err(),
+            "These cards are already linked. Remove that link first",
+            "{kind}"
+        );
+    }
+    // Adding the same relation again is still a no-op, not an error.
+    add_relation(&conn, b, a, "blocks").unwrap();
+    assert_eq!(card_relations(&conn, a).unwrap().len(), 1);
+    // Once removed, the pair takes a different relation.
+    remove_relation(&conn, b, a, "blocks").unwrap();
+    add_relation(&conn, a, b, "relates").unwrap();
+    assert_eq!(card_relations(&conn, a).unwrap()[0].kind, "relates");
 }
 
 type Change<'a> = Box<dyn Fn(&Connection) -> Result<(), String> + 'a>;
@@ -1509,8 +1539,11 @@ fn duplicates_relation_cycle_is_refused() {
     );
     // Each kind is its own graph: a blocking edge back is not a duplicates cycle.
     add_relation(&conn, c, a, "blocks").unwrap();
-    // Once the chain is broken the reverse edge is fine.
+    // Once the chain is broken the reverse edge is fine, after the pair's
+    // blocking edge goes (two cards have one relation at most).
     remove_relation(&conn, b, c, "duplicates").unwrap();
+    assert!(add_relation(&conn, c, a, "duplicates").is_err());
+    remove_relation(&conn, c, a, "blocks").unwrap();
     add_relation(&conn, c, a, "duplicates").unwrap();
 }
 

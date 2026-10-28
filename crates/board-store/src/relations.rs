@@ -30,8 +30,8 @@ fn phrase(kind: &str, number: i64) -> String {
 
 /// `card_id` blocks, relates to, or duplicates `related_card_id`. `relates`
 /// is two-way, so either direction is the same relation; `blocks` and
-/// `duplicates` are directed and refuse a cycle of any length. Returns the
-/// owning board id.
+/// `duplicates` are directed and refuse a cycle of any length. Two cards have
+/// one relation at most. Returns the owning board id.
 pub fn add_relation(
     conn: &Connection,
     card_id: &str,
@@ -78,6 +78,20 @@ pub fn add_relation(
         if cycle {
             return Err("That would make a cycle".into());
         }
+    }
+    // Two cards have one relation at most: "blocked by" and "relates to" the
+    // same card would say two different things about one pair.
+    let linked: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM board_card_relations WHERE
+               (card_id = ?1 AND related_card_id = ?2)
+               OR (card_id = ?2 AND related_card_id = ?1))",
+            params![card_id, related_card_id],
+            |r| r.get(0),
+        )
+        .map_err(db)?;
+    if linked {
+        return Err("These cards are already linked. Remove that link first".into());
     }
     tx.execute(
         "INSERT INTO board_card_relations (card_id, related_card_id, kind) VALUES (?1, ?2, ?3)",

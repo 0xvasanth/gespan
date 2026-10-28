@@ -403,17 +403,8 @@ fn enter_adds_a_trimmed_card_and_an_empty_title_adds_nothing(cx: &mut TestAppCon
 #[gpui::test]
 fn escape_closes_the_composer_without_closing_the_board(cx: &mut TestAppContext) {
     let f = with_board(cx);
-    let closed = Rc::new(std::cell::Cell::new(false));
-    let seen = closed.clone();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
-    let entity = f.window.root(visual).unwrap();
-    let _subscription = visual.update(|_, cx| {
-        cx.subscribe(&entity, move |_, event: &Event, _| {
-            if matches!(event, Event::Close) {
-                seen.set(true);
-            }
-        })
-    });
+    let (seen, _subscription) = events(&f, visual);
     click(visual, "board-add-card-1");
     visual.simulate_input("Draft");
     visual.simulate_keystrokes("escape");
@@ -421,7 +412,7 @@ fn escape_closes_the_composer_without_closing_the_board(cx: &mut TestAppContext)
     f.window
         .read_with(visual, |view, _| assert!(view.composer.is_none()))
         .unwrap();
-    assert!(!closed.get());
+    assert!(seen.borrow().is_empty(), "the board emits nothing");
     assert!(detail(&f, visual).cards.is_empty());
 }
 
@@ -791,7 +782,6 @@ fn events(
     let subscription = visual.update(|_, cx| {
         cx.subscribe(&entity, move |_, event: &Event, _| {
             log.borrow_mut().push(match event {
-                Event::Close => "close".to_string(),
                 Event::OpenSession(id) => format!("session:{id}"),
                 Event::OpenPilot(id) => format!("pilot:{id}"),
                 Event::LinkTicket(id) => format!("link-ticket:{id}"),
@@ -1211,9 +1201,9 @@ fn escape_cancels_a_keyboard_drag_without_writing(cx: &mut TestAppContext) {
         seen.borrow().is_empty(),
         "the same Escape does not close the board"
     );
-    // A second Escape, with nothing lifted, closes it as before.
+    // A second Escape, with nothing lifted, still leaves the board open.
     visual.simulate_keystrokes("escape");
-    assert_eq!(*seen.borrow(), ["close"]);
+    assert!(seen.borrow().is_empty());
 }
 
 #[gpui::test]
@@ -3678,6 +3668,28 @@ fn blocks_and_blocked_by_write_the_right_direction(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_relation_cycle_shows_the_refusal_inline(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let (a, b, c) = (
+        card_id(&f, cx, "A"),
+        card_id(&f, cx, "B"),
+        card_id(&f, cx, "C"),
+    );
+    let mut service = Service::open(&f.db).unwrap();
+    service.add_relation(&a, &b, "blocks").unwrap();
+    service.add_relation(&b, &c, "blocks").unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-3");
+    // C blocking A would close the loop A → B → C → A.
+    click(visual, "board-drawer-blocks");
+    visual.simulate_input("A");
+    click(visual, "board-pick-relation-0");
+    assert!(shown(visual, "board-inline-error"));
+    assert_eq!(relations_of(&f, &c), [(b, c, "blocks".into())]);
+}
+
+#[gpui::test]
+fn a_card_already_linked_is_not_offered_again(cx: &mut TestAppContext) {
     let f = seeded(cx, &["A", "B"]);
     let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
     Service::open(&f.db)
@@ -3687,11 +3699,18 @@ fn a_relation_cycle_shows_the_refusal_inline(cx: &mut TestAppContext) {
     reload(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-2");
-    // B blocking A would close a loop.
-    click(visual, "board-drawer-blocks");
-    visual.simulate_input("A");
-    click(visual, "board-pick-relation-0");
-    assert!(shown(visual, "board-inline-error"));
+    // B is blocked by A, so no other relation offers A.
+    for row in [
+        "board-drawer-relates",
+        "board-drawer-blocks",
+        "board-drawer-blocked-by",
+    ] {
+        click(visual, row);
+        visual.simulate_input("A");
+        assert!(!shown(visual, "board-pick-relation-0"), "{row} offers A");
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+    }
     assert_eq!(relations_of(&f, &b), [(a, b, "blocks".into())]);
 }
 
@@ -5805,22 +5824,11 @@ fn escape_clears_the_selection_after_menus(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert!(selected_numbers(&f, visual).is_empty());
     assert_gone(visual, "board-bulk-bar");
-    // With nothing left, Escape leaves the board as before.
-    let closed = Rc::new(std::cell::Cell::new(false));
-    let flag = closed.clone();
-    let _watch = f
-        .window
-        .update(visual, |_, _, cx| {
-            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
-                if matches!(event, Event::Close) {
-                    flag.set(true);
-                }
-            })
-        })
-        .unwrap();
+    // With nothing left, Escape does nothing: the board stays as it is.
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    assert!(closed.get());
+    assert!(selected_numbers(&f, visual).is_empty());
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
 }
 
 #[gpui::test]
@@ -8470,3 +8478,135 @@ mod layout_fit;
 mod link_run;
 mod scale;
 mod ux_batch;
+
+/// A right click as the mouse makes it: press and release.
+fn full_right_click(visual: &mut VisualTestContext, target: &'static str) {
+    visual.refresh().unwrap();
+    let at = visual.debug_bounds(target).unwrap().center();
+    visual.simulate_mouse_down(at, gpui::MouseButton::Right, Default::default());
+    visual.simulate_mouse_up(at, gpui::MouseButton::Right, Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+}
+
+#[gpui::test]
+fn undo_brings_back_a_card_deleted_from_its_menu_with_the_archive_open(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let b = card_id(&f, cx, "B");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-archive");
+    full_right_click(visual, "board-card-2");
+    click(visual, "menu-action-delete");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #2"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+    click(visual, "board-undo");
+    assert!(card_exists(&f, &b), "Undo must not finish the held delete");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    assert_eq!(toast(&f, visual), None);
+}
+
+#[gpui::test]
+fn the_card_menu_archives_while_the_archive_view_is_open(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-archive");
+    full_right_click(visual, "board-card-2");
+    click(visual, "menu-action-archive");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived #2"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+    let listed: Vec<String> = f
+        .window
+        .read_with(visual, |view, _| {
+            view.archived_cards()
+                .iter()
+                .map(|c| c.title.clone())
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(listed, ["B"], "the open Archive view lists it at once");
+}
+
+/// Keys as a real keyboard sends them: each one pressed, then released.
+/// `simulate_keystrokes` only presses, so it misses what GPUI does on release
+/// (a focused element turns an Enter or Space release into a click).
+fn press_and_release(visual: &mut VisualTestContext, keys: &str) {
+    use gpui::InputEvent as _;
+    for key in keys.split_whitespace() {
+        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        visual.update(|window, cx| {
+            window.dispatch_event(
+                gpui::KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(gpui::KeyUpEvent { keystroke }.to_platform_input(), cx);
+        });
+        visual.run_until_parked();
+    }
+}
+
+#[gpui::test]
+fn a_real_space_press_lifts_the_card_instead_of_opening_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let c = card_id(&f, visual, "C");
+    focus_card(&f, visual, &c);
+    press_and_release(visual, "space");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.card_detail.is_none(), "Space must not open the drawer");
+            assert!(view.kb_drag.is_some(), "Space lifts the card");
+        })
+        .unwrap();
+    press_and_release(visual, "up up enter");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "A", "B"]);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none(), "Enter drops the card");
+            assert!(
+                view.card_detail.is_none(),
+                "dropping must not open the drawer"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn new_card_menus_open_under_their_chip(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    for (chip, first_item) in [
+        ("new-card-column", "menu-action-column-0"),
+        ("new-card-priority", "menu-action-priority-0"),
+        ("new-card-due", "menu-action-due-today"),
+    ] {
+        click(visual, chip);
+        visual.refresh().unwrap();
+        let chip_bounds = visual.debug_bounds(chip).unwrap();
+        let item = visual
+            .debug_bounds(first_item)
+            .unwrap_or_else(|| panic!("{first_item} is not on screen"));
+        // The list opens below the chip, starting at its left edge (the
+        // item may be any row of it, so allow the list's height).
+        let below = item.top() - chip_bounds.bottom();
+        assert!(
+            below > gpui::px(0.) && below < gpui::px(200.),
+            "{chip}: menu {item:?}, chip {chip_bounds:?}"
+        );
+        assert!(
+            (item.left() - chip_bounds.left()).abs() < gpui::px(24.),
+            "{chip}: menu {item:?}, chip {chip_bounds:?}"
+        );
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        assert!(
+            shown(visual, "new-card"),
+            "Escape closes the menu, not the form"
+        );
+    }
+}

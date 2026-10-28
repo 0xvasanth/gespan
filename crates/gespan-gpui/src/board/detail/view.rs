@@ -866,11 +866,19 @@ impl BoardView {
                 }
             }
             Picker::Relation(kind) => {
+                // Two cards have one relation at most, so a card already
+                // linked to this one, in any way, is not offered again.
+                let linked = |other: &str| {
+                    detail
+                        .relations
+                        .iter()
+                        .any(|r| r.card_id == other || r.related_card_id == other)
+                };
                 let mut others: Vec<_> = self
                     .detail
                     .iter()
                     .flat_map(|d| d.cards.iter())
-                    .filter(|other| other.id != card.id)
+                    .filter(|other| other.id != card.id && !linked(&other.id))
                     .filter(|other| matches(&format!("#{} {}", other.number, other.title)))
                     .collect();
                 others.sort_by_key(|other| other.number);
