@@ -162,8 +162,7 @@ Some desktop layout concepts still need native support; see
 The Windows reader always opens a temporary copy of localStorage. Copying while
 Tauri is writing is best-effort: an inconsistent copy can leave desktop
 preferences incomplete or unavailable for that launch. Close Tauri before
-starting GPUI for the first time. See [verification](verification.md) for
-recorded checks.
+starting GPUI for the first time.
 
 To inspect the installed database without opening a window or changing it, use
 the executable from a release build:
@@ -182,8 +181,8 @@ bun run native:check
 ```
 
 This runs the script tests, Rust formatting, strict Clippy and native tests.
-See [verification](verification.md) for individual commands, optional provider
-checks and the latest recorded results.
+See [native checks](verification.md) for individual commands and optional
+provider checks.
 
 A synthetic long-history fixture uses development data and makes no provider
 request:
