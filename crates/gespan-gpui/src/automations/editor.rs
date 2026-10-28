@@ -1279,6 +1279,7 @@ fn next_run_preview(timestamp: i64) -> String {
     else {
         return "Next run —".into();
     };
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut zone = gmt_offset();
     #[cfg(unix)]
     {

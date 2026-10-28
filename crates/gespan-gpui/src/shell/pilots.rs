@@ -53,12 +53,12 @@ impl Shell {
             .as_ref()
             .is_some_and(|m| m.read(cx).active.is_some())
     }
-    // Called from the macOS menu-bar item, which tests don't build.
-    #[cfg_attr(test, allow(dead_code))]
+    // Called from the macOS menu-bar item, which tests and other systems don't build.
+    #[cfg_attr(any(test, not(target_os = "macos")), allow(dead_code))]
     pub(crate) fn pilot_toggle_hold(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.hold_from_menu(cx);
     }
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(any(test, not(target_os = "macos")), allow(dead_code))]
     pub(crate) fn pilot_request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.request_quit(window, cx);
     }

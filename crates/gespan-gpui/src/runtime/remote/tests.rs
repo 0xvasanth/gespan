@@ -3,7 +3,7 @@ use gespan_core::remote::{Connections, Machine};
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::atomic::AtomicUsize,
     thread,
     time::Instant,
@@ -466,7 +466,8 @@ fn built_node_host_round_trip_preserves_native_wire_commands() {
     let cli = std::env::var_os("GESPAN_TEST_HOST_BINARY")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/host/gespan-host.mjs")
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../build/host/gespan-host.mjs")
         });
     assert!(cli.is_file(), "Run npm run host:build first");
     let node = std::env::var("GESPAN_TEST_NODE").unwrap_or_else(|_| "node".into());

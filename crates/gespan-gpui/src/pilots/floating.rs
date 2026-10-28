@@ -4,8 +4,12 @@
 use super::*;
 use gpui::{Bounds, WindowBounds, WindowKind, WindowOptions, point, size};
 /// A 384pt conversation plus the 56pt Pilot rail beside it.
+// The panel opens from the macOS menu bar item.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const WIDTH: f32 = 440.;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const HEIGHT: f32 = 560.;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const MARGIN: f32 = 12.;
 struct Floating {
     owner: Entity<Pilots>,
@@ -512,6 +516,7 @@ impl Pilots {
         self.changed(cx);
         id
     }
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(super) fn open_floating(&mut self, id: String, cx: &mut Context<Self>) {
         if self.roster.get(&id).is_none() {
             return;
