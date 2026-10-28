@@ -76,7 +76,6 @@ pub(crate) fn bind(cx: &mut App) {
 }
 
 pub(crate) enum Event {
-    Close,
     OpenSession(i64),
     OpenPilot(String),
     /// The drawer asks to link (or edit the link of) this card's ticket.
@@ -785,6 +784,18 @@ impl BoardView {
         }
     }
 
+    /// Adds a card to the first column, as a test fixture outside this module.
+    #[cfg(test)]
+    pub(crate) fn add_test_card(&mut self, title: &str, cx: &mut Context<Self>) {
+        let column = self.detail.as_ref().expect("a board is open").columns[0]
+            .id
+            .clone();
+        self.service()
+            .and_then(|service| service.card_create(&column, title, ""))
+            .expect("the card is created");
+        self.reload(cx);
+    }
+
     fn service(&mut self) -> Result<&mut Service, String> {
         if self.service.is_none() {
             self.service = Some(Service::open(&self.db_path)?);
@@ -1489,9 +1500,9 @@ impl BoardView {
             || self.clear_selection()
         {
             cx.notify();
-        } else {
-            cx.emit(Event::Close);
         }
+        // With nothing left to close, Escape does nothing, as in the Tauri
+        // board: it never leaves the Board (its tab or sidebar entry does).
     }
 
     fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

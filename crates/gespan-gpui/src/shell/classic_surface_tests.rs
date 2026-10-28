@@ -1223,3 +1223,81 @@ fn settings_back_and_sidebar_toggle_in_new_layout(cx: &mut TestAppContext) {
 fn settings_back_and_sidebar_toggle_in_original_layout(cx: &mut TestAppContext) {
     assert_settings_navigation(true, cx);
 }
+
+#[gpui::test]
+fn escape_steps_back_inside_the_board_and_never_leaves_it(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let tap = |visual: &mut VisualTestContext, target: &'static str| {
+        visual.refresh().unwrap();
+        let at = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"))
+            .center();
+        visual.simulate_click(at, Default::default());
+        visual.run_until_parked();
+    };
+    let on_board = |visual: &mut VisualTestContext| {
+        window
+            .read_with(visual, |shell, _| shell.active_app_view)
+            .unwrap()
+            == Some(app_views::AppView::Board)
+    };
+    window
+        .update(visual, |shell, _, cx| {
+            shell
+                .board
+                .as_ref()
+                .unwrap()
+                .update(cx, |board, cx| board.add_test_card("Escape test", cx))
+        })
+        .unwrap();
+    visual.run_until_parked();
+    tap(visual, "board-card-1");
+    tap(visual, "board-subtask-add");
+    visual.simulate_input("First step");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    visual.simulate_input("half typed");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(
+        on_board(visual),
+        "Escape in the subtask field stays on the board"
+    );
+    let drawer = |visual: &mut VisualTestContext| {
+        window
+            .read_with(visual, |shell, cx| {
+                shell.board.as_ref().unwrap().read(cx).card_detail.is_some()
+            })
+            .unwrap()
+    };
+    assert!(drawer(visual), "the field closes first, the drawer stays");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!drawer(visual), "the next Escape closes the drawer");
+    assert!(on_board(visual));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(
+        on_board(visual),
+        "with nothing open Escape does nothing, as in Tauri"
+    );
+    // The same after a click on the board's empty space, which focuses it.
+    visual.refresh().unwrap();
+    let body = visual.debug_bounds("board-column-body-0").unwrap();
+    visual.simulate_click(
+        gpui::point(body.center().x, body.bottom() - gpui::px(4.)),
+        Default::default(),
+    );
+    visual.run_until_parked();
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(on_board(visual), "Escape on the focused board stays on it");
+}

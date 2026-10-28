@@ -403,17 +403,8 @@ fn enter_adds_a_trimmed_card_and_an_empty_title_adds_nothing(cx: &mut TestAppCon
 #[gpui::test]
 fn escape_closes_the_composer_without_closing_the_board(cx: &mut TestAppContext) {
     let f = with_board(cx);
-    let closed = Rc::new(std::cell::Cell::new(false));
-    let seen = closed.clone();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
-    let entity = f.window.root(visual).unwrap();
-    let _subscription = visual.update(|_, cx| {
-        cx.subscribe(&entity, move |_, event: &Event, _| {
-            if matches!(event, Event::Close) {
-                seen.set(true);
-            }
-        })
-    });
+    let (seen, _subscription) = events(&f, visual);
     click(visual, "board-add-card-1");
     visual.simulate_input("Draft");
     visual.simulate_keystrokes("escape");
@@ -421,7 +412,7 @@ fn escape_closes_the_composer_without_closing_the_board(cx: &mut TestAppContext)
     f.window
         .read_with(visual, |view, _| assert!(view.composer.is_none()))
         .unwrap();
-    assert!(!closed.get());
+    assert!(seen.borrow().is_empty(), "the board emits nothing");
     assert!(detail(&f, visual).cards.is_empty());
 }
 
@@ -791,7 +782,6 @@ fn events(
     let subscription = visual.update(|_, cx| {
         cx.subscribe(&entity, move |_, event: &Event, _| {
             log.borrow_mut().push(match event {
-                Event::Close => "close".to_string(),
                 Event::OpenSession(id) => format!("session:{id}"),
                 Event::OpenPilot(id) => format!("pilot:{id}"),
                 Event::LinkTicket(id) => format!("link-ticket:{id}"),
@@ -1211,9 +1201,9 @@ fn escape_cancels_a_keyboard_drag_without_writing(cx: &mut TestAppContext) {
         seen.borrow().is_empty(),
         "the same Escape does not close the board"
     );
-    // A second Escape, with nothing lifted, closes it as before.
+    // A second Escape, with nothing lifted, still leaves the board open.
     visual.simulate_keystrokes("escape");
-    assert_eq!(*seen.borrow(), ["close"]);
+    assert!(seen.borrow().is_empty());
 }
 
 #[gpui::test]
@@ -5805,22 +5795,11 @@ fn escape_clears_the_selection_after_menus(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert!(selected_numbers(&f, visual).is_empty());
     assert_gone(visual, "board-bulk-bar");
-    // With nothing left, Escape leaves the board as before.
-    let closed = Rc::new(std::cell::Cell::new(false));
-    let flag = closed.clone();
-    let _watch = f
-        .window
-        .update(visual, |_, _, cx| {
-            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
-                if matches!(event, Event::Close) {
-                    flag.set(true);
-                }
-            })
-        })
-        .unwrap();
+    // With nothing left, Escape does nothing: the board stays as it is.
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    assert!(closed.get());
+    assert!(selected_numbers(&f, visual).is_empty());
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
 }
 
 #[gpui::test]
