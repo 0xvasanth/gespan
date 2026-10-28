@@ -8,7 +8,8 @@
 
 <p align="center">
   Run Claude Code, Codex, Cursor, OpenCode and eight more coding agents side by side,<br/>
-  using the subscriptions you already pay for. No new accounts and no token resale.
+  plan their work on a board, and let a Pilot keep it moving.<br/>
+  It uses the subscriptions you already pay for. No new accounts and no token resale.
 </p>
 
 <p align="center">
@@ -26,22 +27,19 @@
 
 <p align="center">
   <a href="#install"><strong>Install</strong></a> ·
+  <a href="#how-it-works"><strong>How it works</strong></a> ·
   <a href="#features"><strong>Features</strong></a> ·
   <a href="#supported-agents"><strong>Providers</strong></a> ·
   <a href="#documentation"><strong>Docs</strong></a> ·
   <a href="#build-from-source"><strong>Build from source</strong></a> ·
+  <a href="#faq"><strong>FAQ</strong></a> ·
   <a href="#contributing"><strong>Contribute</strong></a>
 </p>
 
 ---
 
-> **Gespan** (pronounced *guh-SPAHN*) is a Dutch word for a *span*: a team of
-> draught animals, horses or oxen, harnessed together to pull the plough and the
-> wagon on the farm before the work was mechanised. One driver, several animals,
-> all pulling in the same direction.
->
-> That is what this app does for coding agents. You hold the reins, and a team of
-> agents does the pulling.
+> **Gespan** (*guh-SPAHN*) is Dutch for a team of horses or oxen harnessed
+> together to pull one wagon. You hold the reins, and a team of agents does the pulling.
 
 ## How it works
 
@@ -49,6 +47,21 @@
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.gif" />
   <img src="docs/assets/how-it-works-light.gif" alt="Animation: a Linear ticket lands in the Inbox and becomes a card on the Board. Run with Claude Code starts a session in its own worktree and the card moves to In progress. A daily 09:00 automation starts a Codex run, and the Claude session opens a pull request, which moves its card to Review. A Pilot triages a GitHub issue and starts a Cursor CLI session, finished sessions report back to the Pilot, and the merged card moves to Done." width="100%" />
 </picture>
+
+1. **Board.** Tickets from GitHub, GitLab, Linear, Jira and Azure DevOps land in
+   the Inbox and become cards.
+2. **Sessions.** Run a card with any agent, each in its own Git worktree. The
+   card moves as the session starts, opens a pull request and finishes.
+3. **Automations.** Agents run on a schedule, like a daily dependency audit, and
+   their runs show up on the board.
+4. **Pilots.** A long-running agent with memory triages the Inbox, starts
+   sessions and gets a report back from each one.
+
+> [!NOTE]
+> This is where Gespan is heading, and parts of the loop are still being built:
+> adding Inbox items to the board, pull requests moving cards, and Pilots and
+> automations working the board directly. Progress is tracked in
+> [#211](https://github.com/0xvasanth/gespan/issues/211).
 
 ## Why Gespan?
 
@@ -62,7 +75,7 @@ Gespan gives them one home:
   signed in to. Your existing plans, logins, skills and MCP setup carry over.
 - **Tabs are sessions.** Every conversation is a tab. Split panes to watch
   several agents work side by side, each in its own Git worktree if you like.
-- **Native and local.** Gespan is built on Rust and Tauri. Sessions are stored on
+- **Native and local.** Gespan is built in Rust, on Tauri and GPUI. Sessions are stored on
   your machine, and the app has [no telemetry](docs/privacy.md).
 - **You stay in charge.** You can review diffs, keep or undo what each turn
   changed, approve tools and stop runaway agents from a single window.
@@ -79,15 +92,26 @@ steps for any that are missing.
 
 | | | | |
 | :-- | :-- | :-- | :-- |
-| **Claude Code** | **Codex** | **Cursor CLI** | **Grok Build** |
-| **OpenCode** | **Antigravity** | **Pi** | **omp** |
-| **fx** | **Hermes Agent** | **Kiro CLI** | **Devin CLI** |
+| **[Claude Code](https://claude.com/product/claude-code)** | **[Codex](https://developers.openai.com/codex/cli)** | **[Cursor CLI](https://cursor.com/cli)** | **[Grok Build](https://docs.x.ai/build/overview)** |
+| **[OpenCode](https://opencode.ai)** | **[Antigravity](https://antigravity.google/docs/cli-install)** | **[Pi](https://pi.dev/)** | **[omp](https://omp.sh)** |
+| **[fx](https://fx.sh)** | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **[Kiro CLI](https://kiro.dev/docs/cli/)** | **[Devin CLI](https://docs.devin.ai/cli)** |
 
 Install and login commands for each agent are in [provider setup](docs/providers.md).
 
 ## Features
 
 <table>
+<tr>
+<td colspan="2" valign="top">
+
+### 📋 Board
+Plan work as cards across boards and columns, linked to tracker tickets, pull
+requests and worktrees. Choose **Run with…** on a card to start a session with
+any agent, and the card moves to In progress when it starts and to Review when
+it finishes. See the [Board guide](docs/board.md).
+
+</td>
+</tr>
 <tr>
 <td width="50%" valign="top">
 
@@ -166,19 +190,32 @@ in from your phone.
 > [!IMPORTANT]
 > Install and sign in to at least one [supported agent](docs/providers.md) first.
 
-| Platform | Download |
-| :-- | :-- |
-| macOS, Apple Silicon | [Gespan.dmg](https://github.com/0xvasanth/gespan/releases/latest) |
-| macOS, Intel | [Gespan_x64.dmg](https://github.com/0xvasanth/gespan/releases/latest) |
-| Linux, x86_64 | [.deb, .rpm, or AppImage](https://github.com/0xvasanth/gespan/releases/latest) |
-| Windows, x86_64 | [Installer](https://github.com/0xvasanth/gespan/releases/latest) |
+Gespan is in public beta. The current release is
+[**0.0.1-beta**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.1-beta).
+It comes as two desktop apps that share the same data: **Gespan Native**, the
+fast native app recommended on macOS, and **Gespan**, recommended on Windows and Linux.
 
-- **macOS:** open the DMG and drag Gespan to Applications.
-- **Windows:** run the installer.
-- **Linux:** see [Linux installation](docs/install.md) for dependencies and package instructions.
+| Platform | Recommended | Also available |
+| :-- | :-- | :-- |
+| macOS, Apple Silicon | [Gespan Native (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_aarch64.dmg) | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_aarch64.dmg) |
+| macOS, Intel | [Gespan Native (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_x64.dmg) | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_x64.dmg) |
+| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_x64-setup.exe) | [Gespan Native (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_x64-setup.exe) |
+| Linux, x64 | [Gespan (AppImage)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan-0.0.1-0.beta.x86_64.rpm) | [Gespan Native (AppImage)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_amd64.AppImage) |
 
-Installers will appear on the [Releases page](https://github.com/0xvasanth/gespan/releases)
-once a release is published. Until then, [build from source](#build-from-source).
+Gespan Native on Windows and Linux is experimental and less tested than on macOS.
+
+**Opening it the first time.** The beta is not yet signed with an Apple
+Developer ID or a Windows code-signing certificate, so your system warns you once.
+
+- **macOS:** open the DMG and drag the app to Applications. The first time,
+  Control-click the app, choose **Open**, then confirm. If macOS still refuses, run
+  `xattr -dr com.apple.quarantine "/Applications/Gespan Native.app"` (or `Gespan.app`).
+- **Windows:** in the SmartScreen prompt, choose **More info → Run anyway**.
+- **Linux:** make the AppImage executable (`chmod +x`) and run it. See
+  [Linux installation](docs/install.md) for dependencies and the `.deb` and `.rpm` packages.
+
+Every release is listed on the
+[Releases page](https://github.com/0xvasanth/gespan/releases).
 
 ## Quick start
 
@@ -207,7 +244,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |
 | [Privacy](docs/privacy.md) | What is recorded locally and what never leaves your machine |
-| [Gespan Native](docs/native/README.md) | The experimental Rust + GPUI app |
+| [Gespan Native](docs/native/README.md) | The Rust + GPUI app: building, checks and current limitations |
 
 ## Build from source
 
@@ -249,12 +286,18 @@ Run it with `cd mobile && bun install && bun run start`.
 
 </details>
 
-## Gespan Native *(preview)*
+## Gespan Native
 
-Gespan Native is an experimental rewrite in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
-The React/Tauri app is still the production app.
+Gespan Native is a rewrite of Gespan in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
+It is the recommended app on macOS. On Windows and Linux, the React/Tauri app is
+still the main app, and Native there is experimental.
 
-To try it from this checkout on macOS, you need Node.js 22+, Rust and Xcode:
+<details>
+<summary><strong>Run Gespan Native from source</strong></summary>
+
+<br/>
+
+On macOS you need Node.js 22+, Rust and Xcode:
 
 ```sh
 bun run native:dev     # launch with a separate development database
@@ -266,11 +309,69 @@ There is no hot reload. The release app saves changes to your installed Gespan
 data. See the [native guide](docs/native/README.md) for prerequisites, build
 output, checks and current limitations.
 
+</details>
+
 > [!WARNING]
 > Gespan Native shares `~/Library/Application Support/dev.gespan.desktop/gespan.db`
 > with Gespan. Close both apps and back up `gespan.db` before you first use
 > Gespan Native. Do not open the same conversation in both apps at once: Gespan
 > saves whole conversations and can overwrite turns added in Gespan Native.
+
+## FAQ
+
+<details>
+<summary><strong>Is Gespan free?</strong></summary>
+
+<br/>
+
+Yes. Gespan is open source under the [MIT License](LICENSE). You pay only for
+the agent plans you already have, directly to their providers.
+
+</details>
+
+<details>
+<summary><strong>Do I need API keys?</strong></summary>
+
+<br/>
+
+No. Gespan runs the agent CLIs you have already installed and signed in to, so
+it uses the same login and plan as your terminal. If an agent is set up to use
+an API key, Gespan uses that setup too.
+
+</details>
+
+<details>
+<summary><strong>Does my code or usage go through Gespan?</strong></summary>
+
+<br/>
+
+No. Each agent talks to its own provider, exactly as it does in your terminal.
+Sessions are stored on your machine, and the app has no telemetry. See
+[Privacy](docs/privacy.md).
+
+</details>
+
+<details>
+<summary><strong>Why not just run the agents in terminal tabs?</strong></summary>
+
+<br/>
+
+You can, and Gespan runs those same CLIs. What it adds is the layer around
+them: sessions as tabs and split panes, a worktree for each parallel task, a
+diff you can keep or undo for each turn, approvals in one place, and a board,
+inbox, automations and Pilots that hand work to the agents.
+
+</details>
+
+<details>
+<summary><strong>Which app should I install, Gespan or Gespan Native?</strong></summary>
+
+<br/>
+
+On macOS, Gespan Native. On Windows and Linux, Gespan. They share the same data,
+so you can switch later. See [Install](#install).
+
+</details>
 
 ## Contributing
 
