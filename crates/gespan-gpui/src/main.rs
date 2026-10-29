@@ -43,6 +43,8 @@ mod image_memory;
 mod inbox;
 mod input;
 mod installed_providers;
+#[cfg(any(windows, test))]
+mod instance;
 #[cfg(test)]
 mod log_capture;
 mod markdown;
@@ -94,6 +96,7 @@ mod tickets;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;
+mod tray;
 mod usage_footer;
 mod visuals;
 mod window_state;
@@ -114,10 +117,17 @@ use std::{
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 actions!(application, [Quit]);
+/// Set once a quit or restart starts; the running-chats list stops updating.
+pub(crate) struct Quitting;
+impl gpui::Global for Quitting {}
+pub(crate) fn quitting(cx: &App) -> bool {
+    cx.has_global::<Quitting>()
+}
 fn quit(cx: &mut App) {
     if notifications::updater::defer_quit(cx) {
         return;
     }
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });
@@ -130,6 +140,7 @@ fn quit(cx: &mut App) {
 
 /// Quit, then relaunch the same app once this process has exited.
 fn restart(cx: &mut App) {
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });
@@ -224,6 +235,11 @@ fn fatal(echo: bool, code: i32, message: &str) -> ! {
     exit(code)
 }
 fn main() {
+    // Before anything loads a DLL: only the app's folder and System32.
+    #[cfg(windows)]
+    if let Err(error) = gespan_core::process::harden_dll_search() {
+        eprintln!("Cannot restrict DLL search paths: {error}");
+    }
     // The dictation helper this binary runs as a child: no app, no GPUI.
     if std::env::args()
         .nth(1)
@@ -358,6 +374,26 @@ fn main() {
             "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR.",
         );
     }
+    // Windows: one instance per database. Close to tray leaves it running with
+    // no taskbar entry, so a second launch shows that window and exits.
+    #[cfg(windows)]
+    let _instance = if check_data {
+        None
+    } else {
+        match instance::acquire(&database) {
+            Ok(instance::Acquired::Lock(lock)) => Some(lock),
+            Ok(instance::Acquired::Running(pid)) => {
+                if !pid.is_some_and(instance::activate) {
+                    tracing::info!("Gespan Native is already running with this data");
+                }
+                exit(0);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "cannot take the single-instance lock");
+                None
+            }
+        }
+    };
     let mut db = if check_data {
         Store::read_gespan(&database)
     } else {

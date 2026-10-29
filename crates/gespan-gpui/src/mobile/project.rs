@@ -804,7 +804,10 @@ mod tests {
                 std::process::id()
             ));
             std::fs::create_dir_all(&dir).unwrap();
-            Self(dir.canonicalize().unwrap())
+            // Resolve macOS's /var symlink as git does, but without Windows'
+            // `\\?\` prefix, which git cannot create worktrees under.
+            let real = dir.canonicalize().unwrap().to_string_lossy().into_owned();
+            Self(PathBuf::from(real.strip_prefix(r"\\?\").unwrap_or(&real)))
         }
     }
     impl Drop for Temp {
@@ -873,9 +876,13 @@ mod tests {
             ],
         );
         let result = worktrees(root).unwrap();
+        let listed = result["worktrees"].as_array().unwrap();
+        assert_eq!(listed.len(), 1, "{result}");
+        assert_eq!(listed[0]["name"], "feature/mobile");
+        // Git reports Windows paths with forward slashes.
         assert_eq!(
-            result["worktrees"],
-            json!([{ "path": linked, "name": "feature/mobile" }])
+            files::path_key(listed[0]["path"].as_str().unwrap()),
+            files::path_key(linked.to_str().unwrap())
         );
         assert_eq!(resolve_root(root, linked.to_str()).unwrap(), linked);
         let mut branches = HashMap::new();

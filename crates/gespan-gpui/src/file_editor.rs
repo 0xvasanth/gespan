@@ -1372,21 +1372,23 @@ mod tests {
     }
     #[test]
     fn file_links_resolve_relative_paths_and_line_locations() {
+        // Resolved paths use the platform's separator.
+        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
         assert_eq!(
             file_location("src/../main.rs:12:4", "/project"),
-            ("/project/main.rs".into(), Some((12, 4)))
+            (native("/project/main.rs"), Some((12, 4)))
         );
         assert_eq!(
             file_location("file:///project/my%20file.rs#L3", "/elsewhere"),
-            ("/project/my file.rs".into(), Some((3, 1)))
+            (native("/project/my file.rs"), Some((3, 1)))
         );
         assert_eq!(
             file_location("./README.md", "/project"),
-            ("/project/README.md".into(), None)
+            (native("/project/README.md"), None)
         );
         assert_eq!(
             file_location("/tmp/a.rs:0", "/project"),
-            ("/tmp/a.rs".into(), Some((1, 1)))
+            (native("/tmp/a.rs"), Some((1, 1)))
         );
     }
 

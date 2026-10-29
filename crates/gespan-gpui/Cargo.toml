@@ -91,6 +91,11 @@ objc2-user-notifications = "0.3"
 # resident. mimalloc 3 retains churn the same way; the v2 feature pins 2.x.
 mimalloc = { version = "0.1", default-features = false, features = ["v2"] }
 
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+tray-icon = { version = "0.25", default-features = false }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui_apple = { package = "gpui-pre-apple", version = "=0.3.9", features = ["test-support", "runtime_shaders"] }
 # Must match the parking_lot the vendored GPUI exposes in its API (0.12).
@@ -129,3 +134,11 @@ opt-level = 1
 
 [profile.native-dev.package.gespan-gpui]
 opt-level = 1
+
+# The renderer debug-asserts its own layout quality, which depends on font
+# metrics and fails on Linux fonts for diagrams that render fine in release.
+[profile.dev.package.mermaid-rs-renderer]
+debug-assertions = false
+
+[profile.native-dev.package.mermaid-rs-renderer]
+debug-assertions = false

@@ -15,6 +15,7 @@ mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
+mod in_flight;
 mod layout;
 mod live_agents;
 mod mobile_host;
@@ -47,6 +48,7 @@ mod sidebar_list;
 mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
+mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
@@ -744,6 +746,8 @@ pub(crate) struct Shell {
     /// The project whose colors were last painted; leaving it blends colors.
     theme_project: Option<String>,
     quit_prompted: bool,
+    /// The running-chats list last written to the store.
+    in_flight_written: Option<Vec<i64>>,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
@@ -1117,6 +1121,7 @@ impl Shell {
             window_glass: None,
             theme_project: None,
             quit_prompted: false,
+            in_flight_written: None,
             menu: None,
             background_dialog: None,
             backgrounds: HashMap::new(),
@@ -1284,6 +1289,7 @@ impl Shell {
         }
         this.init_mobile_host(cx);
         this.restore_hold(cx);
+        this.resume_interrupted(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1408,6 +1414,7 @@ impl Shell {
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();
+                this.sync_in_flight(cx);
                 this.notification_session_changed(id, cx);
                 this.update_usage_provider(cx);
                 this.update_chat_visibility(cx);
@@ -2013,6 +2020,28 @@ impl Shell {
                     this.quit_prompted = false;
                     if matches!(answer, Ok(0)) {
                         // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        let running = self.running_chats(cx).len();
+        if !self.quit_prompted && running > 0 && !crate::hold::active(cx) {
+            self.quit_prompted = true;
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                &gespan_core::interrupted::quit_message(running),
+                None,
+                &["Quit", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.quit_prompted = false;
+                    if matches!(answer, Ok(0)) {
                         this.quit_unless_unsaved(window, cx);
                     }
                 });
@@ -8340,6 +8369,8 @@ impl Render for Shell {
                     cx.notify();
                 }));
             self.start_native_notifications(cx);
+            #[cfg(windows)]
+            self.start_tray(window, cx);
             let shell = cx.entity().downgrade();
             window.on_window_should_close(cx, move |window, cx| {
                 shell
@@ -8357,11 +8388,22 @@ impl Render for Shell {
                             crate::traffic_lights::hide(window, cx);
                             return false;
                         }
-                        if shell.unsaved_files(cx) {
-                            shell.request_quit(window, cx);
-                            false
-                        } else {
-                            true
+                        let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
+                        match crate::tray::on_close(
+                            to_tray,
+                            !shell.running_chats(cx).is_empty(),
+                            shell.unsaved_files(cx),
+                        ) {
+                            crate::tray::Close::Hide => {
+                                shell.set_window_visible(window, false);
+                                false
+                            }
+                            // Closing the window quits: ask first, as a quit does.
+                            crate::tray::Close::Ask => {
+                                shell.request_quit(window, cx);
+                                false
+                            }
+                            crate::tray::Close::Quit => true,
                         }
                     })
                     .unwrap_or(true)
@@ -12107,7 +12149,7 @@ mod tests {
             cx.debug_bounds(count_selector).is_none(),
             "a single pane has no count badge"
         );
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, _| {
@@ -12307,7 +12349,7 @@ mod tests {
             .unwrap();
 
         // ⌘W closes the focused pane only; its neighbour takes focus.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12329,7 +12371,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         window
             .update(cx, |shell, _, _| {
                 shell
@@ -12401,7 +12443,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         cx.update(|_, cx| cx.set_reduce_motion(false));
         let new = window
@@ -12573,7 +12615,7 @@ mod tests {
                 assert_eq!(shell.viewport_width, 1000.);
             })
             .unwrap();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, cx| {
@@ -12591,10 +12633,10 @@ mod tests {
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // A sidebar the user hid stays hidden when room comes back.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         // Collapsed for the split; shown, then hidden again by hand.
-        cx.simulate_keystrokes("cmd-b cmd-b");
+        cx.simulate_keystrokes("secondary-b secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12625,7 +12667,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         // Wide enough for two panes beside the sidebar.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
@@ -12645,13 +12687,13 @@ mod tests {
         // Shown by hand while crowded, it stays until the room changes again.
         cx.simulate_resize(gpui::size(px(1000.), px(800.)));
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // Hidden by hand, it stays hidden however wide the window grows.
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.simulate_resize(gpui::size(px(1600.), px(800.)));
         cx.run_until_parked();
         window
@@ -12724,7 +12766,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         assert!(cx.debug_bounds("terminal-dock").is_none());
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         let project = window
             .update(cx, |shell, w, cx| {
@@ -12742,7 +12784,7 @@ mod tests {
         assert!((dock.size.height - px(220.)).abs() < px(2.));
         // ⌘T in the dock opens another terminal, not a session tab.
         let tabs = window.update(cx, |s, _, _| s.workspace.tabs.len()).unwrap();
-        cx.simulate_keystrokes("cmd-t");
+        cx.simulate_keystrokes("secondary-t");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12754,7 +12796,7 @@ mod tests {
             .unwrap();
         assert!(cx.debug_bounds("terminal-tab-1").is_some());
         // ⌘W closes the focused terminal; the session tab stays.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12780,7 +12822,7 @@ mod tests {
         window
             .update(cx, |shell, w, cx| shell.focus_terminal(w, cx))
             .unwrap();
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {

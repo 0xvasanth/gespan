@@ -243,9 +243,42 @@ jobs:
             native-dist/*.rpm
           if-no-files-found: error
 
+  host:
+    # Gespan Native's SSH remotes download these from the vX.Y.Z release.
+    name: Standalone host packages (${{ matrix.os }})
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run test:host
+      - run: bun run host:package --all
+        if: runner.os == 'Linux'
+      - run: bun run host:package
+        if: runner.os != 'Linux'
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        with:
+          name: host-packages
+          path: |
+            build/host-packages/*.tar.gz
+            build/host-packages/*.zip
+            build/host-packages/*.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish native preview and its update feed
-    needs: [build, rpm]
+    needs: [build, rpm, host]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -274,6 +307,10 @@ jobs:
           pattern: native-*
           merge-multiple: true
           path: native-dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: host-packages
+          path: host-packages
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -357,6 +394,18 @@ jobs:
             gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Update feed: Gespan Native (do not delete)" --notes 'This is not a release. It holds only latest.json, the signed update feed that installed Gespan Native builds check for new versions. Packages live on the vX.Y.Z releases.'
           fi
           gh release upload native-latest "$RUNNER_TEMP/native-feed/latest.json" --clobber
+      - name: Publish standalone host packages
+        run: |
+          set -euo pipefail
+          # Published files are never replaced, so a rerun only adds missing ones.
+          EXISTING="$(gh release view "$NATIVE_RELEASE_TAG" --json assets --jq '.assets[].name')"
+          FILES=()
+          for file in host-packages/*; do
+            grep -qxF "$(basename "$file")" <<<"$EXISTING" || FILES+=("$file")
+          done
+          if (( ${#FILES[@]} )); then
+            gh release upload "$NATIVE_RELEASE_TAG" "${FILES[@]}"
+          fi
       - name: Mirror native preview to R2 (optional)
         if: env.R2_ENABLED == 'true' && env.NATIVE_UPLOAD_PACKAGES == 'true'
         run: |

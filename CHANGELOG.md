@@ -9,11 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gespan Native asks before quitting or closing its window while chats are
+  running. Chats cut short by a quit, a crash or an update restart are marked
+  "Turn interrupted when Gespan quit." and continue on the next launch, as in
+  the Tauri app, which resumes them too.
+- Gespan Native on Windows has a tray icon with Show Gespan and Quit Gespan.
+  With Close to tray on, closing the window hides it there and running agents
+  keep going; a left click on the icon brings it back.
+- Gespan Native on Windows runs one instance per data folder: launching it
+  again brings the running window back, even from the tray.
+- Gespan Native on Windows starts agents in a kill-on-close job, so they stop
+  when Gespan does, even after a crash, and loads DLLs only from its own
+  folder and System32.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
   Gespan left running, as the Tauri app does. Agents of a running Gespan,
   Native or Tauri, are left alone.
 
 ## [0.0.2-beta] - 2026-10-29
+
+This release ships Gespan Native for macOS, Windows and Linux, and the iOS app
+on TestFlight. The earlier Gespan desktop app is no longer released.
 
 This beta is still not signed with an Apple Developer ID or a Windows
 code-signing certificate. On macOS, open it the first time with Control-click →
@@ -29,6 +44,8 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 - Mermaid diagrams render in Markdown and conversations.
 - Gespan Native remembers its window size and display mode, and has a full
   menu bar, per-project theme colours, and `/stage` and `/commit`.
+- Kiro CLI in Gespan Native lists Kiro's own models, and "Default" names the
+  model Kiro picks.
 
 ### Fixed
 
@@ -41,6 +58,23 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 - Two cards can no longer be linked twice, for example as both "blocked by" and
   "related to".
 - The Gespan Native macOS DMG no longer fails to package on macOS 15.
+- Kiro follow-ups in Gespan Native reuse the running Kiro agent instead of
+  starting a new one, so they answer in seconds instead of half a minute, and
+  picking a Kiro model no longer fails the turn.
+- Follow-ups for every provider in Gespan Native reuse their warm agent again;
+  settings saved in a different order no longer forced a cold start.
+- The Board switcher and other checked menus show each name once, a coloured
+  column's header lines up with the others, a card dropped below a short column
+  lands at its end, and arrow keys focus a card after a click on empty space.
+- Diagram text no longer disappears on Linux desktops without generic font
+  families.
+- The terminal in Gespan Native starts on Windows, using `COMSPEC` or
+  PowerShell instead of a missing `/bin/bash`.
+- A Pilot's call to the app is no longer dropped when its request arrives a
+  moment after the connection opens, and a stalled request can no longer hold
+  a connection open.
+- Syntax colours, folds and change markers in Gespan Native line up in files
+  with Windows (CRLF) line endings, and their diffs no longer fail.
 
 ## [0.0.1-beta] - 2026-10-27
 

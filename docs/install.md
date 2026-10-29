@@ -75,7 +75,7 @@ chmod +x Gespan_*.AppImage
 
 The AppImage updates itself from **Settings → General**. The `.deb` and `.rpm` update through apt or dnf: download the newer package from [GitHub Releases](https://github.com/0xvasanth/gespan/releases/latest) and install it with the same command used above.
 
-For beta release feeds and testing AppImage updates, see [release and updater details](building.md#beta-releases-and-updates).
+For how releases are published, see [Releases](building.md#releases).
 
 ## Troubleshooting on Fedora / Wayland
 

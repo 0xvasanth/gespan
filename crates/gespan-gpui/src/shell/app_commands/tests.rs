@@ -634,7 +634,8 @@ fn operator_creates_selects_and_validates_real_worktrees(cx: &mut TestAppContext
             )
         })
         .unwrap();
-    std::fs::remove_dir_all(root).unwrap();
+    // Best effort: on Windows the open sessions still hold files in the folder.
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[gpui::test]

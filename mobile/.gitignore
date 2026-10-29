@@ -41,3 +41,7 @@ yarn-error.*
 /android
 modules/gespan-link/ios/*.xcframework/
 modules/gespan-link/android/src/main/jniLibs/
+
+# EAS credentials downloaded with `eas credentials` (credentials.json holds the keystore passwords)
+credentials.json
+/credentials/
