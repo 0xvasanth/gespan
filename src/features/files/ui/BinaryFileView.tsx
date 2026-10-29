@@ -1,4 +1,5 @@
 import {
+  type SyntheticEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -257,6 +258,15 @@ function VideoView({
     );
   }
 
+  const readMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    setMetadata({
+      width: video.videoWidth,
+      height: video.videoHeight,
+      duration: video.duration,
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 items-center justify-center bg-black/80 p-4">
@@ -268,14 +278,9 @@ function VideoView({
           preload="metadata"
           aria-label={`Video preview: ${basename(path)}`}
           className="h-full w-full object-contain"
-          onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            setMetadata({
-              width: video.videoWidth,
-              height: video.videoHeight,
-              duration: video.duration,
-            });
-          }}
+          onLoadedMetadata={readMetadata}
+          // WebKit can report the size only after loadedmetadata.
+          onResize={readMetadata}
           onPlay={(event) => {
             if (!visible || document.hidden) event.currentTarget.pause();
           }}

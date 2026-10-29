@@ -405,6 +405,12 @@ mod tests {
                         let column = &column_ids[(seed >> 13) as usize % column_ids.len()];
                         let index = (seed >> 7) as usize % 9;
                         service.card_move(card, column, index, "user").unwrap();
+                        // SQLite's write lock is not fair: a writer that commits and
+                        // begins again at once keeps it for its whole run, so the other
+                        // waits about 150 commits, past busy_timeout where commits
+                        // flush slowly (Windows runners). A pause, as people take
+                        // between moves, gives the waiter a turn.
+                        std::thread::sleep(std::time::Duration::from_millis(1));
                     }
                 })
             })

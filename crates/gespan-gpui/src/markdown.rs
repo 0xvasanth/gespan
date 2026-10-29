@@ -1064,12 +1064,17 @@ mod file_link_tests {
         let Part::Text { runs, .. } = row.part else {
             panic!()
         };
+        // Resolved paths use the platform's separator.
+        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
         assert_eq!(runs[0].text, "source");
-        assert_eq!(runs[0].style.link.as_deref(), Some("/project/main.rs:5:1"));
+        assert_eq!(
+            runs[0].style.link.as_deref(),
+            Some(native("/project/main.rs:5:1").as_str())
+        );
         assert_eq!(runs[1].text, "src/lib.rs");
         assert_eq!(
             runs[1].style.link.as_deref(),
-            Some("/project/docs/src/lib.rs")
+            Some(native("/project/docs/src/lib.rs").as_str())
         );
         assert_eq!(runs[2].style.link.as_deref(), Some("https://example.com"));
     }
