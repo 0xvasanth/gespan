@@ -43,6 +43,8 @@ mod image_memory;
 mod inbox;
 mod input;
 mod installed_providers;
+#[cfg(any(windows, test))]
+mod instance;
 #[cfg(test)]
 mod log_capture;
 mod markdown;
@@ -367,6 +369,26 @@ fn main() {
             "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR.",
         );
     }
+    // Windows: one instance per database. Close to tray leaves it running with
+    // no taskbar entry, so a second launch shows that window and exits.
+    #[cfg(windows)]
+    let _instance = if check_data {
+        None
+    } else {
+        match instance::acquire(&database) {
+            Ok(instance::Acquired::Lock(lock)) => Some(lock),
+            Ok(instance::Acquired::Running(pid)) => {
+                if !pid.is_some_and(instance::activate) {
+                    tracing::info!("Gespan Native is already running with this data");
+                }
+                exit(0);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "cannot take the single-instance lock");
+                None
+            }
+        }
+    };
     let mut db = if check_data {
         Store::read_gespan(&database)
     } else {
