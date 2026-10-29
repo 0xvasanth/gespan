@@ -472,11 +472,14 @@ mod tests {
         #[test]
         fn the_real_snapshot_finds_a_marked_orphan_by_its_environment() {
             // macOS hides the environment of Apple-signed binaries such as
-            // /bin/sh, so run a copy of this test binary under an agent's name.
+            // /bin/sh, so run this test binary under an agent's name. A symlink,
+            // not a copy: a copy's write handle can leak into another test's
+            // fork and make the exec fail with ETXTBSY on Linux.
             let dir = std::env::temp_dir().join(format!("gespan-orphan-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             let fake = dir.join("claude");
-            std::fs::copy(std::env::current_exe().unwrap(), &fake).unwrap();
+            let _ = std::fs::remove_file(&fake);
+            std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &fake).unwrap();
             let mut child = Command::new(&fake)
                 .args([
                     "--ignored",
