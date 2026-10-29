@@ -1469,6 +1469,9 @@ impl BoardView {
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key != "escape" {
+            if self.arrow_into_cards(event, window, cx) {
+                cx.stop_propagation();
+            }
             return;
         }
         cx.stop_propagation();
@@ -1746,19 +1749,23 @@ impl BoardView {
 
 fn menu_row(id: SharedString, label: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
     let label = label.into();
+    menu_row_frame(id, label.clone()).child(label)
+}
+
+/// A menu row's box, role and name, with no content yet.
+fn menu_row_frame(id: SharedString, label: SharedString) -> gpui::Stateful<gpui::Div> {
     let selector = id.clone();
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
         .role(Role::MenuItem)
-        .aria_label(label.clone())
+        .aria_label(label)
         .px(px(8.))
         .py(px(6.))
         .rounded(px(6.))
         .text_size(px(13.))
         .cursor_pointer()
         .hover(|s| s.bg(content(0.07)))
-        .child(label)
 }
 
 impl gpui::Render for DraggedCard {

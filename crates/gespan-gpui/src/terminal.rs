@@ -1464,7 +1464,7 @@ impl Terminal {
         agent_cli(self.foreground.as_deref()?)
     }
 }
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg(any(unix, test))]
 fn is_shell_name(name: &str) -> bool {
     matches!(
         name,

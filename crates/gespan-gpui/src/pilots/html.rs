@@ -104,6 +104,7 @@ pub(super) struct Html {
     #[cfg(target_os = "macos")]
     view: Rc<RefCell<Option<Hosted>>>,
 }
+// The page is hosted in a WKWebView, so only macOS renders it.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")

@@ -5,13 +5,12 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+// Only macOS answers a permission request; elsewhere it stays Unsupported.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Permission {
     Prompt,
-    // Only the macOS bridge reports a decision.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Granted,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Denied,
     Unsupported,
 }

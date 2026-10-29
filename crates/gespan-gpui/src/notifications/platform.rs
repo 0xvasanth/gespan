@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver};
 
 use super::delivery::{Permission, Target};
 
-// Only the macOS bridge delivers one.
+// Only the macOS bridge posts these.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct Notification {
     pub tag: String,

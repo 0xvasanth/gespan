@@ -757,14 +757,17 @@ impl BoardView {
                     }
                     let path = path.clone();
                     rows.push(
-                        menu_row(format!("board-pick-project-{index}").into(), name.clone())
-                            .flex()
-                            .gap_2()
-                            .child(check(chosen.contains(&path)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                        checked_row(
+                            format!("board-pick-project-{index}").into(),
+                            name.clone(),
+                            chosen.contains(&path),
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| {
                                 this.toggle_project(path.clone(), cx)
-                            }))
-                            .into_any_element(),
+                            }),
+                        )
+                        .into_any_element(),
                     );
                 }
                 if projects.is_empty() {

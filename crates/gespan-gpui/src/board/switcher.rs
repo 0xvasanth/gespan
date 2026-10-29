@@ -348,26 +348,6 @@ impl BoardView {
                     board.name.clone(),
                     on,
                 )
-                .flex()
-                .gap_2()
-                .child(
-                    div()
-                        .size(px(12.))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when(on, |d| {
-                            d.child(icon("check", 12.).text_color(accent_color()))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(board.name.clone()),
-                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.open_board(id.clone(), cx);
                 }))
@@ -387,18 +367,6 @@ impl BoardView {
                             format!("board-template-{}", template.id).into(),
                             template.name.clone(),
                             on,
-                        )
-                        .flex()
-                        .gap_2()
-                        .child(div().size(px(12.)).flex_shrink_0().when(on, |d| {
-                            d.child(icon("check", 12.).text_color(accent_color()))
-                        }))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(template.name.clone()),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(switcher) = &mut this.switcher {
@@ -484,6 +452,7 @@ impl BoardView {
             .child(
                 div()
                     .id("board-switcher-list")
+                    .debug_selector(|| "board-switcher-list".into())
                     .max_h(px(420.))
                     .overflow_y_scroll()
                     .p(px(4.))

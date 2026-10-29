@@ -144,6 +144,40 @@ impl BoardView {
         true
     }
 
+    /// An arrow pressed while the board itself has focus (after a click on
+    /// empty space) focuses the first card on screen. True when it did.
+    pub(super) fn arrow_into_cards(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if event.keystroke.modifiers.modified()
+            || arrow(event.keystroke.key.as_str()).is_none()
+            || !self.focus.is_focused(window)
+            || self.layout_kind() != super::list::Layout::Board
+        {
+            return false;
+        }
+        let Some(detail) = &self.detail else {
+            return false;
+        };
+        let columns: Vec<String> = detail.columns.iter().map(|c| c.id.clone()).collect();
+        let Some(first) = columns
+            .iter()
+            .find_map(|column| self.visible_ids(column).into_iter().next())
+        else {
+            return false;
+        };
+        self.reveal_card(&first);
+        let Some(handle) = self.card_focus.get(&first).cloned() else {
+            return false;
+        };
+        window.focus(&handle, cx);
+        cx.notify();
+        true
+    }
+
     /// Handles a key on a card. True when the key was used.
     pub(super) fn card_key(
         &mut self,

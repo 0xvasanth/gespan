@@ -197,7 +197,9 @@ setInterval(() => {}, 1000);
       args: [],
       cwd: directory,
     });
-    await vi.waitFor(() => expect(descendant).toBeTruthy());
+    // Two Node processes start one after the other before the pid arrives;
+    // a cold Windows runner can take longer than waitFor's 1 s default.
+    await vi.waitFor(() => expect(descendant).toBeTruthy(), { timeout: 5000 });
     await backend.kill("tree");
     await vi.waitFor(
       () => expect(() => process.kill(descendant!, 0)).toThrow(),

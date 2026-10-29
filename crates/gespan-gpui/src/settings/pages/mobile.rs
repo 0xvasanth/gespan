@@ -1082,7 +1082,6 @@ fn pairing_backdrop(classic: bool) -> impl IntoElement {
         |_, _, _| {},
         move |bounds, _, window, _| {
             let light = content(1.).l < 0.5;
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             let fill = if classic || light {
                 let mut fill = shell_fill();
                 fill.a = if light { 1. } else { 0.55 };
@@ -1092,7 +1091,8 @@ fn pairing_backdrop(classic: bool) -> impl IntoElement {
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let fill = {
-                let _ = (classic, light);
+                // No backdrop blur here, so the glass tint above is not used.
+                let _ = fill;
                 let mut fill = shell_fill();
                 fill.a = 1.;
                 fill

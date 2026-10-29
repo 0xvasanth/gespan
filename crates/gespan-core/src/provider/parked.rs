@@ -188,14 +188,24 @@ impl Drop for Wire {
         // Disconnect before joining so a bounded stdout sender cannot deadlock.
         let (_, empty) = mpsc::channel();
         drop(std::mem::replace(&mut self.rx, empty));
-        if let Some(t) = self.reader.take() {
-            let _ = t.join();
-        }
-        if let Some(t) = self.stderr_reader.take() {
-            let _ = t.join();
+        // The readers end at EOF, but a helper outside the process group
+        // (Kiro's engine) can hold the pipes open for tens of seconds after
+        // the kill. Wait briefly, then let them finish on their own.
+        let deadline = Instant::now() + READER_GRACE;
+        for reader in [self.reader.take(), self.stderr_reader.take()]
+            .into_iter()
+            .flatten()
+        {
+            while !reader.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            if reader.is_finished() {
+                let _ = reader.join();
+            }
         }
     }
 }
+const READER_GRACE: Duration = Duration::from_millis(250);
 pub(super) struct Parked {
     pub wire: Wire,
     pub protocol: Protocol,
@@ -348,17 +358,22 @@ pub(super) fn enforce_idle_limit() {
         }
         retired
     };
-    drop(retired);
+    reap_in_background(retired);
     opencode::retire_idle(&retire);
 }
 pub(super) fn key(request: &Request) -> String {
     let mut settings = request.settings.clone();
+    // Hermes and Kiro take only the model, so the session options they report
+    // back (Kiro's autopilot or memory switches) never change their launch.
+    if matches!(request.kind, Kind::Hermes | Kind::Kiro) {
+        settings.model_settings.clear();
+    }
     settings.turns.clear();
     settings.attachments.clear();
     settings.revision = 0;
     settings.handoff = None;
     settings.pending_provider_switch = None;
-    json!([
+    sorted(json!([
         process::owner(),
         request.kind.id(),
         request.binary,
@@ -373,8 +388,22 @@ pub(super) fn key(request: &Request) -> String {
             .as_ref()
             .map(|pilot| (&pilot.root, &pilot.pilot.id)),
         request.settings.disable_claude_hooks
-    ])
+    ]))
     .to_string()
+}
+/// The app builds serde_json with `preserve_order` (through GPUI), so maps keep
+/// the iteration order of the `HashMap`s they came from, which differs between
+/// otherwise equal settings. Keys must not depend on it.
+fn sorted(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().map(|(k, v)| (k, sorted(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+        other => other,
+    }
 }
 pub(super) fn take(key: &str) -> Option<Parked> {
     let limit = LIMIT.load(Ordering::Relaxed);
@@ -385,6 +414,7 @@ pub(super) fn take(key: &str) -> Option<Parked> {
     let mut parked = pool.remove(ix);
     drop(pool);
     if expired(&parked, limit) || parked.wire.child.try_wait().ok().flatten().is_some() {
+        reap_in_background(vec![parked]);
         return None;
     }
     process::mark_idle(parked.wire.child.id(), false);
@@ -579,9 +609,15 @@ fn park_cancelled(wire: Wire, protocol: Protocol, binding: &Binding, epoch: u64)
 
 pub fn discard_worktree(path: &Path) {
     let root = path.to_string_lossy();
-    idle_pool().lock().unwrap().retain(|p| {
-        !crate::files::is_equal_or_inside(&p.protocol.request.cwd.to_string_lossy(), &root)
-    });
+    let mut pool = idle_pool().lock().unwrap();
+    let (removed, kept) = std::mem::take(&mut *pool)
+        .into_iter()
+        .partition(|p: &Parked| {
+            crate::files::is_equal_or_inside(&p.protocol.request.cwd.to_string_lossy(), &root)
+        });
+    *pool = kept;
+    drop(pool);
+    reap_in_background(removed);
     for (binding, epoch) in epochs().lock().unwrap().iter_mut() {
         if crate::files::is_equal_or_inside(&binding.cwd.to_string_lossy(), &root) {
             *epoch += 1;
@@ -624,13 +660,25 @@ pub(super) fn discard_session(request: &Request) {
         .unwrap()
         .entry(Binding::request(request))
         .or_default() += 1;
-    idle_pool().lock().unwrap().retain(|parked| {
+    let mut pool = idle_pool().lock().unwrap();
+    let (discarded, kept) = std::mem::take(&mut *pool).into_iter().partition(|parked| {
         let old = &parked.protocol.request;
-        !(old.kind == request.kind
+        old.kind == request.kind
             && old.provider_id == request.provider_id
             && old.cwd == request.cwd
-            && old.settings.account.id == request.settings.account.id)
+            && old.settings.account.id == request.settings.account.id
     });
+    *pool = kept;
+    drop(pool);
+    reap_in_background(discarded);
+}
+/// Ends agents on a worker. Dropping a `Wire` waits for its output pipes to
+/// close, and helpers outside the process group (Kiro's engine) can hold them
+/// open for tens of seconds after the kill; a new turn must not wait for that.
+fn reap_in_background(parked: Vec<Parked>) {
+    if !parked.is_empty() {
+        thread::spawn(move || drop(parked));
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -702,6 +750,40 @@ mod tests {
         request.settings.pilot.as_mut().unwrap().pilot.id = "first-pilot".into();
         request.settings.pilot.as_mut().unwrap().root = PathBuf::from("/isolated/pilots");
         assert_ne!(first, key(&request));
+    }
+
+    #[test]
+    fn equal_settings_give_equal_keys_whatever_their_map_order() {
+        // The app serializes maps in `HashMap` order (GPUI enables serde_json's
+        // `preserve_order`); two equal turns must still find the same warm
+        // agent. Core tests build without that feature, where maps are sorted.
+        let names: Vec<String> = (0..12).map(|i| format!("GESPAN_VAR_{i}")).collect();
+        let request = |names: &mut dyn Iterator<Item = &String>| {
+            let mut request = start_request(Kind::Codex, "codex");
+            request.provider_id = Some("thread".into());
+            for name in names {
+                request
+                    .settings
+                    .environment
+                    .insert(name.clone(), format!("{name}-value"));
+                request
+                    .settings
+                    .model_settings
+                    .insert(name.clone(), "on".into());
+            }
+            request
+        };
+        let first = key(&request(&mut names.iter()));
+        for _ in 0..20 {
+            assert_eq!(key(&request(&mut names.iter().rev())), first);
+        }
+        // A real difference still separates them.
+        let mut changed = request(&mut names.iter());
+        changed
+            .settings
+            .environment
+            .insert("GESPAN_VAR_0".into(), "other".into());
+        assert_ne!(key(&changed), first);
     }
 
     #[test]
@@ -788,6 +870,116 @@ for line in sys.stdin:
         request.settings.account = Default::default();
         request.cwd = dir.path().join("other");
         assert_ne!(original, key(&request));
+        configure(0);
+        idle_pool().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn kiro_follow_ups_stay_warm_and_replacements_do_not_wait_for_its_helpers() {
+        const CHILD: &str = "GESPAN_PARKED_KIRO_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The idle limit and pool are process-wide; see the reuse test.
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "provider::parked::tests::kiro_follow_ups_stay_warm_and_replacements_do_not_wait_for_its_helpers",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("kiro-cli");
+        let trace = dir.path().join("starts");
+        let helpers = dir.path().join("helpers");
+        // Like Kiro's engine, a helper in its own process group keeps the
+        // agent's output pipes open after the agent itself is killed.
+        std::fs::write(
+            &binary,
+            format!(
+                r#"#!/usr/bin/env python3
+import json,os,subprocess,sys
+with open({:?},'a') as f: f.write(str(os.getpid())+'\n')
+helper=subprocess.Popen(['sleep','20'],start_new_session=True)
+with open({:?},'a') as f: f.write(str(helper.pid)+'\n')
+def send(v): print(json.dumps(v),flush=True)
+for line in sys.stdin:
+ v=json.loads(line)
+ m,i=v.get('method'),v.get('id')
+ if m=='initialize': send({{'id':i,'result':{{'protocolVersion':1}}}})
+ elif m=='session/new': send({{'id':i,'result':{{'sessionId':'kiro-session'}}}})
+ elif m=='session/prompt':
+  send({{'method':'session/update','params':{{'sessionId':'kiro-session','update':{{'sessionUpdate':'agent_message_chunk','content':{{'type':'text','text':'ok'}}}}}}}})
+  send({{'id':i,'result':{{'stopReason':'end_turn'}}}})
+ elif i is not None: send({{'id':i,'result':{{}}}})
+"#,
+                trace.to_str().unwrap(),
+                helpers.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        configure(1);
+        let mut request = Request {
+            kind: Kind::Kiro,
+            binary,
+            cwd: dir.path().into(),
+            prompt: "hello".into(),
+            provider_id: None,
+            model: None,
+            settings: Settings::default(),
+        };
+        let turn = |request: &Request| {
+            let started = Instant::now();
+            run(
+                request.clone(),
+                Arc::new(AtomicBool::new(false)),
+                |_| Ok(()),
+            )
+            .unwrap();
+            started.elapsed()
+        };
+        turn(&request);
+        // The app saves the session options Kiro reports (autopilot, memory)
+        // with the conversation; they must not cost the warm agent.
+        request.provider_id = Some("kiro-session".into());
+        request
+            .settings
+            .model_settings
+            .insert("autopilot".into(), "on".into());
+        turn(&request);
+        assert_eq!(std::fs::read_to_string(&trace).unwrap().lines().count(), 1);
+        // A new model needs a new agent, which must not wait for the old
+        // agent's helper to release its pipes.
+        request.model = Some("claude-haiku-4.5".into());
+        let elapsed = turn(&request);
+        assert_eq!(std::fs::read_to_string(&trace).unwrap().lines().count(), 2);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "replacement waited {elapsed:?}"
+        );
+        // Runs that are never parked (model probes, background text) end their
+        // agent at once; that must not wait for the helper either.
+        let mut text = request.clone();
+        text.provider_id = None;
+        text.settings.text_only = true;
+        let elapsed = turn(&text);
+        assert_eq!(std::fs::read_to_string(&trace).unwrap().lines().count(), 3);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "unparked run waited {elapsed:?}"
+        );
+        for pid in std::fs::read_to_string(&helpers).unwrap().lines() {
+            unsafe { libc::kill(pid.parse().unwrap(), libc::SIGKILL) };
+        }
         configure(0);
         idle_pool().lock().unwrap().clear();
     }
