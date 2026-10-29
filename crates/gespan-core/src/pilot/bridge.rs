@@ -11,7 +11,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub const HELP: &str = r#"Gespan app access
@@ -132,6 +132,24 @@ fn token(secret: &str, session: i64) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+/// How long a caller has to send its whole request. One deadline for the
+/// request, not one per read, so a trickling caller cannot hold a connection.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 5 });
+struct Deadline<'a> {
+    stream: &'a TcpStream,
+    until: Instant,
+}
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        let mut stream = self.stream;
+        stream.read(buf)
+    }
+}
 fn serve(
     mut stream: TcpStream,
     secret: &str,
@@ -141,12 +159,13 @@ fn serve(
     // listener, so a request still in flight would fail its first read.
     stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new((&stream).take(1_048_577));
+    let request = Deadline {
+        stream: &stream,
+        until: Instant::now() + REQUEST_DEADLINE,
+    };
+    let mut reader = BufReader::new(request.take(1_048_577));
     let mut line = String::new();
     reader.read_line(&mut line).map_err(|e| e.to_string())?;
     if line.len() > 1_048_576 || !line.ends_with('\n') {
@@ -366,5 +385,31 @@ mod capability_tests {
         assert_eq!(call.request_id, "late-1");
         call.reply.send(Ok(json!({"models":[]}))).unwrap();
         assert_eq!(request.join().unwrap().unwrap()["ok"], true);
+    }
+    #[test]
+    fn a_trickling_request_is_cut_off_at_the_deadline() {
+        let (server, rx) = Server::start().unwrap();
+        let mut stream = TcpStream::connect(&server.endpoint).unwrap();
+        stream.set_read_timeout(Some(REQUEST_DEADLINE * 3)).unwrap();
+        let started = Instant::now();
+        // One byte at a time, each well inside a per-read timeout.
+        let mut closed = false;
+        while started.elapsed() < REQUEST_DEADLINE * 3 {
+            if stream.write_all(b"{").is_err() {
+                closed = true;
+                break;
+            }
+            std::thread::sleep(REQUEST_DEADLINE / 10);
+        }
+        if !closed {
+            let mut rest = Vec::new();
+            closed = matches!(stream.read_to_end(&mut rest), Ok(_));
+        }
+        assert!(closed, "the server kept a trickling connection open");
+        assert!(
+            started.elapsed() < REQUEST_DEADLINE * 3,
+            "the connection outlived its deadline"
+        );
+        assert!(rx.try_recv().is_err());
     }
 }
