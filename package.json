@@ -13,7 +13,7 @@
   "homepage": "https://gespan.dev",
   "private": true,
   "packageManager": "bun@1.3.14",
-  "version": "0.0.1-beta",
+  "version": "0.0.2-beta",
   "type": "module",
   "scripts": {
     "dev": "vite",
