@@ -83,7 +83,7 @@ so pushing a tag never publishes anything on its own.
 2. Bump the version (`bun run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
 3. Tag the merge commit as `native-vX.Y.Z` (for example `native-v0.0.2-beta`) and push the tag.
 4. In the Actions tab, run **Native preview release** from that tag. It creates the `vX.Y.Z` GitHub release with the version's CHANGELOG section as its notes, uploads the Native packages and the standalone host packages (Gespan Native's SSH remotes download these), and refreshes the signed `native-latest` update feed. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
-5. Run **Mobile release** from the same tag. It builds the iOS app on EAS with the `production` profile (beta update channel, auto-incremented build number) and submits it to TestFlight.
+5. Run **Mobile release** from the same tag. By default it builds the iOS app on EAS with the `production` profile (beta update channel, auto-incremented build number) and submits it to TestFlight. Choose the `android` or `all` platform to build for Google Play as well; Android submission needs a Google service account key in EAS and one manual upload in Play Console first. Untick **submit** to build without submitting. Choose the `update` release instead to publish the tag's JavaScript over the air to the beta channel. Updates only reach builds with a matching native fingerprint, so make a new build after any native change.
 
 | Secret | Needed for |
 | --- | --- |
@@ -91,7 +91,7 @@ so pushing a tag never publishes anything on its own.
 | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | Signing the macOS app |
 | `APPLE_API_KEY`, `APPLE_API_KEY_P8`, `APPLE_API_ISSUER` | Notarizing the macOS app |
 | `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional R2 mirror. All or none |
-| `EXPO_TOKEN` | The Mobile release. An access token for an Expo account with access to the `gespan-mobile` project; App Store Connect credentials for the submission live in EAS |
+| `EXPO_TOKEN` | The Mobile release and Mobile development workflows. An access token for an Expo account with access to the `@gespan/gespan` project; signing and store credentials live in EAS |
 
 Until the Apple secrets exist, a prerelease can run with **allow_unsigned** ticked in the Run workflow form. The macOS app is then ad-hoc signed and not notarized, so macOS blocks its first launch until it is opened from Finder with Control-click → Open. Windows installers are not code-signed yet, so SmartScreen warns on first run.
 
