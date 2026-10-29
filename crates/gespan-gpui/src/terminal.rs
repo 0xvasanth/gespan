@@ -190,7 +190,7 @@ fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
     };
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut master_fd = -1;
-    #[cfg_attr(not(unix), allow(unused_mut))]
+    #[cfg_attr(not(any(unix, windows)), allow(unused_mut))]
     let mut shell_pid = 0;
     let sender = match tty::new(&options, window, id) {
         Ok(pty) => {
@@ -199,6 +199,10 @@ fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
                 use std::os::fd::AsRawFd;
                 master_fd = pty.file().as_raw_fd();
                 shell_pid = pty.child().id();
+            }
+            #[cfg(windows)]
+            {
+                shell_pid = pty.child_watcher().pid().map_or(0, |pid| pid.get());
             }
             match EventLoop::new(term.clone(), listener, pty, false, false) {
                 Ok(event_loop) => {
@@ -1377,26 +1381,37 @@ fn working_dir(cwd: &str) -> std::path::PathBuf {
     }
 }
 fn default_shell() -> (String, Vec<String>) {
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "macos") {
-                "/bin/zsh".into()
-            } else {
-                "/bin/bash".into()
-            }
-        });
-    let stem = std::path::Path::new(&shell)
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_owned();
-    let args = match stem.as_str() {
-        "zsh" | "bash" | "sh" | "fish" => vec!["-l".to_owned()],
-        _ => Vec::new(),
-    };
-    (shell, args)
+    // Windows has no SHELL; use the command processor, as the Tauri app does.
+    #[cfg(windows)]
+    {
+        match std::env::var("COMSPEC").ok().filter(|s| !s.is_empty()) {
+            Some(comspec) => (comspec, Vec::new()),
+            None => ("powershell.exe".into(), vec!["-NoLogo".into()]),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "macos") {
+                    "/bin/zsh".into()
+                } else {
+                    "/bin/bash".into()
+                }
+            });
+        let stem = std::path::Path::new(&shell)
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        let args = match stem.as_str() {
+            "zsh" | "bash" | "sh" | "fish" => vec!["-l".to_owned()],
+            _ => Vec::new(),
+        };
+        (shell, args)
+    }
 }
 
 /// pty.rs's foreground_label: the command holding the terminal, unless it
@@ -1686,7 +1701,13 @@ mod tests {
         let spawned = spawn(&dir, size, 1);
         let sender = spawned.sender.expect("the shell started");
         assert!(spawned.shell_pid > 1);
-        let _ = sender.send(Msg::Input(Cow::Borrowed(b"printf 'pilot%scode\\n' -\r")));
+        // The command line itself must not contain the text we wait for.
+        let command: &[u8] = if cfg!(windows) {
+            b"echo pilot^-code\r"
+        } else {
+            b"printf 'pilot%scode\\n' -\r"
+        };
+        let _ = sender.send(Msg::Input(Cow::Borrowed(command)));
         let screen = || {
             let term = spawned.term.lock();
             let grid = term.grid();

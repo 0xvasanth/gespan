@@ -525,7 +525,7 @@ impl Popover {
 fn tint() -> Hsla {
     content(0.02)
 }
-// On macOS the renderer blurs what is already drawn behind this quad.
+// On macOS and Windows the renderer blurs what is already drawn behind this quad.
 // Light themes, and platforms without the blur, paint an opaque card.
 fn glass(tint: Hsla, radius: f32, solid: bool) -> impl IntoElement {
     canvas(
@@ -1919,7 +1919,7 @@ mod tests {
             "a solid popover paints no see-through tint"
         );
         let glass = card(cx, false);
-        if cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
             // The dark theme frosts what is behind a default popover.
             assert!(glass.contains(&gpui::Background::from(tint())));
             assert!(!glass.contains(&opaque));
