@@ -137,6 +137,9 @@ fn serve(
     secret: &str,
     tx: &async_channel::Sender<Call>,
 ) -> Result<(), String> {
+    // macOS and Windows hand out accepted streams non-blocking like the
+    // listener, so a request still in flight would fail its first read.
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| e.to_string())?;
@@ -319,6 +322,48 @@ mod capability_tests {
             std::thread::sleep(Duration::from_millis(5));
         };
         assert_eq!(call.session, 7);
+        call.reply.send(Ok(json!({"models":[]}))).unwrap();
+        assert_eq!(request.join().unwrap().unwrap()["ok"], true);
+    }
+    #[test]
+    fn a_request_that_arrives_after_the_connection_is_still_served() {
+        let (server, rx) = Server::start().unwrap();
+        let credential = server.environment(7)["GESPAN_APP_TOKEN"].clone();
+        let endpoint = server.endpoint.clone();
+        let request = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(endpoint).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            // Let the server accept and start reading before anything is sent.
+            std::thread::sleep(Duration::from_millis(300));
+            let wire = Wire {
+                session: 7,
+                token: credential,
+                request_id: "late-1".into(),
+                action: "models.list".into(),
+                input: json!({}),
+            };
+            let line = serde_json::to_string(&wire).unwrap();
+            stream.write_all(line.as_bytes()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            stream.write_all(b"\n").unwrap();
+            let mut result = String::new();
+            let _ = BufReader::new(stream).read_line(&mut result);
+            serde_json::from_str::<Value>(&result).ok()
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let call = loop {
+            if let Ok(call) = rx.try_recv() {
+                break call;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a late request was dropped instead of dispatched"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(call.request_id, "late-1");
         call.reply.send(Ok(json!({"models":[]}))).unwrap();
         assert_eq!(request.join().unwrap().unwrap()["ok"], true);
     }
