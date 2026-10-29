@@ -1,5 +1,5 @@
 //! The board's header row: title, search, filter and New task, like gr8r's.
-use super::{BoardView, menu_row};
+use super::{BoardView, menu_row, menu_row_frame};
 use crate::runtime::locked;
 use crate::{
     popover::{Anchor, popover},
@@ -91,9 +91,34 @@ pub(super) fn checked_row(
     label: impl Into<SharedString>,
     on: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    menu_row(id, label)
+    let label = label.into();
+    let (check, name) = (format!("{id}-check"), format!("{id}-label"));
+    menu_row_frame(id, label.clone())
         .role(Role::MenuItemCheckBox)
         .aria_toggled(if on { Toggled::True } else { Toggled::False })
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .debug_selector(move || check)
+                .size(px(12.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(on, |d| {
+                    d.child(icon("check", 12.).text_color(accent_color()))
+                }),
+        )
+        .child(
+            div()
+                .debug_selector(move || name)
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(label),
+        )
 }
 
 /// Enter or Space on a focused header button presses it.
@@ -786,17 +811,6 @@ impl BoardView {
                 .child(label)
                 .into_any_element()
         };
-        let check = |on: bool| {
-            div()
-                .size(px(12.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(on, |d| {
-                    d.child(icon("check", 12.).text_color(accent_color()))
-                })
-        };
         let mut rows: Vec<AnyElement> = Vec::new();
         for (index, row) in self.spec.rows.iter().enumerate() {
             let open = self.filter_row == Some(index);
@@ -917,9 +931,6 @@ impl BoardView {
                         label,
                         on,
                     )
-                    .flex()
-                    .gap_2()
-                    .child(check(on))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_filter_value(index, &value, cx)
                     }))
@@ -1036,11 +1047,6 @@ impl BoardView {
         }
         let weak = cx.weak_entity();
         let current = self.spec.sort;
-        let check = |on: bool| {
-            div().size(px(12.)).flex_shrink_0().when(on, |d| {
-                d.child(icon("check", 12.).text_color(accent_color()))
-            })
-        };
         let mut rows: Vec<AnyElement> = Vec::new();
         for key in SORT_KEYS {
             let on = current.key == key;
@@ -1051,9 +1057,6 @@ impl BoardView {
                     sort_label(key),
                     on,
                 )
-                .flex()
-                .gap_2()
-                .child(check(on))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_sort(key, dir, cx)))
                 .into_any_element(),
             );
@@ -1067,9 +1070,6 @@ impl BoardView {
                 let on = current.dir == dir;
                 rows.push(
                     checked_row(id.into(), label, on)
-                        .flex()
-                        .gap_2()
-                        .child(check(on))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.set_sort(current.key, dir, cx)),
                         )
@@ -1111,17 +1111,9 @@ impl BoardView {
             return None;
         }
         let weak = cx.weak_entity();
-        let check = |on: bool| {
-            div().size(px(12.)).flex_shrink_0().when(on, |d| {
-                d.child(icon("check", 12.).text_color(accent_color()))
-            })
-        };
         let option = |id: &'static str, label: &'static str, page: bool| {
             let on = self.open_in_page == page;
             checked_row(id.into(), label, on)
-                .flex()
-                .gap_2()
-                .child(check(on))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_open_in_page(page, cx)))
         };
         Some(

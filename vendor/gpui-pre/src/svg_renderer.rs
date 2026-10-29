@@ -337,7 +337,9 @@ fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Dat
     for path in font_paths {
         match asset_source.load(path) {
             Ok(Some(data)) => db.load_font_data(data.into_owned()),
-            Ok(None) => log::warn!("Bundled font not found: {path}"),
+            // Modified by Gespan: the app bundles no fonts of its own, so the
+            // system fonts (and the fallbacks below) are the expected path.
+            Ok(None) => log::debug!("Bundled font not found: {path}"),
             Err(error) => log::warn!("Failed to load bundled font {path}: {error}"),
         }
     }
@@ -349,13 +351,23 @@ fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Dat
 fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
     use usvg::fontdb::{Family, Query};
 
+    // Modified by Gespan: fall back to a family that is actually installed,
+    // since the bundled IBM Plex Sans and Lilex may be absent.
+    let installed: Vec<String> = db
+        .faces()
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let Some(sans) = fallback_family(&installed, SANS_FALLBACKS) else {
+        return;
+    };
+    let mono = fallback_family(&installed, MONO_FALLBACKS).unwrap_or_else(|| sans.clone());
     let families_and_fallbacks: &[(Family<'_>, &str)] = &[
-        (Family::SansSerif, "IBM Plex Sans"),
+        (Family::SansSerif, &sans),
         // No serif font bundled; use sans-serif as best available fallback.
-        (Family::Serif, "IBM Plex Sans"),
-        (Family::Monospace, "Lilex"),
-        (Family::Cursive, "IBM Plex Sans"),
-        (Family::Fantasy, "IBM Plex Sans"),
+        (Family::Serif, &sans),
+        (Family::Monospace, &mono),
+        (Family::Cursive, &sans),
+        (Family::Fantasy, &sans),
     ];
 
     for (family, fallback_name) in families_and_fallbacks {
@@ -376,10 +388,69 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
     }
 }
 
+const SANS_FALLBACKS: &[&str] = &[
+    "IBM Plex Sans",
+    "DejaVu Sans",
+    "Noto Sans",
+    "Liberation Sans",
+    "Ubuntu",
+    "Cantarell",
+    "Segoe UI",
+    "Helvetica",
+    "Arial",
+];
+const MONO_FALLBACKS: &[&str] = &[
+    "Lilex",
+    "DejaVu Sans Mono",
+    "Noto Sans Mono",
+    "Liberation Mono",
+    "Ubuntu Mono",
+    "Cascadia Mono",
+    "Consolas",
+    "Menlo",
+];
+
+/// The first preferred family that is installed, else any installed one.
+fn fallback_family(installed: &[String], preferred: &[&str]) -> Option<String> {
+    preferred
+        .iter()
+        .find(|name| installed.iter().any(|family| family == *name))
+        .map(|name| name.to_string())
+        .or_else(|| installed.first().cloned())
+}
+
 // Modified by Gespan to omit upstream tests requiring unbundled font fixtures.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_bundled_font_falls_back_to_an_installed_family() {
+        let installed = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        // The bundled family wins when present.
+        let all = installed(&["DejaVu Sans", "IBM Plex Sans"]);
+        assert_eq!(
+            fallback_family(&all, SANS_FALLBACKS).as_deref(),
+            Some("IBM Plex Sans")
+        );
+        // Without it, the next preferred family that is installed.
+        let linux = installed(&["Noto Sans", "DejaVu Sans Mono", "DejaVu Sans"]);
+        assert_eq!(
+            fallback_family(&linux, SANS_FALLBACKS).as_deref(),
+            Some("DejaVu Sans")
+        );
+        assert_eq!(
+            fallback_family(&linux, MONO_FALLBACKS).as_deref(),
+            Some("DejaVu Sans Mono")
+        );
+        // With none preferred, any installed family beats a missing one.
+        let odd = installed(&["Some Font"]);
+        assert_eq!(
+            fallback_family(&odd, SANS_FALLBACKS).as_deref(),
+            Some("Some Font")
+        );
+        assert_eq!(fallback_family(&[], SANS_FALLBACKS), None);
+    }
 
     #[test]
     fn renders_parsed_svg_at_requested_size() -> Result<()> {
