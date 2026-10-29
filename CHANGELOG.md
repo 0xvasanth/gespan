@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native on Windows starts agents in a kill-on-close job, so they stop
   when Gespan does, even after a crash, and loads DLLs only from its own
   folder and System32.
+- Gespan Native shows desktop notifications on Windows and Linux too, with a
+  Show button that opens the session. On Windows, turning them off in
+  Settings is respected and the in-app sound plays instead.
 
 ## [0.0.2-beta] - 2026-10-29
 
