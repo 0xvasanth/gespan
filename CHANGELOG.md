@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running. Chats cut short by a quit, a crash or an update restart are marked
   "Turn interrupted when Gespan quit." and continue on the next launch, as in
   the Tauri app, which resumes them too.
+- Gespan Native on Windows has a tray icon with Show Gespan and Quit Gespan.
+  With Close to tray on, closing the window hides it there and running agents
+  keep going; a left click on the icon brings it back.
 
 ## [0.0.2-beta] - 2026-10-29
 

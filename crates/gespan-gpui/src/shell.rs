@@ -48,6 +48,7 @@ mod sidebar_list;
 mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
+mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
@@ -8368,6 +8369,8 @@ impl Render for Shell {
                     cx.notify();
                 }));
             self.start_native_notifications(cx);
+            #[cfg(windows)]
+            self.start_tray(window, cx);
             let shell = cx.entity().downgrade();
             window.on_window_should_close(cx, move |window, cx| {
                 shell
@@ -8385,12 +8388,22 @@ impl Render for Shell {
                             crate::traffic_lights::hide(window, cx);
                             return false;
                         }
-                        // Closing the window quits: ask first, as a quit does.
-                        if shell.unsaved_files(cx) || !shell.running_chats(cx).is_empty() {
-                            shell.request_quit(window, cx);
-                            false
-                        } else {
-                            true
+                        let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
+                        match crate::tray::on_close(
+                            to_tray,
+                            !shell.running_chats(cx).is_empty(),
+                            shell.unsaved_files(cx),
+                        ) {
+                            crate::tray::Close::Hide => {
+                                shell.set_window_visible(window, false);
+                                false
+                            }
+                            // Closing the window quits: ask first, as a quit does.
+                            crate::tray::Close::Ask => {
+                                shell.request_quit(window, cx);
+                                false
+                            }
+                            crate::tray::Close::Quit => true,
                         }
                     })
                     .unwrap_or(true)
