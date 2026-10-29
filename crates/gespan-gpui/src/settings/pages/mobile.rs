@@ -1091,6 +1091,8 @@ fn pairing_backdrop(classic: bool) -> impl IntoElement {
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let fill = {
+                // No backdrop blur here, so the glass tint above is not used.
+                let _ = fill;
                 let mut fill = shell_fill();
                 fill.a = 1.;
                 fill

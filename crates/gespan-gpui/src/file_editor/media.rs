@@ -185,6 +185,9 @@ impl MediaPreview {
                     .await;
                 if this
                     .update(cx, |this, cx| {
+                        // Only the macOS player reports metadata.
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = (this, cx);
                         #[cfg(target_os = "macos")]
                         if this.visible
                             && let Some(video) = &this.video
@@ -335,6 +338,8 @@ impl MediaPreview {
 }
 impl gpui::Render for MediaPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(not(target_os = "macos"))]
+        let _ = window;
         let is_image = self.image.is_some();
         #[cfg(target_os = "macos")]
         if self.failed

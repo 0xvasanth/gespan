@@ -5,6 +5,8 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+// Only macOS answers a permission request; elsewhere it stays Unsupported.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Permission {
     Prompt,
@@ -91,6 +93,8 @@ impl Target {
         }
     }
 
+    // Read back from a clicked macOS notification.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn from_tag(tag: &str) -> Option<Self> {
         if let Some(rest) = tag.strip_prefix("gespan-session:") {
             let (id, sequence) = rest.split_once(':')?;
