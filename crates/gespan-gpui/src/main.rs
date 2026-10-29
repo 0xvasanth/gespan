@@ -94,6 +94,7 @@ mod tickets;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;
+mod tray;
 mod usage_footer;
 mod visuals;
 mod window_state;
