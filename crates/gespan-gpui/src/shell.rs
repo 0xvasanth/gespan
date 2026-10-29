@@ -18,6 +18,7 @@ mod image_lightbox_tests;
 mod in_flight;
 mod layout;
 mod live_agents;
+mod menu_bar;
 mod mobile_host;
 mod notifications;
 mod open_in_editor;
@@ -748,6 +749,7 @@ pub(crate) struct Shell {
     quit_prompted: bool,
     /// The running-chats list last written to the store.
     in_flight_written: Option<Vec<i64>>,
+    menu_bar: menu_bar::MenuBar,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
@@ -1122,6 +1124,7 @@ impl Shell {
             theme_project: None,
             quit_prompted: false,
             in_flight_written: None,
+            menu_bar: menu_bar::MenuBar::new(!cfg!(target_os = "macos")),
             menu: None,
             background_dialog: None,
             backgrounds: HashMap::new(),

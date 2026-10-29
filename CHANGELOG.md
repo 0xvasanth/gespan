@@ -9,18 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Gespan Native asks before quitting or closing its window while chats are
-  running. Chats cut short by a quit, a crash or an update restart are marked
-  "Turn interrupted when Gespan quit." and continue on the next launch, as in
-  the Tauri app, which resumes them too.
-- Gespan Native on Windows has a tray icon with Show Gespan and Quit Gespan.
-  With Close to tray on, closing the window hides it there and running agents
-  keep going; a left click on the icon brings it back.
-- Gespan Native on Windows runs one instance per data folder: launching it
-  again brings the running window back, even from the tray.
-- Gespan Native on Windows starts agents in a kill-on-close job, so they stop
-  when Gespan does, even after a crash, and loads DLLs only from its own
-  folder and System32.
 - Gespan Native shows desktop notifications on Windows and Linux too, with a
   Show button that opens the session. On Windows, turning them off in
   Settings is respected and the in-app sound plays instead.
@@ -36,6 +24,14 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Added
 
+- Gespan Native on Windows has a tray icon with Show Gespan and Quit Gespan.
+  With Close to tray on, closing the window hides it there and running agents
+  keep going; a left click on the icon brings it back.
+- Gespan Native on Windows runs one instance per data folder: launching it
+  again brings the running window back, even from the tray.
+- Gespan Native on Windows and Linux has an in-window menu bar (File, Edit,
+  View, Help) with the same items, shortcuts and checkmarks as the macOS menu
+  bar.
 - Gespan Native on Windows draws its title bar in the tab row, with backdrop
   blur, its app icon and no console windows.
 - Gespan Native on Linux has Wayland window chrome with client-side controls,
@@ -49,6 +45,13 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Fixed
 
+- Gespan Native asks before quitting or closing its window while chats are
+  running. Chats cut short by a quit, a crash or an update restart are marked
+  "Turn interrupted when Gespan quit." and continue on the next launch, as in
+  the Tauri app, which resumes them too.
+- Gespan Native on Windows starts agents in a kill-on-close job, so they stop
+  when Gespan does, even after a crash, and loads DLLs only from its own
+  folder and System32.
 - On the Board in Gespan Native, Space lifts a focused card for a keyboard move
   instead of opening its drawer.
 - Escape on the Board closes the innermost open layer (a field, a menu, the
