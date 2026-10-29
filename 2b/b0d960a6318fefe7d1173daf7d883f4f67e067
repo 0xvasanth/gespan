@@ -1,0 +1,71 @@
+.github/workflows/native.yml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 7-8,33,38,43-52
+mobile/.gitignore
+  s_3abf683d1a12e8::t_d703270d6ce3c9 44-47
+mobile/README.md
+  s_3abf683d1a12e8::t_d703270d6ce3c9 58-59
+src/features/files/ui/BinaryFileView.tsx
+  s_3abf683d1a12e8::t_d703270d6ce3c9 2,261-269,281-283
+crates/gespan-gpui/src/shell.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 12155,12355,12377,12449,12621,12639,12642,12673,12693,12699,12772,12790,12802,12828
+.github/workflows/mobile-development.yml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 1-110
+crates/gespan-gpui/src/shell/app_commands/tests.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 637-638
+.github/workflows/native-release.yml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 246-278,281,310-313,397-408
+crates/gespan-gpui/Cargo.toml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 137-144
+crates/gespan-gpui/src/markdown.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 1067-1068,1070-1073,1077
+.github/workflows/mobile-release.yml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 1-95
+docs/building.md
+  s_3abf683d1a12e8::t_d703270d6ce3c9 74,76-77,79-80,82,84-86,90,93-94,96
+CHANGELOG.md
+  s_3abf683d1a12e8::t_d703270d6ce3c9 30-32,47-48,61-77
+crates/gespan-gpui/src/file_editor.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 1375-1376,1379,1383,1387,1391
+.github/workflows/ci.yml
+  s_3abf683d1a12e8::t_d703270d6ce3c9 12-14
+crates/gespan-core/src/pilot/bridge.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 14,135-152,158-160,164-168,347-414
+mobile/app.json
+  s_3abf683d1a12e8::t_d703270d6ce3c9 4-5,23,96,100
+src/features/files/ui/BinaryFileView.test.ts
+  s_3abf683d1a12e8::t_d703270d6ce3c9 148-169
+crates/gespan-gpui/src/popover.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 528,1922
+crates/gespan-gpui/src/shell/classic_surface_tests.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 656,1009
+crates/gespan-gpui/src/mobile/project.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 807-810,879-882,884-885
+crates/gespan-gpui/src/terminal.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 193,203-206,1384-1414,1704-1710
+crates/gespan-gpui/src/board/tests.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 3747,3896,3947,7376,7381
+docs/install.md
+  s_3abf683d1a12e8::t_d703270d6ce3c9 78
+crates/gespan-core/src/board/mod.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 408-413
+crates/gespan-gpui/src/editor_analysis.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 87-98,234-259,413-416,420,422-424,427-431,586-653
+crates/gespan-gpui/src/shell/settings.rs
+  s_3abf683d1a12e8::t_d703270d6ce3c9 671,782,796,813,820,841
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bb0d960a6318fefe7d1173daf7d883f4f67e067",
+  "prompts": {},
+  "sessions": {
+    "s_3abf683d1a12e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf67907a-9e6a-4d99-aab1-f544258778b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
