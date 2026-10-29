@@ -1,0 +1,89 @@
+crates/gespan-core/src/provider/parked.rs
+  s_93228b2da96037::t_2dffdc97314598 191-204,208,361,366-370,376,391,394-407,417,612-620,663-664,666,669,671-681,755-788,877-982,985
+  s_93228b2da96037::t_a7a83f4f8f06ae 983-984,986
+crates/gespan-gpui/src/pickers.rs
+  s_93228b2da96037::t_2dffdc97314598 194-230,685-689,693-696,714
+src-tauri/tauri.conf.json
+  s_93228b2da96037::t_2dffdc97314598 4
+crates/gespan-gpui/src/board/keyboard.rs
+  s_93228b2da96037::t_2dffdc97314598 147-180
+.claude/settings.json
+  s_93228b2da96037::t_2dffdc97314598 1-16
+package.json
+  s_93228b2da96037::t_2dffdc97314598 16
+crates/gespan-gpui/src/board/switcher.rs
+  s_93228b2da96037::t_2dffdc97314598 455
+CHANGELOG.md
+  s_93228b2da96037::t_2dffdc97314598 10-38
+crates/gespan-gpui/src/notifications/platform.rs
+  s_93228b2da96037::t_2dffdc97314598 8
+tests/native-kiro/fake-kiro-cli
+  s_93228b2da96037::t_2dffdc97314598 1-91
+crates/gespan-gpui/src/pilots/html.rs
+  s_93228b2da96037::t_2dffdc97314598 107
+tests/native-kiro/run_kiro_e2e.py
+  s_93228b2da96037::t_2dffdc97314598 1-288
+crates/gespan-gpui/src/board/tests.rs
+  s_93228b2da96037::t_2dffdc97314598 193-253,755-790,1208-1242,6812-6823
+Cargo.toml
+  s_93228b2da96037::t_2dffdc97314598 7
+crates/gespan-gpui/src/board/detail/view.rs
+  s_93228b2da96037::t_2dffdc97314598 760-766,768-770
+crates/gespan-core/src/catalog.rs
+  s_93228b2da96037::t_2dffdc97314598 372,375-379,381-385,903-910,914,918-922,927
+crates/gespan-gpui/src/notifications/delivery.rs
+  s_93228b2da96037::t_2dffdc97314598 8-9
+crates/gespan-gpui/src/shell/pilots.rs
+  s_93228b2da96037::t_2dffdc97314598 56
+crates/gespan-gpui/Cargo.toml
+  s_93228b2da96037::t_2dffdc97314598 105
+crates/gespan-gpui/src/board/header.rs
+  s_93228b2da96037::t_2dffdc97314598 2,94-96,99-121
+crates/gespan-gpui/src/board.rs
+  s_93228b2da96037::t_2dffdc97314598 1472-1474,1752-1756,1762
+crates/gespan-gpui/src/file_editor/media.rs
+  s_93228b2da96037::t_2dffdc97314598 188-190
+  s_93228b2da96037::t_1b9e0e2d6d7e0a 343
+crates/gespan-gpui/src/terminal.rs
+  s_93228b2da96037::t_2dffdc97314598 1467
+host/child-backend.test.ts
+  s_93228b2da96037::t_2dffdc97314598 200-202
+crates/gespan-core/src/provider/acp.rs
+  s_93228b2da96037::t_2dffdc97314598 54-56,213-221,533-535,683-696,863-875,992-997,1013-1020,1187-1195,1295-1310,1967-1968,1974-1976,1985-2082
+tests/native-kiro/uitool.swift
+  s_93228b2da96037::t_2dffdc97314598 1-45
+crates/gespan-gpui/src/pilots/floating.rs
+  s_93228b2da96037::t_2dffdc97314598 7
+crates/gespan-gpui/src/settings/pages/mobile.rs
+  s_93228b2da96037::t_2dffdc97314598 1094-1095
+tests/native-kiro/README.md
+  s_93228b2da96037::t_2dffdc97314598 1-73
+crates/gespan-gpui/src/board/column.rs
+  s_93228b2da96037::t_2dffdc97314598 770-771,778-814,870,897-898,903-906
+scripts/worktree-setup.sh
+  s_93228b2da96037::t_2dffdc97314598 1-26
+.worktreeinclude
+  s_93228b2da96037::t_2dffdc97314598 1-9
+Cargo.lock
+  s_93228b2da96037::t_3fb7511da394ca 1880,1977,2000
+crates/gespan-gpui/Cargo.lock
+  s_93228b2da96037::t_2656b637fa683a 2343,2395,2488,2508
+vendor/gpui-pre/src/svg_renderer.rs
+  s_93228b2da96037::t_ea396850784a14 340-342,354-363,365,367-370,391-421,427-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc92088e0a66d49969aa766a1fe6d52bcd29da06",
+  "prompts": {},
+  "sessions": {
+    "s_93228b2da96037": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20f1d260-18a2-49fa-adb7-9a456d96c4bd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
