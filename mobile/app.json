@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Gespan",
-    "slug": "gespan-mobile",
+    "slug": "gespan",
     "owner": "gespan",
     "version": "1.0.0",
     "runtimeVersion": {
@@ -93,11 +93,11 @@
     },
     "extra": {
       "eas": {
-        "projectId": "2e152a9e-0978-4648-bb75-b75e035be248"
+        "projectId": "43b3933f-c8f3-4051-a230-917b050f3ea5"
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/2e152a9e-0978-4648-bb75-b75e035be248"
+      "url": "https://u.expo.dev/43b3933f-c8f3-4051-a230-917b050f3ea5"
     }
   }
 }
