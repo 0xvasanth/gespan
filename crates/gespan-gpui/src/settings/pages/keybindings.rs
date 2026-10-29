@@ -241,6 +241,18 @@ pub(crate) const BINDINGS: &[Binding] = &[
         fixed: false,
     },
     Binding {
+        command: "Project: Move Back",
+        keys: "⌘⌥⇧←",
+        when: "!overlay && (!textFocus || emptyComposer)",
+        fixed: false,
+    },
+    Binding {
+        command: "Project: Move Forward",
+        keys: "⌘⌥⇧→",
+        when: "!overlay && (!textFocus || emptyComposer)",
+        fixed: false,
+    },
+    Binding {
         command: "Pane: Close",
         keys: "⌘W",
         when: "Always",
