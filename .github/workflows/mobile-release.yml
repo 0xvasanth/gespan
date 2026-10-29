@@ -1,0 +1,58 @@
+name: Mobile release
+
+# Builds the iOS app on EAS and submits it to TestFlight. Started by hand from
+# the same native-vX.Y.Z tag as the Native preview release, so one tag ships
+# both apps.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Require a native-v* tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: node scripts/release-channel.cjs native-ref
+
+  ios:
+    name: iOS build and TestFlight submission
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Require an Expo access token
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "Add an EXPO_TOKEN repository secret from an Expo account with access to the gespan-mobile project." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # The same installs as the Mobile checks job; EAS reads the app config
+      # and computes the fingerprint runtime version from them.
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: mobile
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      # The production profile builds for the store with the beta update
+      # channel and a remote, auto-incremented build number.
+      - run: eas build --platform ios --profile production --non-interactive --auto-submit
+        working-directory: mobile

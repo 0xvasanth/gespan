@@ -71,41 +71,29 @@ The Windows build emits an NSIS installer under `target/release/bundle/nsis/`.
 - [src-tauri/tauri.linux.conf.json](../src-tauri/tauri.linux.conf.json) loads automatically for Linux development and builds.
 - [src-tauri/tauri.windows.conf.json](../src-tauri/tauri.windows.conf.json) loads automatically for Windows development and builds.
 
-## Beta releases and updates
+## Releases
 
-Prerelease tags such as `v0.9.1-beta.1` publish a separate beta feed, and beta builds use that feed even when a stable updater endpoint is configured. Beta releases leave the stable feed and macOS download links unchanged.
+A release ships Gespan Native and the mobile app. The Tauri app is no longer
+released or tested in CI.
 
-To trial AppImage updates, install a beta AppImage in a writable directory, publish a newer beta, and verify the update downloads, installs, and relaunches successfully before publishing a stable version.
+Both release workflows run only when started by hand from a `native-vX.Y.Z` tag,
+so pushing a tag never publishes anything on its own.
 
-### Updater feed and signing secrets
-
-- Stable releases attach `latest.json` to the GitHub Release. Builds default to `https://github.com/0xvasanth/gespan/releases/latest/download/latest.json`; set the `TAURI_UPDATER_ENDPOINT` secret to override it. The feed always points at the GitHub Release assets.
-- R2 is optional for stable releases. When all R2 secrets (`R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are set, packages and the feed are also mirrored to R2; otherwise that step is skipped.
-- Beta releases publish their feed as the only file on the fixed `beta-latest` GitHub release (`https://github.com/0xvasanth/gespan/releases/download/beta-latest/latest.json`), because GitHub's `/releases/latest` skips prereleases. With every R2 secret set, the beta feed is served from R2 as `beta/latest.json` instead. A beta with only some R2 secrets fails early.
-- `TAURI_UPDATER_PUBKEY` is always required, along with `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate the key pair with `bunx tauri signer generate`.
-
-The [release workflow](../.github/workflows/release.yml) packages the platform builds and publishes the updater feed. [scripts/release-channel.cjs](../scripts/release-channel.cjs) selects the stable or beta feed.
-
-### Cutting a release
-
-The release workflow runs only when started by hand, so pushing a tag never publishes anything on its own.
-
-1. Add every secret below under Settings → Secrets and variables → Actions.
+1. Add the secrets below under Settings → Secrets and variables → Actions.
 2. Bump the version (`bun run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
-3. Tag the merge commit as `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta) and push the tag.
-4. In the Actions tab, open **Release**, choose **Run workflow**, set **Use workflow from** to that tag, and run it. Any other ref fails immediately.
-
-Each version is one GitHub release, `vX.Y.Z`, holding both apps. Gespan Native's workflow runs from `native-vX.Y.Z` and adds its packages to the same release. Whichever runs first creates the release with the version's CHANGELOG section as its notes; run them one after the other. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
+3. Tag the merge commit as `native-vX.Y.Z` (for example `native-v0.0.2-beta`) and push the tag.
+4. In the Actions tab, run **Native preview release** from that tag. It creates the `vX.Y.Z` GitHub release with the version's CHANGELOG section as its notes, uploads the Native packages and the standalone host packages (Gespan Native's SSH remotes download these), and refreshes the signed `native-latest` update feed. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
+5. Run **Mobile release** from the same tag. It builds the iOS app on EAS with the `production` profile (beta update channel, auto-incremented build number) and submits it to TestFlight.
 
 | Secret | Needed for |
 | --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying Native update packages (always required; the names predate Native) |
 | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | Signing the macOS app |
 | `APPLE_API_KEY`, `APPLE_API_KEY_P8`, `APPLE_API_ISSUER` | Notarizing the macOS app |
-| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying updater packages (always required) |
-| `TAURI_UPDATER_ENDPOINT` | Optional. Overrides the default GitHub Releases feed for stable builds |
-| `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional. All or none (see above) |
+| `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional R2 mirror. All or none |
+| `EXPO_TOKEN` | The Mobile release. An access token for an Expo account with access to the `gespan-mobile` project; App Store Connect credentials for the submission live in EAS |
 
-Until the Apple secrets exist, a prerelease can run with **allow_unsigned** ticked in the Run workflow form. The macOS app is then ad-hoc signed and not notarized, so macOS blocks its first launch until it is opened from Finder with Control-click → Open (or after `xattr -dr com.apple.quarantine /Applications/Gespan.app`). Stable releases always require the Apple secrets. Windows installers are not code-signed yet, so SmartScreen warns on first run. The same option exists on **Native preview release**.
+Until the Apple secrets exist, a prerelease can run with **allow_unsigned** ticked in the Run workflow form. The macOS app is then ad-hoc signed and not notarized, so macOS blocks its first launch until it is opened from Finder with Control-click → Open. Windows installers are not code-signed yet, so SmartScreen warns on first run.
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
 

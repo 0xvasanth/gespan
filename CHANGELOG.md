@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.2-beta] - 2026-10-29
 
+This release ships Gespan Native for macOS, Windows and Linux, and the iOS app
+on TestFlight. The earlier Gespan desktop app is no longer released.
+
 This beta is still not signed with an Apple Developer ID or a Windows
 code-signing certificate. On macOS, open it the first time with Control-click →
 Open; on Windows, choose **More info → Run anyway** in SmartScreen.
@@ -52,8 +55,6 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 - A Pilot's call to the app is no longer dropped when its request arrives a
   moment after the connection opens, and a stalled request can no longer hold
   a connection open.
-- A video preview shows the video's size when WebKit reports it after the
-  rest of the metadata.
 - Syntax colours, folds and change markers in Gespan Native line up in files
   with Windows (CRLF) line endings, and their diffs no longer fail.
 
