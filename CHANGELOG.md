@@ -54,6 +54,8 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
   a connection open.
 - A video preview shows the video's size when WebKit reports it after the
   rest of the metadata.
+- Syntax colours, folds and change markers in Gespan Native line up in files
+  with Windows (CRLF) line endings, and their diffs no longer fail.
 
 ## [0.0.1-beta] - 2026-10-27
 
