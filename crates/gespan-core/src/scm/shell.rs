@@ -307,7 +307,7 @@ fn load_unix_login_shell_env() -> HashMap<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     crate::process::isolate(&mut cmd);
-    let Ok(child) = cmd.spawn() else {
+    let Ok(child) = crate::process::spawn(&mut cmd) else {
         return HashMap::new();
     };
     let pid = child.id();

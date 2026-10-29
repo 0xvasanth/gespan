@@ -41,7 +41,7 @@ pub fn output(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     crate::process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = crate::process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = crate::process::register(child.id());
     let read = |mut pipe: Box<dyn Read + Send>| {
         std::thread::spawn(move || {

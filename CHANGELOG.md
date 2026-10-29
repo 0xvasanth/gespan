@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep going; a left click on the icon brings it back.
 - Gespan Native on Windows runs one instance per data folder: launching it
   again brings the running window back, even from the tray.
+- Gespan Native on Windows starts agents in a kill-on-close job, so they stop
+  when Gespan does, even after a crash, and loads DLLs only from its own
+  folder and System32.
 
 ## [0.0.2-beta] - 2026-10-29
 
