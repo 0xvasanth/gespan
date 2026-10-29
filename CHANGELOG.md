@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Gespan Native asks before quitting or closing its window while chats are
+  running. Chats cut short by a quit, a crash or an update restart are marked
+  "Turn interrupted when Gespan quit." and continue on the next launch, as in
+  the Tauri app, which resumes them too.
+
 ## [0.0.2-beta] - 2026-10-29
 
 This release ships Gespan Native for macOS, Windows and Linux, and the iOS app

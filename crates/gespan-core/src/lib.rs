@@ -19,6 +19,7 @@ pub mod git;
 pub mod harness_updates;
 pub mod hold;
 pub mod inbox;
+pub mod interrupted;
 pub mod mobile;
 pub mod notes;
 pub mod pilot;
