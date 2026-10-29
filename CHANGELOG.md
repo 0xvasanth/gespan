@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native on Windows starts agents in a kill-on-close job, so they stop
   when Gespan does, even after a crash, and loads DLLs only from its own
   folder and System32.
+- Gespan Native on Windows and Linux has an in-window menu bar (File, Edit,
+  View, Help) with the same items, shortcuts and checkmarks as the macOS menu
+  bar.
 
 ## [0.0.2-beta] - 2026-10-29
 
