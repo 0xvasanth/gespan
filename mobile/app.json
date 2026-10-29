@@ -2,7 +2,7 @@
   "expo": {
     "name": "Gespan",
     "slug": "gespan-mobile",
-    "owner": "hardbeat920",
+    "owner": "gespan",
     "version": "1.0.0",
     "runtimeVersion": {
       "policy": "fingerprint"
@@ -20,6 +20,7 @@
       }
     },
     "android": {
+      "package": "dev.gespan.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -92,11 +93,11 @@
     },
     "extra": {
       "eas": {
-        "projectId": "f80fe97b-6056-48a4-9fb2-b45ca2c8974b"
+        "projectId": "2e152a9e-0978-4648-bb75-b75e035be248"
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/f80fe97b-6056-48a4-9fb2-b45ca2c8974b"
+      "url": "https://u.expo.dev/2e152a9e-0978-4648-bb75-b75e035be248"
     }
   }
 }
