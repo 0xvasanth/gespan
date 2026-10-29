@@ -55,6 +55,8 @@ bunx eas-cli@latest build --platform ios --profile development-simulator
 
 Install the completed development build, then run `bun run start` to connect it to Metro.
 
+The **Mobile development** GitHub workflow does the same from CI. Run it by hand to make a development build, and every push to `main` that changes `mobile/` publishes an update to the `development` and `development-simulator` channels, which installed development builds with a matching native fingerprint can open from the dev launcher. Store releases use the **Mobile release** workflow; see [Releases](../docs/building.md#releases). Both need the `EXPO_TOKEN` repository secret.
+
 ## Check the project
 
 ```bash

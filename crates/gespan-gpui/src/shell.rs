@@ -12152,7 +12152,7 @@ mod tests {
             cx.debug_bounds(count_selector).is_none(),
             "a single pane has no count badge"
         );
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, _| {
@@ -12352,7 +12352,7 @@ mod tests {
             .unwrap();
 
         // ⌘W closes the focused pane only; its neighbour takes focus.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12374,7 +12374,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         window
             .update(cx, |shell, _, _| {
                 shell
@@ -12446,7 +12446,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         cx.update(|_, cx| cx.set_reduce_motion(false));
         let new = window
@@ -12618,7 +12618,7 @@ mod tests {
                 assert_eq!(shell.viewport_width, 1000.);
             })
             .unwrap();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, cx| {
@@ -12636,10 +12636,10 @@ mod tests {
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // A sidebar the user hid stays hidden when room comes back.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         // Collapsed for the split; shown, then hidden again by hand.
-        cx.simulate_keystrokes("cmd-b cmd-b");
+        cx.simulate_keystrokes("secondary-b secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12670,7 +12670,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         // Wide enough for two panes beside the sidebar.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
@@ -12690,13 +12690,13 @@ mod tests {
         // Shown by hand while crowded, it stays until the room changes again.
         cx.simulate_resize(gpui::size(px(1000.), px(800.)));
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // Hidden by hand, it stays hidden however wide the window grows.
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.simulate_resize(gpui::size(px(1600.), px(800.)));
         cx.run_until_parked();
         window
@@ -12769,7 +12769,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         assert!(cx.debug_bounds("terminal-dock").is_none());
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         let project = window
             .update(cx, |shell, w, cx| {
@@ -12787,7 +12787,7 @@ mod tests {
         assert!((dock.size.height - px(220.)).abs() < px(2.));
         // ⌘T in the dock opens another terminal, not a session tab.
         let tabs = window.update(cx, |s, _, _| s.workspace.tabs.len()).unwrap();
-        cx.simulate_keystrokes("cmd-t");
+        cx.simulate_keystrokes("secondary-t");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12799,7 +12799,7 @@ mod tests {
             .unwrap();
         assert!(cx.debug_bounds("terminal-tab-1").is_some());
         // ⌘W closes the focused terminal; the session tab stays.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12825,7 +12825,7 @@ mod tests {
         window
             .update(cx, |shell, w, cx| shell.focus_terminal(w, cx))
             .unwrap();
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
