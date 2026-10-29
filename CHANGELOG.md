@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native on Windows has a tray icon with Show Gespan and Quit Gespan.
   With Close to tray on, closing the window hides it there and running agents
   keep going; a left click on the icon brings it back.
+- Gespan Native on Windows runs one instance per data folder: launching it
+  again brings the running window back, even from the tray.
 
 ## [0.0.2-beta] - 2026-10-29
 
