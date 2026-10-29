@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
   Gespan left running, as the Tauri app does. Agents of a running Gespan,
   Native or Tauri, are left alone.
+- Gespan Native on Windows and Linux has an in-window menu bar (File, Edit,
+  View, Help) with the same items, shortcuts and checkmarks as the macOS menu
+  bar.
 
 ## [0.0.2-beta] - 2026-10-29
 

@@ -755,41 +755,48 @@ impl Shell {
             .flex()
             .child(self.background_card.probe())
             .child(
-                div().flex_1().min_w_0().h_full().flex().flex_col().child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .min_w_0()
-                        // Every project lands on a blank session, as in
-                        // Gespan; this is empty only while one is created.
-                        .child({
-                            if let Some(pilots) =
-                                self.pilots.clone().filter(|m| m.read(cx).active.is_some())
-                            {
-                                let session = pilots.read(cx).active_notification_session(cx);
-                                let linked = session.and_then(|id| self.linked_notice(id, cx));
-                                div()
-                                    .relative()
-                                    .size_full()
-                                    .child(self.pilot_bounds.layout_probe())
-                                    .child(pilots)
-                                    .children(self.drop_hint(super::pilot_panes::PILOT_VIEW))
-                                    .children(linked.map(|notice| {
-                                        div()
-                                            .absolute()
-                                            .top(px(12.))
-                                            .right(px(12.))
-                                            .w(px(320.))
-                                            .max_w_full()
-                                            .child(notice)
-                                    }))
-                                    .into_any_element()
-                            } else {
-                                let body = self.workspace_body(window, cx);
-                                self.with_dock(body, window, cx)
-                            }
-                        }),
-                ),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .children(self.menu_bar(cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .min_w_0()
+                            // Every project lands on a blank session, as in
+                            // Gespan; this is empty only while one is created.
+                            .child({
+                                if let Some(pilots) =
+                                    self.pilots.clone().filter(|m| m.read(cx).active.is_some())
+                                {
+                                    let session = pilots.read(cx).active_notification_session(cx);
+                                    let linked = session.and_then(|id| self.linked_notice(id, cx));
+                                    div()
+                                        .relative()
+                                        .size_full()
+                                        .child(self.pilot_bounds.layout_probe())
+                                        .child(pilots)
+                                        .children(self.drop_hint(super::pilot_panes::PILOT_VIEW))
+                                        .children(linked.map(|notice| {
+                                            div()
+                                                .absolute()
+                                                .top(px(12.))
+                                                .right(px(12.))
+                                                .w(px(320.))
+                                                .max_w_full()
+                                                .child(notice)
+                                        }))
+                                        .into_any_element()
+                                } else {
+                                    let body = self.workspace_body(window, cx);
+                                    self.with_dock(body, window, cx)
+                                }
+                            }),
+                    ),
             )
             .when_some(panel, |d, panel| {
                 d.child(self.right_panel_frame(panel, right_width, full, window, cx))
