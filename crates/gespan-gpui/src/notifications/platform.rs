@@ -15,6 +15,8 @@ pub struct Notification {
     pub tag: String,
     pub subtitle: String,
     pub body: String,
+    /// macOS only: GPUI's Windows and Linux notifications play the OS sound.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub sound: bool,
 }
 
