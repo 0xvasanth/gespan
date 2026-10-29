@@ -584,8 +584,10 @@ mod parity_tests {
     }
     #[test]
     fn crlf_files_keep_their_raw_byte_positions() {
-        let lf_original = "const a = 1;\nconst b = 2;\nconst c = 3;\n".repeat(40);
-        let lf_source = lf_original.replacen("const c = 3;", "const c = 'changed';", 40);
+        // Few enough changes that the diff never hits its time limit on a
+        // slow runner, which would merge them differently between the runs.
+        let lf_original = "const a = 1;\nconst b = 2;\nconst c = 3;\n".repeat(4);
+        let lf_source = lf_original.replace("const c = 3;", "const c = 'changed';");
         let lf_source = format!("{lf_source}const last = 4;\n");
         let source = lf_source.replace('\n', "\r\n");
         let original = lf_original.replace('\n', "\r\n");
