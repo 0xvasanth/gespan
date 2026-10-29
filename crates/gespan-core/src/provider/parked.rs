@@ -59,7 +59,7 @@ impl Wire {
         count_start: bool,
     ) -> Result<Self, String> {
         let counter = count_start.then(|| format!("agent.start.{}", request.kind.id()));
-        let mut child = command.spawn().map_err(|e| {
+        let mut child = process::spawn(command).map_err(|e| {
             if let Some(counter) = &counter {
                 metrics::failure(counter, metrics::ErrorKind::of_spawn(&e));
             }

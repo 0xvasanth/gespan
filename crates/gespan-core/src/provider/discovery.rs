@@ -37,7 +37,7 @@ pub(super) fn matches(kind: Kind, path: &Path) -> bool {
         .stderr(Stdio::null());
     crate::scm::shell::apply_gui_env(&mut command);
     process::isolate(&mut command);
-    let Ok(mut child) = command.spawn() else {
+    let Ok(mut child) = process::spawn(&mut command) else {
         return false;
     };
     let _registration = process::register(child.id());
