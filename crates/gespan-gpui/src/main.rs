@@ -235,6 +235,11 @@ fn fatal(echo: bool, code: i32, message: &str) -> ! {
     exit(code)
 }
 fn main() {
+    // Before anything loads a DLL: only the app's folder and System32.
+    #[cfg(windows)]
+    if let Err(error) = gespan_core::process::harden_dll_search() {
+        eprintln!("Cannot restrict DLL search paths: {error}");
+    }
     // The dictation helper this binary runs as a child: no app, no GPUI.
     if std::env::args()
         .nth(1)

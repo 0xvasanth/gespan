@@ -98,7 +98,7 @@ pub(crate) fn delete_keychain(config: &std::path::Path) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let deadline = Instant::now() + Duration::from_secs(5);
     let result = loop {
@@ -152,7 +152,7 @@ fn keychain(config: Option<&std::path::Path>) -> Option<Value> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().ok()?;
+    let mut child = process::spawn(&mut command).ok()?;
     let _registration = process::register(child.id());
     let output = child.stdout.take()?;
     // Drain concurrently: waiting before reading can fill the pipe and hang.
