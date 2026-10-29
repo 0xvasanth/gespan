@@ -1,0 +1,21 @@
+mobile/app.json
+  s_bfa0c56141afa0::t_9d55966c269911 96
+  s_bfa0c56141afa0::t_ac975310e7d201 100
+  s_bfa0c56141afa0::t_aac453484dd64d 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4b155572f7fef7e3b67110c554563ad89cb095d",
+  "prompts": {},
+  "sessions": {
+    "s_bfa0c56141afa0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc216694-5545-451b-ae29-38bb1529b6f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
