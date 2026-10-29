@@ -171,10 +171,9 @@ fn command(request: &Request) -> Result<Command, String> {
     Ok(command)
 }
 fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String, String> {
-    let mut child = command(request)?
-        .args(args)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut command = command(request)?;
+    command.args(args);
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let _account = crate::accounts::track(child.id(), request.kind, &request.settings.account);
     let stdout = child.stdout.take().unwrap();

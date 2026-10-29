@@ -54,8 +54,7 @@ pub fn authenticate(
         command.current_dir(home);
     }
     process::isolate(&mut command);
-    let mut child = command
-        .spawn()
+    let mut child = process::spawn(&mut command)
         .map_err(|e| format!("Could not start {} sign-in: {e}", kind.label()))?;
     let _registration = process::register(child.id());
     let _account_process = super::track(child.id(), kind, profile);
@@ -138,7 +137,7 @@ pub(crate) fn cli_output(kind: Kind, args: &[&str], profile: &Profile) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let _account_process = super::track(child.id(), kind, profile);
     let output = child.stdout.take().unwrap();
