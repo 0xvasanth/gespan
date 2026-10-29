@@ -403,7 +403,7 @@ mod capability_tests {
         }
         if !closed {
             let mut rest = Vec::new();
-            closed = matches!(stream.read_to_end(&mut rest), Ok(_));
+            closed = stream.read_to_end(&mut rest).is_ok();
         }
         assert!(closed, "the server kept a trickling connection open");
         assert!(
