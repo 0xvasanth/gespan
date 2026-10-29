@@ -405,6 +405,10 @@ mod tests {
                         let column = &column_ids[(seed >> 13) as usize % column_ids.len()];
                         let index = (seed >> 7) as usize % 9;
                         service.card_move(card, column, index, "user").unwrap();
+                        // SQLite's busy wait polls, so a writer that never lets go
+                        // can starve the other past its timeout on slow Windows
+                        // runners. People do not move cards back to back like this.
+                        std::thread::sleep(std::time::Duration::from_millis(1));
                     }
                 })
             })

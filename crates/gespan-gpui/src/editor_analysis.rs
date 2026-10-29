@@ -231,6 +231,32 @@ fn byte_offsets(source: &str) -> Vec<usize> {
     offsets.push(source.len());
     offsets
 }
+/// CodeMirror reads `\r\n` as one line break, so its offsets skip each `\r`
+/// before a `\n`. The text without those, and for files that had any, where
+/// each of its byte offsets sits in `raw`.
+fn without_crlf(raw: &str) -> (std::borrow::Cow<'_, str>, Option<Vec<usize>>) {
+    if !raw.contains("\r\n") {
+        return (raw.into(), None);
+    }
+    let bytes = raw.as_bytes();
+    let mut text = Vec::with_capacity(raw.len());
+    let mut at = Vec::with_capacity(raw.len() + 1);
+    for (ix, &byte) in bytes.iter().enumerate() {
+        if byte == b'\r' && bytes.get(ix + 1) == Some(&b'\n') {
+            continue;
+        }
+        text.push(byte);
+        // A line break starts at its `\r`, so line ends stay before it.
+        at.push(if byte == b'\n' && ix > 0 && bytes[ix - 1] == b'\r' {
+            ix - 1
+        } else {
+            ix
+        });
+    }
+    at.push(raw.len());
+    // Only ASCII `\r` bytes were dropped, so the rest is still UTF-8.
+    (String::from_utf8(text).unwrap().into(), Some(at))
+}
 /// The one contiguous replacement between two texts, found by trimming their
 /// common prefix and suffix. Typing, undo, reloads and IME all reduce to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -384,20 +410,25 @@ pub(crate) fn analyze(
     let deadline = Instant::now() + budget;
     runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
     let context = Context::full(&runtime).map_err(|e| e.to_string())?;
+    let (text, raw_at) = without_crlf(source);
+    let original = original.map(|original| without_crlf(original).0);
     let json = context.with(|ctx| {
         let run = || -> rquickjs::Result<String> {
             ctx.eval::<(), _>(include_str!("../assets/native-editor.js"))?;
             let function: Function = ctx.globals().get("gespanAnalyze")?;
             function
-                .call::<_, Promise>((path, source, original))?
+                .call::<_, Promise>((path, &*text, original.as_deref()))?
                 .finish()
         };
         run().map_err(|error| thrown(&ctx, error))
     })?;
     let mut analysis: Analysis = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     // CodeMirror offsets are UTF-16, while native selection/IME uses UTF-8.
-    let offsets = byte_offsets(source);
-    let byte = |at: usize| offsets[at.min(offsets.len() - 1)];
+    let offsets = byte_offsets(&text);
+    let byte = |at: usize| {
+        let at = offsets[at.min(offsets.len() - 1)];
+        raw_at.as_ref().map_or(at, |raw_at| raw_at[at])
+    };
     for diagnostic in &mut analysis.diagnostics {
         diagnostic.from = byte(diagnostic.from);
         diagnostic.to = byte(diagnostic.to);
@@ -550,6 +581,41 @@ mod parity_tests {
             source.len()
         );
         assert_eq!(analysis.folds.len(), 200);
+    }
+    #[test]
+    fn crlf_files_keep_their_raw_byte_positions() {
+        let lf_original = "const a = 1;\nconst b = 2;\nconst c = 3;\n".repeat(40);
+        let lf_source = lf_original.replacen("const c = 3;", "const c = 'changed';", 40);
+        let lf_source = format!("{lf_source}const last = 4;\n");
+        let source = lf_source.replace('\n', "\r\n");
+        let original = lf_original.replace('\n', "\r\n");
+        let crlf = analyze("a.ts", &source, Some(&original)).unwrap();
+        let lf = analyze("a.ts", &lf_source, Some(&lf_original)).unwrap();
+        // Same findings as the LF file, each at the same text in the CRLF one.
+        assert_eq!(crlf.changes.len(), lf.changes.len());
+        assert_eq!(crlf.tokens.len(), lf.tokens.len());
+        assert_eq!(crlf.folds.len(), lf.folds.len());
+        for (a, b) in crlf.tokens.iter().zip(&lf.tokens) {
+            assert_eq!(&source[a.from..a.to], &lf_source[b.from..b.to]);
+        }
+        for (a, b) in crlf.changes.iter().zip(&lf.changes) {
+            assert_eq!(
+                source[a.from..a.to].replace("\r\n", "\n"),
+                lf_source[b.from..b.to]
+            );
+        }
+        let last = crlf.changes.last().unwrap();
+        assert!(source[last.from..last.to].contains("const last = 4;"));
+        assert!(crlf.tokens.iter().all(|t| t.to <= source.len()));
+        // A lone `\r` is CodeMirror's line break too, and keeps its offsets.
+        let lone = "const a = 1;\rconst b = 2;\r\nconst c = 3;";
+        let same = "const a = 1;\nconst b = 2;\r\nconst c = 3;";
+        let tokens = analyze("a.ts", lone, None).unwrap().tokens;
+        let expected = analyze("a.ts", same, None).unwrap().tokens;
+        assert_eq!(tokens.len(), expected.len());
+        for (a, b) in tokens.iter().zip(&expected) {
+            assert_eq!((a.from, a.to), (b.from, b.to));
+        }
     }
     #[test]
     fn script_errors_keep_their_own_message() {
