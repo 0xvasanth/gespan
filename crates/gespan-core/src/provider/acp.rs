@@ -51,6 +51,9 @@ pub(super) struct State {
     rpc_failed: bool,
     /// `initialize` advertised `promptCapabilities.image`.
     image_prompts: bool,
+    /// Kiro lists its models in a `config_option_update` after `session/new`;
+    /// the catalog probe waits until this deadline for that list.
+    model_wait: Option<Instant>,
 }
 
 pub(super) const KIRO_AUTH_HELP: &str = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
@@ -206,6 +209,15 @@ impl Protocol {
                 true,
                 stdin,
             )?;
+        }
+        if self
+            .acp
+            .model_wait
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            // An older Kiro without the late model list keeps the catalog it gave.
+            self.acp.model_wait = None;
+            self.done = true;
         }
         if self.acp.stage == Stage::Background
             && self
@@ -518,7 +530,9 @@ impl Protocol {
                         json!({"sessionId":self.acp.session,"configId":"model","value":model}),
                     ));
                 }
-            } else if matches!(kind, Kind::Fx | Kind::Cursor) {
+            } else if matches!(kind, Kind::Fx | Kind::Cursor | Kind::Kiro) {
+                // Kiro lists its model selector only after `session/new` and
+                // rejects `session/set_model`.
                 self.acp.options.push_back((
                     "session/set_config_option",
                     json!({"sessionId":self.acp.session,"configId":"model","value":model}),
@@ -666,6 +680,20 @@ impl Protocol {
             }
             Stage::Configure => {
                 let method = self.acp.pending_method;
+                // Kiro 2.35 rejects `session/set_model`; older builds may lack
+                // the model config option, so they get the legacy method.
+                if kind == Kind::Kiro
+                    && method == "session/set_config_option"
+                    && self.acp.pending_params["configId"] == "model"
+                {
+                    let model = self.acp.pending_params["value"].clone();
+                    return self.acp_send(
+                        Stage::Configure,
+                        "session/set_model",
+                        json!({"sessionId":self.acp.session,"modelId":model}),
+                        stdin,
+                    );
+                }
                 // Cursor's adapter falls back from config selection to the
                 // older model method, then tolerates unsupported controls.
                 if kind == Kind::Cursor {
@@ -832,6 +860,19 @@ impl Protocol {
                         json!({"jsonrpc":"2.0","id":v["id"],"error":{"code":-32601,"message":format!("Unsupported client method: {method}")}}),
                     )?;
                 }
+            } else if method == "session/update"
+                && !matches!(self.acp.stage, Stage::Prompt | Stage::Background)
+                && matches!(
+                    v["params"]["update"]["sessionUpdate"].as_str(),
+                    Some("config_option_update" | "config_options_update")
+                )
+                && v["params"]["sessionId"]
+                    .as_str()
+                    .is_none_or(|id| self.acp.session.is_empty() || id == self.acp.session)
+            {
+                // Option changes are session state, not output: Kiro lists its
+                // models while `session/new` is still being answered.
+                self.acp_update(&v["params"]["update"], &mut events);
             } else if matches!(
                 method,
                 "session/update" | "_x.ai/session_notification" | "x.ai/session_notification"
@@ -948,7 +989,12 @@ impl Protocol {
                     .ok_or("Provider returned no session id")?
                     .into();
                 if self.probe {
-                    self.catalog_result = Some(result.clone());
+                    let mut catalog = result.clone();
+                    // Kiro's model list may arrive just before this answer.
+                    if model_option(&catalog).is_none() && model_option(&self.acp.setup).is_some() {
+                        catalog["configOptions"] = self.acp.setup["configOptions"].clone();
+                    }
+                    self.catalog_result = Some(catalog);
                     if self.request.kind == Kind::Devin {
                         if result["configOptions"].as_array().is_some_and(|options| {
                             options.iter().any(|option| {
@@ -964,6 +1010,14 @@ impl Protocol {
                             self.acp.probe_budget = Some(Instant::now() + Duration::from_secs(20));
                         }
                         self.acp_probe_next(stdin)?;
+                    } else if self.request.kind == Kind::Kiro
+                        && self
+                            .catalog_result
+                            .as_ref()
+                            .and_then(model_option)
+                            .is_none()
+                    {
+                        self.acp.model_wait = Some(Instant::now() + KIRO_MODEL_WAIT);
                     } else {
                         self.done = true;
                     }
@@ -1130,6 +1184,15 @@ impl Protocol {
             "config_option_update" | "config_options_update" => {
                 if update["configOptions"].is_array() {
                     self.acp.setup["configOptions"] = update["configOptions"].clone();
+                    if let (Some(_), Some(catalog)) =
+                        (self.acp.model_wait, self.catalog_result.as_mut())
+                    {
+                        catalog["configOptions"] = update["configOptions"].clone();
+                        if model_option(catalog).is_some() {
+                            self.acp.model_wait = None;
+                            self.done = true;
+                        }
+                    }
                 }
             }
             "plan" => {
@@ -1227,6 +1290,22 @@ impl Protocol {
             )
         }
     }
+}
+
+/// Kiro 2.35 answers `session/new` before its model list is ready.
+const KIRO_MODEL_WAIT: Duration = Duration::from_secs(5);
+
+/// The advertised model selector, as `acp_options` finds it.
+fn model_option(setup: &Value) -> Option<&Value> {
+    let options = setup["configOptions"].as_array()?;
+    options
+        .iter()
+        .find(|o| config_id(o) == "model")
+        .or_else(|| {
+            options
+                .iter()
+                .find(|o| o["category"] == "model" && config_id(o) != "provider")
+        })
 }
 
 fn config_id(option: &Value) -> &str {
@@ -1885,20 +1964,120 @@ mod tests {
         );
         assert_eq!(sent[0]["method"], "session/set_config_option");
         assert_eq!(sent[0]["params"]["configId"], "llm");
-        // Without a model option, the legacy method selects the model.
+        // Kiro 2.35 lists its model option only after `session/new`, and
+        // rejects `session/set_model`: the model config option is still used.
         let sent = kiro_controls(
             "claude-sonnet-4.5",
             json!({"models":{"currentModelId":"auto","availableModels":[{"modelId":"auto"},{"modelId":"claude-sonnet-4.5"}]}}),
         );
         assert_eq!(sent.len(), 1, "{sent:?}");
-        assert_eq!(sent[0]["method"], "session/set_model");
-        assert_eq!(sent[0]["params"]["modelId"], "claude-sonnet-4.5");
+        assert_eq!(sent[0]["method"], "session/set_config_option");
+        assert_eq!(sent[0]["params"]["configId"], "model");
+        assert_eq!(sent[0]["params"]["value"], "claude-sonnet-4.5");
         // The model already running is not selected again.
         let sent = kiro_controls(
             "claude-sonnet-4.5",
             json!({"models":{"currentModelId":"claude-sonnet-4.5"}}),
         );
         assert_eq!(sent, Vec::<Value>::new());
+    }
+    #[test]
+    fn kiro_falls_back_to_set_model_when_its_model_option_is_refused() {
+        let mut p = protocol(Kind::Kiro);
+        p.request.model = Some("claude-sonnet-4.5".into());
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), &mut out)
+            .unwrap();
+        let option = last(&mut out);
+        assert_eq!(option["method"], "session/set_config_option");
+        p.frame(
+            json!({"id":option["id"],"error":{"code":-32602,"message":"Unknown config option"}}),
+            &mut out,
+        )
+        .unwrap();
+        let legacy = last(&mut out);
+        assert_eq!(legacy["method"], "session/set_model");
+        assert_eq!(legacy["params"]["modelId"], "claude-sonnet-4.5");
+        // If the legacy method fails too, the turn reports it.
+        let error = p
+            .frame(
+                json!({"id":legacy["id"],"error":{"code":-32603,"message":"Internal error"}}),
+                &mut out,
+            )
+            .unwrap_err();
+        assert!(error.contains("Internal error"), "{error}");
+    }
+    #[test]
+    fn kiro_catalog_probe_waits_for_the_late_model_list() {
+        let options = json!([{"id":"mode","category":"mode","currentValue":"vibe","options":[]},
+            {"id":"model","category":"model","currentValue":"auto",
+             "options":[{"value":"auto","name":"Auto"},{"value":"claude-haiku-4.5","name":"Claude Haiku 4.5"}]}]);
+        // Kiro 2.35 answers `session/new` first, then lists its models.
+        let mut p = protocol(Kind::Kiro);
+        p.probe = true;
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(
+            json!({"id":new["id"],"result":{"sessionId":"s","configOptions":[options[0].clone()]}}),
+            &mut out,
+        )
+        .unwrap();
+        assert!(!p.done, "the probe waits for the model list");
+        p.frame(
+            json!({"method":"session/update","params":{"sessionId":"s",
+            "update":{"sessionUpdate":"config_option_update","configOptions":options}}}),
+            &mut out,
+        )
+        .unwrap();
+        assert!(p.done);
+        assert_eq!(
+            p.catalog_result.as_ref().and_then(model_option).unwrap()["currentValue"],
+            "auto"
+        );
+        // The list can also arrive just before the answer.
+        let mut p = protocol(Kind::Kiro);
+        p.probe = true;
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(
+            json!({"method":"session/update","params":{"sessionId":"s",
+            "update":{"sessionUpdate":"config_option_update","configOptions":options}}}),
+            &mut out,
+        )
+        .unwrap();
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), &mut out)
+            .unwrap();
+        assert!(p.done);
+        assert!(p.catalog_result.as_ref().and_then(model_option).is_some());
+        // An older Kiro that never lists models ends the probe after the wait.
+        let mut p = protocol(Kind::Kiro);
+        p.probe = true;
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(
+            json!({"id":new["id"],"result":{"sessionId":"s","models":{"currentModelId":"auto"}}}),
+            &mut out,
+        )
+        .unwrap();
+        assert!(!p.done);
+        p.acp.model_wait = Some(Instant::now());
+        p.acp_tick(&mut out).unwrap();
+        assert!(p.done);
+        assert_eq!(
+            p.catalog_result.as_ref().unwrap()["models"]["currentModelId"],
+            "auto"
+        );
+        // Other ACP providers finish on the answer, as before.
+        let mut p = protocol(Kind::Hermes);
+        p.probe = true;
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), &mut out)
+            .unwrap();
+        assert!(p.done);
     }
     #[test]
     fn kiro_sends_only_the_model_and_no_effort_thinking_or_fast_controls() {

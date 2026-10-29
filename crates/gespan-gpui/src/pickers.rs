@@ -191,6 +191,43 @@ mod model_label_tests {
         });
     }
 
+    #[gpui::test]
+    fn kiro_default_entry_names_the_model_kiro_picks(cx: &mut gpui::TestAppContext) {
+        let model = |id: &str, name: &str, default: bool| gespan_core::catalog::Model {
+            id: id.into(),
+            name: name.into(),
+            alias_target: None,
+            efforts: Vec::new(),
+            default_effort: None,
+            fast: false,
+            thinking: false,
+            default,
+            tiers: Vec::new(),
+            controls: Vec::new(),
+        };
+        cx.update(|cx| {
+            let list =
+                cx.new(|cx| ModelList::new_for(Kind::Kiro, None, "/work", Default::default(), cx));
+            list.update(cx, |list, cx| {
+                // Before the catalog arrives the entry stays generic.
+                assert_eq!(list.entries(cx)[0].name.as_ref(), "Default");
+                list.catalogs.push((
+                    Kind::Kiro,
+                    vec![
+                        model("default", "Kiro default (Auto)", false),
+                        model("auto", "Auto", true),
+                        model("claude-haiku-4.5", "Claude Haiku 4.5", false),
+                    ],
+                ));
+                let entries = list.entries(cx);
+                assert_eq!(entries[0].id, None);
+                assert_eq!(entries[0].name.as_ref(), "Default (Auto)");
+                let ids: Vec<_> = entries.iter().map(|e| e.id.as_deref()).collect();
+                assert_eq!(ids, [None, Some("auto"), Some("claude-haiku-4.5")]);
+            });
+        });
+    }
+
     #[test]
     fn account_metadata_never_becomes_a_model_label() {
         for id in [
@@ -645,10 +682,18 @@ impl ModelList {
                 .collect();
         };
         let enabled = self.enabled(kind);
+        let catalog = self.catalogs.iter().find(|(k, _)| *k == kind);
+        // Kiro's own settings pick its model; say which one that is.
+        let resolved = (kind == Kind::Kiro)
+            .then(|| catalog?.1.iter().find(|m| m.default && m.id != "default"))
+            .flatten();
         let mut entries = vec![ModelEntry {
             kind,
             id: None,
-            name: "Default".into(),
+            name: resolved.map_or_else(
+                || "Default".into(),
+                |model| format!("Default ({})", model.name).into(),
+            ),
             enabled,
         }];
         if let Some(prefs) = cx.try_global::<crate::settings::Preferences>() {
@@ -666,7 +711,7 @@ impl ModelList {
                 }
             }
         }
-        if let Some((_, catalog)) = self.catalogs.iter().find(|(k, _)| *k == kind) {
+        if let Some((_, catalog)) = catalog {
             let additional: Vec<_> = catalog
                 .iter()
                 .filter(|model| {

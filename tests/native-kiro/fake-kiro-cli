@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Deterministic stand-in for `kiro-cli acp`.
+
+Speaks just enough of the Agent Client Protocol (newline-delimited JSON-RPC
+over stdio) for Gespan to start a Kiro session, send a prompt and render a
+reply. Every reply is fixed text plus an echo of the prompt, so a UI driver
+can assert on it without any model in the loop.
+
+Every frame Gespan sends is appended to $KIRO_STUB_LOG (one JSON object per
+line) so the test can also assert on the wire traffic.
+"""
+import json
+import os
+import sys
+
+REPLY = "GESPAN KIRO STUB REPLY"
+LOG = os.environ.get("KIRO_STUB_LOG")
+
+
+def log(entry):
+    entry = {"pid": os.getpid(), **entry}
+    if LOG:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+
+def send(frame):
+    sys.stdout.write(json.dumps(frame) + "\n")
+    sys.stdout.flush()
+
+
+def prompt_text(params):
+    return " ".join(
+        block.get("text", "") for block in params.get("prompt", []) if block.get("type") == "text"
+    ).strip()
+
+
+def main():
+    log({"argv": sys.argv[1:]})
+    if sys.argv[1:2] in (["--version"], ["version"]):
+        print("kiro-cli 0.0.0-gespan-stub")
+        return
+    if sys.argv[1:2] in (["whoami"],):
+        print("gespan-stub@example.invalid")
+        return
+    if sys.argv[1:2] != ["acp"]:
+        print(f"fake kiro-cli: unsupported arguments {sys.argv[1:]}", file=sys.stderr)
+        sys.exit(2)
+
+    sessions = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        frame = json.loads(line)
+        log(frame)
+        method, rid, params = frame.get("method"), frame.get("id"), frame.get("params") or {}
+        if rid is None:
+            continue  # notifications such as session/cancel
+        if method == "initialize":
+            result = {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True, "promptCapabilities": {"image": False}},
+                "authMethods": [],
+                "agentInfo": {"name": "fake-kiro-cli", "version": "0.0.0"},
+            }
+        elif method in ("session/new", "session/load"):
+            sessions += 1
+            result = {
+                "sessionId": params.get("sessionId") or f"stub-session-{os.getpid()}-{sessions}",
+                "models": {
+                    "currentModelId": "auto",
+                    "availableModels": [{"modelId": "auto", "name": "Auto"}],
+                },
+            }
+        elif method == "session/prompt":
+            sid = params.get("sessionId")
+            text = f"{REPLY}: {prompt_text(params)}"
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": sid,
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}},
+            }})
+            result = {"stopReason": "end_turn"}
+        else:
+            # set_model, set_config_option, set_mode, delete, ...: accept quietly.
+            result = {}
+        send({"jsonrpc": "2.0", "id": rid, "result": result})
+
+
+if __name__ == "__main__":
+    main()

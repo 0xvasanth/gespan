@@ -369,10 +369,20 @@ pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<
 }
 
 /// Kiro runs the model its own settings choose; `default` skips model selection.
+/// The entry names the model Kiro reports as current, so the choice is legible.
 fn with_configured_model(kind: Kind, models: &mut Vec<Model>) {
     if kind == Kind::Kiro {
+        // Gespan sends Kiro only the model (as the Tauri app did), so its other
+        // session switches are not offered as controls that would do nothing.
+        for model in models.iter_mut() {
+            model.controls.clear();
+        }
         models.retain(|m| m.id != "default");
-        models.insert(0, model("default", "Configured model"));
+        let name = models.iter().find(|m| m.default).map_or_else(
+            || "Kiro default".into(),
+            |m| format!("Kiro default ({})", m.name),
+        );
+        models.insert(0, model("default", &name));
     }
 }
 
@@ -890,18 +900,31 @@ mod tests {
 
     #[test]
     fn kiro_model_picker_offers_the_configured_model() {
+        let mut auto = model("auto", "Auto");
+        auto.default = true;
+        auto.controls.push(ModelControl {
+            id: "autopilot".into(),
+            name: "Autopilot".into(),
+            current: "on".into(),
+            choices: Vec::new(),
+        });
         let mut models = vec![
             model("claude-sonnet-4.5", "Sonnet 4.5"),
             model("default", "Auto"),
+            auto,
         ];
         with_configured_model(Kind::Kiro, &mut models);
         let ids: Vec<_> = models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["default", "claude-sonnet-4.5"]);
-        assert_eq!(models[0].name, "Configured model");
+        assert_eq!(ids, ["default", "claude-sonnet-4.5", "auto"]);
+        // The entry says which model Kiro's own settings pick.
+        assert_eq!(models[0].name, "Kiro default (Auto)");
+        // Session switches Gespan never sends to Kiro are not offered.
+        assert!(models.iter().all(|m| m.controls.is_empty()));
         // An empty live catalog still leaves the one usable entry.
         let mut empty = Vec::new();
         with_configured_model(Kind::Kiro, &mut empty);
         assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].name, "Kiro default");
         // Other providers are untouched.
         let mut hermes = vec![model("a", "A")];
         with_configured_model(Kind::Hermes, &mut hermes);
