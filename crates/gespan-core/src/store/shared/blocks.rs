@@ -421,6 +421,9 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
             if role == "error" {
                 block["notice"] = json!("error");
             }
+            if role == "system" && text == crate::interrupted::MESSAGE {
+                block["notice"] = json!("interrupt");
+            }
             if role == "pilot-system" {
                 block["internal"] = json!(true);
             }

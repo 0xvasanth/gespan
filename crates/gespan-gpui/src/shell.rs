@@ -15,6 +15,7 @@ mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
+mod in_flight;
 mod layout;
 mod live_agents;
 mod mobile_host;
@@ -744,6 +745,8 @@ pub(crate) struct Shell {
     /// The project whose colors were last painted; leaving it blends colors.
     theme_project: Option<String>,
     quit_prompted: bool,
+    /// The running-chats list last written to the store.
+    in_flight_written: Option<Vec<i64>>,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
@@ -1117,6 +1120,7 @@ impl Shell {
             window_glass: None,
             theme_project: None,
             quit_prompted: false,
+            in_flight_written: None,
             menu: None,
             background_dialog: None,
             backgrounds: HashMap::new(),
@@ -1284,6 +1288,7 @@ impl Shell {
         }
         this.init_mobile_host(cx);
         this.restore_hold(cx);
+        this.resume_interrupted(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1408,6 +1413,7 @@ impl Shell {
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();
+                this.sync_in_flight(cx);
                 this.notification_session_changed(id, cx);
                 this.update_usage_provider(cx);
                 this.update_chat_visibility(cx);
@@ -2013,6 +2019,28 @@ impl Shell {
                     this.quit_prompted = false;
                     if matches!(answer, Ok(0)) {
                         // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        let running = self.running_chats(cx).len();
+        if !self.quit_prompted && running > 0 && !crate::hold::active(cx) {
+            self.quit_prompted = true;
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                &gespan_core::interrupted::quit_message(running),
+                None,
+                &["Quit", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.quit_prompted = false;
+                    if matches!(answer, Ok(0)) {
                         this.quit_unless_unsaved(window, cx);
                     }
                 });
@@ -8357,7 +8385,8 @@ impl Render for Shell {
                             crate::traffic_lights::hide(window, cx);
                             return false;
                         }
-                        if shell.unsaved_files(cx) {
+                        // Closing the window quits: ask first, as a quit does.
+                        if shell.unsaved_files(cx) || !shell.running_chats(cx).is_empty() {
                             shell.request_quit(window, cx);
                             false
                         } else {
