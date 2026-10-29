@@ -386,6 +386,8 @@ fn main() {
         &gespan_core::diagnostics::metrics::database_path(&database),
         notifications::updater::version(),
     );
+    // Agents a crashed or force-quit Gespan left running.
+    gespan_core::process::orphans::reap();
     gespan_core::checkpoint::init(
         database
             .parent()

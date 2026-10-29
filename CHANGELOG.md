@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Gespan Native on macOS and Linux stops agents that a crashed or force-quit
+  Gespan left running, as the Tauri app does. Agents of a running Gespan,
+  Native or Tauri, are left alone.
+
 ## [0.0.2-beta] - 2026-10-29
 
 This beta is still not signed with an Apple Developer ID or a Windows

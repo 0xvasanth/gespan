@@ -1,6 +1,8 @@
 //! Child policy extracted from src-tauri/src/background_work.rs.
 use std::process::Command;
 
+pub mod orphans;
+
 /// Apply scheduling hints before exec so descendants inherit them.
 /// Best effort: a refused hint must not prevent a provider from launching.
 pub fn configure_child(command: &mut Command) {
