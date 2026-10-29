@@ -4,52 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Every PR runs this workflow: its jobs are required checks on main, and a
+  # path filter would leave them unreported.
   pull_request:
-    paths:
-      - 'crates/gespan-core/**'
-      - 'crates/gespan-gpui/**'
-      - 'crates/mobile-link/**'
-      - 'crates/tracker-secrets/**'
-      - 'crates/tracker-client/**'
-      - 'crates/board-store/**'
-      - 'crates/gespan-speech/**'
-      - 'crates/gespan-models/**'
-      - 'vendor/gpui-pre*/**'
-      - 'scripts/*native*'
-      - 'scripts/native-editor/**'
-      - 'scripts/native-settings/**'
-      - 'package.json'
-      - '.github/workflows/native.yml'
-      - '.github/workflows/native-release.yml'
-      # Tauri files the shared-contract tests read; drift must fail this workflow.
-      - 'src-tauri/src/remote_bootstrap.sh'
-      - 'src-tauri/src/remote_bootstrap.ps1'
-      - 'src-tauri/src/ssh_askpass.rs'
-      - 'src-tauri/src/remote_ssh.rs'
-      - 'host/windows-acl.ps1'
-      - 'host/package.mjs'
-      - 'src-tauri/src/session_store.rs'
-      - 'src-tauri/src/board.rs'
-      - 'src-tauri/src/pilot_transcript.rs'
-      - 'src-tauri/src/codex_pilot_store.rs'
-      - 'src-tauri/src/mobile_access.rs'
-      - 'src-tauri/tauri.conf.json'
-      - 'src-tauri/src/checkpoint/turn.rs'
-      - 'src-tauri/src/pilot.rs'
-      - 'src/features/pilots/model/pilot.ts'
-      - 'src/features/sessions/model/session.ts'
-      - 'src/features/sessions/data/sessionStore.ts'
-      - 'src/integrations/harness/providers/claude/claude.ts'
-      - 'src/integrations/harness/core/register.ts'
-      - 'src/features/settings/model/displayPrefs.ts'
-      - 'src/features/settings/model/settings.ts'
-      - 'src/app/App.tsx'
-      - 'CHANGELOG.md'
-      - 'docs/native/**'
-      - 'src-tauri/macos/AppIcon.icon/Assets/icon.png'
-      - 'tests/fixtures/claude/resumed-background-agent.jsonl'
-      - 'tests/fixtures/claude/heartbeat-agent.jsonl'
-      - 'tests/fixtures/claude/heartbeat-bash.jsonl'
 
 permissions:
   contents: read
@@ -73,19 +30,26 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - name: Install Linux core dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libdbus-1-dev pkg-config
+          sudo apt-get install --no-install-recommends -y libdbus-1-dev libasound2-dev pkg-config
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun run native:test:dev
       - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
-      # The shared ticket and board crates are root-workspace members, so their tests run there.
-      - run: cargo test --locked -p gespan-tracker-client
-      - run: cargo test --locked -p gespan-board-store
+      # The crates Native shares with the mobile link are root-workspace
+      # members (beside the Tauri app, which is not built), so they run there.
+      - name: Shared crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHARED=(-p gespan-mobile-link -p gespan-keep-awake -p gespan-redact -p gespan-tracker-secrets -p gespan-tracker-client -p gespan-board-store -p gespan-models -p gespan-speech)
+          cargo fmt --check "${SHARED[@]}"
+          cargo clippy --locked "${SHARED[@]}" --all-targets -- -D warnings
+          cargo test --locked "${SHARED[@]}"
 
   desktop:
     name: Gespan Native (${{ matrix.name }})
