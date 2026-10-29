@@ -1,0 +1,29 @@
+.github/workflows/mobile-release.yml
+  s_bfa0c56141afa0::t_bdd5383ef47a6f 3,6-12,15-29,48-49,52-53,56-57,62,83-84,86-95
+mobile/.gitignore
+  s_bfa0c56141afa0::t_1ca3497e4a9d26 44-47
+.github/workflows/mobile-development.yml
+  s_bfa0c56141afa0::t_9c5c40e9d4e660 1-2,6-8,10-43,50-54,56,58,64,66-68,71-76,78-85,90,92-98,100-101,108
+  s_bfa0c56141afa0::t_a81ff83125314c 3-5,9,44-49,55,57,59-63,65,69-70,77,86-89,91,99,102-107,109-110
+mobile/README.md
+  s_bfa0c56141afa0::t_2886da76beea27 58-59
+docs/building.md
+  s_bfa0c56141afa0::t_db61bbd450018d 94
+  s_bfa0c56141afa0::t_7a05300da30783 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f909185e4104cb7db6f3a605136bc610a2d32b9",
+  "prompts": {},
+  "sessions": {
+    "s_bfa0c56141afa0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc216694-5545-451b-ae29-38bb1529b6f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
