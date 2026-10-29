@@ -584,27 +584,39 @@ mod parity_tests {
     }
     #[test]
     fn crlf_files_keep_their_raw_byte_positions() {
-        // Few enough changes that the diff never hits its time limit on a
-        // slow runner, which would merge them differently between the runs.
-        let lf_original = "const a = 1;\nconst b = 2;\nconst c = 3;\n".repeat(4);
-        let lf_source = lf_original.replace("const c = 3;", "const c = 'changed';");
+        let lf_original = "const a = 1;\nconst b = 2;\nconst c = 3;\n".repeat(40);
+        let lf_source = lf_original.replacen("const c = 3;", "const c = 'changed';", 40);
         let lf_source = format!("{lf_source}const last = 4;\n");
         let source = lf_source.replace('\n', "\r\n");
         let original = lf_original.replace('\n', "\r\n");
         let crlf = analyze("a.ts", &source, Some(&original)).unwrap();
         let lf = analyze("a.ts", &lf_source, Some(&lf_original)).unwrap();
-        // Same findings as the LF file, each at the same text in the CRLF one.
-        assert_eq!(crlf.changes.len(), lf.changes.len());
+        // Highlights and folds are the LF file's, each at the same text.
         assert_eq!(crlf.tokens.len(), lf.tokens.len());
-        assert_eq!(crlf.folds.len(), lf.folds.len());
         for (a, b) in crlf.tokens.iter().zip(&lf.tokens) {
             assert_eq!(&source[a.from..a.to], &lf_source[b.from..b.to]);
         }
-        for (a, b) in crlf.changes.iter().zip(&lf.changes) {
+        assert_eq!(crlf.folds.len(), lf.folds.len());
+        for (a, b) in crlf.folds.iter().zip(&lf.folds) {
             assert_eq!(
                 source[a.from..a.to].replace("\r\n", "\n"),
                 lf_source[b.from..b.to]
             );
+        }
+        // Past a wall-clock limit the diff merges nearby changes, so how many
+        // there are depends on the machine. Check each against the file instead.
+        assert!(!crlf.changes.is_empty());
+        for change in &crlf.changes {
+            assert!(change.from == 0 || source[..change.from].ends_with("\r\n"));
+            assert!(change.to == source.len() || source[change.to..].starts_with("\r\n"));
+            let text = &source[change.from..change.to];
+            assert!(
+                text.contains("'changed'") || text.contains("const last"),
+                "{text:?}"
+            );
+        }
+        for (at, _) in source.match_indices("'changed'") {
+            assert!(crlf.changes.iter().any(|c| c.from <= at && at < c.to));
         }
         let last = crlf.changes.last().unwrap();
         assert!(source[last.from..last.to].contains("const last = 4;"));
