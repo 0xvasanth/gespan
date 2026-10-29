@@ -56,23 +56,20 @@ fn should_reap(proc: &ProcessSnapshot, our_pid: u32, parent_alive: impl Fn(u32) 
     if proc.pid == our_pid || proc.pid <= 1 || proc.ppid == our_pid {
         return false;
     }
-    if let Some(parent) = proc.harness_parent {
-        return looks_like_harness_argv(&proc.args) && parent != our_pid && !parent_alive(parent);
-    }
-    proc.ppid == 1 && is_legacy_orphaned_cursor_acp(&proc.args)
-}
-
-/// Pre-marker leftovers: `cursor-agent acp` reparented to launchd.
-#[cfg(any(unix, test))]
-fn is_legacy_orphaned_cursor_acp(args: &str) -> bool {
-    args.contains("cursor-agent") && args.split_whitespace().any(|part| part == "acp")
+    // Only marked processes. Tauri also reaped unmarked `cursor-agent acp`
+    // under pid 1, left by builds from before the marker; that also matches
+    // a Cursor agent another tool started, so Native leaves those alone.
+    let Some(parent) = proc.harness_parent else {
+        return false;
+    };
+    looks_like_harness_argv(&proc.args) && parent != our_pid && !parent_alive(parent)
 }
 
 /// Argv of an agent CLI we spawned, not a shell, tmux or `npm start` the user
 /// ran from a Gespan terminal. The marker still decides what dies.
 #[cfg(any(unix, test))]
 fn looks_like_harness_argv(args: &str) -> bool {
-    is_legacy_orphaned_cursor_acp(args) || args.split_whitespace().any(is_harness_argv_token)
+    args.split_whitespace().any(is_harness_argv_token)
 }
 
 #[cfg(any(unix, test))]
@@ -341,13 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unmarked_agent_is_spared_unless_it_is_a_legacy_cursor_orphan() {
+    fn an_unmarked_agent_is_never_reaped() {
+        // Started by the user or another tool, not by a Gespan.
         let users_own = row(500, 1, "/opt/homebrew/bin/claude", None);
         assert!(!should_reap(&users_own, 100, |_| false));
-        let legacy = row(501, 1, "/Users/n/.local/bin/cursor-agent acp", None);
-        assert!(should_reap(&legacy, 100, |_| false));
-        let legacy_with_parent = row(502, 900, "/Users/n/.local/bin/cursor-agent acp", None);
-        assert!(!should_reap(&legacy_with_parent, 100, |_| false));
+        let other_tools_cursor = row(501, 1, "/Users/n/.local/bin/cursor-agent acp", None);
+        assert!(!should_reap(&other_tools_cursor, 100, |_| false));
     }
 
     #[test]
