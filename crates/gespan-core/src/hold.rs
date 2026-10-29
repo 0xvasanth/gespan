@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 const KEY: &str = "hold";
-const CONTINUE: &str = "Continue from where you left off.";
+use crate::interrupted::CONTINUE;
 
 /// Holding until every tracked session reaches its safe point, then On hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

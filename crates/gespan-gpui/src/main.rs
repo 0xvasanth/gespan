@@ -114,10 +114,17 @@ use std::{
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 actions!(application, [Quit]);
+/// Set once a quit or restart starts; the running-chats list stops updating.
+pub(crate) struct Quitting;
+impl gpui::Global for Quitting {}
+pub(crate) fn quitting(cx: &App) -> bool {
+    cx.has_global::<Quitting>()
+}
 fn quit(cx: &mut App) {
     if notifications::updater::defer_quit(cx) {
         return;
     }
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });
@@ -130,6 +137,7 @@ fn quit(cx: &mut App) {
 
 /// Quit, then relaunch the same app once this process has exited.
 fn restart(cx: &mut App) {
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });

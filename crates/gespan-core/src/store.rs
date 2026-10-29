@@ -1,6 +1,7 @@
 //! Session storage. Desktop launches use Gespan's existing schema directly.
 mod app_access;
 mod gespan_import;
+mod in_flight;
 mod managed_sessions;
 mod notes;
 mod pilots;
