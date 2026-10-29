@@ -1,10 +1,32 @@
 name: Mobile release
 
-# Builds the iOS app on EAS and submits it to TestFlight. Started by hand from
+# Releases the mobile app (Expo project @gespan/gespan). Started by hand from
 # the same native-vX.Y.Z tag as the Native preview release, so one tag ships
 # both apps.
+#
+# "build" makes store builds on EAS with the production profile and, unless
+# told not to, submits them (iOS to TestFlight, Android to Google Play).
+# "update" publishes the tag's JavaScript over the air to the beta channel. An
+# update only reaches builds whose native fingerprint matches, so release a
+# build after any native change (native modules, app.json, Expo upgrades,
+# crates/mobile-link).
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: build makes store builds; update ships JavaScript over the air
+        type: choice
+        options: [build, update]
+        default: build
+      platform:
+        description: Android submission needs a Google service account in EAS and one manual upload in Play Console first
+        type: choice
+        options: [ios, android, all]
+        default: ios
+      submit:
+        description: Submit builds to TestFlight / Google Play
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -23,17 +45,21 @@ jobs:
           persist-credentials: false
       - run: node scripts/release-channel.cjs native-ref
 
-  ios:
-    name: iOS build and TestFlight submission
+  release:
+    name: Release ${{ inputs.release }} (${{ inputs.platform }})
     needs: guard
     runs-on: ubuntu-latest
+    # Waits for the EAS build, so a failed build or submission fails this run.
+    timeout-minutes: 240
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      PLATFORM: ${{ inputs.platform }}
+      SUBMIT: ${{ inputs.submit }}
     steps:
       - name: Require an Expo access token
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
-            echo "Add an EXPO_TOKEN repository secret from an Expo account with access to the gespan-mobile project." >&2
+            echo "Add an EXPO_TOKEN repository secret from an Expo account with access to the @gespan/gespan project." >&2
             exit 1
           fi
       - uses: actions/checkout@v7
@@ -54,5 +80,16 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
       # The production profile builds for the store with the beta update
       # channel and a remote, auto-incremented build number.
-      - run: eas build --platform ios --profile production --non-interactive --auto-submit
+      - name: Build
+        if: inputs.release == 'build'
         working-directory: mobile
+        run: |
+          args=(--platform "$PLATFORM" --profile production --non-interactive)
+          if [ "$SUBMIT" = true ]; then args+=(--auto-submit); fi
+          eas build "${args[@]}"
+      - name: Publish update
+        if: inputs.release == 'update'
+        working-directory: mobile
+        run: |
+          eas update --channel beta --environment production --platform "$PLATFORM" \
+            --message "$GITHUB_REF_NAME" --non-interactive
