@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native's Sessions heading has a + button beside the filter that
+  starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
   and Linux) to see the match count and step through the matches with Enter,
   Shift+Enter, ⌘G or F3. A Pilot's older turns are searched too.

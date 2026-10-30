@@ -620,6 +620,7 @@ impl Shell {
                         }
                     })),
             )
+            .child(self.sidebar_new_session_button(cx))
             .child(self.sidebar_filter_button(cx))
             .into_any()
     }
