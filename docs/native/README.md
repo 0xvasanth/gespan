@@ -122,7 +122,7 @@ are set, packages and `latest.json` are also mirrored under `native-preview/`;
 otherwise that step is skipped. The channel logic lives in
 `scripts/release-channel.cjs` and is tested in `scripts/release-channel.test.cjs`.
 
-The macOS app icon is `src-tauri/icons/icon.icns`, shared with the Tauri app.
+The macOS app icon is `crates/gespan-gpui/packaging/icon.icns`.
 
 ## Running alongside Gespan
 
