@@ -123,6 +123,27 @@ fn repository(path: &Path) -> Option<(String, String)> {
     None
 }
 
+/// A committed file's path inside the session's checkpoint folder.
+fn session_relative(cwd: &str, path: &str) -> Option<String> {
+    let (cwd, path) = (Path::new(cwd), Path::new(path));
+    let relative = path
+        .strip_prefix(cwd)
+        .map(Path::to_path_buf)
+        .ok()
+        .or_else(|| {
+            let canonical = cwd.canonicalize().ok()?;
+            path.strip_prefix(canonical).ok().map(Path::to_path_buf)
+        })?;
+    let parts: Vec<_> = relative
+        .components()
+        .map(|part| match part {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 fn group_files(
     attached: &[String],
     files: &[gespan_core::checkpoint::CheckpointFile],
@@ -361,6 +382,9 @@ impl Pilots {
                     crate::changes::ChangesEvent::OpenDiff { cwd, path, staged } => {
                         this.open_change_review(&event_key, cwd, path.as_deref(), *staged, cx)
                     }
+                    crate::changes::ChangesEvent::Committed { paths } => {
+                        this.keep_committed(&event_key.0, paths, cx)
+                    }
                 },
             );
             let summary_id = pilot.id.clone();
@@ -394,6 +418,65 @@ impl Pilots {
             surface.changes.update(cx, |v, cx| v.set_enabled(true, cx));
             surface.git.update(cx, |v, cx| v.set_polling(true, cx));
         }
+    }
+
+    /// PilotProjectCommit: committed work is accepted work, so files committed
+    /// whole leave the Pilot session's review.
+    fn keep_committed(&mut self, pilot: &str, paths: &[String], cx: &mut Context<Self>) {
+        let Some(Source {
+            session: Some(session),
+            cwd,
+            ..
+        }) = self
+            .project_changes
+            .summaries
+            .get(pilot)
+            .and_then(|s| s.source.clone())
+        else {
+            return;
+        };
+        let Some(store) = gespan_core::checkpoint::store() else {
+            return;
+        };
+        if cwd.is_empty() || cwd == "~" {
+            return;
+        }
+        let relatives: Vec<_> = paths
+            .iter()
+            .filter_map(|path| session_relative(&cwd, path))
+            .collect();
+        if relatives.is_empty() {
+            return;
+        }
+        let database = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            let mut aliases = vec![session.to_string()];
+            if let Ok(persisted) = locked(&database).and_then(|s| s.persisted_session_id(session))
+                && !aliases.contains(&persisted)
+            {
+                aliases.push(persisted);
+            }
+            for relative in &relatives {
+                for id in &aliases {
+                    let _ = store.exclusive(|s| s.keep(id, &cwd, Some(relative)));
+                }
+            }
+        });
+        let pilot = pilot.to_owned();
+        cx.spawn(async move |this, cx| {
+            work.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(summary) = this.project_changes.summaries.get_mut(&pilot) {
+                    summary.loaded = None;
+                    summary.revision += 1;
+                }
+                if let Some(pilot) = this.roster.get(&pilot).cloned() {
+                    this.ensure_changes_summary(&pilot, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn open_change_review(
@@ -754,6 +837,20 @@ mod tests {
             exact: true,
             undoable: true,
         }
+    }
+    #[test]
+    fn committed_paths_are_named_inside_the_session_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().to_str().unwrap();
+        let committed = home.path().join("b").join("same.txt");
+        assert_eq!(
+            session_relative(cwd, committed.to_str().unwrap()).as_deref(),
+            Some("b/same.txt")
+        );
+        let outside = tempfile::tempdir().unwrap();
+        let elsewhere = outside.path().join("same.txt");
+        assert_eq!(session_relative(cwd, elsewhere.to_str().unwrap()), None);
+        assert_eq!(session_relative(cwd, cwd), None);
     }
     fn locate(path: &Path) -> Option<(String, String)> {
         for (root, main) in [("/a-wt", "/a"), ("/a", "/a"), ("/ab", "/ab"), ("/b", "/b")] {

@@ -54,6 +54,10 @@ pub(crate) enum ChangesEvent {
         path: Option<String>,
         staged: bool,
     },
+    /// A commit took these files whole (absolute paths).
+    Committed {
+        paths: Vec<String>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -778,6 +782,18 @@ impl Changes {
         let message = self.message.read(cx).content.to_string();
         let amend = self.amend.is_some();
         let pr = create_pr.then(|| self.text_harness());
+        // Files with nothing left unstaged are committed whole.
+        let committed: Vec<String> = self
+            .index(cx)
+            .map(|index| {
+                index
+                    .files
+                    .into_iter()
+                    .filter(|f| f.staged && !f.unstaged)
+                    .map(|f| f.path)
+                    .collect()
+            })
+            .unwrap_or_default();
         self.run_git(
             if create_pr { "pr" } else { "commit" }.into(),
             move |path| {
@@ -791,6 +807,9 @@ impl Changes {
                 this.amend = None;
                 this.message
                     .update(cx, |m, cx| m.set_text(String::new(), cx));
+                if !committed.is_empty() {
+                    cx.emit(ChangesEvent::Committed { paths: committed });
+                }
                 if let Some(harness) = pr {
                     this.open_created_pr(harness, window, cx);
                 }

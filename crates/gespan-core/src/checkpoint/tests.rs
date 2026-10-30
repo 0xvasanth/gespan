@@ -15,6 +15,8 @@ impl Fixture {
         run_git(&repo, &["config", "user.name", "Test"]).unwrap();
         run_git(&repo, &["config", "user.email", "test@example.invalid"]).unwrap();
         run_git(&repo, &["config", "core.autocrlf", "false"]).unwrap();
+        run_git(&repo, &["config", "core.safecrlf", "false"]).unwrap();
+        run_git(&repo, &["config", "commit.gpgsign", "false"]).unwrap();
         std::fs::write(repo.join("a.txt"), "original\n").unwrap();
         std::fs::write(repo.join("delete.txt"), "remove me\n").unwrap();
         run_git(&repo, &["add", "."]).unwrap();
@@ -834,4 +836,337 @@ fn a_git_failure_without_output_names_the_command_and_its_exit() {
     // Git's own message still wins when it has one.
     let error = run_git(dir.path(), &["cat-file", "-p", "no-such-object"]).unwrap_err();
     assert!(error.contains("no-such-object"), "{error}");
+}
+
+fn relatives(status: &CheckpointStatus) -> Vec<&str> {
+    status
+        .files
+        .iter()
+        .map(|file| file.relative.as_str())
+        .collect()
+}
+
+/// One recorded turn that changed a.txt, created new.txt and deleted delete.txt.
+fn turn_with_three_changes(f: &Fixture) {
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    f.write("a.txt", "agent\n");
+    f.write("new.txt", "created\n");
+    std::fs::remove_file(f.repo.join("delete.txt")).unwrap();
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+}
+
+#[test]
+fn undo_one_file_restores_only_that_file_for_changed_added_and_deleted_files() {
+    let f = Fixture::new();
+    turn_with_three_changes(&f);
+
+    let status = f.store.undo("session", f.cwd(), Some("a.txt")).unwrap();
+    assert_eq!(relatives(&status), ["delete.txt", "new.txt"]);
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("a.txt")).unwrap(),
+        "original\n"
+    );
+    assert!(f.repo.join("new.txt").exists());
+    assert!(!f.repo.join("delete.txt").exists());
+
+    let status = f.store.undo("session", f.cwd(), Some("new.txt")).unwrap();
+    assert_eq!(relatives(&status), ["delete.txt"]);
+    assert!(!f.repo.join("new.txt").exists());
+
+    let status = f
+        .store
+        .undo("session", f.cwd(), Some("delete.txt"))
+        .unwrap();
+    assert!(status.files.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("delete.txt")).unwrap(),
+        "remove me\n"
+    );
+}
+
+#[test]
+fn keep_one_file_leaves_it_on_disk_and_the_rest_pending() {
+    let f = Fixture::new();
+    turn_with_three_changes(&f);
+
+    for (kept, left) in [
+        ("a.txt", vec!["delete.txt", "new.txt"]),
+        ("new.txt", vec!["delete.txt"]),
+        ("delete.txt", vec![]),
+    ] {
+        let status = f.store.keep("session", f.cwd(), Some(kept)).unwrap();
+        assert_eq!(relatives(&status), left, "after keeping {kept}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("a.txt")).unwrap(),
+        "agent\n"
+    );
+    assert!(f.repo.join("new.txt").exists());
+    assert!(!f.repo.join("delete.txt").exists());
+    // Kept files stay accepted, so Undo all has nothing left to restore.
+    assert!(f
+        .store
+        .undo("session", f.cwd(), None)
+        .unwrap()
+        .files
+        .is_empty());
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("a.txt")).unwrap(),
+        "agent\n"
+    );
+}
+
+/// A folder without Git, and the absolute paths a provider's edit tools name.
+struct Folder {
+    _temp: tempfile::TempDir,
+    root: PathBuf,
+    store: Store,
+}
+
+impl Folder {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("folder");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(root.join("gone.txt"), "old\n").unwrap();
+        Self {
+            store: Store::new(temp.path().join("checkpoints")),
+            root,
+            _temp: temp,
+        }
+    }
+    fn cwd(&self) -> &str {
+        self.root.to_str().unwrap()
+    }
+    fn path(&self, relative: &str) -> String {
+        relative
+            .split('/')
+            .fold(self.root.clone(), |path, part| path.join(part))
+            .to_string_lossy()
+            .into_owned()
+    }
+    fn read(&self, relative: &str) -> Option<String> {
+        std::fs::read_to_string(self.path(relative)).ok()
+    }
+    /// A structured edit: snapshot before it starts, record its result after.
+    fn edit(&self, relative: &str, contents: Option<&str>) {
+        let paths = [self.path(relative)];
+        self.store.prepare("session", self.cwd(), &paths).unwrap();
+        match contents {
+            Some(text) => std::fs::write(self.path(relative), text).unwrap(),
+            None => std::fs::remove_file(self.path(relative)).unwrap(),
+        }
+        self.store
+            .capture_edit("session", self.cwd(), &paths)
+            .unwrap();
+    }
+    /// One turn that changed src/a.txt, created new.txt and deleted gone.txt.
+    fn three_changes(&self) {
+        self.store
+            .begin_turn("session", self.cwd(), "turn")
+            .unwrap();
+        self.edit("src/a.txt", Some("one\nTWO\nthree\n"));
+        self.edit("new.txt", Some("fresh\n"));
+        self.edit("gone.txt", None);
+        self.store
+            .finish_turn("session", self.cwd(), "turn")
+            .unwrap();
+    }
+}
+
+#[test]
+fn folders_without_git_record_structured_edits_with_exact_counts_and_diffs() {
+    let f = Folder::new();
+    f.three_changes();
+    // A shell write without edit events is not this session's change.
+    std::fs::write(f.path("shell.txt"), "untracked\n").unwrap();
+
+    let status = f.store.status("session", f.cwd()).unwrap();
+    let files: Vec<_> = status
+        .files
+        .iter()
+        .map(|file| {
+            (
+                file.relative.as_str(),
+                file.status.as_str(),
+                file.additions,
+                file.deletions,
+                file.exact && file.undoable,
+            )
+        })
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("gone.txt", "deleted", 0, 1, true),
+            ("new.txt", "added", 1, 0, true),
+            ("src/a.txt", "modified", 2, 1, true),
+        ]
+    );
+    let diff = f.store.file_diff("session", f.cwd(), "src/a.txt").unwrap();
+    assert_eq!(
+        (diff.original.as_str(), diff.current.as_str()),
+        ("one\ntwo\n", "one\nTWO\nthree\n")
+    );
+    // A later turn keeps the session's recording, as the desktop app does.
+    f.store.begin_turn("session", f.cwd(), "next").unwrap();
+    assert_eq!(f.store.status("session", f.cwd()).unwrap().files.len(), 3);
+}
+
+#[test]
+fn folders_without_git_undo_and_keep_one_file_at_a_time() {
+    let f = Folder::new();
+    f.three_changes();
+
+    let status = f.store.undo("session", f.cwd(), Some("src/a.txt")).unwrap();
+    assert_eq!(relatives(&status), ["gone.txt", "new.txt"]);
+    assert_eq!(f.read("src/a.txt").as_deref(), Some("one\ntwo\n"));
+
+    let status = f.store.keep("session", f.cwd(), Some("new.txt")).unwrap();
+    assert_eq!(relatives(&status), ["gone.txt"]);
+    assert_eq!(f.read("new.txt").as_deref(), Some("fresh\n"));
+
+    let status = f.store.undo("session", f.cwd(), Some("gone.txt")).unwrap();
+    assert!(status.files.is_empty());
+    assert_eq!(f.read("gone.txt").as_deref(), Some("old\n"));
+    // The kept file is untouched by a later Undo all.
+    f.store.undo("session", f.cwd(), None).unwrap();
+    assert_eq!(f.read("new.txt").as_deref(), Some("fresh\n"));
+}
+
+#[test]
+fn folders_without_git_undo_a_created_file_and_keep_a_deleted_one() {
+    let f = Folder::new();
+    f.three_changes();
+    let status = f.store.undo("session", f.cwd(), Some("new.txt")).unwrap();
+    assert_eq!(relatives(&status), ["gone.txt", "src/a.txt"]);
+    assert_eq!(f.read("new.txt"), None);
+    let status = f.store.keep("session", f.cwd(), Some("gone.txt")).unwrap();
+    assert_eq!(relatives(&status), ["src/a.txt"]);
+    assert_eq!(f.read("gone.txt"), None);
+}
+
+#[test]
+fn folders_without_git_refuse_to_undo_a_file_changed_after_the_edit() {
+    let f = Folder::new();
+    f.three_changes();
+    std::fs::write(f.path("src/a.txt"), "someone else\n").unwrap();
+
+    let status = f.store.status("session", f.cwd()).unwrap();
+    let file = status
+        .files
+        .iter()
+        .find(|file| file.relative == "src/a.txt")
+        .unwrap();
+    assert!(file.exact && !file.undoable);
+    let error = f
+        .store
+        .undo("session", f.cwd(), Some("src/a.txt"))
+        .unwrap_err();
+    assert!(error.contains("changed outside this session"), "{error}");
+    assert!(f.store.undo("session", f.cwd(), None).is_err());
+    assert_eq!(f.read("src/a.txt").as_deref(), Some("someone else\n"));
+    assert_eq!(f.read("new.txt").as_deref(), Some("fresh\n"));
+    // Keep still accepts it.
+    let status = f.store.keep("session", f.cwd(), Some("src/a.txt")).unwrap();
+    assert_eq!(relatives(&status), ["gone.txt", "new.txt"]);
+}
+
+#[test]
+fn folders_without_git_undo_all_and_forget_clear_the_recording() {
+    let f = Folder::new();
+    f.three_changes();
+    assert!(f
+        .store
+        .undo("session", f.cwd(), None)
+        .unwrap()
+        .files
+        .is_empty());
+    assert_eq!(f.read("src/a.txt").as_deref(), Some("one\ntwo\n"));
+    assert_eq!(f.read("new.txt"), None);
+    assert_eq!(f.read("gone.txt").as_deref(), Some("old\n"));
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+
+    f.three_changes();
+    assert_eq!(f.store.status("session", f.cwd()).unwrap().files.len(), 3);
+    f.store.forget("session").unwrap();
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+    assert_eq!(f.read("new.txt").as_deref(), Some("fresh\n"));
+}
+
+#[test]
+fn folders_without_git_need_an_edit_start_and_ignore_other_folders() {
+    let f = Folder::new();
+    f.store.begin_turn("session", f.cwd(), "turn").unwrap();
+    // A completion without its start event has no safe baseline.
+    std::fs::write(f.path("src/a.txt"), "changed\n").unwrap();
+    f.store
+        .capture_edit("session", f.cwd(), &[f.path("src/a.txt")])
+        .unwrap();
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+    // Paths outside the folder are never recorded.
+    let outside = tempfile::tempdir().unwrap();
+    let stray = outside.path().join("x.txt").to_string_lossy().into_owned();
+    f.store
+        .prepare("session", f.cwd(), std::slice::from_ref(&stray))
+        .unwrap();
+    f.store.capture_edit("session", f.cwd(), &[stray]).unwrap();
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+    // The same session in another folder starts a fresh recording.
+    let other = tempfile::tempdir().unwrap();
+    let other_cwd = other.path().to_str().unwrap();
+    f.store.begin_turn("session", other_cwd, "turn").unwrap();
+    assert!(f
+        .store
+        .status("session", other_cwd)
+        .unwrap()
+        .files
+        .is_empty());
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+}
+
+#[test]
+fn folders_without_git_do_not_offer_undo_for_another_sessions_file() {
+    let f = Folder::new();
+    f.three_changes();
+    f.store.begin_turn("other", f.cwd(), "turn").unwrap();
+    let paths = [f.path("src/a.txt")];
+    f.store.prepare("other", f.cwd(), &paths).unwrap();
+    f.store.capture_edit("other", f.cwd(), &paths).unwrap();
+    let status = f.store.status("session", f.cwd()).unwrap();
+    let file = status
+        .files
+        .iter()
+        .find(|file| file.relative == "src/a.txt")
+        .unwrap();
+    assert!(!file.undoable);
+    assert!(status
+        .files
+        .iter()
+        .filter(|file| file.relative != "src/a.txt")
+        .all(|file| file.undoable));
+}
+
+#[test]
+fn git_turns_ignore_folder_edit_events() {
+    let f = Fixture::new();
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    let path = f.repo.join("a.txt").to_string_lossy().into_owned();
+    f.store
+        .prepare("session", f.cwd(), std::slice::from_ref(&path))
+        .unwrap();
+    f.write("a.txt", "agent\n");
+    f.store.capture_edit("session", f.cwd(), &[path]).unwrap();
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    assert!(!f
+        .dir
+        .join("checkpoints")
+        .join("session")
+        .join("manifest.json")
+        .exists());
+    assert_eq!(
+        relatives(&f.store.status("session", f.cwd()).unwrap()),
+        ["a.txt"]
+    );
 }

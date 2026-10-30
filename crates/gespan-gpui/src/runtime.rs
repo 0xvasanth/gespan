@@ -848,6 +848,9 @@ fn run_turn_using(
                             }
                             // Saved rows leave live elapsed out; the view reads it here.
                             gespan_core::tool::live::record(&tool);
+                            if let Some((cwd, _)) = &checkpoint {
+                                track_edit(summary.id, cwd, &tool);
+                            }
                             let ix = *tool_rows
                                 .entry(tool.id.clone())
                                 .or_insert_with(|| transcript.begin("tool"));
@@ -1508,37 +1511,68 @@ pub(crate) fn edited_paths(rows: &[Row]) -> Vec<String> {
         if tool.state != gespan_core::tool::ToolState::Completed {
             continue;
         }
-        let shown = tool.presentation();
-        if matches!(
-            shown.action.as_str(),
-            "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
-        ) {
-            let input = serde_json::from_str::<serde_json::Value>(&tool.input).unwrap_or_default();
-            let many = input["paths"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|path| path.as_str());
-            let desktop = tool.display.as_ref().unwrap_or(&input["__desktop"]);
-            let desktop_paths = desktop["paths"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|path| path.as_str());
-            for path in shown
-                .file_path
-                .as_deref()
-                .into_iter()
-                .chain(many)
-                .chain(desktop_paths)
-            {
-                if !path.is_empty() && !paths.iter().any(|p| p == path) {
-                    paths.push(path.to_owned());
-                }
+        for path in edit_tool_paths(&tool) {
+            if !paths.contains(&path) {
+                paths.push(path);
             }
         }
     }
     paths
+}
+
+/// The files a structured edit tool writes, in any state.
+pub(crate) fn edit_tool_paths(tool: &gespan_core::tool::ToolCall) -> Vec<String> {
+    let shown = tool.presentation();
+    if !matches!(
+        shown.action.as_str(),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
+    ) {
+        return Vec::new();
+    }
+    let input = serde_json::from_str::<serde_json::Value>(&tool.input).unwrap_or_default();
+    let many = input["paths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.as_str());
+    let desktop = tool.display.as_ref().unwrap_or(&input["__desktop"]);
+    let desktop_paths = desktop["paths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.as_str());
+    let mut paths: Vec<String> = Vec::new();
+    for path in shown
+        .file_path
+        .as_deref()
+        .into_iter()
+        .chain(many)
+        .chain(desktop_paths)
+    {
+        if !path.is_empty() && !paths.iter().any(|p| p == path) {
+            paths.push(path.to_owned());
+        }
+    }
+    paths
+}
+
+/// App.tsx's trackSessionEdits: a folder without Git snapshots each file
+/// before an edit tool writes it and again once the tool succeeds.
+fn track_edit(session: i64, cwd: &str, tool: &gespan_core::tool::ToolCall) {
+    use gespan_core::tool::ToolState;
+    let paths = edit_tool_paths(tool);
+    if paths.is_empty() {
+        return;
+    }
+    let Some(store) = gespan_core::checkpoint::store() else {
+        return;
+    };
+    let session = session.to_string();
+    let _ = store.exclusive(|store| match tool.state {
+        ToolState::Running => store.prepare(&session, cwd, &paths),
+        ToolState::Completed => store.capture_edit(&session, cwd, &paths),
+        ToolState::Failed | ToolState::Cancelled => Ok(()),
+    });
 }
 
 fn shlex_quote(text: &str) -> String {
@@ -1721,5 +1755,27 @@ mod edited_paths_tests {
             ),
         ];
         assert_eq!(edited_paths(&rows), ["/repo/a.rs", "relative.rs"]);
+    }
+
+    #[test]
+    fn a_running_edit_names_its_files_before_it_writes_them() {
+        let tool = |name: &str, input: serde_json::Value| {
+            let mut tool = ToolCall::new("tool", name);
+            tool.state = ToolState::Running;
+            tool.input = input.to_string();
+            tool
+        };
+        assert_eq!(
+            edit_tool_paths(&tool("Write", json!({"file_path":"/folder/new.md"}))),
+            ["/folder/new.md"]
+        );
+        assert_eq!(
+            edit_tool_paths(&tool(
+                "fileChange",
+                json!({"paths":["/folder/a.md", "/folder/a.md", "b.md"]})
+            )),
+            ["/folder/a.md", "b.md"]
+        );
+        assert!(edit_tool_paths(&tool("Read", json!({"file_path":"/folder/a.md"}))).is_empty());
     }
 }

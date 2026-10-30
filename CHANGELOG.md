@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native lets you undo or keep a session's changes one file at a time:
+  hovering a file in the changes card under the reply shows its own Undo and
+  Keep. Folders without Git now get these reviews too, as the Tauri app does:
+  each file a structured edit writes is saved before and after the edit, and
+  Undo is offered only while the file is still as the session left it.
+  Committing files whole from a Pilot's Changes tab clears them from the
+  Pilot session's review.
 - Gespan Native's / picker has a New skill row, as the Tauri app does. It
   opens a short form named from the typed command, with Project or Personal
   skills, and writes a starter SKILL.md that opens for editing. The command is
