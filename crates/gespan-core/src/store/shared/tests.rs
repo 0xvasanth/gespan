@@ -1338,3 +1338,61 @@ fn a_steer_with_an_earlier_turns_start_still_joins_the_running_turn() {
     assert_eq!(turns[&5].joined_turn, Some(3));
     assert_eq!(turns[&5].started_at, None);
 }
+
+fn bare_shell_session(store: &Store, data: &Path, harness: &str) -> i64 {
+    let (id, original) = saved(
+        store,
+        json!([{"role":"tool","id":"block-1","text":"Shell",
+            "tool":{"kind":"execute","title":"Shell","callId":"toolu_1","status":"completed"}}]),
+    );
+    store
+        .conn
+        .execute(
+            "UPDATE sessions SET harness=?2 WHERE id=?1",
+            params![original, harness],
+        )
+        .unwrap();
+    let account = store.agent_settings(id).unwrap().unwrap().account;
+    let home = crate::accounts::Profile::new(&account.id, data)
+        .home(crate::provider::Kind::Claude)
+        .unwrap();
+    // A profile account, so the test stays out of the real ~/.claude.
+    assert!(home.starts_with(data));
+    let project = home.join("projects/-project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("provider-thread.jsonl"),
+        json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"cargo test -p core"}}
+        ]}})
+        .to_string(),
+    )
+    .unwrap();
+    id
+}
+fn shown_command(store: &Store, id: i64) -> Option<String> {
+    let rows = store.load(id).unwrap().rows;
+    serde_json::from_str::<crate::tool::ToolCall>(&rows[0].text)
+        .unwrap()
+        .presentation()
+        .command
+}
+
+#[test]
+fn opening_a_claude_session_restores_commands_saved_as_shell() {
+    let data = tempfile::tempdir().unwrap();
+    let store = Store::open_gespan(&data.path().join("gespan.db")).unwrap();
+    let id = bare_shell_session(&store, data.path(), "claude");
+    assert_eq!(
+        shown_command(&store, id).as_deref(),
+        Some("cargo test -p core")
+    );
+}
+
+#[test]
+fn other_providers_never_read_a_claude_transcript() {
+    let data = tempfile::tempdir().unwrap();
+    let store = Store::open_gespan(&data.path().join("gespan.db")).unwrap();
+    let id = bare_shell_session(&store, data.path(), "codex");
+    assert_eq!(shown_command(&store, id).as_deref(), Some("Shell"));
+}
