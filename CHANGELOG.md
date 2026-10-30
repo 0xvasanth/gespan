@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3-beta] - 2026-10-30
+
+This release ships Gespan Native for macOS, Windows and Linux, and the iOS app
+on TestFlight. It brings most of the remaining Tauri app features to Gespan
+Native.
+
+This beta is still not signed with an Apple Developer ID or a Windows
+code-signing certificate. On macOS, open it the first time with Control-click →
+Open; on Windows, choose **More info → Run anyway** in SmartScreen.
+
 ### Added
 
 - Gespan Native shows a reply's local images and videos in place, as the Tauri
@@ -81,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issues and pull requests: the link becomes the page's title with the site's
   icon, as in the Tauri app. Links to local or private network addresses are
   never fetched, and a page that can't be read shows its site name instead.
+- After Gespan Native updates, it shows that version's release notes. The
+  update to 0.0.2-beta showed notes from an old preview instead.
 
 ## [0.0.2-beta] - 2026-10-29
 
