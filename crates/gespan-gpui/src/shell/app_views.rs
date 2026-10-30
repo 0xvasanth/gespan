@@ -182,6 +182,14 @@ impl Shell {
     }
 
     fn show_app_view(&mut self, view: AppView, window: &mut Window, cx: &mut Context<Self>) {
+        // These run work on a schedule, which the first window owns.
+        if self.secondary && matches!(view, AppView::Automations | AppView::Flows) {
+            crate::windows::on_primary(cx, move |shell, window, cx| {
+                shell.set_window_visible(window, true, cx);
+                shell.show_app_view(view, window, cx);
+            });
+            return;
+        }
         if self.active_app_view != Some(view) {
             self.leave_app_views(cx);
         }

@@ -36,19 +36,25 @@ replaceFirst(
   `$1${version}$2`,
 );
 replaceFirst(
+  join(root, "src-tauri/Cargo.toml"),
+  /^(version = ")[^"]+(")/m,
+  `$1${version}$2`,
+);
+replaceFirst(
   join(root, "src-tauri/tauri.conf.json"),
   /("version": ")[^"]+(")/,
   `$1${version}$2`,
 );
 replaceFirst(
   join(root, "crates/gespan-gpui/Cargo.toml"),
-  /(\[workspace\.package\]\nversion = ")[^"]+(")/,
+  /(\[workspace\.package\]\r?\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
 // Every package that takes the workspace version, in both lockfiles, so
 // `--locked` builds keep working.
 const lockfiles = {
-  "Cargo.lock": ["gespan", "gespan-models", "gespan-speech"],
+  "Cargo.lock": ["gespan-models", "gespan-speech"],
+  "src-tauri/Cargo.lock": ["gespan", "gespan-models", "gespan-speech"],
   "crates/gespan-gpui/Cargo.lock": [
     "gespan-core",
     "gespan-gpui",
@@ -60,7 +66,7 @@ for (const [lockfile, names] of Object.entries(lockfiles)) {
   for (const name of names) {
     replaceFirst(
       join(root, lockfile),
-      new RegExp(`(name = "${name}"\\nversion = ")[^"]+(")`),
+      new RegExp(`(name = "${name}"\\r?\\nversion = ")[^"]+(")`),
       `$1${version}$2`,
     );
   }

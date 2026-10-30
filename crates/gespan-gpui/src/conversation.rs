@@ -16,6 +16,7 @@ mod follow_up;
 pub(crate) mod git_actions;
 mod history;
 mod hold;
+mod orchestration_card;
 pub(crate) use hold::HoldChanged;
 #[cfg(test)]
 mod composer_card_tests;
@@ -208,6 +209,7 @@ pub(crate) struct Conversation {
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
+    plan_card: orchestration_card::PlanCard,
     orchestration_error: Option<String>,
     pub(crate) orchestration_progress: Option<String>,
     status: String,
@@ -692,6 +694,7 @@ impl Conversation {
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan: None,
+            plan_card: Default::default(),
             orchestration_error: None,
             orchestration_progress: None,
             status: "Loading conversation…".into(),
@@ -1097,9 +1100,13 @@ impl Conversation {
             return;
         }
         self.planning_orchestration = self.settings.orchestrator;
-        self.orchestration_plan = None;
+        self.set_orchestration_plan(None);
         self.orchestration_error = None;
+        if self.settings.orchestrator {
+            self.settings.orchestration_profiles = self.orchestration_profiles(cx);
+        }
         self.launch_prompt(prompt, cx);
+        self.settings.orchestration_profiles.clear();
         if self.busy && mode.is_some() {
             self.clear_submitted_mode(cx);
         }
@@ -4274,7 +4281,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod menu_tests {
+pub(super) mod menu_tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
@@ -4814,7 +4821,7 @@ mod menu_tests {
             .unwrap();
     }
 
-    fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
+    pub(super) fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let summary = store.create("claude", "/work/gespan").unwrap();
         let store = Arc::new(Mutex::new(store));

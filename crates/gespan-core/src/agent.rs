@@ -110,6 +110,9 @@ pub struct Settings {
     pub disable_claude_hooks: bool,
     #[serde(skip)]
     pub environment: std::collections::HashMap<String, String>,
+    /// Accounts for an orchestration planning turn's model catalog.
+    #[serde(skip)]
+    pub orchestration_profiles: Vec<(crate::provider::Kind, crate::accounts::Profile)>,
     #[serde(skip)]
     pub pilot: Option<PilotContext>,
     #[serde(skip)]

@@ -20,6 +20,7 @@ mod layout;
 mod live_agents;
 mod menu_bar;
 mod mobile_host;
+mod multi_window;
 mod notifications;
 mod open_in_editor;
 mod orchestration;
@@ -51,6 +52,7 @@ mod space_reorder;
 mod terminal_dock;
 mod title_tabs;
 mod tray;
+pub(crate) use multi_window::WindowSeed;
 pub(crate) use tray::reopen;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
@@ -99,6 +101,7 @@ actions!(
     [
         NewCodex,
         NewClaude,
+        NewWindow,
         OpenProject,
         CloseTab,
         CloseAllTabs,
@@ -212,7 +215,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-n"), NewCodex, context),
         KeyBinding::new(&format!("{modifier}-shift-h"), ToggleHold, context),
         KeyBinding::new(&format!("{modifier}-t"), NewCodex, context),
-        KeyBinding::new(&format!("{modifier}-shift-n"), NewClaude, context),
+        // The one place that decides who owns this chord.
+        KeyBinding::new(&format!("{modifier}-shift-n"), NewWindow, context),
         KeyBinding::new(&format!("{modifier}-o"), OpenProject, context),
         KeyBinding::new(&format!("{modifier}-p"), GoToFile, context),
         KeyBinding::new(&format!("{modifier}-shift-p"), OpenCommandPalette, context),
@@ -845,6 +849,12 @@ pub(crate) struct Shell {
     observations: Vec<Subscription>,
     generation: Arc<AtomicU64>,
     latest_state: Arc<Mutex<String>>,
+    /// A further window, which leaves app-wide work to the first one.
+    pub(crate) secondary: bool,
+    /// This shell in `crate::windows`.
+    window_key: gpui::EntityId,
+    /// A pending re-read of sessions other windows changed.
+    session_sync: Option<gpui::Task<()>>,
     pub(crate) render_passes: usize,
 }
 impl Shell {
@@ -878,6 +888,23 @@ impl Shell {
         sidebar_metadata: gespan_core::store::SessionSidebarMetadata,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::build(store, summaries, cwd, saved, sidebar_metadata, None, cx)
+    }
+    /// `shared_remote` makes a further window: it shares the first window's
+    /// connections and leaves app-wide work (see `crate::windows`) to it.
+    pub(crate) fn build(
+        store: Database,
+        summaries: Vec<Session>,
+        cwd: String,
+        saved: Option<String>,
+        sidebar_metadata: gespan_core::store::SessionSidebarMetadata,
+        shared_remote: Option<Arc<gespan_core::remote::Connections>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let secondary = shared_remote.is_some();
+        if !secondary {
+            crate::windows::start(cx);
+        }
         crate::accounts::install(store.clone(), cx);
         let remote_dir = locked(&store)
             .ok()
@@ -887,16 +914,19 @@ impl Shell {
             });
         let tickets: Arc<dyn crate::tickets::TicketBackend> =
             Arc::new(gespan_core::tickets::Tickets::new(remote_dir.clone()));
-        let remote = Arc::new(gespan_core::remote::Connections::new(remote_dir));
-        gespan_core::remote::set_default_connections(remote.clone());
-        let quit_remote = remote.clone();
-        cx.on_app_quit(move |_, cx| {
-            let remote = quit_remote.clone();
-            cx.background_executor().spawn(async move {
-                remote.shutdown();
+        let remote = shared_remote.unwrap_or_else(|| {
+            let remote = Arc::new(gespan_core::remote::Connections::new(remote_dir));
+            gespan_core::remote::set_default_connections(remote.clone());
+            let quit_remote = remote.clone();
+            cx.on_app_quit(move |_, cx| {
+                let remote = quit_remote.clone();
+                cx.background_executor().spawn(async move {
+                    remote.shutdown();
+                })
             })
-        })
-        .detach();
+            .detach();
+            remote
+        });
         let remote_clock = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -919,14 +949,16 @@ impl Shell {
         let quit_store = store.clone();
         // This application-level hook survives the last window/entity being released.
         let app: &mut App = cx;
-        app.on_app_quit(move |cx| {
-            let state = quit_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            let store = quit_store.clone();
-            cx.background_executor().spawn(async move {
-                let _ = locked(&store).and_then(|s| s.save_ui_state(&state));
+        if !secondary {
+            app.on_app_quit(move |cx| {
+                let state = quit_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let store = quit_store.clone();
+                cx.background_executor().spawn(async move {
+                    let _ = locked(&store).and_then(|s| s.save_ui_state(&state));
+                })
             })
-        })
-        .detach();
+            .detach();
+        }
         let owner = cx.weak_entity();
         let sidebar_frame = cx.new(|_| Chrome {
             owner: owner.clone(),
@@ -1207,6 +1239,9 @@ impl Shell {
             ],
             generation: Arc::new(AtomicU64::new(0)),
             latest_state,
+            secondary,
+            window_key: cx.entity_id(),
+            session_sync: None,
             render_passes: 0,
         };
         if !cfg!(test) {
@@ -1214,87 +1249,90 @@ impl Shell {
         }
         this.observe_accounts(cx);
         this.observe_picker_preferences(cx);
-        let pilot_owner = cx.weak_entity();
-        let pilot_active = this
-            .workspace
-            .scope_focus
-            .get(&this.tab_scope())
-            .and_then(|tab| match tab {
-                TitleTab::Pilot { id, .. } => Some(id.clone()),
-                _ => None,
+        if !secondary {
+            let pilot_owner = cx.weak_entity();
+            let pilot_active = this
+                .workspace
+                .scope_focus
+                .get(&this.tab_scope())
+                .and_then(|tab| match tab {
+                    TitleTab::Pilot { id, .. } => Some(id.clone()),
+                    _ => None,
+                });
+            let pilots = cx.new(|cx| {
+                crate::pilots::Pilots::new(
+                    this.store.clone(),
+                    pilot_owner,
+                    this.workspace.preferences.clone(),
+                    pilot_active,
+                    this.notification_state.region.clone(),
+                    cx,
+                )
             });
-        let pilots = cx.new(|cx| {
-            crate::pilots::Pilots::new(
-                this.store.clone(),
-                pilot_owner,
-                this.workspace.preferences.clone(),
-                pilot_active,
-                this.notification_state.region.clone(),
-                cx,
-            )
-        });
-        if let Ok(path) = locked(&this.store).map(|store| store.database_path().to_path_buf()) {
-            crate::board::turns::install(path, Some(pilots.downgrade()), cx);
-        }
-        this.observations.push(
-            cx.subscribe(&pilots, |this, _, _: &crate::pilots::Changed, cx| {
-                this.sync_pilot_search(cx);
-                this.update_usage_provider(cx);
-                this.invalidate_chrome(cx);
-                cx.notify();
-            }),
-        );
-        this.observations.push(cx.subscribe(
-            &pilots,
-            |this, _, opened: &crate::pilots::TabOpened, cx| {
-                this.pilot_opened(opened.0.clone(), cx);
-            },
-        ));
-        this.observations.push(cx.subscribe(
-            &pilots,
-            |_, _, request: &crate::pilots::ShowDetails, cx| {
-                let id = request.0.clone();
-                cx.spawn(async move |this, cx| {
-                    let _ = this.update_in(cx, |this, window, cx| {
-                        if this
-                            .pilots
-                            .as_ref()
-                            .is_some_and(|m| m.read(cx).active.as_ref() == Some(&id))
-                        {
-                            this.set_right_panel_open(true, window, cx);
-                        }
-                    });
-                })
-                .detach();
-            },
-        ));
-        let mut pilot_chrome = pilots.read(cx).overview_chrome();
-        let mut pilot_error = pilots.read(cx).error.clone();
-        let mut pilot_session = pilots.read(cx).routed_session();
-        this.observations
-            .push(cx.observe(&pilots, move |this, pilots, cx| {
-                let session = pilots.read(cx).routed_session();
-                if session != pilot_session {
-                    pilot_session = session;
-                    this.update_chat_visibility(cx);
-                }
-                let chrome = pilots.read(cx).overview_chrome();
-                if chrome != pilot_chrome {
-                    pilot_chrome = chrome;
+            if let Ok(path) = locked(&this.store).map(|store| store.database_path().to_path_buf()) {
+                crate::board::turns::install(path, Some(pilots.downgrade()), cx);
+            }
+            this.observations.push(cx.subscribe(
+                &pilots,
+                |this, _, _: &crate::pilots::Changed, cx| {
+                    this.sync_pilot_search(cx);
+                    this.update_usage_provider(cx);
                     this.invalidate_chrome(cx);
                     cx.notify();
-                }
-                let error = &pilots.read(cx).error;
-                if *error != pilot_error {
-                    pilot_error = error.clone();
-                    cx.notify();
-                }
-            }));
-        this.pilots = Some(pilots);
-        // Its roster loaded with it: Pilot Flow events can be delivered.
-        this.flush_pilot_flow_events(cx);
-        this.bind_notices(cx);
-        this.init_app_bridge(cx);
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
+                |this, _, opened: &crate::pilots::TabOpened, cx| {
+                    this.pilot_opened(opened.0.clone(), cx);
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
+                |_, _, request: &crate::pilots::ShowDetails, cx| {
+                    let id = request.0.clone();
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            if this
+                                .pilots
+                                .as_ref()
+                                .is_some_and(|m| m.read(cx).active.as_ref() == Some(&id))
+                            {
+                                this.set_right_panel_open(true, window, cx);
+                            }
+                        });
+                    })
+                    .detach();
+                },
+            ));
+            let mut pilot_chrome = pilots.read(cx).overview_chrome();
+            let mut pilot_error = pilots.read(cx).error.clone();
+            let mut pilot_session = pilots.read(cx).routed_session();
+            this.observations
+                .push(cx.observe(&pilots, move |this, pilots, cx| {
+                    let session = pilots.read(cx).routed_session();
+                    if session != pilot_session {
+                        pilot_session = session;
+                        this.update_chat_visibility(cx);
+                    }
+                    let chrome = pilots.read(cx).overview_chrome();
+                    if chrome != pilot_chrome {
+                        pilot_chrome = chrome;
+                        this.invalidate_chrome(cx);
+                        cx.notify();
+                    }
+                    let error = &pilots.read(cx).error;
+                    if *error != pilot_error {
+                        pilot_error = error.clone();
+                        cx.notify();
+                    }
+                }));
+            this.pilots = Some(pilots);
+            // Its roster loaded with it: Pilot Flow events can be delivered.
+            this.flush_pilot_flow_events(cx);
+            this.bind_notices(cx);
+            this.init_app_bridge(cx);
+        }
         for summary in summaries {
             if this
                 .pilots
@@ -1306,9 +1344,11 @@ impl Shell {
             this.order.push(summary.id);
             this.session_summaries.insert(summary.id, summary);
         }
-        this.init_mobile_host(cx);
-        this.restore_hold(cx);
-        this.resume_interrupted(cx);
+        if !secondary {
+            this.init_mobile_host(cx);
+            this.restore_hold(cx);
+            this.resume_interrupted(cx);
+        }
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1321,11 +1361,18 @@ impl Shell {
         this.update_usage_provider(cx);
         this.apply_preferences(cx);
         this.poll_reminders(cx);
-        this.initialize_automations(cx);
-        this.initialize_flows(cx);
+        if !secondary {
+            this.initialize_automations(cx);
+            this.initialize_flows(cx);
+        }
         // Tests install a fake backend instead of reading the real keychain.
         #[cfg(not(test))]
         this.refresh_connected_trackers(cx);
+        if secondary {
+            this.observations.push(
+                cx.observe_global::<crate::hold::Hold>(|this, cx| this.hold_changed_elsewhere(cx)),
+            );
+        }
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {
                 let _ = this.update_in(cx, |this, window, cx| {
@@ -1400,7 +1447,7 @@ impl Shell {
     /// Loading history must not turn every session directory into a rail project.
     fn add_loaded(&mut self, summary: Session, cx: &mut Context<Self>) {
         let id = summary.id;
-        if self.sessions.contains_key(&id) {
+        if self.sessions.contains_key(&id) || !crate::windows::claim(id, cx.entity_id(), cx) {
             return;
         }
         self.session_summaries.insert(id, summary.clone());
@@ -1424,6 +1471,10 @@ impl Shell {
                 transcript.apply_preferences(&self.workspace.preferences, cx)
             });
         });
+        self.attach_session(id, view, cx);
+    }
+    /// Keeps a chat, and answers its events, in this window.
+    fn attach_session(&mut self, id: i64, view: Entity<Conversation>, cx: &mut Context<Self>) {
         self.observations
             .push(cx.subscribe(&view, move |this, _, _: &SessionChanged, cx| {
                 let Some(view) = this.sessions.get(&id) else {
@@ -1448,6 +1499,7 @@ impl Shell {
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();
                 this.sync_in_flight(cx);
+                crate::windows::sessions_changed(cx.entity_id(), cx);
                 this.notification_session_changed(id, cx);
                 this.update_usage_provider(cx);
                 this.update_chat_visibility(cx);
@@ -1974,7 +2026,7 @@ impl Shell {
         self.sync_git(cx);
     }
     /// The active tab's review pane, created from its saved state.
-    fn unsaved_files(&self, cx: &App) -> bool {
+    pub(crate) fn unsaved_files(&self, cx: &App) -> bool {
         self.reviews
             .values()
             .any(|pane| pane.read(cx).unsaved_files(cx))
@@ -2069,7 +2121,8 @@ impl Shell {
             .detach();
             return;
         }
-        let running = self.running_chats(cx).len();
+        let running =
+            self.running_chats(cx).len() + crate::windows::running_elsewhere(cx.entity_id(), cx);
         if !self.quit_prompted && running > 0 && !crate::hold::active(cx) {
             self.quit_prompted = true;
             let answer = window.prompt(
@@ -2094,7 +2147,7 @@ impl Shell {
         self.quit_unless_unsaved(window, cx);
     }
     fn quit_unless_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.unsaved_files(cx) {
+        if !self.unsaved_files(cx) && !crate::windows::unsaved_elsewhere(cx.entity_id(), cx) {
             crate::quit(cx);
             return;
         }
@@ -4127,6 +4180,10 @@ impl Shell {
         }
     }
     fn save_state(&mut self, cx: &mut Context<Self>) {
+        self.share_workspace(cx);
+        if self.secondary {
+            return;
+        }
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
         let revision = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -4267,6 +4324,9 @@ impl Shell {
         }
     }
     fn activate_session(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if crate::windows::show_elsewhere(id, cx.entity_id(), cx) {
+            return;
+        }
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
             return;
@@ -4508,6 +4568,7 @@ impl Shell {
                 && !s.summary.has_messages
                 && !s.busy
                 && !s.has_saved_draft()
+                && !crate::windows::owned_elsewhere(*id, cx.entity_id(), cx)
                 && self
                     .sessions
                     .get(id)
@@ -8526,43 +8587,14 @@ impl Render for Shell {
                 }));
             self.start_native_notifications(cx);
             #[cfg(windows)]
-            self.start_tray(window, cx);
+            if !self.secondary {
+                self.start_tray(window, cx);
+            }
+            crate::windows::register(&cx.entity(), window.window_handle(), self.secondary, cx);
             let shell = cx.entity().downgrade();
             window.on_window_should_close(cx, move |window, cx| {
                 shell
-                    .update(cx, |shell, cx| {
-                        shell.save_window_state(window, cx);
-                        #[cfg(all(target_os = "macos", not(test)))]
-                        if shell.workspace.preferences.close_to_tray
-                            && shell.workspace.preferences.pilot_menu_bar_icon
-                            && shell
-                                .pilots
-                                .as_ref()
-                                .is_some_and(|m| !m.read(cx).roster.pilots.is_empty())
-                            && !shell.unsaved_files(cx)
-                        {
-                            crate::traffic_lights::hide(window, cx);
-                            return false;
-                        }
-                        let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
-                        match crate::tray::on_close(
-                            to_tray,
-                            cfg!(target_os = "macos"),
-                            !shell.running_chats(cx).is_empty(),
-                            shell.unsaved_files(cx),
-                        ) {
-                            crate::tray::Close::Hide => {
-                                shell.set_window_visible(window, false, cx);
-                                false
-                            }
-                            // Closing the window quits: ask first, as a quit does.
-                            crate::tray::Close::Ask => {
-                                shell.request_quit(window, cx);
-                                false
-                            }
-                            crate::tray::Close::Quit => true,
-                        }
-                    })
+                    .update(cx, |shell, cx| shell.close_requested(window, cx))
                     .unwrap_or(true)
             });
             self.observations
@@ -8571,7 +8603,10 @@ impl Render for Shell {
                         this.close_preview(cx);
                         this.cancel_hold_press(cx);
                     } else {
+                        // However it came back, it is on screen again.
+                        crate::windows::set_hidden(cx.entity_id(), false, cx);
                         this.resume_git(cx);
+                        this.schedule_session_sync(cx);
                     }
                 }));
             self.observations
