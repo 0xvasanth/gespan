@@ -1,3 +1,4 @@
+import type { LinkedSessionUpdate } from "./linkedWorkItemActivity";
 import {
   isGithubWorkItem,
   type GithubLinkedWorkItem,
@@ -10,13 +11,7 @@ export type LinkedWorkItemTarget = {
   item: GithubLinkedWorkItem;
 };
 
-export type LinkedSessionUpdate = {
-  sessionId: string;
-  item: GithubWorkItem;
-  /** The last local turn or acknowledged remote snapshot, whichever is newer. */
-  since: number;
-  updatedAt: number;
-};
+export type { LinkedSessionUpdate };
 
 export function linkedWorkItemUpdateKey(
   item: Pick<GithubLinkedWorkItem, "repo" | "kind" | "number">,

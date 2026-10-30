@@ -7,8 +7,8 @@ import {
   statSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Attachment } from "../src/features/sessions/model/session";
-import type { RemoteAttachment } from "../src/features/connections/model/protocol";
+import type { Attachment } from "./core/features/sessions/model/session";
+import type { RemoteAttachment } from "./core/features/connections/model/protocol";
 import type { HostStore } from "./store";
 
 export const MAX_REMOTE_ATTACHMENT_BYTES = 20 * 1024 * 1024;

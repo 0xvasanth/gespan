@@ -11,7 +11,7 @@ import { saveInboxConnections, saveInboxSource } from "../model/inboxFilters";
 import { updateNotificationPreferences } from "../../notifications/model/notificationPreferences";
 
 const { listInboxItems } = vi.hoisted(() => ({ listInboxItems: vi.fn() }));
-vi.mock("../model/githubTasks", async (importOriginal) => ({
+vi.mock("../../../../host/core/features/inbox/model/githubTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../model/githubTasks")>()),
   listInboxItems,
 }));

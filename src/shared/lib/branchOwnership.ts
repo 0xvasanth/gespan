@@ -1,18 +1,2 @@
-/** Prefix for branches that Gespan creates itself. */
-export const APP_BRANCH_PREFIX = "gespan/";
-/** Legacy prefixes, still recognised so existing worktrees keep working. */
-export const LEGACY_BRANCH_PREFIXES = ["mc/"] as const;
-
-const OWNED_PREFIXES: readonly string[] = [APP_BRANCH_PREFIX, ...LEGACY_BRANCH_PREFIXES];
-
-export const isAppBranch = (name: string | null | undefined): boolean =>
-  !!name && OWNED_PREFIXES.some((prefix) => name.startsWith(prefix));
-
-export const isOrchestrationBranch = (name: string | null | undefined): boolean =>
-  !!name && OWNED_PREFIXES.some((prefix) => name.startsWith(`${prefix}orch-`));
-
-/** The 8-character token branch Gespan gives a fresh worktree before it is renamed. */
-export const isTemporaryWorktreeBranch = (name: string): boolean =>
-  OWNED_PREFIXES.some(
-    (prefix) => name.startsWith(prefix) && /^[a-z0-9]{8}$/.test(name.slice(prefix.length)),
-  );
+// Moved to host/core; the Tauri app still imports it from here.
+export * from "../../../host/core/shared/lib/branchOwnership";

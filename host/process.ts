@@ -3,7 +3,7 @@ import { access, readFile, realpath, readlink, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, extname, join, basename } from "node:path";
-import type { RemoteProvider } from "../src/features/connections/model/protocol";
+import type { RemoteProvider } from "./core/features/connections/model/protocol";
 
 const npmEntries: Record<string, string> = {
   codex: "node_modules/@openai/codex/bin/codex.js",

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const probe = vi.hoisted(() => ({ probed: false, installed: [] as string[] }));
 vi.mock(
-  "../../../integrations/harness/core/availabilityState",
+  "../../../../host/core/integrations/harness/core/availabilityState",
   async (importOriginal) => ({
     ...(await importOriginal<object>()),
     hasProbedHarnessAvailability: () => probe.probed,

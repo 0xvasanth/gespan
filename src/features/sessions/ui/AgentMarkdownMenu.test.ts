@@ -19,7 +19,7 @@ vi.mock("../../../platform/tauri/clipboard", () => ({
   copyText: actions.copyText,
 }));
 
-vi.mock("../../../platform/tauri/fs", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../platform/tauri/fs")>()),
   openPathWithDefaultApp: actions.openPathWithDefaultApp,
   revealPath: actions.revealPath,

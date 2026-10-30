@@ -50,8 +50,8 @@ describe("GPUI and Tauri share one set of contracts", () => {
       ["src/features/pilots/model/pilot.ts", "gespan:pilot-roster"],
       ["src/features/pilots/model/pilot.ts", "gespan:open-pilot"],
       ["src/features/settings/model/displayPrefs.ts", "gespan.railPilotsPinned"],
-      ["src/features/settings/model/settings.ts", "gespan.pilotsEnabled"],
-      ["src/features/settings/model/settings.ts", "gespan.pilotMenuBarIcon"],
+      ["host/core/features/settings/model/settings.ts", "gespan.pilotsEnabled"],
+      ["host/core/features/settings/model/settings.ts", "gespan.pilotMenuBarIcon"],
       ["src/features/settings/model/appearance.ts", "gespan.sidebarTabOrder"],
     ] as const;
     for (const [file, key] of keys) {
@@ -95,9 +95,9 @@ describe("GPUI and Tauri share one set of contracts", () => {
   // field when the other app loads or saves the block, so each literal is pinned on
   // both sides. Mirror of `shared_contracts.rs::agent_run_and_wake_marker_json_names_match`.
   it("shares the agentRun fields and the task-notification row with Gespan Native", () => {
-    const session = read("src/features/sessions/model/session.ts");
+    const session = read("host/core/features/sessions/model/session.ts");
     const store = read("src/features/sessions/data/sessionStore.ts");
-    const claude = read("src/integrations/harness/providers/claude/claude.ts");
+    const claude = read("host/core/integrations/harness/providers/claude/claude.ts");
     const agentRun = /export type AgentRunMeta = \{([\s\S]*?)\n\};/.exec(session)?.[1] ?? "";
     expect(agentRun, "AgentRunMeta in session.ts").not.toBe("");
     const tasks = readFileSync(join(root, "crates/gespan-core/src/tool/tasks.rs"), "utf8");

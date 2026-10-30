@@ -9,7 +9,7 @@ import { hostProviders } from "./providers";
 import {
   acquireHarnessBridge,
   configureChildBackend,
-} from "../src/integrations/harness/core/child";
+} from "./core/integrations/harness/core/child";
 
 const fixture = `const http = require('node:http');
 const args = process.argv.slice(2);

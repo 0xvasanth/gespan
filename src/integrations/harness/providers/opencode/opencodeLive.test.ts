@@ -87,7 +87,7 @@ const harnessHttp = vi.fn(
   },
 );
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   closeHarnessSse,
   execChild: async (_command: string, args: string[]) =>
     args[0] !== "service"

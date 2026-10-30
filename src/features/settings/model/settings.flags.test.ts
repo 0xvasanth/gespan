@@ -5,7 +5,7 @@ import * as appearance from "./appearance";
 import { spyOnStorage } from "../../../test/spyOnStorage";
 
 const platform = vi.hoisted(() => ({ isWindows: true }));
-vi.mock("../../../platform/tauri/platform", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../platform/tauri/platform")>()),
   get IS_WIN() {
     return platform.isWindows;

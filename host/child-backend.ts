@@ -11,12 +11,12 @@ import { join } from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
-import type { ChildBackend } from "../src/integrations/harness/core/child";
-import { devinAskEditsConfig } from "../src/integrations/harness/providers/devin/devinProtocol";
+import type { ChildBackend } from "./core/integrations/harness/core/child";
+import { devinAskEditsConfig } from "./core/integrations/harness/providers/devin/devinProtocol";
 import {
   isRemoteProvider,
   type RemoteProvider,
-} from "../src/features/connections/model/protocol";
+} from "./core/features/connections/model/protocol";
 import { providerLaunch, resolveProvider } from "./process";
 
 const exec = promisify(execFile);

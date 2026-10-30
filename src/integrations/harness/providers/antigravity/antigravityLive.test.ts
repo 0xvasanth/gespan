@@ -26,8 +26,8 @@ const mock = vi.hoisted(() => {
     setConfigResult: null as unknown,
   };
 });
-vi.mock("../../../../platform/tauri/fs", () => ({ homeDir: async () => "/home/test" }));
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/platform/tauri/fs", () => ({ homeDir: async () => "/home/test" }));
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveAntigravityBinary: async () => {
     if (mock.resolveGates) {
       await new Promise<void>((resolve) => mock.resolveGates.push(resolve));

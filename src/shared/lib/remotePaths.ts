@@ -1,2 +1,2 @@
-/** Paths on a connected machine use this scheme in the desktop. */
-export const REMOTE_PATH_PREFIX = "remote://";
+// Moved to host/core; the Tauri app still imports it from here.
+export * from "../../../host/core/shared/lib/remotePaths";

@@ -21,7 +21,7 @@ vi.mock("../../../integrations/harness/core/availability", () => ({
   isHarnessAvailable: (id: string) => id === "claude",
 }));
 let installed = "2.1.284 (Claude Code)";
-vi.mock("../../../integrations/harness/core/child", () => ({
+vi.mock("../../../../host/core/integrations/harness/core/child", () => ({
   inspectHarnessBinary: vi.fn(async () => ({
     path: "/bin/claude",
     version: installed,
@@ -30,7 +30,7 @@ vi.mock("../../../integrations/harness/core/child", () => ({
     installed = "2.1.285 (Claude Code)";
   }),
 }));
-vi.mock("../../sessions/model/models", () => ({
+vi.mock("../../../../host/core/features/sessions/model/models", () => ({
   isPickerProviderVisible: () => true,
 }));
 const refreshHarnessCatalogs = vi.fn(async () => undefined);

@@ -13,7 +13,7 @@ const sent: Array<{ id: string; line: string }> = [];
 /** Stdout callbacks by child id; title generation watches children of its own. */
 const watchers = new Map<string, (line: string) => void>();
 
-vi.mock("../src/integrations/harness/core/child", async (importOriginal) => ({
+vi.mock("./core/integrations/harness/core/child", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveClaudeBinary: async () => ({ path: "/fake/claude" }),
   spawnChild: async () => undefined,

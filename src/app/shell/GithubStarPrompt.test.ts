@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
-vi.mock("../../features/inbox/model/githubTasks", () => ({
+vi.mock("../../../host/core/features/inbox/model/githubTasks", () => ({
   githubGespanStarStatus: mocks.starStatus,
   starGespanOnGithub: mocks.star,
 }));

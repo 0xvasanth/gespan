@@ -11,7 +11,7 @@ import type { GithubPrChecks } from "../model/githubPrChecks";
 const { fetchGithubPrChecks } = vi.hoisted(() => ({
   fetchGithubPrChecks: vi.fn(),
 }));
-vi.mock("../model/githubPrChecks", () => ({ fetchGithubPrChecks }));
+vi.mock("../../../../host/core/features/inbox/model/githubPrChecks", () => ({ fetchGithubPrChecks }));
 
 type Params = Parameters<typeof useGithubPrChecks>[0];
 

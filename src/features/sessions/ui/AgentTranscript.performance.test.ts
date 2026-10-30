@@ -7,7 +7,7 @@ import type { Block } from "../model/session";
 import * as activity from "../model/transcriptActivity";
 import { AgentTranscript } from "./AgentTranscript";
 
-vi.mock("../model/transcriptActivity", async (original) => {
+vi.mock("../../../../host/core/features/sessions/model/transcriptActivity", async (original) => {
   const actual = await original<typeof activity>();
   return {
     ...actual,

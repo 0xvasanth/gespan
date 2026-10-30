@@ -11,22 +11,22 @@ const { runPrompt, context } = vi.hoisted(() => ({
   })),
 }));
 vi.mock("./availability", () => ({ isHarnessAvailable: () => true }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitStagedContext: context,
   gitRangeContext: vi.fn(),
 }));
-vi.mock("../providers/claude/claudeText", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/claude/claudeText", () => ({
   runClaudeTextPrompt: runPrompt,
 }));
-vi.mock("../providers/codex/codexText", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/codex/codexText", () => ({
   runCodexTextPrompt: runPrompt,
 }));
-vi.mock("../providers/cursor/cursorText", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/cursor/cursorText", () => ({
   runCursorTextPrompt: runPrompt,
   stopCursorTextPrompt: vi.fn(),
 }));
-vi.mock("../providers/grok/grokText", () => ({ runGrokTextPrompt: runPrompt }));
-vi.mock("../providers/opencode/opencodeText", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/grok/grokText", () => ({ runGrokTextPrompt: runPrompt }));
+vi.mock("../../../../host/core/integrations/harness/providers/opencode/opencodeText", () => ({
   runOpenCodeTextPrompt: runPrompt,
 }));
 

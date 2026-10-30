@@ -10,7 +10,7 @@ import { loadDisabledSkillPaths, saveDisabledSkillPaths } from "../model/skills"
 import { discoverCodexPluginSkills } from "../../../integrations/harness/providers/codex/codexCatalog";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("../../../integrations/harness/providers/codex/codexCatalog", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/codex/codexCatalog", () => ({
   discoverCodexPluginSkills: vi.fn(async () => []),
 }));
 vi.mock("@tauri-apps/api/window", () => ({

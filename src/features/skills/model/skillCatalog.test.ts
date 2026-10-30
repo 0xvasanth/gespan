@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   readTextFile: vi.fn(),
 }));
 
-vi.mock("../../../integrations/harness/providers/codex/codexCatalog", () => ({
+vi.mock("../../../../host/core/integrations/harness/providers/codex/codexCatalog", () => ({
   discoverCodexPluginSkills: mocks.discoverCodexPluginSkills,
 }));
 
@@ -32,7 +32,7 @@ vi.mock("../../../integrations/harness/core/registry", () => ({
         : undefined,
 }));
 
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   createPath: vi.fn(),
   homeDir: vi.fn(),
   listSkills: mocks.listSkills,

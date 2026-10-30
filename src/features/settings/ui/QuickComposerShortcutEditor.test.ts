@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { SettingsView } from "./SettingsView";
 import { saveKeybindingOverride } from "../model/settings";
 
-vi.mock("../../../platform/tauri/platform", () => ({
+vi.mock("../../../../host/core/platform/tauri/platform", () => ({
   IS_MAC: true,
   IS_WIN: false,
   IS_LINUX: false,

@@ -45,7 +45,7 @@ function fixture(badChecksum = false) {
     `#!/bin/sh\nfor arg do previous="$last"; last="$arg"; done\ncase "$previous" in -o) ;; *) exit 1 ;; esac\ncase "$last" in */checksum) cp "$GESPAN_TEST_CHECKSUM" "$last" ;; *) cp "$GESPAN_TEST_ARCHIVE" "$last" ;; esac\nprintf 'download\\n' >> "$GESPAN_TEST_DOWNLOADS"\n`,
     { mode: 0o755 },
   );
-  const script = readFileSync("src-tauri/src/remote_bootstrap.sh", "utf8")
+  const script = readFileSync("crates/gespan-core/src/remote/remote_bootstrap.sh", "utf8")
     .replace('BASE="$HOME/.gespan-host"', `BASE=${quote(base)}`)
     .replace("@@VERSION@@", quote(version))
     .replace("@@RELEASE@@", "'https://example.invalid/releases'");

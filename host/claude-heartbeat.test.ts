@@ -11,7 +11,7 @@ import { afterEach, expect, it, vi } from "vitest";
 const sent: Array<{ id: string; line: string }> = [];
 const watchers = new Map<string, (line: string) => void>();
 
-vi.mock("../src/integrations/harness/core/child", async (importOriginal) => ({
+vi.mock("./core/integrations/harness/core/child", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveClaudeBinary: async () => ({ path: "/fake/claude" }),
   spawnChild: async () => undefined,

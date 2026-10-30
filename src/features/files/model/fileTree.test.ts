@@ -23,7 +23,7 @@ function entry(name: string): FsEntry {
 
 const listDir = vi.fn<(path: string) => Promise<FsEntry[]>>();
 
-vi.mock("../../../platform/tauri/fs", async (importOriginal) => {
+vi.mock("../../../../host/core/platform/tauri/fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../platform/tauri/fs")>();
   return {
     ...actual,

@@ -12,8 +12,8 @@ const child = vi.hoisted(() => ({
   resolveFxBinary: vi.fn(async () => ({ path: "/bin/fx" })),
 }));
 
-vi.mock("./child", () => child);
-vi.mock("../../../platform/tauri/fs", () => ({ homeDir: vi.fn(async () => "/home/alice") }));
+vi.mock("../../../../host/core/integrations/harness/core/child", () => child);
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({ homeDir: vi.fn(async () => "/home/alice") }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "test-window" }),
 }));

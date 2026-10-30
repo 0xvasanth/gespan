@@ -2,9 +2,9 @@ import {
   automationScheduleLabel,
   isScheduleKind,
   nextAutomationRunAt,
-  type AutomationScheduleKind,
 } from "../../automations/model/automations";
 import type { Block, PilotSpawnedSession } from "../../sessions/model/session";
+import type { HabitSchedule } from "../../../../host/core/features/pilots/model/pilotCard";
 import type { PilotLook } from "./pilot";
 import {
   PilotFileConflict,
@@ -20,15 +20,7 @@ import {
  * only what it decides to tell the user is posted to the chat, and a run with
  * nothing worth saying posts nothing at all.
  */
-export type HabitSchedule = {
-  scheduleKind: AutomationScheduleKind;
-  /** Minute past the hour, for hourly habits. */
-  minute: number;
-  /** "HH:MM", local time. */
-  time: string;
-  /** 0 is Sunday, for weekly habits. */
-  dayOfWeek: number;
-};
+export type { HabitSchedule };
 
 export type Habit = {
   id: string;
