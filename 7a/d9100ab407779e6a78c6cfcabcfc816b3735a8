@@ -1,0 +1,357 @@
+host/bootstrap.test.ts
+  s_943e8c7cbbf342::t_d68e19906900d7 48
+host/core/features/automations/model/automationSchedule.ts
+  s_397904f8fa97d0::t_1508959cfb000f 1
+host/core/features/inbox/model/inboxAskContext.ts
+  s_397904f8fa97d0::t_d3210f25412cf2 1-7
+host/core/features/inbox/model/linkedWorkItemActivity.ts
+  s_397904f8fa97d0::t_e0aa0c657e78db 3,7-14
+host/core/features/notes/noteCards.ts
+  s_397904f8fa97d0::t_7f8a64fcc55bb6 1-12
+host/core/features/pilots/model/pilotCard.ts
+  s_397904f8fa97d0::t_3af616e5ac5e83 1-40
+host/core/features/sessions/model/plan.ts
+  s_397904f8fa97d0::t_a203ff5b95ee9e 1
+host/core/features/sessions/model/session.ts
+  s_397904f8fa97d0::t_63d48777ada7da 5-6,414
+host/core/features/skills/model/builtinSkill.ts
+  s_397904f8fa97d0::t_f0e464ed9f5a4c 1-11
+host/core/features/workspace/model/layout.ts
+  s_397904f8fa97d0::t_7a55831a25fcdd 21-24
+host/core/features/workspace/model/tabGroups.ts
+  s_397904f8fa97d0::t_73c142a362fcf0 376-377
+host/core/integrations/harness/core/textPrompt.ts
+  s_397904f8fa97d0::t_5a8a86526d2c34 1-20
+host/core/integrations/harness/providers/codex/codexText.ts
+  s_397904f8fa97d0::t_29d12dfb333116 21
+host/independence.test.ts
+  s_943e8c7cbbf342::t_51bca9cc53e1d7 1-46
+host/large-sync.test.ts
+  s_943e8c7cbbf342::t_8e6444a048c828 13
+host/tsconfig.json
+  s_397904f8fa97d0::t_2b93cc0b5cf356 9
+host/windows-bootstrap.test.ts
+  s_943e8c7cbbf342::t_98c12e68bd4dd8 94
+host/windows.test.ts
+  s_943e8c7cbbf342::t_e080f4ddba65bb 166
+src/app/model/releaseNotes.ts
+  s_397904f8fa97d0::t_6054ea678bc673 2,4
+src/features/artifacts/artifacts.ts
+  s_397904f8fa97d0::t_1f9b57ef4ff04b 1-2
+src/features/automations/model/automations.ts
+  s_397904f8fa97d0::t_e75c1787711b74 1,10
+src/features/connections/model/connections.ts
+  s_397904f8fa97d0::t_2b7f3da261b64f 1-2
+src/features/connections/model/protocol.ts
+  s_397904f8fa97d0::t_7b7e4794da0b15 1-2
+src/features/connections/model/remoteAttachmentPreviews.ts
+  s_397904f8fa97d0::t_fd7ac32cabce2f 1-2
+src/features/connections/model/remoteProjects.ts
+  s_397904f8fa97d0::t_d1772c025f64ca 1-2
+src/features/files/model/fileName.ts
+  s_397904f8fa97d0::t_73089467da2659 1-2
+src/features/inbox/model/azureDevOps.ts
+  s_397904f8fa97d0::t_42835072857822 1-2
+src/features/inbox/model/ciRepair.ts
+  s_397904f8fa97d0::t_ee8d70a175b33f 1-2
+src/features/inbox/model/githubPrChecks.ts
+  s_397904f8fa97d0::t_29f218982c574d 1-2
+src/features/inbox/model/githubTasks.ts
+  s_397904f8fa97d0::t_88177d5a337506 1-2
+src/features/inbox/model/gitlab.ts
+  s_397904f8fa97d0::t_2bec8f3c0d2697 1-2
+src/features/inbox/model/inboxAsk.ts
+  s_397904f8fa97d0::t_83964e64cf4e57 2,5
+src/features/inbox/model/inboxSeen.ts
+  s_397904f8fa97d0::t_002a35833939bd 1-2
+src/features/inbox/model/inboxSelfActivity.ts
+  s_397904f8fa97d0::t_369669014a0951 1-2
+src/features/inbox/model/jira.ts
+  s_397904f8fa97d0::t_509c8b787fff64 1-2
+src/features/inbox/model/linear.ts
+  s_397904f8fa97d0::t_ad1b082368d56c 1-2
+src/features/inbox/model/linkedSessionUpdates.ts
+  s_397904f8fa97d0::t_f50d198b644ac8 1,14
+src/features/inbox/model/linkedWorkItemActivity.ts
+  s_397904f8fa97d0::t_02690feb7e2adf 1-2
+src/features/notes/notes.ts
+  s_397904f8fa97d0::t_893809dac52fa8 2-5,41
+src/features/orchestration/model/orchestrationPlan.ts
+  s_397904f8fa97d0::t_8e226315d52deb 1-2
+src/features/pilots/model/pilotCards.ts
+  s_397904f8fa97d0::t_c7ba12f6b4d707 1-2,4
+src/features/pilots/model/pilotHabits.ts
+  s_397904f8fa97d0::t_07abd777efdc62 7,23
+src/features/projects/model/projectGroups.ts
+  s_397904f8fa97d0::t_c3e1e75a6544aa 1-2
+src/features/projects/model/projectMascots.ts
+  s_397904f8fa97d0::t_4ece123e0dd7aa 1-2
+src/features/projects/model/projectPathsChanged.ts
+  s_397904f8fa97d0::t_1dfa16fd695d2c 1-2
+src/features/projects/model/projectReturn.ts
+  s_397904f8fa97d0::t_d7d1fb82969cf6 1-2
+src/features/projects/model/projectTerminal.ts
+  s_397904f8fa97d0::t_b2594a30dbc2fd 1-2
+src/features/projects/model/recents.ts
+  s_397904f8fa97d0::t_4f089b05abb052 1-2
+src/features/providers/model/providerAccounts.ts
+  s_397904f8fa97d0::t_7b83d219735523 1-2
+src/features/providers/model/providerBinaryPaths.ts
+  s_397904f8fa97d0::t_ef71166224e04f 1-2
+src/features/providers/model/rateLimits.ts
+  s_397904f8fa97d0::t_14c76f7942baca 1-2
+src/features/quick-composer/model/quickComposerShortcut.ts
+  s_397904f8fa97d0::t_1042ba8f1f983c 1-2
+src/features/search/model/search.ts
+  s_397904f8fa97d0::t_d7b465872187fc 1-2
+src/features/sessions/model/attachments.ts
+  s_397904f8fa97d0::t_a30ff461b46f66 1-2
+src/features/sessions/model/contextUsage.ts
+  s_397904f8fa97d0::t_cdf1fad8b09f78 1-2
+src/features/sessions/model/gespanToolCall.ts
+  s_397904f8fa97d0::t_92d12de536326e 1-2
+src/features/sessions/model/handoff.ts
+  s_397904f8fa97d0::t_2b24f94b355274 1-2
+src/features/sessions/model/inFlight.ts
+  s_397904f8fa97d0::t_2bfbcb064abf9b 1-2
+src/features/sessions/model/models.ts
+  s_397904f8fa97d0::t_5568cc0b8b8226 1-2
+src/features/sessions/model/plan.ts
+  s_397904f8fa97d0::t_0f408b90a007ff 1-2
+src/features/sessions/model/projectProviders.ts
+  s_397904f8fa97d0::t_c981434a458eb8 1-2
+src/features/sessions/model/session.ts
+  s_397904f8fa97d0::t_d92912d94d9868 1-2
+src/features/sessions/model/sessionTitle.ts
+  s_397904f8fa97d0::t_af4dfe2c693f9f 1-2
+src/features/sessions/model/sessionWorkItem.ts
+  s_397904f8fa97d0::t_6163e5a9c5822f 1-2
+src/features/sessions/model/subagentHandback.ts
+  s_397904f8fa97d0::t_11e300692932c4 1-2
+src/features/sessions/model/taskList.ts
+  s_397904f8fa97d0::t_5909e79a09a30f 1-2
+src/features/sessions/model/ticketLinks.ts
+  s_397904f8fa97d0::t_e448c43218aa5e 1-2
+src/features/sessions/model/transcriptActivity.ts
+  s_397904f8fa97d0::t_8c01113f653387 1-2
+src/features/sessions/model/usageLimit.ts
+  s_397904f8fa97d0::t_76a9bcdaa01ec3 1-2
+src/features/sessions/model/userQuestion.ts
+  s_397904f8fa97d0::t_3877afd919b0df 1-2
+src/features/settings/model/settings.ts
+  s_397904f8fa97d0::t_0bcd542d89f024 1-2
+src/features/settings/model/storageFlags.ts
+  s_397904f8fa97d0::t_f9264b7e802018 1-2
+src/features/skills/model/skills.ts
+  s_397904f8fa97d0::t_334383e8412b28 9-12,92
+src/features/source-control/model/gitText.ts
+  s_397904f8fa97d0::t_5fc75d061e35c4 1-2
+src/features/source-control/model/worktrees.ts
+  s_397904f8fa97d0::t_efb856a36497b7 1-2
+src/features/terminal/model/terminalTab.ts
+  s_397904f8fa97d0::t_6d8b7ad3572994 1-2
+src/features/workspace/model/layout.ts
+  s_397904f8fa97d0::t_f883a3696d50d9 1-2
+src/features/workspace/model/tabGroups.ts
+  s_397904f8fa97d0::t_9aad03479023bc 1-2
+src/features/workspace/model/workspaceTabGroups.ts
+  s_397904f8fa97d0::t_dccfa3d5912d31 1-2
+src/integrations/harness/core/abortTextPrompt.ts
+  s_397904f8fa97d0::t_c900aafa295df7 1-2
+src/integrations/harness/core/acp.ts
+  s_397904f8fa97d0::t_ddc528dc1233d2 1-2
+src/integrations/harness/core/acpSubagents.ts
+  s_397904f8fa97d0::t_33dd09d66a035a 1-2
+src/integrations/harness/core/apply.ts
+  s_397904f8fa97d0::t_59f6a8671b38c5 1-2
+src/integrations/harness/core/availabilityState.ts
+  s_397904f8fa97d0::t_87e8c79ff94b9c 1-2
+src/integrations/harness/core/child.ts
+  s_397904f8fa97d0::t_6682b27670d9fa 1-2
+src/integrations/harness/core/jsonRpc.ts
+  s_397904f8fa97d0::t_3264b3e8b6754e 1-2
+src/integrations/harness/core/nativeCommands.ts
+  s_397904f8fa97d0::t_df54fca5881860 1-2
+src/integrations/harness/core/preview.ts
+  s_397904f8fa97d0::t_5412583eace9b0 1-2
+src/integrations/harness/core/providerNames.ts
+  s_397904f8fa97d0::t_3c8008412d49ea 1-2
+src/integrations/harness/core/registry.ts
+  s_397904f8fa97d0::t_0d692aece154a9 13,30
+src/integrations/harness/core/shellIntent.ts
+  s_397904f8fa97d0::t_39b1e34dbdd7ac 1-2
+src/integrations/harness/core/streamText.ts
+  s_397904f8fa97d0::t_51ade1e3b37fc1 1-2
+src/integrations/harness/core/toolElapsed.ts
+  s_397904f8fa97d0::t_9401c9a45cb63a 1-2
+src/integrations/harness/core/types.ts
+  s_397904f8fa97d0::t_1acd502f3fca31 1-2
+src/integrations/harness/providers/antigravity/antigravity.ts
+  s_397904f8fa97d0::t_d868e46b8b5fcf 1-2
+src/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_397904f8fa97d0::t_e1080f71b72b2d 1-2
+src/integrations/harness/providers/antigravity/antigravityProtocol.ts
+  s_397904f8fa97d0::t_f46266d90d0ff2 1-2
+src/integrations/harness/providers/claude/claude.ts
+  s_397904f8fa97d0::t_22eae1f4308fca 1-2
+src/integrations/harness/providers/claude/claudeAgentRegistry.ts
+  s_397904f8fa97d0::t_e4716b0d80f96d 1-2
+src/integrations/harness/providers/claude/claudeCatalog.ts
+  s_397904f8fa97d0::t_8b50286b945f34 1-2
+src/integrations/harness/providers/claude/claudeGit.ts
+  s_397904f8fa97d0::t_c3747ca74a8f4e 1-2
+src/integrations/harness/providers/claude/claudeHeartbeat.ts
+  s_397904f8fa97d0::t_6af038d97df4ef 1-2
+src/integrations/harness/providers/claude/claudeProtocol.ts
+  s_397904f8fa97d0::t_bac7cfe5d3ad05 1-2
+src/integrations/harness/providers/claude/claudeText.ts
+  s_397904f8fa97d0::t_e238fc6599085b 1-2
+src/integrations/harness/providers/claude/claudeTitle.ts
+  s_397904f8fa97d0::t_b11107aa4745ab 1-2
+src/integrations/harness/providers/codex/codex.ts
+  s_397904f8fa97d0::t_2bbfc61f96eeb7 1-2
+src/integrations/harness/providers/codex/codexCatalog.ts
+  s_397904f8fa97d0::t_fda5de30aaff36 1-2
+src/integrations/harness/providers/codex/codexElicitation.ts
+  s_397904f8fa97d0::t_09f4e0a85ea234 1-2
+src/integrations/harness/providers/codex/codexGit.ts
+  s_397904f8fa97d0::t_df2c6f715c54ae 1-2
+src/integrations/harness/providers/codex/codexProtocol.ts
+  s_397904f8fa97d0::t_dcb9bdab24aab5 1-2
+src/integrations/harness/providers/codex/codexQuestions.ts
+  s_397904f8fa97d0::t_f75f126dd3bd18 1-2
+src/integrations/harness/providers/codex/codexStore.ts
+  s_397904f8fa97d0::t_ab1c4ccdb6c5d7 1-2
+src/integrations/harness/providers/codex/codexText.ts
+  s_397904f8fa97d0::t_a30014a6916f46 1-2
+src/integrations/harness/providers/codex/codexTitle.ts
+  s_397904f8fa97d0::t_54c67e4ade4075 1-2
+src/integrations/harness/providers/cursor/cursor.ts
+  s_397904f8fa97d0::t_0e3f79e2c6c712 1-2
+src/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_397904f8fa97d0::t_2c42b45839306b 1-2
+src/integrations/harness/providers/cursor/cursorStore.ts
+  s_397904f8fa97d0::t_d0c59448a2c124 1-2
+src/integrations/harness/providers/cursor/cursorSubagents.ts
+  s_397904f8fa97d0::t_71acabc47b60e0 1-2
+src/integrations/harness/providers/cursor/cursorText.ts
+  s_397904f8fa97d0::t_ee58a4ae51204a 1-2
+src/integrations/harness/providers/cursor/cursorTitle.ts
+  s_397904f8fa97d0::t_36938b8541b72e 1-2
+src/integrations/harness/providers/devin/devin.ts
+  s_397904f8fa97d0::t_3593ac208dadc7 1-2
+src/integrations/harness/providers/devin/devinAuth.ts
+  s_397904f8fa97d0::t_d8912a175d5cdd 1-2
+src/integrations/harness/providers/devin/devinCatalog.ts
+  s_397904f8fa97d0::t_7e59718edbdb86 1-2
+src/integrations/harness/providers/devin/devinProtocol.ts
+  s_397904f8fa97d0::t_354780bff7db48 1-2
+src/integrations/harness/providers/devin/devinSubagents.ts
+  s_397904f8fa97d0::t_4bfd254b7b4315 1-2
+src/integrations/harness/providers/fx/fx.ts
+  s_397904f8fa97d0::t_89b3eb84217be8 1-2
+src/integrations/harness/providers/fx/fxCatalog.ts
+  s_397904f8fa97d0::t_e6fd880ce6e23b 1-2
+src/integrations/harness/providers/fx/fxProtocol.ts
+  s_397904f8fa97d0::t_f4eb6f23e3654c 1-2
+src/integrations/harness/providers/fx/fxTool.ts
+  s_397904f8fa97d0::t_cc398405d50843 1-2
+src/integrations/harness/providers/grok/grok.ts
+  s_397904f8fa97d0::t_c4e0fc09cb8092 1-2
+src/integrations/harness/providers/grok/grokCatalog.ts
+  s_397904f8fa97d0::t_c1efacb73e0c00 1-2
+src/integrations/harness/providers/grok/grokProtocol.ts
+  s_397904f8fa97d0::t_6cec1b2b1ac9c2 1-2
+src/integrations/harness/providers/grok/grokText.ts
+  s_397904f8fa97d0::t_f12d664a080ef9 1-2
+src/integrations/harness/providers/grok/grokTitle.ts
+  s_397904f8fa97d0::t_2fac8ab067c02f 1-2
+src/integrations/harness/providers/hermes/hermes.ts
+  s_397904f8fa97d0::t_ee5a69841595e9 1-2
+src/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_397904f8fa97d0::t_8e6b7bf62f72b6 1-2
+src/integrations/harness/providers/hermes/hermesProtocol.ts
+  s_397904f8fa97d0::t_84453548d408a9 1-2
+src/integrations/harness/providers/kiro/kiro.ts
+  s_397904f8fa97d0::t_3c45eb27af98cd 1-2
+src/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_397904f8fa97d0::t_aeb2a0e6909a23 1-2
+src/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_397904f8fa97d0::t_d42a885f6426b0 1-2
+src/integrations/harness/providers/kiro/kiroProtocol.ts
+  s_397904f8fa97d0::t_5fd962afd609d1 1-2
+src/integrations/harness/providers/omp/omp.ts
+  s_397904f8fa97d0::t_7cf527552ce969 1-2
+src/integrations/harness/providers/opencode/opencode.ts
+  s_397904f8fa97d0::t_6b6ad0ca8366ab 1-2
+src/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_397904f8fa97d0::t_db3a17501d4cb2 1-2
+src/integrations/harness/providers/opencode/opencodeClient.ts
+  s_397904f8fa97d0::t_92103927bd2d64 1-2
+src/integrations/harness/providers/opencode/opencodeProtocol.ts
+  s_397904f8fa97d0::t_27561ef3bf9b5d 1-2
+src/integrations/harness/providers/opencode/opencodeService.ts
+  s_397904f8fa97d0::t_7c86e845f255dc 1-2
+src/integrations/harness/providers/opencode/opencodeText.ts
+  s_397904f8fa97d0::t_579dd24dbc40b0 1-2
+src/integrations/harness/providers/opencode/opencodeTitle.ts
+  s_397904f8fa97d0::t_dfe5c6869e543b 1-2
+src/integrations/harness/providers/opencode/opencodeV2Events.ts
+  s_397904f8fa97d0::t_2fd96338a297ae 1-2
+src/integrations/harness/providers/pi/pi.ts
+  s_397904f8fa97d0::t_fbf40d35425ec7 1-2
+src/integrations/harness/providers/pi/piCatalog.ts
+  s_397904f8fa97d0::t_a8a3b3427ec763 1-2
+src/integrations/harness/providers/pi/piClient.ts
+  s_397904f8fa97d0::t_904e07139751fd 1-2
+src/integrations/harness/providers/pi/piFamily.ts
+  s_397904f8fa97d0::t_2cd9403715d427 1-2
+src/integrations/harness/providers/pi/piFlavor.ts
+  s_397904f8fa97d0::t_544b59b01f96d3 1-2
+src/integrations/harness/providers/pi/piProtocol.ts
+  s_397904f8fa97d0::t_11c11e18b10b6e 1-2
+src/integrations/harness/providers/pi/piSkills.ts
+  s_397904f8fa97d0::t_82ffec206cde94 1-2
+src/integrations/harness/providers/pi/piSubagents.ts
+  s_397904f8fa97d0::t_51d97f2860a76c 1-2
+src/integrations/harness/providers/pi/piText.ts
+  s_397904f8fa97d0::t_57acb2bbe6d49b 1-2
+src/integrations/harness/providers/pi/piTitle.ts
+  s_397904f8fa97d0::t_d5d155bab229a1 1-2
+src/platform/tauri/fs.ts
+  s_397904f8fa97d0::t_fa6b885c14a831 1-2
+src/platform/tauri/platform.ts
+  s_397904f8fa97d0::t_0a5cebc9193c8b 1-2
+src/shared/lib/branchOwnership.ts
+  s_397904f8fa97d0::t_23da9c8c2c25f5 1-2
+src/shared/lib/jsonText.ts
+  s_397904f8fa97d0::t_56e4a314987f28 1-2
+src/shared/lib/paths.ts
+  s_397904f8fa97d0::t_7e20f4a470a694 1-2
+src/shared/lib/remotePaths.ts
+  s_397904f8fa97d0::t_7c935a6aeafcbb 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ad9100ab407779e6a78c6cfcabcfc816b3735a8",
+  "prompts": {},
+  "sessions": {
+    "s_397904f8fa97d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24705048-ccc9-4c8b-8839-19522fa5ecaf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
