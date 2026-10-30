@@ -1,0 +1,19 @@
+docs/native/parity.md
+  s_9c08ee3408ed93::t_fd81f299314ceb 52-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b898aa04850c2d107f4ca513cfbc178fef39e06e",
+  "prompts": {},
+  "sessions": {
+    "s_9c08ee3408ed93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d031ada3-771e-41ee-815e-09ec6da33aca",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
