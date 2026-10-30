@@ -57,9 +57,18 @@ function r2Status(env) {
 // latest.json points at.
 const GITHUB_RELEASES = "https://github.com/0xvasanth/gespan/releases/download";
 const GITHUB_NATIVE_FEED = `${GITHUB_RELEASES}/native-latest/latest.json`;
+// Stable builds read the newest stable release's own copy of the feed. It keeps
+// the name native-latest.json, because Tauri reads latest.json from this path.
+const GITHUB_NATIVE_STABLE_FEED = "https://github.com/0xvasanth/gespan/releases/latest/download/native-latest.json";
+
+function isStableTag(tag) {
+  return RELEASE_TAG.test(tag || "") && !tag.includes("-");
+}
 
 function nativeUpdaterEndpoint(env) {
-  const endpoint = (env.NATIVE_UPDATER_ENDPOINT || "").trim() || GITHUB_NATIVE_FEED;
+  const stable = isStableTag(env.GITHUB_REF_NAME);
+  const configured = (stable ? env.NATIVE_STABLE_UPDATER_ENDPOINT : env.NATIVE_UPDATER_ENDPOINT) || "";
+  const endpoint = configured.trim() || (stable ? GITHUB_NATIVE_STABLE_FEED : GITHUB_NATIVE_FEED);
   if (new URL(endpoint).protocol !== "https:") throw new Error("Native updater endpoints must use HTTPS");
   return endpoint;
 }
@@ -75,6 +84,27 @@ function nativeReleaseTag(env) {
 
 function nativeAssetBase(env) {
   return `${GITHUB_RELEASES}/${nativeReleaseTag(env)}`;
+}
+
+// Where a tag's release goes. A stable release becomes GitHub's latest; a
+// prerelease never does.
+function nativeChannel(env) {
+  const stable = isStableTag(nativeReleaseTag(env));
+  return {
+    prerelease: !stable,
+    mirrorPrefix: stable ? "native-stable" : "native-preview",
+    releaseFlags: stable ? "--prerelease=false --latest" : "--prerelease --latest=false",
+  };
+}
+
+// The stable download links on the R2 root. Prereleases never move them.
+function nativeFixedDownloads(env) {
+  if (nativeChannel(env).prerelease) return [];
+  const version = nativeReleaseTag(env).slice(1);
+  return [
+    { file: `GespanNative_${version}_aarch64.dmg`, key: "Gespan.dmg" },
+    { file: `GespanNative_${version}_x64.dmg`, key: "Gespan_x64.dmg" },
+  ];
 }
 
 // R2 only mirrors the native packages; it is optional and enabled when complete.
@@ -180,7 +210,8 @@ function verifyRecoveredFeed({ latestJson, sigs, tag, expected }) {
 module.exports = {
   verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
-  GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
+  GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
+  nativeChannel, nativeFixedDownloads,
   nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes,
 };
 
@@ -211,8 +242,12 @@ if (require.main === module && process.argv[2] === "native-ref") {
 } else if (require.main === module && process.argv[2] === "native-release-tag") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   const tag = nativeReleaseTag(process.env);
-  fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_RELEASE_TAG=${tag}\n`);
-  console.log(`Publishing into the ${tag} release`);
+  const { prerelease, mirrorPrefix, releaseFlags } = nativeChannel(process.env);
+  fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_RELEASE_TAG=${tag}\nNATIVE_PRERELEASE=${prerelease}\nNATIVE_MIRROR_PREFIX=${mirrorPrefix}\nNATIVE_RELEASE_FLAGS=${releaseFlags}\n`);
+  console.log(`Publishing into the ${tag} release (${prerelease ? "preview" : "stable"})`);
+} else if (require.main === module && process.argv[2] === "native-fixed-downloads") {
+  // Prints "<package> <R2 key>" per line; nothing for a prerelease.
+  for (const { file, key } of nativeFixedDownloads(process.env)) console.log(`${file} ${key}`);
 } else if (require.main === module && process.argv[2] === "native-verify-recovery") {
   // usage: native-verify-recovery <dir holding the downloaded native-latest.json and *.sig>
   const dir = process.argv[3];

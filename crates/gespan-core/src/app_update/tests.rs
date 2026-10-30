@@ -87,6 +87,40 @@ fn wrong_application_and_channel_are_rejected_even_in_a_signed_payload() {
     }
 }
 #[test]
+fn each_build_accepts_only_the_channel_it_was_released_on() {
+    let envelope: Envelope = serde_json::from_slice(FEED).unwrap();
+    let payload = STANDARD.decode(envelope.payload).unwrap();
+    let feed = |channel: &str| {
+        let mut manifest: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        manifest["channel"] = serde_json::json!(channel);
+        serde_json::from_value::<Manifest>(manifest).unwrap()
+    };
+    let select_for = |channel: &str, current: &str| {
+        select(feed(channel), &config(current), "darwin-aarch64-app")
+    };
+    assert!(select_for(STABLE_CHANNEL, "0.15.0").unwrap().is_some());
+    assert!(select_for(PREVIEW_CHANNEL, "0.16.0-preview.1")
+        .unwrap()
+        .is_some());
+    for (channel, current) in [
+        (PREVIEW_CHANNEL, "0.15.0"),
+        (STABLE_CHANNEL, "0.16.0-preview.1"),
+    ] {
+        assert!(select_for(channel, current)
+            .unwrap_err()
+            .contains("different application or release channel"));
+    }
+}
+#[test]
+fn stable_builds_default_to_the_stable_feed_and_previews_to_the_fixed_one() {
+    assert_eq!(default_endpoint("1.2.0"), STABLE_ENDPOINT);
+    assert_eq!(default_endpoint("1.2.0-beta"), DEFAULT_ENDPOINT);
+    assert_eq!(default_endpoint("not a version"), DEFAULT_ENDPOINT);
+    // Tauri reads latest.json from the same path, so this one has its own name.
+    assert!(STABLE_ENDPOINT.ends_with("/releases/latest/download/native-latest.json"));
+    assert!(Config::new(STABLE_ENDPOINT, KEY, "1.2.0").is_ok());
+}
+#[test]
 fn update_endpoints_require_https_and_a_valid_embedded_key() {
     for endpoint in [
         "http://updates.example.test/latest.json",
