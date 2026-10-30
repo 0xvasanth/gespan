@@ -11,7 +11,7 @@ const artifacts = nativeTargets.map((target) => ({
 function manifest(changes = {}) {
   return nativeManifest({
     version: "0.16.0-preview.2",
-    assetBaseUrl: "https://dl.example.test/releases/download/native-v0.16.0-preview.2",
+    assetBaseUrl: "https://dl.example.test/releases/download/v0.16.0-preview.2",
     artifacts,
     ...changes,
   });
@@ -28,7 +28,7 @@ test("all native architectures and installation types have isolated versioned UR
   for (const artifact of Object.values(result.platforms)) {
     assert.match(
       artifact.url,
-      /^https:\/\/dl\.example\.test\/releases\/download\/native-v0\.16\.0-preview\.2\/[^/]+$/,
+      /^https:\/\/dl\.example\.test\/releases\/download\/v0\.16\.0-preview\.2\/[^/]+$/,
     );
     assert.ok(artifact.url.includes("%20"));
   }

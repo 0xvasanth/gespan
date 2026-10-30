@@ -76,13 +76,13 @@ The Windows build emits an NSIS installer under `target/release/bundle/nsis/`.
 A release ships Gespan Native and the mobile app. The Tauri app is no longer
 released or tested in CI.
 
-Both release workflows run only when started by hand from a `native-vX.Y.Z` tag,
+Both release workflows run only when started by hand from a `vX.Y.Z` tag,
 so pushing a tag never publishes anything on its own.
 
 1. Add the secrets below under Settings → Secrets and variables → Actions.
 2. Bump the version (`bun run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
-3. Tag the merge commit as `native-vX.Y.Z` (for example `native-v0.0.2-beta`) and push the tag.
-4. In the Actions tab, run **Native preview release** from that tag. It creates the `vX.Y.Z` GitHub release with the version's CHANGELOG section as its notes, uploads the Native packages and the standalone host packages (Gespan Native's SSH remotes download these), and refreshes the signed `native-latest` update feed. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
+3. Tag the merge commit as `vX.Y.Z` (for example `v0.0.4-beta`) and push the tag.
+4. In the Actions tab, run **Native preview release** from that tag. It creates the GitHub release for that tag with the version's CHANGELOG section as its notes, uploads the Native packages and the standalone host packages (Gespan Native's SSH remotes download these), and refreshes the signed `native-latest` update feed. Published files are never replaced, so a rerun only fills in a build that never finished uploading.
 5. Run **Mobile release** from the same tag. By default it builds the iOS app on EAS with the `production` profile (beta update channel, auto-incremented build number) and submits it to TestFlight. Choose the `android` or `all` platform to build for Google Play as well; Android submission needs a Google service account key in EAS and one manual upload in Play Console first. Untick **submit** to build without submitting. Choose the `update` release instead to publish the tag's JavaScript over the air to the beta channel. Updates only reach builds with a matching native fingerprint, so make a new build after any native change.
 
 | Secret | Needed for |
