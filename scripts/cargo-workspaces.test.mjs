@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { test } from "node:test";
@@ -66,37 +66,47 @@ test("the Tauri app is a workspace of its own and keeps a lockfile that builds",
   assert.match(lock, /^name = "tauri"$/m);
 });
 
-test("set-version reaches both workspaces and the Tauri app's own lockfile", async (t) => {
-  const checkout = await mkdtemp(join(tmpdir(), "gespan-set-version-"));
-  t.after(() => rm(checkout, { recursive: true, force: true }));
-  const files = [
-    "package.json",
-    "Cargo.toml",
-    "Cargo.lock",
-    "src-tauri/Cargo.toml",
-    "src-tauri/Cargo.lock",
-    "src-tauri/tauri.conf.json",
-    "crates/gespan-gpui/Cargo.toml",
-    "crates/gespan-gpui/Cargo.lock",
-    "scripts/bump-version.mjs",
-  ];
-  for (const file of files) {
-    await mkdir(dirname(join(checkout, file)), { recursive: true });
-    await cp(join(root, file), join(checkout, file));
-  }
-  const result = spawnSync(
-    process.execPath,
-    [join(checkout, "scripts/bump-version.mjs"), "9.8.7-beta.6"],
-    { encoding: "utf8" },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const read = (file) => readFile(join(checkout, file), "utf8");
-  const locked = (name) =>
-    new RegExp(`^name = "${name}"\\nversion = "9\\.8\\.7-beta\\.6"$`, "m");
-  assert.match(await read("src-tauri/Cargo.toml"), /^version = "9\.8\.7-beta\.6"$/m);
-  assert.match(await read("Cargo.toml"), /^version = "9\.8\.7-beta\.6"$/m);
-  for (const name of ["gespan", "gespan-models", "gespan-speech"])
-    assert.match(await read("src-tauri/Cargo.lock"), locked(name));
-  for (const name of ["gespan-models", "gespan-speech"])
-    assert.match(await read("Cargo.lock"), locked(name));
-});
+for (const [label, eol] of [
+  ["LF", "\n"],
+  ["CRLF", "\r\n"],
+])
+  test(`set-version reaches both workspaces and the Tauri app's own lockfile (${label})`, async (t) => {
+    const checkout = await mkdtemp(join(tmpdir(), "gespan-set-version-"));
+    t.after(() => rm(checkout, { recursive: true, force: true }));
+    const files = [
+      "package.json",
+      "Cargo.toml",
+      "Cargo.lock",
+      "src-tauri/Cargo.toml",
+      "src-tauri/Cargo.lock",
+      "src-tauri/tauri.conf.json",
+      "crates/gespan-gpui/Cargo.toml",
+      "crates/gespan-gpui/Cargo.lock",
+      "scripts/bump-version.mjs",
+    ];
+    for (const file of files) {
+      await mkdir(dirname(join(checkout, file)), { recursive: true });
+      const text = await readFile(join(root, file), "utf8");
+      await writeFile(
+        join(checkout, file),
+        text.replaceAll("\r\n", "\n").replaceAll("\n", eol),
+      );
+    }
+    const result = spawnSync(
+      process.execPath,
+      [join(checkout, "scripts/bump-version.mjs"), "9.8.7-beta.6"],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    // Windows checkouts have CRLF line endings.
+    const read = async (file) =>
+      (await readFile(join(checkout, file), "utf8")).replaceAll("\r\n", "\n");
+    const locked = (name) =>
+      new RegExp(`^name = "${name}"\\nversion = "9\\.8\\.7-beta\\.6"$`, "m");
+    assert.match(await read("src-tauri/Cargo.toml"), /^version = "9\.8\.7-beta\.6"$/m);
+    assert.match(await read("Cargo.toml"), /^version = "9\.8\.7-beta\.6"$/m);
+    for (const name of ["gespan", "gespan-models", "gespan-speech"])
+      assert.match(await read("src-tauri/Cargo.lock"), locked(name));
+    for (const name of ["gespan-models", "gespan-speech"])
+      assert.match(await read("Cargo.lock"), locked(name));
+  });

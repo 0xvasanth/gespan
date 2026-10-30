@@ -47,7 +47,7 @@ replaceFirst(
 );
 replaceFirst(
   join(root, "crates/gespan-gpui/Cargo.toml"),
-  /(\[workspace\.package\]\nversion = ")[^"]+(")/,
+  /(\[workspace\.package\]\r?\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
 // Every package that takes the workspace version, in both lockfiles, so
@@ -66,7 +66,7 @@ for (const [lockfile, names] of Object.entries(lockfiles)) {
   for (const name of names) {
     replaceFirst(
       join(root, lockfile),
-      new RegExp(`(name = "${name}"\\nversion = ")[^"]+(")`),
+      new RegExp(`(name = "${name}"\\r?\\nversion = ")[^"]+(")`),
       `$1${version}$2`,
     );
   }
