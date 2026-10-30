@@ -145,6 +145,143 @@ impl TaskList {
     }
 }
 
+/// The desktop task-list key for Claude's TaskCreate/TaskUpdate list, and the
+/// id prefix of the snapshot card Native shows for it.
+pub const CLAUDE_TASKS_KEY: &str = "claude-tasks";
+
+/// Claude Code 2.1+ replaced TodoWrite with incremental tools: TaskCreate adds
+/// one task and TaskUpdate changes one task by id. Neither call carries the
+/// whole list, so the list is folded from their successful results.
+///
+/// Task ids belong to one Claude conversation, so the list records which.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaudeTasks {
+    pub conversation: String,
+    pub items: Vec<Task>,
+}
+
+impl ClaudeTasks {
+    /// Fold one successful TaskCreate or TaskUpdate call into the list.
+    /// Returns true when the list changed. TaskCreate learns its id only from
+    /// the result ("Task #3 created successfully: …"), or the structured
+    /// `tool_use_result.task.id` when the text does not carry it.
+    pub fn apply(&mut self, tool: &str, input: &Value, result: &str, structured: &Value) -> bool {
+        match tool.trim() {
+            "TaskCreate" => {
+                let Some(text) = ["subject", "activeForm", "description"]
+                    .iter()
+                    .find_map(|key| string(&input[*key]))
+                else {
+                    return false;
+                };
+                let Some(id) =
+                    created_task_id(result).or_else(|| task_id(&structured["task"]["id"]))
+                else {
+                    return false;
+                };
+                let task = Task {
+                    id: Some(id.clone()),
+                    text,
+                    status: TaskStatus::Pending,
+                };
+                match self.position(&id) {
+                    Some(at) => self.items[at] = task,
+                    None => self.items.push(task),
+                }
+                true
+            }
+            "TaskUpdate" => {
+                let Some(at) = task_id(&input["taskId"]).and_then(|id| self.position(&id)) else {
+                    return false;
+                };
+                let status = string(&input["status"]).map(|status| status.to_lowercase());
+                if status.as_deref() == Some("deleted") {
+                    self.items.remove(at);
+                    return true;
+                }
+                let task = &mut self.items[at];
+                if let Some(subject) = string(&input["subject"]) {
+                    task.text = subject;
+                }
+                if let Some(status) = status {
+                    task.status = TaskStatus::parse(&status);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+    fn position(&self, id: &str) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|task| task.id.as_deref() == Some(id))
+    }
+    /// The list as a task card with the given call id. Its input records the
+    /// key and conversation, so the saved card can reseed a later turn.
+    pub fn card(&self, id: &str) -> ToolCall {
+        let mut call = ToolCall::new(id, "update_plan");
+        call.input = serde_json::json!({
+            "key": CLAUDE_TASKS_KEY,
+            "providerSessionId": self.conversation,
+            "items": self.items,
+        })
+        .to_string();
+        call.panel = Some(Panel::Tasks(TaskList {
+            items: self.items.clone(),
+            explanation: String::new(),
+        }));
+        // A received snapshot, not a claim that its tasks finished.
+        call.state = ToolState::Completed;
+        call
+    }
+    /// The list a saved card holds, from Native or the desktop app alike.
+    pub fn from_call(call: &ToolCall) -> Option<Self> {
+        let input: Value = serde_json::from_str(&call.input).ok()?;
+        if input["key"] != CLAUDE_TASKS_KEY {
+            return None;
+        }
+        let conversation = string(&input["providerSessionId"])?;
+        let items = TaskList::from_value(&input)?
+            .items
+            .into_iter()
+            .filter(|task| task.id.is_some())
+            .collect();
+        Some(Self {
+            conversation,
+            items,
+        })
+    }
+}
+
+/// "Task #7 created successfully: …" → "7".
+fn created_task_id(result: &str) -> Option<String> {
+    let (_, rest) = result.split_once("Task #")?;
+    let id: String = rest
+        .chars()
+        .take_while(|ch| !ch.is_whitespace() && *ch != ':')
+        .collect();
+    (!id.is_empty()).then_some(id)
+}
+
+fn task_id(value: &Value) -> Option<String> {
+    if let Some(id) = value.as_u64() {
+        return Some(id.to_string());
+    }
+    string(value)
+        .map(|id| id.trim_start_matches('#').to_owned())
+        .filter(|id| !id.is_empty())
+}
+
+/// Every Claude task card saved in a transcript, oldest first, to reseed the
+/// list when a later turn resumes the same conversation.
+pub fn claude_task_lists(rows: &[crate::transcript::Row]) -> Vec<ClaudeTasks> {
+    rows.iter()
+        .filter(|row| row.role == "tool" && row.first)
+        .filter_map(|row| serde_json::from_str::<ToolCall>(&row.text).ok())
+        .filter_map(|call| ClaudeTasks::from_call(&call))
+        .collect()
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRun {
     /// Provider-reported thread/task identities, never a generated display ID.
@@ -939,6 +1076,102 @@ mod tests {
                 .len(),
             0
         );
+    }
+    #[test]
+    fn claude_task_tools_fold_by_id_and_ignore_what_they_cannot_place() {
+        let mut list = ClaudeTasks::default();
+        let none = Value::Null;
+        // No id in the result text or the structured result: nothing to key on.
+        assert!(!list.apply("TaskCreate", &json!({"subject":"One"}), "error", &none));
+        // No subject, activeForm or description: nothing to show.
+        assert!(!list.apply(
+            "TaskCreate",
+            &json!({}),
+            "Task #1 created successfully: ",
+            &none
+        ));
+        assert!(list.apply(
+            "TaskCreate",
+            &json!({"description":"Only a description"}),
+            "",
+            &json!({"task":{"id":4}})
+        ));
+        assert!(list.apply(
+            "TaskCreate",
+            &json!({"subject":"Seven","activeForm":"Doing seven"}),
+            "Task #7 created successfully: Seven",
+            &none
+        ));
+        // Numeric and "#"-prefixed ids address the same task.
+        assert!(list.apply(
+            "TaskUpdate",
+            &json!({"taskId":7,"status":"in_progress"}),
+            "",
+            &none
+        ));
+        assert!(list.apply(
+            "TaskUpdate",
+            &json!({"taskId":"#7","subject":"Renamed"}),
+            "",
+            &none
+        ));
+        assert_eq!(
+            list.items,
+            [
+                Task {
+                    id: Some("4".into()),
+                    text: "Only a description".into(),
+                    status: TaskStatus::Pending
+                },
+                Task {
+                    id: Some("7".into()),
+                    text: "Renamed".into(),
+                    status: TaskStatus::InProgress
+                }
+            ]
+        );
+        let before = list.clone();
+        assert!(!list.apply(
+            "TaskUpdate",
+            &json!({"taskId":"9","status":"completed"}),
+            "",
+            &none
+        ));
+        assert!(!list.apply("TaskUpdate", &json!({"status":"completed"}), "", &none));
+        assert!(!list.apply("TaskList", &json!({}), "#7 [in_progress] Renamed", &none));
+        assert!(!list.apply("TodoWrite", &json!({"todos":[]}), "", &none));
+        assert_eq!(list, before);
+        assert!(list.apply(
+            "TaskUpdate",
+            &json!({"taskId":"4","status":"deleted"}),
+            "",
+            &none
+        ));
+        assert_eq!(list.items.len(), 1);
+    }
+    #[test]
+    fn claude_task_cards_roundtrip_and_other_task_lists_are_not_claude_cards() {
+        let list = ClaudeTasks {
+            conversation: "conversation".into(),
+            items: vec![Task {
+                id: Some("1".into()),
+                text: "Ship".into(),
+                status: TaskStatus::Completed,
+            }],
+        };
+        let card = list.card("claude-tasks:toolu_1");
+        let Some(Panel::Tasks(shown)) = card.panel() else {
+            panic!()
+        };
+        assert_eq!(shown.items, list.items);
+        let saved: ToolCall = serde_json::from_str(&serde_json::to_string(&card).unwrap()).unwrap();
+        assert_eq!(ClaudeTasks::from_call(&saved), Some(list));
+        let mut todo = ToolCall::new("todo", "TodoWrite");
+        todo.input = json!({"todos":[{"id":"1","content":"Ship","status":"pending"}]}).to_string();
+        assert_eq!(ClaudeTasks::from_call(&todo), None);
+        let mut unscoped = card.clone();
+        unscoped.input = json!({"key":CLAUDE_TASKS_KEY,"items":[]}).to_string();
+        assert_eq!(ClaudeTasks::from_call(&unscoped), None);
     }
     #[test]
     fn arbitrary_tool_and_prose_are_not_interpreted_as_tasks() {

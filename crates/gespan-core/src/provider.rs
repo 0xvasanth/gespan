@@ -934,6 +934,7 @@ impl Protocol {
                                     };
                                     events.push(Event::Tool(tool.clone()));
                                 }
+                                self.claude_task_result(block, &v, &mut events);
                             }
                         }
                     }
@@ -1699,6 +1700,7 @@ fn launch(
     };
     // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
     protocol.seed_agent_runs();
+    protocol.seed_claude_tasks();
     let rx = &wire.rx;
     let tail = &wire.tail;
     let auth = &wire.auth;

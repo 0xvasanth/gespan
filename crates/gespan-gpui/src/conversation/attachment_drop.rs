@@ -13,9 +13,8 @@ impl Conversation {
         if !cx.has_active_drag() {
             self.file_drag = false;
         }
-        div()
-            .id(id)
-            .key_context("Session")
+        let root = div().id(id).key_context("Session");
+        self.find_actions(root, cx)
             .relative()
             .child(self.completion.read(cx).container_probe())
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -38,6 +37,9 @@ impl Conversation {
                 if event.keystroke.key == "escape" && this.file_drag {
                     cx.stop_active_drag(window);
                     this.set_file_drag(false, cx);
+                    cx.stop_propagation();
+                } else if event.keystroke.key == "escape" && this.find.open {
+                    this.close_find(window, cx);
                     cx.stop_propagation();
                 }
             }))

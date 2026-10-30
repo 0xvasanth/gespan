@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
+  and Linux) to see the match count and step through the matches with Enter,
+  Shift+Enter, ⌘G or F3. A Pilot's older turns are searched too.
+
 ### Fixed
 
 - Gespan Native's context meter no longer jumps to full after a turn on a
@@ -32,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native shows desktop notifications on Windows and Linux too, with a
   Show button that opens the session. On Windows, turning them off in
   Settings is respected and the in-app sound plays instead.
+- Gespan Native shows the task list for Claude sessions again. Newer Claude
+  Code versions track tasks one at a time instead of as a whole list, and
+  Gespan now builds the list from those updates, including renamed and
+  deleted tasks. The list carries on when you resume the session, even after
+  restarting Gespan.
 
 ## [0.0.2-beta] - 2026-10-29
 

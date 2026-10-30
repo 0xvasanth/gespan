@@ -317,6 +317,15 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
                 .collect::<Vec<_>>());
             block["taskList"]["nativeCallId"] = json!(call.id);
             block["taskList"]["explanation"] = json!(list.explanation);
+            // Claude's TaskCreate/TaskUpdate card names its list and conversation,
+            // as the desktop app's does, so a resumed turn can reseed from it.
+            if let Ok(input) = serde_json::from_str::<Value>(&call.input) {
+                for key in ["key", "providerSessionId"] {
+                    if let Some(value) = input[key].as_str() {
+                        block["taskList"][key] = json!(value);
+                    }
+                }
+            }
             if old.is_none() {
                 block["sentAt"] = json!(rows[0].sent_at);
             }
@@ -625,6 +634,45 @@ mod panel_tests {
         call.panel = Some(Panel::Tasks(empty));
         let cleared = merge(&merged, 0, &[row(&call)]).unwrap();
         assert_eq!(cleared[0]["taskList"]["items"], json!([]));
+    }
+    #[test]
+    fn claude_task_cards_survive_the_shared_database_and_read_desktop_lists() {
+        use crate::tool::tasks::{claude_task_lists, ClaudeTasks, Task, TaskStatus};
+        let list = ClaudeTasks {
+            conversation: "claude-conversation".into(),
+            items: vec![
+                Task {
+                    id: Some("1".into()),
+                    text: "Write tests".into(),
+                    status: TaskStatus::InProgress,
+                },
+                Task {
+                    id: Some("2".into()),
+                    text: "Ship it".into(),
+                    status: TaskStatus::Pending,
+                },
+            ],
+        };
+        let card = list.card("claude-tasks:toolu_1");
+        let saved = merge(&[], 0, &[row(&card)]).unwrap();
+        assert_eq!(saved[0]["role"], "tasks");
+        assert_eq!(saved[0]["taskList"]["key"], "claude-tasks");
+        assert_eq!(
+            saved[0]["taskList"]["providerSessionId"],
+            "claude-conversation"
+        );
+        // After a restart the rows come back from the database.
+        let reloaded = project(&saved).unwrap();
+        assert_eq!(claude_task_lists(&reloaded), std::slice::from_ref(&list));
+        let call: ToolCall = serde_json::from_str(&reloaded[0].text).unwrap();
+        assert_eq!(call.id, "claude-tasks:toolu_1");
+        assert_eq!(call.panel(), card.panel());
+        // A list the desktop app saved for the same conversation reseeds too.
+        let desktop = json!({"id":"block","role":"tasks","text":"[~] Write tests\n[ ] Ship it","taskList":{"key":"claude-tasks","providerSessionId":"claude-conversation","items":[{"id":"1","text":"Write tests","status":"in_progress"},{"id":"2","text":"Ship it","status":"pending"}]}});
+        assert_eq!(claude_task_lists(&project(&[desktop]).unwrap()), [list]);
+        // A plain plan list is not a Claude task card.
+        let plan = json!({"id":"plan","role":"tasks","text":"[ ] Step","taskList":{"items":[{"text":"Step","status":"pending"}]}});
+        assert!(claude_task_lists(&project(&[plan]).unwrap()).is_empty());
     }
     #[test]
     fn child_steps_and_raw_native_input_roundtrip_without_erasing_desktop_metadata() {
