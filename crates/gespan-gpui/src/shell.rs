@@ -8982,6 +8982,20 @@ impl Render for Shell {
                 {
                     return;
                 }
+                // These views have layers of their own: Escape closes the
+                // innermost, so it has to reach their key handlers.
+                let layered = match this.active_app_view {
+                    Some(app_views::AppView::Board) => true,
+                    Some(app_views::AppView::Inbox) => this
+                        .inbox
+                        .as_ref()
+                        .is_some_and(|inbox| inbox.read(cx).holds_focus(window, cx)),
+                    _ => false,
+                };
+                if layered {
+                    cx.propagate();
+                    return;
+                }
                 if this.app_view_open() {
                     this.close_app_view(window, cx);
                     return;

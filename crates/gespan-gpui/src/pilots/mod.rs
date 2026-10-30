@@ -1307,13 +1307,14 @@ impl Pilots {
         }
         let count = roster.len();
         let has = count > 0;
-        if original && !has {
-            // With no Pilot yet, the card stands in for the rail's section; the
-            // icon rail has no room for it.
+        // With no Pilot yet, the card stands in for the section; the icon rail
+        // has no room for it. A project without Pilots of its own, when others
+        // exist, offers one under the label instead.
+        if self.roster.pilots.is_empty() {
             return if compact {
                 div().into_any_element()
             } else {
-                self.intro_card(cx)
+                self.intro_card(project.into_iter().collect(), cx)
             };
         }
         let add_project = project.clone();

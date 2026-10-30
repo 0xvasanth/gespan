@@ -107,6 +107,11 @@ impl BoardView {
             .map(|(id, _)| id.clone())
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_focused_card(&self, window: &Window, cx: &App) -> Option<String> {
+        self.focused_card(window, cx)
+    }
+
     /// `E`: open the focused card's detail. False when no card has focus.
     pub(super) fn open_focused_card(
         &mut self,
