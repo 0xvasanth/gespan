@@ -70,7 +70,7 @@ tick the box in the same PR.
 - [x] **Stash and switch, or commit and switch,** when a branch change would overwrite local changes. *(done in #250; Tauri's generate-commit-message button and stashing on remote projects are not ported yet)* Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`, `BranchPicker.tsx`.
 - [x] **Resizable history graph.** Drag to resize, double-click to reset. Tauri: `src/features/source-control/ui/GitHistoryGraph.tsx`. Not needed: Native shows history as a full-height tab, not a graph under Changes.
 - [ ] **Undo or keep changes file by file, and checkpoints outside Git.** Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`. *(also below)*
-- [ ] **New skill from the composer's / picker.** Tauri: `src/features/skills/ui/SkillPicker.tsx`.
+- [x] **New skill from the composer's / picker.** *(done in #250)* Tauri: `src/features/skills/ui/SkillPicker.tsx`.
 
 ### Settings
 
