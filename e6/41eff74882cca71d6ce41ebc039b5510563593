@@ -1,0 +1,14 @@
+docs/native/parity.md
+  h_7bb0b8336911f0 35,70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e641eff74882cca71d6ce41ebc039b5510563593",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
