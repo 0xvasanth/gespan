@@ -1,0 +1,11 @@
+scripts/native-appimage-apprun.sh
+  2272b70ce7ab670a 44-48
+scripts/package-native.test.mjs
+  2272b70ce7ab670a 13,164-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "819f541d271806ee330044573bd93a42a8811e26",
+  "prompts": {}
+}
