@@ -656,6 +656,20 @@ impl Shell {
                         .when(unread, |d| {
                             d.child(div().size(px(8.)).rounded_full().bg(accent_color()))
                         })
+                        .when(label == "Inbox", |d| {
+                            d.on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
+                                    this.open_menu(
+                                        MenuTarget::InboxNav,
+                                        Anchor::Point(e.position),
+                                        w,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }),
+                            )
+                        })
                         .on_click(cx.listener(move |this, _, w, cx| match label {
                             "Inbox" => this.open_inbox(w, cx),
                             "Notes" => this.open_notes(w, cx),

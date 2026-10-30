@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Files explorer can open a terminal in a folder, as in the Tauri app.
 - Gespan Native's inbox can show a GitHub pull request's changes as hunks or
   as whole files, as the Tauri app can.
+- Right-clicking Inbox in Gespan Native's sidebar or project rail marks
+  everything as read, mutes or resumes every project's notifications, or
+  opens notification settings, as in the Tauri app.
 - Gespan Native lists the skills of enabled Codex plugins in the composer's /
   picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit

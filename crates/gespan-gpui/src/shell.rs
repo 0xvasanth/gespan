@@ -386,6 +386,8 @@ pub(crate) enum MenuTarget {
     Actions,
     /// The title bar corner's Open in editor menu, for this folder.
     OpenInEditor(String),
+    /// The Inbox row's right-click menu in the sidebar and the project rail.
+    InboxNav,
 }
 pub(crate) struct ShellMenu {
     pub(crate) target: MenuTarget,
@@ -5435,6 +5437,12 @@ impl Shell {
                 .unwrap_or_default()
         };
         match target {
+            MenuTarget::InboxNav => (
+                "Inbox actions".into(),
+                self.inbox_nav_menu_items(cx),
+                272.,
+                MenuStyle::Explorer,
+            ),
             // Answered by terminal_menu_items above.
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
@@ -5830,6 +5838,7 @@ impl Shell {
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
             MenuTarget::Actions => self.run_actions_menu(action, window, cx),
             MenuTarget::OpenInEditor(path) => self.run_open_in_editor_menu(path, action, cx),
+            MenuTarget::InboxNav => self.run_inbox_nav_menu(action, window, cx),
             MenuTarget::TerminalDock => {
                 let side = match action {
                     "top" => DockSide::Top,

@@ -380,6 +380,22 @@ impl Inbox {
         cx.notify();
     }
 
+    /// Items that arrived since the inbox first loaded, so they are unread.
+    #[cfg(test)]
+    pub(crate) fn receive_unread(&mut self, items: Vec<Item>) {
+        self.state.seen.seeded = true;
+        self.snapshot.items = items;
+    }
+    /// Mark all as read: every item the inbox has loaded.
+    pub(crate) fn mark_all_read(&mut self, cx: &mut Context<Self>) {
+        let items = std::mem::take(&mut self.snapshot.items);
+        for item in &items {
+            self.state.seen.mark(item);
+        }
+        self.snapshot.items = items;
+        self.save();
+        cx.notify();
+    }
     pub(crate) fn unread_count(&self) -> usize {
         self.snapshot
             .items
