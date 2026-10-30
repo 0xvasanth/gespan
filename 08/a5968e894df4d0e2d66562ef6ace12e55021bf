@@ -1,0 +1,26 @@
+scripts/native-release.test.mjs
+  s_a697a7155dfcff::t_430f37a0ad7157 3,103-127
+  s_a697a7155dfcff::t_235bdca94211f6 128
+mobile/eas.json
+  s_a697a7155dfcff::t_430f37a0ad7157 29-33
+scripts/native-release.mjs
+  s_a697a7155dfcff::t_430f37a0ad7157 8-14,121
+.github/workflows/ci.yml
+  s_a697a7155dfcff::t_d540fdaa3f6aa0 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08a5968e894df4d0e2d66562ef6ace12e55021bf",
+  "prompts": {},
+  "sessions": {
+    "s_a697a7155dfcff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4149efd8-65d6-4849-9b21-3042f0ee49fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
