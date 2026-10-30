@@ -578,7 +578,9 @@ fn run_turn_using(
         if !raw_native_command && settings.orchestrator {
             prompt = format!(
                 "{}\n\nUser request:\n{prompt}",
-                gespan_core::orchestration::INSTRUCTIONS
+                gespan_core::orchestration::instructions(&gespan_core::orchestration::choices(
+                    std::mem::take(&mut settings.orchestration_profiles)
+                ))
             );
         }
         if !raw_native_command && settings.operator_enabled {
