@@ -1,5 +1,6 @@
 //! Provider-neutral tool presentation, persisted as a native `tool` row.
 use serde::{Deserialize, Serialize};
+pub mod edit_preview;
 pub mod handback;
 mod presentation;
 pub mod tasks;
@@ -128,6 +129,10 @@ impl ToolCall {
     }
     pub fn presentation_in(&self, cwd: Option<&str>) -> ToolPresentation {
         presentation::present(self, cwd)
+    }
+    /// The diff an Edit or Write proposes, from the call itself.
+    pub fn edit_preview(&self) -> Option<edit_preview::EditPreview> {
+        edit_preview::preview(self)
     }
     /// Show the provider's actual input rather than the desktop adapter envelope.
     pub fn input_detail(&self) -> String {

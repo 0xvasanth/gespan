@@ -1905,6 +1905,8 @@ impl Shell {
                     this.workspace.changes_view = *view;
                     this.persist(cx);
                 }
+                // Git turn reviews drop committed files on their own.
+                crate::changes::ChangesEvent::Committed { .. } => {}
                 crate::changes::ChangesEvent::OpenDiff { cwd, path, staged } => {
                     this.open_review(
                         crate::review::ReviewTab::Changes {
@@ -4505,6 +4507,7 @@ impl Shell {
                 if let Some(path) = paths.first() {
                     let path = path.to_string_lossy().into_owned();
                     let _ = this.update_in(cx, |this, window, cx| {
+                        this.remember_project_location(&path, cx);
                         this.workspace.add_project(&path);
                         this.select_project(path, window, cx);
                     });
@@ -4519,6 +4522,17 @@ impl Shell {
             }
         })
         .detach();
+    }
+    /// Records an opened folder's identity so a later rename can be followed.
+    fn remember_project_location(&self, path: &str, cx: &mut Context<Self>) {
+        let (store, path) = (self.store.clone(), vec![path.to_owned()]);
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(store) = locked(&store) {
+                    gespan_core::project_location::follow_moved_projects(&store, &path);
+                }
+            })
+            .detach();
     }
     fn create(&mut self, kind: Kind, cx: &mut Context<Self>) {
         self.create_session(kind, false, cx);
@@ -11615,6 +11629,49 @@ mod tests {
             .unwrap();
         let copied = cx.update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
         assert_eq!(copied, Some(a.to_string()));
+    }
+    #[gpui::test]
+    fn a_renamed_project_folder_opens_with_its_sessions(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
+        let (old, new) = (
+            dir.path().join("gespan"),
+            dir.path().join("gespan-personal"),
+        );
+        std::fs::create_dir(&old).unwrap();
+        let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
+        let id = store.create("codex", &text(&old)).unwrap().id;
+        let mut state = Workspace::default();
+        state.add_project(&text(&old));
+        state.project = text(&old);
+        state.open(id);
+        let saved = serde_json::to_string(&state).unwrap();
+        // The first launch remembers the folder; it is renamed before the next.
+        let saved = crate::workspace::follow_moved_projects(&store, Some(saved));
+        std::fs::rename(&old, &new).unwrap();
+        let saved = crate::workspace::follow_moved_projects(&store, saved);
+        assert_eq!(store.ui_state().unwrap(), saved);
+        let summaries = store.sessions().unwrap();
+        let database = Arc::new(Mutex::new(store));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Shell::new(database, summaries, text(&new), saved, cx))
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert_eq!(shell.workspace.project, text(&new));
+                assert_eq!(shell.workspace.projects, vec![text(&new)]);
+                assert_eq!(shell.workspace.active, Some(id));
+                assert_eq!(shell.session_summaries[&id].cwd, text(&new));
+                assert_eq!(
+                    crate::workspace::project_name(&shell.workspace.project),
+                    "gespan-personal"
+                );
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn desktop_database_sessions_load_and_copy_their_original_ids(cx: &mut TestAppContext) {

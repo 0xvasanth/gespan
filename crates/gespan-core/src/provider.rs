@@ -24,6 +24,8 @@ pub use commands::{
 };
 mod attachments;
 mod compaction;
+mod cursor_live;
+mod cursor_store;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;
@@ -1341,6 +1343,19 @@ impl Protocol {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            if let Some(first) = changes.first() {
+                let diff = first["diff"].as_str().unwrap_or("");
+                let added = first["kind"]["type"] == "add";
+                let built =
+                    crate::tool::edit_preview::EditPreview::from_patch(diff).or_else(|| {
+                        added
+                            .then(|| crate::tool::edit_preview::EditPreview::from_texts(None, diff))
+                    });
+                if let Some(built) = built {
+                    tool.display.get_or_insert_with(|| json!({}))
+                        [crate::tool::edit_preview::DISPLAY_KEY] = json!(built);
+                }
+            }
         }
         if let Some(output) = item["aggregatedOutput"]
             .as_str()
@@ -2251,6 +2266,46 @@ mod tests {
         assert_eq!(tool.state, ToolState::Completed);
         assert_eq!(input["path"], "/repo/a.rs");
         assert_eq!(input["paths"], json!(["/repo/a.rs", "/repo/b.rs"]));
+    }
+    #[test]
+    fn a_codex_file_change_previews_its_first_patch_or_new_file() {
+        let mut protocol = protocol(Kind::Codex);
+        let mut events = Vec::new();
+        protocol.codex_tool(&json!({
+            "type":"fileChange", "id":"edit", "status":"inProgress",
+            "changes":[
+                {"path":"/repo/a.rs", "kind":{"type":"update"}, "diff":"@@ -3,2 +3,2 @@\n fn a() {}\n-let x = 1;\n+let x = 2;\n"},
+                {"path":"/repo/b.rs", "kind":{"type":"add"}, "diff":"new"}
+            ]
+        }), false, &mut events);
+        let preview = protocol.tools["edit"].edit_preview().unwrap();
+        assert_eq!((preview.additions, preview.deletions), (1, 1));
+        assert_eq!(preview.lines[0].number, Some(3));
+        assert_eq!(
+            preview.lines[1].kind,
+            crate::tool::edit_preview::LineKind::Del
+        );
+        assert_eq!(preview.lines[2].text, "let x = 2;");
+        protocol.codex_tool(
+            &json!({
+                "type":"fileChange", "id":"add", "status":"completed",
+                "changes":[{"path":"/repo/new.rs", "kind":{"type":"add"}, "diff":"fn main() {}\n"}]
+            }),
+            true,
+            &mut events,
+        );
+        let added = protocol.tools["add"].edit_preview().unwrap();
+        assert_eq!((added.additions, added.deletions), (1, 0));
+        assert_eq!(added.lines[0].text, "fn main() {}");
+        protocol.codex_tool(
+            &json!({
+                "type":"fileChange", "id":"odd", "status":"completed",
+                "changes":[{"path":"/repo/c.rs", "kind":{"type":"update"}, "diff":"not a patch"}]
+            }),
+            true,
+            &mut events,
+        );
+        assert_eq!(protocol.tools["odd"].edit_preview(), None);
     }
     #[test]
     fn operator_thread_access_keeps_the_codex_app_bridge_reachable_on_later_turns() {

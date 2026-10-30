@@ -2,7 +2,11 @@
 //! validation, response parsers and saved credential formats.
 mod avatar;
 mod media;
+pub use media::init_video_dir as init_media_video_dir;
 pub use media::png as media_png;
+#[doc(hidden)]
+pub use media::remember_video;
+pub use media::video as media_video;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub(crate) mod github;

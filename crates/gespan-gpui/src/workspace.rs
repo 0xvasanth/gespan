@@ -1063,8 +1063,207 @@ pub(crate) fn project_name(path: &str) -> String {
         .unwrap_or_else(|| path.into())
 }
 
+/// Projects whose folder was renamed take their sessions and saved workspace
+/// state to the new folder (App.tsx's applyProjectLocationChange). This runs
+/// before the workspace is restored, so the app starts on the new paths.
+pub(crate) fn follow_moved_projects(
+    store: &gespan_core::store::Store,
+    saved: Option<String>,
+) -> Option<String> {
+    let Some(mut state) = saved
+        .as_deref()
+        .and_then(|saved| serde_json::from_str::<serde_json::Value>(saved).ok())
+    else {
+        return saved;
+    };
+    let mut projects: Vec<String> = Vec::new();
+    for value in std::iter::once(&state["project"])
+        .chain(state["projects"].as_array().into_iter().flatten())
+        .chain(state["archived_projects"].as_array().into_iter().flatten())
+    {
+        if let Some(path) = value.as_str()
+            && !projects.iter().any(|p| p == path)
+        {
+            projects.push(path.into());
+        }
+    }
+    let moved = gespan_core::project_location::follow_moved_projects(store, &projects);
+    if moved.is_empty() {
+        return saved;
+    }
+    for gespan_core::project_location::Moved { from, to } in &moved {
+        tracing::info!(from = %from, to = %to, "project folder was renamed");
+        rebase_saved_project(&mut state, from, to);
+    }
+    let rebased = state.to_string();
+    if let Err(error) = store.save_ui_state(&rebased) {
+        tracing::warn!(%error, "cannot save the workspace after a project folder moved");
+    }
+    Some(rebased)
+}
+
+/// Rewrites every place the saved workspace names the project `from`.
+fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
+    use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
+    use serde_json::Value;
+    // Only fields that exist are touched: indexing would add nulls that the
+    // workspace cannot read back.
+    fn field<'a>(state: &'a mut Value, path: &[&str]) -> Option<&'a mut Value> {
+        path.iter()
+            .try_fold(state, |value, key| value.get_mut(*key))
+    }
+    let same = |path: &str| path_key(path) == path_key(from);
+    let rebase = |value: &mut Value| {
+        if value.as_str().is_some_and(same) {
+            *value = Value::String(to.into());
+        }
+    };
+    let rebase_inside = |value: &mut Value| {
+        if value.as_str().is_some_and(same) {
+            *value = Value::String(to.into());
+        } else if let Some(path) = value.as_str().filter(|path| is_equal_or_inside(path, from)) {
+            *value = Value::String(rebase_path(path, from, to));
+        }
+    };
+    if let Some(project) = field(state, &["project"]) {
+        rebase(project);
+    }
+    for list in [
+        "projects",
+        "archived_projects",
+        "project_rail_pinned",
+        "collapsed",
+    ] {
+        if let Some(paths) = field(state, &[list]).and_then(Value::as_array_mut) {
+            paths.iter_mut().for_each(rebase);
+            let mut seen = HashSet::new();
+            paths.retain(|path| seen.insert(path.clone()));
+        }
+    }
+    for map in [
+        &["project_focus"][..],
+        &["recent_files"],
+        &["docks"],
+        &["actions"],
+        &["last_actions"],
+        &["classic_sidebar_tabs"],
+        &["project_appearance"],
+        &["project_rail_assignments"],
+        &["preferences", "project_providers"],
+    ] {
+        let Some(map) = field(state, map).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if let Some(key) = map.keys().find(|key| same(key)).cloned()
+            && let Some(value) = map.remove(&key)
+        {
+            map.entry(to).or_insert(value);
+        }
+    }
+    for list in [&["recent_files", to][..], &["docks", to, "terminals"]] {
+        if let Some(paths) = field(state, list).and_then(Value::as_array_mut) {
+            paths.iter_mut().for_each(rebase_inside);
+        }
+    }
+    // Title tabs remember Pilots by project, and each tab scope is keyed by
+    // the project and working copy.
+    let rebase_pilot = |tab: &mut Value| {
+        for key in ["project", "worktree"] {
+            if let Some(path) = field(tab, &["Pilot", key]) {
+                rebase_inside(path);
+            }
+        }
+    };
+    if let Some(tabs) = field(state, &["title_order"]).and_then(Value::as_array_mut) {
+        tabs.iter_mut().for_each(rebase_pilot);
+    }
+    if let Some(focus) = field(state, &["scope_focus"]).and_then(Value::as_object_mut) {
+        *focus = std::mem::take(focus)
+            .into_iter()
+            .map(|(scope, mut tab)| {
+                rebase_pilot(&mut tab);
+                let scope = scope
+                    .split('\0')
+                    .map(|part| {
+                        if is_equal_or_inside(part, from) {
+                            path_key(&rebase_path(part, from, to))
+                        } else {
+                            part.to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\0");
+                (scope, tab)
+            })
+            .collect();
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_renamed_project_moves_its_saved_workspace_state() {
+        use std::path::Path;
+        let root = Path::new("work");
+        let path = |p: &Path| p.to_string_lossy().into_owned();
+        let (old, new, other) = (
+            path(&root.join("gespan")),
+            path(&root.join("gespan-personal")),
+            path(&root.join("other")),
+        );
+        let file = path(&root.join("gespan").join("README.md"));
+        let mut state = serde_json::json!({
+            "project": old,
+            "projects": [old, other],
+            "project_focus": {old.clone(): 3},
+            "recent_files": {old.clone(): [file]},
+            "docks": {old.clone(): {"terminals": [old, other]}},
+            "project_rail_pinned": [old],
+            "preferences": {"project_providers": {old.clone(): {}}},
+            "scope_focus": {
+                format!("{}\0{}", gespan_core::files::path_key(&old), gespan_core::files::path_key(&old)): {"Session": 3},
+                format!("{}\0", gespan_core::files::path_key(&other)): {"Session": 4},
+            },
+            "title_order": [{"Pilot": {"id": "p", "project": old, "worktree": ""}}],
+        });
+        super::rebase_saved_project(&mut state, &old, &new);
+        assert_eq!(state["project"], new);
+        assert_eq!(state["projects"], serde_json::json!([new, other]));
+        assert_eq!(state["project_focus"], serde_json::json!({new.clone(): 3}));
+        assert_eq!(
+            gespan_core::files::path_key(state["recent_files"][&new][0].as_str().unwrap()),
+            gespan_core::files::path_key(&path(&root.join("gespan-personal").join("README.md")))
+        );
+        assert_eq!(
+            state["docks"][&new]["terminals"],
+            serde_json::json!([new, other])
+        );
+        assert_eq!(state["project_rail_pinned"], serde_json::json!([new]));
+        assert!(state["preferences"]["project_providers"][&new].is_object());
+        let scopes: Vec<_> = state["scope_focus"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert!(scopes.contains(&format!(
+            "{}\0{}",
+            gespan_core::files::path_key(&new),
+            gespan_core::files::path_key(&new)
+        )));
+        assert!(scopes.contains(&format!("{}\0", gespan_core::files::path_key(&other))));
+        assert_eq!(state["title_order"][0]["Pilot"]["project"], new);
+        assert_eq!(state["title_order"][0]["Pilot"]["worktree"], "");
+        let restored = super::Workspace::restore(Some(&state.to_string()), &[], &new);
+        assert_eq!(restored.project, new);
+
+        // Fields an older workspace never saved are not added as nulls,
+        // which would make the whole workspace unreadable.
+        let mut sparse = serde_json::json!({"projects": [old]});
+        super::rebase_saved_project(&mut sparse, &old, &new);
+        assert_eq!(sparse, serde_json::json!({"projects": [new]}));
+    }
+
     #[test]
     fn legacy_boxy_layout_and_hidden_rail_migrate_without_changing_appearance() {
         let state = super::Workspace::restore(

@@ -65,6 +65,17 @@ pub fn legacy_tail(text: &str) -> (&str, Vec<PathBuf>) {
 }
 
 impl Transcript {
+    /// A turn's note chip, beside its prompt as the desktop app keeps it.
+    pub fn attach_note(&mut self, card: Option<&serde_json::Value>) {
+        if let Some(card) = card {
+            self.rows.push(Row {
+                role: crate::notes::CARD_ROLE.into(),
+                text: crate::notes::card_row(card).to_string(),
+                first: true,
+                sent_at: None,
+            });
+        }
+    }
     pub fn attach_files(&mut self, paths: &[PathBuf]) {
         if !paths.is_empty() {
             let mut files = from_paths(paths);

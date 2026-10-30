@@ -1,5 +1,6 @@
 //! Inbox attachment fetching, preserving the original host and redirect policy.
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
@@ -256,8 +257,79 @@ fn github_auth_token() -> Option<String> {
 }
 
 /// Decode bounded image bytes before handing them to the native image cache.
+/// Videos fetched for item descriptions, by URL. GPUI cannot play video in
+/// place, so each one is saved once and the file viewer plays it.
+static VIDEOS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The saved copy of a description video, once it has been fetched.
+pub fn video(url: &str) -> Option<PathBuf> {
+    VIDEOS.lock().ok()?.get(url.trim()).cloned()
+}
+
+/// For tests of the views that show a saved video.
+#[doc(hidden)]
+pub fn remember_video(url: &str, path: PathBuf) {
+    if let Ok(mut videos) = VIDEOS.lock() {
+        videos.insert(url.trim().to_owned(), path);
+    }
+}
+
+/// inboxMedia.ts's sniffVideoType: MP4 and QuickTime by their `ftyp` box
+/// (AVIF images share it), and WebM by its EBML header. The file extension.
+pub fn video_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return match &bytes[8..12] {
+            b"avif" | b"avis" => None,
+            b"qt  " => Some("mov"),
+            _ => Some("mp4"),
+        };
+    }
+    bytes
+        .starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
+        .then_some("webm")
+}
+
+/// Write `bytes` under `dir`, named by `url`, and return the file. The bytes
+/// come from a signed-in fetch and may be private, so they go through a
+/// uniquely named file only this user can read, then replace any older copy.
+fn save_video(dir: &Path, url: &str, bytes: &[u8], extension: &str) -> Result<PathBuf, String> {
+    use std::hash::{Hash, Hasher};
+    use std::io::Write;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.trim().hash(&mut hasher);
+    let path = dir.join(format!("{:016x}.{extension}", hasher.finish()));
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
+    file.write_all(bytes).map_err(|e| e.to_string())?;
+    file.persist(&path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// Gespan's own folder for description videos, under its per-user data folder.
+static VIDEO_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Set where description videos are kept, and empty it: a video is only ever
+/// played from a copy this run fetched, never from one left behind.
+pub fn init_video_dir(dir: PathBuf) {
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = VIDEO_DIR.set(dir);
+}
+
+/// A description image as PNG bytes. A video is saved for [`video`] instead
+/// and reported as an error, so the same download serves both.
 pub fn png(url: &str) -> Result<Vec<u8>, String> {
     let bytes = fetch(url)?;
+    if let Some(extension) = video_extension(&bytes) {
+        let dir = VIDEO_DIR
+            .get()
+            .ok_or_else(|| "Gespan has no folder for videos".to_owned())?;
+        let path = save_video(dir, url, &bytes, extension)?;
+        if let Ok(mut videos) = VIDEOS.lock() {
+            videos.insert(url.trim().to_owned(), path);
+        }
+        return Err("This attachment is a video".into());
+    }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| "Unsupported image".to_string())?;
@@ -276,6 +348,47 @@ pub fn png(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn videos_are_told_from_images_by_their_bytes() {
+        let ftyp = |brand: &[u8]| [&[0, 0, 0, 0x20][..], b"ftyp", brand, &[0; 8]].concat();
+        assert_eq!(video_extension(&ftyp(b"isom")), Some("mp4"));
+        assert_eq!(video_extension(&ftyp(b"mp42")), Some("mp4"));
+        assert_eq!(video_extension(&ftyp(b"qt  ")), Some("mov"));
+        assert_eq!(video_extension(&ftyp(b"avif")), None, "AVIF is an image");
+        assert_eq!(video_extension(&ftyp(b"avis")), None);
+        assert_eq!(video_extension(&[0x1a, 0x45, 0xdf, 0xa3, 1]), Some("webm"));
+        assert_eq!(video_extension(b"\x89PNG\r\n\x1a\n...."), None);
+        assert_eq!(video_extension(b"ftyp"), None, "too short");
+    }
+
+    #[test]
+    fn a_video_is_saved_per_url_privately_and_never_half_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let videos = dir.path().join("inbox-media");
+        let url = "https://github.com/user-attachments/assets/clip";
+        let first = save_video(&videos, url, b"movie", "mp4").unwrap();
+        assert_eq!(first.parent().unwrap(), videos);
+        assert_eq!(first.extension().unwrap(), "mp4");
+        assert_eq!(std::fs::read(&first).unwrap(), b"movie");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = first.metadata().unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "only this user can read a private attachment");
+        }
+        // A newer fetch of the same URL replaces the copy in place.
+        let again = save_video(&videos, &format!(" {url} "), b"movie 2", "mp4").unwrap();
+        assert_eq!(again, first);
+        assert_eq!(std::fs::read(&again).unwrap(), b"movie 2");
+        let other = save_video(&videos, "https://uploads.linear.app/x", b"webm", "webm").unwrap();
+        assert_ne!(other, first);
+        assert_eq!(
+            std::fs::read_dir(&videos).unwrap().count(),
+            2,
+            "no partial files are left"
+        );
+    }
 
     #[test]
     fn github_and_linear_attachments_are_allowed() {
