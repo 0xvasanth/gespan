@@ -17,12 +17,12 @@ tick the box in the same PR.
 
 - [ ] **Several windows.** New Window from the File menu, ⌘⇧N and the macOS Dock menu. Reminders, Quick Composer and Pilot chat open a window when none is open. Native has one window. Tauri: `src-tauri/src/window.rs`, `src-tauri/src/menu.rs`, `src-tauri/src/macos.rs` (Dock menu).
 - [ ] **Closing a window keeps its agents running (macOS).** The red button hides the window, and the Dock icon brings it back. Native closes the window, and closing the last one stops every agent. Native only hides when Close to tray and a Pilot menu-bar icon are both on, and it has no Dock-reopen handler. Tauri: `src/app/App.tsx` (close handling), `src-tauri/src/lib.rs` (`RunEvent::Reopen`).
-- [ ] **Ask before quitting or closing with running chats, then resume.** Tauri asks "N chats are still running", marks cut-off turns "Turn interrupted when Gespan quit" and continues them on the next launch. Native asks only during Hold Everything, and only checks for unsaved files when a window closes. Tauri: `src/features/sessions/model/inFlight.ts`, `src/app/model/appLifecycle.ts`, `session_set_in_flight` / `session_take_in_flight`.
-- [ ] **Tray icon and close to tray (Windows).** Closing a window with running chats hides it to the tray. The tray has Show Gespan and Quit Gespan, and a left click reopens the window. Native shows the setting on Windows, but nothing acts on it there. Tauri has no tray on Linux either. Tauri: `src-tauri/src/tray.rs`, the close handler in `src/app/App.tsx`. *(also below)*
-- [ ] **Single instance (Windows).** A second launch shows the running app instead of starting a second process that shares the database and the phone port. Tauri: `src-tauri/src/lib.rs` (single-instance plugin).
-- [ ] **Kill agent processes if Gespan crashes (Windows).** Uses a kill-on-close job object and restricts DLL search paths. Tauri: `src-tauri/src/windows.rs`.
-- [ ] **Clean up orphaned agent processes at launch (macOS, Linux).** Native sets `GESPAN_HARNESS_PARENT` but never cleans up the processes it tags. Tauri: `src-tauri/src/harness.rs` (orphan sweep, called from `lib.rs`).
-- [ ] **In-window menu bar (Windows, Linux).** File, View and Terminal menus. On these platforms Native reaches commands only through shortcuts and the palette. Tauri: `src/app/shell/MenuBar.tsx`.
+- [x] **Ask before quitting or closing with running chats, then resume.** Tauri asks "N chats are still running", marks cut-off turns "Turn interrupted when Gespan quit" and continues them on the next launch. Native asks only during Hold Everything, and only checks for unsaved files when a window closes. Tauri: `src/features/sessions/model/inFlight.ts`, `src/app/model/appLifecycle.ts`, `session_set_in_flight` / `session_take_in_flight`. Done in #229.
+- [x] **Tray icon and close to tray (Windows).** Closing a window with running chats hides it to the tray. The tray has Show Gespan and Quit Gespan, and a left click reopens the window. Native shows the setting on Windows, but nothing acts on it there. Tauri has no tray on Linux either. Tauri: `src-tauri/src/tray.rs`, the close handler in `src/app/App.tsx`. *(also below)* Done in #230.
+- [x] **Single instance (Windows).** A second launch shows the running app instead of starting a second process that shares the database and the phone port. Tauri: `src-tauri/src/lib.rs` (single-instance plugin). Done in #233.
+- [x] **Kill agent processes if Gespan crashes (Windows).** Uses a kill-on-close job object and restricts DLL search paths. Tauri: `src-tauri/src/windows.rs`. Done in #235.
+- [x] **Clean up orphaned agent processes at launch (macOS, Linux).** Native sets `GESPAN_HARNESS_PARENT` but never cleans up the processes it tags. Tauri: `src-tauri/src/harness.rs` (orphan sweep, called from `lib.rs`). Done in #228.
+- [x] **In-window menu bar (Windows, Linux).** File, View and Terminal menus. On these platforms Native reaches commands only through shortcuts and the palette. Tauri: `src/app/shell/MenuBar.tsx`. Done in #238.
 - [ ] **macOS menu items.** File → New Window and Help → Gespan Website. Tauri: `src-tauri/src/menu.rs`.
 - [ ] **Desktop notifications (Windows, Linux).** Native has a stub off macOS. Tauri: `src-tauri/src/notifications.rs`. *(also below)*
 
@@ -84,6 +84,19 @@ tick the box in the same PR.
 - [ ] **Move existing Tauri installs to Native.** Tauri (`dev.gespan.desktop`) and Native (`dev.gespan.native`) use separate app IDs and update feeds, and Native's updater refuses the other one.
 - [ ] **Stable channel and fixed download links.** Native publishes only `native-preview` prereleases. Tauri also publishes stable and copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root. Tauri: `scripts/release-channel.cjs`, `.github/workflows/release.yml`.
 - [ ] **CI builds and checks the GUI on Windows and Linux.** *(also below)*
+
+### Tauri fixes not yet in Native
+
+Bug fixes that landed in the Tauri app after Native was copied in on
+2026-10-22. They must reach Native before Tauri goes.
+
+- [ ] **Empty `usage.iterations` from routed Claude providers.** Tauri keeps the last assistant reading and ignores the summed turn usage, so the context meter stays right. Native falls back to the sum, shows 100% and rotates Pilots too early. Tauri: `433df721`. Native: `crates/gespan-core/src/provider.rs` (Claude `result`).
+- [ ] **`CLAUDE_CODE_OAUTH_TOKEN` for the default Claude account.** Tauri prefers a set token for the signed-in identity and for usage polling. Native never reads it. Tauri: `2f4d01b9`, `809fc012`. Native: `crates/gespan-core/src/accounts/identity.rs`, `crates/gespan-core/src/usage/claude.rs`.
+- [ ] **Claude Code 2.1 task tools in the todo panel.** Claude Code replaced TodoWrite with TaskCreate and TaskUpdate. Tauri builds the task list from them and keeps it across resume. Native shows no todo panel for Claude sessions. Tauri: `2cfc1788`. Native: `crates/gespan-core/src/tool/tasks.rs`, `crates/gespan-core/src/provider/tasks.rs`.
+- [ ] **Codex plugin skills.** Tauri lists enabled plugin skills through Codex's `skills/list`. Native only scans skill folders. Tauri: `221007a3`. Native: `crates/gespan-core/src/skills.rs`.
+- [ ] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Native only removes worktrees from Settings → Worktrees. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`.
+- [ ] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Native only runs `gh repo view` in a local folder. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`.
+- [ ] **Check, then port if needed:** an inline subagent that reported back lets the turn finish (`6b313ab9`); an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`); Claude shell commands restored in saved transcripts (`f028d9e6`); Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`, which goes with the plan card above).
 
 ### Before deleting `src/` and `src-tauri/`
 
