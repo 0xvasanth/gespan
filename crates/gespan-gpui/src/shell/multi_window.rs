@@ -763,6 +763,21 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_new_primary_on_its_own_store_does_not_inherit_the_old_ones_chats(cx: &mut TestAppContext) {
+        let open = |cx: &mut TestAppContext| {
+            let store = Store::open(Path::new(":memory:")).unwrap();
+            let id = store.create("codex", CWD).unwrap().id;
+            (first_window(store, cx), id)
+        };
+        let (_, id) = open(cx);
+        let (second, same_id) = open(cx);
+        assert_eq!(id, same_id, "each store numbers its chats from the start");
+        second
+            .update(cx, |shell, _, _| assert!(shell.sessions.contains_key(&id)))
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn the_shortcut_opens_a_window_from_one_keymap_entry(cx: &mut TestAppContext) {
         cx.update(crate::shell::bind_keys);
         cx.update(|cx| {

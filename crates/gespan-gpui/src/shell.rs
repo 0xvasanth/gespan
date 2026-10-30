@@ -902,6 +902,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         let secondary = shared_remote.is_some();
+        if !secondary {
+            crate::windows::start(cx);
+        }
         crate::accounts::install(store.clone(), cx);
         let remote_dir = locked(&store)
             .ok()

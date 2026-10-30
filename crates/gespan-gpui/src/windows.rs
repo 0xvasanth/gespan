@@ -206,6 +206,12 @@ pub(crate) fn forget_closed(cx: &mut App) -> bool {
         .any(|window| window.downcast::<Shell>().is_some())
 }
 
+/// A primary begins a new set of windows; session ids mean nothing across
+/// stores. The app makes one, and tests make one for each store they open.
+pub(crate) fn start(cx: &mut App) {
+    cx.set_global(Windows::default());
+}
+
 pub(crate) fn register(
     shell: &Entity<Shell>,
     window: AnyWindowHandle,
