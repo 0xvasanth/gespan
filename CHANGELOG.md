@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native shows a reply's local images and videos in place, as the Tauri
+  app does. A paragraph that starts with a local image, or with a link to a
+  local image or video, shows the file in a 16:9 frame. Images open full screen
+  and videos open in the file viewer. Paths are resolved against the session's
+  folder.
 - Gespan Native shows images that Codex generates in the conversation, as the
   Tauri app does. Each one is saved as a PNG in Gespan's data folder and opens
   full screen when clicked. Images saved by the Tauri app show too.

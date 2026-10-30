@@ -193,3 +193,91 @@ fn a_generated_image_shows_in_the_transcript_and_opens_full_screen(cx: &mut Test
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("generated-image").is_some());
 }
+
+#[gpui::test]
+fn a_reply_shows_its_local_image_and_opens_its_local_video(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::input::bind(cx);
+        crate::image_lightbox::bind(cx);
+        cx.set_reduce_motion(true);
+    });
+    let (window, _, active) = super::tests::window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let folder = tempfile::tempdir().unwrap();
+    let shot = folder.path().join("shot.png");
+    std::fs::write(&shot, base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=").unwrap()).unwrap();
+    std::fs::write(folder.path().join("clip.mp4"), b"not really a video").unwrap();
+    let reply = format!(
+        "Before and after:\n\n![Screenshot]({})\n\n[the recording](clip.mp4)\n",
+        shot.display()
+    );
+    window
+        .update(visual, |shell, _, cx| {
+            shell.sessions[&active].update(cx, |view, cx| {
+                view.summary.has_messages = true;
+                cx.notify();
+            });
+            let transcript = shell.sessions[&active].read(cx).transcript.clone();
+            transcript.update(cx, |view, cx| {
+                view.file_link_base = Some(folder.path().to_string_lossy().into_owned());
+                view.patch(
+                    0,
+                    vec![
+                        gespan_core::transcript::Row {
+                            role: "user".into(),
+                            text: "Show me".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                        gespan_core::transcript::Row {
+                            role: "assistant".into(),
+                            text: reply,
+                            first: true,
+                            sent_at: None,
+                        },
+                    ],
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // The list measures rows on its first frames; settle before clicking.
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let video = visual
+        .debug_bounds("local-video")
+        .expect("the video replaces its link");
+    visual.simulate_click(video.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            let opened = shell
+                .active_review(cx)
+                .and_then(|review| review.read(cx).active_editor());
+            assert_eq!(
+                opened.map(|editor| editor.read(cx).path.clone()),
+                Some(
+                    folder
+                        .path()
+                        .join("clip.mp4")
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                "the video opens in the file viewer, resolved against the session folder"
+            );
+        })
+        .unwrap();
+    let image = visual
+        .debug_bounds("local-image")
+        .expect("the image replaces its link");
+    assert_eq!((image.size.width, image.size.height), (px(320.), px(180.)));
+    visual.simulate_click(image.center(), Default::default());
+    assert!(
+        visual.debug_bounds("image-lightbox").is_some(),
+        "the image opens full screen"
+    );
+    visual.simulate_keystrokes("escape");
+    assert!(visual.debug_bounds("image-lightbox").is_none());
+}

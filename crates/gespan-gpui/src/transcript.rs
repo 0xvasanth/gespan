@@ -10,6 +10,7 @@ mod history;
 pub(crate) use history::{HistoryPager, PreparedHistory};
 mod links;
 mod live_phase;
+mod local_media;
 mod mascot;
 mod measurements;
 mod outline;
@@ -5096,6 +5097,8 @@ impl TranscriptView {
                     self.code(fence.clone(), lines.clone(), ix, Some(ix), cx)
                 } else if let Part::Visual { id, caption } = &md.part {
                     self.placed_visual(id, caption, cx)
+                } else if let Part::LocalMedia { href, label } = &md.part {
+                    self.local_media(href, label, ix)
                 } else {
                     markdown::body_selected(
                         md,

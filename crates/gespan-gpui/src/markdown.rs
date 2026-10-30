@@ -171,6 +171,10 @@ pub(crate) enum Part {
         id: String,
         caption: String,
     },
+    LocalMedia {
+        href: String,
+        label: String,
+    },
 }
 #[derive(Clone, PartialEq)]
 pub(crate) struct MarkdownRow {
@@ -290,6 +294,13 @@ fn flatten(
                 caption: caption.clone(),
             },
             16.,
+        ),
+        Block::LocalMedia { href, label } => add(
+            Part::LocalMedia {
+                href: href.clone(),
+                label: label.clone(),
+            },
+            8.,
         ),
     }
     if let Some(row) = out.get_mut(first)
@@ -782,6 +793,15 @@ pub(crate) fn body_selected(
             .into_any_element(),
         // Only the transcript can draw a session's visuals; elsewhere the
         // caption stands in for it.
+        // Elsewhere a local file stays the link it was written as.
+        Part::LocalMedia { href, label } => body
+            .text_color(content(0.5))
+            .child(if label.is_empty() {
+                href.clone()
+            } else {
+                label.clone()
+            })
+            .into_any_element(),
         Part::Visual { caption, .. } => body
             .text_color(content(0.5))
             .child(if caption.is_empty() {
