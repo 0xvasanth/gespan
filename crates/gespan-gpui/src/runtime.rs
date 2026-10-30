@@ -575,7 +575,9 @@ fn run_turn_using(
         if !raw_native_command && settings.orchestrator {
             prompt = format!(
                 "{}\n\nUser request:\n{prompt}",
-                gespan_core::orchestration::INSTRUCTIONS
+                gespan_core::orchestration::instructions(&gespan_core::orchestration::choices(
+                    std::mem::take(&mut settings.orchestration_profiles)
+                ))
             );
         }
         if !raw_native_command && settings.operator_enabled {
@@ -610,8 +612,8 @@ fn run_turn_using(
                 prompt = discovery.prepend(prompt);
             }
         }
-        // A linked ticket gets its own capability on the same terms, but only
-        // where the provider mounts MCP servers: there is no CLI fallback.
+        // A linked ticket gets its own capability on the same terms. A provider
+        // that mounts no MCP servers reaches it through the `app` CLI instead.
         let ticket = summary
             .work_item
             .as_ref()
@@ -626,9 +628,7 @@ fn run_turn_using(
         // Tauri app: the same refusal is applied again to every answered call.
         let restricted = settings.orchestrator || settings.orchestration_worker;
         let ticket = ticket.filter(|_| !restricted);
-        let tool_servers = !settings.text_only
-            && !raw_native_command
-            && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref());
+        let tool_servers = !settings.text_only && !raw_native_command;
         let read_only =
             settings.plan || settings.access == gespan_core::agent::AccessMode::ReadOnly;
         // The board's half of the scope: the status permission (session
@@ -656,6 +656,7 @@ fn run_turn_using(
             if let Ok(server) = gespan_core::ticket_bridge::Server::start(summary.id, scope.clone())
             {
                 settings.environment.extend(server.environment(&executable));
+                let cli = ticket_cli(kind, provider_id.as_deref(), &executable);
                 if let Some(ticket) = ticket {
                     ticket_introduction = ticket_context::TicketContext::prepare(
                         &*locked(&store)?,
@@ -664,6 +665,7 @@ fn run_turn_using(
                         may_change_status,
                         read_only,
                         provider_id.as_deref(),
+                        cli.as_deref(),
                     )?;
                 }
                 if let Some(introduction) = &ticket_introduction {
@@ -1571,6 +1573,17 @@ fn track_edit(session: i64, cwd: &str, tool: &gespan_core::tool::ToolCall) {
         ToolState::Completed => store.capture_edit(&session, cwd, &paths),
         ToolState::Failed | ToolState::Cancelled => Ok(()),
     });
+}
+
+/// How the turn reaches the ticket tools when its provider mounts no MCP
+/// servers: the `app` CLI at this path. `None` means the tools are mounted.
+fn ticket_cli(
+    kind: Kind,
+    provider_id: Option<&str>,
+    executable: &std::path::Path,
+) -> Option<String> {
+    visual_discovery::lacks_tool_servers(kind, provider_id)
+        .then(|| format!("{} app", shlex_quote(&executable.to_string_lossy())))
 }
 
 fn shlex_quote(text: &str) -> String {

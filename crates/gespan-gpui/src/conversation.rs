@@ -6,6 +6,7 @@ mod btw;
 mod commands;
 pub(crate) mod composer_card;
 pub(crate) mod composer_features;
+mod orchestration_card;
 mod composer_shelf;
 pub(crate) mod dictation;
 mod edit_last_turn;
@@ -208,6 +209,7 @@ pub(crate) struct Conversation {
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
+    plan_card: orchestration_card::PlanCard,
     orchestration_error: Option<String>,
     pub(crate) orchestration_progress: Option<String>,
     status: String,
@@ -717,6 +719,7 @@ impl Conversation {
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan: None,
+            plan_card: Default::default(),
             orchestration_error: None,
             orchestration_progress: None,
             status: "Loading conversation…".into(),
@@ -1125,7 +1128,12 @@ impl Conversation {
         self.planning_orchestration = self.settings.orchestrator;
         self.orchestration_plan = None;
         self.orchestration_error = None;
+        self.plan_card = Default::default();
+        if self.settings.orchestrator {
+            self.settings.orchestration_profiles = self.orchestration_profiles(cx);
+        }
         self.launch_prompt(prompt, cx);
+        self.settings.orchestration_profiles.clear();
         if self.busy && mode.is_some() {
             self.clear_submitted_mode(cx);
         }

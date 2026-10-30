@@ -1,0 +1,2 @@
+        let prefix = format!("refs/gespan/checkpoints/{session_id}/");
+    format!("refs/gespan/checkpoints/{session}/{turn}/{side}")

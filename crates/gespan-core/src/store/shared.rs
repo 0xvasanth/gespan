@@ -2,6 +2,7 @@
 //! persistent native_* tables, or history conversion on open.
 mod accounts;
 pub(super) mod blocks;
+mod claude_shell;
 mod edit;
 mod settings;
 #[cfg(test)]
@@ -1059,10 +1060,12 @@ impl Store {
                 .snapshots
                 .borrow_mut()
                 .insert(id, HistoryRevision(digest.finalize().into()));
+            self.restore_claude_shell(id, &mut rows);
             return Ok(Transcript { rows });
         }
         let blocks = self.shared_blocks(id)?;
-        let rows = blocks::project(&blocks)?;
+        let mut rows = blocks::project(&blocks)?;
+        self.restore_claude_shell(id, &mut rows);
         self.shared
             .as_ref()
             .unwrap()
@@ -1070,6 +1073,30 @@ impl Store {
             .borrow_mut()
             .insert(id, HistoryRevision::of(&blocks));
         Ok(Transcript { rows })
+    }
+    fn restore_claude_shell(&self, id: i64, rows: &mut [Row]) {
+        if claude_shell::bare_ids(rows).is_empty() {
+            return;
+        }
+        let Ok(original) = self.persisted_session_id(id) else {
+            return;
+        };
+        let session = self.conn.query_row(
+            "SELECT provider_session_id FROM sessions WHERE id=?1 AND harness='claude'",
+            [original],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        let (Ok(Some(session)), Ok(Some(settings))) = (session, self.shared_agent(id)) else {
+            return;
+        };
+        // Stored settings carry only the account id; its folder is under our data.
+        let Some(data) = self.data_dir() else {
+            return;
+        };
+        let account = crate::accounts::Profile::new(&settings.account.id, data);
+        if let Ok(home) = account.home(crate::provider::Kind::Claude) {
+            claude_shell::restore(rows, &home, &session);
+        }
     }
     pub(super) fn shared_store_blocks(&self, id: i64, blocks: &[Value]) -> Result<(), String> {
         let original = self.persisted_session_id(id)?;

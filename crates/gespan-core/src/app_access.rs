@@ -114,6 +114,12 @@ pub fn model_controls(kind: Kind, model: &Model) -> Vec<ModelControl> {
     }
     controls
 }
+/// The control that sets this model's effort, if it has one.
+pub fn effort_control(kind: Kind, model: &Model) -> Option<ModelControl> {
+    model_controls(kind, model)
+        .into_iter()
+        .find(|c| is_effort(&c.id))
+}
 fn is_effort(key: &str) -> bool {
     matches!(
         key,
@@ -239,6 +245,7 @@ pub fn launch_settings(
     if input.get("worktreeCwd").is_some() && workspace == "worktree" {
         return Err("worktreeCwd requires workspaceMode current".into());
     }
+    settings.orchestration_profiles.clear();
     settings.pilot = None;
     settings.pilot_message_id = None;
     settings.pilot_sent_at = None;

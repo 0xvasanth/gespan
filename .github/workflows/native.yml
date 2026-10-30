@@ -41,7 +41,8 @@ jobs:
       - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
       # The crates Native shares with the mobile link are root-workspace
-      # members (beside the Tauri app, which is not built), so they run there.
+      # members, so they run there. The Tauri app is its own workspace and is
+      # not built.
       - name: Shared crates
         shell: bash
         run: |

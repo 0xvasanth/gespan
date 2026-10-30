@@ -754,7 +754,7 @@ pub fn create_blank(cwd: &str, raw: &str, personal: bool) -> Result<PathBuf, Str
     } else {
         expand_home(cwd)
     };
-    let folder = root.join(".agents/skills").join(&name);
+    let folder = root.join(".agents").join("skills").join(&name);
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let path = folder.join("SKILL.md");
     let title = name

@@ -3,7 +3,9 @@
 use super::*;
 use gespan_core::{
     agent::Settings,
+    catalog,
     orchestration::{self, Plan, Task},
+    provider::{self, Kind},
 };
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -13,6 +15,17 @@ enum State {
     Done,
     Failed,
     Blocked,
+}
+
+/// A worker on its way to a session, with what it needs off the main thread.
+struct Launch {
+    ix: usize,
+    task: Task,
+    kind: Kind,
+    cwd: String,
+    lead_provider: String,
+    settings: Settings,
+    reports: String,
 }
 
 struct Assignment {
@@ -215,14 +228,15 @@ impl Shell {
                 }
                 task.state = State::Starting;
                 occupied.push(task.task.files.clone());
-                jobs.push((
+                jobs.push(Launch {
                     ix,
-                    task.task.clone(),
-                    run.cwd.clone(),
-                    run.provider.clone(),
-                    run.settings.clone(),
-                    reports.clone(),
-                ));
+                    kind: task.task.kind(&run.provider),
+                    task: task.task.clone(),
+                    cwd: run.cwd.clone(),
+                    lead_provider: run.provider.clone(),
+                    settings: run.settings.clone(),
+                    reports: reports.clone(),
+                });
             }
         }
         let done = run
@@ -260,8 +274,12 @@ impl Shell {
                 .map(|t| orchestration::SummaryTask {
                     session: t.session,
                     title: t.task.title.clone(),
-                    provider: run.provider.clone(),
-                    model: run.settings.model.clone(),
+                    provider: t.task.kind(&run.provider).id().to_owned(),
+                    model: t.task.model.clone().or_else(|| {
+                        (t.task.kind(&run.provider).id() == run.provider)
+                            .then(|| run.settings.model.clone())
+                            .flatten()
+                    }),
                     status: match t.state {
                         State::Pending | State::Starting => "queued",
                         State::Running => "running",
@@ -326,9 +344,23 @@ impl Shell {
                 }
             }
         }
-        for (ix, task, cwd, provider, mut settings, reports) in jobs {
+        for job in jobs {
+            let Launch {
+                ix,
+                task,
+                kind,
+                cwd,
+                lead_provider,
+                mut settings,
+                reports,
+            } = job;
             let store = self.store.clone();
             let project = self.sessions[&lead].read(cx).summary.cwd.clone();
+            if kind.id() != lead_provider {
+                settings.account = crate::accounts::get(cx)
+                    .map(|center| center.read(cx).selected(kind, &project))
+                    .unwrap_or_default();
+            }
             let work = cx.background_executor().spawn(async move {
                 let root = std::path::Path::new(&cwd)
                     .canonicalize()
@@ -349,8 +381,18 @@ impl Shell {
                         return Err(format!("Assignment scope escapes the checkout: {file}"));
                     }
                 }
+                if task.harness.is_some() && provider::resolve(kind).is_none() {
+                    return Err(orchestration::UNAVAILABLE.to_owned());
+                }
+                let models = if orchestration::needs_catalog(&task, &lead_provider) {
+                    catalog::models_for(kind, &settings.account)?
+                } else {
+                    catalog::cached_models_for(kind, &settings.account).unwrap_or_default()
+                };
+                let mut settings =
+                    orchestration::worker_settings(&task, &lead_provider, settings, kind, &models)?;
                 let store = locked(&store)?;
-                let mut summary = store.create(&provider, &project)?;
+                let mut summary = store.create(kind.id(), &project)?;
                 summary.title = format!("Agent · {}", task.title);
                 store.title(summary.id, &summary.title)?;
                 settings.worktree_cwd = Some(cwd);
@@ -403,6 +445,54 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     #[gpui::test]
+    fn the_sidebar_lists_each_tasks_own_harness_and_model(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&lead].update(cx, |v, cx| {
+                    v.install_transfer(
+                        Settings {
+                            model: Some("lead-model".into()),
+                            ..Settings::default()
+                        },
+                        None,
+                        cx,
+                    )
+                });
+                let task = |id: &str, file: &str| Task {
+                    id: id.into(),
+                    title: id.into(),
+                    prompt: "Work".into(),
+                    files: vec![file.into()],
+                    depends_on: Vec::new(),
+                    harness: None,
+                    model: None,
+                    model_settings: Default::default(),
+                };
+                let mut own = task("own", "src");
+                own.harness = Some("codex".into());
+                own.model = Some("gpt-6".into());
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Review".into(),
+                        summary: String::new(),
+                        tasks: vec![own, task("inherits", "docs")],
+                    },
+                    cx,
+                );
+                let provider = shell.sessions[&lead].read(cx).summary.provider.clone();
+                let tasks = &shell.orchestration_summaries[&lead].tasks;
+                assert_eq!(tasks[0].provider, "codex");
+                assert_eq!(tasks[0].model.as_deref(), Some("gpt-6"));
+                assert_eq!(tasks[1].provider, provider);
+                assert_eq!(tasks[1].model.as_deref(), Some("lead-model"));
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    #[gpui::test]
     fn reviewed_dispatch_caps_workers_serializes_scopes_and_stops_before_launch(
         cx: &mut TestAppContext,
     ) {
@@ -421,6 +511,9 @@ mod tests {
                         prompt: "Inspect and report".into(),
                         files: vec![file.into()],
                         depends_on: Vec::new(),
+                        harness: None,
+                        model: None,
+                        model_settings: Default::default(),
                     })
                     .collect();
                 shell.start_orchestration(
