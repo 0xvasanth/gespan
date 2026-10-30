@@ -1,0 +1,31 @@
+crates/gespan-core/src/pilot.rs
+  s_63af2de14c07c0::t_c8d9bc241d1028 251-255,258-259,263-269
+crates/gespan-core/src/pilot/tests.rs
+  s_63af2de14c07c0::t_fe673120d51b29 233-242
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_63af2de14c07c0::t_fe673120d51b29 1905-1993
+crates/gespan-gpui/src/pilots/intro.rs
+  s_63af2de14c07c0::t_c635e9ab1cb583 4-228,259
+  s_63af2de14c07c0::t_fe673120d51b29 229-258
+  s_63af2de14c07c0::t_394b98d7dd4bc0 1-3
+crates/gespan-gpui/src/pilots/mod.rs
+  s_63af2de14c07c0::t_38c39a340eb91e 15,60-61,187,1310-1317
+crates/gespan-gpui/src/shell.rs
+  s_63af2de14c07c0::t_66115f6d0638da 3712-3713,3716-3717
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "290d14aad7ac2474adbf3aa63b64639a6b9c6722",
+  "prompts": {},
+  "sessions": {
+    "s_63af2de14c07c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "511cd39b-180a-4062-bdda-b7016f9292ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
