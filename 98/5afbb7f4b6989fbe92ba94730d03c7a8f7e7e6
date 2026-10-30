@@ -1,0 +1,21 @@
+crates/gespan-core/src/orchestration/run.rs
+  s_943e8c7cbbf342::t_56f9ff25861bec 1-1075
+crates/gespan-core/src/orchestration.rs
+  s_943e8c7cbbf342::t_56f9ff25861bec 16-17,34-35,44,53-55,247,269-288,296-323,364-369,443-444
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "985afbb7f4b6989fbe92ba94730d03c7a8f7e7e6",
+  "prompts": {},
+  "sessions": {
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
