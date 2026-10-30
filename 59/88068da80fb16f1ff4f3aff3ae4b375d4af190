@@ -1,0 +1,26 @@
+.github/workflows/ci.yml
+  h_7bb0b8336911f0 28
+crates/gespan-gpui/src/main.rs
+  h_7bb0b8336911f0 238-239,241,353-356
+crates/gespan-gpui/src/shell/in_flight.rs
+  h_7bb0b8336911f0 308-313,322-339
+crates/gespan-gpui/src/shell/layout.rs
+  h_7bb0b8336911f0 751,758-792,796-807
+mobile/eas.json
+  h_7bb0b8336911f0 29-33
+scripts/native-release.mjs
+  h_7bb0b8336911f0 8-14,121
+scripts/native-release.test.mjs
+  h_7bb0b8336911f0 3,103-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5988068da80fb16f1ff4f3aff3ae4b375d4af190",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
