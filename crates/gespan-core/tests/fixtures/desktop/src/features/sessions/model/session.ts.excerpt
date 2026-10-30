@@ -1,0 +1,28 @@
+export type InterjectionMeta = {
+  customType: string;
+  /** Highest severity among this interjection's retained notes, when any is known. */
+  severity?: InterjectionSeverity;
+};
+
+export type AgentRunMeta = {
+  /** What the subagent is called, e.g. "Correctness review". */
+  name: string;
+  /** Provider agent type, e.g. "code-reviewer". */
+  agentType?: string;
+  /** Model reported for the child, which may differ from its parent. */
+  model?: string;
+  steps: AgentStep[];
+  /**
+   * The provider's id for the sub-agent (Claude's agentId), so a later turn
+   * that resumes it can find this run. Shared with Gespan Native.
+   */
+  agentId?: string;
+  /** On a resumption or continuation: the original Agent call's tool id. */
+  resumeOf?: string;
+  /** What the agent is doing now. Never the run's title. */
+  activity?: string;
+  /** A synthetic block for stray work of a finished dispatch. Absent when false. */
+  continuation?: boolean;
+};
+
+  sentAt?: number;

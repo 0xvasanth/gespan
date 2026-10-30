@@ -244,7 +244,7 @@ impl Pilots {
                             let app: &mut App = cx;
                             app.defer(move |cx| {
                                 let _ = handle.update(cx, |_, window, cx| {
-                                    window.activate_window();
+                                    crate::windows::show_primary(cx);
                                     let _ = owner.update(cx, |o, cx| {
                                         if hold {
                                             o.pilot_toggle_hold(window, cx)

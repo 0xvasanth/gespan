@@ -53,8 +53,12 @@ impl Shell {
         if !visible {
             crate::traffic_lights::hide(window, cx);
         }
-        #[cfg(not(all(target_os = "macos", not(test))))]
-        let _ = cx;
+        #[cfg(target_os = "linux")]
+        if !visible {
+            // Nothing there hides a window, so this keeps it out of the way.
+            window.minimize_window();
+        }
+        crate::windows::set_hidden(cx.entity_id(), !visible, cx);
         if visible {
             window.activate_window();
         }
@@ -62,15 +66,9 @@ impl Shell {
 }
 
 /// The Dock icon, or launching Gespan again while it runs: bring back the
-/// workspace window a close hid. Floating Pilot and Quick Composer windows
-/// stay as they are.
+/// workspace windows a close hid, or else the window last in front. Floating
+/// Pilot and Quick Composer windows stay as they are.
 pub(crate) fn reopen(cx: &mut App) {
-    for window in cx.windows() {
-        if let Some(shell) = window.downcast::<Shell>() {
-            let _ = shell.update(cx, |shell, window, cx| {
-                shell.set_window_visible(window, true, cx)
-            });
-        }
-    }
+    crate::windows::reveal(cx);
     cx.activate(true);
 }

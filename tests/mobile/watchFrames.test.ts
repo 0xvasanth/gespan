@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { watchUpdate } from "../../src/features/mobile/model/mobileWatch";
-import type { MobileTurn } from "../../src/features/mobile/model/mobileTranscript";
+import { watchUpdate } from "../../mobile/src/features/workspace/watchFrames";
+import type { Turn } from "../../mobile/src/features/workspace/types";
 import {
   applyFrames,
   type WatchFrame,
 } from "../../mobile/src/features/workspace/watchUpdates";
 
-const turn = (id: string, text: string): MobileTurn => ({
+const turn = (id: string, text: string): Turn => ({
   id,
   items: [{ type: "text", id: `${id}:a`, text }],
 });
@@ -51,7 +51,7 @@ describe("desktop-to-mobile watch frame round trips", () => {
       id: "reply",
       text: "stable ".repeat(1000),
     };
-    const before: MobileTurn = {
+    const before: Turn = {
       id: "a",
       durationMs: 100,
       items: [
@@ -70,7 +70,7 @@ describe("desktop-to-mobile watch frame round trips", () => {
       { busy: true, older: false, turns: [before] },
       true,
     )!;
-    const updates: MobileTurn[] = [
+    const updates: Turn[] = [
       {
         id: "a",
         items: [
@@ -105,7 +105,7 @@ describe("desktop-to-mobile watch frame round trips", () => {
       expect(next.update).toHaveProperty("patches");
       expect(JSON.stringify(next.update)).not.toContain(stable.text);
       known = applyFrames(known, [next.update as WatchFrame])!
-        .turns as MobileTurn[];
+        .turns as Turn[];
       expect(known).toEqual([updated]);
       expect(known[0].items[0]).toBe(stable);
       baseline = next.baseline;

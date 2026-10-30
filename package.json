@@ -30,7 +30,7 @@
     "test:host": "vitest run --config host/vitest.config.ts",
     "check": "bun run check:web && bun run check:rust",
     "check:web": "vitest run && tsc --noEmit",
-    "check:rust": "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test",
+    "check:rust": "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
     "set-version": "node scripts/bump-version.mjs",
     "tauri": "tauri",
     "tauri:stable": "tauri dev --no-watch --config src-tauri/tauri.stable.conf.json",
@@ -40,7 +40,7 @@
     "build:fedora": "node scripts/build-rpm.mjs",
     "build:windows": "RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc tauri build --bundles nsis",
     "native:dev": "node scripts/dev-native.mjs",
-    "native:test:dev": "node --test scripts/dev-native.test.mjs scripts/bundle-native-macos.test.mjs scripts/native-dependencies.test.mjs scripts/native-release.test.mjs scripts/package-native.test.mjs",
+    "native:test:dev": "node --test scripts/dev-native.test.mjs scripts/bundle-native-macos.test.mjs scripts/cargo-workspaces.test.mjs scripts/native-dependencies.test.mjs scripts/native-release.test.mjs scripts/package-native.test.mjs",
     "native:build": "node scripts/build-native.mjs",
     "native:test": "cargo test --locked -p gespan-tracker-client && cargo test --locked -p gespan-board-store && cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev && cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --profile native-dev -- --test-threads=1",
     "native:check": "bun run native:test:dev && cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check && cargo clippy --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings && bun run native:test"

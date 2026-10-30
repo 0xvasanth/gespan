@@ -464,7 +464,7 @@ impl Pilots {
             if let Some(handle) = self.parent_window {
                 let app: &mut App = cx;
                 app.defer(move |cx| {
-                    let _ = handle.update(cx, |_, window, _| window.activate_window());
+                    let _ = handle.update(cx, |_, _, cx| crate::windows::show_primary(cx));
                 });
             }
         }

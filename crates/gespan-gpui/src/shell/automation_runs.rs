@@ -119,6 +119,9 @@ impl Shell {
     }
 
     pub(super) fn poll_automations(&mut self, cx: &mut Context<Self>) {
+        if self.secondary {
+            return;
+        }
         // A rejected or deferred submission still needs a terminal receipt.
         let sessions: Vec<_> = self.automation_state.running.keys().copied().collect();
         for id in sessions {

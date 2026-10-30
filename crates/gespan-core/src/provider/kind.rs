@@ -229,7 +229,7 @@ mod tests {
     }
     #[test]
     fn registry_matches_the_react_harnesses() {
-        let source = include_str!("../../../../src/integrations/harness/core/register.ts");
+        let source = include_str!("../../tests/fixtures/desktop/harness-register.ts");
         for kind in Kind::ALL {
             assert_eq!(Kind::parse(kind.id()), Some(kind));
             assert!(source.contains(&format!("../providers/{}/", kind.id())));
@@ -290,7 +290,7 @@ mod tests {
     }
     #[test]
     fn hints_match_the_react_source() {
-        let source = include_str!("../../../../src/integrations/harness/core/availability.ts");
+        let source = include_str!("../../tests/fixtures/desktop/harness-availability.ts");
         for kind in Kind::ALL {
             assert!(
                 source.contains(&format!("\"{}\"", kind.install_name())),

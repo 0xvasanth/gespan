@@ -1,0 +1,3 @@
+use gespan_board_store::create_field;
+    let card = gespan_board_store::create_card_from_ticket(&conn, &column_id, &json)?;
+        gespan_board_store::retitle_card_from_ticket(&conn, &card_id, &key, &title)?;

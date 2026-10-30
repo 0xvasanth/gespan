@@ -1,0 +1,2 @@
+    let store = open(data_dir()?.join("gespan.db"))?;
+        let path = data_dir.join("gespan.db");
