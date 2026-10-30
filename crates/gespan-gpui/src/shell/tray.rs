@@ -53,7 +53,7 @@ impl Shell {
         if !visible {
             crate::traffic_lights::hide(window, cx);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(test)))]
         if !visible {
             // Nothing there hides a window, so this keeps it out of the way.
             window.minimize_window();
