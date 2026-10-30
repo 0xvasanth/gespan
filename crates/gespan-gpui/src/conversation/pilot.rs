@@ -370,6 +370,10 @@ impl Conversation {
         mode: gespan_core::agent::AccessMode,
         cx: &mut Context<Self>,
     ) {
+        if self.settings_pending() {
+            self.defer_history_action(move |this, cx| this.pilot_access(mode, cx), cx);
+            return;
+        }
         self.settings.access = mode;
         super::remember_access(mode, cx);
         self.save_settings(cx);
