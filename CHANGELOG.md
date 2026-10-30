@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native shows desktop notifications on Windows and Linux too, with a
   Show button that opens the session. On Windows, turning them off in
   Settings is respected and the in-app sound plays instead.
+- Gespan Native shows the task list for Claude sessions again. Newer Claude
+  Code versions track tasks one at a time instead of as a whole list, and
+  Gespan now builds the list from those updates, including renamed and
+  deleted tasks. The list carries on when you resume the session, even after
+  restarting Gespan.
 
 ## [0.0.2-beta] - 2026-10-29
 

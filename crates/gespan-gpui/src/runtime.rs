@@ -683,6 +683,9 @@ fn run_turn_using(
             // work finds the Agent call that started it in an earlier turn.
             settings.agent_runs =
                 gespan_core::tool::tasks::agent_runs(&transcript.rows[..turn_start]);
+            // A resumed conversation's TaskUpdate calls refer to earlier tasks.
+            settings.claude_task_lists =
+                gespan_core::tool::tasks::claude_task_lists(&transcript.rows[..turn_start]);
         }
         let request = Request {
             kind,
