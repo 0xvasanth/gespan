@@ -30,6 +30,10 @@ const ENV_EXECUTABLE: &str = "GESPAN_TICKET_EXECUTABLE";
 pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 const APP_GONE: &str = "Gespan stopped handling this session's ticket tools";
 const NO_CARDS: &str = "Card tools aren't available in this session";
+const BUSY: &str = "Too many ticket calls are waiting; retry shortly";
+const UNSETTLED: &str =
+    "This request has no result yet; check the ticket or card before using a new request ID";
+const MAX_RECEIPTS: usize = 64;
 
 /// What one turn may reach, set by the app and never by the agent. The
 /// ticket tools exist only with a `ticket`; the card tools only with `cards`.
@@ -133,6 +137,9 @@ struct Wire {
     key: Option<String>,
     #[serde(default)]
     tool: Option<BridgeTool>,
+    /// The `app` CLI's request ID, so a retry cannot post a comment twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request: Option<String>,
 }
 
 struct ActiveTurn {
@@ -145,6 +152,8 @@ struct SessionCapability {
     token: String,
     generation: u64,
     active: Option<ActiveTurn>,
+    /// Writes by request ID: what was asked, and its result once known.
+    receipts: HashMap<String, (String, Option<Result<Value, String>>)>,
 }
 
 struct Hub {
@@ -245,6 +254,7 @@ impl Server {
                     ),
                     generation: 0,
                     active: None,
+                    receipts: HashMap::new(),
                 });
             if capability.active.is_some() {
                 return Err("A ticket session turn is already active".into());
@@ -364,13 +374,13 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
         return Err("Invalid ticket request".into());
     }
     let wire: Wire = serde_json::from_str(line).map_err(|_| "Invalid ticket request")?;
-    let (generation, result) = {
-        let sessions = hub
+    let (generation, result, receipt) = {
+        let mut sessions = hub
             .sessions
             .lock()
             .map_err(|_| "Ticket session unavailable")?;
         let capability = sessions
-            .get(&wire.session)
+            .get_mut(&wire.session)
             .ok_or("Invalid ticket capability")?;
         let secret = &capability.token;
         let equal = wire.token.len() == secret.len()
@@ -427,6 +437,28 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
             // Checked above.
             BridgeTool::Card(_) => None,
         };
+        let receipt = wire.request.as_ref().filter(|_| writes(&tool));
+        if let Some(request) = receipt {
+            let asked = serde_json::to_string(&tool).map_err(|e| e.to_string())?;
+            match capability.receipts.get(request) {
+                Some((earlier, _)) if *earlier != asked => {
+                    return Err("Request ID was already used with different input".into());
+                }
+                Some((_, Some(result))) => return result.clone(),
+                Some((_, None)) => return Err(UNSETTLED.into()),
+                None => {}
+            }
+            if capability.receipts.len() >= MAX_RECEIPTS {
+                let settled = capability
+                    .receipts
+                    .iter()
+                    .find(|(_, (_, result))| result.is_some())
+                    .map(|(request, _)| request.clone());
+                capability.receipts.remove(&settled.ok_or(BUSY)?);
+            }
+            capability.receipts.insert(request.clone(), (asked, None));
+        }
+        let receipt = receipt.cloned();
         let (reply, result) = mpsc::channel();
         active
             .send
@@ -436,8 +468,13 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
                 reply,
                 generation: active.generation,
             })
-            .map_err(|_| "Too many ticket calls are waiting; retry shortly")?;
-        (active.generation, result)
+            .map_err(|_| {
+                if let Some(request) = &receipt {
+                    capability.receipts.remove(request);
+                }
+                BUSY
+            })?;
+        (active.generation, result, receipt)
     };
     let started = Instant::now();
     loop {
@@ -445,7 +482,12 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
             return Err(APP_GONE.into());
         }
         match result.recv_timeout(Duration::from_millis(25)) {
-            Ok(result) => return result,
+            Ok(result) => {
+                if let Some(request) = receipt {
+                    settle(hub, wire.session, request, &result);
+                }
+                return result;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(APP_GONE.into()),
             Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() < APP_TIMEOUT => {}
             Err(_) => return Err("Gespan did not answer the ticket call in time".into()),
@@ -453,11 +495,33 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
     }
 }
 
+/// Only a call's answer settles its receipt. When the turn ended or the app
+/// went quiet the write may still have happened, so the retry is refused.
+fn settle(hub: &Hub, session: i64, request: String, result: &Result<Value, String>) {
+    if let Ok(mut sessions) = hub.sessions.lock() {
+        if let Some(receipt) = sessions
+            .get_mut(&session)
+            .and_then(|capability| capability.receipts.get_mut(&request))
+        {
+            receipt.1 = Some(result.clone());
+        }
+    }
+}
+
+fn writes(tool: &BridgeTool) -> bool {
+    matches!(
+        tool,
+        BridgeTool::Ticket(TicketTool::Comment { .. } | TicketTool::SetStatus { .. })
+            | BridgeTool::Card(CardTool::SubtaskDone { .. })
+    )
+}
+
 /// One loopback round trip. `tool: None` asks for the session's scope.
 fn request(
     environment: &HashMap<String, String>,
     key: Option<&str>,
     tool: Option<BridgeTool>,
+    request_id: Option<&str>,
 ) -> Result<Value, String> {
     let get = |name| {
         environment
@@ -477,6 +541,7 @@ fn request(
         token: get(ENV_TOKEN)?.clone(),
         key: key.map(str::to_owned),
         tool,
+        request: request_id.map(str::to_owned),
     };
     let mut stream =
         TcpStream::connect_timeout(&endpoint, Duration::from_secs(3)).map_err(|_| APP_GONE)?;
@@ -546,11 +611,19 @@ fn ticket_definitions() -> Vec<Value> {
 /// reaches the app; the hub checks again for callers that skip this process.
 struct Client {
     environment: HashMap<String, String>,
+    request_id: Option<String>,
 }
 
 impl Client {
     fn new(environment: HashMap<String, String>) -> Self {
-        Self { environment }
+        Self {
+            environment,
+            request_id: None,
+        }
+    }
+
+    fn request(&self, key: Option<&str>, tool: Option<BridgeTool>) -> Result<Value, String> {
+        request(&self.environment, key, tool, self.request_id.as_deref())
     }
 
     fn call(&self, name: &str, arguments: &Value) -> Result<Value, String> {
@@ -611,7 +684,7 @@ impl Client {
             _ => return Err("Unknown ticket tool".into()),
         };
         // Read per call: the link may change between turns of a long-lived provider.
-        let scope = request(&self.environment, None, None)?;
+        let scope = self.request(None, None)?;
         let linked = scope["key"].as_str().ok_or(NO_TICKET)?;
         if key.is_some_and(|key| !same_key(key, linked)) {
             return Err(format!("This session is linked to {linked}"));
@@ -622,7 +695,7 @@ impl Client {
             return Err(refused.into());
         }
         let statuses = matches!(tool, TicketTool::Statuses);
-        let mut result = request(&self.environment, key, Some(tool.into()))?;
+        let mut result = self.request(key, Some(tool.into()))?;
         if statuses {
             result["mayChangeStatus"] = (may_change_status && !read_only).into();
         }
@@ -631,14 +704,14 @@ impl Client {
 
     fn call_card(&self, tool: CardTool) -> Result<Value, String> {
         // Read per call, like the ticket link: cards may be linked mid-session.
-        let scope = request(&self.environment, None, None)?;
+        let scope = self.request(None, None)?;
         if scope["cards"] != true {
             return Err(NO_CARDS.into());
         }
         if let Some(refused) = card_refusal(&tool, scope["readOnly"] == true) {
             return Err(refused.into());
         }
-        request(&self.environment, None, Some(tool.into()))
+        self.request(None, Some(tool.into()))
     }
 
     /// The scope decides the catalog, so a session without a ticket or cards
@@ -646,7 +719,7 @@ impl Client {
     /// read (no active turn yet, say), every tool is listed: each call is
     /// checked against the live scope anyway.
     fn catalog(&self) -> Value {
-        let tools = match request(&self.environment, None, None) {
+        let tools = match self.request(None, None) {
             Ok(scope) => tool_definitions(scope["key"].is_string(), scope["cards"] == true),
             Err(_) => tool_definitions(true, true),
         };
@@ -679,6 +752,48 @@ impl Client {
             Err(error) => json!({"jsonrpc":"2.0","id":id,"error":error}),
         })
     }
+}
+
+/// The `app` CLI's names for the tools, for agents whose provider mounts no
+/// MCP servers. Same scope and refusals as the tools; the session is always
+/// the caller's own.
+const APP_ACTIONS: [(&str, &str); 5] = [
+    ("ticket.get", "ticket_get"),
+    ("ticket.comment", "ticket_comment"),
+    ("ticket.status", "ticket_status"),
+    ("card.subtasks", "card_subtasks"),
+    ("card.subtask_done", "card_subtask_done"),
+];
+
+pub fn is_app_action(action: &str) -> bool {
+    action.starts_with("ticket.") || action.starts_with("card.")
+}
+
+pub fn app_action(action: &str, input: &Value, request_id: &str) -> Result<Value, String> {
+    app_call(current_environment(), action, input, request_id)
+}
+
+fn app_call(
+    environment: HashMap<String, String>,
+    action: &str,
+    input: &Value,
+    request_id: &str,
+) -> Result<Value, String> {
+    let (_, tool) = APP_ACTIONS
+        .iter()
+        .find(|(name, _)| *name == action)
+        .ok_or_else(|| format!("Unknown app action: {action}"))?;
+    if !input.is_object() {
+        return Err("Input must be a JSON object".into());
+    }
+    if environment.is_empty() {
+        return Err("This session has no linked ticket or cards".into());
+    }
+    let client = Client {
+        environment,
+        request_id: Some(request_id.to_owned()),
+    };
+    client.call(tool, input)
 }
 
 /// Runs before GUI initialization. stdout carries MCP JSON-RPC frames only.
@@ -970,8 +1085,13 @@ mod tests {
         // The token is in the agent's environment, so the hub is the boundary.
         let server = Server::start(405, scope("ABC-1", true, false)).unwrap();
         let environment = server.environment(Path::new("/test/app"));
-        let error =
-            request(&environment, Some("ABC-99"), Some(TicketTool::Get.into())).unwrap_err();
+        let error = request(
+            &environment,
+            Some("ABC-99"),
+            Some(TicketTool::Get.into()),
+            None,
+        )
+        .unwrap_err();
         assert_eq!(error, "This session is linked to ABC-1");
         assert!(server.drain().is_empty());
     }
@@ -1013,6 +1133,7 @@ mod tests {
                 }
                 .into(),
             ),
+            None,
         )
         .unwrap_err();
         assert_eq!(
@@ -1105,10 +1226,10 @@ mod tests {
         assert_eq!(response["result"]["isError"], true);
         assert_eq!(text(&response["result"]), "Invalid ticket capability");
         environment.insert(ENV_TOKEN.into(), token[..8].into());
-        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
         environment.insert(ENV_TOKEN.into(), token);
         environment.insert(ENV_SESSION.into(), "999409".into());
-        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
         assert!(server.drain().is_empty());
     }
 
@@ -1145,7 +1266,7 @@ mod tests {
         let environment = Server::start(411, scope("ENG-1", true, false))
             .unwrap()
             .environment(Path::new("/test/app"));
-        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
@@ -1158,7 +1279,7 @@ mod tests {
         let next = Server::start(412, scope("ENG-2", false, false)).unwrap();
         assert_eq!(environment, next.environment(Path::new("/test/app")));
         assert_eq!(
-            request(&environment, None, None).unwrap(),
+            request(&environment, None, None, None).unwrap(),
             json!({"key":"ENG-2","mayChangeStatus":false,"readOnly":false,"cards":false})
         );
     }
@@ -1205,13 +1326,13 @@ mod tests {
             },
         ] {
             assert_eq!(
-                request(&environment, None, Some(tool.into())).unwrap_err(),
+                request(&environment, None, Some(tool.into()), None).unwrap_err(),
                 "This session is read-only"
             );
         }
         assert!(server.drain().is_empty());
         assert_eq!(
-            request(&environment, None, None).unwrap(),
+            request(&environment, None, None, None).unwrap(),
             json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":true,"cards":false})
         );
         let read = call_answered(&server, &tickets, tool_call("ticket_get", json!({})));
@@ -1243,7 +1364,7 @@ mod tests {
         );
         let environment = tickets_only.environment(Path::new("/test/app"));
         assert_eq!(
-            request(&environment, None, Some(CardTool::Subtasks.into())).unwrap_err(),
+            request(&environment, None, Some(CardTool::Subtasks.into()), None).unwrap_err(),
             "Card tools aren't available in this session"
         );
         assert!(tickets_only.drain().is_empty());
@@ -1327,12 +1448,12 @@ mod tests {
         let environment = server.environment(Path::new("/test/app"));
         for key in [None, Some("ENG-1")] {
             assert_eq!(
-                request(&environment, key, Some(TicketTool::Get.into())).unwrap_err(),
+                request(&environment, key, Some(TicketTool::Get.into()), None).unwrap_err(),
                 "This session isn't linked to a ticket"
             );
         }
         assert_eq!(
-            request(&environment, None, None).unwrap(),
+            request(&environment, None, None, None).unwrap(),
             json!({"key":null,"mayChangeStatus":true,"readOnly":false,"cards":true})
         );
         assert!(server.drain().is_empty(), "No call may reach the app");
@@ -1368,7 +1489,7 @@ mod tests {
             done: false,
         };
         assert_eq!(
-            request(&environment, None, Some(untick.into())).unwrap_err(),
+            request(&environment, None, Some(untick.into()), None).unwrap_err(),
             "This session is read-only"
         );
         assert!(server.drain().is_empty());
@@ -1496,7 +1617,10 @@ mod tests {
         drop(server);
         let next = Server::start(427, scope("ENG-3", true, false)).unwrap();
         let environment = next.environment(Path::new("/test/app"));
-        assert_eq!(request(&environment, None, None).unwrap()["key"], "ENG-3");
+        assert_eq!(
+            request(&environment, None, None, None).unwrap()["key"],
+            "ENG-3"
+        );
     }
 
     #[test]
@@ -1542,7 +1666,12 @@ mod tests {
         let worker = {
             let environment = cards_only.environment(Path::new("/test/app"));
             std::thread::spawn(move || {
-                request(&environment, Some("ENG-1"), Some(CardTool::Subtasks.into()))
+                request(
+                    &environment,
+                    Some("ENG-1"),
+                    Some(CardTool::Subtasks.into()),
+                    None,
+                )
             })
         };
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -1559,14 +1688,195 @@ mod tests {
         let tickets_only = Server::start(430, scope("ENG-1", true, false)).unwrap();
         let environment = tickets_only.environment(Path::new("/test/app"));
         assert_eq!(
-            request(&environment, Some("ENG-9"), Some(CardTool::Subtasks.into())).unwrap_err(),
+            request(
+                &environment,
+                Some("ENG-9"),
+                Some(CardTool::Subtasks.into()),
+                None
+            )
+            .unwrap_err(),
             "Card tools aren't available in this session"
         );
         assert!(tickets_only.drain().is_empty());
         // Ticket calls still check the key first.
         assert_eq!(
-            request(&environment, Some("ENG-9"), Some(TicketTool::Get.into())).unwrap_err(),
+            request(
+                &environment,
+                Some("ENG-9"),
+                Some(TicketTool::Get.into()),
+                None
+            )
+            .unwrap_err(),
             "This session is linked to ENG-1"
         );
+    }
+
+    fn app(server: &Server, action: &str, input: Value, request: &str) -> Result<Value, String> {
+        app_call(
+            server.environment(Path::new("/test/app")),
+            action,
+            &input,
+            request,
+        )
+    }
+
+    /// `app` on a worker, as the CLI process would, answered by `answer`.
+    fn app_answered(
+        server: &Server,
+        action: &'static str,
+        input: Value,
+        request: &str,
+        answer: impl Fn(&Call) -> Result<Value, String>,
+    ) -> Result<Value, String> {
+        let environment = server.environment(Path::new("/test/app"));
+        let request = request.to_owned();
+        let worker = std::thread::spawn(move || app_call(environment, action, &input, &request));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < deadline {
+            for call in server.drain() {
+                let _ = call.reply.send(answer(&call));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        worker.join().unwrap()
+    }
+
+    #[test]
+    fn app_actions_reach_the_same_tools_as_the_mcp_server() {
+        let server = Server::start(440, with_cards(Some("ENG-1"), false)).unwrap();
+        let seen = Mutex::new(Vec::new());
+        let record = |call: &Call| {
+            seen.lock().unwrap().push(call.tool.clone());
+            Ok(json!({"answered":true}))
+        };
+        for (ix, (action, input)) in [
+            ("ticket.get", json!({})),
+            ("ticket.comment", json!({"body":"Done"})),
+            ("ticket.status", json!({})),
+            ("ticket.status", json!({"target":"Done","fields":{"a":1}})),
+            ("card.subtasks", json!({})),
+            ("card.subtask_done", json!({"subtaskId":"s1","done":true})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = app_answered(&server, action, input, &format!("r{ix}"), record).unwrap();
+            assert_eq!(result["answered"], true, "{action}");
+        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                TicketTool::Get.into(),
+                TicketTool::Comment {
+                    markdown: "Done".into()
+                }
+                .into(),
+                TicketTool::Statuses.into(),
+                TicketTool::SetStatus {
+                    target: "Done".into(),
+                    fields: BTreeMap::from([("a".to_owned(), json!(1))]),
+                }
+                .into(),
+                CardTool::Subtasks.into(),
+                CardTool::SubtaskDone {
+                    subtask_id: "s1".into(),
+                    done: true,
+                }
+                .into(),
+            ] as [BridgeTool; 6]
+        );
+    }
+
+    #[test]
+    fn app_actions_refuse_what_the_tools_refuse() {
+        let server = Server::start(441, scope("ENG-1", false, false)).unwrap();
+        for (action, input, expected) in [
+            ("ticket.get", json!({"session":"other"}), "Unknown argument"),
+            ("ticket.get", json!({"key":7}), "key must be a string"),
+            ("ticket.get", json!({"key":"ENG-2"}), "linked to ENG-1"),
+            ("ticket.comment", json!({"body":"  "}), "body"),
+            ("ticket.status", json!({"fields":{"a":1}}), "target"),
+            ("ticket.status", json!({"target":"Done"}), "turned off"),
+            ("card.subtasks", json!({}), NO_CARDS),
+            ("card.subtask_done", json!({"done":true}), "subtaskId"),
+            ("ticket.delete", json!({}), "Unknown app action"),
+            ("card.move", json!({}), "Unknown app action"),
+            ("ticket.get", json!([]), "JSON object"),
+        ] {
+            let error = app(&server, action, input.clone(), "r1").unwrap_err();
+            assert!(
+                error.to_lowercase().contains(&expected.to_lowercase()),
+                "{action} {input}: {error}"
+            );
+        }
+        let read_only = Server::start(442, scope("ENG-1", true, true)).unwrap();
+        let error = app(&read_only, "ticket.comment", json!({"body":"Hi"}), "r1").unwrap_err();
+        assert_eq!(error, READ_ONLY);
+    }
+
+    #[test]
+    fn an_app_action_without_a_capability_says_the_session_has_nothing_linked() {
+        let error = app_call(HashMap::new(), "ticket.get", &json!({}), "r1").unwrap_err();
+        assert_eq!(error, "This session has no linked ticket or cards");
+    }
+
+    #[test]
+    fn a_retried_write_returns_its_first_result_and_never_posts_twice() {
+        let server = Server::start(443, scope("ENG-1", true, false)).unwrap();
+        let posted = AtomicUsize::new(0);
+        let answer = |_: &Call| Ok(json!({"comment":posted.fetch_add(1, Ordering::SeqCst)}));
+        let comment = || json!({"body":"Fixed"});
+        let first = app_answered(&server, "ticket.comment", comment(), "r1", answer).unwrap();
+        let again = app(&server, "ticket.comment", comment(), "r1").unwrap();
+        assert_eq!(first, again);
+        assert_eq!(posted.load(Ordering::SeqCst), 1);
+        // A new ID is a new comment; the same ID can't mean something else.
+        app_answered(&server, "ticket.comment", comment(), "r2", answer).unwrap();
+        assert_eq!(posted.load(Ordering::SeqCst), 2);
+        let error = app(&server, "ticket.comment", json!({"body":"Other"}), "r1").unwrap_err();
+        assert!(error.contains("different input"), "{error}");
+    }
+
+    #[test]
+    fn a_write_with_no_answer_is_not_repeated_by_its_retry() {
+        let server = Server::start(444, scope("ENG-1", true, false)).unwrap();
+        let environment = server.environment(Path::new("/test/app"));
+        let worker = std::thread::spawn(move || {
+            app_call(environment, "ticket.comment", &json!({"body":"Hi"}), "r1")
+        });
+        // The app takes the call, then the turn ends before it answers.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut taken = Vec::new();
+        while taken.is_empty() && Instant::now() < deadline {
+            taken = server.drain();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(taken.len(), 1);
+        drop(server);
+        assert_eq!(worker.join().unwrap().unwrap_err(), APP_GONE);
+        let server = Server::start(444, scope("ENG-1", true, false)).unwrap();
+        let error = app(&server, "ticket.comment", json!({"body":"Hi"}), "r1").unwrap_err();
+        assert_eq!(error, UNSETTLED);
+        assert!(server.drain().is_empty(), "the retry reached the app");
+    }
+
+    #[test]
+    fn reads_are_not_remembered() {
+        let server = Server::start(445, scope("ENG-1", true, false)).unwrap();
+        let reads = AtomicUsize::new(0);
+        let answer = |_: &Call| Ok(json!(reads.fetch_add(1, Ordering::SeqCst)));
+        for _ in 0..2 {
+            app_answered(&server, "ticket.get", json!({}), "r1", answer).unwrap();
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_app_help_covers_every_ticket_and_card_action() {
+        for (action, _) in APP_ACTIONS {
+            assert!(is_app_action(action));
+            assert!(crate::pilot::bridge::HELP.contains(action), "{action}");
+        }
+        assert!(!is_app_action("sessions.list"));
     }
 }
