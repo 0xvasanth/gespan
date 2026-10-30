@@ -291,7 +291,7 @@ mod tests {
         let menus = crate::app_menu::menus(&Default::default(), false);
         assert_eq!(names(&menus), ["File", "Edit", "View", "Help"]);
         let file = labels(find(&menus, "File"));
-        assert_eq!(file[0], "Open Project…");
+        assert_eq!(file[..2], ["New Window", "Open Project…"]);
         assert_eq!(
             &file[file.len() - 4..],
             ["Settings…", "Hold Everything", "-", "Quit"]
