@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native's Checks tab repairs CI as the Tauri app does. Pick which
+  failed checks to fix, open a check's job steps and annotations, filter by
+  Needs attention or All checks, refresh, and rerun failed jobs. Each repair
+  shows its progress against the agent and the next CI results, and open pull
+  requests keep their checks up to date.
 - Gespan Native lets you undo or keep a session's changes one file at a time:
   hovering a file in the changes card under the reply shows its own Undo and
   Keep. Folders without Git now get these reviews too, as the Tauri app does:

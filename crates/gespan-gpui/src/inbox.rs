@@ -1,6 +1,7 @@
 //! Inbox: the original provider rail and work-item detail surface, backed by
 //! the native adapters and the desktop app's existing credential files.
 mod avatar;
+mod checks;
 mod diff;
 mod document;
 mod ui;
@@ -33,6 +34,12 @@ pub(crate) enum Event {
     StartSession {
         item: Box<Item>,
         prompt: String,
+    },
+    /// A check repair for the agent, reported back by its `repair` id.
+    StartRepair {
+        item: Box<Item>,
+        prompt: String,
+        repair: String,
     },
     ItemsChanged(Vec<Item>),
     /// A tracker was connected or disconnected.
@@ -81,6 +88,7 @@ pub(crate) struct Inbox {
     self_activity: gespan_core::inbox::SelfActivity,
     diff_view: Entity<DiffView>,
     checks: Option<Checks>,
+    ci: checks::CiState,
     tab: Tab,
     loading: bool,
     detail_loading: bool,
@@ -152,6 +160,11 @@ impl Inbox {
         Self::new_inner(store, projects, cwd, true, cx)
     }
 
+    #[cfg(test)]
+    pub(crate) fn offline(store: Database, cx: &mut Context<Self>) -> Self {
+        Self::new_inner(store, vec![], "/missing/inbox".into(), false, cx)
+    }
+
     fn new_inner(
         store: Database,
         mut projects: Vec<PathBuf>,
@@ -211,7 +224,7 @@ impl Inbox {
                 }
                 loop {
                     cx.background_executor()
-                        .timer(Duration::from_secs(30))
+                        .timer(Duration::from_secs(model::ci_repair::CHECKS_POLL_SECS))
                         .await;
                     if this
                         .update(cx, |this, cx| {
@@ -226,9 +239,13 @@ impl Inbox {
                                 && !this.acting
                             {
                                 this.load_detail(false, cx);
-                                if this.tab == Tab::Checks && !this.extra_loading {
-                                    this.checks = None;
-                                    this.set_tab(Tab::Checks, cx);
+                                if this.tab == Tab::Checks
+                                    && !this.extra_loading
+                                    && this
+                                        .item()
+                                        .is_some_and(|item| model::ci_repair::polls_checks(&item))
+                                {
+                                    this.refresh_checks(cx);
                                 }
                             }
                         })
@@ -240,6 +257,9 @@ impl Inbox {
             })
             .detach();
         }
+        let ci = locked(&store)
+            .map(|db| checks::CiState::load(&db))
+            .unwrap_or_default();
         Self {
             service: Service {
                 data_dir,
@@ -270,6 +290,7 @@ impl Inbox {
             self_activity: Default::default(),
             diff_view,
             checks: None,
+            ci,
             tab: Tab::Summary,
             loading: false,
             detail_loading: false,
@@ -619,6 +640,7 @@ impl Inbox {
         self.diff_view
             .update(cx, |view, cx| view.set_files(vec![], cx));
         self.checks = None;
+        self.ci.reset();
         self.extra_loading = false;
         self.extra_error = None;
         self.details = None;

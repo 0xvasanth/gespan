@@ -5,6 +5,7 @@ mod media;
 pub use media::png as media_png;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
+pub mod ci_repair;
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -245,7 +246,7 @@ pub struct Diff {
     pub patch: String,
     pub truncated: bool,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Check {
     pub name: String,
@@ -255,7 +256,7 @@ pub struct Check {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Checks {
     pub head_oid: String,
