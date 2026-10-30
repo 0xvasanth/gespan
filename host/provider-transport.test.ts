@@ -340,9 +340,10 @@ describe("existing providers over headless process I/O", () => {
         if (harness === "codex")
           efforts.push(calls.find((call) => "codexEffort" in call).codexEffort);
         else {
-          const args: string[] = calls.find(
-            (call) => call.claudeArgs,
-          ).claudeArgs;
+          // Model discovery and helper calls share the log; only a turn has --effort.
+          const args: string[] =
+            calls.find((call) => call.claudeArgs?.includes("--effort"))
+              ?.claudeArgs ?? [];
           efforts.push(args[args.indexOf("--effort") + 1] ?? null);
         }
       }

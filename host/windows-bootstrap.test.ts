@@ -59,7 +59,7 @@ afterAll(() => {
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
 
-async function install(badChecksum: boolean) {
+async function install(badChecksum: boolean, extraOverrides = "") {
   const fixtureDirectory = mkdtempSync(join(directory, "install-"));
   const base = join(
     fixtureDirectory,
@@ -81,6 +81,7 @@ function Download-Gespan([string] $Url, [string] $Destination) {
   Copy-Item -LiteralPath $source -Destination $Destination
   Add-Content -LiteralPath ${psQuote(downloads)} -Value 'download'
 }
+${extraOverrides}
 ${
   windows
     ? ""
@@ -166,6 +167,42 @@ it.skipIf(!shell)(
     expect(
       readFileSync(fixture.downloads, "utf8").trim().split(/\r?\n/),
     ).toHaveLength(4);
+  },
+  90_000,
+);
+
+const lockedRuntime = (failures: number) => `
+$script:moveFailures = ${failures}
+function Move-Item {
+  param([string] $LiteralPath, [string] $Destination, $ErrorAction)
+  if ($script:moveFailures -gt 0) {
+    $script:moveFailures--
+    throw [IO.IOException]::new("The process cannot access the file 'node.exe' because it is being used by another process.")
+  }
+  Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination -ErrorAction Stop
+}`;
+
+it.skipIf(!shell)(
+  "waits for a runtime that is briefly locked after its version check",
+  async () => {
+    const fixture = await install(false, lockedRuntime(3));
+    const result = await fixture.run();
+    expect(JSON.parse(result.stdout)).toEqual({ port: 3774, pid: 123 });
+    expect(
+      existsSync(
+        join(readFileSync(join(fixture.base, "runtime-path"), "utf8"), "node.exe"),
+      ),
+    ).toBe(true);
+  },
+  90_000,
+);
+
+it.skipIf(!shell)(
+  "gives up on a runtime that stays locked",
+  async () => {
+    const fixture = await install(false, lockedRuntime(1000));
+    await expect(fixture.run()).rejects.toThrow("being used by another process");
+    expect(existsSync(join(fixture.base, "runtime-path"))).toBe(false);
   },
   90_000,
 );
