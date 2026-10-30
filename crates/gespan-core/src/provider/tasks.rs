@@ -803,6 +803,30 @@ impl Protocol {
         }
         false
     }
+    /// A subagent that was never backgrounded reports back on the parent's own
+    /// tool result, and Claude sends no task record for one that ended inline.
+    /// Without this its task would keep the turn open for good.
+    pub(super) fn claude_settle_inline_agent(&mut self, block: &Value) {
+        let Some(call) = text(&block["tool_use_id"]) else {
+            return;
+        };
+        let activities = &mut self.activities;
+        if activities.registry.is_resume(call) {
+            return;
+        }
+        let settled: Vec<String> = activities
+            .owners
+            .iter()
+            .filter(|(task, owner)| {
+                owner.as_str() == call && !activities.claude_background.contains_key(*task)
+            })
+            .map(|(task, _)| task.clone())
+            .collect();
+        for task in &settled {
+            activities.claude_pending.remove(task);
+            activities.claude_tasks.retain(|row| row.id != *task);
+        }
+    }
     /// The SendMessage block `send` now shows `agent`'s resumed work.
     fn claude_resume(&mut self, send: &str, agent: &str, events: &mut Vec<Event>) {
         let registry = &mut self.activities.registry;
