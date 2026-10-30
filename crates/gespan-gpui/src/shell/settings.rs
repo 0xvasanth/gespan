@@ -1181,6 +1181,11 @@ mod tests {
 
     #[gpui::test]
     fn last_used_controls_follow_into_a_new_session(cx: &mut TestAppContext) {
+        // The catalog cache outlives each test, and a cached model decides
+        // which controls carry over.
+        for kind in [Kind::Claude, Kind::Codex] {
+            gespan_core::catalog::invalidate(kind, &Default::default());
+        }
         let (window, _, _) = window(cx);
         only_installed(&[Kind::Claude, Kind::Codex], cx);
         let chat = window.update(cx, |shell, _, _| active_chat(shell)).unwrap();
