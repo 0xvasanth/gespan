@@ -1,5 +1,6 @@
 //! Inbox attachment fetching, preserving the original host and redirect policy.
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
@@ -256,8 +257,74 @@ fn github_auth_token() -> Option<String> {
 }
 
 /// Decode bounded image bytes before handing them to the native image cache.
+/// Videos fetched for item descriptions, by URL. GPUI cannot play video in
+/// place, so each one is saved once and the file viewer plays it.
+static VIDEOS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The saved copy of a description video, once it has been fetched.
+pub fn video(url: &str) -> Option<PathBuf> {
+    VIDEOS.lock().ok()?.get(url.trim()).cloned()
+}
+
+/// For tests of the views that show a saved video.
+#[doc(hidden)]
+pub fn remember_video(url: &str, path: PathBuf) {
+    if let Ok(mut videos) = VIDEOS.lock() {
+        videos.insert(url.trim().to_owned(), path);
+    }
+}
+
+/// inboxMedia.ts's sniffVideoType: MP4 and QuickTime by their `ftyp` box
+/// (AVIF images share it), and WebM by its EBML header. The file extension.
+pub fn video_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return match &bytes[8..12] {
+            b"avif" | b"avis" => None,
+            b"qt  " => Some("mov"),
+            _ => Some("mp4"),
+        };
+    }
+    bytes
+        .starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
+        .then_some("webm")
+}
+
+/// Write `bytes` once under `dir`, named by `url`, and return the file.
+fn save_video(dir: &Path, url: &str, bytes: &[u8], extension: &str) -> Result<PathBuf, String> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.trim().hash(&mut hasher);
+    let path = dir.join(format!("{:016x}.{extension}", hasher.finish()));
+    if path
+        .metadata()
+        .is_ok_and(|meta| meta.len() == bytes.len() as u64)
+    {
+        return Ok(path);
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    // A partly written file must never be played, so write beside it first.
+    let partial = path.with_extension(format!("{extension}.part"));
+    std::fs::write(&partial, bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+fn video_dir() -> PathBuf {
+    std::env::temp_dir().join("gespan-inbox-media")
+}
+
+/// A description image as PNG bytes. A video is saved for [`video`] instead
+/// and reported as an error, so the same download serves both.
 pub fn png(url: &str) -> Result<Vec<u8>, String> {
     let bytes = fetch(url)?;
+    if let Some(extension) = video_extension(&bytes) {
+        let path = save_video(&video_dir(), url, &bytes, extension)?;
+        if let Ok(mut videos) = VIDEOS.lock() {
+            videos.insert(url.trim().to_owned(), path);
+        }
+        return Err("This attachment is a video".into());
+    }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| "Unsupported image".to_string())?;
@@ -276,6 +343,44 @@ pub fn png(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn videos_are_told_from_images_by_their_bytes() {
+        let ftyp = |brand: &[u8]| [&[0, 0, 0, 0x20][..], b"ftyp", brand, &[0; 8]].concat();
+        assert_eq!(video_extension(&ftyp(b"isom")), Some("mp4"));
+        assert_eq!(video_extension(&ftyp(b"mp42")), Some("mp4"));
+        assert_eq!(video_extension(&ftyp(b"qt  ")), Some("mov"));
+        assert_eq!(video_extension(&ftyp(b"avif")), None, "AVIF is an image");
+        assert_eq!(video_extension(&ftyp(b"avis")), None);
+        assert_eq!(video_extension(&[0x1a, 0x45, 0xdf, 0xa3, 1]), Some("webm"));
+        assert_eq!(video_extension(b"\x89PNG\r\n\x1a\n...."), None);
+        assert_eq!(video_extension(b"ftyp"), None, "too short");
+    }
+
+    #[test]
+    fn a_video_is_saved_once_per_url_and_never_half_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "https://github.com/user-attachments/assets/clip";
+        let first = save_video(dir.path(), url, b"movie", "mp4").unwrap();
+        assert_eq!(first.parent().unwrap(), dir.path());
+        assert_eq!(first.extension().unwrap(), "mp4");
+        assert_eq!(std::fs::read(&first).unwrap(), b"movie");
+        let modified = first.metadata().unwrap().modified().unwrap();
+        let again = save_video(dir.path(), &format!(" {url} "), b"movie", "mp4").unwrap();
+        assert_eq!(again, first, "the same URL reuses its file");
+        assert_eq!(again.metadata().unwrap().modified().unwrap(), modified);
+        let other =
+            save_video(dir.path(), "https://uploads.linear.app/x", b"webm", "webm").unwrap();
+        assert_ne!(other, first);
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(
+            names.iter().all(|name| !name.ends_with(".part")),
+            "{names:?}"
+        );
+    }
 
     #[test]
     fn github_and_linear_attachments_are_allowed() {

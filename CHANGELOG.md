@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native shows videos attached to inbox item descriptions, as the Tauri
+  app does. A GitHub or Linear attachment that turns out to be a video shows
+  as a play card in the description and opens in the file viewer.
 - Gespan Native lets you undo or keep a session's changes one file at a time:
   hovering a file in the changes card under the reply shows its own Undo and
   Keep. Folders without Git now get these reviews too, as the Tauri app does:

@@ -3,6 +3,9 @@
 mod avatar;
 mod media;
 pub use media::png as media_png;
+#[doc(hidden)]
+pub use media::remember_video;
+pub use media::video as media_video;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub(crate) mod github;
