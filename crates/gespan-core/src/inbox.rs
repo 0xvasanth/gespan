@@ -277,7 +277,7 @@ pub struct Status {
     pub organization: String,
     pub workspace: String,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OptionRow {
     pub id: String,
     pub name: String,

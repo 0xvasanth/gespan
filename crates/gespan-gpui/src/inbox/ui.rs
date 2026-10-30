@@ -2166,6 +2166,11 @@ impl Inbox {
             || (self.state.source == "linear" && !self.state.hidden_linear_teams.is_empty())
             || (self.state.source == "jira" && !self.state.hidden_jira_projects.is_empty())
     }
+    /// Settings' team list: the same choice as the Inbox's Teams filter.
+    pub(crate) fn toggle_linear_team(&mut self, id: String, cx: &mut Context<Self>) {
+        toggle(&mut self.state.hidden_linear_teams, id);
+        self.filters_changed(true, cx);
+    }
     fn filters_changed(&mut self, refetch: bool, cx: &mut Context<Self>) {
         self.save();
         if let Some(item) = self.visible_items(cx).first() {
@@ -2448,7 +2453,7 @@ impl Inbox {
         .into_any_element()
     }
 
-    fn connection_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn connection_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
         let provider = self.connect_provider.clone().unwrap_or_default();
         let connected = self
             .snapshot
@@ -2477,6 +2482,7 @@ impl Inbox {
             }
         };
         div()
+            .debug_selector(|| "inbox-connect-dialog".into())
             .absolute()
             .inset_0()
             .flex()
@@ -2975,12 +2981,15 @@ impl gpui::Render for Inbox {
             .when(self.connections_open, |d| d.child(self.connection_menu(cx)))
             .when(self.project_picker, |d| d.child(self.project_menu(cx)))
             .when(self.action_menu, |d| d.child(self.action_menu_view(cx)))
-            .when(self.connect_provider.is_some(), |d| {
-                d.child(crate::modal::window_overlay(
-                    window,
-                    self.connection_dialog(cx),
-                ))
-            })
+            .when(
+                self.connect_provider.is_some() && !self.connect_in_settings,
+                |d| {
+                    d.child(crate::modal::window_overlay(
+                        window,
+                        self.connection_dialog(cx),
+                    ))
+                },
+            )
             .when(self.confirm_action.is_some(), |d| {
                 d.child(self.action_confirmation(cx))
             })
