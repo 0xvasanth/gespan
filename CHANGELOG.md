@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native's / picker has a New skill row, as the Tauri app does. It
+  opens a short form named from the typed command, with Project or Personal
+  skills, and writes a starter SKILL.md that opens for editing. The command is
+  cleared from the message and the next / lists the new skill.
 - Gespan Native follows a renamed project folder, as the Tauri app does. Each
   project's folder identity is remembered, and when the saved folder is gone
   at launch, its former siblings are checked for it. The project, its
