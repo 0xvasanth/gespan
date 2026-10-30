@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gespan Native on macOS and Linux stops agents that a crashed or force-quit
+  Gespan left running, as the Tauri app does. Agents of a running Gespan,
+  Native or Tauri, are left alone.
 - Gespan Native shows desktop notifications on Windows and Linux too, with a
   Show button that opens the session. On Windows, turning them off in
   Settings is respected and the in-app sound plays instead.

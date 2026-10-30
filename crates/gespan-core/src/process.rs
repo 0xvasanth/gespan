@@ -1,6 +1,8 @@
 //! Child policy extracted from src-tauri/src/background_work.rs.
 use std::process::Command;
 
+pub mod orphans;
+
 #[cfg(windows)]
 mod job;
 #[cfg(windows)]
