@@ -122,11 +122,18 @@ impl Server {
         ))
     }
     pub fn environment(&self, session: i64) -> HashMap<String, String> {
+        self.environment_for(&APP, session)
+    }
+    fn environment_for(&self, surface: &Surface, session: i64) -> HashMap<String, String> {
         HashMap::from([
-            ("GESPAN_APP_ENDPOINT".into(), self.endpoint.clone()),
-            ("GESPAN_APP_TOKEN".into(), token(&self.secret, session)),
-            ("GESPAN_APP_SESSION".into(), session.to_string()),
+            (surface.endpoint.into(), self.endpoint.clone()),
+            (surface.token.into(), token(&self.secret, session)),
+            (surface.session.into(), session.to_string()),
         ])
+    }
+    /// A lead's capability on a server of its own: workers never hold it.
+    pub fn control_environment(&self, session: i64) -> HashMap<String, String> {
+        self.environment_for(&CONTROL, session)
     }
 }
 fn token(secret: &str, session: i64) -> String {
@@ -209,13 +216,43 @@ fn serve(
     };
     writeln!(stream, "{response}").map_err(|e| e.to_string())
 }
+/// One CLI on this wire: `app`, or a lead's `control`.
+struct Surface {
+    endpoint: &'static str,
+    token: &'static str,
+    session: &'static str,
+    help: &'static str,
+    unavailable: &'static str,
+}
+const APP: Surface = Surface {
+    endpoint: "GESPAN_APP_ENDPOINT",
+    token: "GESPAN_APP_TOKEN",
+    session: "GESPAN_APP_SESSION",
+    help: HELP,
+    unavailable: "App access is unavailable outside a Pilot's provider process",
+};
+pub const CONTROL_ENDPOINT: &str = "GESPAN_CONTROL_ENDPOINT";
+const CONTROL: Surface = Surface {
+    endpoint: CONTROL_ENDPOINT,
+    token: "GESPAN_CONTROL_TOKEN",
+    session: "GESPAN_CONTROL_SESSION",
+    help: crate::orchestration::CONTROL_HELP,
+    unavailable: "No Gespan connection. Confirm the Orchestrator proposal in Gespan first.",
+};
 /// Runs before any GUI initialization, so a provider tool never opens a window.
 pub fn client(args: &[String]) -> Result<Value, String> {
+    client_for(&APP, args)
+}
+/// The lead's `control` CLI, on the same terms.
+pub fn control_client(args: &[String]) -> Result<Value, String> {
+    client_for(&CONTROL, args)
+}
+fn client_for(surface: &Surface, args: &[String]) -> Result<Value, String> {
     if args
         .first()
         .is_none_or(|s| matches!(s.as_str(), "help" | "--help" | "-h"))
     {
-        return Ok(json!({"help":HELP}));
+        return Ok(json!({"help":surface.help}));
     }
     let action = args[0].clone();
     let mut input = json!({});
@@ -251,7 +288,7 @@ pub fn client(args: &[String]) -> Result<Value, String> {
             _ => return Err(format!("Unknown app argument: {arg}")),
         }
     }
-    if crate::ticket_bridge::is_app_action(&action) {
+    if surface.endpoint == APP.endpoint && crate::ticket_bridge::is_app_action(&action) {
         return Ok(
             match crate::ticket_bridge::app_action(&action, &input, &request_id) {
                 Ok(value) => json!({"ok":true,"result":value,"requestId":request_id}),
@@ -259,15 +296,15 @@ pub fn client(args: &[String]) -> Result<Value, String> {
             },
         );
     }
-    let endpoint: SocketAddr = std::env::var("GESPAN_APP_ENDPOINT")
-        .map_err(|_| "App access is unavailable outside a Pilot's provider process")?
+    let endpoint: SocketAddr = std::env::var(surface.endpoint)
+        .map_err(|_| surface.unavailable)?
         .parse()
         .map_err(|_| "Invalid app endpoint")?;
     if !endpoint.ip().is_loopback() {
         return Err("App access requires a local endpoint".into());
     }
-    let token = std::env::var("GESPAN_APP_TOKEN").map_err(|_| "App capability missing")?;
-    let session = std::env::var("GESPAN_APP_SESSION")
+    let token = std::env::var(surface.token).map_err(|_| "App capability missing")?;
+    let session = std::env::var(surface.session)
         .map_err(|_| "App session missing")?
         .parse()
         .map_err(|_| "Invalid app session")?;
@@ -320,6 +357,27 @@ mod capability_tests {
                 "{action}"
             );
         }
+    }
+    #[test]
+    fn a_control_capability_is_not_an_app_capability() {
+        let (server, _calls) = Server::start().unwrap();
+        let app = server.environment(7);
+        let control = server.control_environment(7);
+        assert_eq!(control[CONTROL_ENDPOINT], app["GESPAN_APP_ENDPOINT"]);
+        assert!(control.keys().all(|key| key.starts_with("GESPAN_CONTROL_")));
+        assert!(app.keys().all(|key| key.starts_with("GESPAN_APP_")));
+    }
+    #[test]
+    fn the_control_help_explains_every_action() {
+        let value = control_client(&["--help".to_owned()]).unwrap();
+        let help = value["help"].as_str().unwrap();
+        for action in [
+            "list", "delegate", "get", "wait", "respond", "answer", "steer", "message", "retry",
+            "cancel", "review", "finish",
+        ] {
+            assert!(help.contains(&format!("  {action} ")), "{action}");
+        }
+        assert!(help.contains("--request-id"));
     }
     fn send(
         server: &Server,

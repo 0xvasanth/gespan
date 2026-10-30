@@ -43,7 +43,7 @@ impl PlanCard {
 impl Conversation {
     /// Every harness with the account this project uses for it. The lead's
     /// own harness keeps the lead's account.
-    pub(super) fn orchestration_profiles(
+    pub(crate) fn orchestration_profiles(
         &self,
         cx: &App,
     ) -> Vec<(Kind, gespan_core::accounts::Profile)> {
