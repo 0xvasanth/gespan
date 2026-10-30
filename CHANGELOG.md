@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back, as in the Tauri app.
 - Gespan Native's Settings → Keybindings lists Hold Everything, which can now
   be rebound (holding the new shortcut still confirms), and the board's keys.
+- Gespan Native's file tabs have a right-click menu to open the file in its
+  default app, reveal it, and copy its path, relative path or name, and the
+  Files explorer can open a terminal in a folder, as in the Tauri app.
 - Gespan Native lists the skills of enabled Codex plugins in the composer's /
   picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit

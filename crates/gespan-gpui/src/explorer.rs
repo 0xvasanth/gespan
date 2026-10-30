@@ -34,7 +34,7 @@ const SHIFT: &str = if cfg!(target_os = "macos") {
 } else {
     "Shift+"
 };
-const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
+pub(crate) const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
     "Reveal in Finder"
 } else if cfg!(target_os = "windows") {
     "Reveal in File Explorer"
@@ -235,6 +235,9 @@ pub(crate) struct OpenSearchMatch {
     pub pin: bool,
 }
 impl EventEmitter<OpenSearchMatch> for Explorer {}
+/// Open in Terminal: a new terminal in this folder.
+pub(crate) struct OpenTerminal(pub String);
+impl EventEmitter<OpenTerminal> for Explorer {}
 
 impl Explorer {
     pub(crate) fn new(
@@ -1074,6 +1077,7 @@ impl Explorer {
                 .danger()
                 .into(),
             MenuItem::Separator,
+            MenuAction::new("open-terminal", "Open in Terminal").into(),
             MenuAction::new("reveal", REVEAL_LABEL).into(),
         ];
         self.menu = None;
@@ -1094,6 +1098,23 @@ impl Explorer {
             _events: events,
         });
         self.rebuild(cx);
+    }
+    /// A context-menu action on `path`, as if picked from its menu.
+    #[cfg(test)]
+    pub(crate) fn pick(
+        &mut self,
+        id: &str,
+        path: &str,
+        is_dir: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = Target {
+            path: path.into(),
+            is_dir,
+            root: false,
+        };
+        self.run_action(id, target, window, cx)
     }
     fn run_action(
         &mut self,
@@ -1122,6 +1143,11 @@ impl Explorer {
             "rename" => self.start_rename(target.path, window, cx),
             "delete" => self.delete(target.path, window, cx),
             "reveal" => self.reveal(target.path, window, cx),
+            "open-terminal" => cx.emit(OpenTerminal(if target.is_dir {
+                target.path
+            } else {
+                parent_of(&target.path)
+            })),
             _ => {}
         }
     }

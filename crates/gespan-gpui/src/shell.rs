@@ -1852,6 +1852,13 @@ impl Shell {
         self.observations.push(cx.subscribe_in(
             &explorer,
             window,
+            |this, _, event: &crate::explorer::OpenTerminal, window, cx| {
+                this.new_terminal_in(Some(event.0.clone()), window, cx)
+            },
+        ));
+        self.observations.push(cx.subscribe_in(
+            &explorer,
+            window,
             |this, _, event: &crate::explorer::OpenSearchMatch, window, cx| {
                 this.open_review_with_preview(
                     crate::review::ReviewTab::File {
@@ -3112,6 +3119,15 @@ impl Shell {
     /// Terminal: New (cmd-`): another terminal in the project's dock, which
     /// opens if it was hidden.
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_terminal_in(None, window, cx)
+    }
+    /// A new dock terminal in `cwd`, or where Terminal: New opens one.
+    fn new_terminal_in(
+        &mut self,
+        cwd: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.workspace.project.starts_with("remote://") {
             self.error = Some("Terminals are not available on remote projects.".into());
             cx.notify();
@@ -3121,7 +3137,7 @@ impl Shell {
             return;
         }
         let project = self.workspace.project.clone();
-        let cwd = self.terminal_cwd(cx);
+        let cwd = cwd.unwrap_or_else(|| self.terminal_cwd(cx));
         let was_open = self
             .workspace
             .docks
