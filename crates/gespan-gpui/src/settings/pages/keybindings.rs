@@ -343,6 +343,60 @@ pub(crate) const BINDINGS: &[Binding] = &[
         when: "editorFocus",
         fixed: false,
     },
+    Binding {
+        command: "Editor: Toggle Comment",
+        keys: "⌘/",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Move Line Up",
+        keys: "⌥↑",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Move Line Down",
+        keys: "⌥↓",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Copy Line Up",
+        keys: "⇧⌥↑",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Copy Line Down",
+        keys: "⇧⌥↓",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Delete Line",
+        keys: "⌘⇧K",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Select to Matching Bracket",
+        keys: "⌘⇧\\",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Previous Change",
+        keys: "⇧⌥F5",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Next Change",
+        keys: "⌥F5",
+        when: "editorFocus",
+        fixed: false,
+    },
 ];
 pub(super) fn quick_composer_label(p: &Preferences) -> String {
     p.keybindings

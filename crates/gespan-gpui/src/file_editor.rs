@@ -62,8 +62,10 @@ pub(crate) fn bind(cx: &mut App) {
         KeyBinding::new("alt-r", Regex, Some("FileEditor")),
         KeyBinding::new("f3", FindNext, Some("FileEditor")),
         KeyBinding::new("shift-f3", FindPrevious, Some("FileEditor")),
-        KeyBinding::new("alt-up", PreviousChange, Some("FileEditor")),
-        KeyBinding::new("alt-down", NextChange, Some("FileEditor")),
+        // Alt+↑/↓ move lines in the editor, as in the Tauri app; change
+        // navigation takes VS Code's keys instead.
+        KeyBinding::new("shift-alt-f5", PreviousChange, Some("FileEditor")),
+        KeyBinding::new("alt-f5", NextChange, Some("FileEditor")),
         KeyBinding::new(&format!("{m}-g"), FindNext, Some("FileEditor")),
         KeyBinding::new(&format!("{m}-shift-g"), FindPrevious, Some("FileEditor")),
         KeyBinding::new("escape", DismissSearch, Some("FileEditor")),
