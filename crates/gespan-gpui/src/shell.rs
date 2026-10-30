@@ -1577,6 +1577,7 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.sessions.insert(id, view);
+        self.orchestration_view_added(id, cx);
         // Restored after a restart, a held session has no view state of its own.
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
