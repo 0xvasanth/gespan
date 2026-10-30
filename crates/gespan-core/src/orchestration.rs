@@ -14,6 +14,7 @@ use std::{
 };
 
 pub mod run;
+pub mod worktree;
 
 /// orchestrationSummary.ts: what the sidebar shows of a lead's run, kept after
 /// it ends so the lead still lists its agents.
@@ -435,7 +436,7 @@ pub const UNAVAILABLE: &str =
 /// The worker's turn: its instructions in the envelope the lead's rules need.
 pub fn worker_prompt(prompt: &str, files: &[String]) -> String {
     format!(
-        "{prompt}\n\n<gespan_assignment>\nYou are a worker managed by a Gespan lead. Work only in the checkout selected for this run. The workspace, scope and Git rules in this assignment envelope override any contradictory wording in the task text above. Your assigned write scope is: {}. Read other files as needed, but do not edit outside your scope. If another file or shared operation is needed, report the blocker and stop so the lead can expand or create a new assignment. Do not spawn agents, create worktrees, switch branches, stage, commit, push, install dependencies or run broad formatters/generators. A task owning '.' may run explicitly requested project-wide validation or generation, but Git finalization remains the lead's responsibility. Other workers may be working concurrently; preserve their changes and do not reset the repository. Report focused checks, changed files, remaining issues and a concise final result.\n</gespan_assignment>",
+        "{prompt}\n\n<gespan_assignment>\nYou are a worker managed by a Gespan lead. Work only in the checkout selected for this run. The workspace, scope and Git rules in this assignment envelope override any contradictory wording in the task text above. Your assigned write scope is: {}. Read other files as needed, but do not edit outside your scope. If another file or shared operation is needed, report the blocker and stop so the lead can expand or create a new assignment. Do not spawn agents, create worktrees, switch branches, stage, commit, push, install dependencies or run broad formatters/generators. A task owning '.' may run explicitly requested project-wide validation or generation, but Git finalization remains the lead's responsibility. Other workers may be working concurrently in separate checkouts; do not rely on their work until the lead has accepted it. Report focused checks, changed files, remaining issues and a concise final result.\n</gespan_assignment>",
         files.join(", ")
     )
 }

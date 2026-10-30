@@ -1,7 +1,7 @@
 //! One orchestration run under its lead: orchestration.ts's state machine. The
 //! app applies the returned effects to live sessions, so everything here runs
 //! without one.
-use super::{overlaps, Choice, Plan, Summary, SummaryTask};
+use super::{overlaps, worktree::Workspace, Choice, Plan, Summary, SummaryTask};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -101,6 +101,13 @@ pub struct RunTask {
     /// The lead has this result, or there is none for it yet.
     #[serde(default = "yes")]
     pub delivered: bool,
+    /// This worker's own checkout, while it has one. A retry reuses it so
+    /// partial work is never orphaned.
+    #[serde(default)]
+    pub workspace: Option<Workspace>,
+    /// Its unchanged checkout was already looked at for removal.
+    #[serde(default)]
+    pub swept: bool,
 }
 fn yes() -> bool {
     true
@@ -330,6 +337,8 @@ impl Run {
                     error: None,
                     recovery_prompt: None,
                     delivered: true,
+                    workspace: None,
+                    swept: false,
                 })
                 .collect(),
             error: None,
@@ -355,6 +364,55 @@ impl Run {
         if let Some(task) = self.task_mut(task) {
             task.session = Some(session);
         }
+    }
+    pub fn set_workspace(&mut self, task: &str, workspace: Option<Workspace>) {
+        if let Some(task) = self.task_mut(task) {
+            task.workspace = workspace;
+        }
+    }
+    /// Checkouts of work that ended without a result worth keeping: each is
+    /// removed if it never changed, and otherwise stays for review.
+    pub fn to_sweep(&mut self) -> Vec<(String, Workspace)> {
+        let ended = !self.live();
+        self.tasks
+            .iter_mut()
+            .filter(|task| {
+                !task.swept
+                    && !task.accepted
+                    && (ended || matches!(task.status, Status::Failed | Status::Cancelled))
+            })
+            .filter_map(|task| {
+                task.swept = true;
+                Some((task.id.clone(), task.workspace.clone()?))
+            })
+            .collect()
+    }
+    /// Why this task can't be accepted, before any file moves.
+    pub fn check_review(&self, input: &Value) -> Result<RunTask, String> {
+        if self.status != RunStatus::Active {
+            return Err(self.inactive_reason());
+        }
+        let target = self.target(input)?;
+        if target.status != Status::Completed {
+            return Err(format!(
+                "Only a completed result can be accepted; {} is {}. {}",
+                target.title,
+                target.status.name(),
+                if matches!(
+                    target.status,
+                    Status::Failed | Status::Blocked | Status::Interrupted
+                ) {
+                    "Send it another turn with message, retry it with corrected scope when necessary, or drop it with cancel."
+                } else {
+                    "Wait for it to finish, or cancel it."
+                }
+            ));
+        }
+        Ok(target)
+    }
+    /// This request ID already has its answer.
+    pub fn answered(&self, request: &str) -> bool {
+        self.requests.contains_key(request)
     }
     /// orchestrationSummary.ts: what the sidebar shows, without any prompt.
     pub fn summary(&self) -> Summary {
@@ -713,6 +771,7 @@ impl Run {
             task.error = None;
             task.recovery_prompt = None;
             task.delivered = true;
+            task.swept = false;
         }
     }
     fn correctable(&self, target: &RunTask, verb: &str) -> Result<(), String> {
@@ -876,22 +935,7 @@ impl Run {
                 })
             }
             "review" => {
-                let target = self.target(input)?;
-                if target.status != Status::Completed {
-                    return Err(format!(
-                        "Only a completed result can be accepted; {} is {}. {}",
-                        target.title,
-                        target.status.name(),
-                        if matches!(
-                            target.status,
-                            Status::Failed | Status::Blocked | Status::Interrupted
-                        ) {
-                            "Send it another turn with message, retry it with corrected scope when necessary, or drop it with cancel."
-                        } else {
-                            "Wait for it to finish, or cancel it."
-                        }
-                    ));
-                }
+                let target = self.check_review(input)?;
                 if let Some(task) = self.task_mut(&target.id) {
                     task.accepted = true;
                 }
@@ -1004,6 +1048,8 @@ impl Run {
             error: None,
             recovery_prompt: None,
             delivered: true,
+            workspace: None,
+            swept: false,
         });
         Ok(json!({"taskId":id,"status":"queued"}))
     }

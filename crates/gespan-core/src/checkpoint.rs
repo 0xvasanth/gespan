@@ -844,7 +844,7 @@ fn resolve_edit_path(workspace: &Path, root: &Path, path: &str) -> Result<String
     resolve_turn_path(&relative)
 }
 
-fn git_command(root: &Path, args: &[&str]) -> Command {
+pub(crate) fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     #[cfg(windows)]
     {
@@ -871,7 +871,7 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     command
 }
 
-fn checked_output(command: &mut Command) -> Result<Vec<u8>, String> {
+pub(crate) fn checked_output(command: &mut Command) -> Result<Vec<u8>, String> {
     let output = command.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -891,7 +891,7 @@ fn checked_output(command: &mut Command) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     checked_output(&mut git_command(root, args))
 }
 
@@ -903,7 +903,7 @@ impl Drop for PrivateIndex {
     }
 }
 
-fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
+pub(crate) fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
     if run_git(root, &["config", "--bool", "core.sparseCheckout"])
         .ok()
         .is_some_and(|bytes| bytes.starts_with(b"true"))
