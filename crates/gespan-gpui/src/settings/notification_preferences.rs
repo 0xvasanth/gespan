@@ -63,6 +63,13 @@ pub(super) struct Project {
     detail: String,
     kind: String,
 }
+/// Where the OS keeps the app's notification switch.
+const SETTINGS_LABEL: &str = if cfg!(windows) {
+    "Open Windows Settings"
+} else {
+    "Open System Settings"
+};
+
 impl Preferences {
     pub(crate) fn known_notification_project_id(&self, cwd: &str) -> Option<String> {
         if !looks_like_project(cwd) {
@@ -340,11 +347,11 @@ impl SettingsView {
                     .child(
                         secondary_button(
                             "notifications-system-settings",
-                            "Open System Settings",
+                            SETTINGS_LABEL,
                             false,
                             false,
                         )
-                        .child("Open System Settings")
+                        .child(SETTINGS_LABEL)
                         .on_click(cx.listener(|this, _, _, cx| {
                             let _ = platform::open_settings();
                             this.probe_notification_permission(false, cx);

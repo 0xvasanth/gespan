@@ -523,6 +523,10 @@ fn main() {
     gpui::Application::with_platform(platform)
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
+            // Windows registers this AppUserModelID for toasts, which are
+            // unavailable without it; Linux names notifications with it.
+            #[cfg(not(target_os = "macos"))]
+            cx.set_app_identity("dev.gespan.native", "Gespan Native");
             flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
             #[cfg(debug_assertions)]
             dev_reload::install(cx);
