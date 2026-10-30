@@ -959,6 +959,7 @@ impl Protocol {
                                     events.push(Event::Tool(tool.clone()));
                                 }
                                 self.claude_task_result(block, &v, &mut events);
+                                self.claude_settle_inline_agent(block);
                             }
                         }
                     }

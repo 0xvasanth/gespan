@@ -248,3 +248,118 @@ fn items_without_ids(call: &ToolCall) -> Vec<(String, TaskStatus)> {
         .map(|task| (task.text, task.status))
         .collect()
 }
+
+/// An inline subagent: Claude sends `task_started`, then only the parent's
+/// tool result. No `task_notification` ever follows.
+const INLINE_SUBAGENT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/claude/inline-subagent.jsonl"
+);
+fn inline_subagent() -> Vec<Value> {
+    std::fs::read_to_string(INLINE_SUBAGENT)
+        .expect("fixture")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("fixture frame"))
+        .collect()
+}
+fn finished(events: &[Vec<Event>]) -> bool {
+    events.iter().flatten().any(|e| matches!(e, Event::Done))
+}
+/// One foreground call of `name` whose task `task_started` announces.
+fn started_call(p: &mut Protocol, name: &str, task_type: &str, backgrounded: bool) {
+    replay(
+        p,
+        &[
+            json!({"type":"assistant","message":{"id":"m","content":[{
+                "type":"tool_use","id":"call","name":name,"input":{"command":"sleep 1"}
+            }]}}),
+            json!({"type":"system","subtype":"task_started","task_id":"t","tool_use_id":"call",
+                "description":"Work","task_type":task_type,"is_backgrounded":backgrounded}),
+        ],
+    );
+}
+fn tool_result(p: &mut Protocol, content: &str) {
+    replay(
+        p,
+        &[json!({"type":"user","message":{"content":[{
+            "type":"tool_result","tool_use_id":"call","content":content
+        }]}})],
+    );
+}
+fn result_frame() -> Value {
+    json!({"type":"result","subtype":"success","result":"Done"})
+}
+
+#[test]
+fn an_inline_subagent_that_reported_back_lets_the_turn_finish() {
+    let mut p = claude(None, Vec::new());
+    let events = replay(&mut p, &inline_subagent());
+    assert!(finished(&events), "the turn must not wait for the subagent");
+    assert!(p.activities.claude_pending.is_empty());
+    assert!(!events
+        .iter()
+        .flatten()
+        .any(|e| matches!(e, Event::Status(s) if s == "Waiting for background tasks…")));
+    // Nothing is left to show as still running after the turn ended.
+    assert!(p.activities.claude_tasks.is_empty());
+    assert_eq!(p.tools["toolu_01Inline"].state, ToolState::Completed);
+}
+
+#[test]
+fn an_inline_subagent_that_failed_lets_the_turn_finish() {
+    let mut p = claude(None, Vec::new());
+    started_call(&mut p, "Task", "local_agent", false);
+    replay(
+        &mut p,
+        &[json!({"type":"user","message":{"content":[{
+            "type":"tool_result","tool_use_id":"call","is_error":true,"content":"Rate limited"
+        }]}})],
+    );
+    assert!(finished(&replay(&mut p, &[result_frame()])));
+    assert_eq!(p.tools["call"].state, ToolState::Failed);
+}
+
+#[test]
+fn a_backgrounded_subagent_still_holds_the_turn_past_its_launch_receipt() {
+    let mut p = claude(None, Vec::new());
+    started_call(&mut p, "Agent", "local_agent", true);
+    tool_result(&mut p, "Backgrounded agent a1");
+    let yielded = replay(&mut p, &[result_frame()]);
+    assert!(!finished(&yielded), "the agent is still running");
+    assert_eq!(p.activities.claude_tasks.len(), 1);
+
+    replay(
+        &mut p,
+        &[
+            json!({"type":"system","subtype":"task_notification","task_id":"t",
+            "status":"completed","summary":"Finished"}),
+        ],
+    );
+    assert!(p.activities.claude_pending.is_empty());
+    assert!(p.activities.claude_tasks.is_empty());
+}
+
+#[test]
+fn a_subagent_moved_to_the_background_mid_run_is_left_running() {
+    let mut p = claude(None, Vec::new());
+    started_call(&mut p, "Task", "local_agent", false);
+    replay(
+        &mut p,
+        &[
+            json!({"type":"system","subtype":"task_updated","task_id":"t",
+            "patch":{"is_backgrounded":true}}),
+        ],
+    );
+    tool_result(&mut p, "Backgrounded agent a1");
+    assert!(!finished(&replay(&mut p, &[result_frame()])));
+    assert_eq!(p.activities.claude_tasks.len(), 1);
+}
+
+#[test]
+fn a_shell_task_is_not_settled_by_its_tool_result() {
+    let mut p = claude(None, Vec::new());
+    started_call(&mut p, "Bash", "local_bash", false);
+    tool_result(&mut p, "Command running in background");
+    assert!(!finished(&replay(&mut p, &[result_frame()])));
+    assert!(p.activities.claude_pending.contains("t"));
+}
