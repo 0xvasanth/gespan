@@ -54,6 +54,10 @@ pub(crate) enum ChangesEvent {
         path: Option<String>,
         staged: bool,
     },
+    /// A commit took these files whole (absolute paths).
+    Committed {
+        paths: Vec<String>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -778,6 +782,18 @@ impl Changes {
         let message = self.message.read(cx).content.to_string();
         let amend = self.amend.is_some();
         let pr = create_pr.then(|| self.text_harness());
+        // Files with nothing left unstaged are committed whole.
+        let committed: Vec<String> = self
+            .index(cx)
+            .map(|index| {
+                index
+                    .files
+                    .into_iter()
+                    .filter(|f| f.staged && !f.unstaged)
+                    .map(|f| f.path)
+                    .collect()
+            })
+            .unwrap_or_default();
         self.run_git(
             if create_pr { "pr" } else { "commit" }.into(),
             move |path| {
@@ -791,6 +807,9 @@ impl Changes {
                 this.amend = None;
                 this.message
                     .update(cx, |m, cx| m.set_text(String::new(), cx));
+                if !committed.is_empty() {
+                    cx.emit(ChangesEvent::Committed { paths: committed });
+                }
                 if let Some(harness) = pr {
                     this.open_created_pr(harness, window, cx);
                 }
@@ -1076,7 +1095,7 @@ impl Changes {
         // `bg-content` buttons with `text-background-base`, 40% when unavailable.
         let solid: Hsla = content(1.);
         let face = if can_commit { solid } else { content(0.4) };
-        let ink: Hsla = rgb(BACKGROUND_BASE).into();
+        let ink = crate::theme::background_base();
         let generate_label = if generating {
             "Cancel commit message generation"
         } else {
@@ -1200,7 +1219,7 @@ impl Changes {
                             .justify_center()
                             .rounded_r_md()
                             .border_l_1()
-                            .border_color(rgb(BACKGROUND_BASE).opacity(0.1))
+                            .border_color(ink.opacity(0.1))
                             .bg(if menu_open { solid } else { face })
                             .when(can_open_menu && !menu_open, |d| {
                                 d.hover(move |s| {

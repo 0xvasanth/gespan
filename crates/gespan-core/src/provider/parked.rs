@@ -50,6 +50,22 @@ pub(super) struct Wire {
     _registration: process::Registration,
     _account: crate::accounts::Tracked,
 }
+/// Why a provider did not start. A missing working folder fails the same
+/// way as a missing binary, so name the folder rather than blame the CLI.
+fn spawn_error(
+    label: &str,
+    binary: &std::path::Path,
+    cwd: Option<&std::path::Path>,
+    error: &std::io::Error,
+) -> String {
+    match cwd {
+        Some(dir) if !dir.is_dir() => format!(
+            "This session's folder no longer exists: {}. Start a new session in an existing folder.",
+            dir.display()
+        ),
+        _ => format!("Cannot start {label} at {}: {error}", binary.display()),
+    }
+}
 impl Wire {
     /// `count_start`: a conversation's start, counted as `agent.start.<id>`;
     /// model-catalog probes are not.
@@ -59,14 +75,15 @@ impl Wire {
         count_start: bool,
     ) -> Result<Self, String> {
         let counter = count_start.then(|| format!("agent.start.{}", request.kind.id()));
-        let mut child = command.spawn().map_err(|e| {
+        let mut child = process::spawn(command).map_err(|e| {
             if let Some(counter) = &counter {
                 metrics::failure(counter, metrics::ErrorKind::of_spawn(&e));
             }
-            format!(
-                "Cannot start {} at {}: {e}",
+            spawn_error(
                 request.kind.label(),
-                request.binary.display()
+                &request.binary,
+                command.get_current_dir(),
+                &e,
             )
         })?;
         if let Some(counter) = &counter {
@@ -1094,5 +1111,44 @@ for line in sys.stdin:
         assert!(!parked(deleted));
         unpin_idle_agents();
         idle_pool().lock().unwrap().clear();
+    }
+}
+// Every platform, unlike the Unix-only tests above.
+#[cfg(test)]
+mod spawn_error_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_session_folder_is_named_instead_of_the_cli() {
+        let gone = std::env::temp_dir().join(format!("gespan-gone-{}", std::process::id()));
+        let binary = std::path::Path::new("/opt/kiro/kiro-cli");
+        let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let message = spawn_error("Kiro CLI", binary, Some(&gone), &error);
+        assert!(message.contains("folder no longer exists"), "{message}");
+        assert!(message.contains(&gone.display().to_string()));
+        assert!(!message.contains("kiro-cli"));
+        // With the folder there, the binary is what failed.
+        let here = std::env::temp_dir();
+        let message = spawn_error("Kiro CLI", binary, Some(&here), &error);
+        assert!(
+            message.starts_with("Cannot start Kiro CLI at "),
+            "{message}"
+        );
+        assert!(spawn_error("Kiro CLI", binary, None, &error).starts_with("Cannot start"));
+    }
+
+    #[test]
+    fn spawning_in_a_deleted_folder_reports_the_folder() {
+        let gone = std::env::temp_dir().join(format!("gespan-gone-spawn-{}", std::process::id()));
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.current_dir(&gone);
+        let error = command.spawn().unwrap_err();
+        let message = spawn_error(
+            "Kiro CLI",
+            &std::env::current_exe().unwrap(),
+            command.get_current_dir(),
+            &error,
+        );
+        assert!(message.contains("folder no longer exists"), "{message}");
     }
 }

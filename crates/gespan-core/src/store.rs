@@ -1,6 +1,7 @@
 //! Session storage. Desktop launches use Gespan's existing schema directly.
 mod app_access;
 mod gespan_import;
+mod in_flight;
 mod managed_sessions;
 mod notes;
 mod pilots;
@@ -1153,6 +1154,30 @@ impl Store {
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(changed)
+    }
+    /// Moves the sessions saved in `from` to `to`, as the desktop app's
+    /// `session_rebase_project` does: only the folder changes.
+    pub fn rebase_project(&self, from: &str, to: &str) -> Result<(), String> {
+        if from.trim().is_empty() || to.trim().is_empty() {
+            return Err("project paths are required".into());
+        }
+        let table = if self.shared.is_some() {
+            self.shared_writable()?;
+            "sessions"
+        } else {
+            "native_sessions"
+        };
+        self.conn
+            .execute(
+                &format!("UPDATE {table} SET cwd=?2 WHERE cwd=?1"),
+                params![from, to],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
     }
     pub fn reset_provider_id(&self, id: i64) -> Result<(), String> {
         if self.shared.is_some() {

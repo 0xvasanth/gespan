@@ -8,7 +8,7 @@ use crate::{
     file_icons::file_type_icon,
     git_status::{GitChanged, ProjectGit},
     pane_motion::PaneReveal,
-    popover::{Anchor, Menu, MenuAction, MenuEvent, menu_popover},
+    popover::{Anchor, Menu, MenuAction, MenuEvent, MenuItem, menu_popover},
     right_panel::{RED_400, selection, spinner, stroke},
     theme::*,
 };
@@ -1453,26 +1453,59 @@ impl ReviewPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let items = vec![
-            MenuAction::new("close", "Close").into(),
-            MenuAction::new("close-others", "Close Others")
-                .disabled(self.sources.len() < 2)
-                .into(),
-        ];
+        let Some(tab) = self.sources.get(ix).map(|s| s.tab.clone()) else {
+            return;
+        };
+        let items = tab_menu_items(&tab, self.sources.len() > 1);
         let menu = cx.new(|cx| Menu::new("File tab actions", items, window, cx));
         let events = cx.subscribe(&menu, move |this, _, event: &MenuEvent, cx| {
             this.menu = None;
             if let MenuEvent::Picked(id, _) = event {
-                match id.as_ref() {
-                    "close" => this.close_tab(ix, cx),
-                    "close-others" => this.close_others(ix, cx),
-                    _ => {}
-                }
+                this.run_tab_action(ix, id, cx);
             }
             cx.notify();
         });
         self.menu = Some((ix, at, menu, events));
         cx.notify();
+    }
+
+    fn run_tab_action(&mut self, ix: usize, id: &str, cx: &mut Context<Self>) {
+        match id {
+            "close" => return self.close_tab(ix, cx),
+            "close-others" => return self.close_others(ix, cx),
+            _ => {}
+        }
+        let Some((cwd, path)) = self.sources.get(ix).and_then(|s| tab_file(&s.tab)) else {
+            return;
+        };
+        let copy = |text: String, cx: &mut Context<Self>| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
+        };
+        match id {
+            "copy-path" => copy(path, cx),
+            "copy-relative-path" => copy(gespan_core::files::display_path(&path, Some(&cwd)), cx),
+            "copy-name" => copy(
+                path.rsplit(['/', '\\']).next().unwrap_or(&path).to_owned(),
+                cx,
+            ),
+            "open-default" | "reveal" => {
+                let reveal = id == "reveal";
+                cx.background_executor()
+                    .spawn(async move {
+                        let path = std::path::Path::new(&path);
+                        let result = if reveal {
+                            gespan_core::files::reveal_path(path)
+                        } else {
+                            gespan_core::files::open_path_with_default_app(path)
+                        };
+                        if let Err(error) = result {
+                            tracing::warn!(%error, reveal, "file tab action failed");
+                        }
+                    })
+                    .detach();
+            }
+            _ => {}
+        }
     }
 
     /// SurfaceTabs: `h-9` strip of `w-56` tabs with a close button each.
@@ -1896,6 +1929,48 @@ impl Render for ReviewPane {
 
 fn centered() -> gpui::Div {
     div().size_full().flex().items_center().justify_center()
+}
+
+/// A file tab's project and the file's full path.
+fn tab_file(tab: &ReviewTab) -> Option<(String, String)> {
+    let ReviewTab::File { cwd, path } = tab else {
+        return None;
+    };
+    // `has_root` too: a `/…` path is full on Windows without a drive.
+    let full = if std::path::Path::new(path).is_absolute() || std::path::Path::new(path).has_root()
+    {
+        path.clone()
+    } else {
+        std::path::Path::new(cwd)
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    Some((cwd.clone(), full))
+}
+
+/// SurfaceTabs' menu: a file's tab can also open, reveal and copy its file.
+fn tab_menu_items(tab: &ReviewTab, can_close_others: bool) -> Vec<MenuItem> {
+    let close = [
+        MenuAction::new("close", "Close").into(),
+        MenuAction::new("close-others", "Close Others")
+            .disabled(!can_close_others)
+            .into(),
+    ];
+    if tab_file(tab).is_none() {
+        return close.into();
+    }
+    let mut items: Vec<MenuItem> = vec![
+        MenuAction::new("open-default", "Open in Default App").into(),
+        MenuAction::new("reveal", crate::explorer::REVEAL_LABEL).into(),
+        MenuItem::Separator,
+        MenuAction::new("copy-path", "Copy Path").into(),
+        MenuAction::new("copy-relative-path", "Copy Relative Path").into(),
+        MenuAction::new("copy-name", "Copy File Name").into(),
+        MenuItem::Separator,
+    ];
+    items.extend(close);
+    items
 }
 
 #[cfg(test)]
@@ -2338,5 +2413,72 @@ mod tests {
             path: Some("a".into()),
             staged: None
         }));
+    }
+
+    #[test]
+    fn only_a_file_tab_offers_open_reveal_and_copy() {
+        let labels = |items: Vec<MenuItem>| -> Vec<String> {
+            items
+                .iter()
+                .map(|item| match item {
+                    MenuItem::Action(action) => action.label.to_string(),
+                    _ => "-".into(),
+                })
+                .collect()
+        };
+        let file = ReviewTab::File {
+            cwd: "/work/app".into(),
+            path: "/work/app/src/main.rs".into(),
+        };
+        assert_eq!(
+            labels(tab_menu_items(&file, true)),
+            [
+                "Open in Default App",
+                crate::explorer::REVEAL_LABEL,
+                "-",
+                "Copy Path",
+                "Copy Relative Path",
+                "Copy File Name",
+                "-",
+                "Close",
+                "Close Others",
+            ]
+        );
+        let changes = ReviewTab::Changes {
+            cwd: "/work/app".into(),
+            path: None,
+            staged: None,
+        };
+        assert_eq!(
+            labels(tab_menu_items(&changes, true)),
+            ["Close", "Close Others"]
+        );
+    }
+
+    #[gpui::test]
+    fn a_file_tab_copies_its_path_relative_path_and_name(cx: &mut gpui::TestAppContext) {
+        let git = cx.new(|cx| ProjectGit::new("/work/app".into(), cx));
+        let pane = cx.new(|cx| {
+            let mut pane = ReviewPane::new(git, Default::default(), cx);
+            pane.open(
+                ReviewTab::File {
+                    cwd: "/work/app".into(),
+                    path: "/work/app/src/main.rs".into(),
+                },
+                cx,
+            );
+            pane
+        });
+        for (id, copied) in [
+            ("copy-path", "/work/app/src/main.rs"),
+            ("copy-relative-path", "src/main.rs"),
+            ("copy-name", "main.rs"),
+        ] {
+            pane.update(cx, |pane, cx| pane.run_tab_action(0, id, cx));
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+                Some(copied)
+            );
+        }
     }
 }

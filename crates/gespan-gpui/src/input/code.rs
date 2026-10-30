@@ -22,10 +22,10 @@ struct MarkerHit {
 pub(super) struct Code {
     hovered_change: Option<usize>,
     can_stage: bool,
-    suppress_completion: bool,
+    pub(super) suppress_completion: bool,
     diff: bool,
     deleted_rows: Vec<(f32, f32, String, usize, Vec<crate::editor_analysis::Token>)>,
-    path: String,
+    pub(super) path: String,
     completions: Vec<crate::editor_analysis::Completion>,
     completion_index: usize,
     completion_task: Option<Task<()>>,
@@ -36,12 +36,15 @@ pub(super) struct Code {
     visible: Vec<(usize, WrappedLine)>,
     reveal: bool,
     max_width: Pixels,
-    undo: Vec<(SharedString, Range<usize>)>,
+    pub(super) undo: Vec<(SharedString, Range<usize>)>,
     redo: Vec<(SharedString, Range<usize>)>,
+    /// Closing brackets and quotes the editor inserted itself; typing one
+    /// of them again steps over it.
+    pub(super) auto_closed: Vec<usize>,
     wrap: bool,
     layout_width: Option<Pixels>,
     tops: Vec<f32>,
-    analysis: Arc<Analysis>,
+    pub(super) analysis: Arc<Analysis>,
     /// The buffer as of the last change, which `analysis` offsets follow.
     text: SharedString,
     rail: Option<Bounds<Pixels>>,
@@ -72,6 +75,7 @@ impl Code {
             max_width: px(0.),
             undo: Vec::new(),
             redo: Vec::new(),
+            auto_closed: Vec::new(),
             wrap: true,
             layout_width: None,
             tops: vec![TOP_PADDING, TOP_PADDING + 20.],
@@ -674,6 +678,14 @@ impl Input {
     }
     pub(super) fn map_code_folds(&mut self, range: &Range<usize>, inserted: usize) {
         if let Some(code) = &mut self.code {
+            code.auto_closed.retain_mut(|at| {
+                if range.end <= *at {
+                    *at = *at + inserted - range.len();
+                    true
+                } else {
+                    range.start > *at
+                }
+            });
             code.folded.retain_mut(|f| {
                 if range.end <= f.from {
                     f.from = f.from + inserted - range.len();
@@ -687,6 +699,7 @@ impl Input {
     }
     pub(super) fn clear_folds(&mut self) {
         if let Some(code) = &mut self.code {
+            code.auto_closed.clear();
             code.folded.clear();
             code.layout_width = None;
         }
@@ -1782,6 +1795,11 @@ impl Element for CodeElement {
         let cursor = i.cursor();
         let selected = i.selection.clone();
         let focused = i.focus.is_focused(w);
+        let brackets = if focused {
+            i.bracket_highlights()
+        } else {
+            Vec::new()
+        };
         let line_height = i.line_height;
         let code_affinity = code.affinity.get();
         let starts: Vec<_> = state
@@ -1994,6 +2012,29 @@ impl Element for CodeElement {
                                         size((b.x - a.x).max(px(2.)), lh),
                                     ),
                                     rgb(0xe2c08d).opacity(0.46),
+                                ));
+                            }
+                        }
+                    }
+                    for bracket in &brackets {
+                        let a = code
+                            .display_offset(*row, bracket.range.start)
+                            .min(line.len());
+                        let b = code.display_offset(*row, bracket.range.end).min(line.len());
+                        if a < b {
+                            let a = line_position(line, a, lh, false);
+                            let b = line.position_for_index(b, lh).unwrap_or_default();
+                            if a.y == b.y {
+                                w.paint_quad(fill(
+                                    Bounds::new(
+                                        point(x + a.x, y + a.y),
+                                        size((b.x - a.x).max(px(2.)), lh),
+                                    ),
+                                    if bracket.matched {
+                                        crate::theme::content(0.14)
+                                    } else {
+                                        gpui::Hsla::from(rgb(0xf87171)).opacity(0.32)
+                                    },
                                 ));
                             }
                         }
@@ -2339,7 +2380,7 @@ mod tests {
         };
         cx.simulate_keystrokes(window.into(), "tab enter");
         window
-            .update(cx, |i, _, _| assert!(i.content.starts_with("  \n  line 0")))
+            .update(cx, |i, _, _| assert!(i.content.starts_with("\n  line 0")))
             .unwrap();
         cx.simulate_keystrokes(window.into(), &format!("{m}-z {m}-z"));
         window

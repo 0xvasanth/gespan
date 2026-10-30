@@ -24,6 +24,8 @@ pub use commands::{
 };
 mod attachments;
 mod compaction;
+mod cursor_live;
+mod cursor_store;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;
@@ -124,6 +126,12 @@ pub enum Event {
         text: String,
         custom_type: String,
         severity: Option<String>,
+    },
+    /// A finished image as base64 PNG data, which the runtime saves.
+    GeneratedImage {
+        id: String,
+        data: String,
+        alt: Option<String>,
     },
     ConfigChanged {
         model: Option<String>,
@@ -313,6 +321,8 @@ struct Protocol {
     visible_question: Option<String>,
     async_question_items: std::collections::HashSet<String>,
     async_answers: HashMap<String, (Value, String, Value, crate::agent::Question)>,
+    /// Codex image items already reported; their completion can repeat.
+    generated_images: std::collections::HashSet<String>,
 }
 impl Protocol {
     fn new(request: Request) -> Self {
@@ -353,6 +363,7 @@ impl Protocol {
             visible_question: None,
             async_question_items: Default::default(),
             async_answers: HashMap::new(),
+            generated_images: Default::default(),
         }
     }
     fn text(&mut self, key: &str, text: &str, snapshot: bool, events: &mut Vec<Event>) {
@@ -689,6 +700,19 @@ impl Protocol {
                         );
                     }
                     "item/started" if p["item"]["type"] == "agentMessage" => {}
+                    "item/started" if p["item"]["type"] == "imageGeneration" => {}
+                    "item/completed" if p["item"]["type"] == "imageGeneration" => {
+                        let item = &p["item"];
+                        let id = item["id"].as_str().unwrap_or("image").to_owned();
+                        let data = item["result"].as_str().unwrap_or("").trim();
+                        if !data.is_empty() && self.generated_images.insert(id.clone()) {
+                            events.push(Event::GeneratedImage {
+                                id,
+                                data: data.to_owned(),
+                                alt: item["revisedPrompt"].as_str().map(str::to_owned),
+                            });
+                        }
+                    }
                     "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
                         events.push(Event::Reasoning(p["delta"].as_str().unwrap_or("").into()));
                         events.push(Event::Status("Thinking…".into()));
@@ -934,6 +958,8 @@ impl Protocol {
                                     };
                                     events.push(Event::Tool(tool.clone()));
                                 }
+                                self.claude_task_result(block, &v, &mut events);
+                                self.claude_settle_inline_agent(block);
                             }
                         }
                     }
@@ -959,11 +985,16 @@ impl Protocol {
                         if metrics.reported() {
                             events.push(Event::Metrics(metrics));
                         }
-                        let last = v["usage"]["iterations"]
-                            .as_array()
-                            .and_then(|iterations| iterations.last())
-                            .unwrap_or(&v["usage"]);
-                        let used = crate::context::claude_used(last);
+                        // The last iteration is what sits in the window. Routed
+                        // providers send `iterations: []` while `usage` sums the
+                        // whole turn, so report no level then and keep the last
+                        // assistant reading.
+                        let used = match usage["iterations"].as_array() {
+                            Some(iterations) => {
+                                iterations.last().and_then(crate::context::claude_used)
+                            }
+                            None => crate::context::claude_used(usage),
+                        };
                         let window = v["modelUsage"]
                             .as_object()
                             .into_iter()
@@ -1313,6 +1344,19 @@ impl Protocol {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            if let Some(first) = changes.first() {
+                let diff = first["diff"].as_str().unwrap_or("");
+                let added = first["kind"]["type"] == "add";
+                let built =
+                    crate::tool::edit_preview::EditPreview::from_patch(diff).or_else(|| {
+                        added
+                            .then(|| crate::tool::edit_preview::EditPreview::from_texts(None, diff))
+                    });
+                if let Some(built) = built {
+                    tool.display.get_or_insert_with(|| json!({}))
+                        [crate::tool::edit_preview::DISPLAY_KEY] = json!(built);
+                }
+            }
         }
         if let Some(output) = item["aggregatedOutput"]
             .as_str()
@@ -1694,6 +1738,7 @@ fn launch(
     };
     // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
     protocol.seed_agent_runs();
+    protocol.seed_claude_tasks();
     let rx = &wire.rx;
     let tail = &wire.tail;
     let auth = &wire.auth;
@@ -2224,6 +2269,46 @@ mod tests {
         assert_eq!(input["paths"], json!(["/repo/a.rs", "/repo/b.rs"]));
     }
     #[test]
+    fn a_codex_file_change_previews_its_first_patch_or_new_file() {
+        let mut protocol = protocol(Kind::Codex);
+        let mut events = Vec::new();
+        protocol.codex_tool(&json!({
+            "type":"fileChange", "id":"edit", "status":"inProgress",
+            "changes":[
+                {"path":"/repo/a.rs", "kind":{"type":"update"}, "diff":"@@ -3,2 +3,2 @@\n fn a() {}\n-let x = 1;\n+let x = 2;\n"},
+                {"path":"/repo/b.rs", "kind":{"type":"add"}, "diff":"new"}
+            ]
+        }), false, &mut events);
+        let preview = protocol.tools["edit"].edit_preview().unwrap();
+        assert_eq!((preview.additions, preview.deletions), (1, 1));
+        assert_eq!(preview.lines[0].number, Some(3));
+        assert_eq!(
+            preview.lines[1].kind,
+            crate::tool::edit_preview::LineKind::Del
+        );
+        assert_eq!(preview.lines[2].text, "let x = 2;");
+        protocol.codex_tool(
+            &json!({
+                "type":"fileChange", "id":"add", "status":"completed",
+                "changes":[{"path":"/repo/new.rs", "kind":{"type":"add"}, "diff":"fn main() {}\n"}]
+            }),
+            true,
+            &mut events,
+        );
+        let added = protocol.tools["add"].edit_preview().unwrap();
+        assert_eq!((added.additions, added.deletions), (1, 0));
+        assert_eq!(added.lines[0].text, "fn main() {}");
+        protocol.codex_tool(
+            &json!({
+                "type":"fileChange", "id":"odd", "status":"completed",
+                "changes":[{"path":"/repo/c.rs", "kind":{"type":"update"}, "diff":"not a patch"}]
+            }),
+            true,
+            &mut events,
+        );
+        assert_eq!(protocol.tools["odd"].edit_preview(), None);
+    }
+    #[test]
     fn operator_thread_access_keeps_the_codex_app_bridge_reachable_on_later_turns() {
         for plan in [false, true] {
             let mut p = protocol(Kind::Codex);
@@ -2272,6 +2357,69 @@ mod tests {
             used: Some(2050),
             window: Some(200000)
         }));
+    }
+    #[test]
+    fn claude_routed_turn_with_empty_iterations_keeps_the_assistant_level() {
+        let mut claude = protocol(Kind::Claude);
+        let mut context = crate::context::Usage::default();
+        let mut feed = |frame: Value, context: &mut crate::context::Usage| {
+            for event in claude.frame(frame, &mut Vec::new()).unwrap() {
+                if let Event::Context { used, window } = event {
+                    context.merge(used, window);
+                }
+            }
+        };
+        feed(
+            json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":40000,"output_tokens":2000}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 42000);
+        // A routed provider: no iterations, and a usage summed over the turn
+        // that is bigger than the window.
+        feed(
+            json!({"type":"result","usage":{"input_tokens":6058017,"output_tokens":24770,"iterations":[]},"modelUsage":{"deepseek-v4.1-flash":{"contextWindow":1048576}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 42000, "the summed turn is not the level");
+        assert_eq!(context.window, Some(1048576));
+        assert!(context.ratio().unwrap() < 0.05, "the meter is not full");
+        // Without the key at all, older CLIs' usage is still the level.
+        feed(
+            json!({"type":"result","usage":{"input_tokens":50000,"output_tokens":100},"modelUsage":{"m":{"contextWindow":200000}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 50100);
+        assert_eq!(context.window, Some(200000));
+    }
+    #[test]
+    fn a_codex_image_is_reported_once_with_its_prompt() {
+        let mut p = protocol(Kind::Codex);
+        let mut out = Vec::new();
+        let item = |result: &str| json!({"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"img-1","status":"completed","revisedPrompt":"A red fox","result":result}}});
+        assert_eq!(
+            p.frame(json!({"method":"item/started","params":{"item":{"type":"imageGeneration","id":"img-1"}}}), &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "nothing to show until the image is done"
+        );
+        assert_eq!(
+            p.frame(item(" iVBORw0KGgo= "), &mut out).unwrap(),
+            vec![Event::GeneratedImage {
+                id: "img-1".into(),
+                data: "iVBORw0KGgo=".into(),
+                alt: Some("A red fox".into()),
+            }]
+        );
+        assert_eq!(
+            p.frame(item("iVBORw0KGgo="), &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "a repeated completion adds nothing"
+        );
+        let empty = json!({"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"img-2","result":"  "}}});
+        assert_eq!(
+            p.frame(empty, &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "a failed image has no row"
+        );
     }
     #[test]
     fn codex_handshake_stream_snapshot_and_resume() {

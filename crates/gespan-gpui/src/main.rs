@@ -43,6 +43,8 @@ mod image_memory;
 mod inbox;
 mod input;
 mod installed_providers;
+#[cfg(any(windows, test))]
+mod instance;
 #[cfg(test)]
 mod log_capture;
 mod markdown;
@@ -53,6 +55,7 @@ mod memory_log;
 mod metal_tests;
 mod mobile;
 mod modal;
+mod model_welcome;
 mod notes;
 mod notifications;
 mod pane_layout;
@@ -94,6 +97,7 @@ mod tickets;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;
+mod tray;
 mod usage_footer;
 mod visuals;
 mod window_state;
@@ -114,10 +118,17 @@ use std::{
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 actions!(application, [Quit]);
+/// Set once a quit or restart starts; the running-chats list stops updating.
+pub(crate) struct Quitting;
+impl gpui::Global for Quitting {}
+pub(crate) fn quitting(cx: &App) -> bool {
+    cx.has_global::<Quitting>()
+}
 fn quit(cx: &mut App) {
     if notifications::updater::defer_quit(cx) {
         return;
     }
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });
@@ -130,6 +141,7 @@ fn quit(cx: &mut App) {
 
 /// Quit, then relaunch the same app once this process has exited.
 fn restart(cx: &mut App) {
+    cx.set_global(Quitting);
     let shutdown = cx
         .background_executor()
         .spawn(async { gespan_core::process::shutdown_all() });
@@ -224,6 +236,10 @@ fn fatal(echo: bool, code: i32, message: &str) -> ! {
     exit(code)
 }
 fn main() {
+    // Before anything loads a DLL: only the app's folder and System32. A
+    // failure is logged once diagnostics start; release builds have no console.
+    #[cfg(windows)]
+    let dll_search = gespan_core::process::harden_dll_search();
     // The dictation helper this binary runs as a child: no app, no GPUI.
     if std::env::args()
         .nth(1)
@@ -335,6 +351,10 @@ fn main() {
         .inspect_err(|error| eprintln!("{error}"))
         .ok();
     let echo = echo_fatal(diagnostics.is_some(), channel);
+    #[cfg(windows)]
+    if let Err(error) = dll_search {
+        tracing::warn!("Cannot restrict DLL search paths: {error}");
+    }
     let cwd = cwd
         .canonicalize()
         .unwrap_or(cwd)
@@ -358,6 +378,26 @@ fn main() {
             "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR.",
         );
     }
+    // Windows: one instance per database. Close to tray leaves it running with
+    // no taskbar entry, so a second launch shows that window and exits.
+    #[cfg(windows)]
+    let _instance = if check_data {
+        None
+    } else {
+        match instance::acquire(&database) {
+            Ok(instance::Acquired::Lock(lock)) => Some(lock),
+            Ok(instance::Acquired::Running(pid)) => {
+                if !pid.is_some_and(instance::activate) {
+                    tracing::info!("Gespan Native is already running with this data");
+                }
+                exit(0);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "cannot take the single-instance lock");
+                None
+            }
+        }
+    };
     let mut db = if check_data {
         Store::read_gespan(&database)
     } else {
@@ -386,16 +426,26 @@ fn main() {
         &gespan_core::diagnostics::metrics::database_path(&database),
         notifications::updater::version(),
     );
+    // Agents a crashed or force-quit Gespan left running.
+    gespan_core::process::orphans::reap();
     gespan_core::checkpoint::init(
         database
             .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("checkpoints"),
     );
+    gespan_core::inbox::init_media_video_dir(
+        database
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("inbox-media"),
+    );
     let saved = db.ui_state().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
     });
+    // A project folder renamed since the last run takes its sessions along.
+    let saved = workspace::follow_moved_projects(&db, saved);
     let existing_project = if use_gespan {
         saved
             .as_deref()
@@ -479,108 +529,106 @@ fn main() {
     let db = Arc::new(Mutex::new(db));
     let platform = gpui_platform::current_platform(false);
     let title_raster = particle_text::GlyphRaster(platform.text_system());
-    gpui::Application::with_platform(platform)
-        .with_assets(assets::Assets)
-        .run(move |cx: &mut App| {
-            flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
-            #[cfg(debug_assertions)]
-            dev_reload::install(cx);
-            cx.set_global(title_raster);
-            image_memory::init(cx);
-            #[cfg(target_os = "macos")]
-            memory_log::start(cx);
-            #[cfg(target_os = "macos")]
-            hang_watchdog::start(database.with_file_name("gpui-hangs"), cx);
-            input::bind(cx);
-            image_lightbox::bind(cx);
-            composer_completion::bind(cx);
-            file_editor::bind(cx);
-            popover::bind(cx);
-            board::bind(cx);
-            cx.set_prompt_builder(modal::prompt_builder);
-            explorer::bind(cx);
-            history::bind(cx);
-            diff_view::bind(cx);
-            fonts::init(cx);
-            terminal::bind(cx);
-            let modifier = if cfg!(target_os = "macos") {
-                "cmd"
-            } else {
-                "ctrl"
-            };
-            cx.bind_keys([KeyBinding::new(&format!("{modifier}-q"), Quit, None)]);
-            shell::bind_keys(cx);
-            app_menu::bind(cx);
-            usage_footer::bind(cx);
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    quit(cx)
+    let app = gpui::Application::with_platform(platform).with_assets(assets::Assets);
+    app.on_reopen(shell::reopen);
+    app.run(move |cx: &mut App| {
+        // Windows registers this AppUserModelID for toasts, which are
+        // unavailable without it; Linux names notifications with it.
+        #[cfg(not(target_os = "macos"))]
+        cx.set_app_identity("dev.gespan.native", "Gespan Native");
+        flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
+        #[cfg(debug_assertions)]
+        dev_reload::install(cx);
+        cx.set_global(title_raster);
+        image_memory::init(cx);
+        #[cfg(target_os = "macos")]
+        memory_log::start(cx);
+        #[cfg(target_os = "macos")]
+        hang_watchdog::start(database.with_file_name("gpui-hangs"), cx);
+        input::bind(cx);
+        image_lightbox::bind(cx);
+        composer_completion::bind(cx);
+        file_editor::bind(cx);
+        conversation::find::bind(cx);
+        popover::bind(cx);
+        board::bind(cx);
+        cx.set_prompt_builder(modal::prompt_builder);
+        explorer::bind(cx);
+        history::bind(cx);
+        diff_view::bind(cx);
+        fonts::init(cx);
+        terminal::bind(cx);
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        cx.bind_keys([KeyBinding::new(&format!("{modifier}-q"), Quit, None)]);
+        shell::bind_keys(cx);
+        app_menu::bind(cx);
+        usage_footer::bind(cx);
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                quit(cx)
+            }
+        })
+        .detach();
+        let bounds = workspace.window.bounds(cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(bounds),
+                window_min_size: Some(size(px(820.), px(520.))),
+                window_decorations: workspace
+                    .preferences
+                    .wayland_decorations(cx.compositor_name()),
+                // Linux desktops match this to the .desktop file's
+                // StartupWMClass to show the app icon.
+                app_id: Some("dev.gespan.native".into()),
+                window_background: theme::window_backdrop(true),
+                // GPUI owns the custom chrome. AppKit must not reinterpret
+                // its controls as native titlebar double-click/drag gestures.
+                app_owns_titlebar_drag: cfg!(target_os = "macos"),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Gespan Native".into()),
+                    // Windows also drops its caption: the app's drag areas
+                    // hit-test as the caption and the frame still resizes.
+                    appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
+                    traffic_light_position: if cfg!(target_os = "macos") {
+                        // Original macOS chrome: 12 pt left inset, with
+                        // 14 pt native buttons centered in the 40 pt bar.
+                        Some(point(px(12.), px((theme::TITLE_BAR_HEIGHT - 14.) / 2.)))
+                    } else {
+                        None
+                    },
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let shell = cx.new(|cx| {
+                    shell::Shell::new_with_metadata(db, sessions, cwd, saved, sidebar_metadata, cx)
+                });
+                shell.update(cx, |shell, cx| {
+                    shell.focus_active(window, cx);
+                    shell.check_crash_notice(cx);
+                });
+                #[cfg(target_os = "macos")]
+                {
+                    traffic_lights::pin(window, theme::TITLE_BAR_HEIGHT);
+                    // AppKit rebuilds the buttons on some titlebar changes.
+                    shell.update(cx, |_, cx| {
+                        cx.observe_window_activation(window, |_, window, _| {
+                            traffic_lights::pin(window, theme::TITLE_BAR_HEIGHT)
+                        })
+                        .detach();
+                    });
                 }
-            })
-            .detach();
-            let bounds = workspace.window.bounds(cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(bounds),
-                    window_min_size: Some(size(px(820.), px(520.))),
-                    window_decorations: workspace
-                        .preferences
-                        .wayland_decorations(cx.compositor_name()),
-                    // Linux desktops match this to the .desktop file's
-                    // StartupWMClass to show the app icon.
-                    app_id: Some("dev.gespan.native".into()),
-                    window_background: theme::window_backdrop(true),
-                    // GPUI owns the custom chrome. AppKit must not reinterpret
-                    // its controls as native titlebar double-click/drag gestures.
-                    app_owns_titlebar_drag: cfg!(target_os = "macos"),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Gespan Native".into()),
-                        // Windows also drops its caption: the app's drag areas
-                        // hit-test as the caption and the frame still resizes.
-                        appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
-                        traffic_light_position: if cfg!(target_os = "macos") {
-                            // Original macOS chrome: 12 pt left inset, with
-                            // 14 pt native buttons centered in the 40 pt bar.
-                            Some(point(px(12.), px((theme::TITLE_BAR_HEIGHT - 14.) / 2.)))
-                        } else {
-                            None
-                        },
-                    }),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let shell = cx.new(|cx| {
-                        shell::Shell::new_with_metadata(
-                            db,
-                            sessions,
-                            cwd,
-                            saved,
-                            sidebar_metadata,
-                            cx,
-                        )
-                    });
-                    shell.update(cx, |shell, cx| {
-                        shell.focus_active(window, cx);
-                        shell.check_crash_notice(cx);
-                    });
-                    #[cfg(target_os = "macos")]
-                    {
-                        traffic_lights::pin(window, theme::TITLE_BAR_HEIGHT);
-                        // AppKit rebuilds the buttons on some titlebar changes.
-                        shell.update(cx, |_, cx| {
-                            cx.observe_window_activation(window, |_, window, _| {
-                                traffic_lights::pin(window, theme::TITLE_BAR_HEIGHT)
-                            })
-                            .detach();
-                        });
-                    }
-                    window.activate_window();
-                    shell
-                },
-            )
-            .expect("open GPUI window");
-            cx.activate(true);
-        });
+                window.activate_window();
+                shell
+            },
+        )
+        .expect("open GPUI window");
+        cx.activate(true);
+    });
 }
 
 #[cfg(test)]

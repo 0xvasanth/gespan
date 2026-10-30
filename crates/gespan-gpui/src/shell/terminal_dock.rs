@@ -850,22 +850,53 @@ impl Shell {
                                 ),
                             })
                             .collect::<Vec<_>>()
+                    })
+                    // In the panel, New follows the tabs as the title bar's does.
+                    .when(in_panel, |d| {
+                        d.child(
+                            div()
+                                .id("new-terminal")
+                                .debug_selector(|| "new-terminal".into())
+                                .group("new-terminal")
+                                .role(Role::Button)
+                                .aria_label(NEW_TERMINAL_LABEL)
+                                .cursor_pointer()
+                                .size(px(TAB_PLATE_HEIGHT))
+                                .flex_shrink_0()
+                                .ml(px(2.))
+                                .rounded_md()
+                                .bg(content(0.04))
+                                .opacity(0.65)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover(|s| s.opacity(1.).bg(content(0.07)))
+                                .child(
+                                    icon("plus", 14.)
+                                        .group_hover("new-terminal", |s| s.text_color(content(1.))),
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.new_terminal(window, cx)
+                                    }),
+                                ),
+                        )
                     }),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap(px(2.))
-                    .pr(px(6.))
-                    .child(
-                        icon_button("new-terminal", NEW_TERMINAL_LABEL, "plus").on_click(
-                            cx.listener(|this, _, window, cx| this.new_terminal(window, cx)),
-                        ),
-                    )
-                    .when(!in_panel, |d| {
-                        d.child(
+            .when(!in_panel, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap(px(2.))
+                        .pr(px(6.))
+                        .child(
+                            icon_button("new-terminal", NEW_TERMINAL_LABEL, "plus").on_click(
+                                cx.listener(|this, _, window, cx| this.new_terminal(window, cx)),
+                            ),
+                        )
+                        .child(
                             icon_button("move-terminal", "Move Terminal", side)
                                 .child(move_anchor.probe())
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -883,15 +914,13 @@ impl Shell {
                                     );
                                 })),
                         )
-                    })
-                    .when(!in_panel, |d| {
-                        d.child(
+                        .child(
                             icon_button("hide-terminal", HIDE_TERMINAL_LABEL, hide).on_click(
                                 cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)),
                             ),
-                        )
-                    }),
-            )
+                        ),
+                )
+            })
             .into_any_element()
     }
     /// UsageFooter's right side: the running-terminal chip, else the
@@ -1157,5 +1186,38 @@ mod tests {
         assert_eq!(chip_label(["vite"]), "vite");
         assert_eq!(chip_label(["vite", "jest"]), "vite · jest");
         assert_eq!(chip_label(["vite", "jest", "vite"]), "vite ×2 · jest");
+    }
+
+    #[gpui::test]
+    fn explorer_open_in_terminal_starts_a_terminal_in_that_folder(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("gespan-open-terminal-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let src = dir.join("src").to_string_lossy().replace('\\', "/");
+        let file = format!("{src}/main.rs");
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                shell.ensure_right_panel(window, cx);
+                let explorer = shell.right_panel.clone().unwrap().read(cx).explorer.clone();
+                // A file opens its folder; a folder opens itself.
+                explorer.update(cx, |e, cx| {
+                    e.pick("open-terminal", &file, false, window, cx)
+                });
+                explorer.update(cx, |e, cx| e.pick("open-terminal", &src, true, window, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let project = shell.workspace.project.clone();
+                assert_eq!(shell.terminals[&project].len(), 2);
+                assert_eq!(
+                    shell.workspace.docks[&project].terminals,
+                    [src.clone(), src.clone()]
+                );
+            })
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

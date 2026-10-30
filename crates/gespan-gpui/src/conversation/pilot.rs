@@ -606,9 +606,11 @@ impl Conversation {
                 .into_any_element()
         } else {
             div()
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .child(self.transcript.clone())
+                .children(self.find_bar(cx))
                 .into_any_element()
         };
         self.dictation_context(cx);

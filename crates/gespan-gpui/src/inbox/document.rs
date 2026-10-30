@@ -138,6 +138,67 @@ fn attachment(
     })
 }
 
+/// InboxMedia.tsx's video, as a fixed 16:9 frame: GPUI cannot play video in
+/// place, so the saved file opens in the file viewer, which does.
+fn video(ix: usize, path: &std::path::Path, alt: &str) -> AnyElement {
+    let label = if alt.trim().is_empty() {
+        "Video"
+    } else {
+        alt.trim()
+    }
+    .to_owned();
+    let target = path.to_string_lossy().into_owned();
+    div()
+        .py_2()
+        .min_w_0()
+        .child(
+            div()
+                .id(("inbox-video", ix))
+                .debug_selector(|| "inbox-video".into())
+                .role(Role::Button)
+                .aria_label(format!("Play {label}"))
+                .w_full()
+                .max_w(px(576.))
+                .h(px(324.))
+                .rounded(px(10.))
+                .border_1()
+                .border_color(content(0.1))
+                .bg(gpui::black())
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .size(px(48.))
+                        .rounded_full()
+                        .bg(content(0.12))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon("play", 22.).text_color(content(0.9))),
+                )
+                .child(
+                    div()
+                        .max_w_full()
+                        .px_3()
+                        .truncate()
+                        .text_size(px(12.))
+                        .text_color(content(0.6))
+                        .child(label),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(crate::file_editor::OpenPath(target.clone())),
+                        cx,
+                    );
+                }),
+        )
+        .into_any_element()
+}
+
 /// Exact heights are retained at a given width/style. A collapsed body only
 /// measures its leading rows; scrolling only constructs rows intersecting the
 /// page's content mask. This keeps the original flowing document and one scroll.
@@ -161,7 +222,15 @@ impl InboxDocument {
         let row = &self.rows[ix];
         match row {
             Row::Image { url, alt } => {
+                if let Some(path) = gespan_core::inbox::media_video(url) {
+                    return video(ix, &path, alt);
+                }
                 let source = attachment(url, window, cx);
+                if matches!(source, Some(Err(_)))
+                    && let Some(path) = gespan_core::inbox::media_video(url)
+                {
+                    return video(ix, &path, alt);
+                }
                 let label = if alt.trim().is_empty() { "Image" } else { alt }.to_string();
                 let url = url.clone();
                 let media = match source {
@@ -789,5 +858,34 @@ mod tests {
                 assert!(view.scroll.offset().y < px(-39000.));
             })
             .unwrap();
+    }
+    #[gpui::test]
+    fn a_description_video_shows_a_play_card_that_opens_the_saved_file(cx: &mut TestAppContext) {
+        let url = "https://github.com/user-attachments/assets/document-video-test";
+        let saved = std::env::temp_dir().join("gespan-document-video-test.mp4");
+        gespan_core::inbox::remember_video(url, saved.clone());
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        cx.update(|cx| {
+            cx.on_action(move |open: &crate::file_editor::OpenPath, _| {
+                seen.borrow_mut().push(open.0.clone())
+            });
+        });
+        let window = fixture(
+            format!("Steps to reproduce:\n\n![Screen recording]({url})\n\nThen it crashes."),
+            None,
+            cx,
+        );
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let card = visual.debug_bounds("inbox-video").expect("the video card");
+        assert_eq!(
+            card.size.height,
+            px(324.),
+            "a fixed frame, so loading never moves the page"
+        );
+        visual.simulate_click(card.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(*opened.borrow(), [saved.to_string_lossy().into_owned()]);
     }
 }

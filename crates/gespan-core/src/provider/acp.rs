@@ -29,7 +29,7 @@ struct BackgroundDispatch {
 pub(super) struct State {
     sequence: u64,
     stage: Stage,
-    session: String,
+    pub(super) session: String,
     options: VecDeque<(&'static str, Value)>,
     message: usize,
     setup: Value,
@@ -54,6 +54,8 @@ pub(super) struct State {
     /// Kiro lists its models in a `config_option_update` after `session/new`;
     /// the catalog probe waits until this deadline for that list.
     model_wait: Option<Instant>,
+    /// Cursor's own store, read for what its ACP events leave out.
+    pub(super) cursor: super::cursor_live::Live,
 }
 
 pub(super) const KIRO_AUTH_HELP: &str = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
@@ -197,6 +199,10 @@ impl Protocol {
 
     /// ACP deadlines apply to individual requests, never to a quiet stream.
     pub(super) fn acp_tick(&mut self, stdin: &mut impl Write) -> Result<Vec<Event>, String> {
+        if self.request.kind == Kind::Cursor && self.acp.stage == Stage::Prompt {
+            let read = self.cursor_tick(false);
+            self.acp.notices.extend(read);
+        }
         if self
             .acp
             .deadline
@@ -551,8 +557,8 @@ impl Protocol {
     fn acp_settings(&mut self, setup: &Value) {
         let kind = self.request.kind;
         let settings = &self.request.settings;
-        // Hermes and Kiro take only the model; Tauri sends them no other control.
-        if matches!(kind, Kind::Hermes | Kind::Kiro) {
+        // Kiro takes only the model; Tauri sends it no other control.
+        if matches!(kind, Kind::Kiro) {
             return;
         }
         let mut selected = settings.model_settings.clone();
@@ -568,6 +574,9 @@ impl Protocol {
             selected
                 .entry("thinking".into())
                 .or_insert_with(|| thinking.to_string());
+        }
+        if kind == Kind::Hermes {
+            selected.retain(|id, _| id == "effort");
         }
         if kind == Kind::Grok {
             if let Some(effort) = selected
@@ -1056,6 +1065,9 @@ impl Protocol {
                     self.acp.stage = Stage::Background;
                     self.acp.background_poll = None;
                 } else {
+                    if self.request.kind == Kind::Cursor {
+                        events.extend(self.cursor_tick(true));
+                    }
                     self.done = true;
                     events.push(Event::Done);
                 }
@@ -1073,7 +1085,7 @@ impl Protocol {
         events.append(&mut self.acp.notices);
         Ok(events)
     }
-    fn acp_update(&mut self, update: &Value, events: &mut Vec<Event>) {
+    pub(super) fn acp_update(&mut self, update: &Value, events: &mut Vec<Event>) {
         if self.request.kind == Kind::Hermes {
             if let Some(dispatch) = background_dispatch(update) {
                 self.acp
@@ -1143,6 +1155,17 @@ impl Protocol {
                     }
                 }
                 presentation["cwd"] = json!(self.request.cwd);
+                // Keep a short preview of a diff block; its texts can be whole files.
+                if let Some(diff) = tool["content"]
+                    .as_array()
+                    .and_then(|blocks| blocks.iter().find(|block| block["type"] == "diff"))
+                {
+                    let built = crate::tool::edit_preview::EditPreview::from_texts(
+                        diff["oldText"].as_str(),
+                        diff["newText"].as_str().unwrap_or(""),
+                    );
+                    presentation[crate::tool::edit_preview::DISPLAY_KEY] = json!(built);
+                }
                 call.display = Some(presentation);
                 let output = content_text(&tool["content"]);
                 if kind == "tool_call_content_chunk" {
@@ -1171,6 +1194,9 @@ impl Protocol {
                 events.push(Event::Tool(call.clone()));
                 if is_new {
                     self.acp.message += 1;
+                }
+                if self.request.kind == Kind::Cursor {
+                    self.cursor_track(id);
                 }
             }
             "usage_update" => {
@@ -1635,6 +1661,27 @@ mod tests {
         }
     }
     #[test]
+    fn hermes_sends_only_an_advertised_reasoning_effort() {
+        let mut p = protocol(Kind::Hermes);
+        p.request.settings.effort = Some("high".into());
+        p.request.settings.fast = true;
+        let setup = json!({"configOptions":[
+            {"id":"reasoning_effort","category":"thought_level","currentValue":"default","options":[{"value":"low"},{"value":"high"}]},
+            {"id":"fast","currentValue":"false","options":[{"value":"false"},{"value":"true"}]}
+        ]});
+        p.acp_settings(&setup);
+        assert_eq!(p.acp.options.len(), 1);
+        assert_eq!(p.acp.options[0].0, "session/set_config_option");
+        assert_eq!(p.acp.options[0].1["configId"], "reasoning_effort");
+        assert_eq!(p.acp.options[0].1["value"], "high");
+        p.acp.options.clear();
+        p.acp_settings(&json!({}));
+        assert!(p.acp.options.is_empty());
+        p.request.settings.effort = None;
+        p.acp_settings(&setup);
+        assert!(p.acp.options.is_empty());
+    }
+    #[test]
     fn resuming_mutes_replay_and_replaces_missing_sessions_like_the_desktop() {
         let mut p = protocol(Kind::Grok);
         p.request.provider_id = Some("saved".into());
@@ -1710,6 +1757,25 @@ mod tests {
         assert!(tool.input.contains("file.rs"));
         assert_eq!(tool.output, "contents");
         assert_eq!(tool.state, ToolState::Completed);
+    }
+    #[test]
+    fn an_acp_diff_block_is_kept_as_a_short_edit_preview_not_whole_files() {
+        let mut protocol = protocol(Kind::Devin);
+        let old: String = (1..=500).map(|n| format!("line {n}\n")).collect();
+        let new = old.replace("line 250\n", "line 250 changed\n");
+        protocol.acp_update(&json!({"sessionUpdate":"tool_call","toolCallId":"e","kind":"edit","title":"Edit src/lib.rs","rawInput":{"path":"src/lib.rs"},"content":[{"type":"diff","path":"src/lib.rs","oldText":old,"newText":new}]}), &mut Vec::new());
+        let call = &protocol.tools["e"];
+        let display = serde_json::to_string(&call.display).unwrap();
+        assert!(
+            display.len() < 1_000,
+            "the files are not kept: {}",
+            display.len()
+        );
+        let preview = call.edit_preview().unwrap();
+        assert_eq!((preview.additions, preview.deletions), (1, 1));
+        assert_eq!(preview.lines[0].text, "line 249");
+        assert_eq!(preview.lines[1].text, "line 250");
+        assert_eq!(preview.lines[2].text, "line 250 changed");
     }
     #[test]
     fn live_acp_tool_keeps_semantic_kind_locations_and_original_input() {

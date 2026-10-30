@@ -13,6 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 mod code;
 mod command;
+mod editing;
 mod spelling;
 pub(crate) use command::{Command, CommandRemoved};
 
@@ -73,6 +74,9 @@ actions!(
     ]
 );
 pub struct Submitted;
+/// Cmd/Ctrl+Enter in a composer that sends either way, asking for the
+/// opposite of its usual follow-up behavior.
+pub struct AlternateSubmitted;
 pub struct Changed;
 pub(crate) enum CodeAction {
     Stage(usize),
@@ -81,6 +85,7 @@ pub(crate) enum CodeAction {
 pub struct Rejected(pub &'static str);
 
 pub fn bind(cx: &mut App) {
+    editing::bind(cx);
     let selection_modifier = if cfg!(target_os = "macos") {
         "cmd"
     } else {
@@ -219,6 +224,8 @@ pub struct Input {
     max_height: f32,
     /// A textarea that takes Enter as a newline and submits on Cmd/Ctrl+Enter.
     secondary_submit: bool,
+    /// Emit [`AlternateSubmitted`] on Cmd/Ctrl+Enter instead of ignoring it.
+    alternate_submit: bool,
     pub content: SharedString,
     selection: Range<usize>,
     reversed: bool,
@@ -238,6 +245,7 @@ pub struct Input {
     autoscroll: Option<gpui::Task<()>>,
 }
 impl EventEmitter<Submitted> for Input {}
+impl EventEmitter<AlternateSubmitted> for Input {}
 impl EventEmitter<Changed> for Input {}
 impl EventEmitter<Rejected> for Input {}
 impl EventEmitter<CodeAction> for Input {}
@@ -274,6 +282,7 @@ impl Input {
             min_height: MIN_HEIGHT,
             max_height: MAX_HEIGHT,
             secondary_submit: false,
+            alternate_submit: false,
             content: "".into(),
             selection: 0..0,
             reversed: false,
@@ -451,6 +460,9 @@ impl Input {
     pub(crate) fn label(&self) -> &SharedString {
         &self.label
     }
+    pub(crate) fn placeholder(&self) -> &SharedString {
+        &self.placeholder
+    }
     pub(crate) fn set_placeholder(
         &mut self,
         text: impl Into<SharedString>,
@@ -461,6 +473,9 @@ impl Input {
             self.placeholder = text;
             cx.notify();
         }
+    }
+    pub(crate) fn set_alternate_submit(&mut self, value: bool) {
+        self.alternate_submit = value;
     }
     pub(crate) fn set_read_only(&mut self, value: bool) {
         self.read_only = value;
@@ -774,6 +789,7 @@ impl Input {
         let offset = self.clip_offset(offset);
         self.selection = offset..offset;
         self.reversed = false;
+        self.keep_closers_on_caret_line();
         cx.notify();
     }
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -791,6 +807,7 @@ impl Input {
             self.reversed = !self.reversed;
             self.selection = self.selection.end..self.selection.start;
         }
+        self.keep_closers_on_caret_line();
         cx.notify();
     }
     fn prev(&self, at: usize) -> usize {
@@ -1103,6 +1120,9 @@ impl Input {
             cx.emit(CommandRemoved(command.name()));
             return;
         }
+        if self.selection.is_empty() && self.code.is_some() && self.code_delete_pair(cx) {
+            return;
+        }
         if self.selection.is_empty() {
             self.select_to(self.prev(self.cursor()), cx);
         }
@@ -1125,13 +1145,7 @@ impl Input {
         }
         if self.secondary_submit {
             if self.code.is_some() {
-                let at = self.selection.start;
-                let start = self.content[..at].rfind('\n').map_or(0, |n| n + 1);
-                let indent: String = self.content[start..at]
-                    .chars()
-                    .take_while(|c| matches!(c, ' ' | '\t'))
-                    .collect();
-                self.replace_text_in_range(None, &format!("\n{indent}"), w, cx);
+                self.code_newline(cx);
             } else {
                 self.replace_text_in_range(None, "\n", w, cx);
             }
@@ -1140,10 +1154,16 @@ impl Input {
         }
     }
     fn submit_secondary(&mut self, _: &SubmitSecondary, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.secondary_submit {
+        if self.secondary_submit {
+            if self.marked.is_none() {
+                cx.emit(Submitted);
+            }
+        } else if self.alternate_submit {
+            if self.marked.is_none() {
+                cx.emit(AlternateSubmitted);
+            }
+        } else {
             cx.propagate();
-        } else if self.marked.is_none() {
-            cx.emit(Submitted);
         }
     }
     fn paste(&mut self, _: &Paste, w: &mut Window, cx: &mut Context<Self>) {
@@ -1368,6 +1388,9 @@ impl EntityInputHandler for Input {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.code.is_some() && self.type_code(r.clone(), text, cx) {
+            return;
+        }
         self.replace_text(r, text, cx);
     }
     fn replace_and_mark_text_in_range(
@@ -1844,6 +1867,13 @@ impl Render for Input {
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::indent))
             .on_action(cx.listener(Self::outdent))
+            .on_action(cx.listener(Self::toggle_comment))
+            .on_action(cx.listener(Self::move_line_up))
+            .on_action(cx.listener(Self::move_line_down))
+            .on_action(cx.listener(Self::copy_line_up))
+            .on_action(cx.listener(Self::copy_line_down))
+            .on_action(cx.listener(Self::delete_line))
+            .on_action(cx.listener(Self::select_to_matching_bracket))
             .on_scroll_wheel(cx.listener(Self::scroll))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

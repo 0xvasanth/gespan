@@ -14,7 +14,7 @@ pub struct Identity {
 pub(super) fn read(profile: &Profile, kind: Kind) -> Option<Identity> {
     let dir = profile.directory(kind).ok()?;
     match kind {
-        Kind::Claude => claude_identity(dir),
+        Kind::Claude => claude_identity(dir, super::claude_oauth_token()),
         Kind::Codex => codex_identity(dir),
         _ => None,
     }
@@ -44,7 +44,12 @@ fn capitalize(value: &str) -> String {
         .unwrap_or_default()
 }
 
-fn claude_identity(dir: Option<PathBuf>) -> Option<Identity> {
+fn claude_identity(dir: Option<PathBuf>, token: Option<String>) -> Option<Identity> {
+    // Claude Code prefers the token, so the default account is signed in
+    // with it whatever `.claude.json` holds. The token names no one.
+    if dir.is_none() && token.is_some() {
+        return Some(Identity::default());
+    }
     let path = match dir {
         Some(dir) => dir.join(".claude.json"),
         None => home()?.join(".claude.json"),
@@ -219,5 +224,27 @@ mod tests {
             parse_codex_identity(&json!({ "OPENAI_API_KEY": "sk-x" })),
             None
         );
+    }
+
+    #[test]
+    fn claude_oauth_token_signs_in_only_the_default_account() {
+        let dir = std::env::temp_dir().join(format!("gespan-claude-token-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let token = || Some("sk-ant-oat01-test".to_owned());
+        // The default account is signed in by the token alone, before any
+        // stored account is read.
+        assert_eq!(claude_identity(None, token()), Some(Identity::default()));
+        // A named account ignores it: no stored sign-in means signed out.
+        assert_eq!(claude_identity(Some(dir.clone()), token()), None);
+        std::fs::write(
+            dir.join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"ada@example.com","organizationType":"claude_pro"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            claude_identity(Some(dir.clone()), token()),
+            identity(Some("ada@example.com"), None, Some("Pro"), None)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

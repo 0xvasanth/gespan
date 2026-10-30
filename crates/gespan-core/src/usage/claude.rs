@@ -3,11 +3,14 @@ use serde_json::Value;
 use std::{io::Read, path::PathBuf, time::Duration};
 
 pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError> {
-    let config = profile
+    let named = profile
         .directory(crate::provider::Kind::Claude)
-        .map_err(FetchError::failed)?
-        .or_else(config_dir);
-    let credentials = credentials(config).ok_or_else(|| {
+        .map_err(FetchError::failed)?;
+    let token = named
+        .is_none()
+        .then(crate::accounts::claude_oauth_token)
+        .flatten();
+    let credentials = sign_in(named, token).ok_or_else(|| {
         FetchError::unavailable("Sign in with claude auth login, then refresh usage.")
     })?;
     let oauth = credentials.get("claudeAiOauth").unwrap_or(&credentials);
@@ -75,6 +78,18 @@ fn credentials(config: Option<PathBuf>) -> Option<Value> {
     let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok()?;
     credential_blob(&raw)
 }
+/// A named account's stored sign-in, or for the default account its
+/// `CLAUDE_CODE_OAUTH_TOKEN` (no expiry) ahead of the stored one, as Claude
+/// Code itself prefers it.
+fn sign_in(named: Option<PathBuf>, token: Option<String>) -> Option<Value> {
+    match (named, token) {
+        (Some(dir), _) => credentials(Some(dir)),
+        (None, Some(token)) => {
+            Some(serde_json::json!({ "claudeAiOauth": { "accessToken": token } }))
+        }
+        (None, None) => credentials(config_dir()),
+    }
+}
 fn credential_blob(raw: &str) -> Option<Value> {
     let value: Value = serde_json::from_str(raw.trim()).ok()?;
     value.get("claudeAiOauth").unwrap_or(&value)["accessToken"]
@@ -98,7 +113,7 @@ pub(crate) fn delete_keychain(config: &std::path::Path) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let deadline = Instant::now() + Duration::from_secs(5);
     let result = loop {
@@ -152,7 +167,7 @@ fn keychain(config: Option<&std::path::Path>) -> Option<Value> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().ok()?;
+    let mut child = process::spawn(&mut command).ok()?;
     let _registration = process::register(child.id());
     let output = child.stdout.take()?;
     // Drain concurrently: waiting before reading can fill the pipe and hang.
@@ -205,5 +220,27 @@ mod tests {
         assert!(credential_blob(r#"{"accessToken":"test"}"#).is_some());
         assert!(credential_blob(r#"{"accessToken":" "}"#).is_none());
         assert!(credential_blob("invalid").is_none());
+    }
+
+    #[test]
+    fn usage_uses_the_oauth_token_only_for_the_default_account() {
+        let token = || Some("sk-ant-oat01-test".to_owned());
+        let default = sign_in(None, token()).unwrap();
+        assert_eq!(default["claudeAiOauth"]["accessToken"], "sk-ant-oat01-test");
+        assert!(
+            default["claudeAiOauth"]["expiresAt"].is_null(),
+            "a token never reads as expired"
+        );
+        let dir = std::env::temp_dir().join(format!("gespan-claude-usage-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A named account keeps its own sign-in, whatever the token.
+        std::fs::write(
+            dir.join(".credentials.json"),
+            r#"{"claudeAiOauth":{"accessToken":"stored","expiresAt":4102444800000}}"#,
+        )
+        .unwrap();
+        let named = sign_in(Some(dir.clone()), token()).unwrap();
+        assert_eq!(named["claudeAiOauth"]["accessToken"], "stored");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -291,21 +291,16 @@ pub fn snippet(text: &str, query: &str) -> String {
         if end < compact.len() { "…" } else { "" }
     )
 }
-pub fn message_hit(
-    session: &Session,
-    row: usize,
-    role: &str,
-    text: &str,
-    query: &str,
-    live: bool,
-) -> Option<Hit> {
+/// The text a search matches in one message: its body, or a tool's summary,
+/// input and output. None for rows search skips.
+fn searchable(role: &str, text: &str) -> Option<String> {
     if !matches!(
         role,
         "user" | "assistant" | "tool" | "tasks" | "plan" | "image"
     ) {
         return None;
     }
-    let text = if role == "tool" {
+    Some(if role == "tool" {
         serde_json::from_str::<crate::tool::ToolCall>(text)
             .ok()
             .map(|t| {
@@ -315,7 +310,43 @@ pub fn message_hit(
             .unwrap_or_else(|| text.to_owned())
     } else {
         text.to_owned()
-    };
+    })
+}
+/// Messages in one transcript that contain `query`, by their first row, in
+/// order. A message spans its first row and the continuation rows after it.
+pub fn transcript_matches(rows: &[Row], query: &str) -> Vec<usize> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return vec![];
+    }
+    let mut found = vec![];
+    let mut start = 0;
+    while start < rows.len() {
+        let mut end = start + 1;
+        while end < rows.len() && !rows[end].first {
+            end += 1;
+        }
+        let text = rows[start..end]
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<String>();
+        if searchable(&rows[start].role, &text).is_some_and(|t| t.to_lowercase().contains(&needle))
+        {
+            found.push(start);
+        }
+        start = end;
+    }
+    found
+}
+pub fn message_hit(
+    session: &Session,
+    row: usize,
+    role: &str,
+    text: &str,
+    query: &str,
+    live: bool,
+) -> Option<Hit> {
+    let text = searchable(role, text)?;
     if !text.to_lowercase().contains(&query.to_lowercase()) {
         return None;
     }

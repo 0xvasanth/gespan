@@ -1,6 +1,22 @@
 //! Child policy extracted from src-tauri/src/background_work.rs.
 use std::process::Command;
 
+pub mod orphans;
+
+#[cfg(windows)]
+mod job;
+#[cfg(windows)]
+pub use job::harden_dll_search;
+
+/// Start an `isolate`d command. On Windows it runs in a kill-on-close job, so
+/// it dies with Gespan even if Gespan crashes.
+pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
+    #[cfg(windows)]
+    return job::spawn(command);
+    #[cfg(not(windows))]
+    command.spawn()
+}
+
 /// Apply scheduling hints before exec so descendants inherit them.
 /// Best effort: a refused hint must not prevent a provider from launching.
 pub fn configure_child(command: &mut Command) {

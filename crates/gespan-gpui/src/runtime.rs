@@ -20,6 +20,8 @@ mod ticket_context;
 pub(crate) mod ticket_scope;
 #[cfg(all(test, unix))]
 mod ticket_tests;
+#[cfg(all(test, unix))]
+mod turn_result_tests;
 mod visual_discovery;
 #[cfg(all(test, unix))]
 mod visual_tests;
@@ -160,6 +162,7 @@ fn run_turn_using(
             .and_then(|s| s.data_dir().map(std::path::Path::to_path_buf));
     }
     let source_account = settings.account.id.clone();
+    let planning = settings.plan;
     let user_request = prompt.clone();
     let mut transcript = Transcript::default();
     let mut history_loaded = false;
@@ -234,6 +237,7 @@ fn run_turn_using(
         let started_at = transcript.rows[start].sent_at;
         transcript.append(&prompt);
         transcript.attach_files(&settings.attachments);
+        transcript.attach_note(settings.note_card.as_ref());
         // Show the working receipt while connecting, before the first token.
         transcript.begin("assistant");
         // Keep the already painted prompt in the failure replay even if saving
@@ -683,6 +687,9 @@ fn run_turn_using(
             // work finds the Agent call that started it in an earlier turn.
             settings.agent_runs =
                 gespan_core::tool::tasks::agent_runs(&transcript.rows[..turn_start]);
+            // A resumed conversation's TaskUpdate calls refer to earlier tasks.
+            settings.claude_task_lists =
+                gespan_core::tool::tasks::claude_task_lists(&transcript.rows[..turn_start]);
         }
         let request = Request {
             kind,
@@ -842,6 +849,9 @@ fn run_turn_using(
                             }
                             // Saved rows leave live elapsed out; the view reads it here.
                             gespan_core::tool::live::record(&tool);
+                            if let Some((cwd, _)) = &checkpoint {
+                                track_edit(summary.id, cwd, &tool);
+                            }
                             let ix = *tool_rows
                                 .entry(tool.id.clone())
                                 .or_insert_with(|| transcript.begin("tool"));
@@ -921,6 +931,43 @@ fn run_turn_using(
                             let at = transcript.begin("interjection");
                             transcript
                                 .append(&serde_json::to_string(&note).map_err(|e| e.to_string())?);
+                            start = start.min(at);
+                            pending.changed(at);
+                            boundary = true;
+                        }
+                        Event::GeneratedImage { id, data, alt } => {
+                            // GeneratedImage.tsx: the PNG is a file in the data
+                            // folder and the row names it.
+                            let saved = locked(&store)?
+                                .data_dir()
+                                .map(std::path::Path::to_path_buf)
+                                .ok_or_else(|| "Gespan has no data folder".to_owned())
+                                .and_then(|dir| {
+                                    gespan_core::generated_image::save(
+                                        &dir,
+                                        &data,
+                                        "generated-image",
+                                        alt,
+                                    )
+                                });
+                            let at = match saved {
+                                Ok(image) => {
+                                    let at = transcript.begin(gespan_core::generated_image::ROLE);
+                                    transcript.append(
+                                        &serde_json::to_string(&image)
+                                            .map_err(|e| e.to_string())?,
+                                    );
+                                    at
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, item = %id, "cannot save a generated image");
+                                    let at = transcript.begin("error");
+                                    transcript.append(&format!(
+                                        "Could not save generated image: {error}"
+                                    ));
+                                    at
+                                }
+                            };
                             start = start.min(at);
                             pending.changed(at);
                             boundary = true;
@@ -1084,6 +1131,14 @@ fn run_turn_using(
         transcript.rows.len()
     };
     if let Some(ix) = settle_running_tools(&mut transcript.rows, turn_start, cancelled, &result) {
+        final_start = final_start.min(ix);
+    }
+    // A finished plan-mode turn leaves its plan for review and Build.
+    if history_loaded
+        && result.is_ok()
+        && !cancelled
+        && let Some(ix) = gespan_core::plan::promote(&mut transcript.rows, turn_start, planning)
+    {
         final_start = final_start.min(ix);
     }
     if let Some((cwd, id)) = &checkpoint
@@ -1457,37 +1512,68 @@ pub(crate) fn edited_paths(rows: &[Row]) -> Vec<String> {
         if tool.state != gespan_core::tool::ToolState::Completed {
             continue;
         }
-        let shown = tool.presentation();
-        if matches!(
-            shown.action.as_str(),
-            "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
-        ) {
-            let input = serde_json::from_str::<serde_json::Value>(&tool.input).unwrap_or_default();
-            let many = input["paths"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|path| path.as_str());
-            let desktop = tool.display.as_ref().unwrap_or(&input["__desktop"]);
-            let desktop_paths = desktop["paths"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|path| path.as_str());
-            for path in shown
-                .file_path
-                .as_deref()
-                .into_iter()
-                .chain(many)
-                .chain(desktop_paths)
-            {
-                if !path.is_empty() && !paths.iter().any(|p| p == path) {
-                    paths.push(path.to_owned());
-                }
+        for path in edit_tool_paths(&tool) {
+            if !paths.contains(&path) {
+                paths.push(path);
             }
         }
     }
     paths
+}
+
+/// The files a structured edit tool writes, in any state.
+pub(crate) fn edit_tool_paths(tool: &gespan_core::tool::ToolCall) -> Vec<String> {
+    let shown = tool.presentation();
+    if !matches!(
+        shown.action.as_str(),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
+    ) {
+        return Vec::new();
+    }
+    let input = serde_json::from_str::<serde_json::Value>(&tool.input).unwrap_or_default();
+    let many = input["paths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.as_str());
+    let desktop = tool.display.as_ref().unwrap_or(&input["__desktop"]);
+    let desktop_paths = desktop["paths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.as_str());
+    let mut paths: Vec<String> = Vec::new();
+    for path in shown
+        .file_path
+        .as_deref()
+        .into_iter()
+        .chain(many)
+        .chain(desktop_paths)
+    {
+        if !path.is_empty() && !paths.iter().any(|p| p == path) {
+            paths.push(path.to_owned());
+        }
+    }
+    paths
+}
+
+/// App.tsx's trackSessionEdits: a folder without Git snapshots each file
+/// before an edit tool writes it and again once the tool succeeds.
+fn track_edit(session: i64, cwd: &str, tool: &gespan_core::tool::ToolCall) {
+    use gespan_core::tool::ToolState;
+    let paths = edit_tool_paths(tool);
+    if paths.is_empty() {
+        return;
+    }
+    let Some(store) = gespan_core::checkpoint::store() else {
+        return;
+    };
+    let session = session.to_string();
+    let _ = store.exclusive(|store| match tool.state {
+        ToolState::Running => store.prepare(&session, cwd, &paths),
+        ToolState::Completed => store.capture_edit(&session, cwd, &paths),
+        ToolState::Failed | ToolState::Cancelled => Ok(()),
+    });
 }
 
 fn shlex_quote(text: &str) -> String {
@@ -1670,5 +1756,27 @@ mod edited_paths_tests {
             ),
         ];
         assert_eq!(edited_paths(&rows), ["/repo/a.rs", "relative.rs"]);
+    }
+
+    #[test]
+    fn a_running_edit_names_its_files_before_it_writes_them() {
+        let tool = |name: &str, input: serde_json::Value| {
+            let mut tool = ToolCall::new("tool", name);
+            tool.state = ToolState::Running;
+            tool.input = input.to_string();
+            tool
+        };
+        assert_eq!(
+            edit_tool_paths(&tool("Write", json!({"file_path":"/folder/new.md"}))),
+            ["/folder/new.md"]
+        );
+        assert_eq!(
+            edit_tool_paths(&tool(
+                "fileChange",
+                json!({"paths":["/folder/a.md", "/folder/a.md", "b.md"]})
+            )),
+            ["/folder/a.md", "b.md"]
+        );
+        assert!(edit_tool_paths(&tool("Read", json!({"file_path":"/folder/a.md"}))).is_empty());
     }
 }

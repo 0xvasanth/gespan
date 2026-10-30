@@ -171,6 +171,10 @@ pub(crate) enum Part {
         id: String,
         caption: String,
     },
+    LocalMedia {
+        href: String,
+        label: String,
+    },
 }
 #[derive(Clone, PartialEq)]
 pub(crate) struct MarkdownRow {
@@ -290,6 +294,13 @@ fn flatten(
                 caption: caption.clone(),
             },
             16.,
+        ),
+        Block::LocalMedia { href, label } => add(
+            Part::LocalMedia {
+                href: href.clone(),
+                label: label.clone(),
+            },
+            8.,
         ),
     }
     if let Some(row) = out.get_mut(first)
@@ -782,6 +793,15 @@ pub(crate) fn body_selected(
             .into_any_element(),
         // Only the transcript can draw a session's visuals; elsewhere the
         // caption stands in for it.
+        // Elsewhere a local file stays the link it was written as.
+        Part::LocalMedia { href, label } => body
+            .text_color(content(0.5))
+            .child(if label.is_empty() {
+                href.clone()
+            } else {
+                label.clone()
+            })
+            .into_any_element(),
         Part::Visual { caption, .. } => body
             .text_color(content(0.5))
             .child(if caption.is_empty() {
@@ -1064,12 +1084,17 @@ mod file_link_tests {
         let Part::Text { runs, .. } = row.part else {
             panic!()
         };
+        // Resolved paths use the platform's separator.
+        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
         assert_eq!(runs[0].text, "source");
-        assert_eq!(runs[0].style.link.as_deref(), Some("/project/main.rs:5:1"));
+        assert_eq!(
+            runs[0].style.link.as_deref(),
+            Some(native("/project/main.rs:5:1").as_str())
+        );
         assert_eq!(runs[1].text, "src/lib.rs");
         assert_eq!(
             runs[1].style.link.as_deref(),
-            Some("/project/docs/src/lib.rs")
+            Some(native("/project/docs/src/lib.rs").as_str())
         );
         assert_eq!(runs[2].style.link.as_deref(), Some("https://example.com"));
     }

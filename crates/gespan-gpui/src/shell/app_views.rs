@@ -1,6 +1,7 @@
 //! The application destinations (Inbox, Notes, Automations and Board) share
 //! one navigation and focus boundary.
 use super::*;
+use crate::conversation::composer_card::ComposerCard;
 use crate::{automations, board, flows, inbox, notes};
 
 pub(super) use crate::workspace::AppView;
@@ -477,7 +478,10 @@ impl Shell {
                     inbox::Event::Close => this.close_app_view(window, cx),
                     inbox::Event::OpenSession(id) => this.open(*id, window, cx),
                     inbox::Event::StartSession { item, prompt } => {
-                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), cx);
+                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), true, cx);
+                    }
+                    inbox::Event::ComposeSession { item, prompt } => {
+                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), false, cx);
                     }
                     inbox::Event::ItemsChanged(items) => {
                         this.inbox_automation_events(items.clone(), cx)
@@ -683,9 +687,7 @@ impl Shell {
                     this.add(summary, cx);
                     this.sessions[&id].update(cx, |view, cx| {
                         view.seed_new_settings(settings, cx);
-                        view.input.update(cx, |input, cx| {
-                            input.set_text(format!("@note/{} ", note.slug), cx)
-                        });
+                        view.set_composer_card(ComposerCard::Note(Box::new(note)), cx);
                     });
                     if this.navigation_revision == revision {
                         this.activate_session(id, window, cx);
@@ -703,10 +705,13 @@ impl Shell {
         self.focus_active(window, cx);
     }
 
+    /// With `send`, the prompt goes straight out, as Fix with agent does.
+    /// Otherwise the item waits above the composer for a note, or for Send.
     fn start_inbox_session(
         &mut self,
         item: gespan_core::inbox::Item,
         prompt: String,
+        send: bool,
         cx: &mut Context<Self>,
     ) {
         let cwd = if item.project_path.is_empty() {
@@ -751,16 +756,23 @@ impl Shell {
             store.title(summary.id, &summary.title)?;
             store.set_work_item(summary.id, summary.work_item.as_ref())?;
             store.save_agent_settings(summary.id, &settings)?;
-            Ok::<_, String>((summary, settings, prompt))
+            Ok::<_, String>((summary, settings, prompt, item))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
-                Ok((summary, settings, prompt)) => {
+                Ok((summary, settings, prompt, item)) => {
                     let id = summary.id;
                     this.add(summary, cx);
-                    this.sessions[&id]
-                        .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                    this.sessions[&id].update(cx, |view, cx| {
+                        if send {
+                            view.quick_submit(prompt, settings, cx);
+                        } else {
+                            view.seed_new_settings(settings, cx);
+                            let item = Box::new(item);
+                            view.set_composer_card(ComposerCard::Inbox { item, prompt }, cx);
+                        }
+                    });
                     if this.navigation_revision == revision {
                         this.activate_session(id, window, cx);
                     }

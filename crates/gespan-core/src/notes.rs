@@ -255,6 +255,43 @@ pub fn compose_message(note: &Note, text: &str) -> String {
     )
 }
 
+/// The row beside a user turn that carries its note chip.
+pub const CARD_ROLE: &str = "pilot-note";
+
+/// NoteCardMeta: what a user turn keeps of a note; its body is not saved there.
+pub fn card_meta(note: &Note) -> serde_json::Value {
+    let mut card = serde_json::json!({"id":note.id,"slug":note.slug,"title":note.title});
+    if let Some(cwd) = note.source_cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
+        card["sourceCwd"] = cwd.into();
+    }
+    card
+}
+
+/// A user turn's `noteCard` as the row the transcript shows.
+pub fn card_row(card: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id":format!("note:{}", card["id"].as_str().unwrap_or("")),
+        "type":"document",
+        "documentId":card["id"],
+        "title":card["title"],
+        "kind":"document",
+        "note":true,
+        "slug":card["slug"],
+        "sourceCwd":card["sourceCwd"],
+    })
+}
+
+/// A note row back as the `noteCard` the desktop app reads on a user turn.
+pub fn card_from_row(row: &serde_json::Value) -> serde_json::Value {
+    let mut card = serde_json::json!({
+        "id":row["documentId"],"slug":row["slug"],"title":row["title"]
+    });
+    if row["sourceCwd"].is_string() {
+        card["sourceCwd"] = row["sourceCwd"].clone();
+    }
+    card
+}
+
 pub fn slugs_in_text(text: &str) -> Vec<String> {
     static SLUG: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"(?:^|\s)@note/([A-Za-z0-9_-]+)").unwrap());

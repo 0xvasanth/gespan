@@ -144,6 +144,20 @@ impl Conversation {
     pub(crate) fn resume_prompt(&self, reason: Reason) -> Option<String> {
         gespan_core::hold::continuation(reason).map(str::to_owned)
     }
+    /// A quit or crash cut this chat's turn short: continue it once, while the
+    /// interrupt notice is still its last row.
+    pub(crate) fn continue_after_quit(&mut self, cx: &mut Context<Self>) {
+        if !self.history_ready() {
+            self.defer_history_action(|this, cx| this.continue_after_quit(cx), cx);
+            return;
+        }
+        if self.busy
+            || !gespan_core::interrupted::ends_interrupted(self.transcript.read(cx).source_rows())
+        {
+            return;
+        }
+        self.resume_from_hold(Reason::Restarted, cx);
+    }
     /// Continues a held session: its continuation first, then its queue.
     /// Returns whether anything was sent.
     pub(crate) fn resume_from_hold(&mut self, reason: Reason, cx: &mut Context<Self>) -> bool {

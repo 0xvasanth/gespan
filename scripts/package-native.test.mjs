@@ -23,6 +23,41 @@ test("the DMG staging image is sized from its contents with headroom", () => {
   assert.ok(dmgMegabytes(102 * MiB + 1) >= Math.ceil((102 * MiB + 1) / MiB) + 64);
 });
 
+test("Native packages from its own resources, not the Tauri app's", async () => {
+  for (const file of [
+    "scripts/bundle-native-macos.sh",
+    "scripts/package-native.mjs",
+    "scripts/native-installer.nsi",
+    "crates/gespan-gpui/build.rs",
+    "crates/gespan-gpui/src/pilots/status.rs",
+  ]) {
+    const source = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
+    assert.ok(!source.includes("src-tauri"), `${file} reads from src-tauri`);
+  }
+  const resource = (name) =>
+    readFile(new URL(`../crates/gespan-gpui/${name}`, import.meta.url));
+  assert.equal(
+    (await resource("packaging/icon.icns")).subarray(0, 4).toString("latin1"),
+    "icns",
+  );
+  assert.deepEqual(
+    [...(await resource("packaging/icon.ico")).subarray(0, 4)],
+    [0, 0, 1, 0],
+  );
+  assert.deepEqual(
+    [...(await resource("assets/pilot-status-icon.png")).subarray(0, 4)],
+    [0x89, 0x50, 0x4e, 0x47],
+  );
+  // Hardened runtime blocks the JavaScript engine and dictation without these.
+  const entitlements = (await resource("packaging/Entitlements.plist")).toString();
+  for (const key of [
+    "com.apple.security.cs.allow-jit",
+    "com.apple.security.cs.allow-unsigned-executable-memory",
+    "com.apple.security.device.audio-input",
+  ])
+    assert.ok(entitlements.includes(`<key>${key}</key>`), key);
+});
+
 test(
   "Mac preview packaging checks notarization, preserves preview identity and emits both download and updater packages",
   { skip: process.platform === "win32" },

@@ -656,6 +656,20 @@ impl Shell {
                         .when(unread, |d| {
                             d.child(div().size(px(8.)).rounded_full().bg(accent_color()))
                         })
+                        .when(label == "Inbox", |d| {
+                            d.on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
+                                    this.open_menu(
+                                        MenuTarget::InboxNav,
+                                        Anchor::Point(e.position),
+                                        w,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }),
+                            )
+                        })
                         .on_click(cx.listener(move |this, _, w, cx| match label {
                             "Inbox" => this.open_inbox(w, cx),
                             "Notes" => this.open_notes(w, cx),
@@ -1550,15 +1564,10 @@ impl Shell {
                 })
                 .collect()
         } else {
-            let pinned = self.workspace.project_rail_pinned.contains(&id);
-            let section = self.workspace.project_rail_assignments.get(&id);
             self.workspace
                 .projects
                 .iter()
-                .filter(|path| {
-                    self.workspace.project_rail_pinned.contains(*path) == pinned
-                        && (pinned || self.workspace.project_rail_assignments.get(*path) == section)
-                })
+                .filter(|path| self.workspace.project_rail_peers(path, &id))
                 .filter_map(|path| {
                     let mut bounds = self.project_rail_list.bounds.get(path)?.get()?;
                     bounds.origin.y -= px(self.project_rail_project_offset(path));

@@ -7,6 +7,11 @@ use gespan_core::{
 use gpui::{Role, SharedString, div, prelude::*, px};
 
 pub(crate) enum Request {
+    /// A plan card from this app's own plan-mode turn.
+    LocalPlan {
+        plan: crate::conversation::remote_plans::Plan,
+        action: crate::conversation::remote_plans::PlanAction,
+    },
     RemotePlan {
         id: String,
         text: String,

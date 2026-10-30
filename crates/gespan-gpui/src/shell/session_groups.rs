@@ -2558,7 +2558,7 @@ mod tests {
                             && quad
                                 .background
                                 .as_solid()
-                                .is_some_and(|color| color == gpui::Hsla::from(rgb(0x323232)))
+                                .is_some_and(|color| color == crate::theme::rail_color())
                     }),
                     "the same spine as Operator rows connects folder members"
                 );
@@ -2618,6 +2618,39 @@ mod tests {
         assert_eq!(project.left(), search.left());
         assert_eq!(project.size.height, px(28.));
         assert!(project.right() < options.left());
+    }
+
+    #[gpui::test]
+    fn the_sessions_heading_plus_starts_a_session_in_this_project(cx: &mut TestAppContext) {
+        let (window, _, _) = setup(cx);
+        cx.refresh().unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        let new = visual.debug_bounds("sidebar-new-session").unwrap();
+        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
+        // Just before the filter, on the same line.
+        assert!(new.right() <= filter.left(), "{new:?} {filter:?}");
+        assert!((new.center().y - filter.center().y).abs() <= px(1.));
+        let (before, project) = window
+            .update(visual, |shell, _, _| {
+                (
+                    shell.session_summaries.len(),
+                    shell.workspace.project.clone(),
+                )
+            })
+            .unwrap();
+        visual.simulate_click(new.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.session_summaries.len(), before + 1);
+                let newest = shell
+                    .session_summaries
+                    .values()
+                    .max_by_key(|s| s.id)
+                    .unwrap();
+                assert_eq!(newest.cwd, project);
+            })
+            .unwrap();
     }
 
     #[gpui::test]

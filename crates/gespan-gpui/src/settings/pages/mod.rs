@@ -20,7 +20,7 @@ pub(crate) use appearance::{ACCENTS, swatch};
 pub(super) use connections::ConnectionsState;
 pub(super) use diagnostics::DiagnosticsState;
 pub(super) use dictation::DictationState;
-pub(crate) use keybindings::command_shortcut;
+pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
 
 use super::{Section, SettingsView};

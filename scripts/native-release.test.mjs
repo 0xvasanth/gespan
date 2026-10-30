@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nativeManifest, nativeTargets } from "./native-release.mjs";
+import { feedNotes, nativeManifest, nativeTargets } from "./native-release.mjs";
 import { previewVersion } from "./package-native.mjs";
 
 const artifacts = nativeTargets.map((target) => ({
@@ -11,7 +11,7 @@ const artifacts = nativeTargets.map((target) => ({
 function manifest(changes = {}) {
   return nativeManifest({
     version: "0.16.0-preview.2",
-    assetBaseUrl: "https://dl.example.test/releases/download/native-v0.16.0-preview.2",
+    assetBaseUrl: "https://dl.example.test/releases/download/v0.16.0-preview.2",
     artifacts,
     ...changes,
   });
@@ -28,7 +28,7 @@ test("all native architectures and installation types have isolated versioned UR
   for (const artifact of Object.values(result.platforms)) {
     assert.match(
       artifact.url,
-      /^https:\/\/dl\.example\.test\/releases\/download\/native-v0\.16\.0-preview\.2\/[^/]+$/,
+      /^https:\/\/dl\.example\.test\/releases\/download\/v0\.16\.0-preview\.2\/[^/]+$/,
     );
     assert.ok(artifact.url.includes("%20"));
   }
@@ -99,4 +99,30 @@ test("beta versions map to numeric Windows versions and their own label", () => 
   for (const bad of ["0.0.1", "0.0.1-beta.", "0.0.1-alpha", "0.0.1-preview", "0.0.1-beta.65536"]) {
     assert.throws(() => previewVersion(bad), bad);
   }
+});
+
+test("the feed's notes are the version's CHANGELOG section", () => {
+  const changelog = [
+    "# Changelog",
+    "",
+    "## [Unreleased]",
+    "",
+    "- Not shipped yet.",
+    "",
+    "## [0.0.2-beta] - 2026-10-30",
+    "",
+    "### Added",
+    "",
+    "- Windows tray icon.",
+    "",
+    "## [0.0.1-beta] - 2026-10-27",
+    "",
+    "- First beta.",
+  ].join("\n");
+  const notes = feedNotes("0.0.2-beta", changelog);
+  assert.match(notes, /^### Added\n\n- Windows tray icon\./);
+  assert.doesNotMatch(notes, /Not shipped yet|First beta/);
+  // A version without a section fails the release rather than shipping other notes.
+  assert.throws(() => feedNotes("0.0.3-beta", changelog), /no section for 0\.0\.3-beta/);
+  assert.equal(feedNotes("0.0.2-beta", changelog, { NATIVE_RELEASE_NOTES: "Override" }), "Override");
 });

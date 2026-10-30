@@ -3744,7 +3744,7 @@ fn estimate_parses_hours_and_minutes_in_the_drawer(cx: &mut TestAppContext) {
     visual.run_until_parked();
     // Empty clears it. The field opens on the saved value, so clear that.
     click(visual, "board-drawer-estimate");
-    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_keystrokes("secondary-a backspace");
     visual.simulate_keystrokes("enter");
     assert_eq!(meta_of(&f, &card).estimate_minutes, None);
 }
@@ -3893,7 +3893,7 @@ fn custom_field_values_edit_by_kind(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("enter");
     assert!(shown(visual, "board-inline-error"));
     assert_eq!(field_value(&f, &card, "Points"), None);
-    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_keystrokes("secondary-a backspace");
     visual.simulate_input("3.5");
     visual.simulate_keystrokes("enter");
     assert_eq!(field_value(&f, &card, "Points").as_deref(), Some("3.5"));
@@ -3944,7 +3944,7 @@ fn links_list_adds_a_pr_url_and_removes_a_link(cx: &mut TestAppContext) {
         "only http(s) is allowed"
     );
     assert!(links_of(&f, &card).is_empty());
-    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_keystrokes("secondary-a backspace");
     visual.simulate_input("https://github.com/a/b/pull/1");
     visual.simulate_keystrokes("enter");
     assert_eq!(
@@ -7373,12 +7373,12 @@ fn multi_select_and_url_edit_in_the_drawer_and_reject_bad_values(cx: &mut TestAp
     visual.simulate_keystrokes("enter");
     assert!(shown(visual, "board-inline-error"));
     assert_eq!(field_value(&f, &card, "Link"), None);
-    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_keystrokes("secondary-a backspace");
     visual.simulate_input("not a link");
     visual.simulate_keystrokes("enter");
     assert!(shown(visual, "board-inline-error"));
     assert_eq!(field_value(&f, &card, "Link"), None);
-    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_keystrokes("secondary-a backspace");
     visual.simulate_input("https://example.com/a");
     visual.simulate_keystrokes("enter");
     assert_eq!(

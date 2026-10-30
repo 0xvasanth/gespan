@@ -15,8 +15,10 @@ mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
+mod in_flight;
 mod layout;
 mod live_agents;
+mod menu_bar;
 mod mobile_host;
 mod notifications;
 mod open_in_editor;
@@ -45,8 +47,11 @@ mod settings;
 mod shortcuts;
 mod sidebar_list;
 mod sidebar_peek;
+mod space_reorder;
 mod terminal_dock;
 mod title_tabs;
+mod tray;
+pub(crate) use tray::reopen;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
@@ -115,6 +120,8 @@ actions!(
         NextSessionInTab,
         PreviousProject,
         NextProject,
+        MoveProjectBack,
+        MoveProjectForward,
         SwitchModel,
         ToggleRightPanel,
         SplitRight,
@@ -243,6 +250,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-down"), NextSessionInTab, context),
         KeyBinding::new(&format!("{modifier}-shift-left"), PreviousProject, context),
         KeyBinding::new(&format!("{modifier}-shift-right"), NextProject, context),
+        KeyBinding::new(&format!("{modifier}-alt-shift-left"), MoveProjectBack, context),
+        KeyBinding::new(&format!("{modifier}-alt-shift-right"), MoveProjectForward, context),
         KeyBinding::new(&format!("{modifier}-."), SwitchModel, context),
         KeyBinding::new(&format!("{modifier}-shift-b"), ToggleRightPanel, context),
         KeyBinding::new(&format!("{modifier}-d"), SplitRight, context),
@@ -382,6 +391,8 @@ pub(crate) enum MenuTarget {
     Actions,
     /// The title bar corner's Open in editor menu, for this folder.
     OpenInEditor(String),
+    /// The Inbox row's right-click menu in the sidebar and the project rail.
+    InboxNav,
 }
 pub(crate) struct ShellMenu {
     pub(crate) target: MenuTarget,
@@ -613,6 +624,7 @@ pub(crate) struct Shell {
     projects_frame: Entity<Chrome>,
     project_rail_list: project_rail::ProjectRailList,
     project_rail_drag: Option<project_rail::ProjectRailDrag>,
+    space_reorder: space_reorder::SpaceReorder,
     project_rail_stats: project_rail::ProjectRailStats,
     project_resize: Option<(Pixels, f32)>,
     classic_sidebar_tab: classic_sidebar::ClassicSidebarTab,
@@ -744,6 +756,9 @@ pub(crate) struct Shell {
     /// The project whose colors were last painted; leaving it blends colors.
     theme_project: Option<String>,
     quit_prompted: bool,
+    /// The running-chats list last written to the store.
+    in_flight_written: Option<Vec<i64>>,
+    menu_bar: menu_bar::MenuBar,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
@@ -1008,6 +1023,7 @@ impl Shell {
             projects_frame,
             project_rail_list: project_rail::ProjectRailList::new(cx),
             project_rail_drag: None,
+            space_reorder: Default::default(),
             project_rail_stats: Default::default(),
             project_resize: None,
             classic_sidebar_tab,
@@ -1117,6 +1133,8 @@ impl Shell {
             window_glass: None,
             theme_project: None,
             quit_prompted: false,
+            in_flight_written: None,
+            menu_bar: menu_bar::MenuBar::new(!cfg!(target_os = "macos")),
             menu: None,
             background_dialog: None,
             backgrounds: HashMap::new(),
@@ -1252,8 +1270,14 @@ impl Shell {
         ));
         let mut pilot_chrome = pilots.read(cx).overview_chrome();
         let mut pilot_error = pilots.read(cx).error.clone();
+        let mut pilot_session = pilots.read(cx).routed_session();
         this.observations
             .push(cx.observe(&pilots, move |this, pilots, cx| {
+                let session = pilots.read(cx).routed_session();
+                if session != pilot_session {
+                    pilot_session = session;
+                    this.update_chat_visibility(cx);
+                }
                 let chrome = pilots.read(cx).overview_chrome();
                 if chrome != pilot_chrome {
                     pilot_chrome = chrome;
@@ -1284,6 +1308,7 @@ impl Shell {
         }
         this.init_mobile_host(cx);
         this.restore_hold(cx);
+        this.resume_interrupted(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1320,7 +1345,7 @@ impl Shell {
             inbox.update(cx, |inbox, cx| inbox.set_active(active, cx));
         }
         // Every pane of the active tab is on screen, not just the focused one.
-        let shown: HashSet<i64> = match self.workspace.active_tab() {
+        let mut shown: HashSet<i64> = match self.workspace.active_tab() {
             Some(tab)
                 if !self.app_view_open()
                     && self.settings.is_none()
@@ -1331,6 +1356,20 @@ impl Shell {
             }
             _ => HashSet::new(),
         };
+        // A session opened in the Pilot details panel is on screen too. Left
+        // out, it was trimmed as inactive and the panel showed it empty.
+        if self.pilot_active(cx)
+            && self.workspace.right_panel_open
+            && !self.app_view_open()
+            && self.settings.is_none()
+            && self.app_search.is_none()
+        {
+            shown.extend(
+                self.pilots
+                    .as_ref()
+                    .and_then(|m| m.read(cx).routed_session()),
+            );
+        }
         // Hidden tabs keep their prepared image and any in-flight load. Only
         // closing a tab/pane should discard its background.
         let open: HashSet<i64> = self.workspace.open_sessions().into_iter().collect();
@@ -1408,6 +1447,7 @@ impl Shell {
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();
+                this.sync_in_flight(cx);
                 this.notification_session_changed(id, cx);
                 this.update_usage_provider(cx);
                 this.update_chat_visibility(cx);
@@ -1841,6 +1881,13 @@ impl Shell {
         self.observations.push(cx.subscribe_in(
             &explorer,
             window,
+            |this, _, event: &crate::explorer::OpenTerminal, window, cx| {
+                this.new_terminal_in(Some(event.0.clone()), window, cx)
+            },
+        ));
+        self.observations.push(cx.subscribe_in(
+            &explorer,
+            window,
             |this, _, event: &crate::explorer::OpenSearchMatch, window, cx| {
                 this.open_review_with_preview(
                     crate::review::ReviewTab::File {
@@ -1885,6 +1932,8 @@ impl Shell {
                     this.workspace.changes_view = *view;
                     this.persist(cx);
                 }
+                // Git turn reviews drop committed files on their own.
+                crate::changes::ChangesEvent::Committed { .. } => {}
                 crate::changes::ChangesEvent::OpenDiff { cwd, path, staged } => {
                     this.open_review(
                         crate::review::ReviewTab::Changes {
@@ -2013,6 +2062,28 @@ impl Shell {
                     this.quit_prompted = false;
                     if matches!(answer, Ok(0)) {
                         // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        let running = self.running_chats(cx).len();
+        if !self.quit_prompted && running > 0 && !crate::hold::active(cx) {
+            self.quit_prompted = true;
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                &gespan_core::interrupted::quit_message(running),
+                None,
+                &["Quit", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.quit_prompted = false;
+                    if matches!(answer, Ok(0)) {
                         this.quit_unless_unsaved(window, cx);
                     }
                 });
@@ -3079,6 +3150,15 @@ impl Shell {
     /// Terminal: New (cmd-`): another terminal in the project's dock, which
     /// opens if it was hidden.
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_terminal_in(None, window, cx)
+    }
+    /// A new dock terminal in `cwd`, or where Terminal: New opens one.
+    fn new_terminal_in(
+        &mut self,
+        cwd: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.workspace.project.starts_with("remote://") {
             self.error = Some("Terminals are not available on remote projects.".into());
             cx.notify();
@@ -3088,7 +3168,7 @@ impl Shell {
             return;
         }
         let project = self.workspace.project.clone();
-        let cwd = self.terminal_cwd(cx);
+        let cwd = cwd.unwrap_or_else(|| self.terminal_cwd(cx));
         let was_open = self
             .workspace
             .docks
@@ -3545,10 +3625,12 @@ impl Shell {
         let cwd = self.workspace.project.clone();
         let worktree = target.and_then(|id| {
             let path = self.session_working_copy(id, cx);
-            (path != cwd).then(|| crate::worktree_switcher::WorktreeFocus {
-                path: path.into(),
-                branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
-            })
+            (gespan_core::files::path_key(path) != gespan_core::files::path_key(&cwd)).then(
+                || crate::worktree_switcher::WorktreeFocus {
+                    path: path.into(),
+                    branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
+                },
+            )
         });
         let worktree_cwd = worktree.as_ref().map(|f| f.path.clone());
         let work = cx.background_executor().spawn(async move {
@@ -4454,6 +4536,7 @@ impl Shell {
                 if let Some(path) = paths.first() {
                     let path = path.to_string_lossy().into_owned();
                     let _ = this.update_in(cx, |this, window, cx| {
+                        this.remember_project_location(&path, cx);
                         this.workspace.add_project(&path);
                         this.select_project(path, window, cx);
                     });
@@ -4468,6 +4551,17 @@ impl Shell {
             }
         })
         .detach();
+    }
+    /// Records an opened folder's identity so a later rename can be followed.
+    fn remember_project_location(&self, path: &str, cx: &mut Context<Self>) {
+        let (store, path) = (self.store.clone(), vec![path.to_owned()]);
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(store) = locked(&store) {
+                    gespan_core::project_location::follow_moved_projects(&store, &path);
+                }
+            })
+            .detach();
     }
     fn create(&mut self, kind: Kind, cx: &mut Context<Self>) {
         self.create_session(kind, false, cx);
@@ -4489,6 +4583,10 @@ impl Shell {
         let store = self.store.clone();
         let cwd = self.workspace.project.clone();
         let focus = self.worktree_focus.get(&cwd).cloned();
+        // The project folder as a selected checkout is not a separate worktree.
+        let copy = focus.clone().filter(|f| {
+            gespan_core::files::path_key(&f.path) != gespan_core::files::path_key(&cwd)
+        });
         let blank_key = format!("{cwd}\0{}", focus.as_ref().map_or("", |f| f.path.as_str()));
         if only_if_empty && !self.pending_project_blanks.insert(blank_key.clone()) {
             return;
@@ -4510,7 +4608,7 @@ impl Shell {
         let controls = self.workspace.preferences.last_model_settings.clone();
         let work = cx.background_executor().spawn({
             let cwd = cwd.clone();
-            let worktree_cwd = focus.as_ref().map(|f| f.path.clone());
+            let worktree_cwd = copy.as_ref().map(|f| f.path.clone());
             async move {
                 let store = locked(&store)?;
                 let summary = store.create(kind.id(), &cwd)?;
@@ -4577,7 +4675,7 @@ impl Shell {
                         if let Some(view) = this.sessions.get(&id) {
                             view.update(cx, |view, cx| view.seed_new_settings(settings, cx));
                         }
-                        this.seed_worktree(id, focus.as_ref(), cx);
+                        this.seed_worktree(id, copy.as_ref(), cx);
                         // A pending blank belongs to the copy that requested it;
                         // navigation to another copy must never redirect that request.
                         if this.workspace.project != cwd
@@ -5386,6 +5484,12 @@ impl Shell {
                 .unwrap_or_default()
         };
         match target {
+            MenuTarget::InboxNav => (
+                "Inbox actions".into(),
+                self.inbox_nav_menu_items(cx),
+                272.,
+                MenuStyle::Explorer,
+            ),
             // Answered by terminal_menu_items above.
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
@@ -5738,6 +5842,37 @@ impl Shell {
                         .into(),
                     ]);
                 }
+                let peers = self.workspace.project_peers(path);
+                if peers.len() > 1 {
+                    let ix = peers.iter().position(|p| p == path).unwrap_or(0);
+                    let (first, last) = (ix == 0, ix + 1 == peers.len());
+                    let (back, forward) = if self.workspace.classic_layout {
+                        ("Move up", "Move down")
+                    } else {
+                        ("Move left", "Move right")
+                    };
+                    let shortcut = |command| {
+                        crate::settings::command_shortcut(&self.workspace.preferences, command)
+                    };
+                    let step = |id, label, command, disabled| {
+                        let action = MenuAction::new(id, label).disabled(disabled);
+                        match shortcut(command) {
+                            Some(keys) => action.shortcut(keys),
+                            None => action,
+                        }
+                    };
+                    items.push(
+                        MenuAction::new("move", "Move")
+                            .icon("chevrons-up-down")
+                            .submenu(vec![
+                                step("move:back", back, "Project: Move Back", first),
+                                step("move:forward", forward, "Project: Move Forward", last),
+                                MenuAction::new("move:start", "Move to start").disabled(first),
+                                MenuAction::new("move:end", "Move to end").disabled(last),
+                            ])
+                            .into(),
+                    );
+                }
                 items.extend([
                     MenuAction::new("reveal", REVEAL_LABEL)
                         .icon("folder-open")
@@ -5781,6 +5916,7 @@ impl Shell {
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
             MenuTarget::Actions => self.run_actions_menu(action, window, cx),
             MenuTarget::OpenInEditor(path) => self.run_open_in_editor_menu(path, action, cx),
+            MenuTarget::InboxNav => self.run_inbox_nav_menu(action, window, cx),
             MenuTarget::TerminalDock => {
                 let side = match action {
                     "top" => DockSide::Top,
@@ -5850,6 +5986,16 @@ impl Shell {
                     );
                 } else if let Some(group) = action.strip_prefix("project-group:") {
                     self.assign_project_rail_group(&path, group, cx);
+                } else if let Some(direction) = action.strip_prefix("move:") {
+                    let moved = match direction {
+                        "back" => self.workspace.step_project_order(&path, -1),
+                        "forward" => self.workspace.step_project_order(&path, 1),
+                        "start" => self.workspace.move_project_to_end(&path, -1),
+                        _ => self.workspace.move_project_to_end(&path, 1),
+                    };
+                    if moved {
+                        self.project_order_changed(&path, cx);
+                    }
                 } else if action == "reveal" {
                     if path.starts_with("remote://") {
                         self.error = Some("Remote folders stay on their host machine.".into());
@@ -6611,12 +6757,36 @@ impl Shell {
         }
         self.open(next, window, cx);
     }
+    /// `Project: Move Back/Forward` moves the current project one place.
+    fn move_current_project(&mut self, step: isize, cx: &mut Context<Self>) {
+        if self.menu.is_some() {
+            return;
+        }
+        let path = self.workspace.project.clone();
+        if self.workspace.step_project_order(&path, step) {
+            self.project_order_changed(&path, cx);
+        }
+    }
+    /// Saves a new project order and keeps the moved project in view.
+    fn project_order_changed(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.workspace.projects.iter().position(|p| p == path) {
+            if ix < self.spaces_start {
+                self.spaces_start = ix;
+            } else if ix >= self.spaces_start + 5 {
+                self.spaces_start = ix - 4;
+            }
+        }
+        self.persist(cx);
+        self.invalidate_chrome(cx);
+        self.projects_frame.update(cx, |_, cx| cx.notify());
+        cx.notify();
+    }
     /// `Project: Previous/Next` along the project rail.
     fn step_project(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             return;
         }
-        let projects = self.workspace.projects.clone();
+        let projects = self.workspace.visible_project_order();
         if let Some(next) = adjacent(&projects, Some(&self.workspace.project), step)
             && next != self.workspace.project
         {
@@ -6870,13 +7040,12 @@ impl Shell {
         self.spaces_start = self.spaces_start.min(last);
         let first = self.spaces_start;
         let projects: Vec<_> = self
-            .workspace
-            .projects
-            .iter()
+            .space_reorder
+            .order(&self.workspace.projects)
+            .into_iter()
             .enumerate()
             .skip(first)
             .take(shown)
-            .map(|(ix, p)| (ix, p.clone()))
             .collect();
         if self
             .hovered_space
@@ -6966,9 +7135,12 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .child(self.space_reorder.strip.probe())
                     .children(projects.into_iter().map(|(ix, path)| {
                         let active = path == self.workspace.project;
                         let hovered = self.hovered_space.as_ref() == Some(&path);
+                        let dragging = self.space_reorder.dragging(&path);
+                        let offset = self.space_reorder.offset(&path, ix, first);
                         div()
                             .id(("project-space", ix))
                             .debug_selector(move || format!("project-space-{ix}"))
@@ -6985,8 +7157,11 @@ impl Shell {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .opacity(if active { 1. } else { 0.45 })
-                            .when(active, |d| d.bg(content(0.1)))
+                            .relative()
+                            .left(px(offset))
+                            .opacity(if active || dragging { 1. } else { 0.45 })
+                            .when(active || dragging, |d| d.bg(content(0.1)))
+                            .when(dragging, |d| d.cursor(CursorStyle::ClosedHand))
                             .hover(|s| s.opacity(1.).bg(content(if active { 0.1 } else { 0.05 })))
                             .child(self.project_mark(&path, 12.))
                             .when(hovered, |d| d.child(self.space_anchor.probe()))
@@ -7003,18 +7178,28 @@ impl Shell {
                                     this.invalidate_chrome(cx);
                                 })
                             })
+                            .on_mouse_down(MouseButton::Left, {
+                                let path = path.clone();
+                                cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                                    this.start_space_drag(&path, event);
+                                })
+                            })
                             .on_mouse_down(MouseButton::Right, {
                                 let path = path.clone();
                                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                                     let anchor = Anchor::Point(event.position);
+                                    // Spaces have no pins or groups to offer.
                                     let target = MenuTarget::Project {
                                         path: path.clone(),
-                                        rail: true,
+                                        rail: false,
                                     };
                                     this.open_menu(target, anchor, window, cx);
                                 })
                             })
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                if this.space_reorder.take_click() {
+                                    return;
+                                }
                                 // The tip steps aside once a space is clicked.
                                 this.hovered_space = None;
                                 this.select_project(path.clone(), window, cx)
@@ -8340,6 +8525,8 @@ impl Render for Shell {
                     cx.notify();
                 }));
             self.start_native_notifications(cx);
+            #[cfg(windows)]
+            self.start_tray(window, cx);
             let shell = cx.entity().downgrade();
             window.on_window_should_close(cx, move |window, cx| {
                 shell
@@ -8357,11 +8544,23 @@ impl Render for Shell {
                             crate::traffic_lights::hide(window, cx);
                             return false;
                         }
-                        if shell.unsaved_files(cx) {
-                            shell.request_quit(window, cx);
-                            false
-                        } else {
-                            true
+                        let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
+                        match crate::tray::on_close(
+                            to_tray,
+                            cfg!(target_os = "macos"),
+                            !shell.running_chats(cx).is_empty(),
+                            shell.unsaved_files(cx),
+                        ) {
+                            crate::tray::Close::Hide => {
+                                shell.set_window_visible(window, false, cx);
+                                false
+                            }
+                            // Closing the window quits: ask first, as a quit does.
+                            crate::tray::Close::Ask => {
+                                shell.request_quit(window, cx);
+                                false
+                            }
+                            crate::tray::Close::Quit => true,
                         }
                     })
                     .unwrap_or(true)
@@ -8656,13 +8855,19 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &NextProject, window, cx| this.step_project(1, window, cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &MoveProjectBack, _, cx| this.move_current_project(-1, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &MoveProjectForward, _, cx| this.move_current_project(1, cx)),
+            )
             .on_action(cx.listener(|this, _: &SwitchModel, window, cx| {
                 if let Some(view) = this.workspace.active.and_then(|id| this.sessions.get(&id)) {
                     view.update(cx, |v, cx| v.toggle_recent_models(window, cx));
                 }
             }))
             .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
-                if this.cancel_project_rail_drag(cx) {
+                if this.cancel_project_rail_drag(cx) || this.cancel_space_drag(cx) {
                     return;
                 }
                 if this.cancel_classic_sidebar_tab(cx) {
@@ -8809,7 +9014,7 @@ impl Render for Shell {
             }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 if let Some(pilots) = &this.pilots {
                     pilots.update(cx, |m, cx| m.move_rail_drag(event, cx));
                 }
@@ -8818,6 +9023,7 @@ impl Render for Shell {
                 this.move_pane_drag(event, cx);
                 this.move_folder_drag(event, cx);
                 this.move_project_rail_drag(event, cx);
+                this.move_space_drag(event, window, cx);
                 this.move_classic_sidebar_tab(event, cx);
                 this.drag_sash(event, cx);
                 this.drag_dock(event, cx);
@@ -8850,6 +9056,7 @@ impl Render for Shell {
                     this.finish_pane_drag(window, cx);
                     this.finish_folder_drag(cx);
                     this.finish_project_rail_drag(cx);
+                    this.finish_space_drag(cx);
                     this.end_classic_sidebar_tab(cx);
                     if let Some(m) = this.pilots.clone() {
                         m.update(cx, |m, cx| m.finish_reorder(cx));
@@ -11545,6 +11752,49 @@ mod tests {
         assert_eq!(copied, Some(a.to_string()));
     }
     #[gpui::test]
+    fn a_renamed_project_folder_opens_with_its_sessions(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
+        let (old, new) = (
+            dir.path().join("gespan"),
+            dir.path().join("gespan-personal"),
+        );
+        std::fs::create_dir(&old).unwrap();
+        let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
+        let id = store.create("codex", &text(&old)).unwrap().id;
+        let mut state = Workspace::default();
+        state.add_project(&text(&old));
+        state.project = text(&old);
+        state.open(id);
+        let saved = serde_json::to_string(&state).unwrap();
+        // The first launch remembers the folder; it is renamed before the next.
+        let saved = crate::workspace::follow_moved_projects(&store, Some(saved));
+        std::fs::rename(&old, &new).unwrap();
+        let saved = crate::workspace::follow_moved_projects(&store, saved);
+        assert_eq!(store.ui_state().unwrap(), saved);
+        let summaries = store.sessions().unwrap();
+        let database = Arc::new(Mutex::new(store));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Shell::new(database, summaries, text(&new), saved, cx))
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert_eq!(shell.workspace.project, text(&new));
+                assert_eq!(shell.workspace.projects, vec![text(&new)]);
+                assert_eq!(shell.workspace.active, Some(id));
+                assert_eq!(shell.session_summaries[&id].cwd, text(&new));
+                assert_eq!(
+                    crate::workspace::project_name(&shell.workspace.project),
+                    "gespan-personal"
+                );
+            })
+            .unwrap();
+    }
+    #[gpui::test]
     fn desktop_database_sessions_load_and_copy_their_original_ids(cx: &mut TestAppContext) {
         let mut store = Store::open_gespan(std::path::Path::new(":memory:")).unwrap();
         let summary = store.create("codex", "/work/gespan").unwrap();
@@ -12107,7 +12357,7 @@ mod tests {
             cx.debug_bounds(count_selector).is_none(),
             "a single pane has no count badge"
         );
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, _| {
@@ -12307,7 +12557,7 @@ mod tests {
             .unwrap();
 
         // ⌘W closes the focused pane only; its neighbour takes focus.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12329,7 +12579,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         window
             .update(cx, |shell, _, _| {
                 shell
@@ -12401,7 +12651,7 @@ mod tests {
             .unwrap();
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         cx.update(|_, cx| cx.set_reduce_motion(false));
         let new = window
@@ -12573,7 +12823,7 @@ mod tests {
                 assert_eq!(shell.viewport_width, 1000.);
             })
             .unwrap();
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         let new = window
             .update(cx, |shell, _, cx| {
@@ -12591,10 +12841,10 @@ mod tests {
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // A sidebar the user hid stays hidden when room comes back.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         // Collapsed for the split; shown, then hidden again by hand.
-        cx.simulate_keystrokes("cmd-b cmd-b");
+        cx.simulate_keystrokes("secondary-b secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12625,7 +12875,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         // Wide enough for two panes beside the sidebar.
-        cx.simulate_keystrokes("cmd-d");
+        cx.simulate_keystrokes("secondary-d");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
@@ -12645,13 +12895,13 @@ mod tests {
         // Shown by hand while crowded, it stays until the room changes again.
         cx.simulate_resize(gpui::size(px(1000.), px(800.)));
         cx.run_until_parked();
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| assert!(shell.workspace.sidebar_visible))
             .unwrap();
         // Hidden by hand, it stays hidden however wide the window grows.
-        cx.simulate_keystrokes("cmd-b");
+        cx.simulate_keystrokes("secondary-b");
         cx.simulate_resize(gpui::size(px(1600.), px(800.)));
         cx.run_until_parked();
         window
@@ -12724,7 +12974,7 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         cx.run_until_parked();
         assert!(cx.debug_bounds("terminal-dock").is_none());
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         let project = window
             .update(cx, |shell, w, cx| {
@@ -12742,7 +12992,7 @@ mod tests {
         assert!((dock.size.height - px(220.)).abs() < px(2.));
         // ⌘T in the dock opens another terminal, not a session tab.
         let tabs = window.update(cx, |s, _, _| s.workspace.tabs.len()).unwrap();
-        cx.simulate_keystrokes("cmd-t");
+        cx.simulate_keystrokes("secondary-t");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
@@ -12754,7 +13004,7 @@ mod tests {
             .unwrap();
         assert!(cx.debug_bounds("terminal-tab-1").is_some());
         // ⌘W closes the focused terminal; the session tab stays.
-        cx.simulate_keystrokes("cmd-w");
+        cx.simulate_keystrokes("secondary-w");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
@@ -12780,7 +13030,7 @@ mod tests {
         window
             .update(cx, |shell, w, cx| shell.focus_terminal(w, cx))
             .unwrap();
-        cx.simulate_keystrokes("cmd-j");
+        cx.simulate_keystrokes("secondary-j");
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {

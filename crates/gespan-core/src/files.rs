@@ -1,6 +1,7 @@
 //! Explorer filesystem operations, ported from src-tauri/src/fs.rs, plus the
 //! pure name and path helpers from the files feature model.
 pub mod document;
+pub mod editing;
 mod index;
 pub(crate) use index::{git_output_capped, is_indexable_root};
 pub use index::{list_project_files, list_project_files_sync_cancellable, ProjectFile};

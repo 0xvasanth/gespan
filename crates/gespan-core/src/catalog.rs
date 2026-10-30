@@ -620,7 +620,7 @@ fn cli_json(kind: Kind, args: &[&str]) -> Result<Value, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::sync_channel(1);
@@ -693,7 +693,7 @@ pub fn codex_request(
 ) -> Result<Value, String> {
     query_provider(Kind::Codex, method, params, account).map(|value| value["result"].clone())
 }
-fn query_provider(
+pub(crate) fn query_provider(
     kind: Kind,
     method: &str,
     params: Value,
@@ -727,7 +727,7 @@ fn query_provider(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::isolate(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut child = process::spawn(&mut command).map_err(|e| e.to_string())?;
     let _registration = process::register(child.id());
     let _account_process = crate::accounts::track(child.id(), kind, account);
     let mut stdin = child.stdin.take().unwrap();

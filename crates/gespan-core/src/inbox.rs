@@ -2,7 +2,11 @@
 //! validation, response parsers and saved credential formats.
 mod avatar;
 mod media;
+pub use media::init_video_dir as init_media_video_dir;
 pub use media::png as media_png;
+#[doc(hidden)]
+pub use media::remember_video;
+pub use media::video as media_video;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub(crate) mod github;
@@ -417,6 +421,74 @@ impl Seen {
         }
     }
 }
+/// What a change Gespan made itself was made to. Empty fields match anything,
+/// but at least one of `id`, `repo`, `number` or `project_path` must be set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SelfTarget {
+    pub provider: String,
+    pub kind: Option<String>,
+    pub repo: Option<String>,
+    pub number: Option<i64>,
+    pub id: Option<String>,
+    pub project_path: Option<String>,
+}
+impl SelfTarget {
+    /// The item a comment or action was made on.
+    pub fn of(item: &Item) -> Self {
+        let text = |s: &str| (!s.trim().is_empty()).then(|| s.trim().to_owned());
+        Self {
+            provider: item.provider.clone(),
+            kind: text(&item.kind),
+            repo: text(&item.repo),
+            number: (item.number != 0).then_some(item.number),
+            id: text(&item.id),
+            project_path: None,
+        }
+    }
+    fn matches(&self, item: &Item) -> bool {
+        let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+        let path = |p: &str| p.trim_end_matches(['/', '\\']).to_owned();
+        self.provider == item.provider
+            && self.id.as_ref().is_none_or(|id| *id == item.id)
+            && self.kind.as_ref().is_none_or(|kind| *kind == item.kind)
+            && self.number.is_none_or(|number| number == item.number)
+            && self.repo.as_ref().is_none_or(|repo| same(repo, &item.repo))
+            && self
+                .project_path
+                .as_ref()
+                .is_none_or(|p| path(p) == path(&item.project_path))
+            && (self.id.is_some()
+                || self.repo.is_some()
+                || self.number.is_some()
+                || self.project_path.is_some())
+    }
+}
+/// inboxSelfActivity: changes Gespan made, so the update they cause is not
+/// announced back to its author as unread. Each is kept ten minutes.
+#[derive(Clone, Debug, Default)]
+pub struct SelfActivity {
+    pending: Vec<(SelfTarget, u64)>,
+}
+impl SelfActivity {
+    const MAX_AGE_MS: u64 = 10 * 60_000;
+    fn prune(&mut self, now: u64) {
+        let oldest = now.saturating_sub(Self::MAX_AGE_MS);
+        self.pending.retain(|(_, at)| *at >= oldest);
+    }
+    pub fn record(&mut self, target: SelfTarget, now: u64) {
+        self.prune(now);
+        self.pending.push((target, now));
+    }
+    /// Whether `item`'s new revision is one of ours. Consumes every match, so
+    /// a later revision is announced as usual.
+    pub fn consume(&mut self, item: &Item, now: u64) -> bool {
+        self.prune(now);
+        let before = self.pending.len();
+        self.pending.retain(|(target, _)| !target.matches(item));
+        self.pending.len() != before
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ViewState {
@@ -1605,5 +1677,91 @@ mod plane_connection_tests {
             )
             .unwrap_err();
         assert!(error.contains("workspace"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod self_activity_tests {
+    use super::*;
+
+    fn pr(repo: &str, number: i64) -> Item {
+        Item {
+            provider: "github".into(),
+            kind: "pr".into(),
+            repo: repo.into(),
+            number,
+            project_path: "/work/app".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn our_change_is_consumed_once_and_only_by_its_item() {
+        let mut ours = SelfActivity::default();
+        ours.record(SelfTarget::of(&pr("Acme/App", 7)), 1_000);
+        // Another number, repository or provider is not ours.
+        assert!(!ours.consume(&pr("acme/app", 8), 2_000));
+        assert!(!ours.consume(&pr("acme/other", 7), 2_000));
+        let mut gitlab = pr("acme/app", 7);
+        gitlab.provider = "gitlab".into();
+        assert!(!ours.consume(&gitlab, 2_000));
+        // The same item, its repository spelled in another case, is.
+        assert!(ours.consume(&pr("acme/app", 7), 2_000));
+        // The next revision is someone else's again.
+        assert!(!ours.consume(&pr("acme/app", 7), 3_000));
+    }
+
+    #[test]
+    fn several_changes_coalesce_into_one_revision_and_expire_after_ten_minutes() {
+        let mut ours = SelfActivity::default();
+        let target = SelfTarget::of(&pr("acme/app", 7));
+        ours.record(target.clone(), 0);
+        ours.record(target.clone(), 1_000);
+        assert!(ours.consume(&pr("acme/app", 7), 2_000));
+        assert!(!ours.consume(&pr("acme/app", 7), 2_000));
+        ours.record(target, 0);
+        assert!(!ours.consume(&pr("acme/app", 7), 10 * 60_000 + 1));
+    }
+
+    #[test]
+    fn a_project_wide_change_matches_its_project_and_an_empty_target_nothing() {
+        let mut ours = SelfActivity::default();
+        ours.record(
+            SelfTarget {
+                provider: "github".into(),
+                kind: Some("pr".into()),
+                project_path: Some("/work/app/".into()),
+                ..Default::default()
+            },
+            0,
+        );
+        let mut elsewhere = pr("acme/app", 1);
+        elsewhere.project_path = "/work/other".into();
+        assert!(!ours.consume(&elsewhere, 1));
+        assert!(ours.consume(&pr("acme/app", 1), 1));
+        ours.record(
+            SelfTarget {
+                provider: "github".into(),
+                ..Default::default()
+            },
+            0,
+        );
+        assert!(!ours.consume(&pr("acme/app", 1), 1));
+    }
+
+    #[test]
+    fn a_linear_or_jira_change_matches_by_id() {
+        let mut ours = SelfActivity::default();
+        let issue = Item {
+            provider: "linear".into(),
+            kind: "linear".into(),
+            id: "abc".into(),
+            ..Default::default()
+        };
+        ours.record(SelfTarget::of(&issue), 0);
+        let mut other = issue.clone();
+        other.id = "xyz".into();
+        assert!(!ours.consume(&other, 1));
+        assert!(ours.consume(&issue, 1));
     }
 }

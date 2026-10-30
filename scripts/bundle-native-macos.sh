@@ -41,7 +41,7 @@ mkdir -p "$native_bundle/Contents/MacOS" "$native_bundle/Contents/Resources"
 # Replace the inode atomically so macOS does not reuse an older signature cache.
 cp "$native_binary" "$native_bundle/Contents/MacOS/gespan-gpui.next"
 mv -f "$native_bundle/Contents/MacOS/gespan-gpui.next" "$native_bundle/Contents/MacOS/gespan-gpui"
-cp src-tauri/icons/icon.icns "$native_bundle/Contents/Resources/gespan.icns"
+cp crates/gespan-gpui/packaging/icon.icns "$native_bundle/Contents/Resources/gespan.icns"
 # Ship the app's attribution and the license texts for GPUI and embedded assets.
 # Add these before signing so the signature covers the notices too.
 native_licenses="$native_bundle/Contents/Resources/licenses"
@@ -85,6 +85,6 @@ if [ "$native_identity" = - ]; then
   codesign --force --sign - "$native_bundle"
 else
   codesign --force --sign "$native_identity" --options runtime --timestamp \
-    --entitlements src-tauri/Entitlements.plist "$native_bundle"
+    --entitlements crates/gespan-gpui/packaging/Entitlements.plist "$native_bundle"
 fi
 printf 'App: %s\n' "$native_bundle"

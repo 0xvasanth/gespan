@@ -121,6 +121,11 @@ impl FetchError {
     }
 }
 
+/// Whether Gespan can read usage for `kind` at all. Kiro, Cursor and the
+/// other ACP agents report none.
+pub fn has_usage(kind: Kind) -> bool {
+    kind.subscription_usage() || matches!(kind, Kind::Devin | Kind::OpenCode | Kind::Pi)
+}
 pub fn fetch(kind: Kind) -> Result<Snapshot, FetchError> {
     fetch_for(kind, &Default::default(), None)
 }
@@ -626,5 +631,25 @@ mod tests {
             resets_at: None,
         };
         assert_eq!(w.countdown(0), "5h");
+    }
+}
+
+#[cfg(test)]
+mod has_usage_tests {
+    use super::*;
+    #[test]
+    fn only_providers_with_a_usage_source_report_usage() {
+        for kind in [
+            Kind::Codex,
+            Kind::Claude,
+            Kind::Devin,
+            Kind::OpenCode,
+            Kind::Pi,
+        ] {
+            assert!(has_usage(kind), "{kind:?}");
+        }
+        for kind in [Kind::Kiro, Kind::Cursor, Kind::Antigravity, Kind::Hermes] {
+            assert!(!has_usage(kind), "{kind:?}");
+        }
     }
 }

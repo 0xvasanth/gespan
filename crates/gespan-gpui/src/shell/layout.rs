@@ -748,7 +748,7 @@ impl Shell {
             .right_panel
             .clone()
             .filter(|_| right_shown && self.settings.is_none());
-        div()
+        let row = div()
             .flex_1()
             .min_h_0()
             .overflow_hidden()
@@ -793,7 +793,18 @@ impl Shell {
             )
             .when_some(panel, |d, panel| {
                 d.child(self.right_panel_frame(panel, right_width, full, window, cx))
-            })
+            });
+        // The menu bar spans the right panel too, so its headers stay level
+        // with the open-file tabs.
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .children(self.menu_bar(cx))
+            .child(row)
     }
     /// The usage chips with the terminal controls at the far end.
     fn footer_row(&mut self, cx: &mut Context<Self>) -> gpui::Div {

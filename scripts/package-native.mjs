@@ -366,7 +366,7 @@ export async function packageNative({
     const script = template
       .replaceAll("@STAGE@", quote(stage))
       .replaceAll("@OUTFILE@", quote(installer))
-      .replaceAll("@ICON@", quote(join(root, "src-tauri/icons/icon.ico")))
+      .replaceAll("@ICON@", quote(join(root, "crates/gespan-gpui/packaging/icon.ico")))
       .replaceAll("@VERSION@", version)
       .replaceAll("@WINDOWS_VERSION@", parsed.windows);
     const nsi = join(work, "installer.nsi");

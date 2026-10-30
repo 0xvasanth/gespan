@@ -17,6 +17,7 @@ actions!(application, [Hide, HideOthers, ShowAll]);
 pub(crate) struct OpenUrl(pub &'static str);
 
 const REPO: &str = "https://github.com/0xvasanth/gespan";
+const WEBSITE: &str = "https://gespan.dev";
 
 pub(crate) fn bind(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -33,7 +34,15 @@ pub(crate) fn bind(cx: &mut App) {
 }
 
 pub(crate) fn install(prefs: &crate::settings::Preferences, cx: &mut App) {
-    cx.set_menus(vec![
+    cx.set_menus(menus(prefs, cfg!(target_os = "macos")));
+}
+
+/// The menus, for the macOS menu bar or (`mac` false) the in-window menu bar
+/// on Windows and Linux. There the app menu's items move to File and Help,
+/// Hide and the Window menu are dropped, and the window's own buttons
+/// minimize and maximize.
+pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu> {
+    let mut menus = vec![
         Menu::new("Gespan Native").items([
             MenuItem::action("About Gespan Native", About),
             MenuItem::separator(),
@@ -127,6 +136,7 @@ pub(crate) fn install(prefs: &crate::settings::Preferences, cx: &mut App) {
         Menu::new("Help").items([
             MenuItem::action("Report an issue…", crate::report::ReportIssue),
             MenuItem::separator(),
+            MenuItem::action("Gespan Website", OpenUrl(WEBSITE)),
             MenuItem::action("View on GitHub", OpenUrl(REPO)),
             MenuItem::separator(),
             MenuItem::action(
@@ -144,5 +154,28 @@ pub(crate) fn install(prefs: &crate::settings::Preferences, cx: &mut App) {
                 )),
             ),
         ]),
-    ]);
+    ];
+    if !mac {
+        menus.remove(0);
+        menus.retain(|menu| menu.name != "Window");
+        let file = &mut menus[0].items;
+        file.extend([
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Hold Everything", ToggleHold),
+            MenuItem::separator(),
+            MenuItem::action("Quit", Quit),
+        ]);
+        if let Some(help) = menus.iter_mut().find(|menu| menu.name == "Help") {
+            help.items.splice(
+                0..0,
+                [
+                    MenuItem::action("About Gespan Native", About),
+                    MenuItem::action("Check for Updates…", CheckForUpdates),
+                    MenuItem::separator(),
+                ],
+            );
+        }
+    }
+    menus
 }

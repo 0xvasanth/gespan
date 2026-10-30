@@ -145,6 +145,28 @@ describe("BinaryFileView video playback", () => {
     expect(container.textContent).toContain("8 B");
   });
 
+  it("shows the size when it arrives after the metadata", async () => {
+    await renderViewer("/repo/clip.mp4");
+    const video = container.querySelector("video")!;
+    const width = { value: 0, configurable: true };
+    const height = { value: 0, configurable: true };
+    Object.defineProperties(video, {
+      videoWidth: width,
+      videoHeight: height,
+      duration: { value: 3.2 },
+    });
+    act(() => video.dispatchEvent(new Event("loadedmetadata")));
+    expect(container.textContent).toContain("0 × 0");
+
+    Object.defineProperties(video, {
+      videoWidth: { value: 160 },
+      videoHeight: { value: 90 },
+    });
+    act(() => video.dispatchEvent(new Event("resize")));
+    expect(container.textContent).toContain("160 × 90");
+    expect(container.textContent).toContain("0:03");
+  });
+
   it("pauses a hidden tab without resuming when it becomes visible", async () => {
     await renderViewer("/repo/clip.mp4");
     const video = container.querySelector("video")!;
