@@ -1,0 +1,64 @@
+crates/gespan-gpui/src/pilots/intro.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 123-128,222-223
+crates/gespan-gpui/src/board/detail.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 20,461,1404-1406,1409-1416
+  s_666089fd138caa::t_a7b72d93fb1b48 1407-1408
+crates/gespan-gpui/src/inbox.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 1065,1070-1073
+  s_92ed7f2aff7332::t_b2448b4ffe02f6 1062-1064,1066-1069
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 1051,1097,1124
+crates/gespan-gpui/src/shell.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 8979-8992
+crates/gespan-gpui/src/pilots/mod.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 1310-1313,1317
+crates/gespan-gpui/src/shell/classic_surface_tests.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 1439-1542,1545,1550,1552-1577,1581-1622,1624-1635,1637-1672
+  s_92ed7f2aff7332::t_e091d0684aacb3 1543-1544,1546-1549,1551,1578-1580,1623,1636
+crates/gespan-gpui/src/board/keyboard.rs
+  s_63af2de14c07c0::t_1f3e84500140f9 110-114
+crates/gespan-gpui/src/board/quick.rs
+  s_666089fd138caa::t_5f856109a8a74f 517-524
+crates/gespan-gpui/src/settings/model.rs
+  s_943e8c7cbbf342::t_de798d7ac37338 684-695
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36f10c414fdcb4c9bd95b0df56b59dfc7a0aeff0",
+  "prompts": {},
+  "sessions": {
+    "s_63af2de14c07c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "511cd39b-180a-4062-bdda-b7016f9292ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_92ed7f2aff7332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7107c6cf-7d6d-4735-a103-b0f96ca29386",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
