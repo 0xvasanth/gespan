@@ -1,6 +1,6 @@
 //! A release build must open the data an installed Gespan left behind: nothing
 //! can update a Tauri install to Native, so the first launch is the whole move.
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
