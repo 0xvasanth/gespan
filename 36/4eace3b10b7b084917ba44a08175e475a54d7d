@@ -1,0 +1,242 @@
+.github/workflows/native.yml
+  h_7bb0b8336911f0 44-45
+CHANGELOG.md
+  h_7bb0b8336911f0 30-38
+Cargo.lock
+  h_7bb0b8336911f0 49,82,357,367,573,591,763,826,991,1073-1074,1076,1078-1079,1083-1084,1086-1091,1095-1096,1098,1102-1103,1105-1117,1121-1122,1124-1128,1132-1133,1165,1204,1266-1267,1269,1271-1273,1277-1278,1280,1282-1285,1287-1288,1292-1293,1295,1297,1411,1542-1543,1588,1679,1708,1710,1721,1723,1842,1863,1878,1902,1912,1920-1926,1929,1931-1933,1939-1940,1942,1944,1948-1949,1951,1954-1961,1963,1965-1966,1970-1971,1973,1975-1979,1983-1984,1986,1989-1990,1992,1994-1995,1999-2000,2002,2004,2008-2009,2011,2014-2015,2017,2020-2021,2023,2025-2027,2031-2032,2034,2036-2037,2041-2042,2044,2047-2048,2050,2052-2057,2061-2062,2064,2066,2070,2073,2076-2077,2079,2082-2083,2085,2087,2091-2092,2094,2096-2101,2105,2108,2111,2113-2114,2118-2119,2121,2123,2127-2128,2130,2132,2136-2137,2139,2141-2152,2156-2157,2159,2161-2163,2167-2168,2170,2173-2174,2176,2178,2182-2183,2185,2187-2198,2202-2203,2205-2221,2224-2225,2227,2229-2234,2238-2239,2241,2243,2247-2248,2250,2253-2254,2256,2258-2260,2264-2265,2267,2269-2271,2275-2276,2278,2280-2281,2285-2286,2288-2291,2294-2295,2297-2303,2305,2309-2310,2312,2314,2318-2319,2321-2328,2331-2332,2334,2336-2337,2341-2342,2344,2346-2349,2353-2354,2356,2358-2360,2364-2365,2367,2370-2371,2373,2375-2376,2380-2383,2385-2387,2389-2390,2394-2395,2397,2399-2403,2407-2408,2410,2413-2414,2416-2419,2422-2423,2425,2427,2431-2432,2434-2441,2444-2445,2447,2449-2453,2459-2460,2462,2464-2465,2469-2470,2472,2474-2476,2480-2481,2483,2486-2487,2489,2491-2494,2498-2499,2501,2503,2507-2508,2510,2512-2517,2521-2522,2524,2526-2536,2540-2541,2543,2545-2549,2553-2554,2556,2558-2560,2562,2566-2567,2569,2571,2576-2577,2579,2582-2583,2585,2587-2588,2592-2593,2595,2597,2601-2602,2604,2608,2612-2613,2615,2617-2618,2620-2621,2625-2626,2628,2636-2637,2639,2641-2642,2646-2647,2649,2651-2653,2657-2658,2660,2662-2664,2668-2669,2671,2673-2675,2679-2680,2682,2684-2686,2690-2691,2693,2697,2701-2702,2704,2706-2709,2713-2714,2716,2719-2720,2722,2724-2725,2729-2730,2732,2734-2735,2739-2740,2742,2745-2746,2748,2750-2751,2755-2756,2758,2761-2762,2764,2767-2774,2776,2783-2784,2786,2788-2789,2793-2812,2814,2816-2818,2822-2823,2825,2827-2829,2833-2834,2836,2840,2844-2845,2847,2849-2851,2855-2856,2858,2860-2862,2982,2984,2986-2988,2992-2993,2995,2997,3006-3007,3009,3018,3257,3259-3262,3265-3266,3268,3585,3673-3675,3684,3688,3699,3810,3887,3896,3900
+Cargo.toml
+  h_7bb0b8336911f0 3-4
+crates/board-store/Cargo.toml
+  h_7bb0b8336911f0 8-9
+crates/gespan-core/src/agent.rs
+  h_7bb0b8336911f0 113-115
+crates/gespan-core/src/app_access.rs
+  h_7bb0b8336911f0 117-122,248
+crates/gespan-core/src/inbox.rs
+  h_7bb0b8336911f0 3,13,256,266,284
+crates/gespan-core/src/inbox/ask.rs
+  h_7bb0b8336911f0 1-199
+crates/gespan-core/src/inbox/ask_instructions.md
+  h_7bb0b8336911f0 1-22
+crates/gespan-core/src/inbox/ci_repair.rs
+  h_7bb0b8336911f0 1-1787
+crates/gespan-core/src/inbox/github.rs
+  h_7bb0b8336911f0 624,1194
+crates/gespan-core/src/orchestration.rs
+  h_7bb0b8336911f0 3-8,10,12,63-82,89-158,160-171,173-176,199-201,229-240,285-324,338-388,392-487,493
+crates/gespan-core/src/pilot/bridge.rs
+  h_7bb0b8336911f0 42-44,254-261,308-323
+crates/gespan-core/src/provider.rs
+  h_7bb0b8336911f0 22-23
+crates/gespan-core/src/provider/commands.rs
+  h_7bb0b8336911f0 44-50
+crates/gespan-core/src/provider/kind.rs
+  h_7bb0b8336911f0 232,293
+crates/gespan-core/src/skills.rs
+  h_7bb0b8336911f0 757
+crates/gespan-core/src/store.rs
+  h_7bb0b8336911f0 5,65-85,464-465,467,470-486
+crates/gespan-core/src/store/inbox_ask.rs
+  h_7bb0b8336911f0 1-285
+crates/gespan-core/src/store/shared.rs
+  h_7bb0b8336911f0 5,509-511,536-579,584,599-601,603-604,1063,1067-1068,1077-1100
+crates/gespan-core/src/store/shared/claude_shell.rs
+  h_7bb0b8336911f0 1-208
+crates/gespan-core/src/store/shared/tests.rs
+  h_7bb0b8336911f0 3-7,65,102,352,378,1107,1286-1360
+crates/gespan-core/src/ticket_bridge.rs
+  h_7bb0b8336911f0 33-36,140-142,155-156,257,377-378,383,440-461,471-477,485-490,498-518,524,544,614,619-626,687,698,707,714,722,757-798,1088-1094,1136,1229,1232,1269,1282,1329,1335,1367,1451,1456,1492,1620-1623,1669-1674,1691-1697,1703-1709,1713-1881
+crates/gespan-core/tests/fixtures/desktop/harness-availability.ts
+  h_7bb0b8336911f0 1-209
+crates/gespan-core/tests/fixtures/desktop/harness-register.ts
+  h_7bb0b8336911f0 1-28
+crates/gespan-core/tests/fixtures/desktop/pilot-tables.sql
+  h_7bb0b8336911f0 1-20
+crates/gespan-core/tests/fixtures/desktop/schema-v1.sql
+  h_7bb0b8336911f0 1-17
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/board.rs.excerpt
+  h_7bb0b8336911f0 1-3
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/checkpoint/turn.rs.excerpt
+  h_7bb0b8336911f0 1-2
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/codex_pilot_store.rs.excerpt
+  h_7bb0b8336911f0 1
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/lib.rs.excerpt
+  h_7bb0b8336911f0 1-2
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/mobile_access.rs.excerpt
+  h_7bb0b8336911f0 1-4
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/pilot.rs.excerpt
+  h_7bb0b8336911f0 1
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/pilot_transcript.rs.excerpt
+  h_7bb0b8336911f0 1-4
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.ps1.excerpt
+  h_7bb0b8336911f0 1-111
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.sh.excerpt
+  h_7bb0b8336911f0 1-69
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_ssh.rs.excerpt
+  h_7bb0b8336911f0 1-12
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/session_store.rs.excerpt
+  h_7bb0b8336911f0 1-2
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/ssh_askpass.rs.excerpt
+  h_7bb0b8336911f0 1-201
+crates/gespan-core/tests/fixtures/desktop/src-tauri/tauri.conf.json.excerpt
+  h_7bb0b8336911f0 1
+crates/gespan-core/tests/fixtures/desktop/src/features/board/model/ticketCards.ts.excerpt
+  h_7bb0b8336911f0 1-73
+crates/gespan-core/tests/fixtures/desktop/src/features/pilots/model/pilot.ts.excerpt
+  h_7bb0b8336911f0 1
+crates/gespan-core/tests/fixtures/desktop/src/features/sessions/data/sessionStore.ts.excerpt
+  h_7bb0b8336911f0 1-4
+crates/gespan-core/tests/fixtures/desktop/src/features/sessions/model/session.ts.excerpt
+  h_7bb0b8336911f0 1-28
+crates/gespan-core/tests/fixtures/desktop/src/features/settings/model/displayPrefs.ts.excerpt
+  h_7bb0b8336911f0 1
+crates/gespan-core/tests/fixtures/desktop/src/features/settings/model/settings.ts.excerpt
+  h_7bb0b8336911f0 1-3
+crates/gespan-core/tests/fixtures/desktop/src/integrations/harness/providers/claude/claude.ts.excerpt
+  h_7bb0b8336911f0 1-9
+crates/gespan-core/tests/shared_contracts.rs
+  h_7bb0b8336911f0 37-39,41-68
+crates/gespan-gpui/Cargo.lock
+  h_7bb0b8336911f0 4651,4822-4830
+crates/gespan-gpui/Cargo.toml
+  h_7bb0b8336911f0 83,88
+crates/gespan-gpui/src/app_menu.rs
+  h_7bb0b8336911f0 27-29,41-49,73
+crates/gespan-gpui/src/conversation.rs
+  h_7bb0b8336911f0 19,212,295-297,372-393,722,791,1129,1131-1133,1135,1271-1276,1337-1341,2785-2789,2962,3996-4023,4353,4893
+crates/gespan-gpui/src/conversation/composer_features.rs
+  h_7bb0b8336911f0 436
+crates/gespan-gpui/src/conversation/follow_up.rs
+  h_7bb0b8336911f0 159-163,371-376,381,423
+crates/gespan-gpui/src/conversation/orchestration_card.rs
+  h_7bb0b8336911f0 1-701
+crates/gespan-gpui/src/conversation/submission_tests.rs
+  h_7bb0b8336911f0 700-804
+crates/gespan-gpui/src/editor_analysis.rs
+  h_7bb0b8336911f0 655
+crates/gespan-gpui/src/inbox.rs
+  h_7bb0b8336911f0 3,5,25,35-36,40-41,44,46-56,106,129-131,148-150,158-168,214-218,278,293-299,311-313,345,368,385-387,463-494,710,735,772-783,823,1020-1086,1088,1171
+crates/gespan-gpui/src/inbox/ask_panel.rs
+  h_7bb0b8336911f0 1-352
+crates/gespan-gpui/src/inbox/checks.rs
+  h_7bb0b8336911f0 1-1834
+crates/gespan-gpui/src/inbox/ui.rs
+  h_7bb0b8336911f0 9,200,280,288,1028-1032,1127,2138-2142,2425,2454,2879,2947-2948,2955-2963
+crates/gespan-gpui/src/main.rs
+  h_7bb0b8336911f0 103,105,110-112,574,576-590
+crates/gespan-gpui/src/modal.rs
+  h_7bb0b8336911f0 55,63
+crates/gespan-gpui/src/pilots/cards.rs
+  h_7bb0b8336911f0 467
+crates/gespan-gpui/src/pilots/floating.rs
+  h_7bb0b8336911f0 307
+crates/gespan-gpui/src/pilots/mod.rs
+  h_7bb0b8336911f0 247
+crates/gespan-gpui/src/runtime.rs
+  h_7bb0b8336911f0 489,578-580,615-616,631,659,668,1578-1588
+crates/gespan-gpui/src/runtime/ticket_context.rs
+  h_7bb0b8336911f0 22,26-29,82-107,145-165,171,183,190
+crates/gespan-gpui/src/runtime/ticket_tests.rs
+  h_7bb0b8336911f0 204-218
+crates/gespan-gpui/src/search.rs
+  h_7bb0b8336911f0 171-174
+crates/gespan-gpui/src/settings/keymap.rs
+  h_7bb0b8336911f0 61
+crates/gespan-gpui/src/settings/layout_tests.rs
+  h_7bb0b8336911f0 38-130
+crates/gespan-gpui/src/settings/mod.rs
+  h_7bb0b8336911f0 65-68,93-94,113,150,161,172,183,193,204,269,404,457,459-466,511-516,990-994,1065
+crates/gespan-gpui/src/settings/model.rs
+  h_7bb0b8336911f0 380-385,392-397,605-607
+crates/gespan-gpui/src/settings/pages/appearance.rs
+  h_7bb0b8336911f0 8,84-93,235-274,284,289
+crates/gespan-gpui/src/settings/pages/inbox.rs
+  h_7bb0b8336911f0 7-66,152,160-163,186
+crates/gespan-gpui/src/settings/preferences.rs
+  h_7bb0b8336911f0 32,40
+crates/gespan-gpui/src/shell.rs
+  h_7bb0b8336911f0 19,24,56,105,219-220,761,854-859,893-909,919-927,929-931,954-960,962-963,1168,1245-1247,1255-1273,1275-1282,1285-1338,1350-1354,1367-1370,1374-1378,1423-1432,1463,1467-1474,1495-1498,1523,2047,2142-2143,2168,4201-4204,4345-4347,4589,8537,8550,8559,8564-8568,8614-8617,8621,8630-8631,8633
+crates/gespan-gpui/src/shell/app_views.rs
+  h_7bb0b8336911f0 169,184-197,487-505,513-529,531,746-751,754,768,775-792,796,817,825-827,834-838,846-864,1032-1091
+crates/gespan-gpui/src/shell/automation_runs.rs
+  h_7bb0b8336911f0 122-124
+crates/gespan-gpui/src/shell/classic_surface_tests.rs
+  h_7bb0b8336911f0 1304-1438
+crates/gespan-gpui/src/shell/hold.rs
+  h_7bb0b8336911f0 224-229,232-239,241-244,384-387
+crates/gespan-gpui/src/shell/in_flight.rs
+  h_7bb0b8336911f0 29,34
+crates/gespan-gpui/src/shell/inbox_ask.rs
+  h_7bb0b8336911f0 1-596
+crates/gespan-gpui/src/shell/menu_bar.rs
+  h_7bb0b8336911f0 294
+crates/gespan-gpui/src/shell/multi_window.rs
+  h_7bb0b8336911f0 1-835
+crates/gespan-gpui/src/shell/notifications.rs
+  h_7bb0b8336911f0 309-311,333-337,406-408,512-514,698,708-712,719-721
+crates/gespan-gpui/src/shell/orchestration.rs
+  h_7bb0b8336911f0 6,8,20-30,41,102,119,172,174-182,231,244,246-252,290-295,351,360-369,372-376,397-406,408,461-598,617-619,628
+crates/gespan-gpui/src/shell/project_rail.rs
+  h_7bb0b8336911f0 334
+crates/gespan-gpui/src/shell/quick_composer.rs
+  h_7bb0b8336911f0 4-7,200
+crates/gespan-gpui/src/shell/search.rs
+  h_7bb0b8336911f0 153,353
+crates/gespan-gpui/src/shell/session_groups.rs
+  h_7bb0b8336911f0 759,828-833,894,909
+crates/gespan-gpui/src/shell/session_loading.rs
+  h_7bb0b8336911f0 33,50-52
+crates/gespan-gpui/src/shell/settings.rs
+  h_7bb0b8336911f0 77-82,141,154-157,159,161-169,280-295,313-315
+crates/gespan-gpui/src/shell/tray.rs
+  h_7bb0b8336911f0 56-61,69-70,72
+crates/gespan-gpui/src/theme.rs
+  h_7bb0b8336911f0 62,71,93,207-215,622-662,722-728,733,739
+crates/gespan-gpui/src/traffic_lights.rs
+  h_7bb0b8336911f0 88
+crates/gespan-gpui/src/transcript.rs
+  h_7bb0b8336911f0 2706-2709
+crates/gespan-gpui/src/window_blur.rs
+  h_7bb0b8336911f0 1-179
+crates/gespan-gpui/src/windows.rs
+  h_7bb0b8336911f0 1-601
+crates/gespan-gpui/src/workspace.rs
+  h_7bb0b8336911f0 178-241
+crates/gespan-gpui/tests/fixtures/large-app.tsx
+  h_7bb0b8336911f0 1-15943
+mobile/src/features/workspace/watchFrames.ts
+  h_7bb0b8336911f0 1-150
+mobile/tests/watchFrames.test.ts
+  h_7bb0b8336911f0 2-7,9
+package.json
+  h_7bb0b8336911f0 33,43
+scripts/bump-version.mjs
+  h_7bb0b8336911f0 38-42,50,56-57,69
+scripts/cargo-workspaces.test.mjs
+  h_7bb0b8336911f0 1-112
+scripts/native-editor/build.mjs
+  h_7bb0b8336911f0 38
+src-tauri/.cargo/config.toml
+  h_7bb0b8336911f0 1-4
+src-tauri/Cargo.lock
+  h_7bb0b8336911f0 1-7834
+src-tauri/Cargo.toml
+  h_7bb0b8336911f0 3-4,9,35-36,92-95
+src/features/mobile/model/mobileWatch.ts
+  h_7bb0b8336911f0 1-3
+tests/mobile/independence.test.ts
+  h_7bb0b8336911f0 1-56
+tests/mobile/watchFrames.test.ts
+  h_7bb0b8336911f0 2-3,9,54,73,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "364eace3b10b7b084917ba44a08175e475a54d7d",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
