@@ -1,0 +1,50 @@
+crates/gespan-gpui/src/shell/rails.rs
+  s_943e8c7cbbf342::t_75d9d5854b9eb7 1042
+crates/gespan-gpui/src/shell/in_flight.rs
+  s_943e8c7cbbf342::t_45d93a68b75f3b 71-72
+crates/gespan-core/src/store.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 508,510-518,1098,1381-1405,1407-1414
+  s_943e8c7cbbf342::t_75d9d5854b9eb7 1406,1432
+  s_943e8c7cbbf342::t_19136c32dbc88a 1090
+  s_943e8c7cbbf342::t_45d93a68b75f3b 509
+  s_943e8c7cbbf342::t_c5cd21c22b1ae0 1415
+crates/gespan-core/src/orchestration.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 27-28,50-51
+  s_943e8c7cbbf342::t_f94ab25f9770f9 52
+crates/gespan-gpui/src/conversation/composer_features.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 5,457-459
+  s_943e8c7cbbf342::t_d11f9b8b6d01d1 460
+crates/gespan-core/src/orchestration/run.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 421,530-543,546-580
+  s_943e8c7cbbf342::t_45d93a68b75f3b 544-545
+  s_943e8c7cbbf342::t_8c5b4180af28e9 581
+crates/gespan-core/src/orchestration/run/tests.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 495-552,557-561,566-574
+  s_943e8c7cbbf342::t_45d93a68b75f3b 553-556,562-565
+crates/gespan-gpui/src/conversation.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 213,693,1660
+crates/gespan-gpui/src/conversation/orchestration_card.rs
+  s_943e8c7cbbf342::t_a5f8dd257896fc 3,559-576
+crates/gespan-gpui/src/shell.rs
+  s_943e8c7cbbf342::t_19136c32dbc88a 1301
+  s_943e8c7cbbf342::t_a5f8dd257896fc 1466
+crates/gespan-gpui/src/shell/orchestration.rs
+  s_943e8c7cbbf342::t_45d93a68b75f3b 153-157,177-181,887-888,1280-1284,1286-1291
+  s_943e8c7cbbf342::t_a5f8dd257896fc 65-97,129-131,143-152,158-176,182-260,296,313-316,757,771,846-851,857,882-886,889-892,899,1154-1156,1263-1279,1285,1292-1320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31ad6ce496b7f104fe9cb54346e680e02bc12a5b",
+  "prompts": {},
+  "sessions": {
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
