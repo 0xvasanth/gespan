@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native plays the Opus 5.5 and Astra welcome scenes when you pick
+  either model, as the Tauri app does: a staff that writes itself with a short
+  phrase of notes for Opus, and a small sun with falling stars for Astra. The
+  scene sits over the session without taking clicks, and is skipped when the
+  system asks for reduced motion.
 - Gespan Native previews the change an Edit or Write tool proposes, as the
   Tauri app does. Hovering the file chip shows the first changed lines with
   their counts, read from the tool itself rather than from git, for Claude,

@@ -55,6 +55,7 @@ mod memory_log;
 mod metal_tests;
 mod mobile;
 mod modal;
+mod model_welcome;
 mod notes;
 mod notifications;
 mod pane_layout;

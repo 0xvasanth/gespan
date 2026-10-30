@@ -17,6 +17,8 @@ mod history;
 mod hold;
 pub(crate) use hold::HoldChanged;
 mod mobile;
+#[cfg(test)]
+mod model_welcome_tests;
 mod notifications;
 mod pilot;
 mod remote;
@@ -257,6 +259,10 @@ pub(crate) struct Conversation {
     menu: Option<OpenMenu>,
     add_anchor: AnchorSlot,
     model_anchor: AnchorSlot,
+    /// The composer box, which places the Opus welcome scene beside it.
+    composer_box_anchor: AnchorSlot,
+    /// The welcome scene for a just-picked model, cleared when it ends.
+    model_welcome: Option<(crate::model_welcome::Run, gpui::Task<()>)>,
     access_anchor: AnchorSlot,
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
@@ -721,6 +727,8 @@ impl Conversation {
             menu: None,
             add_anchor: AnchorSlot::default(),
             model_anchor: AnchorSlot::default(),
+            composer_box_anchor: AnchorSlot::default(),
+            model_welcome: None,
             access_anchor: AnchorSlot::default(),
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
@@ -2426,8 +2434,45 @@ impl Conversation {
         if !self.is_remote() {
             crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx);
         }
+        self.welcome_model(cx);
         cx.emit(SessionChanged);
         true
+    }
+    /// SessionPane: every pick of Opus 5.5 or Astra restarts its scene; any
+    /// other pick, or reduced motion, ends one that is playing.
+    fn welcome_model(&mut self, cx: &mut Context<Self>) {
+        let label = self.model_label();
+        let kind = crate::model_welcome::Kind::for_model(
+            self.model.as_deref().into_iter().chain([label.as_ref()]),
+        )
+        .filter(|_| !cx.reduce_motion());
+        self.model_welcome = kind.map(|kind| {
+            let ends = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(kind.duration()).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.model_welcome = None;
+                    cx.notify();
+                });
+            });
+            (crate::model_welcome::Run::new(kind), ends)
+        });
+        cx.notify();
+    }
+    fn model_welcome_layer(&self) -> Option<AnyElement> {
+        let (run, _) = self.model_welcome.as_ref()?;
+        Some(
+            div()
+                .debug_selector(|| "model-welcome".into())
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(crate::model_welcome::layer(
+                    *run,
+                    self.composer_box_anchor.get(),
+                ))
+                .into_any_element(),
+        )
     }
     fn menu_is(&self, kind: ComposerMenu) -> bool {
         self.menu.as_ref().is_some_and(|open| open.kind == kind)
@@ -2995,6 +3040,7 @@ impl Conversation {
                         }
                     }))
                     .relative()
+                    .child(self.composer_box_anchor.probe())
                     .rounded(px(radius))
                     .border_1()
                     .border_color(composer_border(self.input.focus_handle(cx).is_focused(window)))
@@ -3851,7 +3897,13 @@ impl Render for Conversation {
             return self.render_pilot(window, cx);
         }
         if !self.summary.has_messages {
-            return self.empty(window, cx);
+            let empty = self.empty(window, cx);
+            return div()
+                .relative()
+                .size_full()
+                .child(empty)
+                .children(self.model_welcome_layer())
+                .into_any();
         }
         self.attachment_drop_target("session-chat", cx)
             .relative()
@@ -3947,6 +3999,7 @@ impl Render for Conversation {
             )
             .when_some(self.btw.as_ref(), |d, sheet| d.child(sheet.clone()))
             .children(self.remote_plan_reader(cx))
+            .children(self.model_welcome_layer())
             .into_any()
     }
 }
