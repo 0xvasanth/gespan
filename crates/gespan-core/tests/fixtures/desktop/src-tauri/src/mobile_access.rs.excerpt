@@ -1,0 +1,4 @@
+        || !catalog["pilots"].is_array()
+            } else if let Some(pilot) = entity.strip_prefix("pilot:") {
+    Ok(json!({"url":format!("gespan://pair?i={code}"),"expires":expires}))
+    let entry = keyring::Entry::new("dev.gespan.mobile", &account).map_err(|e| e.to_string())?;
