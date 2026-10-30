@@ -23,18 +23,36 @@ pub(super) struct HoldCoordinator {
     resume: Option<ResumeQueue>,
     reasons: HashMap<i64, Reason>,
     pub(super) press: Press,
-    /// ⌘⇧H is down: its auto-repeats are ignored until it is released.
+    /// The Hold shortcut is down: its auto-repeats are ignored until it is
+    /// released.
     key_held: bool,
+    /// The chord that started the held press, ⌘⇧H unless rebound.
+    chord: Option<gpui::Keystroke>,
     ticking: bool,
     details_open: bool,
     /// Mirrors the global phase for code that has no `App` at hand.
     pub(super) on_hold: bool,
 }
 
+/// The chord Hold Everything is bound to now, which Settings can change.
+fn hold_chord(window: &Window) -> Option<gpui::Keystroke> {
+    let binding = window.highest_precedence_binding_for_action(&ToggleHold)?;
+    let chord = binding.keystrokes().first()?;
+    gpui::Keystroke::parse(&chord.unparse()).ok()
+}
+/// `have` holds every modifier of a chord that has at least one.
+fn covers(have: &gpui::Modifiers, need: &gpui::Modifiers) -> bool {
+    need.modified()
+        && (!need.control || have.control)
+        && (!need.alt || have.alt)
+        && (!need.shift || have.shift)
+        && (!need.platform || have.platform)
+        && (!need.function || have.function)
+}
 /// The Hold shortcut's modifiers are still down, so the press can be held.
-fn shortcut_down(window: &Window) -> bool {
-    let modifiers = window.modifiers();
-    modifiers.secondary() && modifiers.shift
+fn shortcut_down(window: &Window) -> Option<gpui::Keystroke> {
+    let chord = hold_chord(window)?;
+    covers(&window.modifiers(), &chord.modifiers).then_some(chord)
 }
 
 impl Shell {
@@ -44,7 +62,9 @@ impl Shell {
         if self.hold.key_held {
             return;
         }
-        let key = shortcut_down(window);
+        let chord = shortcut_down(window);
+        let key = chord.is_some();
+        self.hold.chord = chord;
         match crate::hold::phase(cx) {
             None if key => {
                 self.hold.key_held = true;
@@ -103,7 +123,12 @@ impl Shell {
         }
     }
     pub(super) fn hold_key_up(&mut self, event: &gpui::KeyUpEvent, cx: &mut Context<Self>) {
-        if self.hold.key_held && event.keystroke.key.eq_ignore_ascii_case("h") {
+        let key = self
+            .hold
+            .chord
+            .as_ref()
+            .map_or("h", |chord| chord.key.as_str());
+        if self.hold.key_held && event.keystroke.key.eq_ignore_ascii_case(key) {
             self.hold.key_held = false;
             if self.hold.press.pressing() {
                 self.release_hold_press(cx);
@@ -117,7 +142,12 @@ impl Shell {
     ) {
         // macOS sends no key-up for H while ⌘ is down, so a modifier going up
         // is what usually ends a held ⌘⇧H.
-        if self.hold.key_held && !(event.modifiers.secondary() && event.modifiers.shift) {
+        let down = self
+            .hold
+            .chord
+            .as_ref()
+            .is_some_and(|chord| covers(&event.modifiers, &chord.modifiers));
+        if self.hold.key_held && !down {
             self.hold.key_held = false;
             if self.hold.press.pressing() {
                 self.release_hold_press(cx);
@@ -1289,6 +1319,44 @@ mod tests {
         }
         assert_eq!(phase(visual), None, "1.08 s in");
         advance(visual, 200);
+        assert!(!visual.has_pending_prompt());
+        assert_eq!(phase(visual), Some(Phase::Holding));
+    }
+
+    #[gpui::test]
+    fn a_rebound_hold_shortcut_holds_and_its_own_modifier_releases_it(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 1);
+        let window = shell(store, cx);
+        busy_and_idle(window, &ids, cx);
+        cx.update(|cx| {
+            let mut prefs = crate::settings::Preferences::default();
+            prefs
+                .keybindings
+                .insert("App: Hold Everything".into(), Some("alt-j".into()));
+            crate::settings::apply_keybindings(&prefs, cx);
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        // The old chord no longer starts a press.
+        shortcut_down(visual);
+        advance(visual, 1500);
+        assert_eq!(phase(visual), None);
+        visual.simulate_modifiers_change(gpui::Modifiers::none());
+        // Releasing ⌥ ends a held ⌥J early.
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        visual.simulate_modifiers_change(alt);
+        visual.simulate_keystrokes("alt-j");
+        advance(visual, 300);
+        visual.simulate_modifiers_change(gpui::Modifiers::none());
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None, "released after 0.3 s");
+        // Held long enough, it holds.
+        visual.simulate_modifiers_change(alt);
+        visual.simulate_keystrokes("alt-j");
+        advance(visual, 1400);
         assert!(!visual.has_pending_prompt());
         assert_eq!(phase(visual), Some(Phase::Holding));
     }

@@ -53,6 +53,7 @@ fn command(binding: &KeyBinding) -> Option<&'static str> {
     let keys = binding.keystrokes().first()?.unparse();
     Some(match binding.action().name() {
         "workspace::GoToFile" => "App: Go to File",
+        "workspace::ToggleHold" => "App: Hold Everything",
         "workspace::OpenCommandPalette" => "App: Command Palette",
         "workspace::OpenSettings" => "App: Settings",
         "workspace::FocusSearch" => "App: Search",
