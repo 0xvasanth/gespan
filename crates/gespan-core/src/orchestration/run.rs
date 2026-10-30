@@ -418,6 +418,7 @@ impl Run {
     pub fn summary(&self) -> Summary {
         Summary {
             live: self.live(),
+            paused: self.status == RunStatus::Paused,
             tasks: self
                 .tasks
                 .iter()
@@ -524,6 +525,58 @@ impl Run {
                 .tasks
                 .iter()
                 .any(|task| task.status.active() || task.status == Status::Queued)
+    }
+
+    /// A saved run after a restart. Nothing survives with the app, so active
+    /// work pauses: retained checkouts wait for the user's Resume, and the
+    /// lead hears every result it hasn't accepted again.
+    pub fn hydrate(&mut self) {
+        let reason = "Gespan stopped while the orchestration run was active.";
+        for task in &mut self.tasks {
+            if task.status.active() {
+                task.status = Status::Interrupted;
+                task.accepted = false;
+                task.delivered = true;
+                task.error = Some(
+                    "Interrupted while Gespan was not running. Resume will continue from the retained worker checkout."
+                        .into(),
+                );
+                task.recovery_prompt =
+                    Some(recovery_turn("Gespan stopped while the worker was running"));
+            } else {
+                task.delivered = task.accepted || task.status == Status::Queued;
+            }
+        }
+        if self.status == RunStatus::Active {
+            self.status = RunStatus::Paused;
+            self.error = Some(
+                "Run interrupted while Gespan was not running. Worker checkouts were retained; Resume will continue them."
+                    .into(),
+            );
+            self.last_pause_reason = Some(reason.to_owned());
+        }
+    }
+    /// Interrupted workers go back in the queue with their recovery turns;
+    /// policy-blocked ones stay stopped for an explicit retry or cancel.
+    pub fn resume(&mut self) -> Result<(), String> {
+        if self.status != RunStatus::Paused {
+            return Err("This run is not paused.".into());
+        }
+        if self.tasks.iter().any(|task| task.status.active()) {
+            return Err("Wait for interrupted agents to stop before resuming.".into());
+        }
+        self.status = RunStatus::Active;
+        self.last_pause_reason = self.error.take().or(self.last_pause_reason.take());
+        self.continuations = 0;
+        for task in &mut self.tasks {
+            if task.status == Status::Interrupted {
+                task.status = Status::Queued;
+                task.error = None;
+                task.delivered = true;
+                task.accepted = false;
+            }
+        }
+        Ok(())
     }
 
     /// Every task that can start now, marked running.

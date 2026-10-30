@@ -1,6 +1,6 @@
 //! The plan card above the composer: OrchestrationPreview.tsx's review of a
 //! lead's assignments before any worker starts.
-use super::composer_features::{StartOrchestration, StopOrchestration};
+use super::composer_features::{ResumeOrchestration, StartOrchestration, StopOrchestration};
 use super::*;
 use gespan_core::{
     app_access, catalog,
@@ -556,9 +556,24 @@ impl Conversation {
             card = card
                 .child(div().text_color(content(0.6)).child(progress.clone()))
                 .child(
-                    tool_pill("stop-orchestration", "Stop agents")
-                        .child("Stop agents")
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(StopOrchestration))),
+                    div()
+                        .flex()
+                        .gap_2()
+                        .when(self.orchestration_paused, |d| {
+                            d.child(
+                                tool_pill("resume-orchestration", "Resume agents")
+                                    .bg(content(0.1))
+                                    .child("Resume agents")
+                                    .on_click(
+                                        cx.listener(|_, _, _, cx| cx.emit(ResumeOrchestration)),
+                                    ),
+                            )
+                        })
+                        .child(
+                            tool_pill("stop-orchestration", "Stop agents")
+                                .child("Stop agents")
+                                .on_click(cx.listener(|_, _, _, cx| cx.emit(StopOrchestration))),
+                        ),
                 );
         }
         card = card.children(self.plan_card.menu.as_ref().map(|open| {

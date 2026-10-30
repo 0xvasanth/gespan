@@ -24,6 +24,8 @@ pub struct Summary {
     pub tasks: Vec<SummaryTask>,
     /// The run is still dispatching or waiting on its workers.
     pub live: bool,
+    /// It stopped itself, and Resume continues it.
+    pub paused: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -44,6 +46,9 @@ impl SummaryTask {
         }
         if !summary.live && matches!(self.status.as_str(), "running" | "cancelling" | "queued") {
             return "Saved";
+        }
+        if summary.paused && self.status == "queued" {
+            return "Paused";
         }
         match self.status.as_str() {
             "queued" => "Queued",

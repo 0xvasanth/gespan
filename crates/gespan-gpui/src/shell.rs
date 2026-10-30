@@ -1367,6 +1367,7 @@ impl Shell {
         if !secondary {
             this.init_mobile_host(cx);
             this.restore_hold(cx);
+            this.restore_orchestrations(cx);
             this.resume_interrupted(cx);
         }
         if let Some(id) = this.workspace.active {

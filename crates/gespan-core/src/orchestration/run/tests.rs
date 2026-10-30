@@ -492,3 +492,83 @@ fn the_summary_carries_no_prompts_and_a_run_round_trips() {
     let restored: Run = serde_json::from_str(&saved).unwrap();
     assert_eq!(restored, run);
 }
+
+#[test]
+fn a_restart_pauses_active_work_and_keeps_what_it_can() {
+    let mut run = run(
+        vec![
+            task("done", "src", &[]),
+            task("review", "docs", &[]),
+            task("running", "tests", &[]),
+            task("waiting", "tests", &[]),
+        ],
+        4,
+    );
+    run.dispatch();
+    let done = finish_turn(&mut run, "done");
+    finish_turn(&mut run, "review");
+    call(&mut run, "r1", "review", json!({"taskId":done})).unwrap();
+    let running = id(&run, "running");
+    let mut restored: Run = serde_json::from_str(&serde_json::to_string(&run).unwrap()).unwrap();
+    restored.hydrate();
+    assert_eq!(restored.status, RunStatus::Paused);
+    assert!(restored.summary().paused);
+    let task = restored.task(&running).unwrap();
+    assert_eq!(task.status, Status::Interrupted);
+    assert!(task.recovery_prompt.is_some());
+    assert!(restored.tasks[0].accepted, "accepted work stays accepted");
+    let unread = restored.task(&id(&run, "review")).unwrap();
+    assert!(!unread.delivered, "the lead hears it again");
+    assert_eq!(restored.tasks[3].status, Status::Queued);
+    assert!(restored.requests.contains_key("r1"), "receipts survive");
+    assert!(restored.dispatch().is_empty());
+}
+
+#[test]
+fn hydrating_a_paused_run_keeps_its_reason() {
+    let mut run = run(vec![task("a", "src", &[])], 4);
+    run.dispatch();
+    run.pause("Saved run failed");
+    run.hydrate();
+    assert_eq!(run.status, RunStatus::Paused);
+    assert_eq!(run.error.as_deref(), Some("Saved run failed"));
+}
+
+#[test]
+fn resume_continues_interrupted_workers_and_leaves_blocked_ones_stopped() {
+    let mut run = run(vec![task("a", "src", &[]), task("b", "docs", &[])], 4);
+    run.dispatch();
+    let (a, b) = (id(&run, "a"), id(&run, "b"));
+    run.task_mut(&b).unwrap().status = Status::Blocked;
+    run.continuations = 20;
+    run.pause("The lead stopped");
+    run.resume().unwrap();
+    assert_eq!(run.status, RunStatus::Active);
+    assert_eq!(run.continuations, 0);
+    assert_eq!(run.error, None);
+    assert_eq!(run.last_pause_reason.as_deref(), Some("The lead stopped"));
+    assert_eq!(run.task(&b).unwrap().status, Status::Blocked);
+    assert_eq!(run.dispatch(), std::slice::from_ref(&a));
+    let task = run.task(&a).unwrap();
+    assert!(
+        task.recovery_prompt.is_some(),
+        "the worker gets the recovery turn"
+    );
+    run.settle(&a, Outcome::Completed, "Done", None);
+    assert_eq!(run.task(&a).unwrap().recovery_prompt, None);
+    let Wake::Send(body) = run.wake(&Needs::new(), &mut HashSet::new()) else {
+        panic!("the result reaches the lead")
+    };
+    assert!(
+        body.contains("Previous interruption: The lead stopped"),
+        "{body}"
+    );
+}
+
+#[test]
+fn only_a_paused_run_resumes() {
+    let mut run = run(vec![task("a", "src", &[])], 4);
+    assert!(run.resume().is_err());
+    run.stop();
+    assert!(run.resume().is_err());
+}
