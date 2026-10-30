@@ -34,8 +34,8 @@ tick the box in the same PR.
 - [x] **Local images and videos in replies.** A link to a local media file, or a Markdown image, renders inline. Tauri: `src/features/sessions/ui/LocalMedia.tsx`, `DocumentImage.tsx`, `AgentMarkdown.tsx`. Done in #245. A tight list item keeps its link.
 - [x] **Diff preview for edit tools.** *(done in #250)* An Edit or Write file chip opens a popover with the tool's proposed diff. Tauri: `src/features/sessions/ui/ToolDiffPreview.tsx`.
 - [x] **Previews for any link in a prompt.** Title and favicon for links other than GitHub. Native shows GitHub issues and PRs only. Tauri: `src-tauri/src/link_preview.rs`, `UserLinkPreview.tsx`. Done in #245.
-- [ ] **Model welcome animations** (Opus 5.5, Astra). Tauri: `src/features/sessions/ui/OpusWelcome.tsx`, `AstraWelcome.tsx`.
-- [ ] **Cursor subagent runs and tool arguments** read from Cursor's local store. Tauri: `src-tauri/src/cursor_store.rs`, `src/integrations/harness/providers/cursor/cursorSubagents.ts`.
+- [x] **Model welcome animations** (Opus 5.5, Astra). *(done in #250)* Tauri: `src/features/sessions/ui/OpusWelcome.tsx`, `AstraWelcome.tsx`.
+- [x] **Cursor subagent runs and tool arguments** read from Cursor's local store. *(done in #250, live and at turn end; sessions saved before this are not backfilled when reopened)* Tauri: `src-tauri/src/cursor_store.rs`, `src/integrations/harness/providers/cursor/cursorSubagents.ts`.
 - [ ] **Projects and sessions follow a renamed or moved project folder.** Tauri: `src-tauri/src/fs.rs` (`resolve_project_location`), `src-tauri/src/session_store.rs` (`session_rebase_project`), `src/features/projects/model/projectLocation.ts`.
 
 ### Orchestration
