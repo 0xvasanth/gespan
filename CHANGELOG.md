@@ -25,6 +25,45 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Added
 
+- Gespan Native starts work from an inbox item, or from a note, with a card
+  above the composer, as the Tauri app does. You can add a message or just
+  send, and remove the card to start over. A note stays a card on the sent
+  message, and only the agent receives its text. Fix with agent still sends
+  straight away.
+- Gespan Native shows videos attached to inbox item descriptions, as the Tauri
+  app does. A GitHub or Linear attachment that turns out to be a video shows
+  as a play card in the description and opens in the file viewer.
+- Gespan Native lets you undo or keep a session's changes one file at a time:
+  hovering a file in the changes card under the reply shows its own Undo and
+  Keep. Folders without Git now get these reviews too, as the Tauri app does:
+  each file a structured edit writes is saved before and after the edit, and
+  Undo is offered only while the file is still as the session left it.
+  Committing files whole from a Pilot's Changes tab clears them from the
+  Pilot session's review.
+- Gespan Native's / picker has a New skill row, as the Tauri app does. It
+  opens a short form named from the typed command, with Project or Personal
+  skills, and writes a starter SKILL.md that opens for editing. The command is
+  cleared from the message and the next / lists the new skill.
+- Gespan Native follows a renamed project folder, as the Tauri app does. Each
+  project's folder identity is remembered, and when the saved folder is gone
+  at launch, its former siblings are checked for it. The project, its
+  sessions, terminals and settings move to the new name. A folder that cannot
+  be found, or more than one match, leaves the project as it was.
+- Gespan Native reads Cursor's own session store while a Cursor turn runs, as
+  the Tauri app does. Tool calls Cursor sent without their arguments get them,
+  so they show the file, command or search they ran, and each Cursor subagent's
+  card fills with its own messages and tool calls, its model and a readable
+  name. The store is only ever opened read-only.
+- Gespan Native plays the Opus 5.5 and Astra welcome scenes when you pick
+  either model, as the Tauri app does: a staff that writes itself with a short
+  phrase of notes for Opus, and a small sun with falling stars for Astra. The
+  scene sits over the session without taking clicks, and is skipped when the
+  system asks for reduced motion.
+- Gespan Native previews the change an Edit or Write tool proposes, as the
+  Tauri app does. Hovering the file chip shows the first changed lines with
+  their counts, read from the tool itself rather than from git, for Claude,
+  Codex and ACP agents. A Write shows the written lines, since the file's old
+  contents are not known.
 - Gespan Native shows a reply's local images and videos in place, as the Tauri
   app does. A paragraph that starts with a local image, or with a link to a
   local image or video, shows the file in a 16:9 frame. Images open full screen
@@ -39,6 +78,11 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
   build it with. The card shows Building… and then Built. A Codex
   `<proposed_plan>` block becomes a plan card in any turn, and plans saved by
   the Tauri app show as cards too.
+- Gespan Native asks what to do when switching branches would overwrite your
+  local changes, as the Tauri app does, instead of only showing Git's error.
+  Stash & switch puts them in a stash named "WIP before switching to
+  <branch>" and leaves it for you to apply later; Commit & switch commits
+  everything on the current branch with your message first. Cancel stays put.
 - Gespan Native's Sessions heading has a + button beside the filter that
   starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows

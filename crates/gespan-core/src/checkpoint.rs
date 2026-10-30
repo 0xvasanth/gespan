@@ -1,8 +1,9 @@
 //! Git-backed recordings of workspace changes during a turn, ported from
 //! src-tauri/src/checkpoint/turn.rs. These snapshots record what changed.
 //! Shared reviews require successful edit evidence for each displayed file,
-//! without inferring which process owns individual lines. Synchronous: callers
-//! run these on a background executor.
+//! without inferring which process owns individual lines. Folders without Git
+//! record each structured edit instead (`folder`). Synchronous: callers run
+//! these on a background executor.
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::scm::{expand_home, path_to_js, MAX_TEXT_FILE_BYTES};
 
+mod folder;
 #[cfg(test)]
 mod tests;
 
@@ -36,6 +38,7 @@ pub struct CheckpointStatus {
     pub files: Vec<CheckpointFile>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FileState {
     Contents(Vec<u8>),
     Missing,
@@ -95,15 +98,19 @@ impl Store {
 
     pub fn status(&self, session_id: &str, cwd: &str) -> Result<CheckpointStatus, String> {
         validate_id(session_id, "session")?;
-        Ok(self.turn_status(session_id, cwd)?.unwrap_or_default())
+        match self.turn_status(session_id, cwd)? {
+            Some(status) => Ok(status),
+            None => Ok(self.folder_status(session_id, cwd)?.unwrap_or_default()),
+        }
     }
 
     /// A presentation-only read, without persisting newly resolved paths.
     pub fn status_readonly(&self, session_id: &str, cwd: &str) -> Result<CheckpointStatus, String> {
         validate_id(session_id, "session")?;
-        Ok(self
-            .turn_status_inner(session_id, cwd, false)?
-            .unwrap_or_default())
+        match self.turn_status_inner(session_id, cwd, false)? {
+            Some(status) => Ok(status),
+            None => Ok(self.folder_status(session_id, cwd)?.unwrap_or_default()),
+        }
     }
 
     /// Native UI handles and desktop UUIDs can name the same conversation.
@@ -120,10 +127,11 @@ impl Store {
             .iter()
             .enumerate()
             .filter_map(|(index, id)| {
-                let modified = std::fs::metadata(self.session_dir(id).join("turn-review.json"))
-                    .ok()?
-                    .modified()
-                    .ok()?;
+                let dir = self.session_dir(id);
+                let modified = ["turn-review.json", "manifest.json"]
+                    .iter()
+                    .filter_map(|name| std::fs::metadata(dir.join(name)).ok()?.modified().ok())
+                    .max()?;
                 Some((modified, std::cmp::Reverse(index), id))
             })
             .max_by_key(|(modified, index, _)| (*modified, *index));
@@ -140,8 +148,12 @@ impl Store {
         relative: &str,
     ) -> Result<crate::scm::FileDiff, String> {
         validate_id(session_id, "session")?;
-        self.turn_file_diff(session_id, cwd, relative)?
-            .ok_or_else(|| "Session changes are no longer available".into())
+        match self.turn_file_diff(session_id, cwd, relative)? {
+            Some(diff) => Ok(diff),
+            None => self
+                .folder_file_diff(session_id, cwd, relative)?
+                .ok_or_else(|| "Session changes are no longer available".into()),
+        }
     }
 
     pub fn undo(
@@ -151,9 +163,12 @@ impl Store {
         relative: Option<&str>,
     ) -> Result<CheckpointStatus, String> {
         validate_id(session_id, "session")?;
-        Ok(self
-            .undo_turn(session_id, cwd, relative)?
-            .unwrap_or_default())
+        match self.undo_turn(session_id, cwd, relative)? {
+            Some(status) => Ok(status),
+            None => Ok(self
+                .folder_undo(session_id, cwd, relative)?
+                .unwrap_or_default()),
+        }
     }
 
     pub fn keep(
@@ -163,9 +178,12 @@ impl Store {
         relative: Option<&str>,
     ) -> Result<CheckpointStatus, String> {
         validate_id(session_id, "session")?;
-        Ok(self
-            .keep_turn(session_id, cwd, relative)?
-            .unwrap_or_default())
+        match self.keep_turn(session_id, cwd, relative)? {
+            Some(status) => Ok(status),
+            None => Ok(self
+                .folder_keep(session_id, cwd, relative)?
+                .unwrap_or_default()),
+        }
     }
 
     pub fn forget(&self, session_id: &str) -> Result<(), String> {
@@ -187,8 +205,8 @@ impl Store {
             if error.contains("not a git repository")
                 && read_review(&self.session_dir(session_id))?.is_none()
             {
-                // Folders without Git have no recorded review.
-                return Ok(());
+                // Folders without Git record their structured edits instead.
+                return self.ensure_folder(session_id, cwd);
             }
         }
         let dir = self.session_dir(session_id);

@@ -498,6 +498,13 @@ impl Pilots {
             .update(cx, |view, cx| view.set_original_chrome(original, cx));
         cx.notify();
     }
+    /// The session the details panel shows as a page, if any.
+    pub(crate) fn routed_session(&self) -> Option<i64> {
+        match self.route {
+            Some(Route::Session(id)) => Some(id),
+            _ => None,
+        }
+    }
     pub(crate) fn overview_chrome(&self) -> OverviewChrome {
         let counts = self.current().map_or((0, 0, 0, 0), |pilot| {
             (

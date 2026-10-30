@@ -198,7 +198,7 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
         action: match name.as_str() {
             "read" => "Read",
             "write" => "Write",
-            "edit" | "filechange" => "Edit",
+            "edit" | "multiedit" | "filechange" => "Edit",
             "grep" => "Find",
             "glob" => "List",
             "websearch" => "Search",
@@ -382,7 +382,7 @@ fn location(value: &Value) -> Option<&Value> {
 }
 // Parse nested argument bags on the disposable display copy only. Raw input
 // stays byte-for-byte available through ToolCall::input_detail.
-fn normalize_inputs(value: &mut Value, depth: usize) {
+pub(super) fn normalize_inputs(value: &mut Value, depth: usize) {
     if depth > 5 {
         return;
     }
@@ -413,7 +413,7 @@ fn normalize_inputs(value: &mut Value, depth: usize) {
         }
     }
 }
-fn inputs<'a>(value: &'a Value, depth: usize, out: &mut Vec<&'a Value>) {
+pub(super) fn inputs<'a>(value: &'a Value, depth: usize, out: &mut Vec<&'a Value>) {
     if depth > 5 {
         return;
     }

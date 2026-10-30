@@ -52,9 +52,9 @@ function r2Status(env) {
 }
 
 // Gespan Native has its own fixed feed: the `native-latest` release holds only
-// latest.json (overwritten per native-v* release), so it never competes with
-// the Tauri app for /releases/latest. Packages stay on the versioned native-v*
-// release, which latest.json points at.
+// latest.json (overwritten per release), so it never competes with
+// /releases/latest. Packages stay on the versioned vX.Y.Z release, which
+// latest.json points at.
 const GITHUB_RELEASES = "https://github.com/0xvasanth/gespan/releases/download";
 const GITHUB_NATIVE_FEED = `${GITHUB_RELEASES}/native-latest/latest.json`;
 
@@ -64,12 +64,13 @@ function nativeUpdaterEndpoint(env) {
   return endpoint;
 }
 
-// Each version is one GitHub release, vX.Y.Z, holding both apps' packages.
-// The native workflow runs from native-vX.Y.Z and publishes into vX.Y.Z.
+// Each version is one tag and one GitHub release, vX.Y.Z: the release
+// workflows run from the tag and publish into the release of the same name.
+const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 function nativeReleaseTag(env) {
   const tag = env.GITHUB_REF_NAME || "";
-  if (!/^native-v.+/.test(tag)) throw new Error("Expected a native release tag such as native-v0.16.0-preview.2");
-  return tag.slice("native-".length);
+  if (!RELEASE_TAG.test(tag)) throw new Error("Expected a release tag such as v0.0.3-beta");
+  return tag;
 }
 
 function nativeAssetBase(env) {
@@ -82,13 +83,13 @@ function nativeR2Status(env) {
   return { enabled: missing.length === 0, missing };
 }
 
-// Manual dispatch must start from a native-v* tag, never a branch. GitHub sets
+// Manual dispatch must start from a vX.Y.Z tag, never a branch. GitHub sets
 // GITHUB_REF_TYPE and GITHUB_REF_NAME to the tag a "Use workflow from" tag run uses.
 function requireNativeTagRef(env) {
   const name = env.GITHUB_REF_NAME || "";
-  if (env.GITHUB_REF_TYPE !== "tag" || !/^native-v.+/.test(name)) {
+  if (env.GITHUB_REF_TYPE !== "tag" || !RELEASE_TAG.test(name)) {
     throw new Error(
-      `Run this workflow from a native-v* tag (Use workflow from -> Tags), not "${name || "(none)"}" (${env.GITHUB_REF_TYPE || "unknown"}).`,
+      `Run this workflow from a vX.Y.Z release tag (Use workflow from -> Tags), not "${name || "(none)"}" (${env.GITHUB_REF_TYPE || "unknown"}).`,
     );
   }
   return name;

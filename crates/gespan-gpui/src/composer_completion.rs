@@ -30,6 +30,14 @@ pub(crate) fn bind(cx: &mut App) {
     ]);
 }
 pub(crate) struct ModePicked(pub &'static str);
+/// SkillPicker's CreateSkillForm: a starter SKILL.md from the picker.
+struct NewSkill {
+    name: Entity<input::Input>,
+    personal: bool,
+    error: Option<String>,
+    busy: bool,
+    _subscriptions: [Subscription; 2],
+}
 #[derive(Clone)]
 struct Choice {
     label: String,
@@ -69,6 +77,7 @@ pub(crate) struct Completion {
     composer_anchor: AnchorSlot,
     container_anchor: AnchorSlot,
     inline_field: bool,
+    creating: Option<NewSkill>,
     _observe: Subscription,
 }
 impl EventEmitter<ModePicked> for Completion {}
@@ -123,6 +132,7 @@ impl Completion {
             composer_anchor: AnchorSlot::default(),
             container_anchor: AnchorSlot::default(),
             inline_field: false,
+            creating: None,
             _observe: observe,
         }
     }
@@ -297,6 +307,7 @@ impl Completion {
         }
     }
     pub(crate) fn dismiss(&mut self, cx: &mut Context<Self>) {
+        self.creating = None;
         self.mcp_open = false;
         self.dismissed = self.token.take();
         cx.notify();
@@ -808,7 +819,8 @@ impl Completion {
 }
 impl Render for Completion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open = self.token.is_some() && self.input.focus_handle(cx).is_focused(window);
+        let open = self.token.is_some()
+            && (self.creating.is_some() || self.input.focus_handle(cx).is_focused(window));
         let mut root = div()
             .debug_selector(|| "composer-text-field".into())
             .relative()
@@ -816,19 +828,28 @@ impl Render for Completion {
             .child(self.anchor.layout_probe())
             .key_context(if open { "Completion" } else { "" })
             .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if this.token.is_some() && !this.input.read(cx).is_composing() {
+                if this.creating.is_none()
+                    && this.token.is_some()
+                    && !this.input.read(cx).is_composing()
+                {
                     this.step(-1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                if this.token.is_some() && !this.input.read(cx).is_composing() {
+                if this.creating.is_none()
+                    && this.token.is_some()
+                    && !this.input.read(cx).is_composing()
+                {
                     this.step(1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Submit, window, cx| {
-                if this.token.is_some() && !this.input.read(cx).is_composing() {
+                if this.creating.is_none()
+                    && this.token.is_some()
+                    && !this.input.read(cx).is_composing()
+                {
                     if !this.choices.is_empty() {
                         this.pick(this.active, window, cx);
                     } else {
@@ -838,11 +859,18 @@ impl Render for Completion {
                 }
             }))
             .on_action(cx.listener(|this, _: &Accept, window, cx| {
-                this.pick(this.active, window, cx);
+                if this.creating.is_none() {
+                    this.pick(this.active, window, cx);
+                }
                 cx.stop_propagation();
             }))
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                this.dismiss(cx);
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
+                // Esc in the form goes back to the list, as onCancelCreate.
+                if this.creating.is_some() {
+                    this.cancel_new_skill(window, cx);
+                } else {
+                    this.dismiss(cx);
+                }
                 cx.stop_propagation();
             }))
             .child(self.input.clone());
@@ -982,70 +1010,76 @@ impl Render for Completion {
                     .on_dismiss(move |_, cx| {
                         let _ = weak.update(cx, |this, cx| this.dismiss(cx));
                     })
-                    .child(
-                        div()
-                            .id("composer-completion-list")
-                            .debug_selector(|| "composer-completion-list".into())
-                            .role(Role::ListBox)
-                            .aria_label(title)
-                            .p_2()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .px_2()
-                                    .py_1()
-                                    .text_size(px(10.))
-                                    .text_color(content(0.4))
-                                    .child(title),
-                            )
-                            .child(
-                                div()
-                                    .id("composer-completion-rows")
-                                    .min_h_0()
-                                    .max_h(px(320.))
-                                    .pr_1()
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.scroll)
-                                    .children(rows),
-                            )
-                            .when(self.choices.is_empty(), |d| {
-                                d.child(
+                    .when_some(self.new_skill_form(cx), |d, form| d.child(form))
+                    .when(self.creating.is_none(), |d| {
+                        d.child(
+                            div()
+                                .id("composer-completion-list")
+                                .debug_selector(|| "composer-completion-list".into())
+                                .role(Role::ListBox)
+                                .aria_label(title)
+                                .p_2()
+                                .min_h_0()
+                                .flex()
+                                .flex_col()
+                                .child(
                                     div()
+                                        .flex_shrink_0()
                                         .px_2()
-                                        .py_3()
-                                        .text_size(px(12.))
-                                        .text_color(content(0.45))
-                                        .child(SharedString::from(if self.loading {
-                                            "Loading…".to_owned()
-                                        } else {
-                                            self.error
-                                                .clone()
-                                                .unwrap_or_else(|| "No matches".into())
-                                        })),
+                                        .py_1()
+                                        .text_size(px(10.))
+                                        .text_color(content(0.4))
+                                        .child(title),
                                 )
-                            })
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .mt_1()
-                                    .px_2()
-                                    .pt_1p5()
-                                    .pb_1()
-                                    .border_t_1()
-                                    .border_color(content(0.07))
-                                    .text_size(px(10.))
-                                    .text_color(content(0.35))
-                                    .child("↑ ↓ navigate    ↵ / Tab select    Esc dismiss"),
-                            ),
-                    ),
+                                .child(
+                                    div()
+                                        .id("composer-completion-rows")
+                                        .min_h_0()
+                                        .max_h(px(320.))
+                                        .pr_1()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.scroll)
+                                        .children(rows),
+                                )
+                                .when(self.choices.is_empty(), |d| {
+                                    d.child(
+                                        div()
+                                            .px_2()
+                                            .py_3()
+                                            .text_size(px(12.))
+                                            .text_color(content(0.45))
+                                            .child(SharedString::from(if self.loading {
+                                                "Loading…".to_owned()
+                                            } else {
+                                                self.error
+                                                    .clone()
+                                                    .unwrap_or_else(|| "No matches".into())
+                                            })),
+                                    )
+                                })
+                                .when(self.offers_new_skill(), |d| d.child(self.new_skill_row(cx)))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .mt_1()
+                                        .px_2()
+                                        .pt_1p5()
+                                        .pb_1()
+                                        .border_t_1()
+                                        .border_color(content(0.07))
+                                        .text_size(px(10.))
+                                        .text_color(content(0.35))
+                                        .child("↑ ↓ navigate    ↵ / Tab select    Esc dismiss"),
+                                ),
+                        )
+                    }),
             );
         }
         root
     }
 }
+
+mod new_skill;
 
 #[cfg(test)]
 mod tests {

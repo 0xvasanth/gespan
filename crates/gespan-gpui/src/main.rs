@@ -55,6 +55,7 @@ mod memory_log;
 mod metal_tests;
 mod mobile;
 mod modal;
+mod model_welcome;
 mod notes;
 mod notifications;
 mod pane_layout;
@@ -433,10 +434,18 @@ fn main() {
             .unwrap_or(std::path::Path::new("."))
             .join("checkpoints"),
     );
+    gespan_core::inbox::init_media_video_dir(
+        database
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("inbox-media"),
+    );
     let saved = db.ui_state().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
     });
+    // A project folder renamed since the last run takes its sessions along.
+    let saved = workspace::follow_moved_projects(&db, saved);
     let existing_project = if use_gespan {
         saved
             .as_deref()

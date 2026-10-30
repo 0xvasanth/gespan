@@ -74,6 +74,9 @@ actions!(
     ]
 );
 pub struct Submitted;
+/// Cmd/Ctrl+Enter in a composer that sends either way, asking for the
+/// opposite of its usual follow-up behavior.
+pub struct AlternateSubmitted;
 pub struct Changed;
 pub(crate) enum CodeAction {
     Stage(usize),
@@ -221,6 +224,8 @@ pub struct Input {
     max_height: f32,
     /// A textarea that takes Enter as a newline and submits on Cmd/Ctrl+Enter.
     secondary_submit: bool,
+    /// Emit [`AlternateSubmitted`] on Cmd/Ctrl+Enter instead of ignoring it.
+    alternate_submit: bool,
     pub content: SharedString,
     selection: Range<usize>,
     reversed: bool,
@@ -240,6 +245,7 @@ pub struct Input {
     autoscroll: Option<gpui::Task<()>>,
 }
 impl EventEmitter<Submitted> for Input {}
+impl EventEmitter<AlternateSubmitted> for Input {}
 impl EventEmitter<Changed> for Input {}
 impl EventEmitter<Rejected> for Input {}
 impl EventEmitter<CodeAction> for Input {}
@@ -276,6 +282,7 @@ impl Input {
             min_height: MIN_HEIGHT,
             max_height: MAX_HEIGHT,
             secondary_submit: false,
+            alternate_submit: false,
             content: "".into(),
             selection: 0..0,
             reversed: false,
@@ -453,6 +460,9 @@ impl Input {
     pub(crate) fn label(&self) -> &SharedString {
         &self.label
     }
+    pub(crate) fn placeholder(&self) -> &SharedString {
+        &self.placeholder
+    }
     pub(crate) fn set_placeholder(
         &mut self,
         text: impl Into<SharedString>,
@@ -463,6 +473,9 @@ impl Input {
             self.placeholder = text;
             cx.notify();
         }
+    }
+    pub(crate) fn set_alternate_submit(&mut self, value: bool) {
+        self.alternate_submit = value;
     }
     pub(crate) fn set_read_only(&mut self, value: bool) {
         self.read_only = value;
@@ -1141,10 +1154,16 @@ impl Input {
         }
     }
     fn submit_secondary(&mut self, _: &SubmitSecondary, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.secondary_submit {
+        if self.secondary_submit {
+            if self.marked.is_none() {
+                cx.emit(Submitted);
+            }
+        } else if self.alternate_submit {
+            if self.marked.is_none() {
+                cx.emit(AlternateSubmitted);
+            }
+        } else {
             cx.propagate();
-        } else if self.marked.is_none() {
-            cx.emit(Submitted);
         }
     }
     fn paste(&mut self, _: &Paste, w: &mut Window, cx: &mut Context<Self>) {

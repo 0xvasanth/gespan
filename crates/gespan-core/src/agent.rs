@@ -100,6 +100,9 @@ pub struct Settings {
     /// message remains the transcript and queue label.
     #[serde(skip)]
     pub prepared_prompt: Option<String>,
+    /// The note chip of this turn, saved beside its prompt.
+    #[serde(skip)]
+    pub note_card: Option<serde_json::Value>,
     /// Immutable identity captured for this newly submitted turn.
     #[serde(skip)]
     pub turn_model: Option<TurnInfo>,

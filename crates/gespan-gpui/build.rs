@@ -24,11 +24,11 @@ fn main() {
 /// GPUI loads the window and taskbar icon from resource ID 1 of the executable,
 /// which Explorer and the installer shortcuts also show.
 fn embed_windows_icon(manifest_dir: &std::path::Path) {
-    let icon = manifest_dir.join("../../src-tauri/icons/icon.ico");
+    let icon = manifest_dir.join("packaging/icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     assert!(
         icon.is_file(),
-        "The Windows build requires src-tauri/icons/icon.ico"
+        "The Windows build requires packaging/icon.ico"
     );
     // Not canonicalize: its \\?\ verbatim prefix is rejected by rc.exe.
     let icon = icon.to_string_lossy().replace('\\', "/");

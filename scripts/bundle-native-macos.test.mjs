@@ -55,11 +55,17 @@ test("Finder launches use development data for dev bundles and installed data fo
       assert.ok(plist.includes(`<key>CFBundleDisplayName</key><string>${name}</string>`));
       // macOS rejects menu bar items from a process that exec'd after launch.
       assert.ok(plist.includes("<key>CFBundleExecutable</key><string>gespan-gpui</string>"));
-      // Dictation asks for the microphone with the desktop app's wording.
-      const tauriPlist = await readFile(new URL("../src-tauri/Info.plist", import.meta.url), "utf8");
-      const microphone = /<key>NSMicrophoneUsageDescription<\/key>\s*<string>([^<]+)<\/string>/;
-      assert.equal(plist.match(microphone)?.[1], tauriPlist.match(microphone)?.[1]);
-      assert.ok(plist.match(microphone));
+      // Dictation asks for the microphone, and says the audio stays local.
+      assert.ok(
+        plist.includes(
+          "<key>NSMicrophoneUsageDescription</key><string>Gespan uses the microphone when you dictate a message. Audio stays on this device.</string>",
+        ),
+      );
+      // The Dock and Finder show the icon Native owns.
+      assert.deepEqual(
+        await readFile(join(bundle, "Resources/gespan.icns")),
+        await readFile(new URL("../crates/gespan-gpui/packaging/icon.icns", import.meta.url)),
+      );
       await assert.rejects(access(join(bundle, "MacOS/gespan-launcher")));
       const launched = spawnSync(join(bundle, "MacOS/gespan-gpui"), ["--cwd", "a project with spaces"], {
         encoding: "utf8",

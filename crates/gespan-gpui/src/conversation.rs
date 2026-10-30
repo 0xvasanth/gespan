@@ -4,6 +4,7 @@ mod attachment_drop;
 mod background_tasks;
 mod btw;
 mod commands;
+pub(crate) mod composer_card;
 pub(crate) mod composer_features;
 mod composer_shelf;
 pub(crate) mod dictation;
@@ -16,7 +17,11 @@ pub(crate) mod git_actions;
 mod history;
 mod hold;
 pub(crate) use hold::HoldChanged;
+#[cfg(test)]
+mod composer_card_tests;
 mod mobile;
+#[cfg(test)]
+mod model_welcome_tests;
 mod notifications;
 mod pilot;
 mod remote;
@@ -257,6 +262,15 @@ pub(crate) struct Conversation {
     menu: Option<OpenMenu>,
     add_anchor: AnchorSlot,
     model_anchor: AnchorSlot,
+    /// What the next message starts from, shown above the input.
+    composer_card: Option<composer_card::ComposerCard>,
+    composer_placeholder: SharedString,
+    /// The note the next launched turn carries as a card.
+    pending_note: Option<Box<gespan_core::notes::Note>>,
+    /// The composer box, which places the Opus welcome scene beside it.
+    composer_box_anchor: AnchorSlot,
+    /// The welcome scene for a just-picked model, cleared when it ends.
+    model_welcome: Option<(crate::model_welcome::Run, gpui::Task<()>)>,
     access_anchor: AnchorSlot,
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
@@ -287,6 +301,7 @@ pub(crate) struct Conversation {
     #[cfg(test)]
     test_branch_name: Option<String>,
     _submission: Subscription,
+    _alternate_submission: Subscription,
     response_events: Option<Subscription>,
     response_menu: Option<ResponseMenu>,
     response_request: Option<(usize, gespan_core::response::TransferKind, Instant)>,
@@ -579,9 +594,14 @@ impl Conversation {
             }
             this.open_typed_btw(cx);
         });
+        input.update(cx, |input, _| input.set_alternate_submit(true));
         let submission = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| this.send(cx));
         let dictation = cx.new(|cx| dictation::Dictation::new(input.downgrade(), cx));
         let dictation_observation = cx.observe(&dictation, |_, _, cx| cx.notify());
+        let alternate_submission = cx
+            .subscribe(&input, |this, _, _: &input::AlternateSubmitted, cx| {
+                this.send_follow_up(true, cx)
+            });
         let review =
             cx.new(|_| crate::session_review::SessionReview::new(summary.id, summary.cwd.clone()));
         let review_events = cx.subscribe(&review, |this, review, event, cx| match event {
@@ -721,6 +741,11 @@ impl Conversation {
             menu: None,
             add_anchor: AnchorSlot::default(),
             model_anchor: AnchorSlot::default(),
+            composer_card: None,
+            composer_placeholder: SharedString::default(),
+            pending_note: None,
+            composer_box_anchor: AnchorSlot::default(),
+            model_welcome: None,
             access_anchor: AnchorSlot::default(),
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
@@ -744,6 +769,7 @@ impl Conversation {
             #[cfg(test)]
             test_branch_name: None,
             _submission: submission,
+            _alternate_submission: alternate_submission,
             response_events: None,
             response_menu: None,
             response_request: None,
@@ -953,6 +979,11 @@ impl Conversation {
         self.send(cx);
     }
     fn send(&mut self, cx: &mut Context<Self>) {
+        self.send_follow_up(false, cx);
+    }
+    /// `invert` sends a mid-turn message the opposite way from the follow-up
+    /// preference: queued when it steers, steering when it queues.
+    fn send_follow_up(&mut self, invert: bool, cx: &mut Context<Self>) {
         if self.is_remote() && self.remote_send_guard(cx) {
             return;
         }
@@ -960,7 +991,7 @@ impl Conversation {
             return;
         }
         if self.needs_history_restore() {
-            self.defer_history_action(|this, cx| this.send(cx), cx);
+            self.defer_history_action(move |this, cx| this.send_follow_up(invert, cx), cx);
             return;
         }
         if self.submit_edited(cx) {
@@ -1004,7 +1035,9 @@ impl Conversation {
             return;
         }
         if self.attaching
-            || (!self.input.read(cx).has_message_text() && self.attachments.is_empty())
+            || (!self.input.read(cx).has_message_text()
+                && self.attachments.is_empty()
+                && self.composer_card.is_none())
         {
             return;
         }
@@ -1020,6 +1053,7 @@ impl Conversation {
             .unwrap_or(raw);
         self.folder_selected = false;
         let prompt = self.consume_mode_command(raw, cx);
+        let prompt = self.apply_composer_card(prompt, cx);
         if prompt.trim().is_empty() && self.attachments.is_empty() {
             return;
         }
@@ -1039,12 +1073,8 @@ impl Conversation {
             // the outgoing provider and commits the handoff.
             self.stop(cx);
         }
-        if self.stopping
-            || self.busy
-            || self.settings.pending_provider_switch.is_some()
-            || (!self.follow_ups.state.messages.is_empty() && !self.follow_ups.state.paused)
-        {
-            self.enqueue_follow_up(prompt, mode.map(str::to_owned), cx);
+        if self.sends_as_follow_up() {
+            self.enqueue_follow_up_inverted(prompt, mode.map(str::to_owned), invert, cx);
             if self.stopping || self.settings.pending_provider_switch.is_some() {
                 // A fresh Send continues the conversation, while older queued
                 // messages remain paused after Stop.
@@ -1073,6 +1103,37 @@ impl Conversation {
         if self.busy && mode.is_some() {
             self.clear_submitted_mode(cx);
         }
+    }
+    /// A message sent now joins the follow-ups instead of starting a turn.
+    fn sends_as_follow_up(&self) -> bool {
+        self.stopping
+            || self.busy
+            || self.settings.pending_provider_switch.is_some()
+            || (!self.follow_ups.state.messages.is_empty() && !self.follow_ups.state.paused)
+    }
+    /// The submit icon for a message that will steer or queue, if it will.
+    fn follow_up_action(
+        &self,
+        alternate: bool,
+        cx: &gpui::App,
+    ) -> Option<(&'static str, &'static str)> {
+        // Stop and provider switches send the message as the next turn.
+        if self.settings.pilot.is_some()
+            || self.is_remote()
+            || self.stopping
+            || self.settings.pending_provider_switch.is_some()
+            || !self.sends_as_follow_up()
+        {
+            return None;
+        }
+        let mode = self.settings.orchestrator || self.settings.plan || self.settings.operator;
+        Some(
+            if self.busy && !mode && self.steers_follow_up(alternate, cx) {
+                ("Steer", "queue-steer")
+            } else {
+                ("Queue", "queue-list")
+            },
+        )
     }
     fn launch_prompt(&mut self, prompt: String, cx: &mut Context<Self>) {
         // While on hold nothing starts: the prompt waits in the queue for Resume.
@@ -1165,7 +1226,11 @@ impl Conversation {
             ..Default::default()
         });
         if !self.is_remote() && settings.prepared_prompt.is_none() {
-            let prepared = self.completion.read(cx).prepare_prompt(&prompt);
+            let mut prepared = self.completion.read(cx).prepare_prompt(&prompt);
+            if let Some(note) = self.pending_note.take() {
+                prepared = gespan_core::notes::compose_message(&note, &prepared);
+                settings.note_card = Some(gespan_core::notes::card_meta(&note));
+            }
             if prepared != prompt {
                 settings.prepared_prompt = Some(prepared);
             }
@@ -2426,8 +2491,45 @@ impl Conversation {
         if !self.is_remote() {
             crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx);
         }
+        self.welcome_model(cx);
         cx.emit(SessionChanged);
         true
+    }
+    /// SessionPane: every pick of Opus 5.5 or Astra restarts its scene; any
+    /// other pick, or reduced motion, ends one that is playing.
+    fn welcome_model(&mut self, cx: &mut Context<Self>) {
+        let label = self.model_label();
+        let kind = crate::model_welcome::Kind::for_model(
+            self.model.as_deref().into_iter().chain([label.as_ref()]),
+        )
+        .filter(|_| !cx.reduce_motion());
+        self.model_welcome = kind.map(|kind| {
+            let ends = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(kind.duration()).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.model_welcome = None;
+                    cx.notify();
+                });
+            });
+            (crate::model_welcome::Run::new(kind), ends)
+        });
+        cx.notify();
+    }
+    fn model_welcome_layer(&self) -> Option<AnyElement> {
+        let (run, _) = self.model_welcome.as_ref()?;
+        Some(
+            div()
+                .debug_selector(|| "model-welcome".into())
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(crate::model_welcome::layer(
+                    *run,
+                    self.composer_box_anchor.get(),
+                ))
+                .into_any_element(),
+        )
     }
     fn menu_is(&self, kind: ComposerMenu) -> bool {
         self.menu.as_ref().is_some_and(|open| open.kind == kind)
@@ -2995,6 +3097,7 @@ impl Conversation {
                         }
                     }))
                     .relative()
+                    .child(self.composer_box_anchor.probe())
                     .rounded(px(radius))
                     .border_1()
                     .border_color(composer_border(self.input.focus_handle(cx).is_focused(window)))
@@ -3011,6 +3114,7 @@ impl Conversation {
                     .child(self.completion.read(cx).composer_probe())
                     .child(self.btw_home.0.probe())
                     .child(composer_surface(radius))
+                    .children(self.composer_card_view(cx))
                     .children(self.attachment_chips(cx))
                     .children(dictation::bar(&self.dictation, &self.input, cx))
                     .child(
@@ -3147,7 +3251,7 @@ impl Conversation {
                                             .child(icon("chevron-down", 12.)),
                                     ),
                             )
-                            .child(self.action(has_value, cx)),
+                            .child(self.action(has_value, window, cx)),
                     )
                     .children(self.attachment_drop_overlay(12.)),
             )
@@ -3395,9 +3499,18 @@ impl Conversation {
         self.menu_choice(id, cx);
     }
     // ComposerAction: a solid submit, dimmed while empty; Stop while busy.
-    fn action(&self, has_value: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn action(&self, has_value: bool, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.responding() && !has_value;
         let draft = self.draft_active(cx);
+        let modifiers = window.modifiers();
+        let alternate = if cfg!(target_os = "macos") {
+            modifiers.platform
+        } else {
+            modifiers.control
+        };
+        let follow_up = (has_value && !draft)
+            .then(|| self.follow_up_action(alternate, cx))
+            .flatten();
         let enabled = self.send_allowed(has_value, cx);
         let no_agent = (!busy).then(|| self.no_agent_hint(cx)).flatten();
         send_button(
@@ -3407,9 +3520,10 @@ impl Conversation {
             } else if draft {
                 "Save draft"
             } else {
-                "Send"
+                follow_up.map_or("Send", |(label, _)| label)
             },
             busy,
+            follow_up.map_or("send", |(_, glyph)| glyph),
             enabled,
         )
         .debug_selector(|| "send-or-stop".into())
@@ -3417,14 +3531,20 @@ impl Conversation {
             d.aria_description(hint)
                 .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
         })
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
             if !enabled {
                 return;
             }
             if busy {
                 this.stop(cx);
             } else {
-                this.send(cx);
+                let modifiers = event.modifiers();
+                let alternate = if cfg!(target_os = "macos") {
+                    modifiers.platform
+                } else {
+                    modifiers.control
+                };
+                this.send_follow_up(alternate, cx);
             }
         }))
     }
@@ -3851,7 +3971,13 @@ impl Render for Conversation {
             return self.render_pilot(window, cx);
         }
         if !self.summary.has_messages {
-            return self.empty(window, cx);
+            let empty = self.empty(window, cx);
+            return div()
+                .relative()
+                .size_full()
+                .child(empty)
+                .children(self.model_welcome_layer())
+                .into_any();
         }
         self.attachment_drop_target("session-chat", cx)
             .relative()
@@ -3947,6 +4073,7 @@ impl Render for Conversation {
             )
             .when_some(self.btw.as_ref(), |d, sheet| d.child(sheet.clone()))
             .children(self.remote_plan_reader(cx))
+            .children(self.model_welcome_layer())
             .into_any()
     }
 }
@@ -4022,11 +4149,22 @@ fn send_button(
     id: &'static str,
     label: &'static str,
     busy: bool,
+    glyph: &'static str,
     enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let accent = primary_action(enabled);
+    // Without an accent the button is the inverse of the surface: white with
+    // black ink on dark, black with white ink on light.
+    let light = crate::theme::is_light();
+    type Shade = fn(f32) -> gpui::Hsla;
+    let (solid, ink): (Shade, Shade) = if light {
+        (black, white)
+    } else {
+        (white, black)
+    };
     div()
         .id(id)
+        .debug_selector(|| id.into())
         .role(Role::Button)
         .aria_label(label)
         .cursor_pointer()
@@ -4041,15 +4179,15 @@ fn send_button(
                 .bg(fill)
                 .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
             None => d
-                .bg(white(if enabled { 1. } else { 0.3 }))
-                .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
+                .bg(solid(if enabled { 1. } else { 0.3 }))
+                .when(enabled, |d| d.hover(|s| s.bg(solid(0.9)))),
         })
         .map(|d| {
-            let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
+            let ink = accent.map_or(ink(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
             if busy {
                 d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
             } else {
-                d.child(icon("send", 14.).text_color(ink))
+                d.child(icon(glyph, 14.).text_color(ink))
             }
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

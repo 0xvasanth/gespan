@@ -2558,7 +2558,7 @@ mod tests {
                             && quad
                                 .background
                                 .as_solid()
-                                .is_some_and(|color| color == gpui::Hsla::from(rgb(0x323232)))
+                                .is_some_and(|color| color == crate::theme::rail_color())
                     }),
                     "the same spine as Operator rows connects folder members"
                 );

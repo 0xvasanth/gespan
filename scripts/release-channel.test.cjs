@@ -148,7 +148,7 @@ test("the native feed is the fixed native-latest release, separate from Tauri's 
   assert.equal(nativeUpdaterEndpoint({}), GITHUB_NATIVE_FEED);
   assert.equal(
     nativeUpdaterEndpoint({
-      GITHUB_REF_NAME: "native-v0.16.0-preview.2",
+      GITHUB_REF_NAME: "v0.16.0-preview.2",
       R2_PUBLIC_BASE_URL: "https://cdn.example.com",
       TAURI_UPDATER_ENDPOINT: "https://updates.example.com/stable.json",
       NATIVE_UPDATER_ENDPOINT: "  ",
@@ -166,14 +166,16 @@ test("the native endpoint can be overridden, but only with HTTPS", () => {
 });
 
 test("native packages are referenced from the version's shared release, not the feed release", () => {
-  assert.equal(nativeReleaseTag({ GITHUB_REF_NAME: "native-v0.0.1-beta" }), "v0.0.1-beta");
+  // The tag is the release: v0.0.3-beta publishes into the v0.0.3-beta release.
+  assert.equal(nativeReleaseTag({ GITHUB_REF_NAME: "v0.0.3-beta" }), "v0.0.3-beta");
+  assert.equal(nativeReleaseTag({ GITHUB_REF_NAME: "v1.2.0" }), "v1.2.0");
   assert.equal(
-    nativeAssetBase({ GITHUB_REF_NAME: "native-v0.16.0-preview.2" }),
+    nativeAssetBase({ GITHUB_REF_NAME: "v0.16.0-preview.2" }),
     "https://github.com/0xvasanth/gespan/releases/download/v0.16.0-preview.2",
   );
-  assert.throws(() => nativeReleaseTag({ GITHUB_REF_NAME: "v0.0.1-beta" }), /native-v/);
-  for (const ref of ["v0.9.1", "native-latest", "native-v", "", undefined]) {
-    assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /native-v/);
+  // The feed release, the old native-v tags, branches and loose names are refused.
+  for (const ref of ["native-latest", "native-v0.0.3-beta", "v", "v0.0", "v0.0.3-beta/../x", "main", "", undefined]) {
+    assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /release tag such as v0\.0\.3-beta/);
   }
 });
 
@@ -213,15 +215,17 @@ test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () =>
   assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
 });
 
-test("native releases only run from a native-v* tag", () => {
-  assert.equal(requireNativeTagRef({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.16.0-preview.2" }), "native-v0.16.0-preview.2");
+test("releases only run from a vX.Y.Z tag", () => {
+  assert.equal(requireNativeTagRef({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.0.3-beta" }), "v0.0.3-beta");
   for (const env of [
     { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "main" },
-    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "native-v0.16.0-preview.2" },
-    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.9.1" },
-    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v" },
+    // A branch named like a version is still not a tag.
+    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "v0.0.3-beta" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.0.3-beta" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-latest" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v" },
     {},
-  ]) assert.throws(() => requireNativeTagRef(env), /native-v\* tag/);
+  ]) assert.throws(() => requireNativeTagRef(env), /vX\.Y\.Z release tag/);
 });
 
 test("expected native files are each package plus its signature", () => {
@@ -296,7 +300,7 @@ test("release notes are the version's CHANGELOG section", () => {
   assert.throws(() => releaseNotes(changelog, "9.9.9"), /no section for 9\.9\.9/);
 });
 
-const TAG = "native-v0.16.0-preview.2";
+const TAG = "v0.16.0-preview.2";
 const feedFor = (platforms) => JSON.stringify({
   payload: Buffer.from(JSON.stringify({ platforms })).toString("base64"),
   signature: "manifest-signature",
@@ -335,7 +339,7 @@ test("recovery fails when a .sig asset is missing or differs from the feed", () 
 
 test("recovery rejects a feed that points elsewhere, at an unknown file, or is unreadable", () => {
   const sigs = { "a.dmg": "s" };
-  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("a.dmg", "native-v9.9.9"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /does not point at/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("a.dmg", "v9.9.9"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /does not point at/);
   assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("evil.dmg"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /not a published package/);
   assert.throws(() => verifyRecoveredFeed({ latestJson: "not json", sigs, tag: TAG, expected: [] }), /unreadable/);
   assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({}), sigs, tag: TAG, expected: [] }), /lists no packages/);
@@ -347,14 +351,14 @@ test("the recovery CLI checks the native feed copy against the shared release", 
     const name = "GespanNative_0.0.1-beta_x64.app.tar.gz";
     fs.writeFileSync(path.join(dir, `${name}.sig`), "sig-original\n");
     const run = () => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-verify-recovery", dir], {
-      env: { PATH: process.env.PATH, GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.0.1-beta" },
+      env: { PATH: process.env.PATH, GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.0.1-beta" },
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
     });
     const write = (tag) => fs.writeFileSync(path.join(dir, NATIVE_FEED_ASSET),
       feedFor({ "darwin-x86_64-app": { url: url(name, tag), signature: "sig-original" } }));
     write("v0.0.1-beta");
     assert.match(run(), /matches the published signatures/);
-    // A feed still pointing at a separate native-v release is refused.
+    // A feed pointing at another release, such as an old native-v one, is refused.
     write("native-v0.0.1-beta");
     assert.throws(run, (error) => /does not point at the v0\.0\.1-beta release/.test(error.stderr));
   } finally {

@@ -28,6 +28,7 @@ pub mod pilot;
 pub mod plan;
 pub mod process;
 pub mod project_appearance;
+pub mod project_location;
 pub mod provider;
 pub use gespan_tracker_client::provider_boards;
 pub mod remote;

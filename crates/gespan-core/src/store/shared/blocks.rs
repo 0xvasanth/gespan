@@ -217,8 +217,11 @@ fn project_block(block: &Value) -> Result<Vec<Row>, String> {
     for card in crate::pilot::work::document_cards(block) {
         rows.push(metadata_row("pilot-document", &card));
     }
-    if let Some(id) = block["noteCard"]["id"].as_str() {
-        rows.push(metadata_row("pilot-note", &json!({"id":format!("note:{id}"),"type":"document","documentId":id,"title":block["noteCard"]["title"],"kind":"document","note":true})));
+    if block["noteCard"]["id"].is_string() {
+        rows.push(metadata_row(
+            crate::notes::CARD_ROLE,
+            &crate::notes::card_row(&block["noteCard"]),
+        ));
     }
     for launch in crate::pilot::work::block_launches(std::slice::from_ref(block))
         .into_iter()
@@ -562,6 +565,14 @@ pub(super) fn merge(blocks: &[Value], start: usize, delta: &[Row]) -> Result<Vec
                 return Err("Invalid attachment manifest; history was preserved".into());
             }
             prompt["attachments"] = files;
+        } else if rows[0].role == crate::notes::CARD_ROLE {
+            let prompt = result
+                .last_mut()
+                .filter(|block| block["role"] == "user")
+                .ok_or("A note card has no user message; history was preserved")?;
+            let row: Value =
+                super::parse(&rows.iter().map(|r| r.text.as_str()).collect::<String>())?;
+            prompt["noteCard"] = crate::notes::card_from_row(&row);
         } else {
             result.push(update(None, rows)?);
         }
@@ -738,6 +749,60 @@ mod panel_tests {
 #[cfg(test)]
 mod card_tests {
     use super::*;
+    #[test]
+    fn a_note_card_sent_from_native_saves_on_its_user_turn_and_survives_the_reply() {
+        let row = |role: &str, text: &str| Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        };
+        let note = crate::notes::Note {
+            id: "note-1".into(),
+            slug: "read-me".into(),
+            title: "Reference".into(),
+            body: "The body stays out of the turn".into(),
+            tags: Vec::new(),
+            source_session_id: None,
+            source_cwd: Some("/repo".into()),
+            slug_pending: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let card = crate::notes::card_meta(&note);
+        let rows = [
+            row("user", "Use this note."),
+            row(
+                crate::notes::CARD_ROLE,
+                &crate::notes::card_row(&card).to_string(),
+            ),
+        ];
+        let merged = merge(&[], 0, &rows).unwrap();
+        assert_eq!(merged.len(), 1, "the card is not a message of its own");
+        assert_eq!(
+            merged[0]["noteCard"],
+            json!({"id":"note-1","slug":"read-me","title":"Reference","sourceCwd":"/repo"})
+        );
+        assert!(!merged[0].to_string().contains("The body stays"));
+        let projected = project(&merged).unwrap();
+        assert_eq!(projected[1].text, rows[1].text, "the same row reloads");
+        // A later reply leaves the saved turn exactly as it was.
+        let answered = merge(&merged, projected.len(), &[row("assistant", "Done")]).unwrap();
+        assert_eq!(answered[0], merged[0]);
+        assert_eq!(answered.len(), 2);
+        // The desktop's own card has no folder; it still round-trips.
+        let bare =
+            json!({"id":"n","role":"user","text":"x","noteCard":{"id":"a","slug":"b","title":"c"}});
+        assert_eq!(
+            crate::notes::card_from_row(
+                &serde_json::from_str(&project(std::slice::from_ref(&bare)).unwrap()[1].text)
+                    .unwrap()
+            ),
+            bare["noteCard"]
+        );
+        let orphan = merge(&[], 0, &rows[1..]);
+        assert!(orphan.is_err(), "a card needs its message");
+    }
     #[test]
     fn rich_desktop_cards_project_without_rewriting_source_when_later_reply_changes() {
         let source = vec![
