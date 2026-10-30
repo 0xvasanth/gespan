@@ -9,7 +9,7 @@ let onExit: (code: number | null) => void;
 let onStderr: ((line: string) => void) | undefined;
 let agent: (message: Msg) => void;
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveKiroBinary: async () => ({ path: "/fake/kiro-cli" }),
   spawnChild: async (_id: string, _path: string, args: string[]) => {
     spawned.push(args);

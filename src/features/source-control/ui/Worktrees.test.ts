@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../model/worktrees", async (original) => ({
+vi.mock("../../../../host/core/features/source-control/model/worktrees", async (original) => ({
   ...(await original<typeof import("../model/worktrees")>()),
   listWorktrees: vi.fn(),
   createWorktree: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("../hooks/useProjectBranches", () => ({
     settled: true,
   })),
 }));
-vi.mock("../../../platform/tauri/fs", async (original) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (original) => ({
   ...(await original<typeof import("../../../platform/tauri/fs")>()),
   subscribeGitChanged: (listener: () => void) => {
     window.addEventListener("test-git-changed", listener);

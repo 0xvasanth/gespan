@@ -7,7 +7,7 @@ import {
   peekProjectFiles,
 } from "./fileIndex";
 
-vi.mock("../../../platform/tauri/fs", () => ({ listProjectFiles: vi.fn() }));
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({ listProjectFiles: vi.fn() }));
 const list = vi.mocked(listProjectFiles);
 const files: ProjectFile[] = [
   { name: "a.ts", relative: "a.ts", path: "/repo/a.ts" },

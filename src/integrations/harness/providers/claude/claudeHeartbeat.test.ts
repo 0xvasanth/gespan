@@ -17,7 +17,7 @@ import { parseToolProgress } from "./claudeProtocol";
 const sent: string[] = [];
 let onLine: ((line: string) => void) | undefined;
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveClaudeBinary: async () => ({ path: "/fake/claude" }),
   spawnChild: async () => undefined,
   killChild: async () => undefined,

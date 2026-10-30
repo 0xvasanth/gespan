@@ -10,7 +10,7 @@ import type { SendTurnInput } from "./core/integrations/harness/core/types";
 import type { HostSession } from "./core/features/connections/model/protocol";
 import { loadRemoteSession } from "./core/features/connections/model/connections";
 
-// The desktop's native client (src-tauri/src/remote.rs) rejects responses over
+// The desktop's native client rejects responses over
 // 16 MiB. This routes the real renderer sync code through the real host server
 // with the same cap and the same strict JSON rules.
 const DESKTOP_LIMIT = 16 * 1024 * 1024;

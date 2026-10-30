@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => null),
   convertFileSrc: (path: string) => path,
 }));
-vi.mock("../model/projectGroups", async (importOriginal) => {
+vi.mock("../../../../host/core/features/projects/model/projectGroups", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../model/projectGroups")>();
   return {

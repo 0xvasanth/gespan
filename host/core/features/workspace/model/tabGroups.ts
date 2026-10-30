@@ -1,4 +1,3 @@
-import type { Tab } from "../../../app/shell/TitleBar";
 import { projectKey, projectName } from "../../../shared/lib/paths";
 import { knownProjectPaths, notifyProjectPathsChanged } from "../../projects/model/recents";
 
@@ -374,6 +373,8 @@ export type TabGroupSegment =
     };
 
 export type GroupedTab = { id: string; groupId?: string };
+/** The title bar's tab, as far as grouping cares. */
+type Tab = GroupedTab & { project: string };
 
 /**
  * Groups never span projects, so every membership change is checked against the

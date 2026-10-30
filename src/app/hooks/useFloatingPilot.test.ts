@@ -21,7 +21,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: () => ({ listen: native.listen }),
 }));
-vi.mock("../../platform/tauri/platform", async (importOriginal) => ({
+vi.mock("../../../host/core/platform/tauri/platform", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   IS_MAC: true,
 }));

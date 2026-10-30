@@ -19,7 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     return () => {};
   },
 }));
-vi.mock("../../../platform/tauri/fs", () => ({ notifyGitChanged: vi.fn() }));
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({ notifyGitChanged: vi.fn() }));
 vi.mock("../../source-control/hooks/useProjectBranches", () => ({
   useProjectBranchesState: () => ({
     settled: true,

@@ -1,4 +1,3 @@
-import type { ReleaseNotesTabSource } from "../../../app/model/releaseNotes";
 import type { GitFileDiffKind } from "../../../platform/tauri/fs";
 import {
   applyTerminalMeta,
@@ -18,6 +17,10 @@ import { pathKey } from "../../../shared/lib/paths";
  * that pane. cmd-d splits right, shift-cmd-d splits down,
  * cmd-opt-arrows move focus to the adjacent pane.
  */
+
+export type ReleaseNotesTabSource = {
+  version: string;
+};
 
 export type SplitDir = "right" | "down";
 export type FocusDir = "left" | "right" | "up" | "down";

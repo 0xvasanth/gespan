@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readProjectImage = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../platform/tauri/fs", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../platform/tauri/fs")>()),
   readProjectImage,
 }));

@@ -1,8 +1,7 @@
 import bundledChangelog from "../../../CHANGELOG.md?raw";
+import type { ReleaseNotesTabSource } from "../../features/workspace/model/layout";
 
-export type ReleaseNotesTabSource = {
-  version: string;
-};
+export type { ReleaseNotesTabSource };
 
 export type ReleaseNotesDocument = {
   source: ReleaseNotesTabSource;

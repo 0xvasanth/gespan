@@ -1,9 +1,17 @@
 import {
   githubReviewStateLabel,
+  type GithubWorkItem,
   type GithubWorkItemComment,
   type GithubWorkItemThread,
 } from "./githubTasks";
-import type { LinkedSessionUpdate } from "./linkedSessionUpdates";
+
+export type LinkedSessionUpdate = {
+  sessionId: string;
+  item: GithubWorkItem;
+  /** The last local turn or acknowledged remote snapshot, whichever is newer. */
+  since: number;
+  updatedAt: number;
+};
 
 export type LinkedWorkItemActivityKind =
   "comment" | "review" | "review_comment" | "commit";

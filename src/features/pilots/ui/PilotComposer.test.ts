@@ -7,7 +7,7 @@ import { clearComposerDraft } from "../../sessions/model/draftCache";
 import { saveComposerAutocorrect } from "../../settings/model/displayPrefs";
 
 const { pick } = vi.hoisted(() => ({ pick: vi.fn() }));
-vi.mock("../../sessions/model/attachments", async (original) => ({
+vi.mock("../../../../host/core/features/sessions/model/attachments", async (original) => ({
   ...(await original<typeof import("../../sessions/model/attachments")>()),
   pickAttachments: pick,
 }));

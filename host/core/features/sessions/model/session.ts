@@ -2,8 +2,8 @@ import { dropContextWindow, type ContextUsage } from "./contextUsage";
 import type { UserQuestionPrompt } from "./userQuestion";
 import type { HandoffComposerCard } from "./handoff";
 import type { InboxComposerCard } from "../../inbox/model/githubTasks";
-import type { InboxAskContext } from "../../inbox/model/inboxAsk";
-import type { NoteCardMeta, NoteComposerCard } from "../../notes";
+import type { InboxAskContext } from "../../inbox/model/inboxAskContext";
+import type { NoteCardMeta, NoteComposerCard } from "../../notes/noteCards";
 import type { OrchestrationProposal } from "../../orchestration/model/orchestrationPlan";
 import type { LinkedWorkItemUpdateCard } from "../../inbox/model/linkedWorkItemActivity";
 import {
@@ -411,7 +411,7 @@ export type Block = {
   /** Posted to a Pilot's chat by one of its habits, outside any turn. */
   pilotHabit?: { id: string; name: string; at: number };
   /** A card a Pilot put in its chat; see `features/pilots/model/pilotCards`. */
-  pilotCard?: import("../../pilots/model/pilotCards").PilotCard;
+  pilotCard?: import("../../pilots/model/pilotCard").PilotCard;
   /**
    * The emoji a Pilot answered this user message with. Drawn from its reply
    * when the chat renders; see `features/pilots/model/pilotReaction`.

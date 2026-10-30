@@ -4,7 +4,7 @@ const sent: string[] = [];
 let onLine: ((line: string) => void) | undefined;
 let onExit: ((code: number | null) => void) | undefined;
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveGrokBinary: async () => ({ path: "/fake/grok" }),
   spawnChild: async () => undefined,
   killChild: async () => undefined,

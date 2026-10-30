@@ -18,7 +18,7 @@ import {
 import type { HarnessEvent } from "../../core/types";
 import { JsonRpcClient, type JsonRpcId } from "../../core/jsonRpc";
 import { prepareCodexPilotContext } from "./codexStore";
-import type { TextPromptInput } from "../../core/registry";
+import type { TextPromptInput } from "../../core/textPrompt";
 
 import { mergeStream, streamTextDelta } from "../../core/streamText";
 

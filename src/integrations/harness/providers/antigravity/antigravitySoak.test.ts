@@ -25,7 +25,7 @@ const live = vi.hoisted(() => ({
   spawnCount: 0,
 }));
 
-vi.mock("../../core/child", async () => {
+vi.mock("../../../../../host/core/integrations/harness/core/child", async () => {
   const { spawn } = await import("node:child_process");
   const readline = await import("node:readline");
   return {
@@ -73,7 +73,7 @@ vi.mock("../../core/child", async () => {
     },
   };
 });
-vi.mock("../../../../platform/tauri/fs", () => ({ homeDir: async () => homedir() }));
+vi.mock("../../../../../host/core/platform/tauri/fs", () => ({ homeDir: async () => homedir() }));
 
 const agy = await import("./antigravity");
 

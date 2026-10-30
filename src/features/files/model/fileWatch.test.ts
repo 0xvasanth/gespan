@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const statFiles = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../platform/tauri/fs", () => ({ statFiles }));
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({ statFiles }));
 
 import {
   invalidateWatchedFiles,

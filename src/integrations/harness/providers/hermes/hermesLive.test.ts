@@ -5,7 +5,7 @@ let onLine: ((line: string) => void) | undefined;
 let onStderr: ((line: string) => void) | undefined;
 const textFiles = new Map<string, string>();
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveHermesBinary: async () => ({ path: "/fake/hermes" }),
   spawnChild: async () => undefined,
   killChild: async () => undefined,

@@ -6,7 +6,7 @@
     "types": ["node", "vite/client"],
     "composite": false
   },
-  "include": ["./**/*.ts", "../src/vite-env.d.ts"],
+  "include": ["./**/*.ts"],
   "exclude": ["./**/*.test.ts"],
   "references": []
 }

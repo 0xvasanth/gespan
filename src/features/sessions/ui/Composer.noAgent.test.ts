@@ -9,7 +9,7 @@ const probe = vi.hoisted(() => ({
   installed: [] as string[],
 }));
 vi.mock(
-  "../../../integrations/harness/core/availabilityState",
+  "../../../../host/core/integrations/harness/core/availabilityState",
   async (importOriginal) => {
     const original =
       await importOriginal<

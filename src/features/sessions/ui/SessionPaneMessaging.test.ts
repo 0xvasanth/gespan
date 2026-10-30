@@ -12,7 +12,7 @@ const probes = vi.hoisted(() => ({
 }));
 vi.mock("./Composer", () => ({ Composer: () => null }));
 vi.mock("../hooks/useFileDrop", () => ({ useFileDrop: () => false }));
-vi.mock("../model/attachments", async (original) => ({
+vi.mock("../../../../host/core/features/sessions/model/attachments", async (original) => ({
   ...(await original<typeof import("../model/attachments")>()),
   pickAttachments: probes.pick,
 }));

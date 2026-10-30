@@ -1,4 +1,4 @@
-import type { BuiltinSkill } from "../../skills/model/skills";
+import type { BuiltinSkill } from "../../skills/model/builtinSkill";
 
 export const PLAN_COMMAND: BuiltinSkill = {
   kind: "builtin",
