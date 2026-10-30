@@ -1,0 +1,63 @@
+crates/gespan-gpui/src/pilots/mod.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 247
+crates/gespan-gpui/src/shell/app_views.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 185-192
+crates/gespan-gpui/src/shell/in_flight.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 29,34
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 122-124
+crates/gespan-gpui/src/settings/keymap.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 61
+crates/gespan-gpui/src/shell/menu_bar.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 294
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 334
+crates/gespan-gpui/src/shell/quick_composer.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 4-7,200
+crates/gespan-gpui/src/shell/tray.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 56-61,69-70,72
+crates/gespan-gpui/src/shell/multi_window.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 1-889
+crates/gespan-gpui/src/shell.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 23,55,104,218-219,853-858,892-908,918-926,928-930,953-959,961-962,1244-1246,1254-1272,1274-1281,1284-1338,1351-1356,1369-1372,1376-1380,1455,1479-1482,1507,2035,2130-2131,2156,4189-4192,4333-4335,4577,8596-8599,8603,8612-8613,8615
+crates/gespan-gpui/src/windows.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 1-601
+crates/gespan-gpui/src/main.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 104,109-111,581,583-597
+crates/gespan-gpui/src/workspace.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 178-241
+crates/gespan-gpui/src/pilots/cards.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 467
+crates/gespan-gpui/src/shell/notifications.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 309-311,333-337,406-408,512-514,698,708-712
+crates/gespan-gpui/src/shell/session_loading.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 33,50-51
+  s_943e8c7cbbf342::t_a989146a350427 52
+crates/gespan-gpui/src/pilots/floating.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 307
+crates/gespan-gpui/src/shell/orchestration.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 263,340,421
+  s_943e8c7cbbf342::t_4e760b335e66b3 182-183
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 759,828-833,909
+crates/gespan-gpui/src/shell/hold.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 224-229,232-239,241-244,384-387
+crates/gespan-gpui/src/app_menu.rs
+  s_943e8c7cbbf342::t_f0b37f22c1ab2d 27-29,41-49,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "009969b770df6bf052615c085884204c818fe52d",
+  "prompts": {},
+  "sessions": {
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
