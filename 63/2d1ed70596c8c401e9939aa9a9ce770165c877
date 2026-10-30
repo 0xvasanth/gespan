@@ -1,0 +1,59 @@
+crates/gespan-gpui/src/app_menu.rs
+  s_666089fd138caa::t_8fd031808944da 27-29,41-49,73
+crates/gespan-gpui/src/main.rs
+  s_666089fd138caa::t_bfa5bfbeef72fa 104,109-111,573,575-589
+crates/gespan-gpui/src/pilots/cards.rs
+  s_666089fd138caa::t_10001ed3829b7a 467
+crates/gespan-gpui/src/pilots/floating.rs
+  s_666089fd138caa::t_9c36b6a3778bf9 307
+crates/gespan-gpui/src/pilots/mod.rs
+  s_666089fd138caa::t_87f9a1504ce2aa 247
+crates/gespan-gpui/src/settings/keymap.rs
+  s_666089fd138caa::t_2f1faa3d27d5dd 61
+crates/gespan-gpui/src/shell.rs
+  s_666089fd138caa::t_ba9a3ec91cab32 24,56,105,219-220,853-858,892-908,918-926,928-930,953-959,961-962,1243-1245,1253-1271,1273-1280,1283-1336,1348-1352,1365-1368,1372-1376,1461,1493-1496,1521,2045,2140-2141,2166,4199-4202,4343-4345,4587,8606-8609,8613,8622-8623,8625
+crates/gespan-gpui/src/shell/app_views.rs
+  s_666089fd138caa::t_8444db8c60bbd9 190-197
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_666089fd138caa::t_b2f08cd777042f 122-124
+crates/gespan-gpui/src/shell/hold.rs
+  s_666089fd138caa::t_13e606562122ee 224-229,232-239,241-244,384-387
+crates/gespan-gpui/src/shell/in_flight.rs
+  s_666089fd138caa::t_ac49d509c5e15f 29,34
+crates/gespan-gpui/src/shell/menu_bar.rs
+  s_666089fd138caa::t_e3f47ec9bccb19 294
+crates/gespan-gpui/src/shell/multi_window.rs
+  s_666089fd138caa::t_5dae590475d58d 1-835
+crates/gespan-gpui/src/shell/notifications.rs
+  s_666089fd138caa::t_0ba03ca30b01e4 309-311,333-337,406-408,512-514,698,708-712
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_666089fd138caa::t_ed5012d4a7b973 334
+crates/gespan-gpui/src/shell/quick_composer.rs
+  s_666089fd138caa::t_63d7a11bb2cb63 4-7,200
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_666089fd138caa::t_a4c0a33cdf25fa 759,828-833,909
+crates/gespan-gpui/src/shell/session_loading.rs
+  s_666089fd138caa::t_7d0b5701189e10 33,50-52
+crates/gespan-gpui/src/shell/tray.rs
+  s_666089fd138caa::t_7876e10fc4f80a 56-61,69-70,72
+crates/gespan-gpui/src/windows.rs
+  s_666089fd138caa::t_5171afb6fc60cd 1-601
+crates/gespan-gpui/src/workspace.rs
+  s_666089fd138caa::t_1b4225cf76b85a 178-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "632d1ed70596c8c401e9939aa9a9ce770165c877",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
