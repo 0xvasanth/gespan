@@ -1301,3 +1301,138 @@ fn escape_steps_back_inside_the_board_and_never_leaves_it(cx: &mut TestAppContex
     visual.run_until_parked();
     assert!(on_board(visual), "Escape on the focused board stays on it");
 }
+
+mod inbox_settings {
+    use super::*;
+    use crate::settings::Section;
+    use gespan_core::inbox::{OptionRow, Status};
+
+    fn inbox_page(cx: &mut TestAppContext) -> (WindowHandle<Shell>, VisualTestContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(2200.)));
+        window
+            .update(&mut visual, |shell, w, cx| {
+                shell.open_settings(Section::Inbox, w, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (window, visual)
+    }
+
+    fn click(visual: &mut VisualTestContext, target: String) {
+        let target: &'static str = target.leak();
+        visual.refresh().unwrap();
+        let bounds = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn settings_opens_the_connect_dialog_in_place_for_each_provider(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        for provider in ["gitlab", "azuredevops", "jira", "plane", "linear"] {
+            click(visual, format!("settings-connect-{provider}"));
+            assert!(
+                visual.debug_bounds("inbox-connect-dialog").is_some(),
+                "{provider} opens the dialog"
+            );
+            window
+                .update(visual, |shell, _, cx| {
+                    assert!(shell.settings.is_some(), "{provider} stays in Settings");
+                    assert_eq!(shell.active_app_view, None);
+                    assert!(
+                        shell
+                            .inbox
+                            .as_ref()
+                            .unwrap()
+                            .read(cx)
+                            .connecting_to(provider)
+                    );
+                })
+                .unwrap();
+            // Escape closes the dialog alone, in the field that has focus.
+            visual.simulate_keystrokes("escape");
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+            assert!(visual.debug_bounds("inbox-connect-dialog").is_none());
+            window
+                .update(visual, |shell, _, _| assert!(shell.settings.is_some()))
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn the_inbox_view_does_not_show_a_dialog_opened_from_settings(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        click(visual, "settings-connect-plane".into());
+        window
+            .update(visual, |shell, w, cx| {
+                shell.close_settings(w, cx);
+                shell.open_inbox(w, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-connect-dialog").is_none());
+    }
+
+    #[gpui::test]
+    fn linear_teams_are_picked_in_settings_once_connected(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        assert!(visual.debug_bounds("settings-linear-teams").is_none());
+        // A toggle refetches, and this test has no Linear to answer: seed again.
+        let seed = |visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    shell.inbox.as_ref().unwrap().update(cx, |inbox, cx| {
+                        inbox.seed_linear_teams(
+                            Status {
+                                connected: true,
+                                ..Default::default()
+                            },
+                            ["Web", "Mobile"]
+                                .map(|name| OptionRow {
+                                    id: name.to_lowercase(),
+                                    name: name.into(),
+                                    key: name[..3].to_uppercase(),
+                                })
+                                .to_vec(),
+                            cx,
+                        )
+                    });
+                    shell.sync_settings(cx);
+                })
+                .unwrap();
+            visual.run_until_parked();
+        };
+        seed(visual);
+        click(visual, "settings-linear-team-1".into());
+        let hidden = |window: WindowHandle<Shell>, visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    shell
+                        .inbox
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .hidden_linear_teams()
+                        .to_vec()
+                })
+                .unwrap()
+        };
+        assert_eq!(hidden(window, visual), ["mobile"]);
+        seed(visual);
+        click(visual, "settings-linear-team-1".into());
+        assert!(hidden(window, visual).is_empty());
+    }
+}

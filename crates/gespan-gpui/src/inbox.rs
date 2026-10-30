@@ -22,7 +22,7 @@ use gespan_core::{
 };
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListState, Pixels, Subscription, px,
+    ListState, Pixels, Subscription, Window, px,
 };
 use std::{
     path::PathBuf,
@@ -126,6 +126,9 @@ pub(crate) struct Inbox {
     filter_anchor: AnchorSlot,
     connection_anchor: AnchorSlot,
     connect_provider: Option<String>,
+    /// The connect dialog is over Settings, not the Inbox: it stays there on
+    /// success instead of switching the Inbox to the new source.
+    connect_in_settings: bool,
     connect_url: Entity<Input>,
     connect_email: Entity<Input>,
     connect_workspace: Entity<Input>,
@@ -362,6 +365,7 @@ impl Inbox {
             filter_anchor: AnchorSlot::default(),
             connection_anchor: AnchorSlot::default(),
             connect_provider: None,
+            connect_in_settings: false,
             connect_url,
             connect_email,
             connect_workspace,
@@ -1013,7 +1017,75 @@ impl Inbox {
             });
         }
     }
+    /// The Settings rows' Connect and Manage: the same dialog, over Settings.
+    pub(crate) fn open_connection_in_settings(
+        &mut self,
+        provider: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let field = match provider.as_str() {
+            "github" => None,
+            "linear" => Some(self.connect_token.focus_handle(cx)),
+            _ => Some(self.connect_url.focus_handle(cx)),
+        };
+        self.open_connection(provider, cx);
+        self.connect_in_settings = true;
+        if let Some(field) = field {
+            window.focus(&field, cx);
+        }
+    }
+    /// The dialog Settings shows, while one was opened from there.
+    pub(crate) fn settings_dialog(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        (self.connect_in_settings && self.connect_provider.is_some())
+            .then(|| crate::modal::window_overlay(window, self.connection_dialog(cx)))
+    }
+    #[cfg(test)]
+    pub(crate) fn connecting_to(&self, provider: &str) -> bool {
+        self.connect_provider.as_deref() == Some(provider)
+    }
+    #[cfg(test)]
+    pub(crate) fn seed_linear_teams(
+        &mut self,
+        status: gespan_core::inbox::Status,
+        teams: Vec<gespan_core::inbox::OptionRow>,
+        cx: &mut Context<Self>,
+    ) {
+        self.snapshot.connections.insert("linear".into(), status);
+        self.snapshot.linear_teams = teams;
+        cx.notify();
+    }
+    /// Escape on the dialog Settings shows. True when it closed one.
+    pub(crate) fn close_settings_dialog(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.connect_in_settings || self.connect_provider.is_none() || self.connecting {
+            return false;
+        }
+        self.connect_provider = None;
+        self.connect_token
+            .update(cx, |input, cx| input.set_text(String::new(), cx));
+        cx.notify();
+        true
+    }
+    #[cfg(test)]
+    pub(crate) fn hidden_linear_teams(&self) -> &[String] {
+        &self.state.hidden_linear_teams
+    }
+    pub(crate) fn linear_teams(&self) -> Vec<(gespan_core::inbox::OptionRow, bool)> {
+        self.snapshot
+            .linear_teams
+            .iter()
+            .map(|team| {
+                let shown = !self.state.hidden_linear_teams.contains(&team.id);
+                (team.clone(), shown)
+            })
+            .collect()
+    }
     pub(crate) fn open_connection(&mut self, provider: String, cx: &mut Context<Self>) {
+        self.connect_in_settings = false;
         self.connections_open = false;
         self.connect_error = None;
         let status = self
@@ -1096,7 +1168,7 @@ impl Inbox {
                         this.connect_token.update(cx, |input, cx| input.set_text(String::new(), cx));
                         if connected || disconnect {
                             this.connect_provider = None;
-                            if connected { this.change_source(provider, cx); }
+                            if connected && !this.connect_in_settings { this.change_source(provider, cx); }
                             this.refresh(cx);
                         } else { this.connect_error = Some("GitHub is not connected. Run gh auth login in a terminal, then check again.".into()); }
                     }
