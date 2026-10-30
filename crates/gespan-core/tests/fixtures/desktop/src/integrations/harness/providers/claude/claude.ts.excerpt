@@ -1,0 +1,9 @@
+function emitWakeMarker(live: Live, text: string): void {
+  if (live.muteUpdates) return;
+  live.onEvent({
+    type: "interjection",
+    text,
+    customType: "task-notification",
+    sentAt: Date.now(),
+  });
+}

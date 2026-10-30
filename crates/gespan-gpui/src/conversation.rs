@@ -16,6 +16,7 @@ mod follow_up;
 pub(crate) mod git_actions;
 mod history;
 mod hold;
+mod orchestration_card;
 pub(crate) use hold::HoldChanged;
 #[cfg(test)]
 mod composer_card_tests;
@@ -208,6 +209,7 @@ pub(crate) struct Conversation {
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
+    plan_card: orchestration_card::PlanCard,
     orchestration_error: Option<String>,
     pub(crate) orchestration_progress: Option<String>,
     status: String,
@@ -290,6 +292,9 @@ pub(crate) struct Conversation {
     // A split or review pane sits beside this chat; only then does a narrow
     // pane rest the composer where it docks.
     beside_pane: bool,
+    /// Set on an inbox item's Ask conversation: messages reach the agent
+    /// wrapped in this item's context, and cannot be saved as drafts.
+    inbox_ask: Option<gespan_core::inbox::ask::Context>,
     arcade: Option<(Entity<crate::arcade::Arcade>, Subscription)>,
     runner: Option<Entity<crate::composer_runner::Runner>>,
     cancel: Arc<AtomicBool>,
@@ -362,6 +367,28 @@ impl Conversation {
         if self.classic_layout != classic {
             self.classic_layout = classic;
             cx.notify();
+        }
+    }
+    /// Marks this as an inbox item's Ask conversation.
+    pub(crate) fn set_inbox_ask(&mut self, context: gespan_core::inbox::ask::Context) {
+        self.inbox_ask = Some(context);
+    }
+    pub(crate) fn inbox_ask_key(&self) -> Option<String> {
+        self.inbox_ask.as_ref().map(|context| context.key.clone())
+    }
+    /// What the agent receives for a prepared message. A raw native command
+    /// must stay first in the prompt, so it goes unwrapped.
+    pub(super) fn ask_prompt(&self, prepared: String) -> String {
+        match &self.inbox_ask {
+            Some(context)
+                if !gespan_core::provider::is_raw_command(
+                    Kind::from_id(&self.summary.provider),
+                    &prepared,
+                ) =>
+            {
+                gespan_core::inbox::ask::prompt(context, &prepared)
+            }
+            _ => prepared,
         }
     }
     pub(crate) fn set_beside_pane(&mut self, beside: bool, cx: &mut Context<Self>) {
@@ -692,6 +719,7 @@ impl Conversation {
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan: None,
+            plan_card: Default::default(),
             orchestration_error: None,
             orchestration_progress: None,
             status: "Loading conversation…".into(),
@@ -760,6 +788,7 @@ impl Conversation {
             composer_motion: ComposerMotion::default(),
             narrow: false,
             beside_pane: false,
+            inbox_ask: None,
             arcade: None,
             runner: None,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -1097,9 +1126,13 @@ impl Conversation {
             return;
         }
         self.planning_orchestration = self.settings.orchestrator;
-        self.orchestration_plan = None;
+        self.set_orchestration_plan(None);
         self.orchestration_error = None;
+        if self.settings.orchestrator {
+            self.settings.orchestration_profiles = self.orchestration_profiles(cx);
+        }
         self.launch_prompt(prompt, cx);
+        self.settings.orchestration_profiles.clear();
         if self.busy && mode.is_some() {
             self.clear_submitted_mode(cx);
         }
@@ -1235,6 +1268,12 @@ impl Conversation {
                 settings.prepared_prompt = Some(prepared);
             }
         }
+        if self.inbox_ask.is_some() {
+            let prepared = settings.prepared_prompt.take();
+            settings.prepared_prompt =
+                Some(self.ask_prompt(prepared.unwrap_or_else(|| prompt.clone())))
+                    .filter(|prepared| *prepared != prompt);
+        }
         settings.disable_claude_hooks = cx
             .try_global::<crate::settings::Preferences>()
             .is_some_and(|p| !p.claude_hooks);
@@ -1295,6 +1334,11 @@ impl Conversation {
             .is_remote()
             .then(|| self.remote_state.client.clone())
             .flatten();
+        #[cfg(test)]
+        turn_capture::record(
+            self.summary.id,
+            settings.prepared_prompt.as_deref().unwrap_or(&prompt),
+        );
         cx.background_executor()
             .spawn(async move {
                 if let Some(client) = remote_client {
@@ -2738,7 +2782,11 @@ impl Conversation {
                         MenuAction::new("draft", "Draft")
                             .icon("circle-dashed-hi")
                             .description("Save this message without starting the agent")
-                            .disabled(self.busy || self.follow_ups.state.draft.is_some()),
+                            .disabled(
+                                self.busy
+                                    || self.follow_ups.state.draft.is_some()
+                                    || self.inbox_ask.is_some(),
+                            ),
                     ]
                     .into_iter()
                     .map(|action| {
@@ -2911,7 +2959,7 @@ impl Conversation {
             self.stop(cx);
         }
     }
-    fn stop(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
         if !self.busy || self.stopping {
             return;
         }
@@ -3945,6 +3993,34 @@ mod composer_motion_tests {
             .unwrap();
     }
 }
+/// Tests read what each turn would send the provider.
+#[cfg(test)]
+pub(crate) mod turn_capture {
+    thread_local! {
+        static TURNS: std::cell::RefCell<Vec<(i64, String)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    pub(crate) fn start() {
+        TURNS.with(|turns| turns.borrow_mut().clear());
+    }
+    pub(super) fn record(id: i64, prompt: &str) {
+        TURNS.with(|turns| turns.borrow_mut().push((id, prompt.to_owned())));
+    }
+    pub(crate) fn last() -> Option<(i64, String)> {
+        TURNS.with(|turns| turns.borrow().last().cloned())
+    }
+}
+
+#[cfg(test)]
+impl Conversation {
+    pub(crate) fn send_for_test(&mut self, cx: &mut Context<Self>) {
+        self.send(cx);
+    }
+    pub(crate) fn set_loaded_for_test(&mut self) {
+        self.loaded = true;
+    }
+}
+
 impl Render for Conversation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self._input_focus.is_none() {
@@ -4274,7 +4350,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod menu_tests {
+pub(super) mod menu_tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
@@ -4814,7 +4890,7 @@ mod menu_tests {
             .unwrap();
     }
 
-    fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
+    pub(super) fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let summary = store.create("claude", "/work/gespan").unwrap();
         let store = Arc::new(Mutex::new(store));

@@ -59,7 +59,7 @@ const TWEEN_LENGTH: std::time::Duration = std::time::Duration::from_millis(360);
 
 #[cfg(test)]
 pub(crate) fn configure(p: &crate::settings::Preferences, system_light: bool) -> bool {
-    configure_project(p, None, system_light, false)
+    configure_project(p, None, false, system_light, false)
 }
 /// Paint with `project`'s colors in place of the app-wide ones. With
 /// `animate`, a change of colors blends from what is on screen; call again
@@ -68,6 +68,7 @@ pub(crate) fn configure(p: &crate::settings::Preferences, system_light: bool) ->
 pub(crate) fn configure_project(
     p: &crate::settings::Preferences,
     project: Option<&gespan_core::project_appearance::ProjectTheme>,
+    inset: bool,
     system_light: bool,
     animate: bool,
 ) -> bool {
@@ -89,7 +90,7 @@ pub(crate) fn configure_project(
         ),
     };
     let palette = crate::settings::palette(workspace_theme, light);
-    let glass = window_glass(p, system_light);
+    let glass = layout_glass(p, inset, system_light);
     // Both layouts derive their surface roles from the same saved settings.
     let shell = gpui::hsla(
         hue.min(360) as f32 / 360.,
@@ -202,6 +203,15 @@ impl Tokens {
 pub(crate) const GLASS_PLATFORM: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 pub(crate) fn window_glass(p: &crate::settings::Preferences, system_light: bool) -> bool {
     GLASS_PLATFORM && p.theme != "light" && !(p.theme == "system" && system_light)
+}
+/// `window_glass` in the current layout: the inset layout also honors
+/// Transparent window, which the classic layout has no row for.
+pub(crate) fn layout_glass(
+    p: &crate::settings::Preferences,
+    inset: bool,
+    system_light: bool,
+) -> bool {
+    window_glass(p, system_light) && (!inset || p.inset_glass)
 }
 /// What the compositor puts behind a window that does or doesn't paint glass.
 pub(crate) fn window_backdrop(glass: bool) -> gpui::WindowBackgroundAppearance {
@@ -610,6 +620,47 @@ mod composer_tests {
     use super::*;
 
     #[test]
+    fn transparent_window_only_binds_the_inset_layout_and_is_kept_in_light_mode() {
+        let mut preferences = crate::settings::Preferences {
+            theme: "dark".into(),
+            inset_glass: false,
+            ..Default::default()
+        };
+        assert!(!layout_glass(&preferences, true, false));
+        assert_eq!(
+            layout_glass(&preferences, false, false),
+            GLASS_PLATFORM,
+            "the classic layout keeps its glass"
+        );
+        preferences.inset_glass = true;
+        assert_eq!(layout_glass(&preferences, true, false), GLASS_PLATFORM);
+        preferences.theme = "light".into();
+        assert!(!layout_glass(&preferences, true, false));
+        assert!(preferences.inset_glass, "light mode remembers the choice");
+    }
+
+    #[test]
+    fn opaque_inset_window_paints_every_surface_solid() {
+        struct Restore(Option<Tokens>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                TOKENS.with(|tokens| *tokens.borrow_mut() = self.0);
+            }
+        }
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        let preferences = crate::settings::Preferences {
+            theme: "dark".into(),
+            inset_glass: false,
+            sidebar_opacity: 40,
+            ..Default::default()
+        };
+        configure_project(&preferences, None, true, false, false);
+        assert_eq!(shell_fill().a, 1.);
+        assert_eq!(pane_fill().a, 1.);
+        assert_eq!(inset_pane_fill().a, 1.);
+    }
+
+    #[test]
     fn kiro_has_its_own_monochrome_icon() {
         use gpui::AssetSource;
         let (path, monochrome, scale) = provider_mark("kiro");
@@ -668,18 +719,24 @@ mod composer_tests {
             saturation: 40,
             ..Default::default()
         };
-        assert!(configure_project(&preferences, Some(&theme), false, true));
+        assert!(configure_project(
+            &preferences,
+            Some(&theme),
+            false,
+            false,
+            true
+        ));
         assert!(tweening());
         // The blend starts from the colors on screen.
         assert_eq!(accent_color(), app_accent);
         std::thread::sleep(TWEEN_LENGTH);
-        configure_project(&preferences, Some(&theme), false, true);
+        configure_project(&preferences, Some(&theme), false, false, true);
         assert!(!tweening());
         assert_eq!(accent_color(), rgb(0xef4444).into());
         assert_eq!(picked_accent(), rgb(0xef4444).into());
         assert_eq!(shell_fill().h, 20. / 360.);
         // Without animation the app colors return at once.
-        assert!(configure_project(&preferences, None, false, false));
+        assert!(configure_project(&preferences, None, false, false, false));
         assert!(!tweening());
         assert_eq!(accent_color(), app_accent);
     }

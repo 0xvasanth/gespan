@@ -2,6 +2,7 @@
 //! persistent native_* tables, or history conversion on open.
 mod accounts;
 pub(super) mod blocks;
+mod claude_shell;
 mod edit;
 mod settings;
 #[cfg(test)]
@@ -505,8 +506,9 @@ impl Store {
         shared.extras.borrow_mut().insert(key.into(), value.into());
         Ok(())
     }
-    pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
-        let columns = [
+    /// The columns `shared_session` reads, in its order.
+    fn shared_session_columns(&self) -> String {
+        [
             "id",
             "title",
             "harness",
@@ -531,12 +533,55 @@ impl Store {
             .map(|(name, default)| self.shared_field(name, default)),
         )
         .collect::<Vec<_>>()
-        .join(",");
+        .join(",")
+    }
+    /// The session, its original ID, and whether it is hidden from the sidebar.
+    fn shared_session(&self, row: &rusqlite::Row) -> Result<(Session, String, bool), String> {
+        let original: String = sql(row.get(0))?;
+        let id = self.shared_register(&original)?;
+        Ok((
+            Session {
+                id,
+                title: sql(row.get(1))?,
+                provider: sql(row.get(2))?,
+                cwd: sql(row.get(3))?,
+                provider_id: sql(row.get(4))?,
+                updated_at: sql(row.get::<_, i64>(5))?.max(0) as u64,
+                has_messages: sql(row.get(6))?,
+                archived: sql(row.get(7))?,
+                pinned: sql(row.get(8))?,
+                work_item: sql(row.get::<_, Option<String>>(9))?.and_then(|raw| parse(&raw).ok()),
+            },
+            original,
+            sql(row.get::<_, bool>(10))?,
+        ))
+    }
+    pub(super) fn shared_supports_inbox_ask(&self) -> bool {
+        self.shared.as_ref().unwrap().columns.contains("inbox_ask")
+    }
+    /// Ask sessions with their raw context, which `shared_sessions` hides.
+    pub(super) fn shared_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
+        if !self.shared_supports_inbox_ask() {
+            return Ok(Vec::new());
+        }
+        let columns = self.shared_session_columns();
+        let mut query = sql(self.conn.prepare(&format!(
+            "SELECT {columns},inbox_ask FROM sessions WHERE inbox_ask IS NOT NULL ORDER BY updated_at DESC,id"
+        )))?;
+        let mut rows = sql(query.query([]))?;
+        let mut result = Vec::new();
+        while let Some(row) = sql(rows.next())? {
+            result.push((self.shared_session(row)?.0, sql(row.get(11))?));
+        }
+        Ok(result)
+    }
+    pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
+        let columns = self.shared_session_columns();
         let index = if sql(self.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='sessions_cwd_cover_idx')",[],|r|r.get::<_,bool>(0)))? {
             " INDEXED BY sessions_cwd_cover_idx"
         } else { "" };
         let mut filters = vec!["1=1".to_string()];
-        if self.shared.as_ref().unwrap().columns.contains("inbox_ask") {
+        if self.shared_supports_inbox_ask() {
             filters.push("id NOT IN (SELECT id FROM sessions WHERE inbox_ask IS NOT NULL)".into());
         }
         if has_table(&self.conn, "orchestration_workers")? {
@@ -551,24 +596,12 @@ impl Store {
         let mut hidden = HashSet::new();
         let mut originals = HashMap::new();
         while let Some(row) = sql(rows.next())? {
-            let original: String = sql(row.get(0))?;
-            let id = self.shared_register(&original)?;
-            if sql(row.get::<_, bool>(10))? {
-                hidden.insert(id);
+            let (session, original, is_hidden) = self.shared_session(row)?;
+            if is_hidden {
+                hidden.insert(session.id);
             }
-            originals.insert(id, original);
-            result.push(Session {
-                id,
-                title: sql(row.get(1))?,
-                provider: sql(row.get(2))?,
-                cwd: sql(row.get(3))?,
-                provider_id: sql(row.get(4))?,
-                updated_at: sql(row.get::<_, i64>(5))?.max(0) as u64,
-                has_messages: sql(row.get(6))?,
-                archived: sql(row.get(7))?,
-                pinned: sql(row.get(8))?,
-                work_item: sql(row.get::<_, Option<String>>(9))?.and_then(|raw| parse(&raw).ok()),
-            });
+            originals.insert(session.id, original);
+            result.push(session);
         }
         // Keep the source sidebar's compatibility exception for hidden
         // /operator launches. A Pilot's own hidden conversation cannot be a
@@ -1027,10 +1060,12 @@ impl Store {
                 .snapshots
                 .borrow_mut()
                 .insert(id, HistoryRevision(digest.finalize().into()));
+            self.restore_claude_shell(id, &mut rows);
             return Ok(Transcript { rows });
         }
         let blocks = self.shared_blocks(id)?;
-        let rows = blocks::project(&blocks)?;
+        let mut rows = blocks::project(&blocks)?;
+        self.restore_claude_shell(id, &mut rows);
         self.shared
             .as_ref()
             .unwrap()
@@ -1038,6 +1073,30 @@ impl Store {
             .borrow_mut()
             .insert(id, HistoryRevision::of(&blocks));
         Ok(Transcript { rows })
+    }
+    fn restore_claude_shell(&self, id: i64, rows: &mut [Row]) {
+        if claude_shell::bare_ids(rows).is_empty() {
+            return;
+        }
+        let Ok(original) = self.persisted_session_id(id) else {
+            return;
+        };
+        let session = self.conn.query_row(
+            "SELECT provider_session_id FROM sessions WHERE id=?1 AND harness='claude'",
+            [original],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        let (Ok(Some(session)), Ok(Some(settings))) = (session, self.shared_agent(id)) else {
+            return;
+        };
+        // Stored settings carry only the account id; its folder is under our data.
+        let Some(data) = self.data_dir() else {
+            return;
+        };
+        let account = crate::accounts::Profile::new(&settings.account.id, data);
+        if let Ok(home) = account.home(crate::provider::Kind::Claude) {
+            claude_shell::restore(rows, &home, &session);
+        }
     }
     pub(super) fn shared_store_blocks(&self, id: i64, blocks: &[Value]) -> Result<(), String> {
         let original = self.persisted_session_id(id)?;

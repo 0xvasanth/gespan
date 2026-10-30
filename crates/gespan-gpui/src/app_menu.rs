@@ -24,6 +24,9 @@ pub(crate) fn bind(cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|action: &OpenUrl, cx| cx.open_url(action.0));
+    // App-level, so it works with no window in front. Deferred, because the
+    // window it was pressed in cannot be read until its dispatch ends.
+    cx.on_action(|_: &NewWindow, cx| cx.defer(crate::windows::open_new_window));
     if cfg!(target_os = "macos") {
         cx.bind_keys([
             KeyBinding::new("cmd-h", Hide, None),
@@ -35,6 +38,15 @@ pub(crate) fn bind(cx: &mut App) {
 
 pub(crate) fn install(prefs: &crate::settings::Preferences, cx: &mut App) {
     cx.set_menus(menus(prefs, cfg!(target_os = "macos")));
+    // Windows would turn this into a jump list, which the Tauri app has not.
+    if cfg!(target_os = "macos") {
+        cx.set_dock_menu(dock_menu());
+    }
+}
+
+/// What the Dock icon's menu adds on macOS.
+pub(crate) fn dock_menu() -> Vec<MenuItem> {
+    vec![MenuItem::action("New Window", NewWindow)]
 }
 
 /// The menus, for the macOS menu bar or (`mac` false) the in-window menu bar
@@ -58,6 +70,7 @@ pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu
             MenuItem::action("Quit Gespan Native", Quit),
         ]),
         Menu::new("File").items([
+            MenuItem::action("New Window", NewWindow),
             MenuItem::action("Open Project…", OpenProject),
             MenuItem::action("Search…", FocusSearch),
             MenuItem::action("Go to File…", GoToFile),

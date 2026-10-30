@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { turnsBefore, watchUpdate, watchWindow } from "./mobileWatch";
-import type { MobileTurn } from "./mobileTranscript";
+import {
+  turnsBefore,
+  watchUpdate,
+  watchWindow,
+} from "../src/features/workspace/watchFrames";
+import type { Turn } from "../src/features/workspace/types";
 
-const turn = (id: string, text: string): MobileTurn => ({
+const turn = (id: string, text: string): Turn => ({
   id,
   items: [{ type: "text", id: `${id}:a`, text }],
 });

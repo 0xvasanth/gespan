@@ -5,6 +5,7 @@ use crate::settings::{
     widgets::secondary_button,
 };
 use crate::theme::*;
+use crate::window_blur::BLUR_ADJUSTABLE;
 use gpui::{
     AnyElement, Context, Focusable, Role, SharedString, Window, div, linear_color_stop,
     linear_gradient, prelude::*, px, rgb,
@@ -78,6 +79,16 @@ pub(crate) fn swatch(surface: u32, panel: u32, solid: u32, accent: u32) -> AnyEl
                 .bg(rgb(accent)),
         )
         .into_any_element()
+}
+
+fn transparent_window_description(platform: bool, light: bool) -> &'static str {
+    if !platform {
+        "The window stays opaque on Linux."
+    } else if light {
+        "Light mode keeps the window opaque. Your dark-mode choice is remembered."
+    } else {
+        "Show the desktop through the window. Turn off to keep the window opaque."
+    }
 }
 
 impl SettingsView {
@@ -221,19 +232,46 @@ impl SettingsView {
                 ),
             ];
         page.push(self.group(None, false, "Color", None, None, color));
-        let translucency = vec![
-                self.row(
-                    Some("sidebar-opacity"),
-                    true,
-                    "Sidebar opacity",
-                    Some("Applies to the project rail and the other glass panes.".into()),
-                    vec![self.slider(
-                        SliderKind::SidebarOpacity,
-                        format!("{}%", p.sidebar_opacity),
-                        light,
-                        cx,
-                    )],
-                ),
+        let opaque = light || (inset && !p.inset_glass) || !GLASS_PLATFORM;
+        let mut translucency = Vec::new();
+        if inset {
+            translucency.push(self.row(
+                Some("inset-glass"),
+                true,
+                "Transparent window",
+                Some(transparent_window_description(GLASS_PLATFORM, light).into()),
+                vec![self.toggle(
+                    "inset-glass",
+                    "Transparent window",
+                    p.inset_glass,
+                    light || !GLASS_PLATFORM,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.inset_glass = on),
+                )],
+            ));
+        }
+        translucency.extend([self.row(
+            Some("sidebar-opacity"),
+            !inset,
+            "Sidebar opacity",
+            Some("Applies to the project rail and the other glass panes.".into()),
+            vec![self.slider(
+                SliderKind::SidebarOpacity,
+                format!("{}%", p.sidebar_opacity),
+                opaque,
+                cx,
+            )],
+        )]);
+        if BLUR_ADJUSTABLE {
+            translucency.push(self.row(
+                Some("blur"),
+                false,
+                "Blur radius",
+                Some("Background blur behind the window.".into()),
+                vec![self.slider(SliderKind::Blur, p.sidebar_blur.to_string(), opaque, cx)],
+            ));
+        }
+        translucency.push(
                 self.row(
                     Some("main-pane-glass"),
                     false,
@@ -243,12 +281,12 @@ impl SettingsView {
                         "main-pane-glass",
                         "Main pane glass",
                         p.body_glass,
-                        light,
+                        opaque,
                         cx,
                         |this, on, cx| this.update(cx, |p| p.body_glass = on),
                     )],
                 ),
-            ];
+        );
         page.push(self.group(
             None,
             false,

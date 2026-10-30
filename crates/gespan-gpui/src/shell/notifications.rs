@@ -306,7 +306,9 @@ impl Shell {
     }
 
     pub(super) fn start_native_notifications(&mut self, cx: &mut Context<Self>) {
-        platform::set_dock_badge(0);
+        if !self.secondary {
+            platform::set_dock_badge(0);
+        }
         if platform::initialize(cx) {
             self.notification_state.permission = Permission::Prompt;
             self.notification_state.permission_probe = Some(platform::permission());
@@ -328,8 +330,11 @@ impl Shell {
                             this.notification_state.permission_probe = None;
                             cx.notify();
                         }
-                        for target in platform::drain_clicks() {
-                            this.open_notice_target(target, cx);
+                        // One window takes them; it hands each to the chat's window.
+                        if !this.secondary {
+                            for target in platform::drain_clicks() {
+                                this.open_notice_target(target, cx);
+                            }
                         }
                         this.poll_reminders(cx);
                         this.poll_linked_activity(cx);
@@ -398,7 +403,9 @@ impl Shell {
         );
         if badge != self.notification_state.badge {
             self.notification_state.badge = badge;
-            platform::set_dock_badge(badge);
+            if !self.secondary {
+                platform::set_dock_badge(badge);
+            }
         }
         for (session, input) in self.notification_state.announcements.reconcile(&snapshots) {
             if let Ok(id) = session.session_id.parse()
@@ -502,7 +509,9 @@ impl Shell {
         );
         if self.notification_state.badge != badge {
             self.notification_state.badge = badge;
-            platform::set_dock_badge(badge);
+            if !self.secondary {
+                platform::set_dock_badge(badge);
+            }
         }
         let announcements = self.notification_state.announcements.reconcile(&snapshots);
         for (session, input) in announcements {
@@ -686,7 +695,7 @@ impl Shell {
         .detach();
     }
 
-    fn open_notice_target(&mut self, target: Target, cx: &mut Context<Self>) {
+    pub(super) fn open_notice_target(&mut self, target: Target, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let _ = this.update_in(cx, |this, window, cx| {
                 let id = match target {
@@ -696,12 +705,20 @@ impl Shell {
                         session_id
                     }
                 };
+                if crate::windows::show_elsewhere(id, cx.entity_id(), cx) {
+                    return;
+                }
+                // Clicking through may be what brings a hidden window back.
+                this.set_window_visible(window, true, cx);
                 this.close_settings(window, cx);
                 this.leave_app_views(cx);
                 this.leave_app_search(cx);
                 if let Some(pilots) = this.pilots.clone()
                     && pilots.update(cx, |m, cx| m.open_notification_session(id, window, cx))
                 {
+                    return;
+                }
+                if this.reveal_inbox_ask(id, window, cx) {
                     window.activate_window();
                     return;
                 }

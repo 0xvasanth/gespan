@@ -34,14 +34,38 @@ fn native_sources() -> Vec<(PathBuf, String)> {
         .collect()
 }
 
-/// A file of the Tauri app (the source of truth), relative to the repo root.
+/// A file by its path from the repo root. Paths in the Tauri app read the
+/// checked-in excerpt under tests/fixtures/desktop instead: the lines Gespan
+/// Native must stay compatible with, as that app shipped them.
 fn tauri(path: &str) -> String {
-    fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(path),
-    )
-    .unwrap()
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let file = if path.starts_with("src-tauri/") || path.starts_with("src/") {
+        manifest.join(format!("tests/fixtures/desktop/{path}.excerpt"))
+    } else {
+        manifest.join("../..").join(path)
+    };
+    fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+}
+
+/// Tests must not need the Tauri app's folders, which are being removed.
+#[test]
+fn native_sources_embed_nothing_from_the_tauri_app() {
+    for (path, text) in native_sources() {
+        for line in text.lines() {
+            let embeds = line.contains("include_str!(") || line.contains("include_bytes!(");
+            assert!(
+                !(embeds && (line.contains("src-tauri") || line.contains("../src/"))),
+                "{} embeds {line}",
+                path.display()
+            );
+        }
+    }
+    for fixture in [
+        "src-tauri/src/remote_ssh.rs",
+        "src/features/sessions/model/session.ts",
+    ] {
+        assert!(!tauri(fixture).is_empty());
+    }
 }
 
 #[test]

@@ -621,7 +621,7 @@ fn parse_github_review_reply_url(json: &str) -> Result<String, String> {
     Err("GitHub did not return a comment URL".into())
 }
 
-fn split_github_repo(slug: &str) -> Result<(String, String), String> {
+pub(super) fn split_github_repo(slug: &str) -> Result<(String, String), String> {
     let slug = slug.trim();
     let Some((owner, name)) = slug.split_once('/') else {
         return Err("GitHub did not return a repository".into());
@@ -1191,7 +1191,7 @@ fn github_pr_check_from_row(row: GitHubStatusCheckRow) -> GitHubPrCheck {
 /// An unfinished CheckRun reports its execution state instead of a stale
 /// conclusion. Only a completed or entirely missing status trusts the
 /// conclusion; any other nonempty status stays unknown.
-fn github_check_state(status: &str, conclusion: &str) -> String {
+pub(super) fn github_check_state(status: &str, conclusion: &str) -> String {
     match status.trim().to_ascii_uppercase().as_str() {
         "QUEUED" | "IN_PROGRESS" | "PENDING" | "WAITING" | "REQUESTED" => {
             return "pending".into();

@@ -1,0 +1,4 @@
+# The Tauri app is its own workspace, but its bundles stay where the release
+# scripts expect them: the repository's target/ folder.
+[build]
+target-dir = "../target"

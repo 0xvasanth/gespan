@@ -756,7 +756,7 @@ impl Shell {
     }
 
     pub(super) fn poll_reminders(&mut self, cx: &mut Context<Self>) {
-        if self.notification_state.reminder_error.is_some() {
+        if self.secondary || self.notification_state.reminder_error.is_some() {
             return;
         }
         let now = gespan_core::time::now_ms();
@@ -825,6 +825,12 @@ impl Shell {
     }
 
     pub(super) fn delete_session(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        // The window running it stops and removes it.
+        if crate::windows::on_owner(id, cx.entity_id(), cx, move |shell, window, cx| {
+            shell.delete_session(id, window, cx)
+        }) {
+            return;
+        }
         if self.workspace.review_owners.iter().any(|(pane, owner)| {
             *owner == id
                 && (self.workspace.tab_of(*pane).is_some()
@@ -885,7 +891,7 @@ impl Shell {
             });
         }));
     }
-    fn forget_session(&mut self, id: i64, cx: &mut Context<Self>) {
+    pub(super) fn forget_session(&mut self, id: i64, cx: &mut Context<Self>) {
         // A tab opened on it while the store was deleting keeps it alive.
         if self.workspace.tab_of(id).is_some() {
             return;
@@ -900,6 +906,7 @@ impl Shell {
         }
         self.flow_session_closed(id, cx);
         self.sessions.remove(&id);
+        crate::windows::release(id, cx.entity_id(), cx);
         self.session_summaries.remove(&id);
         self.draft_sessions.remove(&id);
         self.history_recency.remove(&id);

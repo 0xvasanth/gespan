@@ -39,6 +39,9 @@ chat.card {type:"pr",repo?,number,note?} / {type:"session",sessionId,note?} / {t
 Ordinary Operator sessions are visible in project history. Pilot launches follow its Show started sessions preference. reveal defaults to false and controls navigation, not history visibility. placement right/down explicitly opens a split beside besideSessionId (or the caller).
 sessions.read returns up to three prose exchanges and nextBefore for older turns; pass that turn ID as before.
 notes.write requires body for a new note; existing notes accept title, body or tags independently.
+ticket.get {key?}; ticket.comment {body,key?}; ticket.status {} lists the statuses; ticket.status {target,fields?,key?} moves the ticket
+card.subtasks {}; card.subtask_done {subtaskId,done}
+ticket.* and card.* act on this session's own linked ticket and cards, in any agent turn, without Operator. Orchestration leads and workers have neither. Read-only turns may read and list only.
 Artifacts, memory, soul, habits, cards and notifyOnComplete:true require a Pilot.
 The CLI returns {ok,result,requestId}. Retry uncertain mutations with the same request ID and identical input.
 Assigned projects alone may be addressed. Credentials are provided in the environment; never print them.
@@ -248,6 +251,14 @@ pub fn client(args: &[String]) -> Result<Value, String> {
             _ => return Err(format!("Unknown app argument: {arg}")),
         }
     }
+    if crate::ticket_bridge::is_app_action(&action) {
+        return Ok(
+            match crate::ticket_bridge::app_action(&action, &input, &request_id) {
+                Ok(value) => json!({"ok":true,"result":value,"requestId":request_id}),
+                Err(error) => json!({"ok":false,"error":error,"requestId":request_id}),
+            },
+        );
+    }
     let endpoint: SocketAddr = std::env::var("GESPAN_APP_ENDPOINT")
         .map_err(|_| "App access is unavailable outside a Pilot's provider process")?
         .parse()
@@ -294,6 +305,22 @@ pub fn client(args: &[String]) -> Result<Value, String> {
 #[cfg(test)]
 mod capability_tests {
     use super::*;
+    #[test]
+    fn ticket_and_card_actions_never_need_the_app_capability() {
+        // Answered by the ticket bridge, so no GESPAN_APP_* variable is read:
+        // an unknown name fails there, with the caller's request ID.
+        for action in ["ticket.delete", "card.move"] {
+            let args = [action.to_owned(), "--request-id".into(), "r-1".into()];
+            let value = client(&args).unwrap();
+            assert_eq!(value["ok"], false);
+            assert_eq!(value["requestId"], "r-1");
+            assert_eq!(
+                value["error"],
+                format!("Unknown app action: {action}"),
+                "{action}"
+            );
+        }
+    }
     fn send(
         server: &Server,
         session: i64,

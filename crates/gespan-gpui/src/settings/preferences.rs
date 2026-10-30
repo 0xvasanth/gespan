@@ -29,7 +29,7 @@ pub(crate) struct Preferences {
     pub wayland_window_decorations: bool,
     pub workspace_theme: String,
     // Retain the legacy inset-only key when reading and saving preferences.
-    // Window materials now use the shared opacity and main-pane glass values.
+    // Transparent window: the inset layout only.
     pub inset_glass: bool,
     pub accent_color: Option<String>,
     pub diff_palette: String,
@@ -37,7 +37,7 @@ pub(crate) struct Preferences {
     pub theme_saturation: u32,
     pub theme_dark_lightness: u32,
     pub sidebar_opacity: u32,
-    // Retain the saved value for compatibility; native window blur is fixed.
+    // The desktop blur behind glass windows, where the platform lets us set it.
     pub sidebar_blur: u32,
     pub body_glass: bool,
     pub chat_background: Option<String>,

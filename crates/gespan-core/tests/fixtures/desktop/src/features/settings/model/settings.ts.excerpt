@@ -1,0 +1,3 @@
+const PILOTS_ENABLED_KEY = "gespan.pilotsEnabled";
+const PILOT_MENU_BAR_KEY = "gespan.pilotMenuBarIcon";
+const BOARD_ENABLED_KEY = "gespan.boardEnabled";

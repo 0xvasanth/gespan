@@ -74,6 +74,12 @@ impl Shell {
                 .as_ref()
                 .map(|inbox| inbox.read(cx).connection_statuses())
                 .unwrap_or_default(),
+            inbox: self.inbox.clone(),
+            linear_teams: self
+                .inbox
+                .as_ref()
+                .map(|inbox| inbox.read(cx).linear_teams())
+                .unwrap_or_default(),
             sessions: self
                 .order
                 .iter()
@@ -132,6 +138,7 @@ impl Shell {
         self.leave_app_search(cx);
         self.close_preview(cx);
         self.menu = None;
+        self.load_inbox_for_settings(section, window, cx);
         if self.settings.is_some() {
             self.select_settings(section, cx);
             return;
@@ -144,11 +151,22 @@ impl Shell {
             &view,
             window,
             |this, _, event: &SettingsEvent, window, cx| match event {
-                SettingsEvent::Section(section) => this.select_settings(*section, cx),
+                SettingsEvent::Section(section) => {
+                    this.load_inbox_for_settings(*section, window, cx);
+                    this.select_settings(*section, cx)
+                }
                 SettingsEvent::ManageInboxProvider(provider) => {
-                    this.open_inbox(window, cx);
+                    this.ensure_background_inbox(window, cx);
                     if let Some(inbox) = &this.inbox {
-                        inbox.update(cx, |inbox, cx| inbox.open_connection(provider.clone(), cx));
+                        inbox.update(cx, |inbox, cx| {
+                            inbox.open_connection_in_settings(provider.clone(), window, cx)
+                        });
+                    }
+                    this.sync_settings(cx);
+                }
+                SettingsEvent::ToggleLinearTeam(id) => {
+                    if let Some(inbox) = &this.inbox {
+                        inbox.update(cx, |inbox, cx| inbox.toggle_linear_team(id.clone(), cx));
                     }
                 }
                 SettingsEvent::WhatsNew => {
@@ -259,6 +277,22 @@ impl Shell {
         window.focus(&view.focus_handle(cx), cx);
         this_update(self, cx);
     }
+    /// The Inbox page shows each connection, which the Inbox reads.
+    fn load_inbox_for_settings(
+        &mut self,
+        section: Section,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if section != Section::Inbox {
+            return;
+        }
+        let first = self.inbox.is_none();
+        self.ensure_background_inbox(window, cx);
+        if first && let Some(inbox) = &self.inbox {
+            inbox.update(cx, |inbox, cx| inbox.refresh(cx));
+        }
+    }
     pub(super) fn select_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         if let Some(view) = &self.settings {
             view.update(cx, |v, cx| v.select_section(section, cx));
@@ -276,6 +310,9 @@ impl Shell {
         }
     }
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(inbox) = &self.inbox {
+            inbox.update(cx, |inbox, cx| inbox.close_settings_dialog(cx));
+        }
         self.settings = None;
         self.settings_events = None;
         self.settings_overlay_watch = None;

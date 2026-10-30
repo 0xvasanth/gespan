@@ -35,7 +35,7 @@ const sandbox = vm.createContext({});
 vm.runInContext(await readFile(asset, "utf8"), sandbox);
 const sample = JSON.parse(await sandbox.gespanAnalyze("test.json", '{"bad": }', "{}"));
 if (!sample.diagnostics.length || !sample.changes.length) throw new Error("Native analysis smoke check failed");
-const largeSource = await readFile(path.join(root, "src/app/App.tsx"), "utf8");
+const largeSource = await readFile(path.join(root, "crates/gespan-gpui/tests/fixtures/large-app.tsx"), "utf8");
 const largeAnalysis = JSON.parse(await sandbox.gespanAnalyze("App.tsx", largeSource, `${largeSource}\nexport const previousHighlightTail = "tail";\n`));
 if (!largeAnalysis.tokens.some(token => token.to > largeSource.length - 1024)) throw new Error("Large-file highlighting stops before the end of App.tsx");
 if (!largeAnalysis.changes.some(change => change.original.includes("previousHighlightTail") && change.tokens.some(token => token.kind === "var(--syntax-string)"))) throw new Error("Large-file baseline highlighting stops before its final change");
