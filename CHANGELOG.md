@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native follows a renamed project folder, as the Tauri app does. Each
+  project's folder identity is remembered, and when the saved folder is gone
+  at launch, its former siblings are checked for it. The project, its
+  sessions, terminals and settings move to the new name. A folder that cannot
+  be found, or more than one match, leaves the project as it was.
 - Gespan Native previews the change an Edit or Write tool proposes, as the
   Tauri app does. Hovering the file chip shows the first changed lines with
   their counts, read from the tool itself rather than from git, for Claude,
