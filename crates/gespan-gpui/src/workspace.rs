@@ -175,6 +175,70 @@ pub(crate) struct Workspace {
     pub desktop_preferences_metadata: Option<serde_json::Value>,
 }
 
+impl Workspace {
+    /// What another window starts from: this one's look and project, without
+    /// the tabs and panes that show this window's chats.
+    pub fn for_new_window(&self) -> Self {
+        Self {
+            tabs: Vec::new(),
+            title_order: Vec::new(),
+            scope_focus: HashMap::new(),
+            worktree_focus: HashMap::new(),
+            tab_workspaces: HashMap::new(),
+            active: None,
+            project_focus: HashMap::new(),
+            reviews: HashMap::new(),
+            review_owners: HashMap::new(),
+            pilot_panes: HashMap::new(),
+            layouts: HashMap::new(),
+            focused: HashMap::new(),
+            docks: HashMap::new(),
+            ..self.clone()
+        }
+    }
+    /// The settings all windows have in common, which one window's change
+    /// passes to the rest: everything but what `adopt_shared` keeps.
+    pub fn shared_part(&self) -> Self {
+        let blank = Self::default();
+        Self {
+            window: blank.window,
+            project: blank.project,
+            sidebar_visible: blank.sidebar_visible,
+            sidebar_width: blank.sidebar_width,
+            right_panel_open: blank.right_panel_open,
+            right_panel_tab: blank.right_panel_tab,
+            right_panel_width: blank.right_panel_width,
+            right_panel_tabs: blank.right_panel_tabs,
+            ..self.for_new_window()
+        }
+    }
+    /// Takes `shared`'s common settings, keeping this window's own view.
+    pub fn adopt_shared(&mut self, shared: &Self) {
+        let own = std::mem::replace(self, shared.clone());
+        self.window = own.window;
+        self.tabs = own.tabs;
+        self.title_order = own.title_order;
+        self.scope_focus = own.scope_focus;
+        self.worktree_focus = own.worktree_focus;
+        self.tab_workspaces = own.tab_workspaces;
+        self.active = own.active;
+        self.project = own.project;
+        self.project_focus = own.project_focus;
+        self.sidebar_visible = own.sidebar_visible;
+        self.sidebar_width = own.sidebar_width;
+        self.right_panel_open = own.right_panel_open;
+        self.right_panel_tab = own.right_panel_tab;
+        self.right_panel_width = own.right_panel_width;
+        self.right_panel_tabs = own.right_panel_tabs;
+        self.reviews = own.reviews;
+        self.review_owners = own.review_owners;
+        self.pilot_panes = own.pilot_panes;
+        self.layouts = own.layouts;
+        self.focused = own.focused;
+        self.docks = own.docks;
+    }
+}
+
 /// A saved command the footer runs in a terminal with one click.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

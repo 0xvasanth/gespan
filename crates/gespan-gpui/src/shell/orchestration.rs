@@ -179,7 +179,8 @@ impl Shell {
             live.run.live() && (*lead == id || live.run.task_of_session(id).is_some())
         })
     }
-    /// A lead's view may load long after its run was restored.
+    /// A lead's view may load long after its run was restored, and a lead that
+    /// arrives from a closing window needs this window's bridge.
     pub(super) fn orchestration_view_added(&mut self, id: i64, cx: &mut Context<Self>) {
         if self
             .orchestrations
@@ -259,7 +260,7 @@ impl Shell {
         })
         .detach();
     }
-    fn start_orchestration(&mut self, lead: i64, plan: Plan, cx: &mut Context<Self>) {
+    pub(super) fn start_orchestration(&mut self, lead: i64, plan: Plan, cx: &mut Context<Self>) {
         if self
             .orchestrations
             .get(&lead)
@@ -336,7 +337,7 @@ impl Shell {
         })
         .detach();
     }
-    fn stop_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+    pub(super) fn stop_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
         if let Some(live) = self.orchestrations.get_mut(&lead) {
             let effects = live.run.stop();
             self.apply_orchestration_effects(lead, effects, cx);
@@ -417,7 +418,7 @@ impl Shell {
             })
             .collect()
     }
-    fn handle_control_call(&mut self, call: Call, cx: &mut Context<Self>) {
+    pub(super) fn handle_control_call(&mut self, call: Call, cx: &mut Context<Self>) {
         let lead = call.session;
         if call.request_id.is_empty()
             || !call

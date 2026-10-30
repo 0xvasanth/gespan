@@ -26,11 +26,12 @@ impl Shell {
 
     /// Called whenever a chat changes. Frozen once a quit starts, so turns the
     /// shutdown stops are not taken off the list.
-    pub(super) fn sync_in_flight(&mut self, cx: &App) {
+    pub(super) fn sync_in_flight(&mut self, cx: &mut Context<Self>) {
         if crate::quitting(cx) {
             return;
         }
         let ids = self.running_chats(cx);
+        let ids = crate::windows::set_running(cx.entity_id(), ids, cx);
         if self.in_flight_written.as_ref() == Some(&ids) {
             return;
         }
