@@ -2200,6 +2200,87 @@ mod remote_github_tests {
     }
 
     #[test]
+    fn a_failed_jobs_details_come_from_the_items_machine() {
+        let calls = host(|command, _| {
+            assert_eq!(command, "git_github_check_details");
+            Ok(json!({
+                "steps": [{
+                    "name": "Test",
+                    "state": "fail",
+                    "startedAt": "2026-10-10T00:00:00Z",
+                    "completedAt": null,
+                }],
+                "annotations": [{
+                    "path": "src/a.rs",
+                    "line": 7,
+                    "message": "boom",
+                    "level": "failure",
+                }],
+                "notice": null,
+            }))
+        });
+        let details = service().check_details(&item(), "123").unwrap();
+        TEST_HOST.set(None);
+        assert_eq!(details.failed_steps(), ["Test"]);
+        assert_eq!(
+            details.steps[0].started_at.as_deref(),
+            Some("2026-10-10T00:00:00Z")
+        );
+        assert_eq!(details.annotations[0].location(), "src/a.rs:7");
+        assert_eq!(details.notice, None);
+        assert_eq!(
+            calls.borrow()[0].1,
+            json!({"cwd": "/home/me/web", "repo": "acme/web", "jobId": "123"})
+        );
+    }
+
+    #[test]
+    fn a_rerun_asks_the_items_machine_once_per_workflow_run() {
+        let calls = host(|_, _| Ok(Value::Null));
+        let runs = ["5".to_string(), "6".to_string()];
+        let asked = service().rerun_failed(&item(), &runs);
+        TEST_HOST.set(None);
+        assert_eq!(asked, Ok(2));
+        assert_eq!(
+            *calls.borrow(),
+            ["5", "6"].map(|run| (
+                "git_github_run_rerun_failed".to_string(),
+                json!({"cwd": "/home/me/web", "repo": "acme/web", "runId": run}),
+            ))
+        );
+    }
+
+    #[test]
+    fn a_rerun_stops_at_the_first_run_the_host_refuses() {
+        let calls = host(|_, _| Err("run 5 is still in progress".into()));
+        let runs = ["5".to_string(), "6".to_string()];
+        let error = service().rerun_failed(&item(), &runs).unwrap_err();
+        TEST_HOST.set(None);
+        assert!(error.contains("run 5 is still in progress"), "{error}");
+        assert_eq!(calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn an_invalid_run_never_reaches_the_host() {
+        let calls = host(|_, _| Ok(Value::Null));
+        let runs = ["5; rm -rf /".to_string()];
+        let error = service().rerun_failed(&item(), &runs).unwrap_err();
+        TEST_HOST.set(None);
+        assert_eq!(error, "Invalid GitHub workflow run ID");
+        assert!(calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_outdated_host_is_named_on_a_rerun() {
+        host(|_, _| Err("Unsupported workspace command".into()));
+        let error = service()
+            .rerun_failed(&item(), &["5".to_string()])
+            .unwrap_err();
+        TEST_HOST.set(None);
+        assert!(error.contains("Update Gespan Host"), "{error}");
+    }
+
+    #[test]
     fn an_outdated_host_is_named_on_the_item_fetch() {
         host(|_, _| Err("Unsupported workspace command".into()));
         let error = service().checks(&item()).unwrap_err();

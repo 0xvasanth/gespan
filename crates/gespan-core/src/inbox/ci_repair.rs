@@ -375,10 +375,6 @@ pub fn rerun_run_ids(checks: &[Check], repo: &str) -> Vec<String> {
     }
     ids
 }
-/// A rerun runs `gh` on this machine, so a remote project cannot offer one yet.
-pub fn can_rerun(item: &Item) -> bool {
-    !crate::files::remote::is_remote(std::path::Path::new(&item.project_path))
-}
 
 /// `gh run rerun <run> --failed`: reruns only a run's failed and cancelled jobs.
 pub fn rerun_args(repo: &str, run_id: &str) -> Result<Vec<String>, String> {
@@ -553,19 +549,32 @@ pub fn check_details_with(
 impl Service {
     pub fn check_details(&self, item: &Item, job_id: &str) -> Result<CheckDetails, String> {
         let root = self.project(item);
-        check_details_with(&item.repo, job_id, |endpoint| {
-            super::run_gh(root, &["api", "--hostname", "github.com", endpoint], false)
-        })
+        super::github_call(
+            root,
+            "git_github_check_details",
+            serde_json::json!({ "repo": item.repo, "jobId": job_id }),
+            || {
+                check_details_with(&item.repo, job_id, |endpoint| {
+                    super::run_gh(root, &["api", "--hostname", "github.com", endpoint], false)
+                })
+            },
+        )
     }
     /// Reruns the failed jobs of each workflow run; returns how many were asked.
     pub fn rerun_failed(&self, item: &Item, run_ids: &[String]) -> Result<usize, String> {
         if run_ids.is_empty() {
             return Err("None of these checks can be rerun from here.".into());
         }
+        let root = self.project(item);
         for run in run_ids {
             let args = rerun_args(&item.repo, run)?;
             let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-            super::run_gh(self.project(item), &refs, true)?;
+            super::github_call::<(), _>(
+                root,
+                "git_github_run_rerun_failed",
+                serde_json::json!({ "repo": item.repo, "runId": run }),
+                || super::run_gh(root, &refs, true).map(drop),
+            )?;
         }
         Ok(run_ids.len())
     }
@@ -1202,16 +1211,6 @@ pub fn find_check_repair<'a>(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn only_local_projects_offer_a_rerun() {
-        let item = |project_path: &str| super::Item {
-            project_path: project_path.into(),
-            ..Default::default()
-        };
-        assert!(can_rerun(&item("/repo")));
-        assert!(can_rerun(&item("")));
-        assert!(!can_rerun(&item("remote://host/repo")));
-    }
     use super::*;
 
     fn check(name: &str, state: &str, url: Option<&str>) -> Check {
