@@ -36,7 +36,7 @@ tick the box in the same PR.
 - [x] **Previews for any link in a prompt.** Title and favicon for links other than GitHub. Native shows GitHub issues and PRs only. Tauri: `src-tauri/src/link_preview.rs`, `UserLinkPreview.tsx`. Done in #245.
 - [x] **Model welcome animations** (Opus 5.5, Astra). *(done in #250)* Tauri: `src/features/sessions/ui/OpusWelcome.tsx`, `AstraWelcome.tsx`.
 - [x] **Cursor subagent runs and tool arguments** read from Cursor's local store. *(done in #250, live and at turn end; sessions saved before this are not backfilled when reopened)* Tauri: `src-tauri/src/cursor_store.rs`, `src/integrations/harness/providers/cursor/cursorSubagents.ts`.
-- [ ] **Projects and sessions follow a renamed or moved project folder.** Tauri: `src-tauri/src/fs.rs` (`resolve_project_location`), `src-tauri/src/session_store.rs` (`session_rebase_project`), `src/features/projects/model/projectLocation.ts`.
+- [x] **Projects and sessions follow a renamed or moved project folder.** *(done in #250, checked at launch; Tauri also re-checks on send while running)* Tauri: `src-tauri/src/fs.rs` (`resolve_project_location`), `src-tauri/src/session_store.rs` (`session_rebase_project`), `src/features/projects/model/projectLocation.ts`.
 
 ### Orchestration
 
