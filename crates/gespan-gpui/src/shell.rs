@@ -1311,6 +1311,7 @@ impl Shell {
         }
         this.init_mobile_host(cx);
         this.restore_hold(cx);
+        this.restore_orchestrations(cx);
         this.resume_interrupted(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
@@ -1489,6 +1490,7 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.sessions.insert(id, view);
+        self.orchestration_view_added(id, cx);
         if !self.order.contains(&id) {
             self.order.push(id);
         }

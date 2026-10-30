@@ -1039,6 +1039,7 @@ mod tests {
                     other,
                     gespan_core::orchestration::Summary {
                         live: false,
+                        paused: false,
                         tasks: vec![gespan_core::orchestration::SummaryTask {
                             session: Some(worker),
                             title: "Write the tests".into(),

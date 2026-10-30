@@ -210,6 +210,7 @@ pub(crate) struct Conversation {
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
     plan_card: orchestration_card::PlanCard,
+    orchestration_paused: bool,
     orchestration_error: Option<String>,
     pub(crate) orchestration_progress: Option<String>,
     status: String,
@@ -695,6 +696,7 @@ impl Conversation {
             planning_orchestration: false,
             orchestration_plan: None,
             plan_card: Default::default(),
+            orchestration_paused: false,
             orchestration_error: None,
             orchestration_progress: None,
             status: "Loading conversation…".into(),
@@ -1694,6 +1696,7 @@ impl EventEmitter<OpenSessionChanges> for Conversation {}
 impl EventEmitter<Transfer> for Conversation {}
 impl EventEmitter<composer_features::StartOrchestration> for Conversation {}
 impl EventEmitter<composer_features::StopOrchestration> for Conversation {}
+impl EventEmitter<composer_features::ResumeOrchestration> for Conversation {}
 
 impl Conversation {
     pub(crate) fn install_transfer(

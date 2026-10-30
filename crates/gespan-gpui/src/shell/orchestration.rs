@@ -62,6 +62,39 @@ pub(super) struct Live {
     integrating: HashSet<String>,
     /// The run ended and the lead's card and capability were cleared.
     closed: bool,
+    /// What the store holds, and whether a write is on its way.
+    written: Option<String>,
+    saving: bool,
+}
+impl Live {
+    fn new(run: Run, settings: Settings) -> Self {
+        Self {
+            run,
+            settings,
+            announced: HashSet::new(),
+            waiters: Vec::new(),
+            next_waiter: 0,
+            lead_busy: false,
+            integrating: HashSet::new(),
+            closed: false,
+            written: None,
+            saving: false,
+        }
+    }
+}
+
+/// What workers inherit from the lead's settings.
+fn worker_base(mut settings: Settings) -> Settings {
+    settings.plan = false;
+    settings.orchestrator = false;
+    settings.orchestration_worker = true;
+    settings.operator = false;
+    settings.operator_enabled = false;
+    settings.handoff = None;
+    settings.turns.clear();
+    settings.environment.clear();
+    settings.attachments.clear();
+    settings
 }
 
 impl Shell {
@@ -93,7 +126,9 @@ impl Shell {
         id: i64,
         cx: &mut Context<Self>,
     ) {
-        use crate::conversation::composer_features::{StartOrchestration, StopOrchestration};
+        use crate::conversation::composer_features::{
+            ResumeOrchestration, StartOrchestration, StopOrchestration,
+        };
         self.observations.push(cx.subscribe(
             view,
             move |this, _, event: &StartOrchestration, cx| {
@@ -105,6 +140,124 @@ impl Shell {
                 this.stop_orchestration(id, cx)
             }),
         );
+        self.observations.push(
+            cx.subscribe(view, move |this, _, _: &ResumeOrchestration, cx| {
+                this.resume_orchestration(id, cx)
+            }),
+        );
+    }
+    /// A restart pauses every run that was live. Nothing starts until the
+    /// user presses Resume on the lead's card.
+    pub(super) fn restore_orchestrations(&mut self, cx: &mut Context<Self>) {
+        let saved = locked(&self.store).and_then(|store| {
+            store
+                .orchestration_runs()?
+                .into_iter()
+                .map(|(lead, run)| Ok((lead, run, store.agent_settings(lead)?.unwrap_or_default())))
+                .collect::<Result<Vec<_>, String>>()
+        });
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(error) => {
+                self.error = Some(format!("Orchestration history: {error}"));
+                return;
+            }
+        };
+        for (lead, mut run, settings) in saved {
+            if !self.session_summaries.contains_key(&lead) || !run.live() {
+                continue;
+            }
+            run.hydrate();
+            self.orchestrations
+                .insert(lead, Live::new(run, worker_base(settings)));
+            self.save_orchestration(lead, cx);
+            self.publish_orchestration(lead, cx);
+        }
+    }
+    pub(super) fn in_live_orchestration(&self, id: i64) -> bool {
+        self.orchestrations.iter().any(|(lead, live)| {
+            live.run.live() && (*lead == id || live.run.task_of_session(id).is_some())
+        })
+    }
+    /// A lead's view may load long after its run was restored.
+    pub(super) fn orchestration_view_added(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self
+            .orchestrations
+            .get(&id)
+            .is_some_and(|live| live.run.live())
+        {
+            self.grant_control(id, cx);
+            self.publish_orchestration(id, cx);
+        }
+    }
+    fn grant_control(&self, lead: i64, cx: &mut Context<Self>) {
+        if let (Some(bridge), Some(view)) = (&self.control_bridge, self.sessions.get(&lead)) {
+            let environment = bridge.control_environment(lead);
+            view.update(cx, |v, _| v.set_control_environment(environment));
+        }
+    }
+    fn resume_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+        let Some(view) = self.sessions.get(&lead).cloned() else {
+            return;
+        };
+        if view.read(cx).external_submission_pending() {
+            self.error =
+                Some("Wait for the lead's interrupted turn to finish before resuming.".into());
+            cx.notify();
+            return;
+        }
+        let Some(live) = self.orchestrations.get_mut(&lead) else {
+            return;
+        };
+        if let Err(error) = live.run.resume() {
+            self.error = Some(error);
+            cx.notify();
+            return;
+        }
+        self.grant_control(lead, cx);
+        self.schedule_orchestration(lead, cx);
+    }
+    /// Writes never overlap, and the newest state always lands last. If it
+    /// can't be saved a restart would lose it, so the run stops here instead.
+    fn save_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+        let Some(live) = self.orchestrations.get_mut(&lead) else {
+            return;
+        };
+        let state = if live.run.live() {
+            serde_json::to_string(&live.run).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if live.saving || live.written.as_ref() == Some(&state) {
+            return;
+        }
+        live.saving = true;
+        let store = self.store.clone();
+        let saved = state.clone();
+        let work = cx.background_executor().spawn(async move {
+            locked(&store).and_then(|store| store.save_orchestration_run(lead, &saved))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(live) = this.orchestrations.get_mut(&lead) else {
+                    return;
+                };
+                live.saving = false;
+                match result {
+                    Ok(()) => {
+                        live.written = Some(state);
+                        this.save_orchestration(lead, cx);
+                    }
+                    Err(error) => {
+                        let effects = live.run.pause(&format!("Could not save run: {error}"));
+                        this.apply_orchestration_effects(lead, effects, cx);
+                        this.publish_orchestration(lead, cx);
+                    }
+                }
+            });
+        })
+        .detach();
     }
     fn start_orchestration(&mut self, lead: i64, plan: Plan, cx: &mut Context<Self>) {
         if self
@@ -140,16 +293,7 @@ impl Shell {
             cx.notify();
             return;
         }
-        let mut settings = conversation.settings.clone();
-        settings.plan = false;
-        settings.orchestrator = false;
-        settings.orchestration_worker = true;
-        settings.operator = false;
-        settings.operator_enabled = false;
-        settings.handoff = None;
-        settings.turns.clear();
-        settings.environment.clear();
-        settings.attachments.clear();
+        let settings = worker_base(conversation.settings.clone());
         let provider = conversation.summary.provider.clone();
         let request = conversation.last_user_text(cx);
         let profiles = conversation.orchestration_profiles(cx);
@@ -166,23 +310,10 @@ impl Shell {
         }
         let run = Run::new(plan, cwd, provider, allowed);
         let first_turn = orchestration::approved_prompt(&request, &run);
-        if let Some(bridge) = &self.control_bridge {
-            let environment = bridge.control_environment(lead);
-            view.update(cx, |v, _| v.set_control_environment(environment));
-        }
-        self.orchestrations.insert(
-            lead,
-            Live {
-                run,
-                settings,
-                announced: HashSet::new(),
-                waiters: Vec::new(),
-                next_waiter: 0,
-                lead_busy: true,
-                integrating: HashSet::new(),
-                closed: false,
-            },
-        );
+        let mut live = Live::new(run, settings);
+        live.lead_busy = true;
+        self.orchestrations.insert(lead, live);
+        self.grant_control(lead, cx);
         self.schedule_orchestration(lead, cx);
         view.update(cx, |v, cx| v.send_coordinator_report(first_turn, cx));
         let work = cx
@@ -623,6 +754,7 @@ impl Shell {
             _ => live.run.progress(),
         };
         let open = live.run.live();
+        let paused = live.run.status == RunStatus::Paused;
         if self.orchestration_summaries.get(&lead) != Some(&summary) {
             let store = self.store.clone();
             let saved = summary.clone();
@@ -636,6 +768,7 @@ impl Shell {
         }
         if let Some(view) = self.sessions.get(&lead) {
             view.update(cx, |v, cx| {
+                v.set_orchestration_paused(paused, cx);
                 v.set_orchestration_progress(open.then_some(progress), cx)
             });
         }
@@ -710,13 +843,18 @@ impl Shell {
                 continue;
             };
             let reports = reports(&live.run, task);
-            let text = task.recovery_prompt.as_ref().unwrap_or(&task.prompt);
+            // A worker that never started has nothing to recover.
+            let text = task
+                .recovery_prompt
+                .as_ref()
+                .filter(|_| task.session.is_some())
+                .unwrap_or(&task.prompt);
             let mut prompt = orchestration::worker_prompt(text, &task.files);
             if !reports.is_empty() {
                 prompt = format!("{prompt}\n\nDependency reports:\n{reports}");
             }
             if let Some(session) = task.session {
-                followups.push((session, prompt));
+                followups.push((id.clone(), session, prompt));
                 continue;
             }
             let planned = orchestration::Task {
@@ -741,15 +879,24 @@ impl Shell {
                 settings: live.settings.clone(),
             });
         }
-        for (session, prompt) in followups {
-            if let Some(view) = self.sessions.get(&session) {
-                view.update(cx, |v, cx| v.send_worker_turn(prompt, cx));
+        for (task, session, prompt) in followups {
+            match self.ensure_session(session, cx) {
+                Some(view) => view.update(cx, |v, cx| v.send_worker_turn(prompt, cx)),
+                None => {
+                    if let Some(live) = self.orchestrations.get_mut(&lead) {
+                        let error =
+                            "This worker's session is gone. Cancel the task or delegate it again.";
+                        live.run
+                            .settle(&task, Outcome::Failed, "", Some(error.to_owned()));
+                    }
+                }
             }
         }
         for job in jobs {
             self.launch_orchestration_worker(lead, job, cx);
         }
         self.sweep_orchestration_checkouts(lead, cx);
+        self.save_orchestration(lead, cx);
         self.publish_orchestration(lead, cx);
         self.answer_orchestration_waits(lead, cx);
         self.close_orchestration(lead, cx);
@@ -1004,19 +1151,9 @@ mod tests {
         run.dispatch();
         run.set_workspace(task, Some(workspace.clone()));
         run.settle(task, Outcome::Completed, "Done", None);
-        shell.orchestrations.insert(
-            lead,
-            Live {
-                run,
-                settings: Settings::default(),
-                announced: HashSet::new(),
-                waiters: Vec::new(),
-                next_waiter: 0,
-                lead_busy: false,
-                integrating: HashSet::new(),
-                closed: false,
-            },
-        );
+        shell
+            .orchestrations
+            .insert(lead, Live::new(run, Settings::default()));
     }
     #[gpui::test]
     fn review_merges_the_workers_changes_and_removes_its_worktree(cx: &mut TestAppContext) {
@@ -1119,6 +1256,64 @@ mod tests {
                 let tasks = &shell.orchestrations[&lead].run.tasks;
                 assert!(tasks[0].workspace.is_some());
                 assert_eq!(tasks[1].workspace, None);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn a_saved_run_pauses_on_restart_and_resumes_on_the_users_word(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                start_one(shell, lead, cx);
+                let live = shell.orchestrations.get_mut(&lead).unwrap();
+                let state = serde_json::to_string(&live.run).unwrap();
+                shell.orchestrations.clear();
+                locked(&shell.store)
+                    .unwrap()
+                    .save_orchestration_run(lead, &state)
+                    .unwrap();
+                shell.restore_orchestrations(cx);
+                let run = &shell.orchestrations[&lead].run;
+                assert_eq!(run.status, RunStatus::Paused);
+                assert_eq!(run.tasks[0].status, Status::Interrupted);
+                assert!(shell.orchestration_summaries[&lead].paused);
+                assert!(
+                    shell.in_live_orchestration(lead),
+                    "the lead must not continue on its own after the restart"
+                );
+                assert!(!shell.in_live_orchestration(lead + 1000));
+                let view = shell.sessions[&lead].read(cx);
+                assert!(
+                    view.orchestration_progress
+                        .as_deref()
+                        .unwrap()
+                        .contains("Resume")
+                );
+                shell.sessions[&lead].update(cx, |v, _| v.busy = false);
+                shell.resume_orchestration(lead, cx);
+                let run = &shell.orchestrations[&lead].run;
+                assert_eq!(run.status, RunStatus::Active);
+                assert_eq!(run.tasks[0].status, Status::Running, "nothing else held it");
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn an_ended_run_is_not_restored(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                start_one(shell, lead, cx);
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.orchestrations.clear();
+                shell.restore_orchestrations(cx);
+                assert!(shell.orchestrations.is_empty());
             })
             .unwrap();
     }

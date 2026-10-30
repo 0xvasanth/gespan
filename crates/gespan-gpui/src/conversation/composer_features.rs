@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 pub(crate) struct StartOrchestration(pub gespan_core::orchestration::Plan);
 pub(crate) struct StopOrchestration;
+pub(crate) struct ResumeOrchestration;
 
 impl Conversation {
     pub(crate) fn request_folder(&mut self, cx: &mut Context<Self>) {
@@ -452,6 +453,10 @@ impl Conversation {
             Ok(plan) => self.set_orchestration_plan(Some(plan)),
             Err(error) => self.orchestration_error = Some(error),
         }
+    }
+    pub(crate) fn set_orchestration_paused(&mut self, paused: bool, cx: &mut Context<Self>) {
+        self.orchestration_paused = paused;
+        cx.notify();
     }
     pub(crate) fn set_orchestration_progress(
         &mut self,

@@ -68,6 +68,8 @@ impl Shell {
         if crate::hold::active(cx) {
             return;
         }
+        // A restored run waits for Resume, which sends its own recovery turns.
+        marked.retain(|id| !self.in_live_orchestration(*id));
         for id in marked {
             if let Some(view) = self.ensure_session(id, cx) {
                 view.update(cx, |view, cx| view.continue_after_quit(cx));
