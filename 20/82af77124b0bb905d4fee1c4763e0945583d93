@@ -1,0 +1,14 @@
+crates/gespan-gpui/tests/first_launch.rs
+  h_7bb0b8336911f0 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2082af77124b0bb905d4fee1c4763e0945583d93",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
