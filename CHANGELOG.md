@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native turns the plan from a Plan mode turn into a plan card, as the
+  Tauri app does. Open reads the whole plan, Build sends it to the agent with
+  Plan mode off, and the arrow beside Build picks another provider or model to
+  build it with. The card shows Building… and then Built. A Codex
+  `<proposed_plan>` block becomes a plan card in any turn, and plans saved by
+  the Tauri app show as cards too.
 - Gespan Native's Sessions heading has a + button beside the filter that
   starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows

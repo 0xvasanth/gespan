@@ -162,7 +162,8 @@ fn project_content(block: &Value) -> Result<Vec<Row>, String> {
             "user" if block["internal"] == true => "pilot-system",
             "user" | "assistant" | "reasoning" | "error" | "pilot-card" | "visual" => role,
             "system" if block["notice"] == "error" => "error",
-            "plan" | "tasks" => "assistant",
+            "plan" => crate::plan::ROLE,
+            "tasks" => "assistant",
             _ => "system",
         });
         t.append(text);
@@ -435,6 +436,13 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
             }
             if role == "pilot-system" {
                 block["internal"] = json!(true);
+            }
+        }
+        // A finished turn's reply becomes its plan after it was saved.
+        if role == crate::plan::ROLE {
+            block["role"] = json!("plan");
+            if !block["plan"].is_object() {
+                block["plan"] = json!({"status":"ready","originalText":text,"edited":false});
             }
         }
         block["text"] = json!(text);
@@ -760,6 +768,36 @@ mod card_tests {
         assert_eq!(native[0]["role"], "user");
         assert_eq!(native[0]["internal"], true);
         assert_eq!(project(&native).unwrap(), rows);
+    }
+    #[test]
+    fn a_reply_promoted_to_a_plan_saves_as_a_desktop_plan_and_reloads_as_one() {
+        let row = |role: &str, text: &str| Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        };
+        let mut rows = vec![row("user", "Plan it"), row("assistant", "# Plan\n- a\n- b")];
+        let saved = merge(&[], 0, &rows).unwrap();
+        assert_eq!(saved[1]["role"], "assistant");
+        let id = saved[1]["id"].clone();
+        assert_eq!(crate::plan::promote(&mut rows, 0, true), Some(1));
+        let promoted = merge(&saved, 1, &rows[1..]).unwrap();
+        assert_eq!(promoted[1]["id"], id, "the reply keeps its identity");
+        assert_eq!(promoted[1]["role"], "plan");
+        assert_eq!(promoted[1]["plan"]["status"], "ready");
+        assert_eq!(promoted[1]["plan"]["originalText"], "# Plan\n- a\n- b");
+        assert_eq!(project(&promoted).unwrap(), rows);
+
+        // A plan the Tauri app saved, built or not, reads as a plan too.
+        let desktop = json!({"id":"p","role":"plan","text":"# Desktop plan","plan":{"status":"built","approvedText":"# Desktop plan"}});
+        let projected = project(std::slice::from_ref(&desktop)).unwrap();
+        assert_eq!(projected[0].role, "plan");
+        assert_eq!(projected[0].text, "# Desktop plan");
+        assert_eq!(
+            merge(std::slice::from_ref(&desktop), 0, &projected).unwrap(),
+            vec![desktop]
+        );
     }
     #[test]
     fn new_native_cards_keep_their_identity_and_reload_as_cards() {

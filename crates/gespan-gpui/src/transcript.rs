@@ -2587,11 +2587,35 @@ impl TranscriptView {
         cx.notify();
     }
 
+    /// The last plan card reads Building… only while its build runs.
+    fn refresh_plan_card(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self
+            .source
+            .iter()
+            .rposition(|row| row.role == gespan_core::plan::ROLE)
+        else {
+            return;
+        };
+        let shown = self.rows.iter().find_map(|row| match &row.body {
+            Body::RemotePlan(plan)
+                if plan.id
+                    == crate::conversation::remote_plans::Plan::local(at, String::new(), "").id =>
+            {
+                Some(plan.status.clone())
+            }
+            _ => None,
+        });
+        let status = remote_plans::plan_status(&self.source, at, self.streaming);
+        if shown.is_some_and(|shown| shown != status) {
+            self.rebuild(at, cx);
+        }
+    }
     pub(crate) fn streaming(&mut self, streaming: bool, cx: &mut Context<Self>) {
         if self.streaming == streaming {
             return;
         }
         self.streaming = streaming;
+        self.refresh_plan_card(cx);
         if streaming {
             self.active_provider_turn_id = None;
             self.live_start = self.source.len();
@@ -2997,6 +3021,19 @@ impl TranscriptView {
         {
             self.rebuild_passes += 1;
         }
+        // A plan card reads Building… and Built from the turn after it, so a
+        // change there redraws the card too.
+        let start = self.source[..start.min(self.source.len())]
+            .iter()
+            .rposition(|row| row.role == gespan_core::plan::ROLE)
+            .filter(|&plan| {
+                self.source[plan + 1..start]
+                    .iter()
+                    .filter(|r| r.is_prompt())
+                    .count()
+                    <= 1
+            })
+            .unwrap_or(start);
         self.phase_layouts.clear();
         let now = Instant::now();
         let following = self.list.is_following_tail();
@@ -3180,7 +3217,11 @@ impl TranscriptView {
             // Older native versions saved user cancellation as an error row.
             let stopped_notice = role == "error" && text.trim() == "Stopped";
             let (display_text, attachments) = if role == "user" {
-                attachments::message(&self.source, end, &text)
+                let (display, attachments) = attachments::message(&self.source, end, &text);
+                // A Build sends the whole approved plan; the message names it.
+                let build = gespan_core::plan::approved_plan(&text)
+                    .map(|_| gespan_core::plan::BUILD_LABEL.to_owned());
+                (build.or(display), attachments)
             } else {
                 (None, Arc::default())
             };
@@ -3243,6 +3284,7 @@ impl TranscriptView {
                     role.as_str(),
                     "pilot-card"
                         | "remote-plan"
+                        | gespan_core::plan::ROLE
                         | "visual"
                         | "pilot-document"
                         | "pilot-note"
@@ -3360,6 +3402,22 @@ impl TranscriptView {
                         thought_phase: None,
                     });
                 }
+            } else if role == gespan_core::plan::ROLE {
+                let status = remote_plans::plan_status(&self.source, at, self.streaming);
+                self.rows.push(UiRow {
+                    key: (0, 0),
+                    body: Body::RemotePlan(crate::conversation::remote_plans::Plan::local(
+                        at,
+                        text.trim().into(),
+                        status,
+                    )),
+                    message,
+                    first: false,
+                    last: false,
+                    work: false,
+                    work_tail: false,
+                    thought_phase: None,
+                });
             } else if role == "remote-plan" {
                 if let Ok(plan) = serde_json::from_str(&text) {
                     self.rows.push(UiRow {

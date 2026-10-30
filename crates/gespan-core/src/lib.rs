@@ -24,6 +24,7 @@ pub mod link_preview;
 pub mod mobile;
 pub mod notes;
 pub mod pilot;
+pub mod plan;
 pub mod process;
 pub mod project_appearance;
 pub mod provider;

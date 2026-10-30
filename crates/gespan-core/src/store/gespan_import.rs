@@ -321,7 +321,8 @@ fn transcript(blocks: &[Value]) -> rusqlite::Result<Transcript> {
             }
             transcript.begin(match role {
                 "user" | "assistant" | "reasoning" => role,
-                "plan" | "tasks" => "assistant",
+                "plan" => crate::plan::ROLE,
+                "tasks" => "assistant",
                 _ => "system",
             });
             transcript.append(text);

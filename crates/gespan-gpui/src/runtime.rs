@@ -15,6 +15,8 @@ mod handoff;
 #[cfg(all(test, unix))]
 mod handoff_tests;
 mod persistence;
+#[cfg(all(test, unix))]
+mod plan_tests;
 pub(crate) mod remote;
 mod ticket_context;
 pub(crate) mod ticket_scope;
@@ -160,6 +162,7 @@ fn run_turn_using(
             .and_then(|s| s.data_dir().map(std::path::Path::to_path_buf));
     }
     let source_account = settings.account.id.clone();
+    let planning = settings.plan;
     let user_request = prompt.clone();
     let mut transcript = Transcript::default();
     let mut history_loaded = false;
@@ -1087,6 +1090,14 @@ fn run_turn_using(
         transcript.rows.len()
     };
     if let Some(ix) = settle_running_tools(&mut transcript.rows, turn_start, cancelled, &result) {
+        final_start = final_start.min(ix);
+    }
+    // A finished plan-mode turn leaves its plan for review and Build.
+    if history_loaded
+        && result.is_ok()
+        && !cancelled
+        && let Some(ix) = gespan_core::plan::promote(&mut transcript.rows, turn_start, planning)
+    {
         final_start = final_start.min(ix);
     }
     if let Some((cwd, id)) = &checkpoint
