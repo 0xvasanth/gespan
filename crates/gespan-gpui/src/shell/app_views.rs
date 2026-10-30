@@ -477,12 +477,19 @@ impl Shell {
                 |this, _, event: &inbox::Event, window, cx| match event {
                     inbox::Event::Close => this.close_app_view(window, cx),
                     inbox::Event::OpenSession(id) => this.open(*id, window, cx),
-                    inbox::Event::StartSession { item, prompt } => {
-                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), true, cx);
-                    }
                     inbox::Event::ComposeSession { item, prompt } => {
-                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), false, cx);
+                        this.start_inbox_session(item.as_ref().clone(), prompt.clone(), None, cx);
                     }
+                    inbox::Event::StartRepair {
+                        item,
+                        prompt,
+                        repair,
+                    } => this.start_inbox_session(
+                        item.as_ref().clone(),
+                        prompt.clone(),
+                        Some(repair.clone()),
+                        cx,
+                    ),
                     inbox::Event::ItemsChanged(items) => {
                         this.inbox_automation_events(items.clone(), cx)
                     }
@@ -705,13 +712,13 @@ impl Shell {
         self.focus_active(window, cx);
     }
 
-    /// With `send`, the prompt goes straight out, as Fix with agent does.
+    /// A check `repair` goes straight out and reports back to the Inbox.
     /// Otherwise the item waits above the composer for a note, or for Send.
     fn start_inbox_session(
         &mut self,
         item: gespan_core::inbox::Item,
         prompt: String,
-        send: bool,
+        repair: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let cwd = if item.project_path.is_empty() {
@@ -745,6 +752,7 @@ impl Shell {
         let store = self.store.clone();
         self.navigation_revision += 1;
         let revision = self.navigation_revision;
+        let failed_repair = repair.clone();
         let work = cx.background_executor().spawn(async move {
             if !std::path::Path::new(&cwd).is_dir() {
                 return Err("Choose a project folder before starting work on this item".into());
@@ -765,7 +773,7 @@ impl Shell {
                     let id = summary.id;
                     this.add(summary, cx);
                     this.sessions[&id].update(cx, |view, cx| {
-                        if send {
+                        if repair.is_some() {
                             view.quick_submit(prompt, settings, cx);
                         } else {
                             view.seed_new_settings(settings, cx);
@@ -773,18 +781,45 @@ impl Shell {
                             view.set_composer_card(ComposerCard::Inbox { item, prompt }, cx);
                         }
                     });
+                    if let Some(repair) = repair {
+                        this.follow_repair(repair, id, cx);
+                    }
                     if this.navigation_revision == revision {
                         this.activate_session(id, window, cx);
                     }
                     this.persist(cx);
                 }
                 Err(error) => {
+                    if let (Some(repair), Some(inbox)) = (failed_repair, &this.inbox) {
+                        inbox.update(cx, |inbox, cx| {
+                            inbox.repair_session_failed(&repair, error.clone(), cx)
+                        });
+                    }
                     this.error = Some(error);
                     cx.notify();
                 }
             });
         })
         .detach();
+    }
+
+    /// Tells the inbox which chat took a check repair and when its agent stops.
+    fn follow_repair(&mut self, repair: String, id: i64, cx: &mut Context<Self>) {
+        let Some(inbox) = self.inbox.clone() else {
+            return;
+        };
+        inbox.update(cx, |inbox, cx| {
+            inbox.repair_session_started(&repair, id, cx)
+        });
+        let mut was_busy = self.sessions[&id].read(cx).busy;
+        self.app_view_events
+            .push(cx.observe(&self.sessions[&id], move |_, view, cx| {
+                let busy = view.read(cx).busy;
+                if was_busy && !busy {
+                    inbox.update(cx, |inbox, cx| inbox.repair_session_settled(id, cx));
+                }
+                was_busy = busy;
+            }));
     }
 }
 
@@ -951,5 +986,65 @@ mod card_run_tests {
             })
             .unwrap();
         assert!(submits().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod repair_tests {
+    use super::*;
+    use gespan_core::inbox::ci_repair::RepairPhase;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn a_repair_learns_its_chat_and_settles_only_after_the_agent_ran(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let (id, repair) = window
+            .update(cx, |shell, _, cx| {
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("codex", "/missing/repair")
+                    .unwrap();
+                let id = summary.id;
+                shell.add_loaded(summary, cx);
+                let store = shell.store.clone();
+                let inbox = cx.new(|cx| inbox::Inbox::offline(store, cx));
+                let repair = inbox.update(cx, |inbox, _| inbox.track_test_repair());
+                shell.inbox = Some(inbox);
+                shell.follow_repair(repair.clone(), id, cx);
+                (id, repair)
+            })
+            .unwrap();
+        let progress = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell
+                        .inbox
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .test_repair_progress()
+                })
+                .unwrap()
+        };
+        let set_busy = |busy: bool, cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.sessions[&id].update(cx, |view, cx| {
+                        view.busy = busy;
+                        cx.notify();
+                    })
+                })
+                .unwrap();
+            cx.run_until_parked();
+        };
+        assert_eq!(progress(cx), (Some(id), RepairPhase::Running));
+        // Not busy yet: the agent has not started, so nothing has finished.
+        set_busy(false, cx);
+        assert_eq!(progress(cx).1, RepairPhase::Running);
+        set_busy(true, cx);
+        assert_eq!(progress(cx).1, RepairPhase::Running);
+        set_busy(false, cx);
+        assert_eq!(progress(cx).1, RepairPhase::Completed);
+        drop(repair);
     }
 }
