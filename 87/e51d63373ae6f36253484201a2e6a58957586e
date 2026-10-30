@@ -1,0 +1,48 @@
+crates/gespan-gpui/src/main.rs
+  s_3abf683d1a12e8::t_dd605346a15730 441-442
+CHANGELOG.md
+  s_3abf683d1a12e8::t_e9459852cd9d89 12-16
+crates/gespan-gpui/src/shell.rs
+  s_3abf683d1a12e8::t_13817db9a25780 4508
+  s_3abf683d1a12e8::t_b9f88a057c3d57 11632-11634,11639-11674
+  s_3abf683d1a12e8::t_8fbd6152e31923 11635-11638
+  s_3abf683d1a12e8::t_23c2e6c383ff86 4524-4534
+crates/gespan-core/src/lib.rs
+  s_3abf683d1a12e8::t_e313841643376f 31
+crates/gespan-core/src/project_location.rs
+  s_3abf683d1a12e8::t_8c0fafa12931e0 325,388
+  s_3abf683d1a12e8::t_a3b153c8b93cd9 1-66,73-180,184-240,244-286,288,290-324,326-362,364-376,381-387,389-428,433-435
+  s_3abf683d1a12e8::t_55e93c790fa2f3 67-72,181-183,241-243,363,377-380,429-432
+  s_3abf683d1a12e8::t_e9a01f6bd8d0eb 287,289
+crates/gespan-core/Cargo.toml
+  s_3abf683d1a12e8::t_fb28a59df30e43 60
+crates/gespan-gpui/src/workspace.rs
+  s_3abf683d1a12e8::t_6d777987a33258 1187-1193
+  s_3abf683d1a12e8::t_59998f4152de78 1224-1225,1254
+  s_3abf683d1a12e8::t_0c10eea418c340 1107,1109-1111,1114,1117,1121,1125,1128-1130,1137,1144-1152,1154-1160,1163-1166,1171-1174,1177,1180
+  s_3abf683d1a12e8::t_8ff0de98c07bb3 1205-1223,1226-1233,1240-1242,1255-1266
+  s_3abf683d1a12e8::t_468eb3808b509b 1073-1078
+  s_3abf683d1a12e8::t_3aae1fbe336c65 1234-1235
+  s_3abf683d1a12e8::t_8fbd6152e31923 1112-1113,1131-1136,1236-1239,1243-1253
+  s_3abf683d1a12e8::t_07a3b768a872e0 1066-1072,1079-1106,1108,1115-1116,1118-1120,1126-1127,1138-1143,1153,1161-1162,1167-1170,1175-1176,1178-1179,1181-1186,1194-1201
+  s_3abf683d1a12e8::t_0dce04ca84ff0f 1122-1124
+  s_3abf683d1a12e8::t_ff8cd9e15d56d1 1204
+crates/gespan-core/src/store.rs
+  s_3abf683d1a12e8::t_de42d7b558dd20 1158-1181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87e51d63373ae6f36253484201a2e6a58957586e",
+  "prompts": {},
+  "sessions": {
+    "s_3abf683d1a12e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf67907a-9e6a-4d99-aab1-f544258778b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
