@@ -76,7 +76,17 @@ try {
     $actual = & (Join-Path $unpacked 'node.exe') (Join-Path $unpacked 'host.mjs') --version
     if ($LASTEXITCODE -ne 0 -or $actual -ne $version) { throw 'Gespan Host version mismatch.' }
     $runtime = Join-Path $runtimeRoot ("$version-$target-" + [Guid]::NewGuid().ToString('N'))
-    Move-Item -LiteralPath $unpacked -Destination $runtime
+    # The version check above just ran node.exe from here. Windows can hold the
+    # file for a moment after a process exits, and antivirus scans new binaries.
+    for ($attempt = 1; ; $attempt++) {
+      try {
+        Move-Item -LiteralPath $unpacked -Destination $runtime -ErrorAction Stop
+        break
+      } catch [IO.IOException], [UnauthorizedAccessException] {
+        if ($attempt -ge 40) { throw }
+        Start-Sleep -Milliseconds 250
+      }
+    }
     $bin = Join-Path $base 'bin'
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     $runtimeName = Split-Path -Leaf $runtime
