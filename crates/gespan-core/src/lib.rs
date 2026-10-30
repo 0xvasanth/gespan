@@ -15,6 +15,7 @@ pub mod external_editor;
 pub mod files;
 pub mod flow;
 pub mod follow_up;
+pub mod generated_image;
 pub mod git;
 pub mod harness_updates;
 pub mod hold;

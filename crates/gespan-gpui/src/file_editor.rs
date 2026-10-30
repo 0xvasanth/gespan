@@ -17,7 +17,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod chrome;
 mod diff;
-mod media;
+pub(crate) mod media;
 #[cfg(test)]
 #[path = "file_editor/tests.rs"]
 mod parity_tests;

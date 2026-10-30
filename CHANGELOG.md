@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native shows images that Codex generates in the conversation, as the
+  Tauri app does. Each one is saved as a PNG in Gespan's data folder and opens
+  full screen when clicked. Images saved by the Tauri app show too.
 - Gespan Native turns the plan from a Plan mode turn into a plan card, as the
   Tauri app does. Open reads the whole plan, Build sends it to the agent with
   Plan mode off, and the arrow beside Build picks another provider or model to

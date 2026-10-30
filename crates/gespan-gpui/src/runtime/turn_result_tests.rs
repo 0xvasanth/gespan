@@ -10,6 +10,12 @@ impl Drop for Fixture {
 
 /// Runs one turn against a mock Codex that answers `reply`.
 fn turn(name: &str, reply: &str, plan: bool) -> Vec<Row> {
+    turn_with(name, reply, plan, "").0
+}
+
+/// The same, sending `items` (Codex `item/completed` items as JSON) after
+/// the reply. Returns the saved rows and the data folder's generated images.
+fn turn_with(name: &str, reply: &str, plan: bool, items: &str) -> (Vec<Row>, Vec<PathBuf>) {
     let fixture = Fixture(std::env::temp_dir().join(format!(
         "gespan-runtime-plan-{name}-{}-{}",
         std::process::id(),
@@ -35,10 +41,13 @@ for line in sys.stdin:
         send({{'id': 2, 'result': {{'thread': {{'id': 'native-plan-test'}}}}}})
     elif value.get('id') == 3:
         send({{'method': 'item/agentMessage/delta', 'params': {{'itemId': 'reply', 'delta': {reply}}}}})
+        for item in json.loads({items}):
+            send({{'method': 'item/completed', 'params': {{'item': item}}}})
         send({{'method': 'turn/completed', 'params': {{'turn': {{'status': 'completed'}}}}}})
         break
 "#,
-            reply = serde_json::to_string(reply).unwrap()
+            reply = serde_json::to_string(reply).unwrap(),
+            items = serde_json::to_string(if items.is_empty() { "[]" } else { items }).unwrap(),
         ),
     )
     .unwrap();
@@ -80,7 +89,10 @@ for line in sys.stdin:
     worker.join().unwrap();
     let saved = locked(&store).unwrap().load(session).unwrap().rows;
     assert_eq!(shown, saved, "the view gets exactly what was saved");
-    saved
+    let images = std::fs::read_dir(fixture.0.join(gespan_core::generated_image::DIR))
+        .map(|dir| dir.map(|entry| entry.unwrap().path()).collect())
+        .unwrap_or_default();
+    (saved, images)
 }
 
 fn roles(rows: &[Row]) -> Vec<&str> {
@@ -116,4 +128,25 @@ fn a_proposed_plan_is_lifted_from_any_turn() {
     );
     assert_eq!(roles(&rows), ["user", "assistant", "plan", "assistant"]);
     assert_eq!(rows[2].text, "# Plan\n- one");
+}
+
+#[test]
+fn a_codex_image_is_saved_in_the_data_folder_and_shown_after_the_reply() {
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let items = serde_json::json!([
+        {"type":"imageGeneration","id":"img","status":"completed","revisedPrompt":"A fox","result":png},
+        {"type":"imageGeneration","id":"img","status":"completed","revisedPrompt":"A fox","result":png},
+        {"type":"imageGeneration","id":"bad","status":"completed","result":"R0lGODlh"}
+    ])
+    .to_string();
+    let (rows, files) = turn_with("image", "Here it is.", false, &items);
+    assert_eq!(roles(&rows), ["user", "assistant", "image", "error"]);
+    assert_eq!(files.len(), 1, "a repeated completion saves one file");
+    let image: gespan_core::generated_image::Image = serde_json::from_str(&rows[2].text).unwrap();
+    assert_eq!(PathBuf::from(&image.path), files[0]);
+    assert_eq!(image.alt.as_deref(), Some("A fox"));
+    assert_eq!(
+        rows[3].text,
+        "Could not save generated image: Generated image data is not a PNG image."
+    );
 }

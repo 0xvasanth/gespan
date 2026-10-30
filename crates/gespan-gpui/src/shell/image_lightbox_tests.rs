@@ -96,3 +96,100 @@ fn image_lightbox_opens_from_composer_and_sent_images_and_restores_focus(cx: &mu
     assert!(visual.debug_bounds("image-lightbox").is_none());
     std::fs::remove_file(path).unwrap();
 }
+
+#[gpui::test]
+fn a_generated_image_shows_in_the_transcript_and_opens_full_screen(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::input::bind(cx);
+        crate::image_lightbox::bind(cx);
+        cx.set_reduce_motion(true);
+    });
+    let (window, _, active) = super::tests::window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let data_dir = tempfile::tempdir().unwrap();
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let image = gespan_core::generated_image::save(
+        data_dir.path(),
+        png,
+        "generated-image",
+        Some("A fox".into()),
+    )
+    .unwrap();
+    window
+        .update(visual, |shell, _, cx| {
+            shell.sessions[&active].update(cx, |view, cx| {
+                view.summary.has_messages = true;
+                cx.notify();
+            });
+            let transcript = shell.sessions[&active].read(cx).transcript.clone();
+            transcript.update(cx, |view, cx| {
+                view.patch(
+                    0,
+                    vec![
+                        gespan_core::transcript::Row {
+                            role: "user".into(),
+                            text: "Draw a fox".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                        gespan_core::transcript::Row {
+                            role: "assistant".into(),
+                            text: "Here it is.".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                        gespan_core::transcript::Row {
+                            role: gespan_core::generated_image::ROLE.into(),
+                            text: serde_json::to_string(&image).unwrap(),
+                            first: true,
+                            sent_at: None,
+                        },
+                    ],
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let shown = visual
+        .debug_bounds("generated-image")
+        .expect("the image is in the transcript");
+    assert!(shown.size.height > px(0.));
+    visual.simulate_click(shown.center(), Default::default());
+    assert!(
+        visual.debug_bounds("image-lightbox").is_some(),
+        "a click opens it full screen"
+    );
+    visual.simulate_keystrokes("escape");
+    assert!(visual.debug_bounds("image-lightbox").is_none());
+
+    // A missing file keeps its row and says so instead of failing the transcript.
+    std::fs::remove_file(&image.path).unwrap();
+    window
+        .update(visual, |shell, _, cx| {
+            let transcript = shell.sessions[&active].read(cx).transcript.clone();
+            transcript.update(cx, |view, cx| {
+                let mut gone = image.clone();
+                gone.path = data_dir
+                    .path()
+                    .join("missing.png")
+                    .to_string_lossy()
+                    .into_owned();
+                view.patch(
+                    2,
+                    vec![gespan_core::transcript::Row {
+                        role: gespan_core::generated_image::ROLE.into(),
+                        text: serde_json::to_string(&gone).unwrap(),
+                        first: true,
+                        sent_at: None,
+                    }],
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("generated-image").is_some());
+}

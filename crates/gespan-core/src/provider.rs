@@ -125,6 +125,12 @@ pub enum Event {
         custom_type: String,
         severity: Option<String>,
     },
+    /// A finished image as base64 PNG data, which the runtime saves.
+    GeneratedImage {
+        id: String,
+        data: String,
+        alt: Option<String>,
+    },
     ConfigChanged {
         model: Option<String>,
         model_settings: HashMap<String, String>,
@@ -313,6 +319,8 @@ struct Protocol {
     visible_question: Option<String>,
     async_question_items: std::collections::HashSet<String>,
     async_answers: HashMap<String, (Value, String, Value, crate::agent::Question)>,
+    /// Codex image items already reported; their completion can repeat.
+    generated_images: std::collections::HashSet<String>,
 }
 impl Protocol {
     fn new(request: Request) -> Self {
@@ -353,6 +361,7 @@ impl Protocol {
             visible_question: None,
             async_question_items: Default::default(),
             async_answers: HashMap::new(),
+            generated_images: Default::default(),
         }
     }
     fn text(&mut self, key: &str, text: &str, snapshot: bool, events: &mut Vec<Event>) {
@@ -689,6 +698,19 @@ impl Protocol {
                         );
                     }
                     "item/started" if p["item"]["type"] == "agentMessage" => {}
+                    "item/started" if p["item"]["type"] == "imageGeneration" => {}
+                    "item/completed" if p["item"]["type"] == "imageGeneration" => {
+                        let item = &p["item"];
+                        let id = item["id"].as_str().unwrap_or("image").to_owned();
+                        let data = item["result"].as_str().unwrap_or("").trim();
+                        if !data.is_empty() && self.generated_images.insert(id.clone()) {
+                            events.push(Event::GeneratedImage {
+                                id,
+                                data: data.to_owned(),
+                                alt: item["revisedPrompt"].as_str().map(str::to_owned),
+                            });
+                        }
+                    }
                     "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
                         events.push(Event::Reasoning(p["delta"].as_str().unwrap_or("").into()));
                         events.push(Event::Status("Thinking…".into()));
@@ -2312,6 +2334,36 @@ mod tests {
         );
         assert_eq!(context.used, 50100);
         assert_eq!(context.window, Some(200000));
+    }
+    #[test]
+    fn a_codex_image_is_reported_once_with_its_prompt() {
+        let mut p = protocol(Kind::Codex);
+        let mut out = Vec::new();
+        let item = |result: &str| json!({"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"img-1","status":"completed","revisedPrompt":"A red fox","result":result}}});
+        assert_eq!(
+            p.frame(json!({"method":"item/started","params":{"item":{"type":"imageGeneration","id":"img-1"}}}), &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "nothing to show until the image is done"
+        );
+        assert_eq!(
+            p.frame(item(" iVBORw0KGgo= "), &mut out).unwrap(),
+            vec![Event::GeneratedImage {
+                id: "img-1".into(),
+                data: "iVBORw0KGgo=".into(),
+                alt: Some("A red fox".into()),
+            }]
+        );
+        assert_eq!(
+            p.frame(item("iVBORw0KGgo="), &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "a repeated completion adds nothing"
+        );
+        let empty = json!({"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"img-2","result":"  "}}});
+        assert_eq!(
+            p.frame(empty, &mut out).unwrap(),
+            Vec::<Event>::new(),
+            "a failed image has no row"
+        );
     }
     #[test]
     fn codex_handshake_stream_snapshot_and_resume() {

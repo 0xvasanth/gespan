@@ -4,6 +4,7 @@ pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]
 mod follow_tests;
+mod generated_image;
 pub(crate) mod git_turns;
 mod history;
 pub(crate) use history::{HistoryPager, PreparedHistory};
@@ -143,6 +144,7 @@ struct RenderedBlock {
 #[derive(Clone)]
 enum Body {
     RemotePlan(crate::conversation::remote_plans::Plan),
+    GeneratedImage(Arc<gespan_core::generated_image::Image>),
     SavedDraft,
     Markdown(Arc<MarkdownRow>),
     Visual(Arc<gespan_core::visual::VisualDocument>),
@@ -3285,6 +3287,7 @@ impl TranscriptView {
                     "pilot-card"
                         | "remote-plan"
                         | gespan_core::plan::ROLE
+                        | gespan_core::generated_image::ROLE
                         | "visual"
                         | "pilot-document"
                         | "pilot-note"
@@ -3394,6 +3397,19 @@ impl TranscriptView {
                     self.rows.push(UiRow {
                         key: (0, 0),
                         body: Body::Interjection(note),
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
+            } else if role == gespan_core::generated_image::ROLE {
+                if let Ok(image) = serde_json::from_str(&text) {
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body: Body::GeneratedImage(Arc::new(image)),
                         message,
                         first: false,
                         last: false,
@@ -4692,6 +4708,7 @@ impl TranscriptView {
         let body = match row.body {
             Body::GitAction(card) => self.git_card_row(&card, message_start, cx),
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
+            Body::GeneratedImage(image) => self.generated_image(&image, message_start),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
             Body::Interjection(_) if marker.is_some() => {
                 // Claude woke itself for a finished background agent; this

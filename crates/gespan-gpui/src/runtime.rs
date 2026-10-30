@@ -15,13 +15,13 @@ mod handoff;
 #[cfg(all(test, unix))]
 mod handoff_tests;
 mod persistence;
-#[cfg(all(test, unix))]
-mod plan_tests;
 pub(crate) mod remote;
 mod ticket_context;
 pub(crate) mod ticket_scope;
 #[cfg(all(test, unix))]
 mod ticket_tests;
+#[cfg(all(test, unix))]
+mod turn_result_tests;
 mod visual_discovery;
 #[cfg(all(test, unix))]
 mod visual_tests;
@@ -927,6 +927,43 @@ fn run_turn_using(
                             let at = transcript.begin("interjection");
                             transcript
                                 .append(&serde_json::to_string(&note).map_err(|e| e.to_string())?);
+                            start = start.min(at);
+                            pending.changed(at);
+                            boundary = true;
+                        }
+                        Event::GeneratedImage { id, data, alt } => {
+                            // GeneratedImage.tsx: the PNG is a file in the data
+                            // folder and the row names it.
+                            let saved = locked(&store)?
+                                .data_dir()
+                                .map(std::path::Path::to_path_buf)
+                                .ok_or_else(|| "Gespan has no data folder".to_owned())
+                                .and_then(|dir| {
+                                    gespan_core::generated_image::save(
+                                        &dir,
+                                        &data,
+                                        "generated-image",
+                                        alt,
+                                    )
+                                });
+                            let at = match saved {
+                                Ok(image) => {
+                                    let at = transcript.begin(gespan_core::generated_image::ROLE);
+                                    transcript.append(
+                                        &serde_json::to_string(&image)
+                                            .map_err(|e| e.to_string())?,
+                                    );
+                                    at
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, item = %id, "cannot save a generated image");
+                                    let at = transcript.begin("error");
+                                    transcript.append(&format!(
+                                        "Could not save generated image: {error}"
+                                    ));
+                                    at
+                                }
+                            };
                             start = start.min(at);
                             pending.changed(at);
                             boundary = true;
