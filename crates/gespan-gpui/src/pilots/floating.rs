@@ -304,7 +304,7 @@ impl Floating {
                             if let Some(parent) = parent {
                                 let _ = parent.update(cx, |_, w, cx| {
                                     owner.update(cx, |m, cx| m.open(&id, w, cx));
-                                    w.activate_window();
+                                    crate::windows::show_primary(cx);
                                     cx.activate(true);
                                 });
                             }
