@@ -10,6 +10,7 @@ pub(crate) mod dictation;
 mod edit_last_turn;
 #[cfg(test)]
 mod empty_arcade_tests;
+pub(crate) mod find;
 mod follow_up;
 pub(crate) mod git_actions;
 mod history;
@@ -162,6 +163,7 @@ pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
 pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
 pub(crate) struct Conversation {
     editing_last_turn: edit_last_turn::State,
+    find: find::State,
     btw: Option<Entity<btw::Btw>>,
     /// The composer box the /btw sheet morphs out of, and how visible the
     /// composer is under the sheet.
@@ -636,6 +638,7 @@ impl Conversation {
         });
         Self {
             editing_last_turn: Default::default(),
+            find: Default::default(),
             btw: None,
             btw_home: (AnchorSlot::default(), 1.),
             _btw_observer: None,
@@ -3889,6 +3892,7 @@ impl Render for Conversation {
                             .clone()
                             .cached(StyleRefinement::default().size_full()),
                     )
+                    .children(self.find_bar(cx))
                     // Level with the transcript's jump button, which moves to
                     // the column's other end.
                     .children(pill.map(|pill| {

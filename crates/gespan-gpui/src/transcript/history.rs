@@ -105,6 +105,14 @@ impl TranscriptView {
         self.reveal_search(row, query, cx);
     }
 
+    /// Reads every older turn still in the store, so a find covers the whole
+    /// conversation. Does nothing when all of it is loaded.
+    pub(crate) fn load_all_history(&mut self, cx: &mut Context<Self>) {
+        if self.history_before.is_some() && !self.history_loading {
+            self.load_older_page(true, cx);
+        }
+    }
+
     pub(super) fn load_older_history(&mut self, cx: &mut Context<Self>) {
         if self.history_loading {
             return;
@@ -791,6 +799,50 @@ mod tests {
             view.restore_history(Vec::new(), cx);
             assert!(view.source.is_empty());
             assert!(view.history_position.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn a_find_reads_every_older_pilot_turn_before_matching(cx: &mut TestAppContext) {
+        let full = long_pilot(35);
+        let pager: HistoryPager = {
+            let full = full.clone();
+            Arc::new(move |before, all| {
+                let before = before as usize;
+                let start = if all || before <= 20 { 0 } else { before - 20 };
+                Ok(HistoryPage {
+                    rows: full[start..before].to_vec(),
+                    turns: HashMap::new(),
+                    before: (start > 0).then_some(start as i64),
+                })
+            })
+        };
+        let view = cx.new(|_| TranscriptView::new());
+        view.update(cx, |view, cx| {
+            view.pilot_mode("pilot", 0xffffff, "Pilot");
+            view.install_prepared_history(PreparedHistory::new(full[50..].to_vec(), true), cx);
+            view.set_history_pager(Some(50), Some(pager));
+            // Only the window's turns, 25 to 34, are in memory.
+            assert_eq!(view.find_matches("Question 1").len(), 0);
+            view.load_all_history(cx);
+            // A second request while the first is reading changes nothing.
+            view.load_all_history(cx);
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            assert!(view.history_complete());
+            assert_eq!(view.history_rows(), &full[..]);
+            // Question 1 and 10–19, by the rows reveal_search takes.
+            let found = view.find_matches("Question 1");
+            assert_eq!(found.len(), 11);
+            assert!(
+                found
+                    .iter()
+                    .all(|&row| full[row].text.starts_with("Question 1"))
+            );
+            // Everything is loaded: nothing left to read.
+            view.load_all_history(cx);
+            assert!(!view.history_loading);
         });
     }
 }

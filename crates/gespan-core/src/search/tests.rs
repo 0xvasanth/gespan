@@ -209,3 +209,23 @@ fn unopened_titles_are_searchable_and_the_reader_sees_new_writes() {
             row: 1
         }));
 }
+
+#[test]
+fn transcript_find_returns_each_matching_message_once_by_its_first_row() {
+    let mut tool = crate::tool::ToolCall::new("t", "Read");
+    tool.input = "{\"path\":\"src/needle.rs\"}".into();
+    let rows = vec![
+        row("user", "Where is the Need", true),
+        // A phrase split across a message's stored fragments still matches.
+        row("user", "le?", false),
+        row("assistant", "No match here", true),
+        row("tool", &serde_json::to_string(&tool).unwrap(), true),
+        // Rows the transcript find skips, like a find in the Tauri app.
+        row("error", "needle", true),
+        row("assistant", "needle and NEEDLE again", true),
+    ];
+    assert_eq!(transcript_matches(&rows, "  needle "), vec![0, 3, 5]);
+    assert_eq!(transcript_matches(&rows, "nothing"), Vec::<usize>::new());
+    assert_eq!(transcript_matches(&rows, "   "), Vec::<usize>::new());
+    assert_eq!(transcript_matches(&[], "needle"), Vec::<usize>::new());
+}
