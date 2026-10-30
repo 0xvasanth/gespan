@@ -110,7 +110,7 @@ async function notices(directory) {
     join(directory, "material-icons.LICENSE"),
   );
 }
-async function linuxTree(directory, binary, kind) {
+export async function linuxTree(directory, binary, kind) {
   const app = join(directory, "usr/lib/gespan-native");
   await mkdir(app, { recursive: true });
   await cp(binary, join(app, "gespan-gpui"));
@@ -130,7 +130,7 @@ async function linuxTree(directory, binary, kind) {
   const desktop =
     "[Desktop Entry]\nType=Application\nName=Gespan Native\nExec=gespan-native %F\nIcon=gespan-native\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n";
   await writeFile(
-    join(directory, "usr/share/applications/gespan-native.desktop"),
+    join(directory, "usr/share/applications/dev.gespan.native.desktop"),
     desktop,
   );
   const icons = join(directory, "usr/share/icons/hicolor/256x256/apps");
@@ -289,18 +289,15 @@ export async function packageNative({
     const appDir = join(work, "GespanNative.AppDir");
     const { desktop } = await linuxTree(appDir, binary, "appimage");
     await writeFile(
-      join(appDir, "gespan-native.desktop"),
+      join(appDir, "dev.gespan.native.desktop"),
       desktop.replace("Exec=gespan-native %F", "Exec=gespan-gpui %F"),
     );
     await cp(
       join(root, "public/gespan.png"),
       join(appDir, "gespan-native.png"),
     );
-    await writeFile(
-      join(appDir, "AppRun"),
-      '#!/bin/sh\nexec "$APPDIR/usr/lib/gespan-native/gespan-gpui" "$@"\n',
-      { mode: 0o755 },
-    );
+    await cp(join(root, "scripts/native-appimage-apprun.sh"), join(appDir, "AppRun"));
+    await chmod(join(appDir, "AppRun"), 0o755);
     run(
       process.env.APPIMAGETOOL || "appimagetool",
       [
@@ -323,7 +320,7 @@ export async function packageNative({
     const spec = join(top, "SPECS/gespan-native.spec");
     await writeFile(
       spec,
-      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: 0.${parsed.label}.${parsed.sequence}%{?dist}\nSummary: Gespan Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nGespan Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/gespan-native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
+      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: 0.${parsed.label}.${parsed.sequence}%{?dist}\nSummary: Gespan Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nGespan Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
     );
     run("rpmbuild", [
       "--define",

@@ -137,6 +137,19 @@ you use Gespan Native with your real data:
 
 Opening different conversations in each app is fine. A code safeguard for this is
 planned but not built yet.
+### AppImage desktop integration
+
+Move the AppImage to a permanent location and make it executable, then opt in
+to a per-user application menu entry and Wayland icon registration:
+
+```sh
+./GespanNative.AppImage --install-desktop
+```
+
+This installs `dev.gespan.native.desktop` and the app icon under
+`$XDG_DATA_HOME` (default: `~/.local/share`). The launcher points to the AppImage,
+not its temporary mount. Normal launches do not install anything. Run the
+command again after moving or renaming the AppImage.
 
 ## Data and configuration
 
