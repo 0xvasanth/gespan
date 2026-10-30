@@ -45,6 +45,7 @@ mod session_groups;
 mod session_loading;
 mod session_preview;
 mod session_shortcuts;
+mod session_worktree;
 mod settings;
 mod shortcuts;
 mod sidebar_list;
@@ -710,6 +711,9 @@ pub(crate) struct Shell {
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
+    /// A removal prompt or its worktree lookup is under way.
+    removal_prompt: bool,
+    worktree_cleanups: HashMap<i64, session_worktree::WorktreeCleanup>,
     group_writes: Option<gpui::Task<()>>,
     selected_sessions: HashSet<i64>,
     selection_anchor: Option<i64>,
@@ -1121,6 +1125,8 @@ impl Shell {
             editor_menu: Default::default(),
             action_terminals: HashMap::new(),
             deleting: HashSet::new(),
+            removal_prompt: false,
+            worktree_cleanups: HashMap::new(),
             group_writes: None,
             selected_sessions: HashSet::new(),
             selection_anchor: None,
@@ -1677,8 +1683,10 @@ impl Shell {
                             this.invalidate_chrome(cx);
                             cx.notify();
                         }
+                        this.session_removed(id, true, cx);
                     }
                     Err(error) => {
+                        this.session_removed(id, false, cx);
                         this.error = Some(format!("Could not update archive: {error}"));
                         this.invalidate_chrome(cx);
                         cx.notify();
@@ -6004,7 +6012,7 @@ impl Shell {
     ) {
         if let MenuTarget::Tab(id) = target {
             match action {
-                "archive" => return self.toggle_archive(id, cx),
+                "archive" => return self.archive_session(id, window, cx),
                 "delete" => return self.confirm_delete_session(id, window, cx),
                 _ => {}
             }
@@ -6686,9 +6694,9 @@ impl Shell {
                 icon("archive", 12.).group_hover("session-archive", |s| s.text_color(content(1.))),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.toggle_archive(id, cx);
+                this.archive_session(id, window, cx);
             }))
             .into_any()
     }
