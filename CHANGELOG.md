@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build it with. The card shows Building… and then Built. A Codex
   `<proposed_plan>` block becomes a plan card in any turn, and plans saved by
   the Tauri app show as cards too.
+- Gespan Native asks what to do when switching branches would overwrite your
+  local changes, as the Tauri app does, instead of only showing Git's error.
+  Stash & switch puts them in a stash named "WIP before switching to
+  <branch>" and leaves it for you to apply later; Commit & switch commits
+  everything on the current branch with your message first. Cancel stays put.
 - Gespan Native's Sessions heading has a + button beside the filter that
   starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
