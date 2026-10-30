@@ -25,7 +25,8 @@ import {
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
+    // Git can still be finishing writes in .git when a test ends.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 it("reports a broken Git index instead of searching ignored files", async () => {
