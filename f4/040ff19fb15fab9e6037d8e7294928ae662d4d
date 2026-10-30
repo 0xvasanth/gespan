@@ -1,0 +1,93 @@
+crates/gespan-gpui/src/runtime.rs
+  s_3abf683d1a12e8::t_610fa615120d10 489
+crates/gespan-gpui/src/search.rs
+  s_3abf683d1a12e8::t_a8265baefe9f28 171-174
+crates/gespan-core/src/inbox/ask.rs
+  s_3abf683d1a12e8::t_97e7d59861f013 1-199
+crates/gespan-core/src/inbox.rs
+  s_3abf683d1a12e8::t_018255fa02f412 3
+crates/gespan-gpui/src/inbox/ask_panel.rs
+  s_3abf683d1a12e8::t_d7b8f13bdb22bb 165-169
+  s_3abf683d1a12e8::t_cd62aaa33850b8 1-164,170-352
+crates/gespan-gpui/src/shell.rs
+  s_3abf683d1a12e8::t_610fa615120d10 19,1374-1383,1418-1425
+  s_3abf683d1a12e8::t_372022f3283bf4 3644-3645,3648-3649
+crates/gespan-gpui/src/shell/inbox_ask.rs
+  s_3abf683d1a12e8::t_2feb281390b907 178,187,410
+  s_3abf683d1a12e8::t_188e9f7a451cb6 214-215
+  s_3abf683d1a12e8::t_7e40838ce91233 468-488
+  s_3abf683d1a12e8::t_23b76e2642533a 193-195,415-417,420-421,424,426-427,429-430,432-434,436,439
+  s_3abf683d1a12e8::t_c13be552d44818 77,80-81,465-467,489-494,496,499-500
+  s_3abf683d1a12e8::t_90a590a0915f19 1-76,78-79,82-125,128-160,162-177,179-186,188-192,196-198,201-206,209-213,216-334,336-340,348-351,354-361,364-409,414,418-419,422-423,425,428,431,435,438,440-442,444-464,501-572,575-596
+  s_3abf683d1a12e8::t_a8265baefe9f28 495,497-498
+  s_3abf683d1a12e8::t_bf32802348f410 161
+  s_3abf683d1a12e8::t_b3f15c824cf004 341-347,411-413
+  s_3abf683d1a12e8::t_3b71b96b0bee63 335,352-353,362-363
+  s_3abf683d1a12e8::t_d7b8f13bdb22bb 126-127,199-200,207-208,437,443,573-574
+crates/gespan-core/src/store/shared.rs
+  s_3abf683d1a12e8::t_018255fa02f412 508-510,535-578,583,598-600,602-603
+crates/gespan-gpui/src/inbox/ui.rs
+  s_3abf683d1a12e8::t_caca4f8094f681 1028
+  s_3abf683d1a12e8::t_610fa615120d10 1029-1032,2873,2941-2942
+crates/gespan-gpui/src/inbox.rs
+  s_3abf683d1a12e8::t_d7b8f13bdb22bb 469-471
+  s_3abf683d1a12e8::t_bf32802348f410 461
+  s_3abf683d1a12e8::t_610fa615120d10 3,46-56,145-147,155-165,381-383,459-460,462-468,472-490,706,768-779,819
+CHANGELOG.md
+  s_3abf683d1a12e8::t_6571d6d8cfc17c 22-25
+crates/gespan-core/src/store/shared/tests.rs
+  s_3abf683d1a12e8::t_018255fa02f412 1342-1357
+  s_3abf683d1a12e8::t_01b74a800e1481 1341
+crates/gespan-gpui/src/conversation/follow_up.rs
+  s_3abf683d1a12e8::t_610fa615120d10 159-163,371-376,381
+crates/gespan-core/src/inbox/ask_instructions.md
+  s_3abf683d1a12e8::t_824f6ccbd89521 1-22
+crates/gespan-gpui/src/conversation/submission_tests.rs
+  s_3abf683d1a12e8::t_a8265baefe9f28 700-804
+crates/gespan-core/src/provider/commands.rs
+  s_3abf683d1a12e8::t_018255fa02f412 44-50
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_3abf683d1a12e8::t_2feb281390b907 888
+crates/gespan-gpui/src/transcript.rs
+  s_3abf683d1a12e8::t_2feb281390b907 2706-2709
+crates/gespan-gpui/src/shell/search.rs
+  s_3abf683d1a12e8::t_c13be552d44818 153,353
+crates/gespan-gpui/src/shell/notifications.rs
+  s_3abf683d1a12e8::t_610fa615120d10 708-711
+crates/gespan-core/src/store/inbox_ask.rs
+  s_3abf683d1a12e8::t_35d2ef6616c777 1-81,85-121,123-173,175-192,194-198,216-285
+  s_3abf683d1a12e8::t_2549a609196ad8 201,207
+  s_3abf683d1a12e8::t_3b71b96b0bee63 199-200,202-206,208-215
+  s_3abf683d1a12e8::t_3eb9c741eaf1a2 174,193
+  s_3abf683d1a12e8::t_b3f15c824cf004 82-84
+  s_3abf683d1a12e8::t_c36c151921dc99 122
+crates/gespan-gpui/src/shell/app_views.rs
+  s_3abf683d1a12e8::t_01b74a800e1481 770
+  s_3abf683d1a12e8::t_d7b8f13bdb22bb 184-189
+  s_3abf683d1a12e8::t_610fa615120d10 169,479-497,517-523,738-743,746,760,767-769,771-775,777-784
+  s_3abf683d1a12e8::t_42fc6e745a173b 776
+crates/gespan-core/src/provider.rs
+  s_3abf683d1a12e8::t_018255fa02f412 22
+  s_3abf683d1a12e8::t_c36c151921dc99 23
+crates/gespan-core/src/store.rs
+  s_3abf683d1a12e8::t_018255fa02f412 5,65-85,464-465,467,470-486
+crates/gespan-gpui/src/conversation.rs
+  s_3abf683d1a12e8::t_610fa615120d10 293-295,370-381,386-391,788,1264-1269,1330-1334,2778-2782,2955,3989-4016
+  s_3abf683d1a12e8::t_2feb281390b907 382-385
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4040ff19fb15fab9e6037d8e7294928ae662d4d",
+  "prompts": {},
+  "sessions": {
+    "s_3abf683d1a12e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf67907a-9e6a-4d99-aab1-f544258778b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
