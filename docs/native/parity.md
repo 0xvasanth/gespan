@@ -82,8 +82,8 @@ tick the box in the same PR.
 ### Distribution and updates
 
 - [ ] **Move existing Tauri installs to Native.** Tauri (`dev.gespan.desktop`) and Native (`dev.gespan.native`) use separate app IDs and update feeds, and Native's updater refuses the other one.
-- [ ] **Stable channel and fixed download links.** Native publishes only `native-preview` prereleases. Tauri also publishes stable and copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root. Tauri: `scripts/release-channel.cjs`, `.github/workflows/release.yml`.
-- [ ] **CI builds and checks the GUI on Windows and Linux.** *(also below)*
+- [ ] **Stable channel and fixed download links.** Native publishes only prereleases: the `native-latest` feed on GitHub and `native-preview` on R2. #231 removed the Tauri release workflow, so nothing publishes a stable channel or copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root any more. Port from `.github/workflows/release.yml` as it was before #231 (`ee815fab^`) and `scripts/release-channel.cjs`.
+- [x] **CI builds and checks the GUI on Windows and Linux.** *(also below)* Done in #219.
 
 ### Tauri fixes not yet in Native
 
@@ -104,7 +104,7 @@ These are not features. They are dependencies that break if the folders are
 deleted as they are now.
 
 - [ ] **The remote host is built from `src/`.** `host/*.ts` imports 49 modules from `../src/` (connection protocol, harness, providers, sessions). Native's SSH setup installs that host.
-- [ ] **Only the Tauri release publishes host packages** (the `host` job in `release.yml`). Native downloads them from `v{version}`. Move the job to the Native release.
+- [x] **Only the Tauri release publishes host packages.** Done in #231: `native-release.yml` has the `host` job, and `release.yml` is gone.
 - [ ] **Native packaging uses files in `src-tauri/`.** `scripts/bundle-native-macos.sh` (icon.icns, Entitlements.plist), `scripts/package-native.mjs` and `crates/gespan-gpui/build.rs` (icon.ico).
 - [ ] **Native tests read Tauri and `src/` sources.** `include_str!` in `crates/gespan-core/src/store/shared/tests.rs`, `crates/gespan-core/src/provider/kind.rs` and `crates/gespan-gpui/src/editor_analysis.rs`.
 - [ ] **Mobile tests import `src/`.** `tests/mobile/watchFrames.test.ts`, which `mobile/vitest.config.ts` includes, imports `src/features/mobile/model/*`.
