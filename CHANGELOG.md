@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native treats the default Claude account as signed in when
   `CLAUDE_CODE_OAUTH_TOKEN` is set, and uses that token to show its usage, as
   Claude Code and the Tauri app do. Named accounts are unaffected.
+- Gespan Native lists the skills of enabled Codex plugins in the composer's /
+  picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
   Gespan left running, as the Tauri app does. Agents of a running Gespan,
   Native or Tauri, are left alone.

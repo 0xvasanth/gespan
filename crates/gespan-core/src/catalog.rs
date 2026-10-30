@@ -693,7 +693,7 @@ pub fn codex_request(
 ) -> Result<Value, String> {
     query_provider(Kind::Codex, method, params, account).map(|value| value["result"].clone())
 }
-fn query_provider(
+pub(crate) fn query_provider(
     kind: Kind,
     method: &str,
     params: Value,
