@@ -1,5 +1,6 @@
 //! Working-copy operations used by the native composer. Git protects dirty files;
-//! these operations never force a checkout, stash, or discard changes.
+//! these operations never force a checkout or discard changes, and only stash
+//! when the user picks Stash & switch.
 mod remote;
 use crate::diagnostics::metrics;
 pub mod report;
@@ -48,6 +49,9 @@ pub(crate) fn subcommand<'a>(args: &[&'a str]) -> &'a str {
 }
 
 pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    git_with(cwd, args, &[])
+}
+fn git_with(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String, String> {
     if crate::files::remote::is_remote(cwd) {
         return Err("This isn’t available for projects on another machine yet.".into());
     }
@@ -56,7 +60,8 @@ pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     command
         .current_dir(cwd)
         .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .envs(envs.iter().copied());
     crate::process::configure_child(&mut command);
     let out = command.output().map_err(|e| {
         tracing::error!(error = %e, "could not run Git");
@@ -285,21 +290,81 @@ fn valid_branch(cwd: &Path, name: &str) -> Result<(), String> {
     }
     git(cwd, &["check-ref-format", "--branch", name]).map(|_| ())
 }
-pub fn checkout(cwd: &Path, branch: &Branch) -> Result<(), String> {
+/// Why a branch switch did not happen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckoutError {
+    /// Git refused because the switch would overwrite local changes, tracked
+    /// or untracked; stashing or committing them lets the switch go ahead.
+    LocalChanges(String),
+    Other(String),
+}
+impl std::fmt::Display for CheckoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalChanges(error) | Self::Other(error) => f.write_str(error),
+        }
+    }
+}
+impl From<String> for CheckoutError {
+    fn from(error: String) -> Self {
+        if blocked_by_changes(&error) {
+            Self::LocalChanges(error)
+        } else {
+            Self::Other(error)
+        }
+    }
+}
+/// Git's refusal to switch over local changes, the same test as the Tauri app.
+fn blocked_by_changes(error: &str) -> bool {
+    let text = error.to_ascii_lowercase();
+    text.contains("would be overwritten")
+        || text.contains("commit your changes or stash")
+        || text.contains("please move or remove them before")
+}
+pub fn checkout(cwd: &Path, branch: &Branch) -> Result<(), CheckoutError> {
     if crate::files::remote::is_remote(cwd) {
-        return remote::checkout(cwd, branch);
+        return Ok(remote::checkout(cwd, branch)?);
     }
     valid_branch(cwd, &branch.name)?;
+    // Git's refusal is matched in English whatever the user's locale.
+    let english = [("LC_ALL", "C"), ("LANGUAGE", "C")];
     if let Some(remote) = &branch.remote {
         let reference = format!("{remote}/{}", branch.name);
-        git(
+        git_with(
             cwd,
             &["switch", "--track", "-c", &branch.name, "--", &reference],
+            &english,
         )?;
     } else {
-        git(cwd, &["switch", "--", &branch.name])?;
+        git_with(cwd, &["switch", "--", &branch.name], &english)?;
     }
     Ok(())
+}
+/// The stash message for changes set aside before switching to `branch`.
+pub fn switch_stash_message(branch: &str) -> String {
+    format!("WIP before switching to {branch}")
+}
+/// SwitchBranchDialog's Stash & switch: stash tracked and untracked changes,
+/// then switch. The stash is kept for the user to apply later, not reapplied.
+pub fn stash_and_checkout(cwd: &Path, branch: &Branch) -> Result<(), String> {
+    let message = switch_stash_message(&branch.name);
+    git(
+        cwd,
+        &["stash", "push", "--include-untracked", "-m", &message],
+    )?;
+    checkout(cwd, branch).map_err(|error| {
+        format!("Your changes are stashed as “{message}”, but the switch failed: {error}")
+    })
+}
+/// SwitchBranchDialog's Commit & switch: commit every change on the current
+/// branch, then switch. An empty message is refused before anything is staged.
+pub fn commit_and_checkout(cwd: &Path, branch: &Branch, message: &str) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("Commit message cannot be empty".into());
+    }
+    crate::scm::stage_all(cwd)?;
+    crate::scm::commit(cwd, message, false)?;
+    checkout(cwd, branch).map_err(|error| error.to_string())
 }
 pub fn create_branch(cwd: &Path, name: &str) -> Result<(), String> {
     if crate::files::remote::is_remote(cwd) {
@@ -730,6 +795,158 @@ mod tests {
         )
         .unwrap();
         (temp, cwd)
+    }
+
+    /// `main` and `other` disagree about `shared.txt`, and only `other` has
+    /// `new.txt`; `main` is checked out with a clean tree.
+    fn switch_repo() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().to_owned();
+        let run = |args: &[&str]| git(&cwd, args).unwrap();
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.name", "Test"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "core.autocrlf", "false"]);
+        run(&["config", "core.safecrlf", "false"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        std::fs::write(cwd.join("shared.txt"), "base\n").unwrap();
+        run(&["add", "shared.txt"]);
+        run(&["commit", "-m", "Base"]);
+        run(&["switch", "-c", "other"]);
+        std::fs::write(cwd.join("shared.txt"), "other\n").unwrap();
+        std::fs::write(cwd.join("new.txt"), "from other\n").unwrap();
+        run(&["add", "shared.txt", "new.txt"]);
+        run(&["commit", "-m", "Other"]);
+        run(&["switch", "main"]);
+        (temp, cwd)
+    }
+    fn local(name: &str) -> Branch {
+        Branch {
+            name: name.into(),
+            remote: None,
+        }
+    }
+    fn current(cwd: &Path) -> String {
+        git(cwd, &["symbolic-ref", "--short", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+    fn read(cwd: &Path, file: &str) -> String {
+        std::fs::read_to_string(cwd.join(file)).unwrap()
+    }
+    fn stashes(cwd: &Path) -> Vec<String> {
+        git(cwd, &["stash", "list", "--format=%gs"])
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_tree_switches_branches() {
+        let (_temp, cwd) = switch_repo();
+        checkout(&cwd, &local("other")).unwrap();
+        assert_eq!(current(&cwd), "other");
+        assert_eq!(read(&cwd, "shared.txt"), "other\n");
+        assert!(stashes(&cwd).is_empty());
+    }
+
+    #[test]
+    fn a_switch_over_conflicting_edits_is_reported_as_local_changes() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("shared.txt"), "mine\n").unwrap();
+        let error = checkout(&cwd, &local("other")).unwrap_err();
+        assert!(matches!(error, CheckoutError::LocalChanges(_)), "{error:?}");
+        assert_eq!(current(&cwd), "main");
+        assert_eq!(read(&cwd, "shared.txt"), "mine\n");
+        // Edits that don't conflict ride along as Git always allowed.
+        std::fs::write(cwd.join("shared.txt"), "base\n").unwrap();
+        std::fs::write(cwd.join("loose.txt"), "kept\n").unwrap();
+        checkout(&cwd, &local("other")).unwrap();
+        assert_eq!(read(&cwd, "loose.txt"), "kept\n");
+    }
+
+    #[test]
+    fn an_untracked_file_in_the_way_is_reported_as_local_changes() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("new.txt"), "mine\n").unwrap();
+        let error = checkout(&cwd, &local("other")).unwrap_err();
+        assert!(matches!(error, CheckoutError::LocalChanges(_)), "{error:?}");
+        stash_and_checkout(&cwd, &local("other")).unwrap();
+        assert_eq!(current(&cwd), "other");
+        assert_eq!(read(&cwd, "new.txt"), "from other\n");
+        // The untracked file went into the stash rather than being lost.
+        checkout(&cwd, &local("main")).unwrap();
+        assert!(!cwd.join("new.txt").exists());
+        git(&cwd, &["stash", "apply"]).unwrap();
+        assert_eq!(read(&cwd, "new.txt"), "mine\n");
+    }
+
+    #[test]
+    fn other_switch_failures_are_not_mistaken_for_local_changes() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("shared.txt"), "mine\n").unwrap();
+        let error = checkout(&cwd, &local("missing")).unwrap_err();
+        assert!(matches!(error, CheckoutError::Other(_)), "{error:?}");
+        assert!(!error.to_string().is_empty());
+        let error = checkout(&cwd, &local("-bad")).unwrap_err();
+        assert!(matches!(error, CheckoutError::Other(_)), "{error:?}");
+    }
+
+    #[test]
+    fn stash_and_switch_keeps_the_changes_in_a_named_stash() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("shared.txt"), "mine\n").unwrap();
+        std::fs::write(cwd.join("scratch.txt"), "draft\n").unwrap();
+        stash_and_checkout(&cwd, &local("other")).unwrap();
+        assert_eq!(current(&cwd), "other");
+        assert_eq!(read(&cwd, "shared.txt"), "other\n");
+        // As in the Tauri app the stash is not reapplied on the new branch.
+        assert!(!cwd.join("scratch.txt").exists());
+        assert_eq!(git(&cwd, &["status", "--porcelain"]).unwrap(), "");
+        assert_eq!(
+            stashes(&cwd),
+            ["On main: WIP before switching to other".to_owned()]
+        );
+        checkout(&cwd, &local("main")).unwrap();
+        git(&cwd, &["stash", "apply"]).unwrap();
+        assert_eq!(read(&cwd, "shared.txt"), "mine\n");
+        assert_eq!(read(&cwd, "scratch.txt"), "draft\n");
+    }
+
+    #[test]
+    fn commit_and_switch_commits_on_the_old_branch_first() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("shared.txt"), "mine\n").unwrap();
+        std::fs::write(cwd.join("scratch.txt"), "draft\n").unwrap();
+        commit_and_checkout(&cwd, &local("other"), "  Keep my edits\n").unwrap();
+        assert_eq!(current(&cwd), "other");
+        assert_eq!(read(&cwd, "shared.txt"), "other\n");
+        assert_eq!(git(&cwd, &["status", "--porcelain"]).unwrap(), "");
+        assert!(stashes(&cwd).is_empty());
+        let log = |args: &[&str]| git(&cwd, args).unwrap().trim().to_owned();
+        assert_eq!(log(&["log", "-1", "--format=%s", "main"]), "Keep my edits");
+        assert_eq!(log(&["show", "main:shared.txt"]), "mine");
+        assert_eq!(log(&["show", "main:scratch.txt"]), "draft");
+        assert_eq!(log(&["log", "-1", "--format=%s", "other"]), "Other");
+    }
+
+    #[test]
+    fn commit_and_switch_refuses_an_empty_message_without_staging() {
+        let (_temp, cwd) = switch_repo();
+        std::fs::write(cwd.join("shared.txt"), "mine\n").unwrap();
+        std::fs::write(cwd.join("scratch.txt"), "draft\n").unwrap();
+        let head = git(&cwd, &["rev-parse", "HEAD"]).unwrap();
+        for message in ["", "  \n\t"] {
+            let error = commit_and_checkout(&cwd, &local("other"), message).unwrap_err();
+            assert_eq!(error, "Commit message cannot be empty");
+        }
+        assert_eq!(current(&cwd), "main");
+        assert_eq!(git(&cwd, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(git(&cwd, &["diff", "--cached", "--name-only"]).unwrap(), "");
+        assert_eq!(read(&cwd, "shared.txt"), "mine\n");
+        assert_eq!(read(&cwd, "scratch.txt"), "draft\n");
     }
 
     fn branch_of(cwd: &Path, tree: &Path) -> Option<String> {
