@@ -34,6 +34,11 @@ pub(crate) enum Event {
         item: Box<Item>,
         prompt: String,
     },
+    /// A new session with the item as a card above its composer, to send.
+    ComposeSession {
+        item: Box<Item>,
+        prompt: String,
+    },
     ItemsChanged(Vec<Item>),
     /// A tracker was connected or disconnected.
     ConnectionsChanged,
@@ -884,7 +889,7 @@ impl Inbox {
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let prompt = item.prompt(&format!("{body}\n\n{discussion}"), false);
-            cx.emit(Event::StartSession {
+            cx.emit(Event::ComposeSession {
                 item: Box::new(item),
                 prompt,
             });

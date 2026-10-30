@@ -453,6 +453,9 @@ impl Input {
     pub(crate) fn label(&self) -> &SharedString {
         &self.label
     }
+    pub(crate) fn placeholder(&self) -> &SharedString {
+        &self.placeholder
+    }
     pub(crate) fn set_placeholder(
         &mut self,
         text: impl Into<SharedString>,

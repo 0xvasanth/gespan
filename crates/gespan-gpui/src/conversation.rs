@@ -4,6 +4,7 @@ mod attachment_drop;
 mod background_tasks;
 mod btw;
 mod commands;
+pub(crate) mod composer_card;
 pub(crate) mod composer_features;
 mod composer_shelf;
 pub(crate) mod dictation;
@@ -16,6 +17,8 @@ pub(crate) mod git_actions;
 mod history;
 mod hold;
 pub(crate) use hold::HoldChanged;
+#[cfg(test)]
+mod composer_card_tests;
 mod mobile;
 #[cfg(test)]
 mod model_welcome_tests;
@@ -259,6 +262,11 @@ pub(crate) struct Conversation {
     menu: Option<OpenMenu>,
     add_anchor: AnchorSlot,
     model_anchor: AnchorSlot,
+    /// What the next message starts from, shown above the input.
+    composer_card: Option<composer_card::ComposerCard>,
+    composer_placeholder: SharedString,
+    /// The note the next launched turn carries as a card.
+    pending_note: Option<Box<gespan_core::notes::Note>>,
     /// The composer box, which places the Opus welcome scene beside it.
     composer_box_anchor: AnchorSlot,
     /// The welcome scene for a just-picked model, cleared when it ends.
@@ -727,6 +735,9 @@ impl Conversation {
             menu: None,
             add_anchor: AnchorSlot::default(),
             model_anchor: AnchorSlot::default(),
+            composer_card: None,
+            composer_placeholder: SharedString::default(),
+            pending_note: None,
             composer_box_anchor: AnchorSlot::default(),
             model_welcome: None,
             access_anchor: AnchorSlot::default(),
@@ -1012,7 +1023,9 @@ impl Conversation {
             return;
         }
         if self.attaching
-            || (!self.input.read(cx).has_message_text() && self.attachments.is_empty())
+            || (!self.input.read(cx).has_message_text()
+                && self.attachments.is_empty()
+                && self.composer_card.is_none())
         {
             return;
         }
@@ -1028,6 +1041,7 @@ impl Conversation {
             .unwrap_or(raw);
         self.folder_selected = false;
         let prompt = self.consume_mode_command(raw, cx);
+        let prompt = self.apply_composer_card(prompt, cx);
         if prompt.trim().is_empty() && self.attachments.is_empty() {
             return;
         }
@@ -1173,7 +1187,11 @@ impl Conversation {
             ..Default::default()
         });
         if !self.is_remote() && settings.prepared_prompt.is_none() {
-            let prepared = self.completion.read(cx).prepare_prompt(&prompt);
+            let mut prepared = self.completion.read(cx).prepare_prompt(&prompt);
+            if let Some(note) = self.pending_note.take() {
+                prepared = gespan_core::notes::compose_message(&note, &prepared);
+                settings.note_card = Some(gespan_core::notes::card_meta(&note));
+            }
             if prepared != prompt {
                 settings.prepared_prompt = Some(prepared);
             }
@@ -3057,6 +3075,7 @@ impl Conversation {
                     .child(self.completion.read(cx).composer_probe())
                     .child(self.btw_home.0.probe())
                     .child(composer_surface(radius))
+                    .children(self.composer_card_view(cx))
                     .children(self.attachment_chips(cx))
                     .children(dictation::bar(&self.dictation, &self.input, cx))
                     .child(

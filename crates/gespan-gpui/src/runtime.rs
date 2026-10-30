@@ -237,6 +237,7 @@ fn run_turn_using(
         let started_at = transcript.rows[start].sent_at;
         transcript.append(&prompt);
         transcript.attach_files(&settings.attachments);
+        transcript.attach_note(settings.note_card.as_ref());
         // Show the working receipt while connecting, before the first token.
         transcript.begin("assistant");
         // Keep the already painted prompt in the failure replay even if saving

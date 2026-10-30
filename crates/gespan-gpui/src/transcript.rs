@@ -2826,6 +2826,7 @@ impl TranscriptView {
                 sent_at: None,
             });
         }
+        submitted.attach_note(settings.note_card.as_ref());
         submitted.begin("assistant");
         if !settings.internal_message && !self.pilot && self.visible && !cx.reduce_motion() {
             self.burst = burst::Kind::from_settings(settings)

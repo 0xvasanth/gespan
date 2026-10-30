@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native starts work from an inbox item, or from a note, with a card
+  above the composer, as the Tauri app does. You can add a message or just
+  send, and remove the card to start over. A note stays a card on the sent
+  message, and only the agent receives its text. Fix with agent still sends
+  straight away.
 - Gespan Native shows videos attached to inbox item descriptions, as the Tauri
   app does. A GitHub or Linear attachment that turns out to be a video shows
   as a play card in the description and opens in the file viewer.
