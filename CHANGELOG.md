@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Right-clicking Inbox in Gespan Native's sidebar or project rail marks
   everything as read, mutes or resumes every project's notifications, or
   opens notification settings, as in the Tauri app.
+- A comment or action you make from Gespan Native's inbox no longer marks
+  that item unread when the update comes back, as in the Tauri app.
 - Gespan Native lists the skills of enabled Codex plugins in the composer's /
   picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit

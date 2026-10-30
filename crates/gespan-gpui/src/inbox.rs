@@ -77,6 +77,8 @@ pub(crate) struct Inbox {
     diff: Option<Diff>,
     /// The Code tab's Hunks / Full file switch, for GitHub pull requests.
     full_file: bool,
+    /// Comments and actions made here, whose update must not read as unread.
+    self_activity: gespan_core::inbox::SelfActivity,
     diff_view: Entity<DiffView>,
     checks: Option<Checks>,
     tab: Tab,
@@ -265,6 +267,7 @@ impl Inbox {
             comments: vec![],
             diff: None,
             full_file: false,
+            self_activity: Default::default(),
             diff_view,
             checks: None,
             tab: Tab::Summary,
@@ -386,6 +389,14 @@ impl Inbox {
         self.state.seen.seeded = true;
         self.snapshot.items = items;
     }
+    /// An update our own comment or action caused is not unread.
+    fn skip_own_updates(&mut self, items: &[Item], now: u64) {
+        for item in items {
+            if self.state.seen.unseen(item) && self.self_activity.consume(item, now) {
+                self.state.seen.mark(item);
+            }
+        }
+    }
     /// Mark all as read: every item the inbox has loaded.
     pub(crate) fn mark_all_read(&mut self, cx: &mut Context<Self>) {
         let items = std::mem::take(&mut self.snapshot.items);
@@ -490,6 +501,7 @@ impl Inbox {
                 snapshot
                     .items
                     .sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
+                this.skip_own_updates(&snapshot.items, gespan_core::time::now_ms());
                 this.state.seen.seed(&snapshot.items);
                 this.snapshot = snapshot;
                 this.sessions = sessions;
@@ -823,6 +835,7 @@ impl Inbox {
         let key = item.key();
         let service = self.service.clone();
         let reply = self.reply.as_ref().map(|r| r.0.clone()).unwrap_or_default();
+        let target = gespan_core::inbox::SelfTarget::of(&item);
         let task = cx
             .background_executor()
             .spawn(async move { service.comment(&item, body, reply) });
@@ -836,6 +849,8 @@ impl Inbox {
                 }
                 match result {
                     Ok(_) => {
+                        this.self_activity
+                            .record(target, gespan_core::time::now_ms());
                         this.comment
                             .update(cx, |input, cx| input.set_text(String::new(), cx));
                         this.reply = None;
@@ -981,6 +996,7 @@ impl Inbox {
         let service = self.service.clone();
         let key = item.key();
         let merging = matches!(action.as_str(), "merge" | "squash" | "rebase");
+        let target = gespan_core::inbox::SelfTarget::of(&item);
         let task = cx
             .background_executor()
             .spawn(async move { service.action(&item, &action) });
@@ -990,6 +1006,8 @@ impl Inbox {
                 this.acting = false;
                 match result {
                     Ok(item) => {
+                        this.self_activity
+                            .record(target, gespan_core::time::now_ms());
                         this.action_notice = (merging
                             && !item.state.eq_ignore_ascii_case("merged"))
                         .then(|| "Merge queued or auto-merge enabled.".into());
@@ -1098,5 +1116,32 @@ mod tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("inbox-diff-hunks").is_none());
+    }
+
+    #[gpui::test]
+    fn an_update_from_our_own_comment_does_not_read_as_unread(cx: &mut TestAppContext) {
+        let (window, _) = inbox(cx);
+        window
+            .update(cx, |inbox, _, _| {
+                let mut ours = item("github", 1);
+                let mut theirs = item("github", 2);
+                inbox.state.seen.seed(&[ours.clone(), theirs.clone()]);
+                inbox.self_activity.record(
+                    gespan_core::inbox::SelfTarget::of(&ours),
+                    gespan_core::time::now_ms(),
+                );
+                // Both get a newer revision; only #1's came from us.
+                ours.updated_at = "2030-01-01T00:00:00Z".into();
+                theirs.updated_at = "2030-01-01T00:00:00Z".into();
+                let now = gespan_core::time::now_ms();
+                inbox.skip_own_updates(&[ours.clone(), theirs.clone()], now);
+                inbox.snapshot.items = vec![ours.clone(), theirs];
+                assert_eq!(inbox.unread_count(), 1, "only someone else's update");
+                // Its next revision is announced as usual.
+                ours.updated_at = "2031-01-01T00:00:00Z".into();
+                inbox.skip_own_updates(std::slice::from_ref(&ours), now);
+                assert!(inbox.state.seen.unseen(&ours));
+            })
+            .unwrap();
     }
 }
