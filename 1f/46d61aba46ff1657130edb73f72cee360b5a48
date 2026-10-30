@@ -1,0 +1,118 @@
+docs/building.md
+  s_bfa0c56141afa0::t_2ff40c4ceef703 102
+  s_bfa0c56141afa0::t_e54c5d6049232d 23-24,76,85,90,100,119
+docs/diagnostics/log-schema.md
+  s_bfa0c56141afa0::t_e54c5d6049232d 15-20,26-29
+src/test/diagnosticsContract.test.ts
+  s_bfa0c56141afa0::t_e54c5d6049232d 119-121
+crates/gespan-gpui/src/pilots/floating.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 590
+crates/gespan-core/Cargo.toml
+  s_bfa0c56141afa0::t_cd7c7ff5ae80d4 80-81
+  s_bfa0c56141afa0::t_810d588ba955dd 82-86
+docs/privacy.md
+  s_bfa0c56141afa0::t_e54c5d6049232d 72
+crates/gespan-gpui/src/main.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 260,393,573,579
+  s_bfa0c56141afa0::t_d18ac33c4dd283 194,200-202,204
+crates/gespan-gpui/src/memory_log.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 3
+crates/gespan-core/examples/sign_native_update/test-key.txt
+  s_bfa0c56141afa0::t_810d588ba955dd 1
+scripts/package-native.mjs
+  s_bfa0c56141afa0::t_3eba6e1e73d632 113-119,127,138,166-167,201,252,255-259,264,266,270,292,300,320,337,364,368,380-383
+.github/workflows/ci.yml
+  s_bfa0c56141afa0::t_50b326fc226459 12
+crates/gespan-core/examples/sign_native_update/main.rs
+  s_bfa0c56141afa0::t_810d588ba955dd 1-119
+crates/gespan-gpui/src/notifications/updater.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 265,395
+scripts/bundle-native-macos.sh
+  s_bfa0c56141afa0::t_0d0f78bc81eba6 26-27,29-30,44,80,92
+  s_bfa0c56141afa0::t_3eba6e1e73d632 64-66
+crates/gespan-core/src/diagnostics/paths.rs
+  s_bfa0c56141afa0::t_46584eef3cb441 14-36,47-58,63-100,109-119,128,130,133,138,140,175,185,200,210,221,233,249,261,287,292-369
+  s_bfa0c56141afa0::t_ce9a60d3dd757f 370
+crates/gespan-core/src/provider.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 1734
+crates/gespan-core/src/app_update/tests.rs
+  s_bfa0c56141afa0::t_36b139504a2ce5 70
+  s_bfa0c56141afa0::t_9b823d46ff4559 188-210
+scripts/package-native.test.mjs
+  s_bfa0c56141afa0::t_e1d69cad296efa 316
+  s_bfa0c56141afa0::t_35b64a439ddf6a 41,145,159-162,237,264,315,317-318
+crates/gespan-core/src/diagnostics/actions.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 28,66,98,121,133,136,141,153
+scripts/release-channel.cjs
+  s_bfa0c56141afa0::t_824af760817e32 4,7-8,16-18,28-29,58-59,141
+  s_bfa0c56141afa0::t_c07394c98630c8 75-77,79
+scripts/dev-native.mjs
+  s_bfa0c56141afa0::t_35b64a439ddf6a 108
+.github/workflows/native-release.yml
+  s_bfa0c56141afa0::t_50b326fc226459 61,209,247,287,341-344,358,365-366,394
+  s_bfa0c56141afa0::t_c07394c98630c8 85,232
+crates/gespan-gpui/src/shell.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 1994,8499,8602
+crates/gespan-core/src/provider/rewind.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 100
+crates/gespan-gpui/src/instance.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 1,74
+scripts/native-release.test.mjs
+  s_bfa0c56141afa0::t_52fabcebecc243 3-12,31-32,140-205
+scripts/dev-native.test.mjs
+  s_bfa0c56141afa0::t_35b64a439ddf6a 167
+docs/native/README.md
+  s_bfa0c56141afa0::t_2ff40c4ceef703 1,3-5,41,56,59-65,109,114,120-124,130
+  s_bfa0c56141afa0::t_5e7420430052c7 88-90
+crates/gespan-core/src/diagnostics/mod.rs
+  s_bfa0c56141afa0::t_1ffc46651993f6 31
+scripts/native-installer.nsi
+  s_bfa0c56141afa0::t_55fb2e47edb924 4,6-8,13-14,34,37,57,60-63,71,87-88
+crates/gespan-core/examples/sign_native_update/test-key.pub.txt
+  s_bfa0c56141afa0::t_810d588ba955dd 1
+crates/gespan-gpui/src/app_menu.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 45-46,53,57,171
+crates/gespan-core/src/app_update/install.rs
+  s_bfa0c56141afa0::t_36b139504a2ce5 66
+  s_bfa0c56141afa0::t_09e7f359cb0804 324-331,337-428
+  s_bfa0c56141afa0::t_3743a995749989 3-4,138-140,142,146,152-153,155-159,162,164-165,177-213,220,235,239,269-272,283,290
+  s_bfa0c56141afa0::t_1130e0e61cb80e 151,154
+crates/gespan-gpui/src/shell/menu_bar.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 257,274
+crates/gespan-core/tests/diagnostics_init.rs
+  s_bfa0c56141afa0::t_d3a19f48d76463 78
+crates/gespan-core/src/app_update/mod.rs
+  s_bfa0c56141afa0::t_98a5711ae4b619 1-3,20-32,80-82,112,120,145,147-156,238,285,328,376,411
+  s_bfa0c56141afa0::t_b8ac452cfd094b 146,294,309,353
+crates/gespan-gpui/packaging/Entitlements.plist
+  s_bfa0c56141afa0::t_0d0f78bc81eba6 1-12
+crates/gespan-gpui/src/shell/quick_composer.rs
+  s_bfa0c56141afa0::t_d2d3256609bbd4 101
+scripts/native-release.mjs
+  s_bfa0c56141afa0::t_571325a6c97558 60-61,70-102,105-106,110,115-118,121,138,144-147,157
+scripts/release-channel.test.cjs
+  s_bfa0c56141afa0::t_824af760817e32 107,199
+  s_bfa0c56141afa0::t_c9aee6815a8492 7,18,20,60-64,74-75,131-133,135,174,178
+scripts/bundle-native-macos.test.mjs
+  s_bfa0c56141afa0::t_35b64a439ddf6a 50,58,60-62
+crates/gespan-core/tests/shared_contracts.rs
+  s_bfa0c56141afa0::t_d3a19f48d76463 3-7,162-163,165-172,290,295
+crates/gespan-gpui/Cargo.lock
+  s_bfa0c56141afa0::t_5f6f9fac1c0690 1443-1448,2373,4157-4168,6076-6086,6116-6125,6292-6300,6348-6358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f46d61aba46ff1657130edb73f72cee360b5a48",
+  "prompts": {},
+  "sessions": {
+    "s_bfa0c56141afa0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc216694-5545-451b-ae29-38bb1529b6f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
