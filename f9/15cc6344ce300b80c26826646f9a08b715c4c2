@@ -1,0 +1,80 @@
+crates/gespan-gpui/src/editor_analysis.rs
+  s_397904f8fa97d0::t_286369f4b43159 655
+crates/gespan-core/tests/fixtures/desktop/harness-register.ts
+  s_397904f8fa97d0::t_286369f4b43159 1-28
+crates/gespan-core/tests/fixtures/desktop/schema-v1.sql
+  s_397904f8fa97d0::t_286369f4b43159 1-17
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.ps1.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-111
+crates/gespan-core/tests/fixtures/desktop/src/features/settings/model/displayPrefs.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/checkpoint/turn.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-2
+crates/gespan-core/tests/fixtures/desktop/pilot-tables.sql
+  s_397904f8fa97d0::t_286369f4b43159 1-20
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/ssh_askpass.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-201
+crates/gespan-core/tests/shared_contracts.rs
+  s_397904f8fa97d0::t_286369f4b43159 37-39,41-47
+  s_397904f8fa97d0::t_6ad8aa98330a42 50-68
+  s_397904f8fa97d0::t_2545019ab232ae 48-49
+scripts/native-editor/build.mjs
+  s_397904f8fa97d0::t_286369f4b43159 38
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/board.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-3
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/mobile_access.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-4
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/pilot_transcript.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-4
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.sh.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-69
+crates/gespan-core/tests/fixtures/desktop/src/features/sessions/model/session.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-28
+crates/gespan-gpui/tests/fixtures/large-app.tsx
+  s_397904f8fa97d0::t_286369f4b43159 1-15943
+crates/gespan-core/tests/fixtures/desktop/src-tauri/tauri.conf.json.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1
+crates/gespan-core/tests/fixtures/desktop/src/features/pilots/model/pilot.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/codex_pilot_store.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1
+crates/gespan-core/tests/fixtures/desktop/src/integrations/harness/providers/claude/claude.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-9
+crates/gespan-core/src/provider/kind.rs
+  s_397904f8fa97d0::t_286369f4b43159 232,293
+crates/gespan-core/src/store/shared/tests.rs
+  s_397904f8fa97d0::t_6ad8aa98330a42 3-7
+  s_397904f8fa97d0::t_286369f4b43159 65,102,352,378,1107
+crates/gespan-core/tests/fixtures/desktop/harness-availability.ts
+  s_397904f8fa97d0::t_286369f4b43159 1-209
+crates/gespan-core/tests/fixtures/desktop/src/features/sessions/data/sessionStore.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-4
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/lib.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-2
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_ssh.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-12
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/session_store.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-2
+crates/gespan-core/tests/fixtures/desktop/src/features/board/model/ticketCards.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-73
+crates/gespan-core/tests/fixtures/desktop/src/features/settings/model/settings.ts.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1-3
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/pilot.rs.excerpt
+  s_397904f8fa97d0::t_286369f4b43159 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f915cc6344ce300b80c26826646f9a08b715c4c2",
+  "prompts": {},
+  "sessions": {
+    "s_397904f8fa97d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24705048-ccc9-4c8b-8839-19522fa5ecaf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
