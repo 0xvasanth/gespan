@@ -615,7 +615,8 @@ pub(crate) struct Shell {
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
-    orchestrations: HashMap<i64, orchestration::Run>,
+    orchestrations: HashMap<i64, orchestration::Live>,
+    control_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
     orchestration_summaries: HashMap<i64, gespan_core::orchestration::Summary>,
     /// Sessions an /operator thread started, by the session that started them.
@@ -1048,6 +1049,7 @@ impl Shell {
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
             orchestrations: HashMap::new(),
+            control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
             started_by: sidebar_metadata.started_by,
             rails: Default::default(),
@@ -1349,6 +1351,8 @@ impl Shell {
             this.bind_notices(cx);
             this.init_app_bridge(cx);
         }
+        // Every window hosts its own runs, so each has its own control bridge.
+        this.init_control_bridge(cx);
         for summary in summaries {
             if this
                 .pilots

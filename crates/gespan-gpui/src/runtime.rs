@@ -580,6 +580,18 @@ fn run_turn_using(
                 ))
             );
         }
+        if !raw_native_command
+            && settings
+                .environment
+                .contains_key(gespan_core::pilot::bridge::CONTROL_ENDPOINT)
+        {
+            let cli = std::env::current_exe().map_err(|e| e.to_string())?;
+            let cli = format!("{} control", shlex_quote(&cli.to_string_lossy()));
+            prompt = format!(
+                "{prompt}\n\n{}",
+                gespan_core::orchestration::lead_prompt(&cli)
+            );
+        }
         if !raw_native_command && settings.operator_enabled {
             let cli = std::env::current_exe().map_err(|e| e.to_string())?;
             prompt = format!(

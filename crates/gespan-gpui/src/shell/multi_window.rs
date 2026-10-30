@@ -300,6 +300,8 @@ impl Shell {
             });
         }
         self.attach_session(id, view, cx);
+        // A lead's capability named the closing window's bridge.
+        self.orchestration_view_added(id, cx);
         self.refresh_session_mark(id, cx);
         self.sync_keep_awake();
     }
@@ -389,6 +391,58 @@ mod tests {
         window
             .update(cx, |_, _, cx| crate::windows::is_hidden(cx.entity_id(), cx))
             .unwrap()
+    }
+
+    #[gpui::test]
+    fn closing_a_window_hands_its_run_to_the_primary_still_under_control(cx: &mut TestAppContext) {
+        use gespan_core::orchestration::{Plan, Task};
+        let (first, second, _) = two_windows(cx);
+        let lead = active(second, cx);
+        second
+            .update(cx, |shell, _, cx| {
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Work".into(),
+                        summary: String::new(),
+                        tasks: vec![Task {
+                            id: "a".into(),
+                            title: "A".into(),
+                            prompt: "Work".into(),
+                            files: vec!["src".into()],
+                            depends_on: Vec::new(),
+                            harness: None,
+                            model: None,
+                            model_settings: Default::default(),
+                        }],
+                        max_workers: 1,
+                    },
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        close(second, cx);
+        let (reply, result) = std::sync::mpsc::channel();
+        first
+            .update(cx, |shell, _, cx| {
+                assert!(shell.sessions.contains_key(&lead));
+                shell.handle_control_call(
+                    gespan_core::pilot::bridge::Call {
+                        session: lead,
+                        request_id: "r1".into(),
+                        action: "list".into(),
+                        input: serde_json::json!({}),
+                        reply,
+                    },
+                    cx,
+                );
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        let listed = result.try_recv().unwrap().unwrap();
+        assert_eq!(listed["run"]["tasks"][0]["title"], "A");
+        cx.run_until_parked();
     }
 
     #[gpui::test]
