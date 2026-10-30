@@ -1,0 +1,19 @@
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.ps1.excerpt
+  s_a697a7155dfcff::t_c8d8e2a5f0a86b 79-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a035b41186825ff412f4dbd432b92a08fe76b576",
+  "prompts": {},
+  "sessions": {
+    "s_a697a7155dfcff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4149efd8-65d6-4849-9b21-3042f0ee49fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
