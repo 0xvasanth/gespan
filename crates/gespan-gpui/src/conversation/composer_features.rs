@@ -433,7 +433,7 @@ impl Conversation {
             .map(|row| row.text.as_str())
             .collect();
         match gespan_core::orchestration::parse(&text) {
-            Ok(plan) => self.orchestration_plan = Some(plan),
+            Ok(plan) => self.set_orchestration_plan(Some(plan)),
             Err(error) => self.orchestration_error = Some(error),
         }
     }

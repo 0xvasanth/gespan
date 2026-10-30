@@ -6,7 +6,6 @@ mod btw;
 mod commands;
 pub(crate) mod composer_card;
 pub(crate) mod composer_features;
-mod orchestration_card;
 mod composer_shelf;
 pub(crate) mod dictation;
 mod edit_last_turn;
@@ -17,6 +16,7 @@ mod follow_up;
 pub(crate) mod git_actions;
 mod history;
 mod hold;
+mod orchestration_card;
 pub(crate) use hold::HoldChanged;
 #[cfg(test)]
 mod composer_card_tests;
@@ -1100,9 +1100,8 @@ impl Conversation {
             return;
         }
         self.planning_orchestration = self.settings.orchestrator;
-        self.orchestration_plan = None;
+        self.set_orchestration_plan(None);
         self.orchestration_error = None;
-        self.plan_card = Default::default();
         if self.settings.orchestrator {
             self.settings.orchestration_profiles = self.orchestration_profiles(cx);
         }
@@ -4282,7 +4281,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod menu_tests {
+pub(super) mod menu_tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
@@ -4822,7 +4821,7 @@ mod menu_tests {
             .unwrap();
     }
 
-    fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
+    pub(super) fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let summary = store.create("claude", "/work/gespan").unwrap();
         let store = Arc::new(Mutex::new(store));

@@ -38,6 +38,7 @@ pub(super) struct Run {
     cwd: String,
     provider: String,
     settings: Settings,
+    max_workers: usize,
     tasks: Vec<Assignment>,
     stopped: bool,
 }
@@ -98,6 +99,7 @@ impl Shell {
         settings.environment.clear();
         settings.attachments.clear();
         let provider = conversation.summary.provider.clone();
+        let max_workers = plan.max_workers;
         let tasks = plan
             .tasks
             .into_iter()
@@ -114,6 +116,7 @@ impl Shell {
                 cwd,
                 provider,
                 settings,
+                max_workers,
                 tasks,
                 stopped: false,
             },
@@ -166,7 +169,17 @@ impl Shell {
     }
     pub(super) fn schedule_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
         // Nothing is dispatched while held; Resume schedules every run again.
+        // The card still locks: this run already holds the plan it will use.
         if crate::hold::active(cx) {
+            if self.orchestrations.contains_key(&lead)
+                && let Some(view) = self.sessions.get(&lead)
+            {
+                view.update(cx, |v, cx| {
+                    if v.orchestration_progress.is_none() {
+                        v.set_orchestration_progress(Some("Waiting for Resume".into()), cx);
+                    }
+                });
+            }
             return;
         }
         let Some(run) = self.orchestrations.get_mut(&lead) else {
@@ -215,7 +228,7 @@ impl Shell {
         let mut jobs = Vec::new();
         if !run.stopped {
             for (ix, task) in run.tasks.iter_mut().enumerate() {
-                if occupied.len() >= 4 {
+                if occupied.len() >= run.max_workers {
                     break;
                 }
                 if task.state != State::Pending
@@ -335,7 +348,7 @@ impl Shell {
                 self.orchestrations.remove(&lead);
                 if let Some(view) = self.sessions.get(&lead) {
                     view.update(cx, |v, cx| {
-                        v.orchestration_plan = None;
+                        v.set_orchestration_plan(None);
                         v.set_orchestration_progress(None, cx);
                         if !stopped {
                             v.send_coordinator_report(format!("The orchestration workers have finished. Summarize and verify the combined results, identify incomplete work and report the outcome to the user. Preserve their changes.\n\n{reports}"), cx);
@@ -478,6 +491,7 @@ mod tests {
                         title: "Review".into(),
                         summary: String::new(),
                         tasks: vec![own, task("inherits", "docs")],
+                        max_workers: orchestration::MAX_WORKERS,
                     },
                     cx,
                 );
@@ -487,6 +501,95 @@ mod tests {
                 assert_eq!(tasks[0].model.as_deref(), Some("gpt-6"));
                 assert_eq!(tasks[1].provider, provider);
                 assert_eq!(tasks[1].model.as_deref(), Some("lead-model"));
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn a_plan_started_on_hold_locks_its_card_and_dispatches_nothing(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&lead].update(cx, |v, cx| {
+                    v.install_transfer(Settings::default(), None, cx)
+                });
+                cx.set_global(crate::hold::Hold(Some(gespan_core::hold::HoldState::new(
+                    1,
+                ))));
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Review".into(),
+                        summary: String::new(),
+                        tasks: vec![Task {
+                            id: "a".into(),
+                            title: "A".into(),
+                            prompt: "Work".into(),
+                            files: vec!["src".into()],
+                            depends_on: Vec::new(),
+                            harness: None,
+                            model: None,
+                            model_settings: Default::default(),
+                        }],
+                        max_workers: 1,
+                    },
+                    cx,
+                );
+                let run = shell.orchestrations.get(&lead).unwrap();
+                assert!(run.tasks[0].state == State::Pending);
+                assert_eq!(
+                    shell.sessions[&lead]
+                        .read(cx)
+                        .orchestration_progress
+                        .as_deref(),
+                    Some("Waiting for Resume"),
+                    "Edits after this point would not reach the run"
+                );
+                cx.set_global(crate::hold::Hold(None));
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn the_worker_count_chosen_on_the_card_limits_dispatch(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&lead].update(cx, |v, cx| {
+                    v.install_transfer(Settings::default(), None, cx)
+                });
+                let tasks = ["src", "tests", "docs"]
+                    .into_iter()
+                    .map(|file| Task {
+                        id: file.into(),
+                        title: file.into(),
+                        prompt: "Work".into(),
+                        files: vec![file.into()],
+                        depends_on: Vec::new(),
+                        harness: None,
+                        model: None,
+                        model_settings: Default::default(),
+                    })
+                    .collect();
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Review".into(),
+                        summary: String::new(),
+                        tasks,
+                        max_workers: 2,
+                    },
+                    cx,
+                );
+                let run = shell.orchestrations.get(&lead).unwrap();
+                let starting = run
+                    .tasks
+                    .iter()
+                    .filter(|t| t.state == State::Starting)
+                    .count();
+                assert_eq!(starting, 2);
                 shell.stop_orchestration(lead, cx);
             })
             .unwrap();
@@ -522,6 +625,7 @@ mod tests {
                         title: "Review".into(),
                         summary: String::new(),
                         tasks,
+                        max_workers: orchestration::MAX_WORKERS,
                     },
                     cx,
                 );
