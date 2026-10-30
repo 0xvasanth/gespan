@@ -1321,3 +1321,20 @@ fn desktop_work_item_reads_a_sidebar_hidden_session_by_id() {
     store.set_work_item(hidden.id, None).unwrap();
     assert_eq!(store.work_item(hidden.id).unwrap(), None);
 }
+
+#[test]
+fn a_steer_with_an_earlier_turns_start_still_joins_the_running_turn() {
+    // Saved by a receipt keyed to the wrong row: the steer carried a start
+    // from before it was sent, and reopening split it from its turn.
+    let turns = project_turns(&[
+        json!({"id":"old","role":"user","text":"merge it","sentAt":500,"startedAt":500}),
+        json!({"id":"done","role":"assistant","text":"Merged"}),
+        json!({"id":"first","role":"user","text":"windows fails","sentAt":1_000_000,"startedAt":1_000_000}),
+        json!({"id":"work","role":"assistant","text":"Checking"}),
+        json!({"id":"steer","role":"user","text":"is it the pr","sentAt":1_017_000,"startedAt":500}),
+        json!({"id":"answer","role":"assistant","text":"Shared test code"}),
+    ])
+    .unwrap();
+    assert_eq!(turns[&5].joined_turn, Some(3));
+    assert_eq!(turns[&5].started_at, None);
+}
