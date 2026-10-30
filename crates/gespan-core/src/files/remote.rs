@@ -6,6 +6,17 @@ use std::path::Path;
 
 const UNAVAILABLE: &str = "This isn’t available for projects on another machine yet.";
 const OUTDATED: &str = "Update Gespan Host in Connections settings to use this project’s files.";
+const OUTDATED_INBOX: &str =
+    "Update Gespan Host in Connections settings to use this project’s GitHub Inbox.";
+
+#[cfg(test)]
+type TestHost = Box<dyn FnMut(&str, Value) -> Result<Value, String>>;
+#[cfg(test)]
+thread_local! {
+    /// Stands in for the machine a test's `remote://` paths belong to.
+    pub(crate) static TEST_HOST: std::cell::RefCell<Option<TestHost>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 pub fn is_remote(path: &Path) -> bool {
     path.to_str()
@@ -16,6 +27,12 @@ pub fn is_remote(path: &Path) -> bool {
 /// This is synchronous, like the filesystem APIs; call from a background task.
 pub fn run_remote_command(command: &str, args: Value) -> Result<Value, String> {
     run_with(command, args, |environment, params| {
+        #[cfg(test)]
+        if let Some(result) = TEST_HOST
+            .with_borrow_mut(|host| host.as_mut().map(|host| host(environment, params.clone())))
+        {
+            return result;
+        }
         let connections = crate::remote::default_connections()?;
         let machine = connections.machine_for_environment(environment)?;
         connections.request(&machine.id, "workspace.run", params)
@@ -28,8 +45,8 @@ fn run_with(
     request: impl FnOnce(&str, Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     let (environment, args) = host_arguments(command, args)?;
-    let result =
-        request(&environment, json!({"command":command,"args":args})).map_err(workspace_error)?;
+    let result = request(&environment, json!({"command":command,"args":args}))
+        .map_err(|error| workspace_error(command, error))?;
     Ok(client_result(command, &environment, &args, result))
 }
 
@@ -38,7 +55,7 @@ pub(crate) fn command<T: DeserializeOwned>(command: &str, args: Value) -> Result
         .map_err(|error| format!("Invalid remote workspace response: {error}"))
 }
 
-fn workspace_error(error: String) -> String {
+fn workspace_error(command: &str, error: String) -> String {
     let lower = error.to_ascii_lowercase();
     if [
         "unsupported host method",
@@ -48,7 +65,11 @@ fn workspace_error(error: String) -> String {
     .iter()
     .any(|message| lower.contains(message))
     {
-        OUTDATED.into()
+        if command.starts_with("git_github_") {
+            OUTDATED_INBOX.into()
+        } else {
+            OUTDATED.into()
+        }
     } else {
         error
     }
@@ -88,6 +109,17 @@ fn host_arguments(command: &str, args: Value) -> Result<(String, Value), String>
             | "git_sync"
             | "git_pr_status"
             | "git_pr_create"
+            | "git_github_repo"
+            | "git_github_repositories"
+            | "git_github_work_items"
+            | "git_github_work_item"
+            | "git_github_work_item_details"
+            | "git_github_work_item_thread"
+            | "git_github_work_item_comment"
+            | "git_github_pr_action"
+            | "git_github_pr_diff"
+            | "git_github_pr_checks"
+            | "git_github_check_details"
             | "git_history"
             | "git_commit_files"
             | "git_commit_file_diff"
@@ -253,6 +285,33 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, OUTDATED);
+    }
+
+    #[test]
+    fn github_inbox_commands_run_on_the_project_machine_and_name_an_outdated_host() {
+        let result = run_with(
+            "git_github_pr_checks",
+            json!({"cwd":"remote://env/home/code","repo":"acme/web","number":7}),
+            |environment, params| {
+                assert_eq!(environment, "env");
+                assert_eq!(
+                    params,
+                    json!({"command":"git_github_pr_checks","args":{
+                        "cwd":"/home/code","repo":"acme/web","number":7
+                    }})
+                );
+                Ok(json!({"headOid":"abc","checks":[]}))
+            },
+        )
+        .unwrap();
+        assert_eq!(result["headOid"], "abc");
+        let error = run_with(
+            "git_github_work_items",
+            json!({"cwd":"remote://env/home/code","repo":"acme/web"}),
+            |_, _| Err("Unsupported workspace command".into()),
+        )
+        .unwrap_err();
+        assert_eq!(error, OUTDATED_INBOX);
     }
 
     #[test]

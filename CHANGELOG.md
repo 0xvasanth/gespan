@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gespan Native's GitHub Inbox works for projects on another machine. Issues,
+  pull requests, conversations, diffs, checks and actions go through Gespan
+  Host and use that machine's `gh` account and checkout, so they work even
+  when GitHub CLI isn't signed in on this computer. Update Gespan Host to use
+  this.
+
 ## [0.0.3-beta] - 2026-10-30
 
 This release ships Gespan Native for macOS, Windows and Linux, and the iOS app
