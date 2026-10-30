@@ -49,8 +49,8 @@ tick the box in the same PR.
 
 ### Inbox and notes
 
-- [ ] **Ask panel next to an inbox item.** A resizable side chat with Restart and Close. Tauri: `src/features/inbox/ui/InboxDiscussionPanel.tsx`.
-- [ ] **CI repair.** Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`. *(also below)*
+- [x] **Ask panel next to an inbox item.** *(done in #266)* A resizable side chat with Restart and Close. Tauri: `src/features/inbox/ui/InboxDiscussionPanel.tsx`.
+- [x] **CI repair.** *(done in #266; remote projects need #263 for job details and rerun)* Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`. *(also below)*
 - [x] **Hunks / Full switch on the PR diff.** The core already supports it. Tauri: `src/features/inbox/ui/InboxView.tsx`. Done in #245.
 - [x] **Inbox right-click menu in the sidebar and rail.** Mark all as read, mute every project for a set time, and a notification settings link. Tauri: `src/features/inbox/ui/InboxNotificationMenu.tsx`. Done in #245.
 - [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`. *(also below)*
