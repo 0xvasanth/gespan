@@ -8,11 +8,25 @@ use gespan_core::{
     orchestration::{
         self, Choice, Plan,
         run::{self, Effect, Needs, Outcome, Run, RunStatus, Status, Wake},
+        worktree::{self, Workspace},
     },
     pilot::bridge::{Call, Server},
     provider::{self, Kind},
 };
 use serde_json::Value;
+
+/// Sessions moved off a checkout that no longer exists.
+type Detached = Vec<(Session, Settings)>;
+
+fn remove_checkout(
+    store: &Database,
+    lead: &str,
+    workspace: &Workspace,
+    task: &str,
+) -> Result<Detached, String> {
+    worktree::remove(std::path::Path::new(lead), workspace, task)?;
+    locked(store)?.detach_worktree(&workspace.path, lead)
+}
 
 /// A `wait` call parked until the run changes or its time is up.
 struct Waiter {
@@ -44,6 +58,8 @@ pub(super) struct Live {
     waiters: Vec<Waiter>,
     next_waiter: u64,
     lead_busy: bool,
+    /// Tasks whose changes are on their way to the lead checkout.
+    integrating: HashSet<String>,
     /// The run ended and the lead's card and capability were cleared.
     closed: bool,
 }
@@ -163,6 +179,7 @@ impl Shell {
                 waiters: Vec::new(),
                 next_waiter: 0,
                 lead_busy: true,
+                integrating: HashSet::new(),
                 closed: false,
             },
         );
@@ -332,10 +349,17 @@ impl Shell {
                 return;
             }
         }
+        if call.action == "review" && !live.run.answered(&call.request_id) {
+            self.review_orchestration_task(lead, call, cx);
+            return;
+        }
         match live
             .run
             .control(&call.request_id, &call.action, &call.input, &needs)
         {
+            Ok(reply) if call.action == "finish" => {
+                self.finish_orchestration_run(lead, reply.result, call.reply, cx);
+            }
             Ok(reply) => {
                 self.apply_orchestration_effects(lead, reply.effects, cx);
                 let _ = call.reply.send(Ok(reply.result));
@@ -345,6 +369,169 @@ impl Shell {
             }
         }
         self.schedule_orchestration(lead, cx);
+    }
+    /// `review` merges the worker's changes, so it runs off the main thread
+    /// and only then accepts. If the merge can't happen the task stays
+    /// reviewable and its worktree is kept.
+    fn review_orchestration_task(&mut self, lead: i64, call: Call, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let Some(live) = self.orchestrations.get_mut(&lead) else {
+            return;
+        };
+        let task = match live.run.check_review(&call.input) {
+            Ok(task) => task,
+            Err(error) => {
+                let _ = call.reply.send(Err(error));
+                return;
+            }
+        };
+        if !live.integrating.insert(task.id.clone()) {
+            let _ = call.reply.send(Err(
+                "This worker's changes are still being merged; retry with the same request ID."
+                    .into(),
+            ));
+            return;
+        }
+        let cwd = live.run.cwd.clone();
+        let reviewing = task.id.clone();
+        let work = cx.background_executor().spawn(async move {
+            let Some(workspace) = &task.workspace else {
+                return Ok((task.id, None));
+            };
+            worktree::integrate(std::path::Path::new(&cwd), workspace, &task.id, &task.files)?;
+            let cleaned = remove_checkout(&store, &cwd, workspace, &task.id);
+            Ok::<_, String>((task.id, Some(cleaned)))
+        });
+        cx.spawn(async move |this, cx| {
+            let merged = work.await;
+            let _ = this.update(cx, |this, cx| {
+                let needs = this.orchestration_needs(lead, cx);
+                let Some(live) = this.orchestrations.get_mut(&lead) else {
+                    return;
+                };
+                live.integrating.remove(&reviewing);
+                let (id, cleaned) = match merged {
+                    Ok(merged) => merged,
+                    Err(error) => {
+                        let _ = call.reply.send(Err(error));
+                        return;
+                    }
+                };
+                let result = live
+                    .run
+                    .control(&call.request_id, "review", &call.input, &needs)
+                    .map(|reply| reply.result);
+                let result = result.map(|mut result| {
+                    result["integrated"] = cleaned.is_some().into();
+                    match cleaned {
+                        Some(Ok(detached)) => {
+                            result["cleaned"] = true.into();
+                            if let Some(live) = this.orchestrations.get_mut(&lead) {
+                                live.run.set_workspace(&id, None);
+                            }
+                            this.apply_detached(detached, cx);
+                        }
+                        Some(Err(error)) => {
+                            result["cleaned"] = false.into();
+                            result["cleanupError"] = error.into();
+                        }
+                        None => result["cleaned"] = true.into(),
+                    }
+                    result
+                });
+                let _ = call.reply.send(result);
+                this.schedule_orchestration(lead, cx);
+            });
+        })
+        .detach();
+    }
+    fn apply_detached(&mut self, detached: Detached, cx: &mut Context<Self>) {
+        for (summary, settings) in detached {
+            self.session_summaries.insert(summary.id, summary.clone());
+            self.session_worktrees
+                .insert(summary.id, settings.worktree_cwd.clone());
+            if let Some(view) = self.sessions.get(&summary.id) {
+                view.update(cx, |v, cx| v.worktree_deleted(summary, settings, cx));
+            }
+        }
+    }
+    /// Accepted work leaves with the run. A checkout that never changed goes
+    /// too; one with changes nobody reviewed stays, and the lead hears where.
+    fn finish_orchestration_run(
+        &mut self,
+        lead: i64,
+        mut result: Value,
+        reply: std::sync::mpsc::Sender<Result<Value, String>>,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store.clone();
+        let Some(live) = self.orchestrations.get_mut(&lead) else {
+            return;
+        };
+        let cwd = live.run.cwd.clone();
+        let retained: Vec<_> = live
+            .run
+            .tasks
+            .iter()
+            .filter_map(|task| Some((task.id.clone(), task.accepted, task.workspace.clone()?)))
+            .collect();
+        let work = cx.background_executor().spawn(async move {
+            let mut removed = Vec::new();
+            let mut pending = Vec::new();
+            for (task, accepted, workspace) in retained {
+                let safe = accepted || worktree::unchanged(&workspace, &task).unwrap_or(false);
+                match safe.then(|| remove_checkout(&store, &cwd, &workspace, &task)) {
+                    Some(Ok(detached)) => removed.push((task, detached)),
+                    _ => pending.push(workspace.path),
+                }
+            }
+            (removed, pending)
+        });
+        cx.spawn(async move |this, cx| {
+            let (removed, pending) = work.await;
+            let _ = this.update(cx, |this, cx| {
+                for (task, detached) in removed {
+                    if let Some(live) = this.orchestrations.get_mut(&lead) {
+                        live.run.set_workspace(&task, None);
+                    }
+                    this.apply_detached(detached, cx);
+                }
+                if !pending.is_empty() {
+                    result["cleanupPending"] = pending.into();
+                }
+                let _ = reply.send(Ok(result));
+                this.schedule_orchestration(lead, cx);
+            });
+        })
+        .detach();
+    }
+    /// Failed or cancelled work with nothing to show loses its checkout.
+    fn sweep_orchestration_checkouts(&mut self, lead: i64, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let Some(live) = self.orchestrations.get_mut(&lead) else {
+            return;
+        };
+        let cwd = live.run.cwd.clone();
+        for (task, workspace) in live.run.to_sweep() {
+            let (store, cwd) = (store.clone(), cwd.clone());
+            let work = cx.background_executor().spawn(async move {
+                worktree::unchanged(&workspace, &task)?
+                    .then(|| remove_checkout(&store, &cwd, &workspace, &task))
+                    .transpose()
+                    .map(|detached| (task, detached))
+            });
+            cx.spawn(async move |this, cx| {
+                if let Ok((task, Some(detached))) = work.await {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(live) = this.orchestrations.get_mut(&lead) {
+                            live.run.set_workspace(&task, None);
+                        }
+                        this.apply_detached(detached, cx);
+                    });
+                }
+            })
+            .detach();
+        }
     }
     fn finish_orchestration_wait(&mut self, lead: i64, id: u64, cx: &mut Context<Self>) {
         let needs = self.orchestration_needs(lead, cx);
@@ -562,6 +749,7 @@ impl Shell {
         for job in jobs {
             self.launch_orchestration_worker(lead, job, cx);
         }
+        self.sweep_orchestration_checkouts(lead, cx);
         self.publish_orchestration(lead, cx);
         self.answer_orchestration_waits(lead, cx);
         self.close_orchestration(lead, cx);
@@ -580,6 +768,7 @@ impl Shell {
             mut settings,
         } = job;
         let store = self.store.clone();
+        let checkout_task = task_id.clone();
         let project = self.sessions[&lead].read(cx).summary.cwd.clone();
         if kind.id() != lead_provider {
             settings.account = crate::accounts::get(cx)
@@ -616,19 +805,24 @@ impl Shell {
             };
             let mut settings =
                 orchestration::worker_settings(&planned, &lead_provider, settings, kind, &models)?;
+            let workspace = worktree::prepare(&root, &checkout_task)?;
             let store = locked(&store)?;
             let mut summary = store.create(kind.id(), &project)?;
             summary.title = format!("Agent · {title}");
             store.title(summary.id, &summary.title)?;
-            settings.worktree_cwd = Some(cwd);
+            settings.worktree_cwd = Some(
+                workspace
+                    .as_ref()
+                    .map_or(cwd, |workspace| workspace.path.clone()),
+            );
             store.save_agent_settings(summary.id, &settings)?;
-            Ok::<_, String>((summary, settings))
+            Ok::<_, String>((summary, settings, workspace))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok((summary, settings)) => {
+                    Ok((summary, settings, workspace)) => {
                         let id = summary.id;
                         this.add(summary, cx);
                         let start = this.orchestrations.get(&lead).is_some_and(|live| {
@@ -640,6 +834,7 @@ impl Shell {
                         });
                         if let Some(live) = this.orchestrations.get_mut(&lead) {
                             live.run.set_session(&task_id, id);
+                            live.run.set_workspace(&task_id, workspace);
                         }
                         if start {
                             this.sessions[&id]
@@ -760,6 +955,172 @@ mod tests {
             },
             cx,
         );
+    }
+    fn repository() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(dir.path())
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "fixture@example.invalid"]);
+        git(&["config", "user.name", "Fixture"]);
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.txt"), "a\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "Initial"]);
+        let root = dir.path().to_string_lossy().into_owned();
+        (dir, root)
+    }
+    /// A run in `root` whose one task finished in `workspace`.
+    fn completed_run(shell: &mut Shell, lead: i64, root: &str, workspace: &Workspace, task: &str) {
+        let mut run = Run::new(
+            Plan {
+                title: "Review".into(),
+                summary: String::new(),
+                tasks: vec![Task {
+                    id: "a".into(),
+                    title: "A".into(),
+                    prompt: "Work".into(),
+                    files: vec!["src".into()],
+                    depends_on: Vec::new(),
+                    harness: None,
+                    model: None,
+                    model_settings: Default::default(),
+                }],
+                max_workers: 1,
+            },
+            root.to_owned(),
+            "claude".into(),
+            Vec::new(),
+        );
+        run.tasks[0].id = task.to_owned();
+        run.dispatch();
+        run.set_workspace(task, Some(workspace.clone()));
+        run.settle(task, Outcome::Completed, "Done", None);
+        shell.orchestrations.insert(
+            lead,
+            Live {
+                run,
+                settings: Settings::default(),
+                announced: HashSet::new(),
+                waiters: Vec::new(),
+                next_waiter: 0,
+                lead_busy: false,
+                integrating: HashSet::new(),
+                closed: false,
+            },
+        );
+    }
+    #[gpui::test]
+    fn review_merges_the_workers_changes_and_removes_its_worktree(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        let (_dir, root) = repository();
+        let workspace = worktree::prepare(std::path::Path::new(&root), "t1")
+            .unwrap()
+            .unwrap();
+        std::fs::write(
+            std::path::Path::new(&workspace.path).join("src/a.txt"),
+            "worker\n",
+        )
+        .unwrap();
+        let result = window
+            .update(cx, |shell, _, cx| {
+                completed_run(shell, lead, &root, &workspace, "t1");
+                let (call, result) = control(lead, "r1", "review", json!({"taskId":"t1"}));
+                shell.handle_control_call(call, cx);
+                result
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let reply = result.try_recv().unwrap().unwrap();
+        assert_eq!(reply["integrated"], true, "{reply}");
+        assert_eq!(reply["cleaned"], true, "{reply}");
+        assert_eq!(
+            std::fs::read_to_string(std::path::Path::new(&root).join("src/a.txt")).unwrap(),
+            "worker\n"
+        );
+        assert!(!std::path::Path::new(&workspace.path).exists());
+        window
+            .update(cx, |shell, _, _| {
+                let task = &shell.orchestrations[&lead].run.tasks[0];
+                assert!(task.accepted);
+                assert_eq!(task.workspace, None);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn a_review_that_cannot_merge_keeps_the_worktree_and_stays_reviewable(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        let (_dir, root) = repository();
+        let workspace = worktree::prepare(std::path::Path::new(&root), "t1")
+            .unwrap()
+            .unwrap();
+        std::fs::write(
+            std::path::Path::new(&workspace.path).join("src/a.txt"),
+            "worker\n",
+        )
+        .unwrap();
+        std::fs::write(std::path::Path::new(&root).join("src/a.txt"), "lead\n").unwrap();
+        let result = window
+            .update(cx, |shell, _, cx| {
+                completed_run(shell, lead, &root, &workspace, "t1");
+                let (call, result) = control(lead, "r1", "review", json!({"taskId":"t1"}));
+                shell.handle_control_call(call, cx);
+                result
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let error = result.try_recv().unwrap().unwrap_err();
+        assert!(error.contains("the lead checkout changed"), "{error}");
+        assert!(std::path::Path::new(&workspace.path).exists());
+        window
+            .update(cx, |shell, _, _| {
+                let live = &shell.orchestrations[&lead];
+                assert!(!live.run.tasks[0].accepted);
+                assert!(live.integrating.is_empty(), "a retry may try again");
+                assert!(live.run.requests.is_empty());
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn stopping_keeps_a_changed_worktree_and_removes_a_clean_one(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        let (_dir, root) = repository();
+        let project = std::path::Path::new(&root);
+        let changed = worktree::prepare(project, "t1").unwrap().unwrap();
+        let clean = worktree::prepare(project, "t2").unwrap().unwrap();
+        std::fs::write(std::path::Path::new(&changed.path).join("src/a.txt"), "w\n").unwrap();
+        window
+            .update(cx, |shell, _, cx| {
+                completed_run(shell, lead, &root, &changed, "t1");
+                let live = shell.orchestrations.get_mut(&lead).unwrap();
+                let mut second = live.run.tasks[0].clone();
+                second.id = "t2".into();
+                second.workspace = Some(clean.clone());
+                live.run.tasks.push(second);
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(
+            std::path::Path::new(&changed.path).exists(),
+            "Nobody reviewed these changes"
+        );
+        assert!(!std::path::Path::new(&clean.path).exists());
+        window
+            .update(cx, |shell, _, _| {
+                let tasks = &shell.orchestrations[&lead].run.tasks;
+                assert!(tasks[0].workspace.is_some());
+                assert_eq!(tasks[1].workspace, None);
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn a_session_without_a_run_has_no_control(cx: &mut TestAppContext) {
