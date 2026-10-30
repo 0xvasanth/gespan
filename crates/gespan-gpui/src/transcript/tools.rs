@@ -215,6 +215,20 @@ impl TranscriptView {
             Vec::new()
         };
         let error_detail = tool.output.clone();
+        let edit_preview = matches!(shown.action.as_str(), "Edit" | "Write")
+            .then(|| tool.edit_preview())
+            .flatten()
+            .filter(|preview| preview.shows_change())
+            .map(|preview| super::edit_preview::Open {
+                key: format!("edit-preview:{identity}"),
+                label: shown.target.clone(),
+                path: target_path.clone(),
+                state: tool.state.clone(),
+                preview,
+            });
+        let preview_anchor = edit_preview
+            .as_ref()
+            .map(|open| self.edit_preview_anchor(&open.key));
         let summary = div()
             .id(gpui::SharedString::from(format!("tool:{identity}")))
             .debug_selector(move || format!("tool-{start}"))
@@ -307,18 +321,27 @@ impl TranscriptView {
                                 },
                             )
                         })
+                        .when_some(preview_anchor, |d, anchor| {
+                            d.relative().child(anchor.probe())
+                        })
+                        .when_some(edit_preview, |d, open| {
+                            d.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                                this.hover_edit_chip(open.clone(), *hovered, cx);
+                            }))
+                        })
                         .when_some(target_path, |d, path| {
                             d.role(Role::Button)
                                 .aria_label(format!("Open {path}"))
                                 .cursor_pointer()
                                 .hover(|style| style.text_color(rgb(0x7dd3fc)))
-                                .on_click(move |_, window, cx| {
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
+                                    this.hide_edit_preview(cx);
                                     window.dispatch_action(
                                         Box::new(crate::file_editor::OpenPath(path.clone())),
                                         cx,
                                     );
-                                })
+                                }))
                         })
                         .when(!is_search && !chain, |d| {
                             d.child(div().min_w_0().truncate().child(shown.target))
@@ -903,5 +926,155 @@ mod tests {
             view.rebuild(1, cx);
             assert_eq!(lone(view), None, "collapsed work hides the settled step");
         });
+    }
+
+    fn edit_tools(
+        cx: &mut TestAppContext,
+        calls: Vec<ToolCall>,
+    ) -> gpui::WindowHandle<TranscriptView> {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| TranscriptView::new())
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| {
+                let mut rows = vec![Row {
+                    role: "user".into(),
+                    text: "Change it".into(),
+                    first: true,
+                    sent_at: None,
+                }];
+                rows.extend(calls.iter().map(|call| Row {
+                    role: "tool".into(),
+                    text: serde_json::to_string(call).unwrap(),
+                    first: true,
+                    sent_at: None,
+                }));
+                let count = rows.len();
+                view.patch(0, rows, cx);
+                for ix in 1..count {
+                    view.work_folds.insert(ix, true);
+                    view.phases.insert(ix, true);
+                }
+                view.rebuild(0, cx);
+            })
+            .unwrap();
+        window
+    }
+
+    #[gpui::test]
+    fn hovering_an_edit_chip_previews_its_proposed_diff_then_closes(cx: &mut TestAppContext) {
+        let mut edit = ToolCall::new("edit", "Edit");
+        edit.input = serde_json::json!({"file_path":"/repo/src/lib.rs","old_string":"let a = 1;\nlet b = 2;","new_string":"let a = 1;\nlet b = 3;"}).to_string();
+        let mut read = ToolCall::new("read", "Read");
+        read.input = r#"{"file_path":"/repo/src/main.rs"}"#.into();
+        read.state = ToolState::Completed;
+        let window = edit_tools(cx, vec![edit, read]);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(900.), px(600.)));
+        visual.run_until_parked();
+        let chip = visual.debug_bounds("tool-target-1").expect("edit chip");
+        visual.simulate_mouse_move(chip.center(), None, Default::default());
+        visual.run_until_parked();
+        let open = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, _, _| {
+                    view.open_edit_preview()
+                        .map(|open| (open.key.clone(), open.description()))
+                })
+                .unwrap()
+        };
+        assert_eq!(open(visual), None, "it waits before opening");
+        visual
+            .executor()
+            .advance_clock(super::super::edit_preview::OPEN_DELAY);
+        visual.run_until_parked();
+        assert_eq!(
+            open(visual),
+            Some(("edit-preview:1".into(), "Proposed changes"))
+        );
+        let card = visual
+            .debug_bounds("edit-preview")
+            .expect("the popover is drawn");
+        let lines = visual
+            .debug_bounds("edit-preview-lines")
+            .expect("its lines");
+        assert!(
+            card.top() >= chip.bottom(),
+            "below the chip: {card:?} {chip:?}"
+        );
+        // Context, the removed line and the added one.
+        assert!(lines.size.height >= px(54.), "{lines:?}");
+        // Moving onto the card keeps it open.
+        visual.simulate_mouse_move(lines.center(), None, Default::default());
+        visual
+            .executor()
+            .advance_clock(super::super::edit_preview::CLOSE_DELAY * 2);
+        visual.run_until_parked();
+        assert!(open(visual).is_some(), "the card holds it open");
+
+        // Leaving the chip and the card closes it.
+        visual.simulate_mouse_move(gpui::point(px(890.), px(590.)), None, Default::default());
+        visual
+            .executor()
+            .advance_clock(super::super::edit_preview::CLOSE_DELAY);
+        visual.run_until_parked();
+        assert_eq!(open(visual), None);
+        assert!(visual.debug_bounds("edit-preview").is_none());
+        // A Read chip has no preview.
+        let read = visual.debug_bounds("tool-target-2").expect("read chip");
+        visual.simulate_mouse_move(read.center(), None, Default::default());
+        visual
+            .executor()
+            .advance_clock(super::super::edit_preview::OPEN_DELAY * 2);
+        visual.run_until_parked();
+        assert_eq!(open(visual), None);
+        assert!(visual.debug_bounds("edit-preview").is_none());
+    }
+
+    #[gpui::test]
+    fn a_write_and_a_failed_edit_say_what_their_preview_shows(cx: &mut TestAppContext) {
+        let mut write = ToolCall::new("write", "Write");
+        write.input = r#"{"file_path":"/repo/notes.md","content":"one\ntwo\n"}"#.into();
+        write.state = ToolState::Completed;
+        let mut failed = ToolCall::new("edit", "Edit");
+        failed.input = r#"{"file_path":"/repo/a.rs","old_string":"a","new_string":"b"}"#.into();
+        failed.state = ToolState::Failed;
+        let mut unchanged = ToolCall::new("same", "Edit");
+        unchanged.input = r#"{"file_path":"/repo/b.rs","old_string":"a","new_string":"a"}"#.into();
+        unchanged.state = ToolState::Completed;
+        let window = edit_tools(cx, vec![write, failed, unchanged]);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(900.), px(600.)));
+        visual.run_until_parked();
+        for (row, expected) in [
+            (1, Some("Written content · previous contents unavailable")),
+            (2, Some("Attempted changes · tool did not complete")),
+            (3, None),
+        ] {
+            let chip = visual
+                .debug_bounds(Box::leak(format!("tool-target-{row}").into_boxed_str()))
+                .expect("chip");
+            visual.simulate_mouse_move(chip.center(), None, Default::default());
+            visual
+                .executor()
+                .advance_clock(super::super::edit_preview::OPEN_DELAY);
+            visual.run_until_parked();
+            let shown = window
+                .update(visual, |view, _, _| {
+                    view.open_edit_preview().map(|open| open.description())
+                })
+                .unwrap();
+            assert_eq!(shown, expected, "row {row}");
+            // Away, so the card no longer covers the next row.
+            visual.simulate_mouse_move(gpui::point(px(890.), px(590.)), None, Default::default());
+            visual
+                .executor()
+                .advance_clock(super::super::edit_preview::CLOSE_DELAY);
+            visual.run_until_parked();
+        }
     }
 }

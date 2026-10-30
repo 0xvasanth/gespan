@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native previews the change an Edit or Write tool proposes, as the
+  Tauri app does. Hovering the file chip shows the first changed lines with
+  their counts, read from the tool itself rather than from git, for Claude,
+  Codex and ACP agents. A Write shows the written lines, since the file's old
+  contents are not known.
 - Gespan Native shows a reply's local images and videos in place, as the Tauri
   app does. A paragraph that starts with a local image, or with a link to a
   local image or video, shows the file in a 16:9 frame. Images open full screen

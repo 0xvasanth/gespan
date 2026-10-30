@@ -2,6 +2,7 @@ pub(crate) mod attachments;
 pub(crate) mod burst;
 pub(crate) mod dates;
 mod drafts;
+mod edit_preview;
 #[cfg(test)]
 mod follow_tests;
 mod generated_image;
@@ -491,6 +492,7 @@ pub(crate) struct TranscriptView {
     selection_focus: Option<gpui::FocusHandle>,
     links: links::State,
     work_item_cards: user_links::Cards,
+    edit_previews: edit_preview::Previews,
     source: Vec<Row>,
     source_bytes: usize,
     attachment_images: HashMap<String, gpui::Entity<attachments::Photo>>,
@@ -2409,6 +2411,7 @@ impl TranscriptView {
             selection_focus: None,
             links: Default::default(),
             work_item_cards: Default::default(),
+            edit_previews: Default::default(),
             source: Vec::new(),
             source_bytes: 0,
             attachment_images: HashMap::new(),
@@ -5824,6 +5827,7 @@ impl Render for TranscriptView {
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
             .children(self.work_item_card(window, cx))
+            .children(self.edit_preview_card(cx))
             .when(self.show_jump, |d| {
                 // Centered, or the column's right end when the commit pill
                 // takes the left.

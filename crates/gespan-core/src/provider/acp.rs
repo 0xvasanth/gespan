@@ -1143,6 +1143,17 @@ impl Protocol {
                     }
                 }
                 presentation["cwd"] = json!(self.request.cwd);
+                // Keep a short preview of a diff block; its texts can be whole files.
+                if let Some(diff) = tool["content"]
+                    .as_array()
+                    .and_then(|blocks| blocks.iter().find(|block| block["type"] == "diff"))
+                {
+                    let built = crate::tool::edit_preview::EditPreview::from_texts(
+                        diff["oldText"].as_str(),
+                        diff["newText"].as_str().unwrap_or(""),
+                    );
+                    presentation[crate::tool::edit_preview::DISPLAY_KEY] = json!(built);
+                }
                 call.display = Some(presentation);
                 let output = content_text(&tool["content"]);
                 if kind == "tool_call_content_chunk" {
@@ -1710,6 +1721,25 @@ mod tests {
         assert!(tool.input.contains("file.rs"));
         assert_eq!(tool.output, "contents");
         assert_eq!(tool.state, ToolState::Completed);
+    }
+    #[test]
+    fn an_acp_diff_block_is_kept_as_a_short_edit_preview_not_whole_files() {
+        let mut protocol = protocol(Kind::Devin);
+        let old: String = (1..=500).map(|n| format!("line {n}\n")).collect();
+        let new = old.replace("line 250\n", "line 250 changed\n");
+        protocol.acp_update(&json!({"sessionUpdate":"tool_call","toolCallId":"e","kind":"edit","title":"Edit src/lib.rs","rawInput":{"path":"src/lib.rs"},"content":[{"type":"diff","path":"src/lib.rs","oldText":old,"newText":new}]}), &mut Vec::new());
+        let call = &protocol.tools["e"];
+        let display = serde_json::to_string(&call.display).unwrap();
+        assert!(
+            display.len() < 1_000,
+            "the files are not kept: {}",
+            display.len()
+        );
+        let preview = call.edit_preview().unwrap();
+        assert_eq!((preview.additions, preview.deletions), (1, 1));
+        assert_eq!(preview.lines[0].text, "line 249");
+        assert_eq!(preview.lines[1].text, "line 250");
+        assert_eq!(preview.lines[2].text, "line 250 changed");
     }
     #[test]
     fn live_acp_tool_keeps_semantic_kind_locations_and_original_input() {
