@@ -378,10 +378,22 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "black brightness contrast background",
     ),
     (
+        "inset-glass",
+        Section::Appearance,
+        "Transparent window",
+        "glass inset translucent transparency opaque desktop blur layout",
+    ),
+    (
         "sidebar-opacity",
         Section::Appearance,
         "Sidebar opacity",
         "glass translucent transparency vibrancy",
+    ),
+    (
+        "blur",
+        Section::Appearance,
+        "Blur radius",
+        "glass translucent vibrancy backdrop",
     ),
     (
         "main-pane-glass",
@@ -588,6 +600,9 @@ pub(crate) fn search(query: &str, compositor: &str) -> Vec<SearchResult> {
     let mut scored: Vec<(f32, SearchResult)> = Vec::new();
     for &(id, section, label, keywords) in INDEX {
         if id == "wayland-window-decorations" && compositor != "Wayland" {
+            continue;
+        }
+        if id == "blur" && !crate::window_blur::BLUR_ADJUSTABLE {
             continue;
         }
         if let Some(s) = score(&needle, label, keywords) {

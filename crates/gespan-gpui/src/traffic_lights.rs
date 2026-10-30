@@ -85,7 +85,7 @@ pub(crate) fn position(zoom: f32, title_bar_height: f32) -> gpui::Point<gpui::Pi
     )
 }
 
-fn ns_window(window: &Window) -> Option<objc2::rc::Retained<NSWindow>> {
+pub(crate) fn ns_window(window: &Window) -> Option<objc2::rc::Retained<NSWindow>> {
     let handle = HasWindowHandle::window_handle(window).ok()?;
     let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
         return None;
