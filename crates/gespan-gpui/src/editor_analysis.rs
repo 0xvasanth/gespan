@@ -652,7 +652,7 @@ mod parity_tests {
     }
     #[test]
     fn large_tsx_analysis_highlights_the_end_of_the_current_and_original_file() {
-        let source = include_str!("../../../src/app/App.tsx");
+        let source = include_str!("../tests/fixtures/large-app.tsx");
         let original = format!("{source}\nexport const previousHighlightTail = \"tail\";\n");
         let analysis = analyze("App.tsx", source, Some(&original)).unwrap();
         let last = analysis

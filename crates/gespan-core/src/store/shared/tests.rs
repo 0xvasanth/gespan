@@ -1,5 +1,10 @@
 use super::*;
 
+/// The tables the Tauri app created for an indexed Pilot transcript.
+const PILOT_TABLES: &str = include_str!("../../../tests/fixtures/desktop/pilot-tables.sql");
+/// The first schema the Tauri app shipped, which saved databases still have.
+const DESKTOP_SCHEMA_V1: &str = include_str!("../../../tests/fixtures/desktop/schema-v1.sql");
+
 #[test]
 fn desktop_operator_access_restores_only_from_submitted_user_messages() {
     for (block, enabled) in [
@@ -57,20 +62,7 @@ fn saved_turn_metrics_reload_with_the_same_revision() {
 #[test]
 fn streamed_indexed_pilot_load_preserves_projection_and_revision_guards() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
-    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
-    let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
-        .nth(1)
-        .unwrap()
-        .split("\",")
-        .next()
-        .unwrap();
-    store
-        .conn
-        .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
-        ))
-        .unwrap();
+    store.conn.execute_batch(PILOT_TABLES).unwrap();
     let blocks = (0..1_000)
         .map(|i| {
             json!({
@@ -107,20 +99,7 @@ fn streamed_indexed_pilot_load_preserves_projection_and_revision_guards() {
 }
 
 fn indexed_pilot(store: &mut Store, turns: usize) -> (i64, String, Vec<Value>) {
-    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
-    let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
-        .nth(1)
-        .unwrap()
-        .split("\",")
-        .next()
-        .unwrap();
-    store
-        .conn
-        .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
-        ))
-        .unwrap();
+    store.conn.execute_batch(PILOT_TABLES).unwrap();
     let blocks = (0..turns)
         .flat_map(|turn| {
             [
@@ -369,16 +348,8 @@ fn search_connections_share_the_same_read_only_preference_snapshot() {
 fn original_desktop_schema_opens_without_schema_or_history_migration() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
-    let source = include_str!("../../../../../src-tauri/src/session_store.rs");
-    let schema = source
-        .split("const MIGRATION_V1: &str = r#\"")
-        .nth(1)
-        .unwrap()
-        .split("\"#;")
-        .next()
-        .unwrap();
     let conn = Connection::open(&path).unwrap();
-    conn.execute_batch(schema).unwrap();
+    conn.execute_batch(DESKTOP_SCHEMA_V1).unwrap();
     conn.execute("INSERT INTO sessions VALUES('old-string-id','/project','codex','codex:old','{}','supervised','Old title','thread','[{\"id\":\"u\",\"role\":\"user\",\"text\":\"Old history\"}]',1,2)",[]).unwrap();
     let version: i64 = conn
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
@@ -404,20 +375,7 @@ fn original_desktop_schema_opens_without_schema_or_history_migration() {
 fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
-    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
-    let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
-        .nth(1)
-        .unwrap()
-        .split("\",")
-        .next()
-        .unwrap();
-    store
-        .conn
-        .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
-        ))
-        .unwrap();
+    store.conn.execute_batch(PILOT_TABLES).unwrap();
     store
         .conn
         .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&source])
@@ -1146,20 +1104,7 @@ fn fresh_native_turn_receipts_persist_source_fields_without_changing_saved_prove
 fn indexed_pilot_turn_receipts_restore_and_save_in_the_original_block_table() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, original) = saved(&store, json!([]));
-    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
-    let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
-        .nth(1)
-        .unwrap()
-        .split("\",")
-        .next()
-        .unwrap();
-    store
-        .conn
-        .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
-        ))
-        .unwrap();
+    store.conn.execute_batch(PILOT_TABLES).unwrap();
     store
         .conn
         .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])

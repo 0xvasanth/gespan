@@ -1,0 +1,4 @@
+        "CREATE TABLE IF NOT EXISTS pilot_transcripts (
+         CREATE TABLE IF NOT EXISTS pilot_turns (
+         CREATE TABLE IF NOT EXISTS pilot_blocks (
+            || block.get("pilotHabit").is_some()

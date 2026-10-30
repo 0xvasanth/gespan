@@ -1,0 +1,12 @@
+const PLATFORM_PROBE: &[&str] = &["echo", "GESPAN_PLATFORM", "$env:OS", "%OS%", "$OS"];
+        .rsplit_once("GESPAN_PLATFORM")
+    let url = format!("https://github.com/0xvasanth/gespan/releases/download/v{version}");
+            format!("GESPAN_HOST_FORCE_UPGRADE=1\nGESPAN_HOST_PORT={port}\n{script}")
+            "$env:GESPAN_HOST_FORCE_UPGRADE = '1'\n$env:GESPAN_HOST_PORT = '{port}'\n{script}"
+        HostPlatform::Unix => format!("set -eu\n\"$HOME/.gespan-host/bin/gespan-host\" pair --name {} --json\n", shell_quote(name)),
+        HostPlatform::Windows => format!("$ErrorActionPreference = 'Stop'\n$base = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.gespan-host'\n$runtime = [IO.File]::ReadAllText((Join-Path $base 'runtime-path')).Trim()\n& (Join-Path $runtime 'node.exe') (Join-Path $runtime 'host.mjs') pair --name {} --json\nif ($LASTEXITCODE -ne 0) {{ throw 'Host pairing failed.' }}\n", powershell_quote(name)),
+        assert!(upgrade_script(HostPlatform::Unix, 3774).starts_with("GESPAN_HOST_FORCE_UPGRADE=1"));
+            .starts_with("$env:GESPAN_HOST_FORCE_UPGRADE = '1'"));
+            parse_platform("GESPAN_PLATFORM $env:OS Windows_NT $OS\r\n").unwrap(),
+            parse_platform("GESPAN_PLATFORM\r\nWindows_NT\r\n%OS%\r\n").unwrap(),
+            parse_platform("GESPAN_PLATFORM :OS %OS%\n").unwrap(),
