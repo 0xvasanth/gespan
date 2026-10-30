@@ -106,7 +106,23 @@ impl Shell {
             }),
         );
     }
-    fn start_orchestration(&mut self, lead: i64, plan: Plan, cx: &mut Context<Self>) {
+    fn grant_control(&self, lead: i64, cx: &mut Context<Self>) {
+        if let (Some(bridge), Some(view)) = (&self.control_bridge, self.sessions.get(&lead)) {
+            let environment = bridge.control_environment(lead);
+            view.update(cx, |v, _| v.set_control_environment(environment));
+        }
+    }
+    /// A lead that arrives from a closing window needs this window's bridge.
+    pub(super) fn orchestration_view_added(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self
+            .orchestrations
+            .get(&id)
+            .is_some_and(|live| live.run.live())
+        {
+            self.grant_control(id, cx);
+        }
+    }
+    pub(super) fn start_orchestration(&mut self, lead: i64, plan: Plan, cx: &mut Context<Self>) {
         if self
             .orchestrations
             .get(&lead)
@@ -166,10 +182,6 @@ impl Shell {
         }
         let run = Run::new(plan, cwd, provider, allowed);
         let first_turn = orchestration::approved_prompt(&request, &run);
-        if let Some(bridge) = &self.control_bridge {
-            let environment = bridge.control_environment(lead);
-            view.update(cx, |v, _| v.set_control_environment(environment));
-        }
         self.orchestrations.insert(
             lead,
             Live {
@@ -183,6 +195,7 @@ impl Shell {
                 closed: false,
             },
         );
+        self.grant_control(lead, cx);
         self.schedule_orchestration(lead, cx);
         view.update(cx, |v, cx| v.send_coordinator_report(first_turn, cx));
         let work = cx
@@ -205,7 +218,7 @@ impl Shell {
         })
         .detach();
     }
-    fn stop_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+    pub(super) fn stop_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
         if let Some(live) = self.orchestrations.get_mut(&lead) {
             let effects = live.run.stop();
             self.apply_orchestration_effects(lead, effects, cx);
@@ -286,7 +299,7 @@ impl Shell {
             })
             .collect()
     }
-    fn handle_control_call(&mut self, call: Call, cx: &mut Context<Self>) {
+    pub(super) fn handle_control_call(&mut self, call: Call, cx: &mut Context<Self>) {
         let lead = call.session;
         if call.request_id.is_empty()
             || !call

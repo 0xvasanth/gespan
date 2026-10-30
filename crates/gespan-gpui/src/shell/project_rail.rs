@@ -331,7 +331,7 @@ impl Shell {
     }
     fn prepare_project_rail(&mut self, compact: bool) {
         let mut rows = Vec::new();
-        if self.workspace.preferences.pilots {
+        if self.pilots.is_some() && self.workspace.preferences.pilots {
             rows.push(ProjectRailRow::Pilots);
         }
         let projects = &self.workspace.projects;

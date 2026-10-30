@@ -1,6 +1,10 @@
 use super::*;
 impl Shell {
     pub(super) fn configure_quick_composer(&mut self, cx: &mut Context<Self>) {
+        // The hotkey is app-wide; the first window answers it.
+        if self.secondary {
+            return;
+        }
         if let Some(receiver) = self.quick.configure(&self.workspace.preferences) {
             self.quick.task = Some(cx.spawn(async move |this, cx| {
                 while receiver.recv().await.is_ok() {
@@ -193,7 +197,7 @@ impl Shell {
                         this.workspace.project = launch.cwd;
                         this.close_settings(window, cx);
                         this.activate_session(id, window, cx);
-                        window.activate_window();
+                        this.show_window(window, cx);
                         cx.activate(true);
                     }
                     this.invalidate_chrome(cx);
