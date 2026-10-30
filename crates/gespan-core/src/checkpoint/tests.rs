@@ -821,6 +821,9 @@ fn checkpoints_scope_nested_workspaces_and_repositories_without_head() {
 fn a_git_failure_without_output_names_the_command_and_its_exit() {
     let dir = tempfile::tempdir().unwrap();
     run_git(dir.path(), &["init", "-q"]).unwrap();
+    // Windows git would otherwise warn about line endings on stderr.
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]).unwrap();
+    run_git(dir.path(), &["config", "core.safecrlf", "false"]).unwrap();
     // `diff --quiet` reports a difference by exit code alone.
     std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
     run_git(dir.path(), &["add", "a.txt"]).unwrap();
