@@ -362,12 +362,18 @@ fn is_public_ipv6(ip: Ipv6Addr) -> bool {
         return is_public_ipv4(ipv4);
     }
     let segments = ip.segments();
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || segments[0] & 0xfe00 == 0xfc00
-        || segments[0] & 0xffc0 == 0xfe80
-        || segments[0] & 0xffc0 == 0xfec0
+    // Only global unicast, 2000::/3. That leaves out loopback, unique-local,
+    // link-local, multicast, discard (100::/64) and NAT64 (64:ff9b::/96 and
+    // 64:ff9b:1::/48), whose embedded IPv4 could be private.
+    if segments[0] & 0xe000 != 0x2000 {
+        return false;
+    }
+    // Inside it, 6to4 (2002::/16) and Teredo (2001::/32) also carry an IPv4
+    // address; benchmarking (2001:2::/48) and documentation (2001:db8::/32)
+    // are never real hosts.
+    !(segments[0] == 0x2002
+        || (segments[0] == 0x2001 && segments[1] == 0)
+        || (segments[0] == 0x2001 && segments[1] == 2 && segments[2] == 0)
         || (segments[0] == 0x2001 && segments[1] == 0x0db8))
 }
 
@@ -414,8 +420,9 @@ fn image_mime(content_type: Option<&str>, bytes: &[u8]) -> Option<&'static str> 
 
 /// `og:title`, then `twitter:title`, then `<title>`.
 fn document_title(html: &str) -> Option<String> {
+    let metas = opening_tags(html, "meta");
     for key in ["og:title", "twitter:title"] {
-        for tag in opening_tags(html, "meta") {
+        for &tag in &metas {
             let marker = attribute(tag, "property").or_else(|| attribute(tag, "name"));
             if marker
                 .as_deref()
@@ -449,6 +456,9 @@ fn document_icon_href(html: &str) -> Option<String> {
     })
 }
 
+/// More tags than any real page head has; the rest of the page is ignored.
+const MAX_TAGS: usize = 4096;
+
 fn opening_tags<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
     let lower = html.to_ascii_lowercase();
     let needle = format!("<{name}");
@@ -459,11 +469,17 @@ fn opening_tags<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
         let after = start + needle.len();
         let boundary = lower.as_bytes().get(after).copied();
         if boundary.is_some_and(|byte| byte.is_ascii_whitespace() || byte == b'/' || byte == b'>') {
-            if let Some(end) = tag_end(html, start) {
-                tags.push(&html[start..=end]);
-                offset = end + 1;
-                continue;
+            // A tag that never closes means none after it can either, so
+            // stop rather than rescan the rest of the page for each one.
+            let Some(end) = tag_end(html, start) else {
+                break;
+            };
+            tags.push(&html[start..=end]);
+            if tags.len() >= MAX_TAGS {
+                break;
             }
+            offset = end + 1;
+            continue;
         }
         offset = after;
     }

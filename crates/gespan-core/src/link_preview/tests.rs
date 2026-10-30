@@ -149,6 +149,16 @@ fn rejects_local_and_special_networks() {
         "fe80::1",
         "ff02::1",
         "2001:db8::1",
+        // IPv6 forms that carry an IPv4 address, which may be private.
+        "64:ff9b::7f00:1",
+        "64:ff9b::a00:1",
+        "64:ff9b:1::a00:1",
+        "2002:7f00:1::1",
+        "2002:a00:1::1",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+        // Discard and benchmarking ranges.
+        "100::1",
+        "2001:2::1",
     ] {
         assert!(!is_public_ip(address.parse().unwrap()), "{address}");
     }
@@ -157,6 +167,7 @@ fn rejects_local_and_special_networks() {
         "172.32.0.1",
         "100.128.0.1",
         "2606:4700:4700::1111",
+        "2a00:1450:4001:80b::200e",
     ] {
         assert!(is_public_ip(address.parse().unwrap()), "{address}");
     }
@@ -545,4 +556,20 @@ fn a_cached_link_is_served_without_a_request() {
         Some("Once")
     );
     assert_eq!(server.hits.load(Ordering::SeqCst), after_first);
+}
+
+#[test]
+fn an_unclosed_tag_ends_the_scan_instead_of_rescanning_the_page() {
+    // Thousands of `<meta` openings with no `>`: each would otherwise read to
+    // the end of the page again.
+    let page = "<meta content=\"x".repeat(50_000);
+    let started = std::time::Instant::now();
+    assert_eq!(document_title(&page), None);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    // Tags before the unclosed one still count.
+    let page = format!(
+        "<meta property=\"og:title\" content=\"Kept\"><meta content=\"{}",
+        "x".repeat(1000)
+    );
+    assert_eq!(document_title(&page).as_deref(), Some("Kept"));
 }
