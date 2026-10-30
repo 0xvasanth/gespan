@@ -145,3 +145,55 @@ fn saving_a_clean_file_still_applies_the_format_on_save_preference(cx: &mut Test
     );
     std::fs::remove_file(path).unwrap();
 }
+
+#[gpui::test]
+fn editing_keys_reach_the_file_editor_and_undo_marks_it_clean(cx: &mut TestAppContext) {
+    let path = std::env::temp_dir().join(format!("gespan-editing-keys-{}.py", std::process::id()));
+    std::fs::write(&path, "first = 1\nsecond = 2\n").unwrap();
+    cx.update(|cx| {
+        cx.set_global(crate::settings::Preferences::default());
+        input::bind(cx);
+        bind(cx);
+    });
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |_, cx| {
+            let git = cx
+                .new(|cx| ProjectGit::new(std::env::temp_dir().to_string_lossy().into_owned(), cx));
+            cx.new(|cx| FileEditor::new(path.to_string_lossy().into_owned(), git, cx))
+        })
+        .unwrap()
+    });
+    cx.run_until_parked();
+    window
+        .update(cx, |e, w, cx| {
+            e.input.update(cx, |i, cx| {
+                w.focus(&i.focus_handle(cx), cx);
+                i.select_range(0..0, cx);
+            })
+        })
+        .unwrap();
+    let text = |cx: &mut TestAppContext| {
+        window
+            .update(cx, |e, _, cx| {
+                (e.input.read(cx).content.to_string(), e.dirty)
+            })
+            .unwrap()
+    };
+    // Alt+↓ moves the line here; the editor's change navigation is on Alt+F5.
+    cx.simulate_keystrokes(window.into(), "alt-down");
+    assert_eq!(text(cx), ("second = 2\nfirst = 1\n".into(), true));
+    let m = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.simulate_keystrokes(window.into(), &format!("{m}-/"));
+    assert_eq!(text(cx), ("second = 2\n# first = 1\n".into(), true));
+    cx.simulate_keystrokes(window.into(), &format!("{m}-z {m}-z"));
+    assert_eq!(
+        text(cx),
+        ("first = 1\nsecond = 2\n".into(), false),
+        "two commands, two undo steps, back to the saved text"
+    );
+    std::fs::remove_file(path).unwrap();
+}

@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
   and Linux) to see the match count and step through the matches with Enter,
   Shift+Enter, ⌘G or F3. A Pilot's older turns are searched too.
+- Gespan Native's code editor has the Tauri app's editing commands. Brackets
+  and quotes close themselves, a closer it added is typed over, and Backspace
+  removes an empty pair. Enter indents after `{`, `(`, `[` (and `:` in Python
+  and YAML), the bracket or tag beside the caret is highlighted with its
+  partner, and ⌘/ toggles comments. ⌥↑/⌥↓ move lines, ⇧⌥↑/⇧⌥↓ copy them,
+  ⌘⇧K deletes them and ⌘⇧\ selects to the matching bracket (Ctrl in place of
+  ⌘ on Windows and Linux). Each command undoes in one step and can be rebound
+  in Settings → Keybindings. Previous and next change in a file's diff move
+  to ⇧⌥F5 and ⌥F5.
 
 ### Fixed
 
