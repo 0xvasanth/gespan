@@ -965,7 +965,7 @@ impl Pilots {
             .upgrade()
             .map(|owner| owner.read(cx).pilot_session_views(cx))
             .unwrap_or_default();
-        let launches: Vec<_> = pilot
+        let mut launches: Vec<_> = pilot
             .launches
             .iter()
             .rev()
@@ -991,6 +991,16 @@ impl Pilots {
             })
             .cloned()
             .collect();
+        // Most recent activity first: running or waiting sessions, then by
+        // last update. Launch order alone puts re-attached old sessions on top.
+        launches.sort_by_cached_key(|l| {
+            std::cmp::Reverse(
+                views
+                    .iter()
+                    .find(|v| v.id == l.session_id)
+                    .map(|v| (v.busy || v.needs_input, v.updated_at)),
+            )
+        });
         let search_bar = search_bar(filter).child(
             icon_button("pilot-session-filter", "Filter Pilot sessions", "filter")
                 .relative()
