@@ -1,0 +1,33 @@
+crates/gespan-core/src/ticket_bridge.rs
+  s_943e8c7cbbf342::t_e59fcef6543a07 1091,1326,1364,1448,1489,1680,1686
+  s_943e8c7cbbf342::t_6cf47e75bd2fd2 1226,1229,1266,1279,1332,1453,1617,1663
+  s_943e8c7cbbf342::t_4559bdf12587eb 507,1705-1842
+  s_943e8c7cbbf342::t_09ae7e4d40fb58 1133
+  s_943e8c7cbbf342::t_fd44e1da016a1f 504-506
+  s_943e8c7cbbf342::t_3239f83b462f5a 508-510
+  s_943e8c7cbbf342::t_039f0daf50b15d 1702-1704
+  s_943e8c7cbbf342::t_4d101ccadcccf2 1843-1845
+  s_943e8c7cbbf342::t_688d85a377db18 33-36,140-142,155-156,257,377-378,383,440-463,473-479,487-492,500-503,511-520,526,546,616,621-628,689,700,709,716,724,759-800,1690-1701,1846-1858
+crates/gespan-core/src/pilot/bridge.rs
+  s_943e8c7cbbf342::t_06b3b7966c670b 42-44,254-261
+crates/gespan-gpui/src/runtime.rs
+  s_943e8c7cbbf342::t_d070fd61677a4b 615-616,631,659-660,669
+crates/gespan-gpui/src/runtime/ticket_context.rs
+  s_943e8c7cbbf342::t_7f313a2b5b0f77 22,26-29,82-107,145-164,170,182,189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9ecb45b8f680ac1f7b72453bd9b5862b16cf61d",
+  "prompts": {},
+  "sessions": {
+    "s_943e8c7cbbf342": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "153c370b-d910-43a7-9cfb-f42ea178d392",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
