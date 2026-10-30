@@ -120,6 +120,7 @@ fn host_arguments(command: &str, args: Value) -> Result<(String, Value), String>
             | "git_github_pr_diff"
             | "git_github_pr_checks"
             | "git_github_check_details"
+            | "git_github_run_rerun_failed"
             | "git_history"
             | "git_commit_files"
             | "git_commit_file_diff"
@@ -312,6 +313,15 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, OUTDATED_INBOX);
+        let (_, args) = host_arguments(
+            "git_github_run_rerun_failed",
+            json!({"cwd":"remote://env/home/code","repo":"acme/web","runId":"99"}),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            json!({"cwd":"/home/code","repo":"acme/web","runId":"99"})
+        );
     }
 
     #[test]

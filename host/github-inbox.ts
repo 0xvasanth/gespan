@@ -17,6 +17,7 @@ export const GITHUB_INBOX_COMMANDS = [
   "git_github_pr_diff",
   "git_github_pr_checks",
   "git_github_check_details",
+  "git_github_run_rerun_failed",
 ] as const;
 export type GithubInboxCommand = (typeof GITHUB_INBOX_COMMANDS)[number];
 
@@ -238,6 +239,17 @@ export class GithubInbox {
     const repo = repoSlug(input.repo);
     if (command === "git_github_check_details")
       return this.checkDetails(cwd, repo, input.jobId);
+    if (command === "git_github_run_rerun_failed") {
+      const runId = text(input.runId);
+      if (!/^[1-9]\d*$/.test(runId))
+        throw new Error("Invalid GitHub workflow run ID");
+      await this.gh(
+        cwd,
+        ["run", "rerun", runId, "--repo", repo, "--failed"],
+        true,
+      );
+      return null;
+    }
     if (command === "git_github_work_items") {
       const kind = itemKind(input.kind);
       const limit =

@@ -476,6 +476,7 @@ it("accepts the exact arguments Gespan Native sends for every command", async ()
     ["git_github_pr_checks", { repo, number: 42 }],
     ["git_github_pr_action", { repo, number: 42, action: "ready" }],
     ["git_github_check_details", { repo, jobId: "7" }],
+    ["git_github_run_rerun_failed", { repo, runId: "9" }],
   ];
   expect(calls.map(([command]) => command).sort()).toEqual(
     [...GITHUB_INBOX_COMMANDS].sort(),
@@ -484,6 +485,19 @@ it("accepts the exact arguments Gespan Native sends for every command", async ()
     await expect(
       inbox.run(command, cwd, args as Record<string, unknown>),
     ).resolves.toBeDefined();
+});
+
+it("reruns only a run's failed jobs, in the requested repository", async () => {
+  const raw = vi.fn().mockResolvedValue("");
+  const inbox = new GithubInbox(raw);
+  expect(
+    await inbox.run("git_github_run_rerun_failed", cwd, { repo, runId: "99" }),
+  ).toBeNull();
+  expect(raw).toHaveBeenCalledWith(
+    cwd,
+    ["run", "rerun", "99", "--repo", repo, "--failed"],
+    true,
+  );
 });
 
 it("rejects caller-controlled process, API path and action inputs before gh runs", async () => {
@@ -504,6 +518,10 @@ it("rejects caller-controlled process, API path and action inputs before gh runs
   await expect(
     inbox.run("git_github_check_details", cwd, { repo, jobId: "1/../../evil" }),
   ).rejects.toThrow();
+  for (const runId of ["0", "1 --help", "--failed", 99])
+    await expect(
+      inbox.run("git_github_run_rerun_failed", cwd, { repo, runId }),
+    ).rejects.toThrow("Invalid GitHub workflow run ID");
   await expect(
     inbox.run("git_github_work_item_comment", cwd, {
       ...input,
@@ -633,7 +651,7 @@ it.skipIf(process.platform === "win32")(
           .trim()
           .split("\n"),
       ).toHaveLength(1);
-      expect(GITHUB_INBOX_COMMANDS).toHaveLength(9);
+      expect(GITHUB_INBOX_COMMANDS).toHaveLength(10);
     } finally {
       store.close();
       rmSync(home, { recursive: true, force: true });
