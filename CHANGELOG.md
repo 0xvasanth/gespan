@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Gespan now builds the list from those updates, including renamed and
   deleted tasks. The list carries on when you resume the session, even after
   restarting Gespan.
+- Gespan Native shows a preview for any web link in a prompt, not only GitHub
+  issues and pull requests: the link becomes the page's title with the site's
+  icon, as in the Tauri app. Links to local or private network addresses are
+  never fetched, and a page that can't be read shows its site name instead.
 
 ## [0.0.2-beta] - 2026-10-29
 
