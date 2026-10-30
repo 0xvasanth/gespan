@@ -651,6 +651,20 @@ impl TranscriptView {
         self.list.set_follow_mode(FollowMode::Tail);
         self.scroll_bound = false;
     }
+    /// The messages the find bar matches, by source row.
+    pub(crate) fn find_matches(&self, query: &str) -> Vec<usize> {
+        gespan_core::search::transcript_matches(&self.source, query)
+    }
+    #[cfg(test)]
+    pub(crate) fn search_target(&self) -> Option<(usize, String)> {
+        self.search_match.clone()
+    }
+    /// Drops the find bar's highlight.
+    pub(crate) fn clear_search(&mut self, cx: &mut Context<Self>) {
+        if self.search_match.take().is_some() {
+            cx.notify();
+        }
+    }
     pub(crate) fn reveal_search(&mut self, row: usize, query: &str, cx: &mut Context<Self>) {
         if row < self.history_start {
             self.history_search = Some((row, query.into()));

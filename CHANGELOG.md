@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
+  and Linux) to see the match count and step through the matches with Enter,
+  Shift+Enter, ⌘G or F3. A Pilot's older turns are searched too.
+
 ### Fixed
 
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit

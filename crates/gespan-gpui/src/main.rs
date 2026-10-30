@@ -536,6 +536,7 @@ fn main() {
             image_lightbox::bind(cx);
             composer_completion::bind(cx);
             file_editor::bind(cx);
+            conversation::find::bind(cx);
             popover::bind(cx);
             board::bind(cx);
             cx.set_prompt_builder(modal::prompt_builder);
