@@ -1,12 +1,12 @@
 [package]
 name = "gespan"
-version.workspace = true
-edition.workspace = true
+version = "0.0.3-beta"
+edition = "2021"
 description = "Gespan — one UI for every agent harness"
 authors = ["vasanth"]
 repository = "https://github.com/0xvasanth/gespan"
 homepage = "https://gespan.dev"
-license.workspace = true
+license = "MIT"
 
 [lib]
 name = "gespan_lib"
@@ -32,8 +32,8 @@ natpmp = "0.5"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 open = "5.4.1"
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "1.1.8"
 sha2 = "0.11"
 zstd = "0.14"
@@ -89,3 +89,7 @@ tauri-plugin-window-state = "2.4.1"
 gespan-tracker-client = { path = "../crates/tracker-client", features = ["testing"] }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets", features = ["testing"] }
 tempfile = "3"
+
+# Its own workspace, so the root one (shared crates and the mobile link) builds
+# without the Tauri app.
+[workspace]
