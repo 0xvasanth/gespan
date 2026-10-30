@@ -40,12 +40,12 @@ tick the box in the same PR.
 
 ### Orchestration
 
-- [ ] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`.
+- [x] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`. Done in #261.
 - [ ] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`.
 - [ ] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Native runs a fixed plan and reports to the lead at the end. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`.
 - [ ] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). *(also below)*
 - [ ] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). *(also below)*
-- [ ] **`app` CLI `ticket.*` and `card.*` actions.** Native offers these as MCP tools only. Tauri: `src-tauri/src/control_cli.rs`.
+- [x] **`app` CLI `ticket.*` and `card.*` actions.** Native offers these as MCP tools only. Tauri: `src-tauri/src/control_cli.rs`. Done in #259.
 
 ### Inbox and notes
 
@@ -96,7 +96,7 @@ Bug fixes that landed in the Tauri app after Native was copied in on
 - [x] **Codex plugin skills.** Tauri lists enabled plugin skills through Codex's `skills/list`. Native only scans skill folders. Tauri: `221007a3`. Native: `crates/gespan-core/src/skills.rs`. Done in #245.
 - [ ] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Native only removes worktrees from Settings → Worktrees. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`.
 - [ ] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Native only runs `gh repo view` in a local folder. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`.
-- [ ] **Check, then port if needed:** an inline subagent that reported back lets the turn finish (`6b313ab9`); an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`); Claude shell commands restored in saved transcripts (`f028d9e6`); Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`) is done with the plan card in #245.
+- [ ] **Check, then port if needed:** an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`). The inline subagent fix (`6b313ab9`) is done in #255, Claude shell commands restored in saved transcripts (`f028d9e6`) in #269, and Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`) with the plan card in #245.
 
 ### Before deleting `src/` and `src-tauri/`
 
@@ -105,10 +105,10 @@ deleted as they are now.
 
 - [ ] **The remote host is built from `src/`.** `host/*.ts` imports 49 modules from `../src/` (connection protocol, harness, providers, sessions). Native's SSH setup installs that host.
 - [x] **Only the Tauri release publishes host packages.** Done in #231: `native-release.yml` has the `host` job, and `release.yml` is gone.
-- [ ] **Native packaging uses files in `src-tauri/`.** `scripts/bundle-native-macos.sh` (icon.icns, Entitlements.plist), `scripts/package-native.mjs` and `crates/gespan-gpui/build.rs` (icon.ico).
-- [ ] **Native tests read Tauri and `src/` sources.** `include_str!` in `crates/gespan-core/src/store/shared/tests.rs`, `crates/gespan-core/src/provider/kind.rs` and `crates/gespan-gpui/src/editor_analysis.rs`.
-- [ ] **Mobile tests import `src/`.** `tests/mobile/watchFrames.test.ts`, which `mobile/vitest.config.ts` includes, imports `src/features/mobile/model/*`.
-- [ ] **The root Cargo workspace lists `src-tauri`.** `mobile/scripts/build-native-link.mjs` builds in that workspace.
+- [x] **Native packaging uses files in `src-tauri/`.** `scripts/bundle-native-macos.sh` (icon.icns, Entitlements.plist), `scripts/package-native.mjs` and `crates/gespan-gpui/build.rs` (icon.ico). Done in #254.
+- [x] **Native tests read Tauri and `src/` sources.** `include_str!` in `crates/gespan-core/src/store/shared/tests.rs`, `crates/gespan-core/src/provider/kind.rs` and `crates/gespan-gpui/src/editor_analysis.rs`. Done in #258.
+- [x] **Mobile tests import `src/`.** `tests/mobile/watchFrames.test.ts`, which `mobile/vitest.config.ts` includes, imports `src/features/mobile/model/*`. Done in #256.
+- [x] **The root Cargo workspace lists `src-tauri`.** `mobile/scripts/build-native-link.mjs` builds in that workspace. Done in #257.
 
 ## Providers
 
