@@ -5,8 +5,8 @@ edition = "2021"
 license = "MIT"
 publish = false
 
-# Built under both the root workspace (src-tauri) and the gespan-gpui workspace
-# (gespan-core), so nothing here inherits from either workspace.
+# Built under the root workspace, the Tauri app's workspace and the gespan-gpui
+# workspace (gespan-core), so nothing here inherits from either workspace.
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
