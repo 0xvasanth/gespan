@@ -1181,7 +1181,10 @@ mod tests {
         assert_eq!(reply["integrated"], true, "{reply}");
         assert_eq!(reply["cleaned"], true, "{reply}");
         assert_eq!(
-            std::fs::read_to_string(std::path::Path::new(&root).join("src/a.txt")).unwrap(),
+            // Git may check this out with CRLF on Windows.
+            std::fs::read_to_string(std::path::Path::new(&root).join("src/a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "worker\n"
         );
         assert!(!std::path::Path::new(&workspace.path).exists());
