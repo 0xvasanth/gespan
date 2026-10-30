@@ -375,6 +375,11 @@ pub fn rerun_run_ids(checks: &[Check], repo: &str) -> Vec<String> {
     }
     ids
 }
+/// A rerun runs `gh` on this machine, so a remote project cannot offer one yet.
+pub fn can_rerun(item: &Item) -> bool {
+    !crate::files::remote::is_remote(std::path::Path::new(&item.project_path))
+}
+
 /// `gh run rerun <run> --failed`: reruns only a run's failed and cancelled jobs.
 pub fn rerun_args(repo: &str, run_id: &str) -> Result<Vec<String>, String> {
     let (owner, name) = super::github::split_github_repo(repo)?;
@@ -1197,6 +1202,16 @@ pub fn find_check_repair<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_local_projects_offer_a_rerun() {
+        let item = |project_path: &str| super::Item {
+            project_path: project_path.into(),
+            ..Default::default()
+        };
+        assert!(can_rerun(&item("/repo")));
+        assert!(can_rerun(&item("")));
+        assert!(!can_rerun(&item("remote://host/repo")));
+    }
     use super::*;
 
     fn check(name: &str, state: &str, url: Option<&str>) -> Check {
