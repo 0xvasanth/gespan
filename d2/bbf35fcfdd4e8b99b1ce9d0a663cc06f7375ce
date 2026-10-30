@@ -1,0 +1,23 @@
+host/github-inbox.ts
+  s_e86ce54257af83::t_a1837096c93b97 20,242-252
+host/github-inbox.test.ts
+  s_e86ce54257af83::t_a1837096c93b97 479,490-502,521-524,654
+crates/gespan-core/src/files/remote.rs
+  s_e86ce54257af83::t_a1837096c93b97 123,316-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2bbf35fcfdd4e8b99b1ce9d0a663cc06f7375ce",
+  "prompts": {},
+  "sessions": {
+    "s_e86ce54257af83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "117db5a4-2c1a-4e88-bda8-65eec1ea3d63",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
