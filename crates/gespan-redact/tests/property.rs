@@ -75,7 +75,12 @@ proptest! {
         let input = surround(&prefix, open, &pair, close, &suffix);
         let out = Redactor::new(Config::default()).redact_text(&input);
         prop_assert!(!out.contains(&pair), "{pair:?} survived in {out:?}");
-        prop_assert!(out.contains(&format!("{key}=<redacted>")), "{out:?}");
+        // The key keeps a redacted value, unless a secret key in the prefix
+        // (such as `PW:`) redacted the whole pair as its own value.
+        prop_assert!(
+            out.contains(&format!("{key}=<redacted>")) || !out.contains(&key),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -154,4 +159,10 @@ proptest! {
         let out = Redactor::new(Config::default()).redact_value(input);
         prop_assert_eq!(out, json!({"events": [{"keep": 1}], "level": "info"}));
     }
+}
+
+#[test]
+fn a_secret_key_before_a_pair_redacts_the_whole_pair() {
+    let out = Redactor::new(Config::default()).redact_text("PW:\tpassword=0 ");
+    assert_eq!(out, "PW:\t<redacted> ");
 }
