@@ -1292,6 +1292,19 @@ impl Shell {
             ));
             this.observations.push(cx.subscribe(
                 &pilots,
+                |_, _, _: &crate::pilots::HidePilots, cx| {
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            let mut prefs = this.workspace.preferences.clone();
+                            prefs.pilots = false;
+                            this.set_preferences(prefs, window, cx);
+                        });
+                    })
+                    .detach();
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
                 |_, _, request: &crate::pilots::ShowDetails, cx| {
                     let id = request.0.clone();
                     cx.spawn(async move |this, cx| {

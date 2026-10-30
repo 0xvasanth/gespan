@@ -12,6 +12,7 @@ mod floating;
 mod flow_reviews;
 mod host;
 mod html;
+mod intro;
 mod memory_ui;
 mod notifications;
 mod overview;
@@ -56,6 +57,8 @@ use std::{
 pub(crate) struct Changed;
 pub(crate) struct TabOpened(pub String);
 pub(crate) struct ShowDetails(pub String);
+/// The rail asked to turn Pilots off, as Settings › Pilots › Show pilots does.
+pub(crate) struct HidePilots;
 pub(crate) use notifications::{NotificationChanged, NotificationFinished};
 #[derive(Clone, PartialEq)]
 pub(crate) struct OverviewChrome {
@@ -181,6 +184,7 @@ pub(crate) struct Pilots {
 impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
 impl EventEmitter<ShowDetails> for Pilots {}
+impl EventEmitter<HidePilots> for Pilots {}
 impl Pilots {
     pub(crate) fn resource_sessions(
         &self,
@@ -1303,8 +1307,14 @@ impl Pilots {
         }
         let count = roster.len();
         let has = count > 0;
-        if original && !has && compact {
-            return div().into_any_element();
+        if original && !has {
+            // With no Pilot yet, the card stands in for the rail's section; the
+            // icon rail has no room for it.
+            return if compact {
+                div().into_any_element()
+            } else {
+                self.intro_card(cx)
+            };
         }
         let add_project = project.clone();
         let heading = if original {
