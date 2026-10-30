@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gespan Native's context meter no longer jumps to full after a turn on a
+  routed Claude Code provider, and Pilots no longer start a new session too
+  early because of it. The level stays at the last reading, as in the Tauri
+  app.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
   Gespan left running, as the Tauri app does. Agents of a running Gespan,
   Native or Tauri, are left alone.

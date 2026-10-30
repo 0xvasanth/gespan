@@ -959,11 +959,16 @@ impl Protocol {
                         if metrics.reported() {
                             events.push(Event::Metrics(metrics));
                         }
-                        let last = v["usage"]["iterations"]
-                            .as_array()
-                            .and_then(|iterations| iterations.last())
-                            .unwrap_or(&v["usage"]);
-                        let used = crate::context::claude_used(last);
+                        // The last iteration is what sits in the window. Routed
+                        // providers send `iterations: []` while `usage` sums the
+                        // whole turn, so report no level then and keep the last
+                        // assistant reading.
+                        let used = match usage["iterations"].as_array() {
+                            Some(iterations) => {
+                                iterations.last().and_then(crate::context::claude_used)
+                            }
+                            None => crate::context::claude_used(usage),
+                        };
                         let window = v["modelUsage"]
                             .as_object()
                             .into_iter()
@@ -2272,6 +2277,39 @@ mod tests {
             used: Some(2050),
             window: Some(200000)
         }));
+    }
+    #[test]
+    fn claude_routed_turn_with_empty_iterations_keeps_the_assistant_level() {
+        let mut claude = protocol(Kind::Claude);
+        let mut context = crate::context::Usage::default();
+        let mut feed = |frame: Value, context: &mut crate::context::Usage| {
+            for event in claude.frame(frame, &mut Vec::new()).unwrap() {
+                if let Event::Context { used, window } = event {
+                    context.merge(used, window);
+                }
+            }
+        };
+        feed(
+            json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":40000,"output_tokens":2000}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 42000);
+        // A routed provider: no iterations, and a usage summed over the turn
+        // that is bigger than the window.
+        feed(
+            json!({"type":"result","usage":{"input_tokens":6058017,"output_tokens":24770,"iterations":[]},"modelUsage":{"deepseek-v4.1-flash":{"contextWindow":1048576}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 42000, "the summed turn is not the level");
+        assert_eq!(context.window, Some(1048576));
+        assert!(context.ratio().unwrap() < 0.05, "the meter is not full");
+        // Without the key at all, older CLIs' usage is still the level.
+        feed(
+            json!({"type":"result","usage":{"input_tokens":50000,"output_tokens":100},"modelUsage":{"m":{"contextWindow":200000}}}),
+            &mut context,
+        );
+        assert_eq!(context.used, 50100);
+        assert_eq!(context.window, Some(200000));
     }
     #[test]
     fn codex_handshake_stream_snapshot_and_resume() {
