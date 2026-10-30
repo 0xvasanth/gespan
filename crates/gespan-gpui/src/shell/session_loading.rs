@@ -30,6 +30,7 @@ impl Shell {
         Metadata {
             summary: live.map_or_else(|| &self.session_summaries[&id], |v| &v.summary),
             busy: live.is_some_and(|v| v.busy)
+                || crate::windows::is_running(id, cx)
                 || self.remote_marks.get(&id).is_some_and(|state| state.0),
             live,
             draft: self.draft_sessions.contains(&id),
@@ -45,6 +46,9 @@ impl Shell {
     ) -> Option<Entity<Conversation>> {
         if let Some(view) = self.sessions.get(&id) {
             return Some(view.clone());
+        }
+        if crate::windows::owned_elsewhere(id, cx.entity_id(), cx) {
+            return None;
         }
         let summary = self.session_summaries.get(&id)?.clone();
         self.add_loaded(summary, cx);

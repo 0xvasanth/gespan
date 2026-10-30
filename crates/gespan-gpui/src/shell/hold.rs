@@ -221,9 +221,27 @@ impl Shell {
         if let Some(pilots) = &self.pilots {
             views.extend(pilots.read(cx).hold_views());
         }
+        views.extend(
+            crate::windows::conversations_elsewhere(self.window_key, cx)
+                .into_iter()
+                .filter(|view| !view.read(cx).is_remote())
+                .map(|view| (view, false)),
+        );
         views
     }
+    /// Hold's own state lives in the first window; another only reflects it.
+    pub(super) fn hold_changed_elsewhere(&mut self, cx: &mut Context<Self>) {
+        self.hold.on_hold = crate::hold::phase(cx) == Some(Phase::OnHold);
+        self.sync_keep_awake();
+        self.refresh_hold_marks(cx);
+        self.invalidate_chrome(cx);
+        cx.notify();
+    }
     pub(super) fn hold_all(&mut self, cx: &mut Context<Self>) {
+        if self.secondary {
+            crate::windows::on_primary(cx, |shell, _, cx| shell.hold_all(cx));
+            return;
+        }
         if crate::hold::active(cx) {
             return;
         }
@@ -363,6 +381,10 @@ impl Shell {
         }
     }
     pub(super) fn resume_all(&mut self, cx: &mut Context<Self>) {
+        if self.secondary {
+            crate::windows::on_primary(cx, |shell, _, cx| shell.resume_all(cx));
+            return;
+        }
         let Some(state) = cx.try_global::<Hold>().and_then(|hold| hold.0.clone()) else {
             return;
         };
