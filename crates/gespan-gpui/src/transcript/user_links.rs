@@ -1,14 +1,17 @@
-//! A prompt's GitHub issue or pull request link as a chip with a hover card,
-//! ported from src/features/sessions/ui/UserLinkPreview.tsx.
+//! A prompt's first web link as a chip, ported from
+//! src/features/sessions/ui/UserLinkPreview.tsx: a GitHub issue or pull
+//! request gets a "PR #12" chip with a hover card, and any other link its
+//! page's favicon and title, fetched off the main thread.
 use super::*;
 use crate::popover::Align;
 use gespan_core::inbox::{Details, Item};
-use gespan_core::user_links::{GithubWorkItemLink, plain_text_summary};
-use gpui::{AnyElement, HighlightStyle, Hsla, StyledText, Task};
+use gespan_core::link_preview::LinkPreview;
+use gespan_core::user_links::{GithubWorkItemLink, UserLink, plain_text_summary};
+use gpui::{AnyElement, HighlightStyle, Hsla, Image, ImageFormat, StyledText, Task, img};
 use std::{
     ops::Range,
     path::Path,
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
@@ -18,6 +21,9 @@ const CARD_WIDTH: f32 = 360.;
 const VIOLET: u32 = 0xa78bfa;
 const EMERALD: u32 = 0x34d399;
 const ROSE: u32 = 0xfb7185;
+/// Tailwind's sky-400 and sky-300: GenericLinkPreview's link ink and hover.
+const SKY: u32 = 0x38bdf8;
+const SKY_HOVER: u32 = 0x7dd3fc;
 
 /// githubTasks.ts's workItemByKey and detailsByKey: one cache for the app.
 type Key = (String, &'static str, u64);
@@ -41,6 +47,34 @@ enum Load {
     Unavailable,
 }
 
+/// A web link's title and favicon, as this view last saw them.
+#[derive(Clone, Debug)]
+enum WebPreview {
+    Loading,
+    Ready {
+        title: Option<String>,
+        icon: Option<Arc<Image>>,
+    },
+    /// Shown as the host and its initial, as React's failed fetch.
+    Failed,
+}
+impl WebPreview {
+    fn ready(preview: &LinkPreview) -> Self {
+        Self::Ready {
+            title: preview
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_owned),
+            icon: preview
+                .favicon_png
+                .clone()
+                .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png))),
+        }
+    }
+}
+
 /// The open hover card, keyed by its prompt's source index.
 #[derive(Default)]
 pub(super) struct Cards {
@@ -50,6 +84,9 @@ pub(super) struct Cards {
     closing: Option<Task<()>>,
     /// Each chip requests its details once, as React's `requestStarted`.
     loads: HashMap<Key, Load>,
+    /// Each web link is fetched once per view; the app cache in
+    /// gespan_core::link_preview keeps successes across views.
+    previews: HashMap<String, WebPreview>,
 }
 
 impl TranscriptView {
@@ -78,8 +115,9 @@ impl TranscriptView {
                 .text_selection(row, message_start, false, cx)
                 .map(|selection| selection.with_text(text.clone())),
         };
-        let Some(work) = link.link.github_work_item.clone() else {
-            return pieces.piece(0..text.len());
+        let chip = match link.link.github_work_item.clone() {
+            Some(work) => self.work_item_chip(message_start, &link.link.url, &work, cx),
+            None => self.web_link_chip(message_start, &link.link, cx),
         };
         let url = link.range.clone();
         let line_start = text[..url.start].rfind('\n').map_or(0, |i| i + 1);
@@ -95,7 +133,7 @@ impl TranscriptView {
             .flex_wrap()
             .items_center()
             .children(words(text, line_start..url.start).map(|range| pieces.piece(range)))
-            .child(self.work_item_chip(message_start, &link.link.url, &work, cx))
+            .child(chip)
             .when(space_after, |d| d.child(space()))
             .children(words(text, url.end..line_end).map(|range| pieces.piece(range)));
         div()
@@ -109,6 +147,113 @@ impl TranscriptView {
                 d.child(pieces.piece(line_end + 1..text.len()))
             })
             .into_any_element()
+    }
+    /// GenericLinkPreview: the site's favicon and page title, or its host and
+    /// initial while loading or when the page could not be read.
+    fn web_link_chip(
+        &mut self,
+        message_start: usize,
+        link: &UserLink,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let anchor = self
+            .work_item_cards
+            .anchors
+            .entry(message_start)
+            .or_default()
+            .clone();
+        let (title, favicon) = match self.web_preview(&link.url, cx) {
+            WebPreview::Ready { title, icon } => (title.unwrap_or_else(|| link.host.clone()), icon),
+            WebPreview::Loading | WebPreview::Failed => (link.host.clone(), None),
+        };
+        let initial = link
+            .host
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default();
+        let open_url = link.url.clone();
+        div()
+            .id(("web-link-chip", message_start))
+            .role(Role::Link)
+            .aria_label(format!("Open {title}"))
+            .group("web-link-chip")
+            .relative()
+            .mx(px(2.))
+            .min_w_0()
+            .max_w_full()
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .text_color(alpha(rgb(SKY), 0.9))
+            .hover(|s| s.text_color(rgb(SKY_HOVER)))
+            .child(anchor.probe())
+            .child(
+                div()
+                    .mr_1()
+                    .size(px(16.))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .overflow_hidden()
+                    .rounded(px(4.))
+                    .bg(content(0.06))
+                    .text_size(px(9.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(content(0.55))
+                    .map(|d| match favicon {
+                        Some(icon) => {
+                            d.child(img(icon).size(px(14.)).object_fit(gpui::ObjectFit::Contain))
+                        }
+                        None => d.child(initial),
+                    }),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .group_hover("web-link-chip", |s| s.underline())
+                    .child(title),
+            )
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, _, cx| cx.open_url(&open_url))
+            .into_any_element()
+    }
+    /// `url`'s preview, starting its fetch on the background executor the
+    /// first time this view draws it. A failure stays quiet: the chip keeps
+    /// the host, and the next view to show the link tries again.
+    fn web_preview(&mut self, url: &str, cx: &mut Context<Self>) -> WebPreview {
+        if let Some(preview) = self.work_item_cards.previews.get(url) {
+            return preview.clone();
+        }
+        let preview = match gespan_core::link_preview::cache().get(url) {
+            Some(cached) => WebPreview::ready(&cached),
+            None => {
+                let fetch_url = url.to_owned();
+                let fetch = cx
+                    .background_executor()
+                    .spawn(async move { gespan_core::link_preview::load(&fetch_url) });
+                let url = url.to_owned();
+                cx.spawn(async move |this, cx| {
+                    let preview = match fetch.await {
+                        Ok(preview) => WebPreview::ready(&preview),
+                        Err(_) => WebPreview::Failed,
+                    };
+                    let _ = this.update(cx, |this, cx| {
+                        this.work_item_cards.previews.insert(url, preview);
+                        cx.notify();
+                    });
+                })
+                .detach();
+                WebPreview::Loading
+            }
+        };
+        self.work_item_cards
+            .previews
+            .insert(url.to_owned(), preview.clone());
+        preview
     }
     /// GithubWorkItemPreview's compact chip: "PR #12" or "Issue #7".
     fn work_item_chip(
@@ -702,6 +847,114 @@ fn skeleton() -> AnyElement {
 mod tests {
     use super::*;
     use gpui::{Bounds, TestAppContext, WindowBounds, WindowOptions, point, size};
+
+    fn transcript_window(cx: &mut TestAppContext) -> gpui::WindowHandle<TranscriptView> {
+        cx.update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(900.), px(600.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| TranscriptView::new()),
+            )
+            .unwrap()
+        })
+    }
+    fn show_prompt(
+        window: gpui::WindowHandle<TranscriptView>,
+        prompt: &str,
+        cx: &mut TestAppContext,
+    ) {
+        window
+            .update(cx, |view, _, cx| {
+                let mut source = gespan_core::transcript::Transcript::default();
+                source.begin("user");
+                source.append(prompt);
+                view.patch(0, source.rows, cx);
+                view.visible = true;
+            })
+            .unwrap();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_non_github_link_becomes_a_chip_with_its_page_title_and_favicon(cx: &mut TestAppContext) {
+        let window = transcript_window(cx);
+        let url = "https://docs.example.com/guide";
+        // Seed the app cache so the chip never reaches the network.
+        let favicon = gespan_core::project_appearance::png_bytes(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([10, 20, 30, 255]),
+        ))
+        .unwrap();
+        gespan_core::link_preview::cache().insert(
+            url,
+            LinkPreview {
+                title: Some("  Example Guide  ".into()),
+                favicon_png: Some(favicon),
+            },
+        );
+        show_prompt(
+            window,
+            &format!("please read {url} first\nthen fix the tests\nand ship"),
+            cx,
+        );
+        window
+            .update(cx, |view, _, _| {
+                let (_, link) = view.messages[0].user_link.clone().unwrap();
+                assert_eq!(link.link.url, url);
+                assert_eq!(link.link.github_work_item, None);
+                // The chip is drawn in place of the URL, inside the bubble.
+                let chip = view.work_item_cards.anchors[&0].get().unwrap();
+                let item = view.list.bounds_for_item(0).unwrap();
+                assert!(item.contains(&chip.origin), "{chip:?} {item:?}");
+                match &view.work_item_cards.previews[url] {
+                    WebPreview::Ready { title, icon } => {
+                        assert_eq!(title.as_deref(), Some("Example Guide"));
+                        assert!(icon.is_some());
+                    }
+                    other => panic!("{other:?}"),
+                }
+                // A message with a link chip is shown in full, as in React.
+                assert!(view.clamped_prompts.is_empty());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_link_whose_page_cannot_be_read_keeps_a_host_chip(cx: &mut TestAppContext) {
+        let window = transcript_window(cx);
+        // A local address is refused before any request is made.
+        let url = "http://localhost:4100/dev/page";
+        show_prompt(window, &format!("see {url}"), cx);
+        window
+            .update(cx, |view, _, _| {
+                assert!(matches!(
+                    view.work_item_cards.previews[url],
+                    WebPreview::Failed
+                ));
+                assert!(view.work_item_cards.anchors[&0].get().is_some());
+                assert!(gespan_core::link_preview::cache().get(url).is_none());
+            })
+            .unwrap();
+        // Redrawing does not fetch again: the failure is remembered per view.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, _| {
+                assert!(matches!(
+                    view.work_item_cards.previews[url],
+                    WebPreview::Failed
+                ));
+            })
+            .unwrap();
+    }
 
     #[gpui::test]
     fn a_pasted_pull_request_becomes_an_unclamped_chip_with_a_hover_card(cx: &mut TestAppContext) {
