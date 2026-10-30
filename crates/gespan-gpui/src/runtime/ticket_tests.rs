@@ -202,6 +202,21 @@ fn linked() -> Option<TicketRef> {
 }
 
 #[test]
+fn only_a_provider_without_tool_servers_is_pointed_at_the_cli() {
+    let executable = std::path::Path::new("/Applications/Gespan/gespan-gpui");
+    assert_eq!(
+        ticket_cli(Kind::Pi, None, executable).as_deref(),
+        Some(r#""/Applications/Gespan/gespan-gpui" app"#)
+    );
+    assert_eq!(
+        ticket_cli(Kind::Grok, Some("thread"), executable).as_deref(),
+        Some(r#""/Applications/Gespan/gespan-gpui" app"#)
+    );
+    assert_eq!(ticket_cli(Kind::Codex, None, executable), None);
+    assert_eq!(ticket_cli(Kind::Claude, Some("thread"), executable), None);
+}
+
+#[test]
 fn a_linked_session_mounts_ticket_tools_and_answers_calls() {
     let (record, ticket_changed, status) = run(linked(), Settings::default());
     assert_eq!(status, "Ready");
