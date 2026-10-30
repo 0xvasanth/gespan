@@ -1,0 +1,39 @@
+crates/gespan-gpui/Cargo.toml
+  s_63af2de14c07c0::t_0a2475a35c89c7 88
+crates/gespan-gpui/src/main.rs
+  s_63af2de14c07c0::t_a63280e1c0fce6 99
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_63af2de14c07c0::t_ec42e1d0c451ad 38-128
+crates/gespan-gpui/src/settings/mod.rs
+  s_63af2de14c07c0::t_663705d68a7da5 143,154,165,176,186,197
+crates/gespan-gpui/src/settings/model.rs
+  s_63af2de14c07c0::t_851c6283d97e3e 380-385,392-397,605-607
+crates/gespan-gpui/src/settings/pages/appearance.rs
+  s_63af2de14c07c0::t_bcd83e5e666ce3 8,84-93,235-253,256,262,266-276,286,291
+crates/gespan-gpui/src/settings/preferences.rs
+  s_63af2de14c07c0::t_a09e1508a528ab 32,40
+crates/gespan-gpui/src/shell.rs
+  s_63af2de14c07c0::t_39a627985a1af2 756,1135,8460,8473,8482,8487-8491
+crates/gespan-gpui/src/theme.rs
+  s_63af2de14c07c0::t_ce77dc9f3b52aa 62,71,93,207-215,622-662,722,727,733
+crates/gespan-gpui/src/traffic_lights.rs
+  s_63af2de14c07c0::t_a9c8b953018da2 88
+crates/gespan-gpui/src/window_blur.rs
+  s_63af2de14c07c0::t_f2ae96b639ea83 1-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6cb81d566b6cbf2de74a11f384c9b2f3a087338",
+  "prompts": {},
+  "sessions": {
+    "s_63af2de14c07c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "511cd39b-180a-4062-bdda-b7016f9292ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
