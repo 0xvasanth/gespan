@@ -197,7 +197,7 @@ impl Shell {
             view.update(cx, |v, _| v.set_control_environment(environment));
         }
     }
-    fn resume_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+    pub(super) fn resume_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
         let Some(view) = self.sessions.get(&lead).cloned() else {
             return;
         };
