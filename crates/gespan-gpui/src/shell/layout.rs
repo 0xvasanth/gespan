@@ -748,9 +748,6 @@ impl Shell {
             .right_panel
             .clone()
             .filter(|_| right_shown && self.settings.is_none());
-        // The menu bar spans the workspace and the right panel, so their
-        // headers stay level with each other.
-        let menu_bar = self.menu_bar(cx);
         let row = div()
             .flex_1()
             .min_h_0()
@@ -797,6 +794,8 @@ impl Shell {
             .when_some(panel, |d, panel| {
                 d.child(self.right_panel_frame(panel, right_width, full, window, cx))
             });
+        // The menu bar spans the right panel too, so its headers stay level
+        // with the open-file tabs.
         div()
             .flex_1()
             .min_h_0()
@@ -804,7 +803,7 @@ impl Shell {
             .overflow_hidden()
             .flex()
             .flex_col()
-            .children(menu_bar)
+            .children(self.menu_bar(cx))
             .child(row)
     }
     /// The usage chips with the terminal controls at the far end.

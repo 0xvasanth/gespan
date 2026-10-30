@@ -235,8 +235,8 @@ fn fatal(echo: bool, code: i32, message: &str) -> ! {
     exit(code)
 }
 fn main() {
-    // Before anything loads a DLL: only the app's folder and System32.
-    // Logged once logging has started.
+    // Before anything loads a DLL: only the app's folder and System32. A
+    // failure is logged once diagnostics start; release builds have no console.
     #[cfg(windows)]
     let dll_search = gespan_core::process::harden_dll_search();
     // The dictation helper this binary runs as a child: no app, no GPUI.
@@ -352,7 +352,7 @@ fn main() {
     let echo = echo_fatal(diagnostics.is_some(), channel);
     #[cfg(windows)]
     if let Err(error) = dll_search {
-        tracing::warn!(%error, "cannot restrict DLL search paths");
+        tracing::warn!("Cannot restrict DLL search paths: {error}");
     }
     let cwd = cwd
         .canonicalize()
