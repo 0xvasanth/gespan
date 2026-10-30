@@ -1,5 +1,6 @@
 //! Native Inbox services. Provider adapters preserve the Tauri API's requests,
 //! validation, response parsers and saved credential formats.
+pub mod ask;
 mod avatar;
 mod media;
 pub use media::init_video_dir as init_media_video_dir;

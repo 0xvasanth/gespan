@@ -168,6 +168,10 @@ impl SearchView {
         self.active = 0;
         self.refresh(cx);
     }
+    #[cfg(test)]
+    pub(crate) fn has_session_for_test(&self, id: i64) -> bool {
+        self.summaries.iter().any(|s| s.id == id) || self.live.contains_key(&id)
+    }
     pub(crate) fn update_session(
         &mut self,
         summary: Session,

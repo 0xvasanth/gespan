@@ -16,6 +16,7 @@ mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
 mod in_flight;
+mod inbox_ask;
 mod layout;
 mod live_agents;
 mod menu_bar;
@@ -1370,6 +1371,16 @@ impl Shell {
                     .and_then(|m| m.read(cx).routed_session()),
             );
         }
+        if self.active_app_view == Some(app_views::AppView::Inbox)
+            && self.settings.is_none()
+            && self.app_search.is_none()
+            && let Some(id) = self
+                .inbox
+                .as_ref()
+                .and_then(|inbox| inbox.read(cx).shown_ask_session())
+        {
+            shown.insert(id);
+        }
         // Hidden tabs keep their prepared image and any in-flight load. Only
         // closing a tab/pane should discard its background.
         let open: HashSet<i64> = self.workspace.open_sessions().into_iter().collect();
@@ -1404,6 +1415,14 @@ impl Shell {
             return;
         }
         self.session_summaries.insert(id, summary.clone());
+        self.attach_conversation(summary, cx);
+        if !self.order.contains(&id) {
+            self.order.push(id);
+        }
+    }
+    /// A live Conversation wired to the shell, without a sidebar row of its own.
+    fn attach_conversation(&mut self, summary: Session, cx: &mut Context<Self>) {
+        let id = summary.id;
         self.session_marks
             .insert(id, cx.new(|_| SessionMark::new(summary.provider.clone())));
         self.tab_marks
@@ -1486,9 +1505,6 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.sessions.insert(id, view);
-        if !self.order.contains(&id) {
-            self.order.push(id);
-        }
         // Restored after a restart, a held session has no view state of its own.
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
@@ -3625,12 +3641,12 @@ impl Shell {
         let cwd = self.workspace.project.clone();
         let worktree = target.and_then(|id| {
             let path = self.session_working_copy(id, cx);
-            (gespan_core::files::path_key(path) != gespan_core::files::path_key(&cwd)).then(
-                || crate::worktree_switcher::WorktreeFocus {
+            (gespan_core::files::path_key(path) != gespan_core::files::path_key(&cwd)).then(|| {
+                crate::worktree_switcher::WorktreeFocus {
                     path: path.into(),
                     branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
-                },
-            )
+                }
+            })
         });
         let worktree_cwd = worktree.as_ref().map(|f| f.path.clone());
         let work = cx.background_executor().spawn(async move {

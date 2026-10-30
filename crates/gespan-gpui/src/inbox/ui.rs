@@ -1026,6 +1026,11 @@ impl Inbox {
                             })
                             .child(self.copy_link_button(&item, cx))
                             .child(
+                                icon_action("inbox-ask", "Ask", "message-square")
+                                    .debug_selector(|| "inbox-ask".into())
+                                    .on_click(cx.listener(|this, _, _, cx| this.open_ask(cx))),
+                            )
+                            .child(
                                 icon_action(
                                     "inbox-open-external",
                                     &format!(
@@ -2865,6 +2870,7 @@ impl gpui::Render for Inbox {
         }
         let list = self.list_view(cx);
         let detail = self.detail_view(window, cx);
+        let ask = self.ask_panel(window, cx);
         div()
             .id("inbox-view")
             .role(Role::Group)
@@ -2932,7 +2938,8 @@ impl gpui::Render for Inbox {
                     .min_w_0()
                     .flex()
                     .child(list)
-                    .child(div().flex_1().min_w_0().min_h_0().child(detail)),
+                    .child(div().flex_1().min_w_0().min_h_0().child(detail))
+                    .children(ask),
             )
             .when_some(self.error.clone(), |d, text| d.child(error(text)))
             .when(self.filters_open, |d| d.child(self.filters_menu(cx)))

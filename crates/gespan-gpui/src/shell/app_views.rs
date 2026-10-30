@@ -166,7 +166,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn prepare_app_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn prepare_app_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_app_search(cx);
         self.close_preview(cx);
         self.close_menu(cx);
@@ -181,7 +181,12 @@ impl Shell {
         self.pending_composer_focus = None;
     }
 
-    fn show_app_view(&mut self, view: AppView, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_app_view(
+        &mut self,
+        view: AppView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.active_app_view != Some(view) {
             self.leave_app_views(cx);
         }
@@ -471,6 +476,25 @@ impl Shell {
             let projects = self.workspace.projects.iter().map(Into::into).collect();
             let cwd = self.workspace.project.clone().into();
             let view = cx.new(|cx| inbox::Inbox::new(self.store.clone(), projects, cwd, cx));
+            self.adopt_inbox(view, window, cx);
+        }
+        if let Some(inbox) = &self.inbox {
+            let projects = self.workspace.projects.iter().map(Into::into).collect();
+            let cwd = self.workspace.project.clone().into();
+            inbox.update(cx, |inbox, cx| {
+                inbox.set_appearances(self.workspace.project_appearance.clone(), cx);
+                inbox.set_context(projects, cwd, cx);
+            });
+        }
+    }
+
+    pub(super) fn adopt_inbox(
+        &mut self,
+        view: Entity<inbox::Inbox>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        {
             self.app_view_events.push(cx.subscribe_in(
                 &view,
                 window,
@@ -490,6 +514,13 @@ impl Shell {
                         Some(repair.clone()),
                         cx,
                     ),
+                    inbox::Event::Ask { item, description } => {
+                        this.open_inbox_ask(item.as_ref().clone(), description.clone(), cx);
+                    }
+                    inbox::Event::RestartAsk { key, session } => {
+                        this.restart_inbox_ask(key.clone(), *session, cx);
+                    }
+                    inbox::Event::AskClosed => this.update_chat_visibility(cx),
                     inbox::Event::ItemsChanged(items) => {
                         this.inbox_automation_events(items.clone(), cx)
                     }
@@ -513,14 +544,6 @@ impl Shell {
                     cx.notify();
                 }));
             self.inbox = Some(view);
-        }
-        if let Some(inbox) = &self.inbox {
-            let projects = self.workspace.projects.iter().map(Into::into).collect();
-            let cwd = self.workspace.project.clone().into();
-            inbox.update(cx, |inbox, cx| {
-                inbox.set_appearances(self.workspace.project_appearance.clone(), cx);
-                inbox.set_context(projects, cwd, cx);
-            });
         }
     }
 
@@ -712,6 +735,38 @@ impl Shell {
         self.focus_active(window, cx);
     }
 
+    /// The provider and controls a new session from the inbox starts with.
+    pub(super) fn inbox_session_settings(
+        &self,
+        cwd: &str,
+        cx: &App,
+    ) -> (Kind, gespan_core::agent::Settings) {
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(cwd),
+            cx,
+        );
+        let mut settings = gespan_core::agent::Settings {
+            model,
+            effort: crate::conversation::preferred_effort(kind.id(), cx),
+            access: self
+                .workspace
+                .preferences
+                .default_access
+                .as_deref()
+                .map(gespan_core::agent::AccessMode::from_id)
+                .unwrap_or_default(),
+            account: crate::accounts::get(cx)
+                .map(|accounts| accounts.read(cx).selected(kind, cwd))
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+        self.workspace
+            .preferences
+            .apply_last_controls(&mut settings, kind);
+        (kind, settings)
+    }
+
     /// A check `repair` goes straight out and reports back to the Inbox.
     /// Otherwise the item waits above the composer for a note, or for Send.
     fn start_inbox_session(
@@ -726,29 +781,7 @@ impl Shell {
         } else {
             item.project_path.clone()
         };
-        let (kind, model) = crate::installed_providers::new_session_choice(
-            &self.workspace.preferences,
-            Some(&cwd),
-            cx,
-        );
-        let mut settings = gespan_core::agent::Settings {
-            model,
-            effort: crate::conversation::preferred_effort(kind.id(), cx),
-            access: self
-                .workspace
-                .preferences
-                .default_access
-                .as_deref()
-                .map(gespan_core::agent::AccessMode::from_id)
-                .unwrap_or_default(),
-            account: crate::accounts::get(cx)
-                .map(|accounts| accounts.read(cx).selected(kind, &cwd))
-                .unwrap_or_default(),
-            ..Default::default()
-        };
-        self.workspace
-            .preferences
-            .apply_last_controls(&mut settings, kind);
+        let (kind, settings) = self.inbox_session_settings(&cwd, cx);
         let store = self.store.clone();
         self.navigation_revision += 1;
         let revision = self.navigation_revision;

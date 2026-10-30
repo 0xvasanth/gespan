@@ -19,6 +19,10 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Added
 
+- Gespan Native has an Ask panel next to an inbox item, as the Tauri app does.
+  A resizable side chat keeps one conversation per item, with Restart and
+  Close. It stays out of the sidebar, and only the agent receives the item's
+  context.
 - Gespan Native's Checks tab repairs CI as the Tauri app does. Pick which
   failed checks to fix, open a check's job steps and annotations, filter by
   Needs attention or All checks, refresh, and rerun failed jobs. Each repair

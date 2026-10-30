@@ -1,5 +1,6 @@
 //! Inbox: the original provider rail and work-item detail surface, backed by
 //! the native adapters and the desktop app's existing credential files.
+mod ask_panel;
 mod avatar;
 mod checks;
 mod diff;
@@ -42,6 +43,17 @@ pub(crate) enum Event {
         prompt: String,
         repair: String,
     },
+    /// The item's Ask conversation, for the panel beside it.
+    Ask {
+        item: Box<Item>,
+        description: Option<String>,
+    },
+    /// An empty conversation in place of `session`, for the same panel.
+    RestartAsk {
+        key: String,
+        session: i64,
+    },
+    AskClosed,
     ItemsChanged(Vec<Item>),
     /// A tracker was connected or disconnected.
     ConnectionsChanged,
@@ -130,11 +142,25 @@ pub(crate) struct Inbox {
     action_notice: Option<String>,
     confirm_action: Option<String>,
     resize_start: Option<(f32, f32)>,
+    ask: ask_panel::AskPanel,
+    #[cfg(test)]
+    offline: Offline,
     active: bool,
     refresh_queued: bool,
     notifications: model::NotificationTracker,
     last_refresh: Instant,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Tests keep the inbox away from every provider.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Offline {
+    Live,
+    /// Details arrive at once, written from the item.
+    Instant,
+    /// Details stay loading until the test finishes them.
+    Held,
 }
 
 /// The inbox opens scoped to the project it was opened from.
@@ -352,6 +378,9 @@ impl Inbox {
             action_notice: None,
             confirm_action: None,
             resize_start: None,
+            ask: Default::default(),
+            #[cfg(test)]
+            offline: Offline::Live,
             active: false,
             refresh_queued: false,
             notifications: model::NotificationTracker::default(),
@@ -427,6 +456,38 @@ impl Inbox {
         cx.notify();
     }
 
+    /// Never reaches a provider; `items` are what it lists.
+    #[cfg(test)]
+    pub(crate) fn offline_with(
+        store: Database,
+        cwd: PathBuf,
+        items: Vec<Item>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut inbox = Self::new_inner(store, vec![], cwd, false, cx);
+        inbox.offline = Offline::Instant;
+        inbox.state.source = items
+            .first()
+            .map_or_else(String::new, |i| i.provider.clone());
+        inbox.selected = items.first().map(Item::key);
+        inbox.snapshot.items = items;
+        inbox.load_detail(true, cx);
+        inbox
+    }
+    #[cfg(test)]
+    pub(crate) fn select_for_test(&mut self, key: String, cx: &mut Context<Self>) {
+        self.select(key, cx);
+    }
+    #[cfg(test)]
+    pub(crate) fn hold_details_for_test(&mut self, cx: &mut Context<Self>) {
+        self.offline = Offline::Held;
+        cx.notify();
+    }
+    #[cfg(test)]
+    pub(crate) fn finish_details_for_test(&mut self, cx: &mut Context<Self>) {
+        self.offline = Offline::Instant;
+        self.load_detail(false, cx);
+    }
     /// Items that arrived since the inbox first loaded, so they are unread.
     #[cfg(test)]
     pub(crate) fn receive_unread(&mut self, items: Vec<Item>) {
@@ -642,6 +703,7 @@ impl Inbox {
             }
         }
         self.load_detail(true, cx);
+        self.sync_ask(cx);
         cx.notify();
     }
     fn deselect(&mut self, cx: &mut Context<Self>) {
@@ -703,6 +765,18 @@ impl Inbox {
         let Some(item) = self.item() else {
             return;
         };
+        #[cfg(test)]
+        if self.offline != Offline::Live {
+            self.detail_loading = self.offline == Offline::Held;
+            if self.offline == Offline::Instant {
+                self.details = Some(Details {
+                    body: format!("Body of {}", item.title),
+                    ..Default::default()
+                });
+                self.sync_ask(cx);
+            }
+            return;
+        }
         self.detail_generation += 1;
         let generation = self.detail_generation;
         self.detail_loading = true;
@@ -742,6 +816,7 @@ impl Inbox {
                     }
                     Err(error) => this.detail_error = Some(error),
                 }
+                this.sync_ask(cx);
                 match thread {
                     Ok(thread) => {
                         let mut rows = vec![];
