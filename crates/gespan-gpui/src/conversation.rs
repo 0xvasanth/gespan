@@ -224,6 +224,8 @@ pub(crate) struct Conversation {
     pub(crate) busy: bool,
     /// The UI is idle; serialize the next launch behind the worker's last save.
     stopping: bool,
+    /// Alive while this chat's turn is running, agent included.
+    turn_alive: std::sync::Weak<()>,
     notification_cancelled: bool,
     /// The store's saved-draft flag, until the conversation loads its own.
     pub(crate) draft_hint: bool,
@@ -436,6 +438,14 @@ impl Conversation {
     #[cfg(test)]
     pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
         self.approvals = approvals.into();
+    }
+    /// Ends once the running turn's agent has exited.
+    pub(crate) fn turn_exit(&self) -> std::sync::Weak<()> {
+        self.turn_alive.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn set_turn_exit_for_test(&mut self, turn: std::sync::Weak<()>) {
+        self.turn_alive = turn;
     }
     pub(crate) fn responding(&self) -> bool {
         self.busy && !self.stopping
@@ -733,6 +743,7 @@ impl Conversation {
             loading: false,
             busy: false,
             stopping: false,
+            turn_alive: std::sync::Weak::new(),
             notification_cancelled: false,
             draft_hint: false,
             model: std::env::var(format!("GESPAN_{}_MODEL", summary.provider.to_uppercase())).ok(),
@@ -1341,8 +1352,11 @@ impl Conversation {
             self.summary.id,
             settings.prepared_prompt.as_deref().unwrap_or(&prompt),
         );
+        let alive = Arc::new(());
+        self.turn_alive = Arc::downgrade(&alive);
         cx.background_executor()
             .spawn(async move {
+                let _alive = alive;
                 if let Some(client) = remote_client {
                     crate::runtime::remote::run_with_client(
                         client, summary, prompt, settings, control_rx, store, cancel, tx,
