@@ -104,7 +104,7 @@ pub struct GitHubPrDiff {
     pub truncated: bool,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubPrCheck {
     pub name: String,
@@ -115,7 +115,7 @@ pub struct GitHubPrCheck {
     pub completed_at: Option<String>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubPrChecks {
     pub head_oid: String,
