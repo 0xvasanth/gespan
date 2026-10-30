@@ -3,6 +3,7 @@ docs/building.md
   s_bfa0c56141afa0::t_e54c5d6049232d 23-24,76,85,90,100,119
 docs/diagnostics/log-schema.md
   s_bfa0c56141afa0::t_e54c5d6049232d 15-20,27-29
+  s_bfa0c56141afa0::t_010e18fedb3fcd 26
 src/test/diagnosticsContract.test.ts
   s_bfa0c56141afa0::t_e54c5d6049232d 119-121
 crates/gespan-gpui/src/pilots/floating.rs
@@ -64,6 +65,7 @@ scripts/dev-native.test.mjs
 docs/native/README.md
   s_bfa0c56141afa0::t_2ff40c4ceef703 1,3-5,41,56,59,61-65,109,114,120-124,130
   s_bfa0c56141afa0::t_5e7420430052c7 88-90
+  s_bfa0c56141afa0::t_010e18fedb3fcd 60
 crates/gespan-core/src/diagnostics/mod.rs
   s_bfa0c56141afa0::t_1ffc46651993f6 31
 scripts/native-installer.nsi
