@@ -1,0 +1,25 @@
+crates/gespan-gpui/src/shell/hold.rs
+  s_3abf683d1a12e8::t_9d27a97c4d11df 26-27,29-30,37-51,53-55,65-67,131,145-150
+  s_3abf683d1a12e8::t_ee8997b5414c17 126-130
+  s_3abf683d1a12e8::t_1a070c2f109f8c 1327-1364
+crates/gespan-gpui/src/settings/pages/keybindings.rs
+  s_3abf683d1a12e8::t_9d27a97c4d11df 45-50,303-333
+crates/gespan-gpui/src/settings/keymap.rs
+  s_3abf683d1a12e8::t_9d27a97c4d11df 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41bc64e1e5cf0079e4b20552a6696e3156bf95a9",
+  "prompts": {},
+  "sessions": {
+    "s_3abf683d1a12e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf67907a-9e6a-4d99-aab1-f544258778b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
