@@ -120,7 +120,12 @@ fn stage(mascot: &str, color: u32, reduced: bool) -> Stateful<Div> {
 }
 
 impl Pilots {
-    pub(super) fn intro_card(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// `projects` are what the first Pilot starts working on.
+    pub(super) fn intro_card(
+        &mut self,
+        projects: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (mascot, color) = self.roster.next_look();
         let mut ink = shell_fill();
         ink.a = 1.;
@@ -214,8 +219,8 @@ impl Pilots {
                         .text_color(ink)
                         .hover(|s| s.opacity(0.85))
                         .child("Create pilot")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.create(Vec::new(), window, cx);
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.create(projects.clone(), window, cx);
                         })),
                 ),
             )

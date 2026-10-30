@@ -17,7 +17,7 @@ use gespan_core::board::{
     Activity,
     extras::{CardLink, Comment, Field, Relation, Subtask},
 };
-use gpui::{ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
+use gpui::{App, ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
 use std::collections::HashMap;
 
 const ACTIVITY_LIMIT: usize = 50;
@@ -458,7 +458,7 @@ impl BoardView {
 
     /// Re-read the drawer's subtasks, comments and activity. Each list keeps
     /// what it showed when its own read fails, and the failure is reported.
-    pub(super) fn refresh_detail_lists(&mut self, cx: &gpui::App) {
+    pub(super) fn refresh_detail_lists(&mut self, cx: &App) {
         let Some(card) = self.detail_card() else {
             return;
         };
@@ -1401,6 +1401,19 @@ impl BoardView {
 
     /// Move a subtask one place up (`-1`) or down (`1`). A subtask that is
     /// already at that end, or is gone, is left alone.
+    #[cfg(test)]
+    pub(crate) fn test_focus_subtask(&self, index: usize, window: &mut Window, cx: &mut App) {
+        let detail = self.card_detail.as_ref().expect("a card is open");
+        let handle = detail.subtask_focus[&detail.subtasks[index].id].clone();
+        window.focus(&handle, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_subtask_titles(&self) -> Vec<String> {
+        let detail = self.card_detail.as_ref().expect("a card is open");
+        detail.subtasks.iter().map(|s| s.title.clone()).collect()
+    }
+
     pub(super) fn shift_subtask(&mut self, subtask_id: &str, by: isize, cx: &mut Context<Self>) {
         let Some(detail) = &self.card_detail else {
             return;

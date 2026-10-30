@@ -514,6 +514,14 @@ impl BoardView {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_open_due_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let card = self.detail.as_ref().expect("a board is open").cards[0]
+            .id
+            .clone();
+        self.open_face_menu(card, Face::Due, window, cx);
+    }
+
     /// "Pick a date…" on a card face: a date field where the menu was.
     fn open_due_entry(
         &mut self,
