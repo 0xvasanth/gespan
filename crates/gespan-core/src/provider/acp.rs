@@ -29,7 +29,7 @@ struct BackgroundDispatch {
 pub(super) struct State {
     sequence: u64,
     stage: Stage,
-    session: String,
+    pub(super) session: String,
     options: VecDeque<(&'static str, Value)>,
     message: usize,
     setup: Value,
@@ -54,6 +54,8 @@ pub(super) struct State {
     /// Kiro lists its models in a `config_option_update` after `session/new`;
     /// the catalog probe waits until this deadline for that list.
     model_wait: Option<Instant>,
+    /// Cursor's own store, read for what its ACP events leave out.
+    pub(super) cursor: super::cursor_live::Live,
 }
 
 pub(super) const KIRO_AUTH_HELP: &str = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
@@ -197,6 +199,10 @@ impl Protocol {
 
     /// ACP deadlines apply to individual requests, never to a quiet stream.
     pub(super) fn acp_tick(&mut self, stdin: &mut impl Write) -> Result<Vec<Event>, String> {
+        if self.request.kind == Kind::Cursor && self.acp.stage == Stage::Prompt {
+            let read = self.cursor_tick(false);
+            self.acp.notices.extend(read);
+        }
         if self
             .acp
             .deadline
@@ -1056,6 +1062,9 @@ impl Protocol {
                     self.acp.stage = Stage::Background;
                     self.acp.background_poll = None;
                 } else {
+                    if self.request.kind == Kind::Cursor {
+                        events.extend(self.cursor_tick(true));
+                    }
                     self.done = true;
                     events.push(Event::Done);
                 }
@@ -1073,7 +1082,7 @@ impl Protocol {
         events.append(&mut self.acp.notices);
         Ok(events)
     }
-    fn acp_update(&mut self, update: &Value, events: &mut Vec<Event>) {
+    pub(super) fn acp_update(&mut self, update: &Value, events: &mut Vec<Event>) {
         if self.request.kind == Kind::Hermes {
             if let Some(dispatch) = background_dispatch(update) {
                 self.acp
@@ -1182,6 +1191,9 @@ impl Protocol {
                 events.push(Event::Tool(call.clone()));
                 if is_new {
                     self.acp.message += 1;
+                }
+                if self.request.kind == Kind::Cursor {
+                    self.cursor_track(id);
                 }
             }
             "usage_update" => {

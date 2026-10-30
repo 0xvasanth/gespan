@@ -24,6 +24,8 @@ pub use commands::{
 };
 mod attachments;
 mod compaction;
+mod cursor_live;
+mod cursor_store;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native reads Cursor's own session store while a Cursor turn runs, as
+  the Tauri app does. Tool calls Cursor sent without their arguments get them,
+  so they show the file, command or search they ran, and each Cursor subagent's
+  card fills with its own messages and tool calls, its model and a readable
+  name. The store is only ever opened read-only.
 - Gespan Native plays the Opus 5.5 and Astra welcome scenes when you pick
   either model, as the Tauri app does: a staff that writes itself with a short
   phrase of notes for Opus, and a small sun with falling stars for Astra. The
