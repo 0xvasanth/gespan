@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/shell/tray.rs
+  s_666089fd138caa::t_24b0cebebf58c7 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d81d22b35aaad2c821961b6a5113ed034d8a6cc",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
