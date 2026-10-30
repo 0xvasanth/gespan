@@ -753,6 +753,7 @@ pub(crate) struct Shell {
     shortcuts: Option<shortcuts::Shortcuts>,
     window_active: bool,
     window_glass: Option<bool>,
+    window_blur: Option<crate::window_blur::Applied>,
     /// The project whose colors were last painted; leaving it blends colors.
     theme_project: Option<String>,
     quit_prompted: bool,
@@ -1131,6 +1132,7 @@ impl Shell {
             shortcuts: None,
             window_active: false,
             window_glass: None,
+            window_blur: None,
             theme_project: None,
             quit_prompted: false,
             in_flight_written: None,
@@ -8455,6 +8457,7 @@ impl Render for Shell {
             cx.window_appearance(),
             gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
         );
+        let classic_layout = self.workspace.classic_layout;
         let project = &self.workspace.project;
         let animate = !cx.reduce_motion()
             && self
@@ -8467,7 +8470,7 @@ impl Render for Shell {
             .get(project)
             .and_then(|a| a.theme.as_ref());
         // Repainting bypasses cached views, so every surface follows the blend.
-        if configure_project(p, project_theme, system_light, animate) {
+        if configure_project(p, project_theme, !classic_layout, system_light, animate) {
             cx.refresh_windows();
         }
         if tweening() {
@@ -8476,10 +8479,15 @@ impl Render for Shell {
         if self.theme_project.as_ref() != Some(project) {
             self.theme_project = Some(project.clone());
         }
-        let glass = window_glass(p, system_light);
+        let glass = layout_glass(p, !classic_layout, system_light);
         if self.window_glass != Some(glass) {
             self.window_glass = Some(glass);
             window.set_background_appearance(crate::theme::window_backdrop(glass));
+        }
+        if glass {
+            crate::window_blur::sync(&mut self.window_blur, p.sidebar_blur, window);
+        } else {
+            self.window_blur = None;
         }
         self.sync_settings(cx);
         self.sidebar_fraction = match &self.sidebar_slide {

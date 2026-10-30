@@ -140,6 +140,7 @@ pub(crate) enum SliderKind {
     Saturation,
     DarkLightness,
     SidebarOpacity,
+    Blur,
     BackgroundEmpty,
     BackgroundSession,
 }
@@ -150,6 +151,7 @@ impl SliderKind {
             SliderKind::Saturation => "saturation",
             SliderKind::DarkLightness => "dark-lightness",
             SliderKind::SidebarOpacity => "sidebar-opacity",
+            SliderKind::Blur => "blur",
             SliderKind::BackgroundEmpty => "background-empty",
             SliderKind::BackgroundSession => "background-session",
         }
@@ -160,6 +162,7 @@ impl SliderKind {
             SliderKind::Saturation => "Saturation",
             SliderKind::DarkLightness => "Dark-mode lightness",
             SliderKind::SidebarOpacity => "Sidebar opacity",
+            SliderKind::Blur => "Blur radius",
             SliderKind::BackgroundEmpty => "Empty chat background visibility",
             SliderKind::BackgroundSession => "Session background visibility",
         }
@@ -170,6 +173,7 @@ impl SliderKind {
             SliderKind::Saturation => (0, 100),
             SliderKind::DarkLightness => (0, 30),
             SliderKind::SidebarOpacity => (15, 100),
+            SliderKind::Blur => (1, 64),
             SliderKind::BackgroundEmpty | SliderKind::BackgroundSession => (5, 65),
         }
     }
@@ -179,6 +183,7 @@ impl SliderKind {
             SliderKind::Saturation => p.theme_saturation,
             SliderKind::DarkLightness => p.theme_dark_lightness,
             SliderKind::SidebarOpacity => p.sidebar_opacity,
+            SliderKind::Blur => p.sidebar_blur,
             SliderKind::BackgroundEmpty => p.chat_background_empty,
             SliderKind::BackgroundSession => p.chat_background_session,
         }
@@ -189,6 +194,7 @@ impl SliderKind {
             SliderKind::Saturation => p.theme_saturation = value,
             SliderKind::DarkLightness => p.theme_dark_lightness = value,
             SliderKind::SidebarOpacity => p.sidebar_opacity = value,
+            SliderKind::Blur => p.sidebar_blur = value,
             SliderKind::BackgroundEmpty => p.chat_background_empty = value,
             SliderKind::BackgroundSession => p.chat_background_session = value,
         }
