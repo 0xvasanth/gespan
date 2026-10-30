@@ -15,7 +15,7 @@ tick the box in the same PR.
 
 ### Windows, menus and app lifecycle
 
-- [ ] **Several windows.** New Window from the File menu, ⌘⇧N and the macOS Dock menu. Reminders, Quick Composer and Pilot chat open a window when none is open. Native has one window. Tauri: `src-tauri/src/window.rs`, `src-tauri/src/menu.rs`, `src-tauri/src/macos.rs` (Dock menu).
+- [x] **Several windows.** New Window from the File menu, ⌘⇧N and the macOS Dock menu. Reminders, Quick Composer and Pilot chat open a window when none is open. Native has one window. Tauri: `src-tauri/src/window.rs`, `src-tauri/src/menu.rs`, `src-tauri/src/macos.rs` (Dock menu). Done in #267.
 - [x] **Closing a window keeps its agents running (macOS).** The red button hides the window, and the Dock icon brings it back. Native closes the window, and closing the last one stops every agent. Native only hides when Close to tray and a Pilot menu-bar icon are both on, and it has no Dock-reopen handler. Tauri: `src/app/App.tsx` (close handling), `src-tauri/src/lib.rs` (`RunEvent::Reopen`). Done in #245.
 - [x] **Ask before quitting or closing with running chats, then resume.** Tauri asks "N chats are still running", marks cut-off turns "Turn interrupted when Gespan quit" and continues them on the next launch. Native asks only during Hold Everything, and only checks for unsaved files when a window closes. Tauri: `src/features/sessions/model/inFlight.ts`, `src/app/model/appLifecycle.ts`, `session_set_in_flight` / `session_take_in_flight`. Done in #229.
 - [x] **Tray icon and close to tray (Windows).** Closing a window with running chats hides it to the tray. The tray has Show Gespan and Quit Gespan, and a left click reopens the window. Native shows the setting on Windows, but nothing acts on it there. Tauri has no tray on Linux either. Tauri: `src-tauri/src/tray.rs`, the close handler in `src/app/App.tsx`. *(also below)* Done in #230.
@@ -23,7 +23,7 @@ tick the box in the same PR.
 - [x] **Kill agent processes if Gespan crashes (Windows).** Uses a kill-on-close job object and restricts DLL search paths. Tauri: `src-tauri/src/windows.rs`. Done in #235.
 - [x] **Clean up orphaned agent processes at launch (macOS, Linux).** Native sets `GESPAN_HARNESS_PARENT` but never cleans up the processes it tags. Tauri: `src-tauri/src/harness.rs` (orphan sweep, called from `lib.rs`). Done in #228.
 - [x] **In-window menu bar (Windows, Linux).** File, View and Terminal menus. On these platforms Native reaches commands only through shortcuts and the palette. Tauri: `src/app/shell/MenuBar.tsx`. Done in #238.
-- [ ] **macOS menu items.** File → New Window (goes with Several windows above). Help → Gespan Website is done in #245. Tauri: `src-tauri/src/menu.rs`.
+- [x] **macOS menu items.** File → New Window (goes with Several windows above). Help → Gespan Website is done in #245. Tauri: `src-tauri/src/menu.rs`. Done in #267.
 - [x] **Desktop notifications (Windows, Linux).** Native has a stub off macOS. Tauri: `src-tauri/src/notifications.rs`. *(also below)* Done in #240.
 
 ### Sessions and transcript
@@ -41,7 +41,7 @@ tick the box in the same PR.
 ### Orchestration
 
 - [x] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`. Done in #261.
-- [ ] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`.
+- [x] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`. Done in #264.
 - [ ] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Native runs a fixed plan and reports to the lead at the end. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`.
 - [ ] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). *(also below)*
 - [ ] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). *(also below)*
@@ -74,10 +74,10 @@ tick the box in the same PR.
 
 ### Settings
 
-- [ ] **Appearance → Transparent window and Blur radius.** Native stores the transparency setting but shows no row for it, and its blur is fixed. Tauri: `src/features/settings/ui/SettingsView.tsx`.
+- [x] **Appearance → Transparent window and Blur radius.** Native stores the transparency setting but shows no row for it, and its blur is fixed. Tauri: `src/features/settings/ui/SettingsView.tsx`. Done in #268.
 - [ ] **Appearance → collapsed project rail set to Hidden.** Native retired this on purpose. Decide whether to keep that, and remove the row from settings search (`crates/gespan-gpui/src/settings/model.rs`) if so.
 - [x] **Keybindings list.** Add App: Hold Everything and the Board rows. Tauri: `src/features/settings/model/settings.ts`. Done in #245.
-- [ ] **Inbox connection forms in Settings** for GitLab, Azure DevOps, Linear (including team picking), Jira and Plane. Native sends you to the Inbox flow. Tauri: `SettingsView.tsx`.
+- [x] **Inbox connection forms in Settings** for GitLab, Azure DevOps, Linear (including team picking), Jira and Plane. Native sends you to the Inbox flow. Tauri: `SettingsView.tsx`. Done in #275.
 
 ### Distribution and updates
 
