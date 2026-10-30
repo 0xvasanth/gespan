@@ -2,9 +2,9 @@ name: Native preview release
 
 on:
   # Manual only until the signing secrets exist; see "Releases and the update
-  # feed" in docs/native/README.md. Start it from a native-v* tag (Run workflow
-  # -> Use workflow from -> Tags -> native-vX.Y.Z-preview.N): the tag name is the
-  # version, and the guard job rejects any other ref.
+  # feed" in docs/native/README.md. Start it from a release tag (Run workflow
+  # -> Use workflow from -> Tags -> vX.Y.Z): the tag name is the version, and
+  # the guard job rejects any other ref.
   workflow_dispatch:
     inputs:
       allow_unsigned:
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Require a native-v* tag
+    name: Require a release tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#native-v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
           # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
@@ -226,7 +226,7 @@ jobs:
       - name: Configure native rpm channel
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#native-v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
           # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
@@ -316,7 +316,7 @@ jobs:
         with:
           workspaces: crates/gespan-gpui
           key: native-publication-verifier
-      # native-vX.Y.Z publishes into vX.Y.Z, the one release both apps share.
+      # The vX.Y.Z tag publishes into the vX.Y.Z release.
       - name: Select the version's shared release
         run: node scripts/release-channel.cjs native-release-tag
       - name: Decide whether the versioned release still needs its packages
@@ -343,8 +343,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          echo "GESPAN_NATIVE_VERSION=${GITHUB_REF_NAME#native-v}" >> "$GITHUB_ENV"
-          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#native-v}" node scripts/native-release.mjs native-dist
+          echo "GESPAN_NATIVE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}" node scripts/native-release.mjs native-dist
       - name: Verify the signed feed and all packages with the native client
         if: env.NATIVE_UPLOAD_PACKAGES == 'true'
         run: cargo run --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --example verify_native_update --profile native-dev -- native-dist
@@ -353,7 +353,7 @@ jobs:
       - name: Publish native preview assets
         run: |
           set -euo pipefail
-          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#native-v}"
+          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}"
           echo "GESPAN_NATIVE_VERSION=$GESPAN_NATIVE_VERSION" >> "$GITHUB_ENV"
           # The packages go on vX.Y.Z, shared with the Gespan (Tauri) release.
           # Published files are never replaced: when this build's files are

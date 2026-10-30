@@ -70,11 +70,11 @@ verification.
 **Native preview release** runs only when started by hand, so pushing a tag
 never publishes anything. To cut a preview:
 
-1. Tag the commit as `native-v<version>` (for example
-   `native-v0.16.0-preview.2`) and push the tag.
+1. Tag the commit as `v<version>` (for example `v0.0.4-beta`) and push the
+   tag.
 2. In the Actions tab, open **Native preview release**, choose **Run workflow**,
    set **Use workflow from** to that tag, and run it. Dispatching from a branch or
-   any tag that is not `native-v*` fails at once in the first job.
+   any tag that is not a `vX.Y.Z` version fails at once in the first job.
 
 The workflow builds and signs every platform package, then publishes to GitHub
 Releases:

@@ -1,7 +1,7 @@
 name: Mobile release
 
 # Releases the mobile app (Expo project @gespan/gespan). Started by hand from
-# the same native-vX.Y.Z tag as the Native preview release, so one tag ships
+# the same vX.Y.Z tag as the Native preview release, so one tag ships
 # both apps.
 #
 # "build" makes store builds on EAS with the production profile and, unless
@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Require a native-v* tag
+    name: Require a release tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
