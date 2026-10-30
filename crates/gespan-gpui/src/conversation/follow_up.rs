@@ -156,6 +156,11 @@ impl Conversation {
             self.defer_history_action(|this, cx| this.save_message_draft(cx), cx);
             return;
         }
+        if self.inbox_ask.is_some() {
+            self.status = "Ask conversations cannot save drafts.".into();
+            cx.notify();
+            return;
+        }
         if self.busy
             || self.follow_ups.state.draft.is_some()
             || !self.loaded
@@ -363,11 +368,17 @@ impl Conversation {
             {
                 return;
             }
+            let mut steer = message.clone();
+            if self.inbox_ask.is_some() {
+                let prepared = steer.prepared_prompt.take();
+                let prepared = prepared.unwrap_or_else(|| steer.text.clone());
+                steer.prepared_prompt = Some(self.ask_prompt(prepared));
+            }
             if let Some(controls) = &self.controls {
                 if controls
                     .send(Control {
                         id: message.id.clone(),
-                        decision: Decision::Steer(message.clone()),
+                        decision: Decision::Steer(steer),
                     })
                     .is_ok()
                 {

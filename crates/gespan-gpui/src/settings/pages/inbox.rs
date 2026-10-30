@@ -4,6 +4,66 @@ use crate::{
 };
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 impl SettingsView {
+    /// Which teams' issues reach the inbox, the Inbox's Teams filter here.
+    fn linear_teams(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let teams = self.ctx.linear_teams.clone();
+        div()
+            .debug_selector(|| "settings-linear-teams".into())
+            .px_4()
+            .py_3()
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child("Teams"),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(12.))
+                    .text_color(content(0.45))
+                    .child("Unchecked teams stay out of the inbox."),
+            )
+            .child(div().mt_2().flex().flex_col().gap(px(2.)).children(
+                teams.into_iter().enumerate().map(|(ix, (team, shown))| {
+                    let id = team.id.clone();
+                    div()
+                        .id(SharedString::from(format!("settings-linear-team-{ix}")))
+                        .debug_selector(move || format!("settings-linear-team-{ix}"))
+                        .role(gpui::Role::CheckBox)
+                        .aria_label(team.name.clone())
+                        .aria_toggled(if shown {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                        .h(px(28.))
+                        .px_2()
+                        .rounded_md()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(13.))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(content(0.05)))
+                        .child(div().flex_1().min_w_0().truncate().child(team.name))
+                        .when(!team.key.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(content(0.4))
+                                    .child(team.key),
+                            )
+                        })
+                        .when(shown, |d| d.child(icon("check", 14.)))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::ToggleLinearTeam(id.clone()))
+                        }))
+                }),
+            ))
+            .into_any_element()
+    }
+
     pub(super) fn inbox_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut page = vec![self.project_notification_settings(cx)];
         for (id, title, description, label, hint) in [
@@ -89,6 +149,7 @@ impl SettingsView {
                         false,
                         false,
                     )
+                    .debug_selector(move || format!("settings-connect-{id}"))
                     .child(if connected { "Manage" } else { "Connect" })
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(SettingsEvent::ManageInboxProvider(id.into()))
@@ -96,7 +157,10 @@ impl SettingsView {
                     .into_any_element(),
                 ]
             };
-            let row = self.row(None, false, label, Some(hint.into()), controls);
+            let mut rows = vec![self.row(None, false, label, Some(hint.into()), controls)];
+            if id == "linear" && connected && !self.ctx.linear_teams.is_empty() {
+                rows.push(self.linear_teams(cx));
+            }
             page.push(
                 self.group(
                     Some(id),
@@ -119,7 +183,7 @@ impl SettingsView {
                         .child(title),
                     Some(description.into()),
                     None,
-                    vec![row],
+                    rows,
                 ),
             );
         }

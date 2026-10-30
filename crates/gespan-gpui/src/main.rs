@@ -100,6 +100,7 @@ mod transcript;
 mod tray;
 mod usage_footer;
 mod visuals;
+mod window_blur;
 mod window_state;
 mod windows;
 mod workspace;
