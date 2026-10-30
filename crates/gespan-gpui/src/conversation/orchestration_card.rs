@@ -2,7 +2,10 @@
 //! lead's assignments before any worker starts.
 use super::composer_features::{StartOrchestration, StopOrchestration};
 use super::*;
-use gespan_core::{app_access, catalog, orchestration::Task};
+use gespan_core::{
+    app_access, catalog,
+    orchestration::{Plan, Task},
+};
 use gpui::App;
 use std::collections::{HashMap, HashSet};
 
@@ -82,6 +85,13 @@ impl Conversation {
         catalog::cached_models_for(kind, &self.task_account(kind, cx))?
             .into_iter()
             .find(|entry| entry.id == model)
+    }
+    /// The card's fields belong to one plan, and every plan change goes
+    /// through here: an editor left over from another would show text that
+    /// isn't what runs.
+    pub(crate) fn set_orchestration_plan(&mut self, plan: Option<Plan>) {
+        self.orchestration_plan = plan;
+        self.plan_card = Default::default();
     }
     fn toggle_task(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.plan_card.expanded.remove(&id) {
@@ -523,8 +533,7 @@ impl Conversation {
                             tool_pill("dismiss-orchestration", "Dismiss plan")
                                 .child("Dismiss")
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.orchestration_plan = None;
-                                    this.plan_card = Default::default();
+                                    this.set_orchestration_plan(None);
                                     cx.notify();
                                 })),
                         ),
@@ -563,13 +572,13 @@ impl Conversation {
 mod tests {
     use super::super::menu_tests::conversation;
     use super::*;
-    use gespan_core::orchestration::{MAX_WORKERS, Plan};
+    use gespan_core::orchestration::MAX_WORKERS;
     use gpui::{TestAppContext, WindowHandle};
 
     fn with_plan(window: WindowHandle<Conversation>, cx: &mut TestAppContext) {
         window
             .update(cx, |view, _, _| {
-                view.orchestration_plan = Some(Plan {
+                view.set_orchestration_plan(Some(Plan {
                     title: "Work".into(),
                     summary: String::new(),
                     tasks: vec![Task {
@@ -583,7 +592,7 @@ mod tests {
                         model_settings: Default::default(),
                     }],
                     max_workers: MAX_WORKERS,
-                });
+                }));
             })
             .unwrap();
     }
@@ -628,6 +637,27 @@ mod tests {
                 view.toggle_task("a".into(), cx);
                 let editor = &view.plan_card.editors["a"];
                 assert_eq!(editor.title.read(cx).content.as_ref(), "Renamed");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_new_plan_never_shows_the_last_plans_fields(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        with_plan(window, cx);
+        window
+            .update(cx, |view, _, cx| view.toggle_task("a".into(), cx))
+            .unwrap();
+        edit(window, cx, "Typed for the old plan", "Old instructions");
+        // Same task ID, as a re-plan usually produces.
+        with_plan(window, cx);
+        window
+            .update(cx, |view, _, cx| {
+                assert!(view.plan_card.editors.is_empty());
+                view.toggle_task("a".into(), cx);
+                let editor = &view.plan_card.editors["a"];
+                assert_eq!(editor.title.read(cx).content.as_ref(), "First");
+                assert_eq!(editor.prompt.read(cx).content.as_ref(), "Do it");
             })
             .unwrap();
     }

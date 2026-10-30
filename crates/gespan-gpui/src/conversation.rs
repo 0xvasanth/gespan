@@ -6,7 +6,6 @@ mod btw;
 mod commands;
 pub(crate) mod composer_card;
 pub(crate) mod composer_features;
-mod orchestration_card;
 mod composer_shelf;
 pub(crate) mod dictation;
 mod edit_last_turn;
@@ -17,6 +16,7 @@ mod follow_up;
 pub(crate) mod git_actions;
 mod history;
 mod hold;
+mod orchestration_card;
 pub(crate) use hold::HoldChanged;
 #[cfg(test)]
 mod composer_card_tests;
@@ -1100,9 +1100,8 @@ impl Conversation {
             return;
         }
         self.planning_orchestration = self.settings.orchestrator;
-        self.orchestration_plan = None;
+        self.set_orchestration_plan(None);
         self.orchestration_error = None;
-        self.plan_card = Default::default();
         if self.settings.orchestrator {
             self.settings.orchestration_profiles = self.orchestration_profiles(cx);
         }
