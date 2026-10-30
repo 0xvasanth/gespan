@@ -1,0 +1,27 @@
+tests/fixtures/claude/inline-subagent.jsonl
+  s_92ed7f2aff7332::t_da9c7e84fc9efc 1-8
+crates/gespan-core/src/provider.rs
+  s_92ed7f2aff7332::t_17650eb4737f22 962
+crates/gespan-core/src/provider/tasks.rs
+  s_92ed7f2aff7332::t_17650eb4737f22 806-829
+crates/gespan-core/src/provider/tasks/claude_task_tests.rs
+  s_92ed7f2aff7332::t_17650eb4737f22 309-322
+  s_92ed7f2aff7332::t_da9c7e84fc9efc 251-308,323-361
+  s_92ed7f2aff7332::t_c6f0fa8f657f76 362-365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1514562779fdc39ce1ac1ade91aefc4bed1b0fda",
+  "prompts": {},
+  "sessions": {
+    "s_92ed7f2aff7332": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7107c6cf-7d6d-4735-a103-b0f96ca29386",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
