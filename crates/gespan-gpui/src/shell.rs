@@ -3625,12 +3625,13 @@ impl Shell {
         let cwd = self.workspace.project.clone();
         let worktree = target.and_then(|id| {
             let path = self.session_working_copy(id, cx);
-            (gespan_core::files::path_key(path) != gespan_core::files::path_key(&cwd)).then(
-                || crate::worktree_switcher::WorktreeFocus {
-                    path: path.into(),
-                    branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
-                },
-            )
+            if gespan_core::files::path_key(path) == gespan_core::files::path_key(&cwd) {
+                return None;
+            }
+            Some(crate::worktree_switcher::WorktreeFocus {
+                path: path.into(),
+                branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
+            })
         });
         let worktree_cwd = worktree.as_ref().map(|f| f.path.clone());
         let work = cx.background_executor().spawn(async move {
