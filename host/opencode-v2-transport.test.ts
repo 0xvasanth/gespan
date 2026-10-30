@@ -10,7 +10,7 @@ import { hostProviders } from "./providers";
 import {
   acquireHarnessBridge,
   configureChildBackend,
-} from "../src/integrations/harness/core/child";
+} from "./core/integrations/harness/core/child";
 
 const PASSWORD = "fixture-secret";
 

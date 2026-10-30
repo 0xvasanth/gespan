@@ -6,9 +6,9 @@ import type { AddressInfo } from "node:net";
 import { HostEngine } from "./engine";
 import { HostStore } from "./store";
 import { createHostServer } from "./server";
-import type { SendTurnInput } from "../src/integrations/harness/core/types";
-import type { HostSession } from "../src/features/connections/model/protocol";
-import { loadRemoteSession } from "../src/features/connections/model/connections";
+import type { SendTurnInput } from "./core/integrations/harness/core/types";
+import type { HostSession } from "./core/features/connections/model/protocol";
+import { loadRemoteSession } from "./core/features/connections/model/connections";
 
 // The desktop's native client (src-tauri/src/remote.rs) rejects responses over
 // 16 MiB. This routes the real renderer sync code through the real host server

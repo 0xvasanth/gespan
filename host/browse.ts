@@ -1,7 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, parse, resolve } from "node:path";
-import type { HostDirectory } from "../src/features/connections/model/protocol";
+import type { HostDirectory } from "./core/features/connections/model/protocol";
 
 /** Lists host directories for the project picker without reading file contents. */
 export async function browseHostDirectories(

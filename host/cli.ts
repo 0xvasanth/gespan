@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 import {
   configureChildBackend,
   acquireHarnessBridge,
-} from "../src/integrations/harness/core/child";
+} from "./core/integrations/harness/core/child";
 import { HostChildBackend } from "./child-backend";
 import { HostStore } from "./store";
 import { acquireHostOwner } from "./owner";
@@ -26,7 +26,7 @@ import { createHostServer } from "./server";
 import {
   REMOTE_PROVIDERS,
   type RemoteProvider,
-} from "../src/features/connections/model/protocol";
+} from "./core/features/connections/model/protocol";
 import { connectionInfo, installService, uninstallService } from "./service";
 import { version } from "../package.json";
 import { protectWindowsDirectory } from "./windows";

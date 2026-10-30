@@ -14,7 +14,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { FileMtime, FsEntry, GitPr, ProjectFile } from "../src/platform/tauri/fs";
+import type { FileMtime, FsEntry, GitPr, ProjectFile } from "./core/platform/tauri/fs";
 import { hostWorktrees } from "./git-worktrees";
 import { createHostBranch, hostBranches, switchHostBranch } from "./git-branches";
 import type { HostStore } from "./store";

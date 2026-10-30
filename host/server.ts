@@ -11,11 +11,11 @@ import {
   HOST_PROTOCOL_VERSION,
   type HostModelCatalog,
   type RemoteProvider,
-} from "../src/features/connections/model/protocol";
+} from "./core/features/connections/model/protocol";
 import { HostEngine } from "./engine";
 import { writeAttachmentChunk, readAttachmentChunk } from "./attachments";
-import type { GithubLinkedWorkItem, LinkedWorkItem } from "../src/features/sessions/model/session";
-import { parseGithubWorkItemUrl } from "../src/features/sessions/model/sessionWorkItem";
+import type { GithubLinkedWorkItem, LinkedWorkItem } from "./core/features/sessions/model/session";
+import { parseGithubWorkItemUrl } from "./core/features/sessions/model/sessionWorkItem";
 import { SyncTransfers } from "./sync-transfer";
 import { browseHostDirectories } from "./browse";
 import {
@@ -41,18 +41,18 @@ import {
   writeHostFile,
 } from "./workspace";
 import { WorkspaceCommands } from "./workspace-commands";
-import { discoverCodexModels } from "../src/integrations/harness/providers/codex/codexCatalog";
-import { discoverClaudeModels } from "../src/integrations/harness/providers/claude/claudeCatalog";
-import { discoverCursorModels } from "../src/integrations/harness/providers/cursor/cursorCatalog";
-import { discoverGrokModels } from "../src/integrations/harness/providers/grok/grokCatalog";
-import { discoverOpenCodeModels } from "../src/integrations/harness/providers/opencode/opencodeCatalog";
-import { discoverPiModels, discoverOmpModels } from "../src/integrations/harness/providers/pi/piCatalog";
-import { discoverFxModels } from "../src/integrations/harness/providers/fx/fxCatalog";
-import { discoverHermesModels } from "../src/integrations/harness/providers/hermes/hermesCatalog";
-import { discoverKiroModels } from "../src/integrations/harness/providers/kiro/kiroCatalog";
-import { discoverAntigravityModels } from "../src/integrations/harness/providers/antigravity/antigravityCatalog";
-import { discoverDevinModels } from "../src/integrations/harness/providers/devin/devinCatalog";
-import { setHarnessModels, type AgentModel } from "../src/features/sessions/model/models";
+import { discoverCodexModels } from "./core/integrations/harness/providers/codex/codexCatalog";
+import { discoverClaudeModels } from "./core/integrations/harness/providers/claude/claudeCatalog";
+import { discoverCursorModels } from "./core/integrations/harness/providers/cursor/cursorCatalog";
+import { discoverGrokModels } from "./core/integrations/harness/providers/grok/grokCatalog";
+import { discoverOpenCodeModels } from "./core/integrations/harness/providers/opencode/opencodeCatalog";
+import { discoverPiModels, discoverOmpModels } from "./core/integrations/harness/providers/pi/piCatalog";
+import { discoverFxModels } from "./core/integrations/harness/providers/fx/fxCatalog";
+import { discoverHermesModels } from "./core/integrations/harness/providers/hermes/hermesCatalog";
+import { discoverKiroModels } from "./core/integrations/harness/providers/kiro/kiroCatalog";
+import { discoverAntigravityModels } from "./core/integrations/harness/providers/antigravity/antigravityCatalog";
+import { discoverDevinModels } from "./core/integrations/harness/providers/devin/devinCatalog";
+import { setHarnessModels, type AgentModel } from "./core/features/sessions/model/models";
 import {
   resolveAntigravityBinary,
   resolveClaudeBinary,
@@ -66,7 +66,7 @@ import {
   resolveOmpBinary,
   resolveOpenCodeBinary,
   resolvePiBinary,
-} from "../src/integrations/harness/core/child";
+} from "./core/integrations/harness/core/child";
 
 const exec = promisify(execFile);
 // Providers also add models server-side, without a CLI update.

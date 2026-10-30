@@ -8,9 +8,9 @@ import type {
   HostSessionSummary,
   RemoteProvider,
   SessionSync,
-} from "../src/features/connections/model/protocol";
-import type { LinkedWorkItem } from "../src/features/sessions/model/session";
-import { sessionNeedsInput } from "../src/features/sessions/model/session";
+} from "./core/features/connections/model/protocol";
+import type { LinkedWorkItem } from "./core/features/sessions/model/session";
+import { sessionNeedsInput } from "./core/features/sessions/model/session";
 
 const CACHED_SESSIONS = 32;
 
