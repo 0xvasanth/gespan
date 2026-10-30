@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native follows a renamed project folder, as the Tauri app does. Each
+  project's folder identity is remembered, and when the saved folder is gone
+  at launch, its former siblings are checked for it. The project, its
+  sessions, terminals and settings move to the new name. A folder that cannot
+  be found, or more than one match, leaves the project as it was.
 - Gespan Native reads Cursor's own session store while a Cursor turn runs, as
   the Tauri app does. Tool calls Cursor sent without their arguments get them,
   so they show the file, command or search they ran, and each Cursor subagent's

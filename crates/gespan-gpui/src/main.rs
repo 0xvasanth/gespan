@@ -438,6 +438,8 @@ fn main() {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
     });
+    // A project folder renamed since the last run takes its sessions along.
+    let saved = workspace::follow_moved_projects(&db, saved);
     let existing_project = if use_gespan {
         saved
             .as_deref()
