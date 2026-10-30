@@ -697,3 +697,108 @@ fn build_with_another_model_switches_the_provider_then_builds(cx: &mut TestAppCo
         })
         .unwrap();
 }
+
+fn asking(view: &mut Conversation) {
+    view.set_inbox_ask(gespan_core::inbox::ask::Context {
+        key: "linear:eng-1".into(),
+        title: "Item".into(),
+        provider: "linear".into(),
+        ..Default::default()
+    });
+}
+
+#[gpui::test]
+fn an_ask_conversation_cannot_save_a_draft(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    turn_capture::start();
+    window
+        .update(cx, |view, _, cx| {
+            asking(view);
+            view.input.update(cx, |input, cx| {
+                input.set_text("/draft Keep this for later".into(), cx)
+            });
+            view.send(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert!(view.follow_ups.state.draft.is_none());
+            assert_eq!(view.status, "Ask conversations cannot save drafts.");
+            assert_eq!(
+                view.input.read(cx).content.as_ref(),
+                "/draft Keep this for later",
+                "the text stays in the composer"
+            );
+        })
+        .unwrap();
+    assert!(turn_capture::last().is_none());
+}
+
+#[gpui::test]
+fn a_queued_ask_message_is_wrapped_once_when_it_launches(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    turn_capture::start();
+    window
+        .update(cx, |view, _, cx| {
+            asking(view);
+            let message = view.message("Queued question".into(), Vec::new(), None, cx);
+            view.launch_message(message, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (_, prompt) = turn_capture::last().unwrap();
+    assert_eq!(prompt.matches("USER MESSAGE:").count(), 1);
+    assert!(prompt.ends_with("USER MESSAGE:\nQueued question"));
+}
+
+#[gpui::test]
+fn an_ask_steer_carries_the_wrapper_and_the_queue_keeps_the_typed_text(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    let (controls, received) = std::sync::mpsc::channel();
+    window
+        .update(cx, |view, _, cx| {
+            asking(view);
+            view.summary.provider = "codex".into();
+            view.busy = true;
+            view.controls = Some(controls);
+            view.follow_ups.ready = true;
+            let mut message = view.message("Also check CI".into(), Vec::new(), None, cx);
+            message.steer = true;
+            view.follow_ups.state.messages.push(message);
+            view.pump_follow_ups(cx);
+            let queued = &view.follow_ups.state.messages[0];
+            assert!(queued.prepared_prompt.is_none(), "only the agent's copy");
+            view.busy = false;
+            view.controls = None;
+        })
+        .unwrap();
+    let Decision::Steer(steer) = received.try_recv().unwrap().decision else {
+        panic!("expected a steer");
+    };
+    assert_eq!(steer.text, "Also check CI");
+    let prompt = steer.prepared_prompt.unwrap();
+    assert!(prompt.starts_with("# Inbox discussion instructions"));
+    assert!(prompt.ends_with("USER MESSAGE:\nAlso check CI"));
+}
+
+#[gpui::test]
+fn a_raw_native_command_reaches_the_agent_unwrapped(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, _| {
+            asking(view);
+            view.summary.provider = "omp".into();
+            assert_eq!(view.ask_prompt("/compact now".into()), "/compact now");
+            assert!(
+                view.ask_prompt("compact now".into())
+                    .contains("USER MESSAGE:")
+            );
+            view.summary.provider = "codex".into();
+            assert!(
+                view.ask_prompt("/compact now".into())
+                    .contains("USER MESSAGE:")
+            );
+        })
+        .unwrap();
+}

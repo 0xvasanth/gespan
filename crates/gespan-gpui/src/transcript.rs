@@ -2703,6 +2703,10 @@ impl TranscriptView {
             cx.notify();
         }
     }
+    #[cfg(test)]
+    pub(crate) fn is_visible(&self) -> bool {
+        self.visible
+    }
     pub(crate) fn visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;

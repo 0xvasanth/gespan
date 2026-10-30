@@ -150,6 +150,7 @@ impl Shell {
         let conversations = self
             .sessions
             .values()
+            .filter(|view| view.read(cx).inbox_ask_key().is_none())
             .cloned()
             .chain(
                 self.pilots
@@ -349,7 +350,7 @@ impl Shell {
         };
         let session = session.read(cx);
         let transcript = session.transcript.read(cx);
-        if !transcript.history_complete() {
+        if !transcript.history_complete() || session.inbox_ask_key().is_some() {
             return;
         }
         let summary = session.summary.clone();

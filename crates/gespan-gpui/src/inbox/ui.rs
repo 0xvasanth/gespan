@@ -6,7 +6,7 @@ use gpui::{
     rgb,
 };
 
-fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
+pub(super) fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     plain_action(id, label).hover(|s| s.bg(content(0.07)).text_color(content(1.)))
 }
 /// An [`action`] without its hover, for callers that set their own.
@@ -197,10 +197,7 @@ fn review_label(state: &str) -> String {
     }
 }
 fn failed_check(state: &str) -> bool {
-    matches!(
-        state.to_lowercase().as_str(),
-        "failure" | "failed" | "error" | "timed_out" | "cancelled" | "action_required"
-    )
+    state == "fail"
 }
 fn review_event(comment: &model::Comment) -> bool {
     comment.kind == "review" && comment.body.trim().is_empty() && comment.replies.is_empty()
@@ -280,7 +277,7 @@ fn caption(text: impl Into<SharedString>) -> Div {
         .text_color(content(0.4))
         .child(text.into())
 }
-fn message(text: impl Into<SharedString>) -> Div {
+pub(super) fn message(text: impl Into<SharedString>) -> Div {
     div()
         .p(px(12.))
         .text_size(px(12.))
@@ -288,7 +285,7 @@ fn message(text: impl Into<SharedString>) -> Div {
         .text_color(content(0.5))
         .child(text.into())
 }
-fn error(text: impl Into<SharedString>) -> Div {
+pub(super) fn error(text: impl Into<SharedString>) -> Div {
     message(text).text_color(rgb(0xf87171))
 }
 fn provider_mark(provider: &str) -> gpui::Svg {
@@ -1029,6 +1026,11 @@ impl Inbox {
                             })
                             .child(self.copy_link_button(&item, cx))
                             .child(
+                                icon_action("inbox-ask", "Ask", "message-square")
+                                    .debug_selector(|| "inbox-ask".into())
+                                    .on_click(cx.listener(|this, _, _, cx| this.open_ask(cx))),
+                            )
+                            .child(
                                 icon_action(
                                     "inbox-open-external",
                                     &format!(
@@ -1122,7 +1124,7 @@ impl Inbox {
         let body = match self.tab {
             Tab::Summary => self.summary_view(&item, window, cx),
             Tab::Code => self.diff_view(),
-            Tab::Checks => self.checks_view(cx),
+            Tab::Checks => self.checks_panel(cx),
         };
         div()
             .size_full()
@@ -2119,39 +2121,6 @@ impl Inbox {
             .into_any_element()
     }
 
-    fn checks_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        div().id("inbox-checks-scroll").min_h_0().flex_1().overflow_y_scroll().px(px(12.)).py(px(20.))
-            .when(self.extra_loading, |d| d.child(message("Loading checks…")))
-            .when_some(self.extra_error.clone(), |d, text| d.child(error(text)))
-            .when_some(self.checks.clone(), |d, checks| {
-                let failed = checks.checks.iter().filter(|c| matches!(c.state.to_lowercase().as_str(), "failure" | "failed" | "error" | "timed_out" | "cancelled" | "action_required")).cloned().collect::<Vec<_>>();
-                d.when(checks.checks.is_empty(), |d| d.child(message("No checks reported")))
-                    .when(!failed.is_empty(), |d| d.child(div().mb(px(12.)).flex().items_center().gap(px(8.))
-                        .child(div().flex_1().text_size(px(12.)).text_color(content(0.7)).child(format!("{} failing checks", failed.len())))
-                        .child(action("inbox-fix-checks", "Fix with agent").bg(content(0.1)).on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(mut item) = this.item() {
-                                if item.project_path.is_empty() { item.project_path = this.start_project.to_string_lossy().into_owned(); }
-                                let evidence = failed.iter().map(|check| format!("{}: {} {}", check.name, check.state, check.url.as_deref().unwrap_or(""))).collect::<Vec<_>>().join("\n");
-                                let prompt = format!("Investigate and repair the failing CI checks for {} {}: {}\n{}\n\n{}\n\nRead the check logs, reproduce the failures, implement the fix, and run relevant checks.", item.repo, item.reference(), item.title, item.url, evidence);
-                                cx.emit(Event::StartSession { item: Box::new(item), prompt });
-                            }
-                        })))))
-                    .children(checks.checks.iter().enumerate().map(|(ix, check)| {
-                        let state = check.state.to_lowercase();
-                        let color: Hsla = if matches!(state.as_str(), "success" | "neutral" | "skipped") { rgb(0x4ade80).into() }
-                            else if matches!(state.as_str(), "failure" | "failed" | "error" | "timed_out" | "cancelled" | "action_required") { rgb(0xf87171).into() }
-                            else { rgb(0xfbbf24).into() };
-                        let url = check.url.clone();
-                        div().id(("inbox-check", ix)).py(px(12.)).border_b_1().border_color(content(0.07)).flex().items_center().gap(px(10.))
-                            .child(icon(if state == "success" { "check-circle" } else { "circle-dot" }, 15.).text_color(color))
-                            .child(div().flex_1().min_w_0().child(div().text_size(px(12.)).text_color(content(0.85)).child(check.name.clone()))
-                                .child(div().text_size(px(11.)).text_color(content(0.4)).child(check.workflow.clone())))
-                            .child(div().text_size(px(11.)).text_color(color).child(check.state.replace('_', " ").to_lowercase()))
-                            .when(url.is_some(), |d| d.child(action(format!("inbox-check-link-{ix}"), "Details ↗").on_click(move |_, _, cx| { if let Some(url) = &url { cx.open_url(url); } })))
-                    }))
-            }).into_any_element()
-    }
-
     fn filters_active(&self) -> bool {
         let f = &self.state.filters;
         f.assigned_to_me
@@ -2901,6 +2870,7 @@ impl gpui::Render for Inbox {
         }
         let list = self.list_view(cx);
         let detail = self.detail_view(window, cx);
+        let ask = self.ask_panel(window, cx);
         div()
             .id("inbox-view")
             .role(Role::Group)
@@ -2968,7 +2938,8 @@ impl gpui::Render for Inbox {
                     .min_w_0()
                     .flex()
                     .child(list)
-                    .child(div().flex_1().min_w_0().min_h_0().child(detail)),
+                    .child(div().flex_1().min_w_0().min_h_0().child(detail))
+                    .children(ask),
             )
             .when_some(self.error.clone(), |d, text| d.child(error(text)))
             .when(self.filters_open, |d| d.child(self.filters_menu(cx)))

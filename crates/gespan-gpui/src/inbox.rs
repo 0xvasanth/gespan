@@ -1,6 +1,8 @@
 //! Inbox: the original provider rail and work-item detail surface, backed by
 //! the native adapters and the desktop app's existing credential files.
+mod ask_panel;
 mod avatar;
+mod checks;
 mod diff;
 mod document;
 mod ui;
@@ -30,15 +32,28 @@ use std::{
 pub(crate) enum Event {
     Close,
     OpenSession(i64),
-    StartSession {
-        item: Box<Item>,
-        prompt: String,
-    },
     /// A new session with the item as a card above its composer, to send.
     ComposeSession {
         item: Box<Item>,
         prompt: String,
     },
+    /// A check repair for the agent, reported back by its `repair` id.
+    StartRepair {
+        item: Box<Item>,
+        prompt: String,
+        repair: String,
+    },
+    /// The item's Ask conversation, for the panel beside it.
+    Ask {
+        item: Box<Item>,
+        description: Option<String>,
+    },
+    /// An empty conversation in place of `session`, for the same panel.
+    RestartAsk {
+        key: String,
+        session: i64,
+    },
+    AskClosed,
     ItemsChanged(Vec<Item>),
     /// A tracker was connected or disconnected.
     ConnectionsChanged,
@@ -88,6 +103,7 @@ pub(crate) struct Inbox {
     self_activity: gespan_core::inbox::SelfActivity,
     diff_view: Entity<DiffView>,
     checks: Option<Checks>,
+    ci: checks::CiState,
     tab: Tab,
     loading: bool,
     detail_loading: bool,
@@ -126,11 +142,25 @@ pub(crate) struct Inbox {
     action_notice: Option<String>,
     confirm_action: Option<String>,
     resize_start: Option<(f32, f32)>,
+    ask: ask_panel::AskPanel,
+    #[cfg(test)]
+    offline: Offline,
     active: bool,
     refresh_queued: bool,
     notifications: model::NotificationTracker,
     last_refresh: Instant,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Tests keep the inbox away from every provider.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Offline {
+    Live,
+    /// Details arrive at once, written from the item.
+    Instant,
+    /// Details stay loading until the test finishes them.
+    Held,
 }
 
 /// The inbox opens scoped to the project it was opened from.
@@ -176,6 +206,11 @@ impl Inbox {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(store, projects, cwd, true, cx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn offline(store: Database, cx: &mut Context<Self>) -> Self {
+        Self::new_inner(store, vec![], "/missing/inbox".into(), false, cx)
     }
 
     fn new_inner(
@@ -237,7 +272,7 @@ impl Inbox {
                 }
                 loop {
                     cx.background_executor()
-                        .timer(Duration::from_secs(30))
+                        .timer(Duration::from_secs(model::ci_repair::CHECKS_POLL_SECS))
                         .await;
                     if this
                         .update(cx, |this, cx| {
@@ -252,9 +287,13 @@ impl Inbox {
                                 && !this.acting
                             {
                                 this.load_detail(false, cx);
-                                if this.tab == Tab::Checks && !this.extra_loading {
-                                    this.checks = None;
-                                    this.set_tab(Tab::Checks, cx);
+                                if this.tab == Tab::Checks
+                                    && !this.extra_loading
+                                    && this
+                                        .item()
+                                        .is_some_and(|item| model::ci_repair::polls_checks(&item))
+                                {
+                                    this.refresh_checks(cx);
                                 }
                             }
                         })
@@ -266,6 +305,9 @@ impl Inbox {
             })
             .detach();
         }
+        let ci = locked(&store)
+            .map(|db| checks::CiState::load(&db))
+            .unwrap_or_default();
         Self {
             service: Service {
                 data_dir,
@@ -297,6 +339,7 @@ impl Inbox {
             self_activity: Default::default(),
             diff_view,
             checks: None,
+            ci,
             tab: Tab::Summary,
             loading: false,
             detail_loading: false,
@@ -335,6 +378,9 @@ impl Inbox {
             action_notice: None,
             confirm_action: None,
             resize_start: None,
+            ask: Default::default(),
+            #[cfg(test)]
+            offline: Offline::Live,
             active: false,
             refresh_queued: false,
             notifications: model::NotificationTracker::default(),
@@ -410,6 +456,38 @@ impl Inbox {
         cx.notify();
     }
 
+    /// Never reaches a provider; `items` are what it lists.
+    #[cfg(test)]
+    pub(crate) fn offline_with(
+        store: Database,
+        cwd: PathBuf,
+        items: Vec<Item>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut inbox = Self::new_inner(store, vec![], cwd, false, cx);
+        inbox.offline = Offline::Instant;
+        inbox.state.source = items
+            .first()
+            .map_or_else(String::new, |i| i.provider.clone());
+        inbox.selected = items.first().map(Item::key);
+        inbox.snapshot.items = items;
+        inbox.load_detail(true, cx);
+        inbox
+    }
+    #[cfg(test)]
+    pub(crate) fn select_for_test(&mut self, key: String, cx: &mut Context<Self>) {
+        self.select(key, cx);
+    }
+    #[cfg(test)]
+    pub(crate) fn hold_details_for_test(&mut self, cx: &mut Context<Self>) {
+        self.offline = Offline::Held;
+        cx.notify();
+    }
+    #[cfg(test)]
+    pub(crate) fn finish_details_for_test(&mut self, cx: &mut Context<Self>) {
+        self.offline = Offline::Instant;
+        self.load_detail(false, cx);
+    }
     /// Items that arrived since the inbox first loaded, so they are unread.
     #[cfg(test)]
     pub(crate) fn receive_unread(&mut self, items: Vec<Item>) {
@@ -625,6 +703,7 @@ impl Inbox {
             }
         }
         self.load_detail(true, cx);
+        self.sync_ask(cx);
         cx.notify();
     }
     fn deselect(&mut self, cx: &mut Context<Self>) {
@@ -649,6 +728,7 @@ impl Inbox {
         self.diff_view
             .update(cx, |view, cx| view.set_files(vec![], cx));
         self.checks = None;
+        self.ci.reset();
         self.extra_loading = false;
         self.extra_error = None;
         self.details = None;
@@ -685,6 +765,18 @@ impl Inbox {
         let Some(item) = self.item() else {
             return;
         };
+        #[cfg(test)]
+        if self.offline != Offline::Live {
+            self.detail_loading = self.offline == Offline::Held;
+            if self.offline == Offline::Instant {
+                self.details = Some(Details {
+                    body: format!("Body of {}", item.title),
+                    ..Default::default()
+                });
+                self.sync_ask(cx);
+            }
+            return;
+        }
         self.detail_generation += 1;
         let generation = self.detail_generation;
         self.detail_loading = true;
@@ -724,6 +816,7 @@ impl Inbox {
                     }
                     Err(error) => this.detail_error = Some(error),
                 }
+                this.sync_ask(cx);
                 match thread {
                     Ok(thread) => {
                         let mut rows = vec![];

@@ -2,6 +2,7 @@
 mod app_access;
 mod gespan_import;
 mod in_flight;
+mod inbox_ask;
 mod managed_sessions;
 mod notes;
 mod pilots;
@@ -59,6 +60,27 @@ pub struct Reminder {
     /// Unix milliseconds.
     pub due_at: u64,
     pub fired_at: Option<u64>,
+}
+
+const LOCAL_SESSION_COLUMNS: &str = "native_sessions.id,title,provider,cwd,provider_id,
+    (EXISTS(SELECT 1 FROM native_rows WHERE session_id=native_sessions.id)
+     OR EXISTS(SELECT 1 FROM native_settings WHERE key='follow-up:'||native_sessions.id AND json_valid(value) AND (json_type(value,'$.draft')='object' OR json_array_length(value,'$.messages')>0))),updated_at,archived,
+    pinned,work_item";
+fn local_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
+    Ok(Session {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        provider: r.get(2)?,
+        cwd: r.get(3)?,
+        provider_id: r.get(4)?,
+        has_messages: r.get(5)?,
+        updated_at: r.get::<_, i64>(6)?.max(0) as u64,
+        archived: r.get(7)?,
+        pinned: r.get(8)?,
+        work_item: r
+            .get::<_, Option<String>>(9)?
+            .and_then(|text| serde_json::from_str(&text).ok()),
+    })
 }
 
 pub struct Store {
@@ -439,31 +461,29 @@ impl Store {
 
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id,title,provider,cwd,provider_id,
-                 (EXISTS(SELECT 1 FROM native_rows WHERE session_id=native_sessions.id)
-                  OR EXISTS(SELECT 1 FROM native_settings WHERE key='follow-up:'||native_sessions.id AND json_valid(value) AND (json_type(value,'$.draft')='object' OR json_array_length(value,'$.messages')>0))),updated_at,archived,
-                 pinned,work_item
+            .prepare(&format!(
+                "SELECT {LOCAL_SESSION_COLUMNS}
                  FROM native_sessions WHERE NOT EXISTS(SELECT 1 FROM native_settings WHERE key='inbox-ask:'||native_sessions.id) ORDER BY updated_at DESC,id DESC",
-            )
+            ))
             .map_err(|e| e.to_string())?;
         let result = stmt
-            .query_map([], |r| {
-                Ok(Session {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    provider: r.get(2)?,
-                    cwd: r.get(3)?,
-                    provider_id: r.get(4)?,
-                    has_messages: r.get(5)?,
-                    updated_at: r.get::<_, i64>(6)?.max(0) as u64,
-                    archived: r.get(7)?,
-                    pinned: r.get(8)?,
-                    work_item: r
-                        .get::<_, Option<String>>(9)?
-                        .and_then(|text| serde_json::from_str(&text).ok()),
-                })
-            })
+            .query_map([], local_session)
+            .map_err(|e| e.to_string())?;
+        result
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+    /// Ask sessions with their raw context, which `local_sessions` hides.
+    fn local_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "SELECT {LOCAL_SESSION_COLUMNS},a.value
+                 FROM native_sessions JOIN native_settings a ON a.key='inbox-ask:'||native_sessions.id ORDER BY updated_at DESC,id DESC",
+            ))
+            .map_err(|e| e.to_string())?;
+        let result = stmt
+            .query_map([], |r| Ok((local_session(r)?, r.get(10)?)))
             .map_err(|e| e.to_string())?;
         result
             .collect::<Result<Vec<_>, _>>()
