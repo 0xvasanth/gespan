@@ -46,6 +46,11 @@ enum Tab {
     Checks,
 }
 
+/// Only a GitHub pull request diff can widen to whole files.
+pub(crate) fn shows_full_file(item: &gespan_core::inbox::Item) -> bool {
+    item.provider == "github" && item.kind == "pr"
+}
+
 pub(crate) struct Inbox {
     store: Database,
     service: Service,
@@ -70,6 +75,8 @@ pub(crate) struct Inbox {
     document: Option<Entity<document::InboxDocument>>,
     comments: Vec<(model::Comment, Entity<document::InboxDocument>)>,
     diff: Option<Diff>,
+    /// The Code tab's Hunks / Full file switch, for GitHub pull requests.
+    full_file: bool,
     diff_view: Entity<DiffView>,
     checks: Option<Checks>,
     tab: Tab,
@@ -257,6 +264,7 @@ impl Inbox {
             document: None,
             comments: vec![],
             diff: None,
+            full_file: false,
             diff_view,
             checks: None,
             tab: Tab::Summary,
@@ -578,6 +586,7 @@ impl Inbox {
         self.focus_comment = false;
         self.tab = Tab::Summary;
         self.diff = None;
+        self.full_file = false;
         self.extra_request += 1;
         self.diff_view
             .update(cx, |view, cx| view.set_files(vec![], cx));
@@ -706,6 +715,17 @@ impl Inbox {
         })
         .detach();
     }
+    /// Hunks or the whole file around each change: reloads the Code tab.
+    pub(crate) fn set_full_file(&mut self, full: bool, cx: &mut Context<Self>) {
+        if self.full_file == full {
+            return;
+        }
+        self.full_file = full;
+        self.diff = None;
+        self.diff_view
+            .update(cx, |view, cx| view.set_files(vec![], cx));
+        self.set_tab(Tab::Code, cx);
+    }
     fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.extra_error = None;
@@ -725,9 +745,10 @@ impl Inbox {
         let request = self.extra_request;
         let key = item.key();
         let service = self.service.clone();
+        let full = self.full_file && shows_full_file(&item);
         let task = cx.background_executor().spawn(async move {
             if tab == Tab::Code {
-                service.diff(&item).map(|diff| {
+                service.diff_context(&item, full).map(|diff| {
                     let files = diff::models(&diff);
                     (Some((diff, files)), None)
                 })
@@ -970,5 +991,96 @@ impl Inbox {
         })
         .detach();
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+
+    fn item(provider: &str, number: i64) -> Item {
+        Item {
+            provider: provider.into(),
+            kind: "pr".into(),
+            repo: "acme/app".into(),
+            number,
+            title: format!("Change {number}"),
+            ..Default::default()
+        }
+    }
+
+    fn inbox(cx: &mut TestAppContext) -> (WindowHandle<Inbox>, [String; 2]) {
+        cx.update(|cx| cx.set_global(crate::settings::Preferences::default()));
+        let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let store: Database = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let (github, gitlab) = (item("github", 1), item("gitlab", 2));
+        let keys = [github.key(), gitlab.key()];
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Inbox::new_inner(store, vec![], "/missing/inbox".into(), false, cx))
+            })
+            .unwrap()
+        });
+        // After the inbox's own first load, which would replace them.
+        cx.run_until_parked();
+        window
+            .update(cx, |inbox, _, _| {
+                inbox.snapshot.items = vec![github, gitlab]
+            })
+            .unwrap();
+        (window, keys)
+    }
+
+    #[gpui::test]
+    fn a_github_pull_request_switches_between_hunks_and_full_files(cx: &mut TestAppContext) {
+        let (window, [github, gitlab]) = inbox(cx);
+        window
+            .update(cx, |inbox, _, cx| {
+                inbox.select(github.clone(), cx);
+                inbox.set_tab(Tab::Code, cx);
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-diff-hunks").is_some());
+        let request = window
+            .update(visual, |inbox, _, _| inbox.extra_request)
+            .unwrap();
+        let full = visual.debug_bounds("inbox-diff-full").unwrap();
+        visual.simulate_click(full.center(), Default::default());
+        window
+            .update(visual, |inbox, _, _| {
+                assert!(inbox.full_file);
+                assert!(inbox.diff.is_none(), "the hunk diff is dropped");
+                assert_eq!(
+                    inbox.extra_request,
+                    request + 1,
+                    "and the full one requested"
+                );
+            })
+            .unwrap();
+        // Picking the shown mode again loads nothing.
+        window
+            .update(visual, |inbox, _, cx| inbox.set_full_file(true, cx))
+            .unwrap();
+        assert_eq!(
+            window
+                .update(visual, |inbox, _, _| inbox.extra_request)
+                .unwrap(),
+            request + 1
+        );
+        // Another item starts on Hunks; GitLab has no full-file diff.
+        window
+            .update(visual, |inbox, _, cx| {
+                inbox.select(gitlab.clone(), cx);
+                assert!(!inbox.full_file);
+                inbox.set_tab(Tab::Code, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-diff-hunks").is_none());
     }
 }

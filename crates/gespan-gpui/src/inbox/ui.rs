@@ -9,6 +9,67 @@ fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Statef
     plain_action(id, label).hover(|s| s.bg(content(0.07)).text_color(content(1.)))
 }
 /// An [`action`] without its hover, for callers that set their own.
+impl Inbox {
+    /// InboxView's "Diff context" group: Hunks or Full file.
+    fn diff_context_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let option = |full: bool, label: &'static str| {
+            let on = self.full_file == full;
+            div()
+                .id(if full {
+                    "inbox-diff-full"
+                } else {
+                    "inbox-diff-hunks"
+                })
+                .debug_selector(move || {
+                    if full {
+                        "inbox-diff-full"
+                    } else {
+                        "inbox-diff-hunks"
+                    }
+                    .into()
+                })
+                .role(Role::Button)
+                .aria_label(label)
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .cursor_pointer()
+                .px(px(10.))
+                .py_1()
+                .rounded(px(4.))
+                .text_size(px(11.))
+                .line_height(px(11.))
+                .when(on, |d| {
+                    d.bg(crate::right_panel::selection())
+                        .text_color(content(1.))
+                })
+                .when(!on, |d| {
+                    d.text_color(content(0.45))
+                        .hover(|s| s.text_color(content(0.7)))
+                })
+                .on_click(cx.listener(move |this, _, _, cx| this.set_full_file(full, cx)))
+                .child(label)
+        };
+        div()
+            .id("inbox-diff-context")
+            .role(Role::Group)
+            .aria_label("Diff context")
+            .ml_auto()
+            .self_center()
+            .flex()
+            .items_center()
+            .p(px(2.))
+            .rounded_md()
+            .border_1()
+            .border_color(content(0.1))
+            .bg(content(0.03))
+            .child(option(false, "Hunks"))
+            .child(option(true, "Full file"))
+    }
+}
+
 fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     let id: SharedString = id.into();
     let label = label.into();
@@ -1031,6 +1092,10 @@ impl Inbox {
                                                 this.set_tab(tab, cx)
                                             }))
                                     }),
+                                )
+                                .when(
+                                    self.tab == Tab::Code && super::shows_full_file(&item),
+                                    |d| d.child(self.diff_context_switch(cx)),
                                 ),
                         )
                     }),

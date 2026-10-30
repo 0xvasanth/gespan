@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gespan Native's file tabs have a right-click menu to open the file in its
   default app, reveal it, and copy its path, relative path or name, and the
   Files explorer can open a terminal in a folder, as in the Tauri app.
+- Gespan Native's inbox can show a GitHub pull request's changes as hunks or
+  as whole files, as the Tauri app can.
 - Gespan Native lists the skills of enabled Codex plugins in the composer's /
   picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
