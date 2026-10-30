@@ -259,6 +259,34 @@ mod tests {
     }
 
     #[test]
+    fn help_links_to_the_website_then_github() {
+        for mac in [true, false] {
+            let menus = crate::app_menu::menus(&Default::default(), mac);
+            let help = labels(find(&menus, "Help"));
+            let website = help.iter().position(|l| l == "Gespan Website").unwrap();
+            assert_eq!(help[website + 1], "View on GitHub");
+        }
+        // The link goes to the site, not the repository.
+        let menus = crate::app_menu::menus(&Default::default(), true);
+        let actions: Vec<_> = find(&menus, "Help")
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                gpui::MenuItem::Action { name, action, .. }
+                    if name.as_ref() == "Gespan Website" =>
+                {
+                    action
+                        .as_any()
+                        .downcast_ref::<crate::app_menu::OpenUrl>()
+                        .map(|u| u.0)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(actions, ["https://gespan.dev"]);
+    }
+
+    #[test]
     fn in_the_window_the_app_menu_moves_to_file_and_help() {
         let menus = crate::app_menu::menus(&Default::default(), false);
         assert_eq!(names(&menus), ["File", "Edit", "View", "Help"]);
@@ -273,6 +301,7 @@ mod tests {
             &help[..3],
             ["About Gespan Native", "Check for Updates…", "-"]
         );
+        assert!(help.iter().any(|label| label == "Gespan Website"));
         // Nothing hides the app or its others: those are macOS-only.
         let all: Vec<String> = menus.iter().flat_map(labels).collect();
         assert!(!all.iter().any(|label| label.starts_with("Hide")));

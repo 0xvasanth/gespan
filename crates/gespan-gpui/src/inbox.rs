@@ -46,6 +46,11 @@ enum Tab {
     Checks,
 }
 
+/// Only a GitHub pull request diff can widen to whole files.
+pub(crate) fn shows_full_file(item: &gespan_core::inbox::Item) -> bool {
+    item.provider == "github" && item.kind == "pr"
+}
+
 pub(crate) struct Inbox {
     store: Database,
     service: Service,
@@ -70,6 +75,10 @@ pub(crate) struct Inbox {
     document: Option<Entity<document::InboxDocument>>,
     comments: Vec<(model::Comment, Entity<document::InboxDocument>)>,
     diff: Option<Diff>,
+    /// The Code tab's Hunks / Full file switch, for GitHub pull requests.
+    full_file: bool,
+    /// Comments and actions made here, whose update must not read as unread.
+    self_activity: gespan_core::inbox::SelfActivity,
     diff_view: Entity<DiffView>,
     checks: Option<Checks>,
     tab: Tab,
@@ -257,6 +266,8 @@ impl Inbox {
             document: None,
             comments: vec![],
             diff: None,
+            full_file: false,
+            self_activity: Default::default(),
             diff_view,
             checks: None,
             tab: Tab::Summary,
@@ -372,6 +383,30 @@ impl Inbox {
         cx.notify();
     }
 
+    /// Items that arrived since the inbox first loaded, so they are unread.
+    #[cfg(test)]
+    pub(crate) fn receive_unread(&mut self, items: Vec<Item>) {
+        self.state.seen.seeded = true;
+        self.snapshot.items = items;
+    }
+    /// An update our own comment or action caused is not unread.
+    fn skip_own_updates(&mut self, items: &[Item], now: u64) {
+        for item in items {
+            if self.state.seen.unseen(item) && self.self_activity.consume(item, now) {
+                self.state.seen.mark(item);
+            }
+        }
+    }
+    /// Mark all as read: every item the inbox has loaded.
+    pub(crate) fn mark_all_read(&mut self, cx: &mut Context<Self>) {
+        let items = std::mem::take(&mut self.snapshot.items);
+        for item in &items {
+            self.state.seen.mark(item);
+        }
+        self.snapshot.items = items;
+        self.save();
+        cx.notify();
+    }
     pub(crate) fn unread_count(&self) -> usize {
         self.snapshot
             .items
@@ -466,6 +501,7 @@ impl Inbox {
                 snapshot
                     .items
                     .sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
+                this.skip_own_updates(&snapshot.items, gespan_core::time::now_ms());
                 this.state.seen.seed(&snapshot.items);
                 this.snapshot = snapshot;
                 this.sessions = sessions;
@@ -578,6 +614,7 @@ impl Inbox {
         self.focus_comment = false;
         self.tab = Tab::Summary;
         self.diff = None;
+        self.full_file = false;
         self.extra_request += 1;
         self.diff_view
             .update(cx, |view, cx| view.set_files(vec![], cx));
@@ -706,6 +743,17 @@ impl Inbox {
         })
         .detach();
     }
+    /// Hunks or the whole file around each change: reloads the Code tab.
+    pub(crate) fn set_full_file(&mut self, full: bool, cx: &mut Context<Self>) {
+        if self.full_file == full {
+            return;
+        }
+        self.full_file = full;
+        self.diff = None;
+        self.diff_view
+            .update(cx, |view, cx| view.set_files(vec![], cx));
+        self.set_tab(Tab::Code, cx);
+    }
     fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.extra_error = None;
@@ -725,9 +773,10 @@ impl Inbox {
         let request = self.extra_request;
         let key = item.key();
         let service = self.service.clone();
+        let full = self.full_file && shows_full_file(&item);
         let task = cx.background_executor().spawn(async move {
             if tab == Tab::Code {
-                service.diff(&item).map(|diff| {
+                service.diff_context(&item, full).map(|diff| {
                     let files = diff::models(&diff);
                     (Some((diff, files)), None)
                 })
@@ -786,6 +835,7 @@ impl Inbox {
         let key = item.key();
         let service = self.service.clone();
         let reply = self.reply.as_ref().map(|r| r.0.clone()).unwrap_or_default();
+        let target = gespan_core::inbox::SelfTarget::of(&item);
         let task = cx
             .background_executor()
             .spawn(async move { service.comment(&item, body, reply) });
@@ -799,6 +849,8 @@ impl Inbox {
                 }
                 match result {
                     Ok(_) => {
+                        this.self_activity
+                            .record(target, gespan_core::time::now_ms());
                         this.comment
                             .update(cx, |input, cx| input.set_text(String::new(), cx));
                         this.reply = None;
@@ -944,6 +996,7 @@ impl Inbox {
         let service = self.service.clone();
         let key = item.key();
         let merging = matches!(action.as_str(), "merge" | "squash" | "rebase");
+        let target = gespan_core::inbox::SelfTarget::of(&item);
         let task = cx
             .background_executor()
             .spawn(async move { service.action(&item, &action) });
@@ -953,6 +1006,8 @@ impl Inbox {
                 this.acting = false;
                 match result {
                     Ok(item) => {
+                        this.self_activity
+                            .record(target, gespan_core::time::now_ms());
                         this.action_notice = (merging
                             && !item.state.eq_ignore_ascii_case("merged"))
                         .then(|| "Merge queued or auto-merge enabled.".into());
@@ -970,5 +1025,123 @@ impl Inbox {
         })
         .detach();
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+
+    fn item(provider: &str, number: i64) -> Item {
+        Item {
+            provider: provider.into(),
+            kind: "pr".into(),
+            repo: "acme/app".into(),
+            number,
+            title: format!("Change {number}"),
+            ..Default::default()
+        }
+    }
+
+    fn inbox(cx: &mut TestAppContext) -> (WindowHandle<Inbox>, [String; 2]) {
+        cx.update(|cx| cx.set_global(crate::settings::Preferences::default()));
+        let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let store: Database = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let (github, gitlab) = (item("github", 1), item("gitlab", 2));
+        let keys = [github.key(), gitlab.key()];
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Inbox::new_inner(store, vec![], "/missing/inbox".into(), false, cx))
+            })
+            .unwrap()
+        });
+        // After the inbox's own first load, which would replace them.
+        cx.run_until_parked();
+        window
+            .update(cx, |inbox, _, _| {
+                inbox.snapshot.items = vec![github, gitlab]
+            })
+            .unwrap();
+        (window, keys)
+    }
+
+    #[gpui::test]
+    fn a_github_pull_request_switches_between_hunks_and_full_files(cx: &mut TestAppContext) {
+        let (window, [github, gitlab]) = inbox(cx);
+        window
+            .update(cx, |inbox, _, cx| {
+                inbox.select(github.clone(), cx);
+                inbox.set_tab(Tab::Code, cx);
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-diff-hunks").is_some());
+        let request = window
+            .update(visual, |inbox, _, _| inbox.extra_request)
+            .unwrap();
+        let full = visual.debug_bounds("inbox-diff-full").unwrap();
+        visual.simulate_click(full.center(), Default::default());
+        window
+            .update(visual, |inbox, _, _| {
+                assert!(inbox.full_file);
+                assert!(inbox.diff.is_none(), "the hunk diff is dropped");
+                assert_eq!(
+                    inbox.extra_request,
+                    request + 1,
+                    "and the full one requested"
+                );
+            })
+            .unwrap();
+        // Picking the shown mode again loads nothing.
+        window
+            .update(visual, |inbox, _, cx| inbox.set_full_file(true, cx))
+            .unwrap();
+        assert_eq!(
+            window
+                .update(visual, |inbox, _, _| inbox.extra_request)
+                .unwrap(),
+            request + 1
+        );
+        // Another item starts on Hunks; GitLab has no full-file diff.
+        window
+            .update(visual, |inbox, _, cx| {
+                inbox.select(gitlab.clone(), cx);
+                assert!(!inbox.full_file);
+                inbox.set_tab(Tab::Code, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-diff-hunks").is_none());
+    }
+
+    #[gpui::test]
+    fn an_update_from_our_own_comment_does_not_read_as_unread(cx: &mut TestAppContext) {
+        let (window, _) = inbox(cx);
+        window
+            .update(cx, |inbox, _, _| {
+                let mut ours = item("github", 1);
+                let mut theirs = item("github", 2);
+                inbox.state.seen.seed(&[ours.clone(), theirs.clone()]);
+                inbox.self_activity.record(
+                    gespan_core::inbox::SelfTarget::of(&ours),
+                    gespan_core::time::now_ms(),
+                );
+                // Both get a newer revision; only #1's came from us.
+                ours.updated_at = "2030-01-01T00:00:00Z".into();
+                theirs.updated_at = "2030-01-01T00:00:00Z".into();
+                let now = gespan_core::time::now_ms();
+                inbox.skip_own_updates(&[ours.clone(), theirs.clone()], now);
+                inbox.snapshot.items = vec![ours.clone(), theirs];
+                assert_eq!(inbox.unread_count(), 1, "only someone else's update");
+                // Its next revision is announced as usual.
+                ours.updated_at = "2031-01-01T00:00:00Z".into();
+                inbox.skip_own_updates(std::slice::from_ref(&ours), now);
+                assert!(inbox.state.seen.unseen(&ours));
+            })
+            .unwrap();
     }
 }

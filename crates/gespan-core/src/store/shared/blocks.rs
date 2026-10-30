@@ -124,6 +124,21 @@ fn project_content(block: &Value) -> Result<Vec<Row>, String> {
             }),
         )]);
     }
+    if block["role"] == crate::generated_image::ROLE {
+        // The typed image keeps the row text the same however the block's
+        // keys are ordered; the block itself keeps any other fields.
+        let Ok(image) =
+            serde_json::from_value::<crate::generated_image::Image>(block["image"].clone())
+        else {
+            return Ok(Vec::new());
+        };
+        return Ok(vec![Row {
+            role: crate::generated_image::ROLE.into(),
+            text: serde_json::to_string(&image).map_err(|e| e.to_string())?,
+            first: true,
+            sent_at: block["sentAt"].as_u64(),
+        }]);
+    }
     let role = block["role"].as_str().unwrap_or("system");
     let text = block["text"].as_str().unwrap_or("");
     let mut t = Transcript::default();
@@ -162,7 +177,8 @@ fn project_content(block: &Value) -> Result<Vec<Row>, String> {
             "user" if block["internal"] == true => "pilot-system",
             "user" | "assistant" | "reasoning" | "error" | "pilot-card" | "visual" => role,
             "system" if block["notice"] == "error" => "error",
-            "plan" | "tasks" => "assistant",
+            "plan" => crate::plan::ROLE,
+            "tasks" => "assistant",
             _ => "system",
         });
         t.append(text);
@@ -244,7 +260,11 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
             return Ok(old.clone());
         }
     }
-    if role == "interjection" {
+    if role == crate::generated_image::ROLE {
+        block["role"] = json!(crate::generated_image::ROLE);
+        block["text"] = json!("");
+        block["image"] = super::parse(&text)?;
+    } else if role == "interjection" {
         let note: crate::transcript::Interjection = super::parse(&text)?;
         block["role"] = json!("system");
         block["text"] = json!(note.text);
@@ -317,6 +337,15 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
                 .collect::<Vec<_>>());
             block["taskList"]["nativeCallId"] = json!(call.id);
             block["taskList"]["explanation"] = json!(list.explanation);
+            // Claude's TaskCreate/TaskUpdate card names its list and conversation,
+            // as the desktop app's does, so a resumed turn can reseed from it.
+            if let Ok(input) = serde_json::from_str::<Value>(&call.input) {
+                for key in ["key", "providerSessionId"] {
+                    if let Some(value) = input[key].as_str() {
+                        block["taskList"][key] = json!(value);
+                    }
+                }
+            }
             if old.is_none() {
                 block["sentAt"] = json!(rows[0].sent_at);
             }
@@ -426,6 +455,13 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
             }
             if role == "pilot-system" {
                 block["internal"] = json!(true);
+            }
+        }
+        // A finished turn's reply becomes its plan after it was saved.
+        if role == crate::plan::ROLE {
+            block["role"] = json!("plan");
+            if !block["plan"].is_object() {
+                block["plan"] = json!({"status":"ready","originalText":text,"edited":false});
             }
         }
         block["text"] = json!(text);
@@ -627,6 +663,45 @@ mod panel_tests {
         assert_eq!(cleared[0]["taskList"]["items"], json!([]));
     }
     #[test]
+    fn claude_task_cards_survive_the_shared_database_and_read_desktop_lists() {
+        use crate::tool::tasks::{claude_task_lists, ClaudeTasks, Task, TaskStatus};
+        let list = ClaudeTasks {
+            conversation: "claude-conversation".into(),
+            items: vec![
+                Task {
+                    id: Some("1".into()),
+                    text: "Write tests".into(),
+                    status: TaskStatus::InProgress,
+                },
+                Task {
+                    id: Some("2".into()),
+                    text: "Ship it".into(),
+                    status: TaskStatus::Pending,
+                },
+            ],
+        };
+        let card = list.card("claude-tasks:toolu_1");
+        let saved = merge(&[], 0, &[row(&card)]).unwrap();
+        assert_eq!(saved[0]["role"], "tasks");
+        assert_eq!(saved[0]["taskList"]["key"], "claude-tasks");
+        assert_eq!(
+            saved[0]["taskList"]["providerSessionId"],
+            "claude-conversation"
+        );
+        // After a restart the rows come back from the database.
+        let reloaded = project(&saved).unwrap();
+        assert_eq!(claude_task_lists(&reloaded), std::slice::from_ref(&list));
+        let call: ToolCall = serde_json::from_str(&reloaded[0].text).unwrap();
+        assert_eq!(call.id, "claude-tasks:toolu_1");
+        assert_eq!(call.panel(), card.panel());
+        // A list the desktop app saved for the same conversation reseeds too.
+        let desktop = json!({"id":"block","role":"tasks","text":"[~] Write tests\n[ ] Ship it","taskList":{"key":"claude-tasks","providerSessionId":"claude-conversation","items":[{"id":"1","text":"Write tests","status":"in_progress"},{"id":"2","text":"Ship it","status":"pending"}]}});
+        assert_eq!(claude_task_lists(&project(&[desktop]).unwrap()), [list]);
+        // A plain plan list is not a Claude task card.
+        let plan = json!({"id":"plan","role":"tasks","text":"[ ] Step","taskList":{"items":[{"text":"Step","status":"pending"}]}});
+        assert!(claude_task_lists(&project(&[plan]).unwrap()).is_empty());
+    }
+    #[test]
     fn child_steps_and_raw_native_input_roundtrip_without_erasing_desktop_metadata() {
         let source = json!({"id":"block","role":"tool","text":"Review","tool":{"callId":"actual-call","kind":"agent","title":"Review","status":"in_progress","future":true},"agentRun":{"name":"Reviewer","steps":[{"id":"old-step","kind":"tool","text":"Read","preview":{"path":"keep.rs"},"future":9}],"unknownAgent":true}});
         let mut call = tool(&source);
@@ -712,6 +787,76 @@ mod card_tests {
         assert_eq!(native[0]["role"], "user");
         assert_eq!(native[0]["internal"], true);
         assert_eq!(project(&native).unwrap(), rows);
+    }
+    #[test]
+    fn a_reply_promoted_to_a_plan_saves_as_a_desktop_plan_and_reloads_as_one() {
+        let row = |role: &str, text: &str| Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        };
+        let mut rows = vec![row("user", "Plan it"), row("assistant", "# Plan\n- a\n- b")];
+        let saved = merge(&[], 0, &rows).unwrap();
+        assert_eq!(saved[1]["role"], "assistant");
+        let id = saved[1]["id"].clone();
+        assert_eq!(crate::plan::promote(&mut rows, 0, true), Some(1));
+        let promoted = merge(&saved, 1, &rows[1..]).unwrap();
+        assert_eq!(promoted[1]["id"], id, "the reply keeps its identity");
+        assert_eq!(promoted[1]["role"], "plan");
+        assert_eq!(promoted[1]["plan"]["status"], "ready");
+        assert_eq!(promoted[1]["plan"]["originalText"], "# Plan\n- a\n- b");
+        assert_eq!(project(&promoted).unwrap(), rows);
+
+        // A plan the Tauri app saved, built or not, reads as a plan too.
+        let desktop = json!({"id":"p","role":"plan","text":"# Desktop plan","plan":{"status":"built","approvedText":"# Desktop plan"}});
+        let projected = project(std::slice::from_ref(&desktop)).unwrap();
+        assert_eq!(projected[0].role, "plan");
+        assert_eq!(projected[0].text, "# Desktop plan");
+        assert_eq!(
+            merge(std::slice::from_ref(&desktop), 0, &projected).unwrap(),
+            vec![desktop]
+        );
+    }
+    #[test]
+    fn generated_images_save_as_desktop_image_blocks_and_reload() {
+        let image = crate::generated_image::Image {
+            path: "/data/generated-images/1-fox.png".into(),
+            name: "fox".into(),
+            mime_type: "image/png".into(),
+            size: 9,
+            alt: Some("A red fox".into()),
+        };
+        let row = Row {
+            role: crate::generated_image::ROLE.into(),
+            text: serde_json::to_string(&image).unwrap(),
+            first: true,
+            sent_at: Some(5),
+        };
+        let saved = merge(&[], 0, std::slice::from_ref(&row)).unwrap();
+        assert_eq!(saved[0]["role"], "image");
+        assert_eq!(saved[0]["text"], "");
+        assert_eq!(
+            saved[0]["image"]["path"],
+            "/data/generated-images/1-fox.png"
+        );
+        assert_eq!(saved[0]["image"]["mimeType"], "image/png");
+        assert_eq!(saved[0]["sentAt"], 5);
+        assert_eq!(project(&saved).unwrap(), vec![row]);
+
+        // The Tauri app's blocks read the same, and unknown fields survive.
+        let desktop = json!({"id":"img","role":"image","text":"","image":{"path":"/generated.png","name":"generated-image","future":"keep"}});
+        let rows = project(std::slice::from_ref(&desktop)).unwrap();
+        let read: crate::generated_image::Image = serde_json::from_str(&rows[0].text).unwrap();
+        assert_eq!(read.path, "/generated.png");
+        assert_eq!(
+            merge(std::slice::from_ref(&desktop), 0, &rows).unwrap(),
+            vec![desktop]
+        );
+        // A block without a file stays hidden.
+        assert!(project(&[json!({"id":"x","role":"image","text":""})])
+            .unwrap()
+            .is_empty());
     }
     #[test]
     fn new_native_cards_keep_their_identity_and_reload_as_cards() {

@@ -121,6 +121,10 @@ pub struct Settings {
     /// seeds Claude's cross-turn agent registry when a process (re)starts.
     #[serde(skip)]
     pub agent_runs: Vec<crate::tool::ToolCall>,
+    /// Claude task cards already in this conversation. Transport-only: a
+    /// resumed conversation's TaskUpdate calls still refer to earlier tasks.
+    #[serde(skip)]
+    pub claude_task_lists: Vec<crate::tool::tasks::ClaudeTasks>,
     pub revision: u64,
     pub model: Option<String>,
     pub effort: Option<String>,

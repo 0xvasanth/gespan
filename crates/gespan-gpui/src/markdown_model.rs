@@ -64,6 +64,13 @@ pub(crate) enum Block {
         id: String,
         caption: String,
     },
+    /// LocalMedia.tsx: a paragraph that starts with a local image, or a link
+    /// to a local image or video, shows the file. `href` is as written;
+    /// the transcript resolves it against the session folder.
+    LocalMedia {
+        href: String,
+        label: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TopBlock {
@@ -494,6 +501,13 @@ fn blocks(events: &mut Events<'_>, until: Option<TagEnd>, depth: usize) -> Vec<B
                         out.push(visual);
                         continue;
                     }
+                    if let Some((media, rest)) = placed_media(events) {
+                        out.push(media);
+                        if rest.iter().any(|run| !run.text.trim().is_empty()) {
+                            out.push(Block::Paragraph { runs: rest });
+                        }
+                        continue;
+                    }
                     out.push(Block::Paragraph {
                         runs: inlines(events, TagEnd::Paragraph),
                     })
@@ -681,6 +695,44 @@ fn placed_visual(events: &mut Events<'_>) -> Option<Block> {
     }
     Some(Block::Visual { id, caption })
 }
+/// Whether a link names a local image or video: a path or `file://` URL.
+pub(crate) fn is_local_media(href: &str) -> bool {
+    let lower = href.to_ascii_lowercase();
+    if lower.starts_with("data:") || (href.contains("://") && !lower.starts_with("file://")) {
+        return false;
+    }
+    let path = href.strip_prefix("file://").unwrap_or(href);
+    let path = path.split(['#', '?']).next().unwrap_or(path);
+    let path = std::path::Path::new(path);
+    !path.as_os_str().is_empty()
+        && (gespan_core::composer::image_mime(path).is_some()
+            || gespan_core::files::document::is_video_path(path))
+}
+/// A paragraph that starts with a local image or media link: the media, and
+/// the rest of the paragraph's text. Leaves the events untouched otherwise.
+fn placed_media(events: &mut Events<'_>) -> Option<(Block, Vec<InlineRun>)> {
+    let (href, end) = match events.peek()? {
+        Event::Start(Tag::Image { dest_url, .. }) if is_local_media(dest_url) => {
+            (dest_url.to_string(), TagEnd::Image)
+        }
+        Event::Start(Tag::Link { dest_url, .. }) if is_local_media(dest_url) => {
+            (dest_url.to_string(), TagEnd::Link)
+        }
+        _ => return None,
+    };
+    events.next();
+    let mut label = String::new();
+    for event in events.by_ref() {
+        match event {
+            Event::End(tag) if tag == end => break,
+            Event::Text(text) | Event::Code(text) => label.push_str(&text),
+            _ => {}
+        }
+    }
+    let rest = inlines(events, TagEnd::Paragraph);
+    let label = label.trim().to_owned();
+    Some((Block::LocalMedia { href, label }, rest))
+}
 fn inlines(events: &mut Events<'_>, end: TagEnd) -> Vec<InlineRun> {
     let mut out = Vec::new();
     while let Some(event) = events.next() {
@@ -757,6 +809,78 @@ mod note_break_tests {
             panic!("expected code")
         };
         assert_eq!(code, "one\ntwo\n");
+    }
+
+    fn blocks_of(markdown: &str) -> Vec<Block> {
+        parse_full(markdown)
+            .blocks
+            .iter()
+            .map(|top| top.block.clone())
+            .collect()
+    }
+    fn media(href: &str, label: &str) -> Block {
+        Block::LocalMedia {
+            href: href.into(),
+            label: label.into(),
+        }
+    }
+
+    #[test]
+    fn local_images_and_media_links_become_media_blocks() {
+        assert_eq!(
+            blocks_of("![Screenshot](/tmp/shot.PNG)"),
+            [media("/tmp/shot.PNG", "Screenshot")]
+        );
+        assert_eq!(
+            blocks_of("[demo](recordings/demo.mp4)"),
+            [media("recordings/demo.mp4", "demo")]
+        );
+        assert_eq!(
+            blocks_of("![](file:///Users/me/out.webp)"),
+            [media("file:///Users/me/out.webp", "")]
+        );
+        // The text after the file stays a paragraph below it.
+        let mut parsed = blocks_of("[`clip.mov`](./clip.mov) shows the bug.");
+        assert_eq!(parsed.remove(0), media("./clip.mov", "clip.mov"));
+        let Block::Paragraph { runs } = &parsed[0] else {
+            panic!("expected the rest as prose")
+        };
+        assert_eq!(
+            runs.iter()
+                .map(|r| r.text.as_str())
+                .collect::<String>()
+                .trim(),
+            "shows the bug."
+        );
+        // Inside a loose list item too. A tight item has no paragraph and
+        // keeps its link.
+        let Block::List { items, .. } = &blocks_of("- ![a](/a.gif)\n\n- b")[0] else {
+            panic!("expected a list")
+        };
+        assert_eq!(items[0], [media("/a.gif", "a")]);
+    }
+
+    #[test]
+    fn web_inline_and_non_media_links_stay_prose() {
+        for markdown in [
+            "![logo](https://example.com/logo.png)",
+            "![data](data:image/png;base64,AAAA)",
+            "[notes](docs/notes.md)",
+            "[folder](/tmp/)",
+            "See ![shot](/tmp/shot.png) here",
+            "![chart](visual:sales)",
+        ] {
+            assert!(
+                !blocks_of(markdown)
+                    .iter()
+                    .any(|block| matches!(block, Block::LocalMedia { .. })),
+                "{markdown}"
+            );
+        }
+        assert!(is_local_media("C:\\Users\\me\\shot.jpg"));
+        assert!(is_local_media("/tmp/a.png#L1"));
+        assert!(!is_local_media("ftp://host/a.png"));
+        assert!(!is_local_media(""));
     }
 }
 

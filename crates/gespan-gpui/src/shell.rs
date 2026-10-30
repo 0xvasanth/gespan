@@ -50,6 +50,7 @@ mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
 mod tray;
+pub(crate) use tray::reopen;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
@@ -385,6 +386,8 @@ pub(crate) enum MenuTarget {
     Actions,
     /// The title bar corner's Open in editor menu, for this folder.
     OpenInEditor(String),
+    /// The Inbox row's right-click menu in the sidebar and the project rail.
+    InboxNav,
 }
 pub(crate) struct ShellMenu {
     pub(crate) target: MenuTarget,
@@ -1851,6 +1854,13 @@ impl Shell {
         self.observations.push(cx.subscribe_in(
             &explorer,
             window,
+            |this, _, event: &crate::explorer::OpenTerminal, window, cx| {
+                this.new_terminal_in(Some(event.0.clone()), window, cx)
+            },
+        ));
+        self.observations.push(cx.subscribe_in(
+            &explorer,
+            window,
             |this, _, event: &crate::explorer::OpenSearchMatch, window, cx| {
                 this.open_review_with_preview(
                     crate::review::ReviewTab::File {
@@ -3111,6 +3121,15 @@ impl Shell {
     /// Terminal: New (cmd-`): another terminal in the project's dock, which
     /// opens if it was hidden.
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_terminal_in(None, window, cx)
+    }
+    /// A new dock terminal in `cwd`, or where Terminal: New opens one.
+    fn new_terminal_in(
+        &mut self,
+        cwd: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.workspace.project.starts_with("remote://") {
             self.error = Some("Terminals are not available on remote projects.".into());
             cx.notify();
@@ -3120,7 +3139,7 @@ impl Shell {
             return;
         }
         let project = self.workspace.project.clone();
-        let cwd = self.terminal_cwd(cx);
+        let cwd = cwd.unwrap_or_else(|| self.terminal_cwd(cx));
         let was_open = self
             .workspace
             .docks
@@ -5418,6 +5437,12 @@ impl Shell {
                 .unwrap_or_default()
         };
         match target {
+            MenuTarget::InboxNav => (
+                "Inbox actions".into(),
+                self.inbox_nav_menu_items(cx),
+                272.,
+                MenuStyle::Explorer,
+            ),
             // Answered by terminal_menu_items above.
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
@@ -5813,6 +5838,7 @@ impl Shell {
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
             MenuTarget::Actions => self.run_actions_menu(action, window, cx),
             MenuTarget::OpenInEditor(path) => self.run_open_in_editor_menu(path, action, cx),
+            MenuTarget::InboxNav => self.run_inbox_nav_menu(action, window, cx),
             MenuTarget::TerminalDock => {
                 let side = match action {
                     "top" => DockSide::Top,
@@ -8394,11 +8420,12 @@ impl Render for Shell {
                         let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
                         match crate::tray::on_close(
                             to_tray,
+                            cfg!(target_os = "macos"),
                             !shell.running_chats(cx).is_empty(),
                             shell.unsaved_files(cx),
                         ) {
                             crate::tray::Close::Hide => {
-                                shell.set_window_visible(window, false);
+                                shell.set_window_visible(window, false, cx);
                                 false
                             }
                             // Closing the window quits: ask first, as a quit does.

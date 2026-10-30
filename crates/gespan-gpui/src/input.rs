@@ -13,6 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 mod code;
 mod command;
+mod editing;
 mod spelling;
 pub(crate) use command::{Command, CommandRemoved};
 
@@ -81,6 +82,7 @@ pub(crate) enum CodeAction {
 pub struct Rejected(pub &'static str);
 
 pub fn bind(cx: &mut App) {
+    editing::bind(cx);
     let selection_modifier = if cfg!(target_os = "macos") {
         "cmd"
     } else {
@@ -774,6 +776,7 @@ impl Input {
         let offset = self.clip_offset(offset);
         self.selection = offset..offset;
         self.reversed = false;
+        self.keep_closers_on_caret_line();
         cx.notify();
     }
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -791,6 +794,7 @@ impl Input {
             self.reversed = !self.reversed;
             self.selection = self.selection.end..self.selection.start;
         }
+        self.keep_closers_on_caret_line();
         cx.notify();
     }
     fn prev(&self, at: usize) -> usize {
@@ -1103,6 +1107,9 @@ impl Input {
             cx.emit(CommandRemoved(command.name()));
             return;
         }
+        if self.selection.is_empty() && self.code.is_some() && self.code_delete_pair(cx) {
+            return;
+        }
         if self.selection.is_empty() {
             self.select_to(self.prev(self.cursor()), cx);
         }
@@ -1125,13 +1132,7 @@ impl Input {
         }
         if self.secondary_submit {
             if self.code.is_some() {
-                let at = self.selection.start;
-                let start = self.content[..at].rfind('\n').map_or(0, |n| n + 1);
-                let indent: String = self.content[start..at]
-                    .chars()
-                    .take_while(|c| matches!(c, ' ' | '\t'))
-                    .collect();
-                self.replace_text_in_range(None, &format!("\n{indent}"), w, cx);
+                self.code_newline(cx);
             } else {
                 self.replace_text_in_range(None, "\n", w, cx);
             }
@@ -1368,6 +1369,9 @@ impl EntityInputHandler for Input {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.code.is_some() && self.type_code(r.clone(), text, cx) {
+            return;
+        }
         self.replace_text(r, text, cx);
     }
     fn replace_and_mark_text_in_range(
@@ -1844,6 +1848,13 @@ impl Render for Input {
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::indent))
             .on_action(cx.listener(Self::outdent))
+            .on_action(cx.listener(Self::toggle_comment))
+            .on_action(cx.listener(Self::move_line_up))
+            .on_action(cx.listener(Self::move_line_down))
+            .on_action(cx.listener(Self::copy_line_up))
+            .on_action(cx.listener(Self::copy_line_down))
+            .on_action(cx.listener(Self::delete_line))
+            .on_action(cx.listener(Self::select_to_matching_bracket))
             .on_scroll_wheel(cx.listener(Self::scroll))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

@@ -816,3 +816,22 @@ fn checkpoints_scope_nested_workspaces_and_repositories_without_head() {
     f.store.undo("unborn", cwd, None).unwrap();
     assert!(!unborn.join("new.txt").exists());
 }
+
+#[test]
+fn a_git_failure_without_output_names_the_command_and_its_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    run_git(dir.path(), &["init", "-q"]).unwrap();
+    // Windows git would otherwise warn about line endings on stderr.
+    run_git(dir.path(), &["config", "core.autocrlf", "false"]).unwrap();
+    run_git(dir.path(), &["config", "core.safecrlf", "false"]).unwrap();
+    // `diff --quiet` reports a difference by exit code alone.
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    run_git(dir.path(), &["add", "a.txt"]).unwrap();
+    std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+    let error = run_git(dir.path(), &["diff", "--quiet"]).unwrap_err();
+    assert!(error.starts_with("git diff --quiet failed ("), "{error}");
+    assert!(error.contains('1'), "{error}");
+    // Git's own message still wins when it has one.
+    let error = run_git(dir.path(), &["cat-file", "-p", "no-such-object"]).unwrap_err();
+    assert!(error.contains("no-such-object"), "{error}");
+}

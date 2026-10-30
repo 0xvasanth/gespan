@@ -9,18 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gespan Native shows a reply's local images and videos in place, as the Tauri
+  app does. A paragraph that starts with a local image, or with a link to a
+  local image or video, shows the file in a 16:9 frame. Images open full screen
+  and videos open in the file viewer. Paths are resolved against the session's
+  folder.
+- Gespan Native shows images that Codex generates in the conversation, as the
+  Tauri app does. Each one is saved as a PNG in Gespan's data folder and opens
+  full screen when clicked. Images saved by the Tauri app show too.
+- Gespan Native turns the plan from a Plan mode turn into a plan card, as the
+  Tauri app does. Open reads the whole plan, Build sends it to the agent with
+  Plan mode off, and the arrow beside Build picks another provider or model to
+  build it with. The card shows Building… and then Built. A Codex
+  `<proposed_plan>` block becomes a plan card in any turn, and plans saved by
+  the Tauri app show as cards too.
+- Gespan Native's Sessions heading has a + button beside the filter that
+  starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
   and Linux) to see the match count and step through the matches with Enter,
   Shift+Enter, ⌘G or F3. A Pilot's older turns are searched too.
+- Gespan Native's code editor has the Tauri app's editing commands. Brackets
+  and quotes close themselves, a closer it added is typed over, and Backspace
+  removes an empty pair. Enter indents after `{`, `(`, `[` (and `:` in Python
+  and YAML), the bracket or tag beside the caret is highlighted with its
+  partner, and ⌘/ toggles comments. ⌥↑/⌥↓ move lines, ⇧⌥↑/⇧⌥↓ copy them,
+  ⌘⇧K deletes them and ⌘⇧\ selects to the matching bracket (Ctrl in place of
+  ⌘ on Windows and Linux). Each command undoes in one step and can be rebound
+  in Settings → Keybindings. Previous and next change in a file's diff move
+  to ⇧⌥F5 and ⌥F5.
 
 ### Fixed
 
+- Gespan Native's context meter no longer jumps to full after a turn on a
+  routed Claude Code provider, and Pilots no longer start a new session too
+  early because of it. The level stays at the last reading, as in the Tauri
+  app.
+- Gespan Native treats the default Claude account as signed in when
+  `CLAUDE_CODE_OAUTH_TOKEN` is set, and uses that token to show its usage, as
+  Claude Code and the Tauri app do. Named accounts are unaffected.
+- On macOS, closing the Gespan Native window while chats are running hides it
+  instead of asking, so they keep going, and clicking the Dock icon brings it
+  back, as in the Tauri app.
+- Gespan Native's Settings → Keybindings lists Hold Everything, which can now
+  be rebound (holding the new shortcut still confirms), and the board's keys.
+- Gespan Native's file tabs have a right-click menu to open the file in its
+  default app, reveal it, and copy its path, relative path or name, and the
+  Files explorer can open a terminal in a folder, as in the Tauri app.
+- Gespan Native's inbox can show a GitHub pull request's changes as hunks or
+  as whole files, as the Tauri app can.
+- Right-clicking Inbox in Gespan Native's sidebar or project rail marks
+  everything as read, mutes or resumes every project's notifications, or
+  opens notification settings, as in the Tauri app.
+- A comment or action you make from Gespan Native's inbox no longer marks
+  that item unread when the update comes back, as in the Tauri app.
+- Gespan Native's usage chip shows only the provider's icon for agents that
+  report no usage, such as Kiro, instead of "not connected".
+- Gespan Native lists the skills of enabled Codex plugins in the composer's /
+  picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit
   Gespan left running, as the Tauri app does. Agents of a running Gespan,
   Native or Tauri, are left alone.
 - Gespan Native shows desktop notifications on Windows and Linux too, with a
   Show button that opens the session. On Windows, turning them off in
   Settings is respected and the in-app sound plays instead.
+- Gespan Native shows the task list for Claude sessions again. Newer Claude
+  Code versions track tasks one at a time instead of as a whole list, and
+  Gespan now builds the list from those updates, including renamed and
+  deleted tasks. The list carries on when you resume the session, even after
+  restarting Gespan.
+- Gespan Native shows a preview for any web link in a prompt, not only GitHub
+  issues and pull requests: the link becomes the page's title with the site's
+  icon, as in the Tauri app. Links to local or private network addresses are
+  never fetched, and a page that can't be read shows its site name instead.
 
 ## [0.0.2-beta] - 2026-10-29
 

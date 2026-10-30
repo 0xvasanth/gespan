@@ -328,15 +328,18 @@ impl Shell {
 }
 
 impl Shell {
-    pub(super) fn project_notification_menu(&self, cwd: &str) -> MenuAction {
+    /// Muted until resumed, or until a time still ahead.
+    fn notifications_muted(&self, cwd: &str) -> bool {
         let now = gespan_core::time::now_ms();
         let prefs = &self.workspace.preferences;
-        let muted = prefs.known_notification_project_id(cwd).is_some_and(|id| {
+        prefs.known_notification_project_id(cwd).is_some_and(|id| {
             let preference = &prefs.project_notifications[id];
             preference.get("mutedUntil") == Some(&serde_json::Value::Null)
                 || preference["mutedUntil"].as_u64().is_some_and(|at| at > now)
-        });
-        if muted {
+        })
+    }
+    pub(super) fn project_notification_menu(&self, cwd: &str) -> MenuAction {
+        if self.notifications_muted(cwd) {
             MenuAction::new("mute:resume", "Resume notifications").icon("bell")
         } else {
             MenuAction::new("notifications-mute", "Mute notifications")
@@ -362,24 +365,206 @@ impl Shell {
             self.open_settings(crate::settings::Section::Inbox, window, cx);
             return;
         }
-        if action == "mute:resume" {
-            self.workspace.preferences.resume_notification_project(cwd);
-        } else {
-            let hours = match action {
-                "mute:1h" => Some(1),
-                "mute:4h" => Some(4),
-                "mute:8h" => Some(8),
-                "mute:forever" => None,
-                _ => return,
-            };
-            let until = hours.map(|hours| gespan_core::time::now_ms() + hours * 3_600_000);
-            self.workspace
-                .preferences
-                .mute_notification_project(cwd, until);
+        if !self.mute_notifications(&[cwd.to_owned()], action) {
+            return;
         }
         self.apply_preferences(cx);
         self.sync_settings(cx);
         self.persist(cx);
         cx.notify();
+    }
+
+    /// Applies a mute menu pick to `projects`. False for anything else.
+    fn mute_notifications(&mut self, projects: &[String], action: &str) -> bool {
+        let prefs = &mut self.workspace.preferences;
+        if action == "mute:resume" {
+            for cwd in projects {
+                prefs.resume_notification_project(cwd);
+            }
+            return true;
+        }
+        let hours = match action {
+            "mute:1h" => Some(1),
+            "mute:4h" => Some(4),
+            "mute:8h" => Some(8),
+            "mute:forever" => None,
+            _ => return false,
+        };
+        let until = hours.map(|hours| gespan_core::time::now_ms() + hours * 3_600_000);
+        for cwd in projects {
+            prefs.mute_notification_project(cwd, until);
+        }
+        true
+    }
+
+    /// InboxNotificationMenu: read everything, or mute every project.
+    pub(super) fn inbox_nav_menu_items(&self, cx: &App) -> Vec<MenuItem> {
+        let projects = &self.workspace.projects;
+        let muted = projects
+            .iter()
+            .filter(|cwd| self.notifications_muted(cwd))
+            .count();
+        let unread = self
+            .inbox
+            .as_ref()
+            .is_some_and(|inbox| inbox.read(cx).unread_count() > 0);
+        let count = projects.len();
+        vec![
+            MenuItem::Header(
+                format!(
+                    "{count} {} · {muted} muted",
+                    if count == 1 { "project" } else { "projects" }
+                )
+                .into(),
+            ),
+            MenuAction::new("read-all", "Mark all as read")
+                .disabled(!unread)
+                .into(),
+            MenuItem::Separator,
+            MenuAction::new("notifications-mute", "Mute all projects")
+                .disabled(count == 0)
+                .submenu(vec![
+                    MenuAction::new("mute:1h", "For 1 hour"),
+                    MenuAction::new("mute:4h", "For 4 hours"),
+                    MenuAction::new("mute:8h", "For 8 hours"),
+                    MenuAction::new("mute:forever", "Until resumed"),
+                    MenuAction::new("mute:custom", "Custom…"),
+                ])
+                .into(),
+            MenuAction::new("mute:resume", "Resume muted projects")
+                .disabled(muted == 0)
+                .into(),
+            MenuItem::Separator,
+            MenuAction::new("settings", "Notification settings…").into(),
+        ]
+    }
+
+    pub(super) fn run_inbox_nav_menu(
+        &mut self,
+        action: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            "read-all" => {
+                if let Some(inbox) = self.inbox.clone() {
+                    inbox.update(cx, |inbox, cx| inbox.mark_all_read(cx));
+                }
+            }
+            "settings" | "mute:custom" => {
+                self.open_settings(crate::settings::Section::Inbox, window, cx)
+            }
+            action => {
+                let projects = self.workspace.projects.clone();
+                if self.mute_notifications(&projects, action) {
+                    self.apply_preferences(cx);
+                    self.sync_settings(cx);
+                    self.persist(cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod inbox_menu_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    /// Each row as "label", "(label)" when disabled, or "-" for a separator.
+    fn rows(shell: &Shell, cx: &App) -> Vec<String> {
+        shell
+            .inbox_nav_menu_items(cx)
+            .iter()
+            .map(|item| match item {
+                MenuItem::Header(text) => format!("# {text}"),
+                MenuItem::Action(action) if action.disabled => format!("({})", action.label),
+                MenuItem::Action(action) => action.label.to_string(),
+                _ => "-".into(),
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn the_inbox_menu_mutes_every_project_and_marks_everything_read(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        // Right-clicking the Inbox row opens it.
+        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        visual.simulate_mouse_down(inbox.center(), gpui::MouseButton::Right, Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                assert!(
+                    shell
+                        .menu
+                        .as_ref()
+                        .is_some_and(|m| m.target == MenuTarget::InboxNav)
+                );
+                assert_eq!(
+                    rows(shell, cx),
+                    [
+                        "# 2 projects · 0 muted",
+                        "(Mark all as read)",
+                        "-",
+                        "Mute all projects",
+                        "(Resume muted projects)",
+                        "-",
+                        "Notification settings…",
+                    ]
+                );
+            })
+            .unwrap();
+        window
+            .update(visual, |shell, window, cx| {
+                shell.run_inbox_nav_menu("mute:1h", window, cx);
+                assert!(
+                    shell
+                        .workspace
+                        .projects
+                        .iter()
+                        .all(|cwd| shell.notifications_muted(cwd))
+                );
+                assert_eq!(rows(shell, cx)[0], "# 2 projects · 2 muted");
+                assert_eq!(rows(shell, cx)[4], "Resume muted projects");
+                shell.run_inbox_nav_menu("mute:resume", window, cx);
+                assert!(
+                    !shell
+                        .workspace
+                        .projects
+                        .iter()
+                        .any(|cwd| shell.notifications_muted(cwd))
+                );
+                // Until resumed, too.
+                shell.run_inbox_nav_menu("mute:forever", window, cx);
+                assert!(
+                    shell
+                        .workspace
+                        .projects
+                        .iter()
+                        .all(|cwd| shell.notifications_muted(cwd))
+                );
+            })
+            .unwrap();
+        window
+            .update(visual, |shell, window, cx| {
+                shell.ensure_background_inbox(window, cx);
+                let inbox = shell.inbox.clone().unwrap();
+                let item = |number| gespan_core::inbox::Item {
+                    provider: "github".into(),
+                    kind: "issue".into(),
+                    repo: "acme/app".into(),
+                    number,
+                    ..Default::default()
+                };
+                inbox.update(cx, |inbox, _| inbox.receive_unread(vec![item(1), item(2)]));
+                assert_eq!(rows(shell, cx)[1], "Mark all as read");
+                shell.run_inbox_nav_menu("read-all", window, cx);
+                assert_eq!(inbox.read(cx).unread_count(), 0);
+                assert_eq!(rows(shell, cx)[1], "(Mark all as read)");
+            })
+            .unwrap();
     }
 }

@@ -20,6 +20,8 @@ mod ticket_context;
 pub(crate) mod ticket_scope;
 #[cfg(all(test, unix))]
 mod ticket_tests;
+#[cfg(all(test, unix))]
+mod turn_result_tests;
 mod visual_discovery;
 #[cfg(all(test, unix))]
 mod visual_tests;
@@ -160,6 +162,7 @@ fn run_turn_using(
             .and_then(|s| s.data_dir().map(std::path::Path::to_path_buf));
     }
     let source_account = settings.account.id.clone();
+    let planning = settings.plan;
     let user_request = prompt.clone();
     let mut transcript = Transcript::default();
     let mut history_loaded = false;
@@ -683,6 +686,9 @@ fn run_turn_using(
             // work finds the Agent call that started it in an earlier turn.
             settings.agent_runs =
                 gespan_core::tool::tasks::agent_runs(&transcript.rows[..turn_start]);
+            // A resumed conversation's TaskUpdate calls refer to earlier tasks.
+            settings.claude_task_lists =
+                gespan_core::tool::tasks::claude_task_lists(&transcript.rows[..turn_start]);
         }
         let request = Request {
             kind,
@@ -925,6 +931,43 @@ fn run_turn_using(
                             pending.changed(at);
                             boundary = true;
                         }
+                        Event::GeneratedImage { id, data, alt } => {
+                            // GeneratedImage.tsx: the PNG is a file in the data
+                            // folder and the row names it.
+                            let saved = locked(&store)?
+                                .data_dir()
+                                .map(std::path::Path::to_path_buf)
+                                .ok_or_else(|| "Gespan has no data folder".to_owned())
+                                .and_then(|dir| {
+                                    gespan_core::generated_image::save(
+                                        &dir,
+                                        &data,
+                                        "generated-image",
+                                        alt,
+                                    )
+                                });
+                            let at = match saved {
+                                Ok(image) => {
+                                    let at = transcript.begin(gespan_core::generated_image::ROLE);
+                                    transcript.append(
+                                        &serde_json::to_string(&image)
+                                            .map_err(|e| e.to_string())?,
+                                    );
+                                    at
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, item = %id, "cannot save a generated image");
+                                    let at = transcript.begin("error");
+                                    transcript.append(&format!(
+                                        "Could not save generated image: {error}"
+                                    ));
+                                    at
+                                }
+                            };
+                            start = start.min(at);
+                            pending.changed(at);
+                            boundary = true;
+                        }
                         Event::Metrics(reading) => {
                             if let Some((_, info)) = &mut turn_receipt {
                                 info.metrics = Some(reading);
@@ -1084,6 +1127,14 @@ fn run_turn_using(
         transcript.rows.len()
     };
     if let Some(ix) = settle_running_tools(&mut transcript.rows, turn_start, cancelled, &result) {
+        final_start = final_start.min(ix);
+    }
+    // A finished plan-mode turn leaves its plan for review and Build.
+    if history_loaded
+        && result.is_ok()
+        && !cancelled
+        && let Some(ix) = gespan_core::plan::promote(&mut transcript.rows, turn_start, planning)
+    {
         final_start = final_start.min(ix);
     }
     if let Some((cwd, id)) = &checkpoint

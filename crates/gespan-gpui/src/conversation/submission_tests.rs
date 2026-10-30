@@ -1,4 +1,5 @@
 use super::*;
+use crate::conversation::remote_plans::PlanAction;
 use gespan_core::{store::Store, transcript::attachments};
 use gpui::{TestAppContext, WindowHandle};
 use std::sync::Mutex;
@@ -558,6 +559,140 @@ fn the_pilot_send_button_stops_a_running_turn_when_nothing_is_typed(cx: &mut Tes
             assert!(
                 !view.pilot_stoppable(cx),
                 "a stopping turn offers no second stop"
+            );
+        })
+        .unwrap();
+}
+
+fn planned(cx: &mut TestAppContext) -> (WindowHandle<Conversation>, &'static str) {
+    let plan = "# Login plan\n\n1. Add the form\n2. Wire auth";
+    let rows = vec![
+        gespan_core::transcript::Row {
+            role: "user".into(),
+            text: "Plan the login".into(),
+            first: true,
+            sent_at: None,
+        },
+        gespan_core::transcript::Row {
+            role: gespan_core::plan::ROLE.into(),
+            text: plan.into(),
+            first: true,
+            sent_at: None,
+        },
+    ];
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            view.settings.plan = true;
+            locked(&view.store)
+                .unwrap()
+                .write_rows(view.summary.id, 0, &rows)
+                .unwrap();
+            view.transcript
+                .update(cx, |transcript, cx| transcript.patch(0, rows, cx));
+            view.summary.has_messages = true;
+        })
+        .unwrap();
+    (window, plan)
+}
+
+fn prompts(view: &Conversation, cx: &gpui::App) -> Vec<String> {
+    view.transcript
+        .read(cx)
+        .source_rows()
+        .iter()
+        .filter(|row| row.is_prompt())
+        .map(|row| row.text.clone())
+        .collect()
+}
+
+#[gpui::test]
+fn a_local_plan_card_opens_the_plan_and_builds_it_with_plan_mode_off(cx: &mut TestAppContext) {
+    let (window, plan) = planned(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let open = visual.debug_bounds("plan-open").unwrap();
+    visual.simulate_click(open.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |view, _, cx| {
+            assert_eq!(
+                view.remote_plans.reader_text(),
+                Some(plan),
+                "Open shows the plan"
+            );
+            assert!(!view.busy, "opening never sends");
+            assert!(view.close_remote_plan(cx));
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let build = visual.debug_bounds("plan-build").unwrap();
+    visual.simulate_click(build.center(), gpui::Modifiers::default());
+    window
+        .update(visual, |view, _, cx| {
+            assert!(!view.settings.plan, "the build may change files");
+            assert_eq!(
+                prompts(view, cx),
+                [
+                    "Plan the login".to_owned(),
+                    gespan_core::plan::build_prompt(plan)
+                ]
+            );
+        })
+        .unwrap();
+    // The fixture provider fails once the turn is saved; the plan stays built.
+    visual.run_until_parked();
+    window
+        .update(visual, |view, window, cx| {
+            assert!(!view.busy);
+            let card = view.transcript.read(cx).plan_cards()[0].clone();
+            assert_eq!(card.build_label(), "Built");
+            view.local_plan_request(&card, PlanAction::Build, window, cx);
+            view.local_plan_request(&card, PlanAction::BuildWith, window, cx);
+            assert_eq!(prompts(view, cx).len(), 2, "a plan builds once");
+            assert!(!view.menu_is(ComposerMenu::Model));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn build_with_another_model_switches_the_provider_then_builds(cx: &mut TestAppContext) {
+    let (window, plan) = planned(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let other = visual.debug_bounds("plan-build-with").unwrap();
+    visual.simulate_click(other.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |view, window, cx| {
+            assert!(view.menu_is(ComposerMenu::Model), "the model menu opens");
+            assert_eq!(view.remote_plans.build_with.as_deref(), Some(plan));
+            assert!(!view.busy, "nothing is sent until a model is picked");
+            // Closing and reopening the menu the usual way forgets the plan.
+            view.close_menu(window, cx);
+            view.toggle_menu(ComposerMenu::Model, window, cx);
+            assert_eq!(view.remote_plans.build_with, None);
+            assert!(!view.build_plan_with(&ModelPicked(Kind::Claude, None), cx));
+            assert!(!view.busy);
+            view.close_menu(window, cx);
+        })
+        .unwrap();
+    let other = visual.debug_bounds("plan-build-with").unwrap();
+    visual.simulate_click(other.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |view, _, cx| {
+            assert!(view.build_plan_with(
+                &ModelPicked(Kind::Claude, Some("claude-opus-5-5".into())),
+                cx
+            ));
+            assert_eq!(view.summary.provider, "claude");
+            assert_eq!(view.model.as_deref(), Some("claude-opus-5-5"));
+            assert!(view.busy);
+            assert!(!view.settings.plan);
+            assert_eq!(
+                prompts(view, cx).last().unwrap(),
+                &gespan_core::plan::build_prompt(plan)
             );
         })
         .unwrap();

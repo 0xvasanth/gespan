@@ -2621,6 +2621,39 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_sessions_heading_plus_starts_a_session_in_this_project(cx: &mut TestAppContext) {
+        let (window, _, _) = setup(cx);
+        cx.refresh().unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        let new = visual.debug_bounds("sidebar-new-session").unwrap();
+        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
+        // Just before the filter, on the same line.
+        assert!(new.right() <= filter.left(), "{new:?} {filter:?}");
+        assert!((new.center().y - filter.center().y).abs() <= px(1.));
+        let (before, project) = window
+            .update(visual, |shell, _, _| {
+                (
+                    shell.session_summaries.len(),
+                    shell.workspace.project.clone(),
+                )
+            })
+            .unwrap();
+        visual.simulate_click(new.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.session_summaries.len(), before + 1);
+                let newest = shell
+                    .session_summaries
+                    .values()
+                    .max_by_key(|s| s.id)
+                    .unwrap();
+                assert_eq!(newest.cwd, project);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn session_actions_are_enabled_and_bulk_selection_shapes_the_menu(cx: &mut TestAppContext) {
         let (window, a, b) = setup(cx);
         window

@@ -43,6 +43,12 @@ pub(crate) const BINDINGS: &[Binding] = &[
         fixed: false,
     },
     Binding {
+        command: "App: Hold Everything",
+        keys: "⌘⇧H",
+        when: "Always",
+        fixed: false,
+    },
+    Binding {
         command: "App: Open Project",
         keys: "⌘O",
         when: "Always",
@@ -294,6 +300,37 @@ pub(crate) const BINDINGS: &[Binding] = &[
         when: "Always",
         fixed: false,
     },
+    // The board's own keys, shown for reference: they can't be rebound.
+    Binding {
+        command: "Board: New Card",
+        keys: "⌘N",
+        when: "Board focused",
+        fixed: true,
+    },
+    Binding {
+        command: "Board: New card (N, board focused)",
+        keys: "N",
+        when: "Board focused, not typing",
+        fixed: true,
+    },
+    Binding {
+        command: "Board: Search",
+        keys: "/",
+        when: "Board focused, not typing",
+        fixed: true,
+    },
+    Binding {
+        command: "Board: Open Card",
+        keys: "E",
+        when: "Board focused, not typing",
+        fixed: true,
+    },
+    Binding {
+        command: "Board: Delete Card or Selection",
+        keys: "Delete / ⌫",
+        when: "Board focused, not typing, not in the drawer",
+        fixed: true,
+    },
     Binding {
         command: "Editor: Find",
         keys: "⌘F",
@@ -303,6 +340,60 @@ pub(crate) const BINDINGS: &[Binding] = &[
     Binding {
         command: "Editor: Replace",
         keys: "⌘⌥F",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Toggle Comment",
+        keys: "⌘/",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Move Line Up",
+        keys: "⌥↑",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Move Line Down",
+        keys: "⌥↓",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Copy Line Up",
+        keys: "⇧⌥↑",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Copy Line Down",
+        keys: "⇧⌥↓",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Delete Line",
+        keys: "⌘⇧K",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Select to Matching Bracket",
+        keys: "⌘⇧\\",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Previous Change",
+        keys: "⇧⌥F5",
+        when: "editorFocus",
+        fixed: false,
+    },
+    Binding {
+        command: "Editor: Next Change",
+        keys: "⌥F5",
         when: "editorFocus",
         fixed: false,
     },

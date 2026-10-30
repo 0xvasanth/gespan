@@ -159,6 +159,14 @@ impl Profile {
     }
 }
 
+/// The token Claude Code signs the default account in with when it is set,
+/// ahead of any stored sign-in. Named accounts never see it.
+pub(crate) fn claude_oauth_token() -> Option<String> {
+    std::env::var("CLAUDE_CODE_OAUTH_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+}
 pub fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

@@ -14,6 +14,18 @@ pub(crate) struct Plan {
     pub status: String,
 }
 impl Plan {
+    /// A plan this app's own plan-mode turn left at source row `at`.
+    pub(crate) fn local(at: usize, text: String, status: &str) -> Self {
+        Self {
+            id: format!("{LOCAL}{at}"),
+            text,
+            streaming: false,
+            status: status.into(),
+        }
+    }
+    pub(crate) fn is_local(&self) -> bool {
+        self.id.starts_with(LOCAL)
+    }
     pub(crate) fn can_build(&self, busy: bool) -> bool {
         !busy
             && !self.streaming
@@ -78,6 +90,7 @@ impl Plan {
         format!("Build the approved plan:\n\n{}", self.text)
     }
 }
+const LOCAL: &str = "local:";
 struct Reader {
     id: String,
     text: String,
@@ -87,6 +100,23 @@ struct Reader {
 pub(super) struct State {
     plans: HashMap<String, Plan>,
     reader: Option<Reader>,
+    /// The plan the open model menu builds once a model is picked.
+    pub(super) build_with: Option<String>,
+}
+
+#[cfg(test)]
+impl State {
+    pub(super) fn reader_text(&self) -> Option<&str> {
+        self.reader.as_ref().map(|reader| reader.text.as_str())
+    }
+}
+
+/// What a local plan card asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlanAction {
+    Open,
+    Build,
+    BuildWith,
 }
 
 impl Conversation {
@@ -124,6 +154,67 @@ impl Conversation {
             reader.view = cx.new(|cx| TranscriptView::document(plan.text.clone(), cx));
         }
     }
+    /// PlanPreview's actions on a plan this app's own plan-mode turn wrote.
+    pub(super) fn local_plan_request(
+        &mut self,
+        plan: &Plan,
+        action: PlanAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_remote() || !plan.is_local() {
+            return;
+        }
+        match action {
+            PlanAction::Open => {
+                self.remote_plans
+                    .plans
+                    .insert(plan.id.clone(), plan.clone());
+                self.remote_plans.reader = Some(Reader {
+                    id: plan.id.clone(),
+                    text: plan.text.clone(),
+                    view: cx.new(|cx| TranscriptView::document(plan.text.clone(), cx)),
+                });
+                cx.notify();
+            }
+            PlanAction::Build => self.build_local_plan(plan, cx),
+            PlanAction::BuildWith => {
+                if !self.can_build_local(plan) {
+                    return;
+                }
+                if !self.menu_is(ComposerMenu::Model) {
+                    self.toggle_menu(ComposerMenu::Model, window, cx);
+                }
+                // Set after opening: opening the menu forgets an earlier plan.
+                self.remote_plans.build_with =
+                    self.menu_is(ComposerMenu::Model).then(|| plan.text.clone());
+            }
+        }
+    }
+    fn can_build_local(&self, plan: &Plan) -> bool {
+        plan.can_build(self.busy || self.stopping || !self.loaded)
+    }
+    /// Build sends the approved plan as a normal turn with plan mode off, so
+    /// the provider may change files.
+    fn build_local_plan(&mut self, plan: &Plan, cx: &mut Context<Self>) {
+        if !self.can_build_local(plan) {
+            return;
+        }
+        self.remote_plans.reader = None;
+        self.remote_plans.build_with = None;
+        self.clear_submitted_mode(cx);
+        self.launch_prompt(gespan_core::plan::build_prompt(&plan.text), cx);
+    }
+    /// The model menu opened by Build with another model: switch, then build.
+    pub(super) fn build_plan_with(&mut self, picked: &ModelPicked, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self.remote_plans.build_with.take() else {
+            return false;
+        };
+        if self.apply_model_pick(picked, cx) {
+            self.build_local_plan(&Plan::local(0, text, "ready"), cx);
+        }
+        true
+    }
     pub(super) fn remote_plan_request(
         &mut self,
         id: &str,
@@ -131,6 +222,18 @@ impl Conversation {
         build: bool,
         cx: &mut Context<Self>,
     ) {
+        if let Some(plan) = self
+            .remote_plans
+            .plans
+            .get(id)
+            .filter(|plan| plan.is_local())
+        {
+            if build {
+                let plan = plan.clone();
+                self.build_local_plan(&plan, cx);
+            }
+            return;
+        }
         if !self.is_remote() {
             return;
         }
@@ -180,6 +283,9 @@ impl Conversation {
         let reader = self.remote_plans.reader.as_ref()?;
         let id = reader.id.clone();
         let build = self.remote_plans.plans.get(&id).is_some_and(|plan| {
+            if plan.is_local() {
+                return self.can_build_local(plan);
+            }
             plan.can_build(
                 self.busy
                     || self.stopping

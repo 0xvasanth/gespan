@@ -1691,6 +1691,9 @@ impl Conversation {
             ResponseRequest::RemotePlan { id, text, build } => {
                 self.remote_plan_request(id, text, *build, cx)
             }
+            ResponseRequest::LocalPlan { plan, action } => {
+                self.local_plan_request(plan, *action, window, cx)
+            }
             ResponseRequest::QuoteSelection { text } => self.pilot_quote(text, window, cx),
             ResponseRequest::EditLastTurn { turn } => self.begin_edit_last_turn(*turn, window, cx),
             ResponseRequest::Draft { send } => self.draft_action(*send, cx),
@@ -2450,6 +2453,7 @@ impl Conversation {
         cx.notify();
     }
     fn toggle_menu(&mut self, kind: ComposerMenu, window: &mut Window, cx: &mut Context<Self>) {
+        self.remote_plans.build_with = None;
         if matches!(kind, ComposerMenu::Model | ComposerMenu::Recent)
             && self.no_agent_hint(cx).is_some()
         {
@@ -2675,7 +2679,7 @@ impl Conversation {
                     &list,
                     window,
                     |this, _, picked: &ModelPicked, window, cx| {
-                        if this.apply_model_pick(picked, cx) {
+                        if this.build_plan_with(picked, cx) || this.apply_model_pick(picked, cx) {
                             this.close_menu(window, cx);
                         }
                     },

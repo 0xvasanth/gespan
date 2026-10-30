@@ -4,11 +4,13 @@ pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]
 mod follow_tests;
+mod generated_image;
 pub(crate) mod git_turns;
 mod history;
 pub(crate) use history::{HistoryPager, PreparedHistory};
 mod links;
 mod live_phase;
+mod local_media;
 mod mascot;
 mod measurements;
 mod outline;
@@ -143,6 +145,7 @@ struct RenderedBlock {
 #[derive(Clone)]
 enum Body {
     RemotePlan(crate::conversation::remote_plans::Plan),
+    GeneratedImage(Arc<gespan_core::generated_image::Image>),
     SavedDraft,
     Markdown(Arc<MarkdownRow>),
     Visual(Arc<gespan_core::visual::VisualDocument>),
@@ -2587,11 +2590,35 @@ impl TranscriptView {
         cx.notify();
     }
 
+    /// The last plan card reads Building… only while its build runs.
+    fn refresh_plan_card(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self
+            .source
+            .iter()
+            .rposition(|row| row.role == gespan_core::plan::ROLE)
+        else {
+            return;
+        };
+        let shown = self.rows.iter().find_map(|row| match &row.body {
+            Body::RemotePlan(plan)
+                if plan.id
+                    == crate::conversation::remote_plans::Plan::local(at, String::new(), "").id =>
+            {
+                Some(plan.status.clone())
+            }
+            _ => None,
+        });
+        let status = remote_plans::plan_status(&self.source, at, self.streaming);
+        if shown.is_some_and(|shown| shown != status) {
+            self.rebuild(at, cx);
+        }
+    }
     pub(crate) fn streaming(&mut self, streaming: bool, cx: &mut Context<Self>) {
         if self.streaming == streaming {
             return;
         }
         self.streaming = streaming;
+        self.refresh_plan_card(cx);
         if streaming {
             self.active_provider_turn_id = None;
             self.live_start = self.source.len();
@@ -2997,6 +3024,19 @@ impl TranscriptView {
         {
             self.rebuild_passes += 1;
         }
+        // A plan card reads Building… and Built from the turn after it, so a
+        // change there redraws the card too.
+        let start = self.source[..start.min(self.source.len())]
+            .iter()
+            .rposition(|row| row.role == gespan_core::plan::ROLE)
+            .filter(|&plan| {
+                self.source[plan + 1..start]
+                    .iter()
+                    .filter(|r| r.is_prompt())
+                    .count()
+                    <= 1
+            })
+            .unwrap_or(start);
         self.phase_layouts.clear();
         let now = Instant::now();
         let following = self.list.is_following_tail();
@@ -3180,7 +3220,11 @@ impl TranscriptView {
             // Older native versions saved user cancellation as an error row.
             let stopped_notice = role == "error" && text.trim() == "Stopped";
             let (display_text, attachments) = if role == "user" {
-                attachments::message(&self.source, end, &text)
+                let (display, attachments) = attachments::message(&self.source, end, &text);
+                // A Build sends the whole approved plan; the message names it.
+                let build = gespan_core::plan::approved_plan(&text)
+                    .map(|_| gespan_core::plan::BUILD_LABEL.to_owned());
+                (build.or(display), attachments)
             } else {
                 (None, Arc::default())
             };
@@ -3243,6 +3287,8 @@ impl TranscriptView {
                     role.as_str(),
                     "pilot-card"
                         | "remote-plan"
+                        | gespan_core::plan::ROLE
+                        | gespan_core::generated_image::ROLE
                         | "visual"
                         | "pilot-document"
                         | "pilot-note"
@@ -3360,6 +3406,35 @@ impl TranscriptView {
                         thought_phase: None,
                     });
                 }
+            } else if role == gespan_core::generated_image::ROLE {
+                if let Ok(image) = serde_json::from_str(&text) {
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body: Body::GeneratedImage(Arc::new(image)),
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
+            } else if role == gespan_core::plan::ROLE {
+                let status = remote_plans::plan_status(&self.source, at, self.streaming);
+                self.rows.push(UiRow {
+                    key: (0, 0),
+                    body: Body::RemotePlan(crate::conversation::remote_plans::Plan::local(
+                        at,
+                        text.trim().into(),
+                        status,
+                    )),
+                    message,
+                    first: false,
+                    last: false,
+                    work: false,
+                    work_tail: false,
+                    thought_phase: None,
+                });
             } else if role == "remote-plan" {
                 if let Ok(plan) = serde_json::from_str(&text) {
                     self.rows.push(UiRow {
@@ -4634,6 +4709,7 @@ impl TranscriptView {
         let body = match row.body {
             Body::GitAction(card) => self.git_card_row(&card, message_start, cx),
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
+            Body::GeneratedImage(image) => self.generated_image(&image, message_start),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
             Body::Interjection(_) if marker.is_some() => {
                 // Claude woke itself for a finished background agent; this
@@ -5021,6 +5097,8 @@ impl TranscriptView {
                     self.code(fence.clone(), lines.clone(), ix, Some(ix), cx)
                 } else if let Part::Visual { id, caption } = &md.part {
                     self.placed_visual(id, caption, cx)
+                } else if let Part::LocalMedia { href, label } = &md.part {
+                    self.local_media(href, label, ix)
                 } else {
                     markdown::body_selected(
                         md,

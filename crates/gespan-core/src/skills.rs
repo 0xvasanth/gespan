@@ -113,7 +113,145 @@ pub fn list_skills(
         }
         skills.sort_by(|a, b| a.name.cmp(&b.name));
     }
+    let plugins = codex_plugin_skills(&cwd);
+    if !plugins.is_empty() {
+        add_plugin_skills(&mut skills, plugins, disabled.as_ref());
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+    }
     Ok(skills)
+}
+
+/// Codex plugin skills after the file skills: never past the cap, never a
+/// disabled path, and never over a name or path a file skill already has.
+fn add_plugin_skills(
+    skills: &mut Vec<DiscoveredSkill>,
+    plugins: Vec<DiscoveredSkill>,
+    disabled: Option<&DisabledFilter>,
+) {
+    let mut names: HashSet<_> = skills.iter().map(|s| s.name.clone()).collect();
+    let mut paths: HashSet<_> = skills.iter().map(|s| s.path.clone()).collect();
+    for skill in plugins {
+        if skills.len() >= MAX_SKILLS {
+            break;
+        }
+        if disabled.is_some_and(|f| f.is_disabled(&skill.path))
+            || names.contains(&skill.name)
+            || paths.contains(&skill.path)
+        {
+            continue;
+        }
+        names.insert(skill.name.clone());
+        paths.insert(skill.path.clone());
+        skills.push(skill);
+    }
+}
+
+type PluginCache = Vec<(String, std::time::Instant, Vec<DiscoveredSkill>)>;
+static PLUGIN_SKILLS: std::sync::Mutex<PluginCache> = std::sync::Mutex::new(Vec::new());
+
+/// The enabled Codex plugin skills for `cwd`, as Codex's app-server lists
+/// them; it knows the installed plugins and which are turned off. Kept five
+/// minutes per folder, and empty when Codex is missing or does not answer.
+fn codex_plugin_skills(cwd: &str) -> Vec<DiscoveredSkill> {
+    use std::time::{Duration, Instant};
+    let fresh = |at: &Instant| at.elapsed() < Duration::from_secs(300);
+    if let Some((_, _, skills)) = PLUGIN_SKILLS.lock().ok().and_then(|cache| {
+        cache
+            .iter()
+            .find(|(c, at, _)| c == cwd && fresh(at))
+            .cloned()
+    }) {
+        return skills;
+    }
+    if crate::provider::resolve(crate::provider::Kind::Codex).is_none() {
+        return Vec::new();
+    }
+    let skills = crate::catalog::query_provider(
+        crate::provider::Kind::Codex,
+        "skills/list",
+        serde_json::json!({ "cwds": [cwd], "forceReload": true }),
+        &crate::accounts::Profile::default(),
+    )
+    .map(|response| parse_codex_plugin_skills(&response["result"], cwd))
+    .unwrap_or_else(|error| {
+        tracing::debug!(%error, "codex plugin skills");
+        Vec::new()
+    });
+    if let Ok(mut cache) = PLUGIN_SKILLS.lock() {
+        cache.retain(|(c, at, _)| c != cwd && fresh(at));
+        cache.push((cwd.to_owned(), Instant::now(), skills.clone()));
+    }
+    skills
+}
+
+/// `skills/list`'s enabled plugin skills for `cwd`. A plugin skill is named
+/// `plugin:skill` and lives at an absolute `…/SKILL.md`; anything else, a
+/// disabled skill or a plain file skill (scanned from disk already) is left out.
+pub(crate) fn parse_codex_plugin_skills(
+    result: &serde_json::Value,
+    cwd: &str,
+) -> Vec<DiscoveredSkill> {
+    let text = |v: &serde_json::Value, key: &str| {
+        v[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let slug = |part: &str| {
+        !part.is_empty()
+            && part.split('-').all(|word| {
+                !word.is_empty()
+                    && word
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            })
+    };
+    let absolute = |path: &str| {
+        let bytes = path.as_bytes();
+        path.starts_with('/')
+            || path.starts_with("\\\\")
+            || (bytes.len() > 2
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'))
+    };
+    let mut skills: Vec<DiscoveredSkill> = Vec::new();
+    for row in result["data"].as_array().into_iter().flatten() {
+        if row["cwd"].as_str() != Some(cwd) {
+            continue;
+        }
+        for skill in row["skills"].as_array().into_iter().flatten() {
+            let (Some(name), Some(path)) = (text(skill, "name"), text(skill, "path")) else {
+                continue;
+            };
+            let plugin_name = name
+                .split_once(':')
+                .is_some_and(|(plugin, rest)| slug(plugin) && slug(rest));
+            if skill["enabled"] != true
+                || text(skill, "pluginId").is_none()
+                || !plugin_name
+                || !absolute(&path)
+                || !(path.ends_with("/SKILL.md") || path.ends_with("\\SKILL.md"))
+                || skills.iter().any(|s| s.name == name)
+            {
+                continue;
+            }
+            skills.push(DiscoveredSkill {
+                name,
+                description: text(skill, "description").unwrap_or_default(),
+                path,
+                scope: if matches!(skill["scope"].as_str(), Some("repo" | "project")) {
+                    "project"
+                } else {
+                    "user"
+                }
+                .into(),
+                source: "codex".into(),
+            });
+        }
+    }
+    skills
 }
 
 pub(crate) fn list_skills_from(
@@ -1301,6 +1439,110 @@ mod tests {
         assert!(
             slash_skill.is_some(),
             "distinct backslash path on Unix must not be disabled by colliding slash path"
+        );
+    }
+
+    fn skill(name: &str, path: &str) -> super::DiscoveredSkill {
+        super::DiscoveredSkill {
+            name: name.into(),
+            description: String::new(),
+            path: path.into(),
+            scope: "user".into(),
+            source: "codex".into(),
+        }
+    }
+
+    #[test]
+    fn codex_lists_only_enabled_plugin_skills_for_the_open_folder() {
+        let cwd = "/work/app";
+        let entry = |name: &str, path: &str| serde_json::json!({"name": name, "path": path, "enabled": true, "pluginId": "github@openai", "description": " Review PRs ", "scope": "user"});
+        let mut disabled = entry(
+            "github:triage",
+            "/codex/plugins/github/skills/triage/SKILL.md",
+        );
+        disabled["enabled"] = false.into();
+        let mut no_plugin = entry("local:skill", "/codex/skills/local/SKILL.md");
+        no_plugin.as_object_mut().unwrap().remove("pluginId");
+        let mut repo = entry(
+            "acme:deploy",
+            "C:\\work\\app\\.codex\\plugins\\deploy\\SKILL.md",
+        );
+        repo["scope"] = "repo".into();
+        let result = serde_json::json!({"data": [
+            {"cwd": "/work/other", "skills": [entry("github:other", "/codex/other/SKILL.md")]},
+            {"cwd": cwd, "skills": [
+                entry("github:review", "/codex/plugins/github/skills/review/SKILL.md"),
+                entry("github:review", "/codex/plugins/copy/SKILL.md"),
+                disabled,
+                no_plugin,
+                entry("Review", "/codex/plugins/github/skills/x/SKILL.md"),
+                entry("github:relative", "plugins/github/skills/relative/SKILL.md"),
+                entry("github:readme", "/codex/plugins/github/README.md"),
+                repo,
+                "not an object",
+            ]},
+        ]});
+        let skills = super::parse_codex_plugin_skills(&result, cwd);
+        let rows: Vec<_> = skills
+            .iter()
+            .map(|s| {
+                (
+                    s.name.as_str(),
+                    s.path.as_str(),
+                    s.scope.as_str(),
+                    s.source.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "github:review",
+                    "/codex/plugins/github/skills/review/SKILL.md",
+                    "user",
+                    "codex"
+                ),
+                (
+                    "acme:deploy",
+                    "C:\\work\\app\\.codex\\plugins\\deploy\\SKILL.md",
+                    "project",
+                    "codex"
+                ),
+            ]
+        );
+        assert_eq!(skills[0].description, "Review PRs");
+        assert!(super::parse_codex_plugin_skills(&serde_json::json!({}), cwd).is_empty());
+    }
+
+    #[test]
+    fn plugin_skills_never_shadow_file_skills_or_disabled_paths() {
+        let mut skills = vec![skill(
+            "github:review",
+            "/repo/.agents/skills/review/SKILL.md",
+        )];
+        let disabled = ["/codex/plugins/off/SKILL.md".to_owned()];
+        let filter = super::DisabledFilter::new(Some(&disabled));
+        super::add_plugin_skills(
+            &mut skills,
+            vec![
+                skill("github:review", "/codex/plugins/review/SKILL.md"),
+                skill("github:off", "/codex/plugins/off/SKILL.md"),
+                skill("github:alias", "/repo/.agents/skills/review/SKILL.md"),
+                skill("github:triage", "/codex/plugins/triage/SKILL.md"),
+            ],
+            filter.as_ref(),
+        );
+        let names: Vec<_> = skills
+            .iter()
+            .map(|s| (s.name.as_str(), s.path.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("github:review", "/repo/.agents/skills/review/SKILL.md"),
+                ("github:triage", "/codex/plugins/triage/SKILL.md"),
+            ]
         );
     }
 }

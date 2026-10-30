@@ -504,7 +504,10 @@ impl Shell {
             Row::Gap => return div().h(px(12.)).into_any(),
             Row::Heading { label, first } => section_label(label)
                 .when(!first, |d| d.mt_3())
-                .when(first, |d| d.child(self.sidebar_filter_button(cx)))
+                .when(first, |d| {
+                    d.child(self.sidebar_new_session_button(cx))
+                        .child(self.sidebar_filter_button(cx))
+                })
                 .into_any(),
             Row::Session(id) => self.session_card(id, cx),
             Row::GroupedSession { id, first, last } => {
@@ -764,6 +767,20 @@ impl Shell {
                                     .bg(accent_color()),
                             )
                         })
+                        .when(label == "Inbox", |d| {
+                            d.on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
+                                    this.open_menu(
+                                        MenuTarget::InboxNav,
+                                        Anchor::Point(e.position),
+                                        w,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }),
+                            )
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| match label {
                             "Inbox" => this.open_inbox(window, cx),
                             "Notes" => this.open_notes(window, cx),
@@ -790,6 +807,40 @@ impl Shell {
         } else {
             self.sidebar_frame.update(cx, |_, cx| cx.notify());
         }
+    }
+    /// New session in this project, just before the filter.
+    pub(super) fn sidebar_new_session_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let classic = self.workspace.classic_layout;
+        let new = if classic {
+            div()
+                .id("new-session")
+                .role(Role::Button)
+                .aria_label("New session")
+                .cursor_pointer()
+                .group("classic-new-session")
+                .size(px(24.))
+                .flex_shrink_0()
+                .rounded_md()
+                .flex()
+                .items_center()
+                .justify_center()
+                .hover(|s| s.bg(content(0.1)))
+                .child(
+                    icon("plus", 12.)
+                        .text_color(content(0.5))
+                        .group_hover("classic-new-session", |s| s.text_color(content(1.))),
+                )
+        } else {
+            icon_button("new-session", "New session", "plus")
+        };
+        new.debug_selector(|| "sidebar-new-session".into())
+            .on_click(cx.listener(|this, _, _, cx| {
+                let kind = this.default_kind(cx);
+                this.create(kind, cx)
+            }))
     }
     pub(super) fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self

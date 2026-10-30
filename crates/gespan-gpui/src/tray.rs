@@ -1,6 +1,7 @@
 //! Close to tray on Windows: closing the window hides it so running agents
 //! keep going, and the tray icon is the way back (src-tauri/src/tray.rs and
-//! the close handler in src/app/App.tsx). Other platforms have no tray.
+//! the close handler in src/app/App.tsx). macOS has no tray but hides the
+//! window over running chats too; the Dock icon brings it back.
 
 /// What closing the main window does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,8 +15,15 @@ pub(crate) enum Close {
 }
 
 /// `to_tray` is the Close to tray setting, which only Windows offers.
-pub(crate) fn on_close(to_tray: bool, running_chats: bool, unsaved_files: bool) -> Close {
-    if to_tray {
+/// `hide_running` is macOS, where a window over running chats hides so
+/// they keep going, as an app's red button does.
+pub(crate) fn on_close(
+    to_tray: bool,
+    hide_running: bool,
+    running_chats: bool,
+    unsaved_files: bool,
+) -> Close {
+    if to_tray || (hide_running && running_chats) {
         Close::Hide
     } else if running_chats || unsaved_files {
         Close::Ask
@@ -118,20 +126,32 @@ mod tests {
         // As in the Tauri app: with the setting on, close never quits.
         for running in [false, true] {
             for unsaved in [false, true] {
-                assert_eq!(on_close(true, running, unsaved), Close::Hide);
+                assert_eq!(on_close(true, false, running, unsaved), Close::Hide);
             }
         }
     }
 
     #[test]
     fn without_the_tray_running_chats_or_unsaved_files_ask_first() {
-        assert_eq!(on_close(false, true, false), Close::Ask);
-        assert_eq!(on_close(false, false, true), Close::Ask);
-        assert_eq!(on_close(false, true, true), Close::Ask);
+        assert_eq!(on_close(false, false, true, false), Close::Ask);
+        assert_eq!(on_close(false, false, false, true), Close::Ask);
+        assert_eq!(on_close(false, false, true, true), Close::Ask);
     }
 
     #[test]
     fn without_the_tray_an_idle_window_just_closes() {
-        assert_eq!(on_close(false, false, false), Close::Quit);
+        assert_eq!(on_close(false, false, false, false), Close::Quit);
+    }
+
+    #[test]
+    fn on_macos_running_chats_hide_the_window_instead_of_asking() {
+        // As Tauri's close handler on macOS: the chats keep going, unsaved
+        // files included, and the Dock icon brings the window back.
+        assert_eq!(on_close(false, true, true, false), Close::Hide);
+        assert_eq!(on_close(false, true, true, true), Close::Hide);
+        // With nothing running, unsaved files still ask and an idle window
+        // still closes.
+        assert_eq!(on_close(false, true, false, true), Close::Ask);
+        assert_eq!(on_close(false, true, false, false), Close::Quit);
     }
 }

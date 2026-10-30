@@ -1158,4 +1158,37 @@ mod tests {
         assert_eq!(chip_label(["vite", "jest"]), "vite · jest");
         assert_eq!(chip_label(["vite", "jest", "vite"]), "vite ×2 · jest");
     }
+
+    #[gpui::test]
+    fn explorer_open_in_terminal_starts_a_terminal_in_that_folder(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("gespan-open-terminal-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let src = dir.join("src").to_string_lossy().replace('\\', "/");
+        let file = format!("{src}/main.rs");
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                shell.ensure_right_panel(window, cx);
+                let explorer = shell.right_panel.clone().unwrap().read(cx).explorer.clone();
+                // A file opens its folder; a folder opens itself.
+                explorer.update(cx, |e, cx| {
+                    e.pick("open-terminal", &file, false, window, cx)
+                });
+                explorer.update(cx, |e, cx| e.pick("open-terminal", &src, true, window, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let project = shell.workspace.project.clone();
+                assert_eq!(shell.terminals[&project].len(), 2);
+                assert_eq!(
+                    shell.workspace.docks[&project].terminals,
+                    [src.clone(), src.clone()]
+                );
+            })
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

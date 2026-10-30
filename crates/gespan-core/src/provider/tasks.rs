@@ -33,6 +33,10 @@ pub(super) struct Activities {
     pub(super) wake_handled: bool,
     /// The user wrote into the running turn, so its reply may not be a wake.
     pub(super) steered_in_turn: bool,
+    /// Claude's TaskCreate/TaskUpdate list, seeded from saved cards.
+    pub(super) claude_task_list: crate::tool::tasks::ClaudeTasks,
+    /// This turn's task card, once a task call changed the list.
+    claude_task_card: Option<String>,
 }
 /// Synthetic block ids for work whose parent this session cannot place.
 pub(super) const FALLBACK_PREFIX: &str = crate::tool::tasks::SYNTHETIC_BLOCK_PREFIX;
@@ -61,6 +65,67 @@ impl Protocol {
         if self.request.kind == Kind::Claude {
             self.activities.registry.seed_from_blocks(&runs);
         }
+    }
+    /// Seed Claude's task list from the latest saved card of the conversation
+    /// this turn resumes. A new conversation's task ids start over.
+    pub(super) fn seed_claude_tasks(&mut self) {
+        let lists = std::mem::take(&mut self.request.settings.claude_task_lists);
+        if self.request.kind != Kind::Claude {
+            return;
+        }
+        let Some(conversation) = self.request.provider_id.as_deref() else {
+            return;
+        };
+        if let Some(list) = lists
+            .into_iter()
+            .rev()
+            .find(|list| list.conversation == conversation)
+        {
+            self.activities.claude_task_list = list;
+        }
+    }
+    /// A main-thread tool_result for TaskCreate or TaskUpdate: fold it into
+    /// the task list and show the list as this turn's task card.
+    pub(super) fn claude_task_result(
+        &mut self,
+        block: &Value,
+        frame: &Value,
+        events: &mut Vec<Event>,
+    ) {
+        if block["is_error"] == true {
+            return;
+        }
+        let Some(id) = text(&block["tool_use_id"]) else {
+            return;
+        };
+        let Some(tool) = self.tools.get(id) else {
+            return;
+        };
+        if !matches!(tool.name.trim(), "TaskCreate" | "TaskUpdate") {
+            return;
+        }
+        let input: Value = serde_json::from_str(&tool.input).unwrap_or_default();
+        let conversation = text(&frame["session_id"])
+            .or(self.request.provider_id.as_deref())
+            .unwrap_or("")
+            .to_owned();
+        let list = &mut self.activities.claude_task_list;
+        if list.conversation != conversation {
+            // Task ids from another conversation mean nothing in this one.
+            *list = crate::tool::tasks::ClaudeTasks {
+                conversation,
+                items: Vec::new(),
+            };
+        }
+        let content = text_content(&block["content"]);
+        if !list.apply(&tool.name, &input, &content, &frame["tool_use_result"]) {
+            return;
+        }
+        let card = self
+            .activities
+            .claude_task_card
+            .get_or_insert_with(|| format!("{}:{id}", crate::tool::tasks::CLAUDE_TASKS_KEY));
+        events.push(Event::Tool(self.activities.claude_task_list.card(card)));
     }
     pub(super) fn activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
         match self.request.kind {
@@ -1399,6 +1464,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "tasks/claude_task_tests.rs"]
+mod claude_task_tests;
 #[cfg(test)]
 #[path = "tasks/heartbeat_tests.rs"]
 mod heartbeat_tests;

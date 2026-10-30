@@ -856,7 +856,19 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
 fn checked_output(command: &mut Command) -> Result<Vec<u8>, String> {
     let output = command.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !stderr.is_empty() {
+            return Err(stderr);
+        }
+        // A silent failure still names the command and how it ended.
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .skip_while(|arg| arg != "core.fsmonitor=false")
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Err(format!("git {args} failed ({})", output.status));
     }
     Ok(output.stdout)
 }

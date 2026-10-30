@@ -17,6 +17,7 @@ actions!(application, [Hide, HideOthers, ShowAll]);
 pub(crate) struct OpenUrl(pub &'static str);
 
 const REPO: &str = "https://github.com/0xvasanth/gespan";
+const WEBSITE: &str = "https://gespan.dev";
 
 pub(crate) fn bind(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -135,6 +136,7 @@ pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu
         Menu::new("Help").items([
             MenuItem::action("Report an issue…", crate::report::ReportIssue),
             MenuItem::separator(),
+            MenuItem::action("Gespan Website", OpenUrl(WEBSITE)),
             MenuItem::action("View on GitHub", OpenUrl(REPO)),
             MenuItem::separator(),
             MenuItem::action(
