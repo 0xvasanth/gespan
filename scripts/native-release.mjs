@@ -5,7 +5,13 @@ import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { previewVersion } from "./package-native.mjs";
 
-const { nativeAssetBase } = createRequire(import.meta.url)("./release-channel.cjs");
+const { nativeAssetBase, releaseNotes } = createRequire(import.meta.url)("./release-channel.cjs");
+
+// The feed carries the same notes as the vX.Y.Z release: the version's
+// CHANGELOG section, which the app shows after it updates.
+export function feedNotes(version, changelog, env = {}) {
+  return env.NATIVE_RELEASE_NOTES || releaseNotes(changelog, version);
+}
 
 export const nativeTargets = [
   "darwin-aarch64-app",
@@ -112,9 +118,7 @@ export async function prepareNativeRelease(directory, env = process.env) {
     version,
     assetBaseUrl: nativeAssetBase(env),
     artifacts: records,
-    notes:
-      env.NATIVE_RELEASE_NOTES ||
-      (await readFile("docs/native/preview-release-notes.md", "utf8")),
+    notes: feedNotes(version, await readFile("CHANGELOG.md", "utf8"), env),
   });
   const payload = Buffer.from(JSON.stringify(manifest));
   const payloadPath = join(directory, "native-manifest.payload");

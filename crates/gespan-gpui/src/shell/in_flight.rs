@@ -305,6 +305,12 @@ mod tests {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let id = store.create("codex", CWD).unwrap().id;
         let window = shell(store, cx);
+        // Windows hides to the tray by default; with that off, close quits.
+        window
+            .update(cx, |shell, _, _| {
+                shell.workspace.preferences.close_to_tray = false
+            })
+            .unwrap();
         set_busy(window, id, true, cx);
         let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
         let closed = visual.simulate_close();
@@ -312,5 +318,23 @@ mod tests {
         assert!(!closed, "the window stays open until the user answers");
         assert!(cx.has_pending_prompt());
         cx.simulate_prompt_answer("Cancel");
+    }
+
+    #[cfg(windows)]
+    #[gpui::test]
+    fn closing_the_window_with_a_running_chat_hides_to_the_tray(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let id = store.create("codex", CWD).unwrap().id;
+        let window = shell(store, cx);
+        set_busy(window, id, true, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        let closed = visual.simulate_close();
+        visual.run_until_parked();
+        assert!(!closed, "the window is hidden, not closed");
+        assert!(
+            !cx.has_pending_prompt(),
+            "the chat keeps running, so nothing to ask"
+        );
+        assert!(!cx.update(|cx| crate::quitting(cx)));
     }
 }
