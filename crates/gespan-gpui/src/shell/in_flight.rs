@@ -300,6 +300,8 @@ mod tests {
         assert!(cx.update(|cx| crate::quitting(cx)));
     }
 
+    // macOS hides instead; see the test below.
+    #[cfg(not(target_os = "macos"))]
     #[gpui::test]
     fn closing_the_window_with_a_running_chat_asks_first(cx: &mut TestAppContext) {
         let store = Store::open(Path::new(":memory:")).unwrap();
@@ -335,6 +337,43 @@ mod tests {
             !cx.has_pending_prompt(),
             "the chat keeps running, so nothing to ask"
         );
+        assert!(!cx.update(|cx| crate::quitting(cx)));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    fn on_macos_closing_over_a_running_chat_hides_and_keeps_it_going(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let id = store.create("codex", CWD).unwrap().id;
+        let window = shell(store, cx);
+        set_busy(window, id, true, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        let closed = visual.simulate_close();
+        visual.run_until_parked();
+        assert!(!closed, "the window is hidden, not closed");
+        assert!(
+            !cx.has_pending_prompt(),
+            "nothing to ask: the chat keeps going"
+        );
+        assert!(!cx.update(|cx| crate::quitting(cx)));
+        // With the chat done, closing quits as before.
+        set_busy(window, id, false, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.simulate_close());
+    }
+
+    #[gpui::test]
+    fn reopening_from_the_dock_brings_the_workspace_window_back(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.deactivate_window();
+        visual.run_until_parked();
+        assert!(!visual.update(|window, _| window.is_window_active()));
+        // The platform calls this at app level, outside any window update.
+        cx.update(crate::shell::reopen);
+        visual.run_until_parked();
+        assert!(visual.update(|window, _| window.is_window_active()));
         assert!(!cx.update(|cx| crate::quitting(cx)));
     }
 }

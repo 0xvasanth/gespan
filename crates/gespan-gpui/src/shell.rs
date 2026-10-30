@@ -50,6 +50,7 @@ mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
 mod tray;
+pub(crate) use tray::reopen;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod window_chrome;
 mod worktrees;
@@ -8394,11 +8395,12 @@ impl Render for Shell {
                         let to_tray = cfg!(windows) && shell.workspace.preferences.close_to_tray;
                         match crate::tray::on_close(
                             to_tray,
+                            cfg!(target_os = "macos"),
                             !shell.running_chats(cx).is_empty(),
                             shell.unsaved_files(cx),
                         ) {
                             crate::tray::Close::Hide => {
-                                shell.set_window_visible(window, false);
+                                shell.set_window_visible(window, false, cx);
                                 false
                             }
                             // Closing the window quits: ask first, as a quit does.
