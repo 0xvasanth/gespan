@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens notification settings, as in the Tauri app.
 - A comment or action you make from Gespan Native's inbox no longer marks
   that item unread when the update comes back, as in the Tauri app.
+- Gespan Native's usage chip shows only the provider's icon for agents that
+  report no usage, such as Kiro, instead of "not connected".
 - Gespan Native lists the skills of enabled Codex plugins in the composer's /
   picker and in Settings → Skills, as the Tauri app does.
 - Gespan Native on macOS and Linux stops agents that a crashed or force-quit

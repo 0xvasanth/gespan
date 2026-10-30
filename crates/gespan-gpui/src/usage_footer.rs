@@ -203,7 +203,7 @@ impl UsageFooter {
             cx.notify();
             return;
         }
-        if cfg!(test) {
+        if cfg!(test) || !usage::has_usage(self.kind) {
             return;
         }
         let slot = index(self.kind);
@@ -812,7 +812,11 @@ impl Render for UsageFooter {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.cache[index(self.kind)];
         let now = usage::now_ms();
-        let label = if let Some(snapshot) = &state.snapshot {
+        // With no usage to read, the chip is just the provider's icon.
+        let tracked = usage::has_usage(self.kind);
+        let label = if !tracked {
+            String::new()
+        } else if let Some(snapshot) = &state.snapshot {
             snapshot
                 .windows
                 .iter()
@@ -850,6 +854,11 @@ impl Render for UsageFooter {
             })
             .or_else(|| state.error.as_ref().map(|e| e.message.clone()))
             .unwrap_or_else(|| "Loading usage".into());
+        let description = if tracked {
+            description
+        } else {
+            format!("{} reports no usage", self.kind.label())
+        };
         let fetching = state.fetching;
         let tightest = state
             .snapshot
@@ -873,6 +882,7 @@ impl Render for UsageFooter {
             .child(
                 div()
                     .id("usage-provider-chip")
+                    .debug_selector(|| "usage-provider-chip".into())
                     .role(Role::Button)
                     .aria_label(format!("{} usage details", self.kind.label()))
                     .aria_description(description)
@@ -913,38 +923,43 @@ impl Render for UsageFooter {
                                 ),
                         )
                     })
-                    .child(label)
+                    .when(!label.is_empty(), |d| d.child(label))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx)))
                     .on_action(
                         cx.listener(|this, _: &ToggleUsage, window, cx| this.toggle(window, cx)),
                     ),
             )
-            .child(
-                div()
-                    .id("refresh-usage")
-                    .role(Role::Button)
-                    .aria_label("Refresh usage")
-                    .track_focus(&self.refresh_focus)
-                    .tab_index(0)
-                    .key_context("UsageRefresh")
-                    .map(|d| {
-                        if classic {
-                            d.size(px(18.)).rounded_md()
-                        } else {
-                            d.size(px(20.)).ml(px(-4.)).rounded_full()
-                        }
-                    })
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .opacity(if fetching { 0.5 } else { 1. })
-                    .when(!fetching, |d| d.hover(|s| s.bg(content(0.1))))
-                    .child(icon("refresh", 12.))
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(true, cx)))
-                    .on_action(cx.listener(|this, _: &RefreshUsage, _, cx| this.refresh(true, cx))),
-            )
+            .when(tracked, |d| {
+                d.child(
+                    div()
+                        .id("refresh-usage")
+                        .debug_selector(|| "refresh-usage".into())
+                        .role(Role::Button)
+                        .aria_label("Refresh usage")
+                        .track_focus(&self.refresh_focus)
+                        .tab_index(0)
+                        .key_context("UsageRefresh")
+                        .map(|d| {
+                            if classic {
+                                d.size(px(18.)).rounded_md()
+                            } else {
+                                d.size(px(20.)).ml(px(-4.)).rounded_full()
+                            }
+                        })
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .opacity(if fetching { 0.5 } else { 1. })
+                        .when(!fetching, |d| d.hover(|s| s.bg(content(0.1))))
+                        .child(icon("refresh", 12.))
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh(true, cx)))
+                        .on_action(
+                            cx.listener(|this, _: &RefreshUsage, _, cx| this.refresh(true, cx)),
+                        ),
+                )
+            })
             .when(self.open, |d| {
                 d.child(
                     popover("usage-details", Anchor::Slot(self.anchor.clone()))
@@ -1051,5 +1066,27 @@ mod tests {
         assert!(state.snapshot.is_none());
         state.complete(Ok(Snapshot::default()));
         assert!(state.error.is_none());
+    }
+
+    #[gpui::test]
+    fn a_provider_without_usage_shows_only_its_icon(cx: &mut gpui::TestAppContext) {
+        cx.update(bind);
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| UsageFooter::new(Kind::Kiro, cx))
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        // Just the icon: no "not connected" text and nothing to refresh.
+        let chip = visual.debug_bounds("usage-provider-chip").unwrap();
+        assert!(chip.size.width < gpui::px(40.), "{chip:?}");
+        assert!(visual.debug_bounds("refresh-usage").is_none());
+        window
+            .update(visual, |footer, _, cx| footer.provider(Kind::Codex, cx))
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("refresh-usage").is_some());
     }
 }
