@@ -53,9 +53,9 @@ tick the box in the same PR.
 - [ ] **CI repair.** Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`. *(also below)*
 - [x] **Hunks / Full switch on the PR diff.** The core already supports it. Tauri: `src/features/inbox/ui/InboxView.tsx`. Done in #245.
 - [x] **Inbox right-click menu in the sidebar and rail.** Mark all as read, mute every project for a set time, and a notification settings link. Tauri: `src/features/inbox/ui/InboxNotificationMenu.tsx`. Done in #245.
-- [ ] **Inline video in item descriptions.** Tauri: `src/features/inbox/ui/InboxMedia.tsx`. *(also below)*
+- [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`. *(also below)*
 - [x] **Hide updates caused by your own actions.** No unread mark or notification for an update you made yourself. Tauri: `src/features/inbox/model/inboxSelfActivity.ts`. Done in #245.
-- [ ] **Inbox item card and note card** in the composer and transcript. Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`. *(also below)*
+- [x] **Inbox item card and note card** in the composer and transcript. *(done in #250)* Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`. *(also below)*
 
 ### Pilots and board
 
