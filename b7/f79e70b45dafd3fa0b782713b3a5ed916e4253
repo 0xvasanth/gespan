@@ -1,0 +1,815 @@
+host/attachments.ts
+  s_666089fd138caa::t_430e693a9c20ab 10-11
+host/bootstrap.test.ts
+  s_666089fd138caa::t_5cc0dfa4660689 48
+host/browse.ts
+  s_666089fd138caa::t_5d89cfbcf97c12 4
+host/child-backend.test.ts
+  s_666089fd138caa::t_ca1cb5e41bd653 9
+host/child-backend.ts
+  s_666089fd138caa::t_ac2aecd7d9b099 14-15,19
+host/claude-heartbeat.test.ts
+  s_666089fd138caa::t_5fb3bb1fc62812 14
+host/claude-resume.test.ts
+  s_666089fd138caa::t_62a9e140ee4917 16
+host/cli.ts
+  s_666089fd138caa::t_549377d6e7c0cb 19,29
+host/core/features/artifacts/artifacts.ts
+  s_666089fd138caa::t_e4e8d5804428c8 1-96
+host/core/features/automations/model/automationSchedule.ts
+  s_666089fd138caa::t_182df3ff6190e4 1
+host/core/features/connections/model/connections.ts
+  s_666089fd138caa::t_a02294b682b5e7 1-449
+host/core/features/connections/model/protocol.ts
+  s_666089fd138caa::t_9e443aaad30f8c 1-248
+host/core/features/connections/model/remoteAttachmentPreviews.ts
+  s_666089fd138caa::t_361d4c2ab86124 1-91
+host/core/features/connections/model/remoteProjects.ts
+  s_666089fd138caa::t_0e54793208ff48 1-121
+host/core/features/files/model/fileName.ts
+  s_666089fd138caa::t_a0c3af1870a4dd 1-63
+host/core/features/inbox/model/azureDevOps.ts
+  s_666089fd138caa::t_91e32d9eabeb31 1-285
+host/core/features/inbox/model/ciRepair.ts
+  s_666089fd138caa::t_9350074b9abdc9 1-134
+host/core/features/inbox/model/githubPrChecks.ts
+  s_666089fd138caa::t_be5948177d82d7 1-221
+host/core/features/inbox/model/githubTasks.ts
+  s_666089fd138caa::t_4240fd1f1e4c2b 1-1301
+host/core/features/inbox/model/gitlab.ts
+  s_666089fd138caa::t_c92e4fb84ca754 1-259
+host/core/features/inbox/model/inboxAskContext.ts
+  s_666089fd138caa::t_116dd8f2b669e6 1-7
+host/core/features/inbox/model/inboxSeen.ts
+  s_666089fd138caa::t_d672ccd6d70c9a 1-188
+host/core/features/inbox/model/inboxSelfActivity.ts
+  s_666089fd138caa::t_191298ba17dd95 1-91
+host/core/features/inbox/model/jira.ts
+  s_666089fd138caa::t_75cc38891d5541 1-232
+host/core/features/inbox/model/linear.ts
+  s_666089fd138caa::t_144740d3ff3191 1-206
+host/core/features/inbox/model/linkedWorkItemActivity.ts
+  s_666089fd138caa::t_ec98ad2774b6fd 1-225
+host/core/features/notes/noteCards.ts
+  s_666089fd138caa::t_4dafb34cae48f8 1-12
+host/core/features/orchestration/model/orchestrationPlan.ts
+  s_666089fd138caa::t_82b0409b504049 1-379
+host/core/features/pilots/model/pilotCard.ts
+  s_666089fd138caa::t_fac6fe0adbbb4a 1-40
+host/core/features/projects/model/projectGroups.ts
+  s_666089fd138caa::t_4beb8e101de6bc 1-224
+host/core/features/projects/model/projectMascots.ts
+  s_666089fd138caa::t_4283fca2e505f3 1-276
+host/core/features/projects/model/projectPathsChanged.ts
+  s_666089fd138caa::t_8ee16d5ad2f101 1-14
+host/core/features/projects/model/projectReturn.ts
+  s_666089fd138caa::t_f57a732561b0c0 1-184
+host/core/features/projects/model/projectTerminal.ts
+  s_666089fd138caa::t_2047fe5347c167 1-337
+host/core/features/projects/model/recents.ts
+  s_666089fd138caa::t_555f5efc9b69ef 1-435
+host/core/features/providers/model/providerAccounts.ts
+  s_666089fd138caa::t_8a8b174a7d5f30 1-308
+host/core/features/providers/model/providerBinaryPaths.ts
+  s_666089fd138caa::t_bda0b6a374d9f8 1-70
+host/core/features/providers/model/rateLimits.ts
+  s_666089fd138caa::t_cf10ea4713aa91 1-567
+host/core/features/quick-composer/model/quickComposerShortcut.ts
+  s_666089fd138caa::t_874a7561258706 1-162
+host/core/features/search/model/search.ts
+  s_666089fd138caa::t_8e3a2776251c99 1-75
+host/core/features/sessions/model/attachments.ts
+  s_666089fd138caa::t_bc495702f7417c 1-547
+host/core/features/sessions/model/contextUsage.ts
+  s_666089fd138caa::t_346f0bb1f774b5 1-85
+host/core/features/sessions/model/gespanToolCall.ts
+  s_666089fd138caa::t_16de1e54a29b7b 1-139
+host/core/features/sessions/model/handoff.ts
+  s_666089fd138caa::t_c9f42fea977c12 1-499
+host/core/features/sessions/model/inFlight.ts
+  s_666089fd138caa::t_4ec333792402e0 1-188
+host/core/features/sessions/model/models.ts
+  s_666089fd138caa::t_f7c896492b4818 1-1081
+host/core/features/sessions/model/plan.ts
+  s_666089fd138caa::t_dfa3da451aba1f 1-127
+host/core/features/sessions/model/projectProviders.ts
+  s_666089fd138caa::t_e453192aa6ceae 1-217
+host/core/features/sessions/model/session.ts
+  s_666089fd138caa::t_de4a6ebfe0544c 1-901
+host/core/features/sessions/model/sessionTitle.ts
+  s_666089fd138caa::t_27f1fd1cfecff5 1-116
+host/core/features/sessions/model/sessionWorkItem.ts
+  s_666089fd138caa::t_1395c2e3e85985 1-168
+host/core/features/sessions/model/subagentHandback.ts
+  s_666089fd138caa::t_c57f42142480d4 1-106
+host/core/features/sessions/model/taskList.ts
+  s_666089fd138caa::t_60e61f3e8b6d11 1-114
+host/core/features/sessions/model/ticketLinks.ts
+  s_666089fd138caa::t_18eea5ebc3e3d3 1-167
+host/core/features/sessions/model/transcriptActivity.ts
+  s_666089fd138caa::t_094ae0a195756f 1-1363
+host/core/features/sessions/model/usageLimit.ts
+  s_666089fd138caa::t_abf01d6e168a30 1-78
+host/core/features/sessions/model/userQuestion.ts
+  s_666089fd138caa::t_c1e75cf2906a9e 1-247
+host/core/features/settings/model/settings.ts
+  s_666089fd138caa::t_28b99beb6a8122 1-1705
+host/core/features/settings/model/storageFlags.ts
+  s_666089fd138caa::t_6664b6534dbe68 1-17
+host/core/features/skills/model/builtinSkill.ts
+  s_666089fd138caa::t_e35857d3a7b16c 1-11
+host/core/features/source-control/model/gitText.ts
+  s_666089fd138caa::t_a527195678998e 1-164
+host/core/features/source-control/model/worktrees.ts
+  s_666089fd138caa::t_314c615926e973 1-288
+host/core/features/terminal/model/terminalTab.ts
+  s_666089fd138caa::t_75b34150547116 1-143
+host/core/features/workspace/model/layout.ts
+  s_666089fd138caa::t_3d886dd8827ec4 1-1437
+host/core/features/workspace/model/tabGroups.ts
+  s_666089fd138caa::t_125d93e4d9e5c6 1-748
+host/core/features/workspace/model/workspaceTabGroups.ts
+  s_666089fd138caa::t_46b97df40b0aa3 1-481
+host/core/integrations/harness/core/abortTextPrompt.ts
+  s_666089fd138caa::t_32af77e48f0870 1-25
+host/core/integrations/harness/core/acp.ts
+  s_666089fd138caa::t_1af2bc738749ba 1-72
+host/core/integrations/harness/core/acpSubagents.ts
+  s_666089fd138caa::t_3729a6cf39128b 1-186
+host/core/integrations/harness/core/apply.ts
+  s_666089fd138caa::t_9b250cbb46cec9 1-1464
+host/core/integrations/harness/core/availabilityState.ts
+  s_666089fd138caa::t_1ff6bd8bfcfe59 1-65
+host/core/integrations/harness/core/child.ts
+  s_666089fd138caa::t_71a1dbba53e85b 1-616
+host/core/integrations/harness/core/jsonRpc.ts
+  s_666089fd138caa::t_cf7e84f5615332 1-221
+host/core/integrations/harness/core/nativeCommands.ts
+  s_666089fd138caa::t_0da1fcf446de0a 1-48
+host/core/integrations/harness/core/preview.ts
+  s_666089fd138caa::t_b3caa16dcb6fde 1-1086
+host/core/integrations/harness/core/providerNames.ts
+  s_666089fd138caa::t_6eb25a354261c8 1-33
+host/core/integrations/harness/core/shellIntent.ts
+  s_666089fd138caa::t_3065ad31ead9de 1-667
+host/core/integrations/harness/core/streamText.ts
+  s_666089fd138caa::t_11079a0d1249b3 1-56
+host/core/integrations/harness/core/textPrompt.ts
+  s_666089fd138caa::t_29a366833b1882 1-20
+host/core/integrations/harness/core/toolElapsed.ts
+  s_666089fd138caa::t_a08e17450ae8e7 1-45
+host/core/integrations/harness/core/types.ts
+  s_666089fd138caa::t_21f485dd81de39 1-249
+host/core/integrations/harness/providers/antigravity/antigravity.ts
+  s_666089fd138caa::t_7a36b5a8bdfe0a 1-835
+host/core/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_666089fd138caa::t_afeabdb9de4b3a 1-93
+host/core/integrations/harness/providers/antigravity/antigravityProtocol.ts
+  s_666089fd138caa::t_0d5d3914a1a1ba 1-584
+host/core/integrations/harness/providers/claude/claude.ts
+  s_666089fd138caa::t_74410921ce4dff 1-2482
+host/core/integrations/harness/providers/claude/claudeAgentRegistry.ts
+  s_666089fd138caa::t_f59e9800c0951a 1-155
+host/core/integrations/harness/providers/claude/claudeCatalog.ts
+  s_666089fd138caa::t_7b3b2af2acbe52 1-584
+host/core/integrations/harness/providers/claude/claudeGit.ts
+  s_666089fd138caa::t_cca496e746c326 1-99
+host/core/integrations/harness/providers/claude/claudeHeartbeat.ts
+  s_666089fd138caa::t_8a1de842bfe8ca 1-49
+host/core/integrations/harness/providers/claude/claudeProtocol.ts
+  s_666089fd138caa::t_e5e79695ca4dfe 1-1239
+host/core/integrations/harness/providers/claude/claudeText.ts
+  s_666089fd138caa::t_59b8cee2a0192f 1-470
+host/core/integrations/harness/providers/claude/claudeTitle.ts
+  s_666089fd138caa::t_be83f9815e64aa 1-30
+host/core/integrations/harness/providers/codex/codex.ts
+  s_666089fd138caa::t_c4d76d9122d963 1-1624
+host/core/integrations/harness/providers/codex/codexCatalog.ts
+  s_666089fd138caa::t_1c57ba7094e3d6 1-372
+host/core/integrations/harness/providers/codex/codexElicitation.ts
+  s_666089fd138caa::t_d610d710bf55c4 1-69
+host/core/integrations/harness/providers/codex/codexGit.ts
+  s_666089fd138caa::t_86f48ce3132d88 1-95
+host/core/integrations/harness/providers/codex/codexProtocol.ts
+  s_666089fd138caa::t_1ee79f9b60859b 1-1427
+host/core/integrations/harness/providers/codex/codexQuestions.ts
+  s_666089fd138caa::t_c21f9505433cea 1-117
+host/core/integrations/harness/providers/codex/codexStore.ts
+  s_666089fd138caa::t_07bd3998874ecc 1-217
+host/core/integrations/harness/providers/codex/codexText.ts
+  s_666089fd138caa::t_398f7529d96615 1-520
+host/core/integrations/harness/providers/codex/codexTitle.ts
+  s_666089fd138caa::t_7a8578802adb66 1-29
+host/core/integrations/harness/providers/cursor/cursor.ts
+  s_666089fd138caa::t_63c5825e56dac3 1-1648
+host/core/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_666089fd138caa::t_ed844967ebfc97 1-489
+host/core/integrations/harness/providers/cursor/cursorStore.ts
+  s_666089fd138caa::t_eb3a2fff436e59 1-50
+host/core/integrations/harness/providers/cursor/cursorSubagents.ts
+  s_666089fd138caa::t_3053a6dcb6f601 1-147
+host/core/integrations/harness/providers/cursor/cursorText.ts
+  s_666089fd138caa::t_01b10d091a083e 1-422
+host/core/integrations/harness/providers/cursor/cursorTitle.ts
+  s_666089fd138caa::t_e6f83274692350 1-31
+host/core/integrations/harness/providers/devin/devin.ts
+  s_666089fd138caa::t_61044dd77ed566 1-762
+host/core/integrations/harness/providers/devin/devinAuth.ts
+  s_666089fd138caa::t_a7c009cce081f7 1-53
+host/core/integrations/harness/providers/devin/devinCatalog.ts
+  s_666089fd138caa::t_d3bb74d6878c19 1-135
+host/core/integrations/harness/providers/devin/devinProtocol.ts
+  s_666089fd138caa::t_e337ce4c0fec58 1-822
+host/core/integrations/harness/providers/devin/devinSubagents.ts
+  s_666089fd138caa::t_416b42083b8160 1-182
+host/core/integrations/harness/providers/fx/fx.ts
+  s_666089fd138caa::t_07df801b08b172 1-531
+host/core/integrations/harness/providers/fx/fxCatalog.ts
+  s_666089fd138caa::t_b67a943f14a303 1-38
+host/core/integrations/harness/providers/fx/fxProtocol.ts
+  s_666089fd138caa::t_dc742460ac89d0 1-716
+host/core/integrations/harness/providers/fx/fxTool.ts
+  s_666089fd138caa::t_9051c367c41aa3 1-272
+host/core/integrations/harness/providers/grok/grok.ts
+  s_666089fd138caa::t_c0bb77d4256bb1 1-636
+host/core/integrations/harness/providers/grok/grokCatalog.ts
+  s_666089fd138caa::t_9b3007501a327e 1-150
+host/core/integrations/harness/providers/grok/grokProtocol.ts
+  s_666089fd138caa::t_ec672f03cf4b86 1-946
+host/core/integrations/harness/providers/grok/grokText.ts
+  s_666089fd138caa::t_97252ac4d9a498 1-377
+host/core/integrations/harness/providers/grok/grokTitle.ts
+  s_666089fd138caa::t_80ce40ab85e628 1-26
+host/core/integrations/harness/providers/hermes/hermes.ts
+  s_666089fd138caa::t_3b0594734036ee 1-630
+host/core/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_666089fd138caa::t_851b97e6daaab6 1-120
+host/core/integrations/harness/providers/hermes/hermesProtocol.ts
+  s_666089fd138caa::t_7c8d7993d80cf3 1-246
+host/core/integrations/harness/providers/kiro/kiro.ts
+  s_666089fd138caa::t_e25f1dae647ebc 1-499
+host/core/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_666089fd138caa::t_e53c6c2d19314b 1-88
+host/core/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_666089fd138caa::t_b56d7c8a9bf8c4 1-89
+host/core/integrations/harness/providers/kiro/kiroProtocol.ts
+  s_666089fd138caa::t_8e23d87f2228b3 1-305
+host/core/integrations/harness/providers/omp/omp.ts
+  s_666089fd138caa::t_282040f3c6a8a8 1-80
+host/core/integrations/harness/providers/opencode/opencode.ts
+  s_666089fd138caa::t_a5ab937d68deb3 1-1622
+host/core/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_666089fd138caa::t_a0b8ae03338952 1-358
+host/core/integrations/harness/providers/opencode/opencodeClient.ts
+  s_666089fd138caa::t_fc0809bc462f50 1-808
+host/core/integrations/harness/providers/opencode/opencodeProtocol.ts
+  s_666089fd138caa::t_7ae35889e7d55e 1-610
+host/core/integrations/harness/providers/opencode/opencodeService.ts
+  s_666089fd138caa::t_b5fa189ed68749 1-61
+host/core/integrations/harness/providers/opencode/opencodeText.ts
+  s_666089fd138caa::t_b462035bea978a 1-455
+host/core/integrations/harness/providers/opencode/opencodeTitle.ts
+  s_666089fd138caa::t_eb2bbdab394911 1-26
+host/core/integrations/harness/providers/opencode/opencodeV2Events.ts
+  s_666089fd138caa::t_20fefb2c5e8165 1-321
+host/core/integrations/harness/providers/pi/pi.ts
+  s_666089fd138caa::t_515fa7b53997ea 1-77
+host/core/integrations/harness/providers/pi/piCatalog.ts
+  s_666089fd138caa::t_d753db89ea0b4b 1-165
+host/core/integrations/harness/providers/pi/piClient.ts
+  s_666089fd138caa::t_cb0e54e9d968c3 1-92
+host/core/integrations/harness/providers/pi/piFamily.ts
+  s_666089fd138caa::t_99e186b7701b45 1-1316
+host/core/integrations/harness/providers/pi/piFlavor.ts
+  s_666089fd138caa::t_b7ceb551177d01 1-52
+host/core/integrations/harness/providers/pi/piProtocol.ts
+  s_666089fd138caa::t_f509c60b90978a 1-890
+host/core/integrations/harness/providers/pi/piSkills.ts
+  s_666089fd138caa::t_b0a4bc51659a52 1-170
+host/core/integrations/harness/providers/pi/piSubagents.ts
+  s_666089fd138caa::t_bdcf694e225705 1-202
+host/core/integrations/harness/providers/pi/piText.ts
+  s_666089fd138caa::t_6d76580c5ea3fc 1-371
+host/core/integrations/harness/providers/pi/piTitle.ts
+  s_666089fd138caa::t_31b217043cf3d6 1-46
+host/core/platform/tauri/fs.ts
+  s_666089fd138caa::t_0f280279d8b426 1-667
+host/core/platform/tauri/platform.ts
+  s_666089fd138caa::t_41b1a1adbdbc98 1-16
+host/core/shared/lib/branchOwnership.ts
+  s_666089fd138caa::t_02f26447767221 1-18
+host/core/shared/lib/jsonText.ts
+  s_666089fd138caa::t_f2e741385864ad 1-68
+host/core/shared/lib/paths.ts
+  s_666089fd138caa::t_d08febcce25b3b 1-333
+host/core/shared/lib/remotePaths.ts
+  s_666089fd138caa::t_171aa6a3a61d8d 1-2
+host/engine.test.ts
+  s_666089fd138caa::t_93ebfdf6aab197 5
+host/engine.ts
+  s_666089fd138caa::t_7137bb0e4a8a14 9-12,16,24-25,32
+host/git-worktrees.ts
+  s_666089fd138caa::t_a23f0e54ced845 6
+host/independence.test.ts
+  s_666089fd138caa::t_5d8d3299949ad6 1-47
+host/large-sync.test.ts
+  s_666089fd138caa::t_f2d8d13065b3cd 9-11,13
+host/opencode-transport.test.ts
+  s_666089fd138caa::t_e393498fabfa57 12
+host/opencode-v2-transport.test.ts
+  s_666089fd138caa::t_02af828ceedff2 13
+host/process.ts
+  s_666089fd138caa::t_cc7a1a3906af62 6
+host/provider-transport.test.ts
+  s_666089fd138caa::t_e5dff6c6568079 16-18,22
+host/providers.test.ts
+  s_666089fd138caa::t_7f07a12d29211a 6,8
+host/providers.ts
+  s_666089fd138caa::t_f7e5fab9f5045b 1-12,17-28,32,36-37
+host/server.test.ts
+  s_666089fd138caa::t_7c17c4d30502b1 18-20,23
+host/server.ts
+  s_666089fd138caa::t_43dc7e8adc38e3 14,17-18,44-55,69
+host/store.ts
+  s_666089fd138caa::t_c1f571defd1544 11-13
+host/sync-transfer.test.ts
+  s_666089fd138caa::t_836d7814eeb10c 3
+host/sync-transfer.ts
+  s_666089fd138caa::t_53a02e8ecd5148 6
+host/tsconfig.json
+  s_666089fd138caa::t_dcec5105ae5855 9
+host/windows-bootstrap.test.ts
+  s_666089fd138caa::t_877c16cc8704fe 94
+host/windows.test.ts
+  s_666089fd138caa::t_c5a46a59bc53f0 166
+host/workspace-commands.ts
+  s_666089fd138caa::t_8d8ffd4ccf483e 17
+host/workspace.ts
+  s_666089fd138caa::t_5b47c3471f9e18 19,23
+src/app/hooks/useFloatingPilot.test.ts
+  s_666089fd138caa::t_774004ab997132 24
+src/app/model/appLifecycle.test.ts
+  s_666089fd138caa::t_85f9fb644517f5 49
+src/app/model/bootWorkspace.test.ts
+  s_666089fd138caa::t_a8885ac01c28ff 19
+src/app/model/releaseNotes.ts
+  s_666089fd138caa::t_2626040b6e783f 2,4
+src/app/shell/GithubStarPrompt.test.ts
+  s_666089fd138caa::t_75419dec88ef0d 17
+src/app/shell/SidebarRename.test.ts
+  s_666089fd138caa::t_45a7f9d5d392d4 28
+src/features/artifacts/artifacts.ts
+  s_666089fd138caa::t_47f8cb3a72ad62 1-2
+src/features/automations/model/automations.ts
+  s_666089fd138caa::t_e48f5c9dbdbb52 1,10
+src/features/connections/model/connections.ts
+  s_666089fd138caa::t_552253318f12b8 1-2
+src/features/connections/model/protocol.ts
+  s_666089fd138caa::t_54fa83ca1cfd8b 1-2
+src/features/connections/model/remoteAttachmentPreviews.ts
+  s_666089fd138caa::t_5bb97539f676de 1-2
+src/features/connections/model/remoteCommands.test.ts
+  s_666089fd138caa::t_da554fb624019c 12
+src/features/connections/model/remoteProjects.ts
+  s_666089fd138caa::t_2d9439eff82215 1-2
+src/features/files/model/fileIndex.resume.test.ts
+  s_666089fd138caa::t_7f3882d2202947 10
+src/features/files/model/fileIndex.test.ts
+  s_666089fd138caa::t_d677b66356b096 40
+src/features/files/model/fileName.ts
+  s_666089fd138caa::t_f09f6244fa5e0f 1-2
+src/features/files/model/fileTree.test.ts
+  s_666089fd138caa::t_e43bec890916c3 26
+src/features/files/model/fileWatch.test.ts
+  s_666089fd138caa::t_17b2d20e90c3b9 5
+src/features/files/ui/BinaryFileView.test.ts
+  s_666089fd138caa::t_b126e70daa13be 18,37
+src/features/files/ui/FilePicker.test.ts
+  s_666089fd138caa::t_5847c4d674f110 45
+src/features/inbox/hooks/useGithubPrChecks.test.ts
+  s_666089fd138caa::t_07d587be0099b1 14
+src/features/inbox/hooks/useInboxUnseen.test.ts
+  s_666089fd138caa::t_f43912ed5a860f 26
+src/features/inbox/model/azureDevOps.ts
+  s_666089fd138caa::t_be8d9f6c9d73f1 1-2
+src/features/inbox/model/ciRepair.ts
+  s_666089fd138caa::t_3e9fa1e4b67c87 1-2
+src/features/inbox/model/githubPrChecks.ts
+  s_666089fd138caa::t_275b22b6dfa681 1-2
+src/features/inbox/model/githubTasks.ts
+  s_666089fd138caa::t_d3da536b83dabe 1-2
+src/features/inbox/model/gitlab.ts
+  s_666089fd138caa::t_1defdacdaa309c 1-2
+src/features/inbox/model/inboxAsk.ts
+  s_666089fd138caa::t_62e51cc234fccb 2,5
+src/features/inbox/model/inboxSeen.ts
+  s_666089fd138caa::t_b57cf38862c60f 1-2
+src/features/inbox/model/inboxSelfActivity.ts
+  s_666089fd138caa::t_c2ef9daf928aec 1-2
+src/features/inbox/model/jira.ts
+  s_666089fd138caa::t_0660dd11bec535 1-2
+src/features/inbox/model/linear.ts
+  s_666089fd138caa::t_a2adce82f0538a 1-2
+src/features/inbox/model/linkedSessionUpdates.ts
+  s_666089fd138caa::t_2808ec7c331b56 1,14
+src/features/inbox/model/linkedWorkItemActivity.ts
+  s_666089fd138caa::t_7cd904cb3331c5 1-2
+src/features/inbox/ui/InboxNotificationIndicators.test.ts
+  s_666089fd138caa::t_36947875155e49 14
+src/features/inbox/ui/InboxNotificationMenu.test.ts
+  s_666089fd138caa::t_a6403e31ec134b 23
+src/features/notes/notes.ts
+  s_666089fd138caa::t_df9d3715a40526 2-5,41
+src/features/notifications/hooks/projectNotificationFlow.test.ts
+  s_666089fd138caa::t_5f4f18f6eaf4c4 30
+src/features/orchestration/model/orchestrationPlan.ts
+  s_666089fd138caa::t_99e49aba28f2c2 1-2
+src/features/pilots/floatingMain.test.ts
+  s_666089fd138caa::t_73ac3be007e611 9,13
+src/features/pilots/model/floatingPilot.test.ts
+  s_666089fd138caa::t_b85b600e834aa8 5
+src/features/pilots/model/pilotCards.ts
+  s_666089fd138caa::t_ec37c173d11609 1-2,4
+src/features/pilots/model/pilotHabits.ts
+  s_666089fd138caa::t_3f028e3786e43c 7,23
+src/features/pilots/ui/PilotChangesView.test.ts
+  s_666089fd138caa::t_2187a9a90e64fd 10,35,45
+src/features/pilots/ui/PilotComposer.test.ts
+  s_666089fd138caa::t_0f9b5a7c8879f1 10
+src/features/projects/model/projectGroups.ts
+  s_666089fd138caa::t_2853b0a7f8a345 1-2
+src/features/projects/model/projectLocation.test.ts
+  s_666089fd138caa::t_2da3760fda134a 9
+src/features/projects/model/projectMascots.ts
+  s_666089fd138caa::t_bb6e5a0ba0459d 1-2
+src/features/projects/model/projectPathsChanged.ts
+  s_666089fd138caa::t_4ebe503e92e544 1-2
+src/features/projects/model/projectReturn.ts
+  s_666089fd138caa::t_2c09a1694554c0 1-2
+src/features/projects/model/projectTerminal.ts
+  s_666089fd138caa::t_6096fd0717812f 1-2
+src/features/projects/model/recents.ts
+  s_666089fd138caa::t_c7dbf8d5b8d5ac 1-2
+src/features/projects/ui/ProjectGroups.test.ts
+  s_666089fd138caa::t_0a4046c3936fc8 21
+src/features/providers/model/providerAccounts.ts
+  s_666089fd138caa::t_372d9c10f00f4b 1-2
+src/features/providers/model/providerBinaryPaths.ts
+  s_666089fd138caa::t_73ffd777be2273 1-2
+src/features/providers/model/rateLimits.ts
+  s_666089fd138caa::t_c2ba9b244f7500 1-2
+src/features/providers/model/rateLimitsFetch.test.ts
+  s_666089fd138caa::t_e6f8ae394fb514 10,13,36
+src/features/providers/ui/HarnessUpdateNotice.test.ts
+  s_666089fd138caa::t_1aa9734a4f9eb0 24,33
+src/features/quick-composer/model/quickComposerShortcut.ts
+  s_666089fd138caa::t_a661f407b42d31 1-2
+src/features/quick-composer/ui/QuickComposer.attachments.test.ts
+  s_666089fd138caa::t_89eca98f224908 27
+src/features/quick-composer/ui/QuickGitPopup.firstOpen.test.ts
+  s_666089fd138caa::t_e27b8c27671a26 24
+src/features/quick-composer/ui/QuickGitPopup.test.ts
+  s_666089fd138caa::t_77e66d5117b6a8 42
+src/features/quick-composer/ui/QuickWorkspaceControls.test.ts
+  s_666089fd138caa::t_fad3f715646662 22
+src/features/quick-composer/ui/useQuickAttachments.test.ts
+  s_666089fd138caa::t_ed3379fdd5fc12 14
+src/features/search/model/search.ts
+  s_666089fd138caa::t_75f02c577846c3 1-2
+src/features/sessions/model/attachments.ts
+  s_666089fd138caa::t_9101e40cb5f7ee 1-2
+src/features/sessions/model/contextUsage.ts
+  s_666089fd138caa::t_29022c18781738 1-2
+src/features/sessions/model/gespanToolCall.ts
+  s_666089fd138caa::t_8cc92f70dbc9b4 1-2
+src/features/sessions/model/handoff.ts
+  s_666089fd138caa::t_dcf85baafdcb15 1-2
+src/features/sessions/model/inFlight.ts
+  s_666089fd138caa::t_2beb884e8b0d09 1-2
+src/features/sessions/model/models.ts
+  s_666089fd138caa::t_44614ffc8c4dbc 1-2
+src/features/sessions/model/plan.ts
+  s_666089fd138caa::t_b985967506400b 1-2
+src/features/sessions/model/projectProviders.ts
+  s_666089fd138caa::t_ac74e95b41bcdb 1-2
+src/features/sessions/model/session.ts
+  s_666089fd138caa::t_e526dff1a4401a 1-2
+src/features/sessions/model/sessionTitle.ts
+  s_666089fd138caa::t_e04afb63dae5f9 1-2
+src/features/sessions/model/sessionWorkItem.ts
+  s_666089fd138caa::t_ddbfa126121e5d 1-2
+src/features/sessions/model/subagentHandback.ts
+  s_666089fd138caa::t_f8ec600db68586 1-2
+src/features/sessions/model/taskList.ts
+  s_666089fd138caa::t_75bf2dd6330cee 1-2
+src/features/sessions/model/ticketLinks.ts
+  s_666089fd138caa::t_3194adf9a61d05 1-2
+src/features/sessions/model/transcriptActivity.ts
+  s_666089fd138caa::t_e91ec6b5c27912 1-2
+src/features/sessions/model/usageLimit.ts
+  s_666089fd138caa::t_4206a8c9498a97 1-2
+src/features/sessions/model/userQuestion.ts
+  s_666089fd138caa::t_dbb4f835c42ab1 1-2
+src/features/sessions/ui/AgentMarkdownMenu.test.ts
+  s_666089fd138caa::t_f0be682cee83f0 22
+src/features/sessions/ui/AgentTranscript.performance.test.ts
+  s_666089fd138caa::t_9019df100316b9 10
+src/features/sessions/ui/AttachmentChip.test.ts
+  s_666089fd138caa::t_2194260fcf4b9a 9
+src/features/sessions/ui/Composer.noAgent.test.ts
+  s_666089fd138caa::t_b2e9b84c7d13c7 12
+src/features/sessions/ui/ComposerFileDrop.test.ts
+  s_666089fd138caa::t_919e396dc562e7 24
+src/features/sessions/ui/DocumentImage.test.ts
+  s_666089fd138caa::t_b03a59fad11148 8
+src/features/sessions/ui/NewSessionFromTicketDialog.test.ts
+  s_666089fd138caa::t_4008af1d3ab570 16
+src/features/sessions/ui/SessionPaneMessaging.test.ts
+  s_666089fd138caa::t_d45f6189b96564 15
+src/features/sessions/ui/SessionReview.test.ts
+  s_666089fd138caa::t_e04aa623a1dd24 29
+src/features/sessions/ui/UserLinkPreview.test.ts
+  s_666089fd138caa::t_b9c19a8a59a47f 10
+src/features/settings/model/nativeGlass.test.ts
+  s_666089fd138caa::t_a57995f3187e90 6
+src/features/settings/model/settings.flags.test.ts
+  s_666089fd138caa::t_2f4479b200000d 8
+src/features/settings/model/settings.ts
+  s_666089fd138caa::t_1e37f25bb429f5 1-2
+src/features/settings/model/storageFlags.ts
+  s_666089fd138caa::t_e62a2853e034cc 1-2
+src/features/settings/ui/QuickComposerShortcutEditor.test.ts
+  s_666089fd138caa::t_24f2ebbc069224 9
+src/features/skills/model/skillCatalog.test.ts
+  s_666089fd138caa::t_ed3e05331207cf 12,35
+src/features/skills/model/skills.ts
+  s_666089fd138caa::t_32a5e9555908c0 9-12,92
+src/features/skills/ui/SkillsPage.test.ts
+  s_666089fd138caa::t_4ae67ead142767 13
+src/features/source-control/model/gitText.ts
+  s_666089fd138caa::t_1ee0d55f82b970 1-2
+src/features/source-control/model/worktreeBranchName.test.ts
+  s_666089fd138caa::t_def05effa19375 11
+src/features/source-control/model/worktrees.ts
+  s_666089fd138caa::t_a90e4cb2780b37 1-2
+src/features/source-control/ui/BranchPicker.test.ts
+  s_666089fd138caa::t_b67fdf773d6891 6
+src/features/source-control/ui/GitChangesPanel.test.ts
+  s_666089fd138caa::t_1d92ffe1288d15 14,46
+src/features/source-control/ui/GitHistoryGraph.test.ts
+  s_666089fd138caa::t_cafe90c4d2b7f0 6
+src/features/source-control/ui/GithubPrActions.test.ts
+  s_666089fd138caa::t_2e159090e1bb7e 6
+src/features/source-control/ui/ReviewDiffCaching.test.ts
+  s_666089fd138caa::t_6f4388309c7bfa 16
+src/features/source-control/ui/SidebarWorktreeSwitcher.test.ts
+  s_666089fd138caa::t_d290d491b966a4 17
+src/features/source-control/ui/WorkingTreeDiff.test.ts
+  s_666089fd138caa::t_6f14302100efc4 12
+src/features/source-control/ui/Worktrees.test.ts
+  s_666089fd138caa::t_2998ee26b40fe3 7,23
+src/features/terminal/model/terminalTab.ts
+  s_666089fd138caa::t_33784ec675428e 1-2
+src/features/workspace/model/layout.ts
+  s_666089fd138caa::t_26a599215d0ab0 1-2
+src/features/workspace/model/tabGroups.ts
+  s_666089fd138caa::t_16665434e6d1bb 1-2
+src/features/workspace/model/workspaceTabGroups.ts
+  s_666089fd138caa::t_dcca591113e481 1-2
+src/features/workspace/ui/SurfaceTabsMenu.test.ts
+  s_666089fd138caa::t_6d48f509b1a7d2 18
+src/integrations/harness/core/abortTextPrompt.ts
+  s_666089fd138caa::t_541a9ffc101478 1-2
+src/integrations/harness/core/acp.ts
+  s_666089fd138caa::t_5f8a90a7ad8fb3 1-2
+src/integrations/harness/core/acpSubagents.ts
+  s_666089fd138caa::t_5b3503762d41f1 1-2
+src/integrations/harness/core/apply.ts
+  s_666089fd138caa::t_0f3aa0adc2ef15 1-2
+src/integrations/harness/core/auth.test.ts
+  s_666089fd138caa::t_51563a4d19d004 15-16
+src/integrations/harness/core/availability.test.ts
+  s_666089fd138caa::t_4c1fcc242c7589 6,21
+src/integrations/harness/core/availabilityState.ts
+  s_666089fd138caa::t_1c53a9641b44d5 1-2
+src/integrations/harness/core/child.ts
+  s_666089fd138caa::t_b42d5fdec04b20 1-2
+src/integrations/harness/core/commitMessage.test.ts
+  s_666089fd138caa::t_b86a93106f345b 14,18,21,24,28-29
+src/integrations/harness/core/jsonRpc.ts
+  s_666089fd138caa::t_9af9197e635048 1-2
+src/integrations/harness/core/nativeCommands.ts
+  s_666089fd138caa::t_1fabeca8185307 1-2
+src/integrations/harness/core/preview.ts
+  s_666089fd138caa::t_99bdfe6e29fdad 1-2
+src/integrations/harness/core/providerNames.ts
+  s_666089fd138caa::t_ec2ee40028be6e 1-2
+src/integrations/harness/core/registry.ts
+  s_666089fd138caa::t_61bf6620045a48 13,30
+src/integrations/harness/core/shellIntent.ts
+  s_666089fd138caa::t_993324aa7afb10 1-2
+src/integrations/harness/core/streamText.ts
+  s_666089fd138caa::t_48a3356793989a 1-2
+src/integrations/harness/core/toolElapsed.ts
+  s_666089fd138caa::t_8825be0300dfe8 1-2
+src/integrations/harness/core/types.ts
+  s_666089fd138caa::t_3b92c160877b3a 1-2
+src/integrations/harness/providers/antigravity/antigravity.ts
+  s_666089fd138caa::t_4b853e751b24c7 1-2
+src/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_666089fd138caa::t_267671a58d8958 1-2
+src/integrations/harness/providers/antigravity/antigravityLive.test.ts
+  s_666089fd138caa::t_dabe584df8f499 29-30
+src/integrations/harness/providers/antigravity/antigravityProtocol.ts
+  s_666089fd138caa::t_87fb46c03c53cf 1-2
+src/integrations/harness/providers/antigravity/antigravityReal.test.ts
+  s_666089fd138caa::t_06f0668a726045 24,72
+src/integrations/harness/providers/antigravity/antigravitySoak.test.ts
+  s_666089fd138caa::t_f618c3576d8856 28,76
+src/integrations/harness/providers/claude/claude.ts
+  s_666089fd138caa::t_44e49f9dce4016 1-2
+src/integrations/harness/providers/claude/claudeAgentRegistry.ts
+  s_666089fd138caa::t_e4a617c2ccddce 1-2
+src/integrations/harness/providers/claude/claudeCatalog.ts
+  s_666089fd138caa::t_9e016c6c8b2309 1-2
+src/integrations/harness/providers/claude/claudeGit.ts
+  s_666089fd138caa::t_dd1094d500a417 1-2
+src/integrations/harness/providers/claude/claudeHeartbeat.test.ts
+  s_666089fd138caa::t_81ab74f88a6656 20
+src/integrations/harness/providers/claude/claudeHeartbeat.ts
+  s_666089fd138caa::t_925e4c142ce1ef 1-2
+src/integrations/harness/providers/claude/claudeLive.test.ts
+  s_666089fd138caa::t_82f4eb8209681c 19
+src/integrations/harness/providers/claude/claudeProtocol.ts
+  s_666089fd138caa::t_d748dedf2f99ce 1-2
+src/integrations/harness/providers/claude/claudeResume.test.ts
+  s_666089fd138caa::t_c1712eb00363e2 22
+src/integrations/harness/providers/claude/claudeText.ts
+  s_666089fd138caa::t_3077aadbcd5ea6 1-2
+src/integrations/harness/providers/claude/claudeTitle.ts
+  s_666089fd138caa::t_2dd66c490230ef 1-2
+src/integrations/harness/providers/codex/codex.ts
+  s_666089fd138caa::t_7dc0d072caa081 1-2
+src/integrations/harness/providers/codex/codexApprovalUi.test.ts
+  s_666089fd138caa::t_9ae01416b5b1bf 31
+src/integrations/harness/providers/codex/codexAttachments.test.ts
+  s_666089fd138caa::t_ae082218ca3dd0 8
+src/integrations/harness/providers/codex/codexCatalog.ts
+  s_666089fd138caa::t_bd0d32c95a0f97 1-2
+src/integrations/harness/providers/codex/codexElicitation.ts
+  s_666089fd138caa::t_d14755f27bf4e4 1-2
+src/integrations/harness/providers/codex/codexGit.ts
+  s_666089fd138caa::t_da3c7b5d1206b3 1-2
+src/integrations/harness/providers/codex/codexLive.test.ts
+  s_666089fd138caa::t_0ddc8f6659d4b1 31,33,45
+src/integrations/harness/providers/codex/codexProtocol.ts
+  s_666089fd138caa::t_e3b1a7df5ccc0b 1-2
+src/integrations/harness/providers/codex/codexQuestions.ts
+  s_666089fd138caa::t_1485098c69c464 1-2
+src/integrations/harness/providers/codex/codexStore.ts
+  s_666089fd138caa::t_d8c069c5dc74af 1-2
+src/integrations/harness/providers/codex/codexText.ts
+  s_666089fd138caa::t_f889ad92839992 1-2
+src/integrations/harness/providers/codex/codexTitle.ts
+  s_666089fd138caa::t_26cb616144ed1a 1-2
+src/integrations/harness/providers/cursor/cursor.ts
+  s_666089fd138caa::t_ce0811fd35820a 1-2
+src/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_666089fd138caa::t_bb1d28dd79eb0d 1-2
+src/integrations/harness/providers/cursor/cursorLive.test.ts
+  s_666089fd138caa::t_1b0c89225dd045 7,26
+src/integrations/harness/providers/cursor/cursorStore.ts
+  s_666089fd138caa::t_4d802b0d2315f5 1-2
+src/integrations/harness/providers/cursor/cursorSubagents.ts
+  s_666089fd138caa::t_db9ceff8909afc 1-2
+src/integrations/harness/providers/cursor/cursorText.ts
+  s_666089fd138caa::t_4b74abec2691d3 1-2
+src/integrations/harness/providers/cursor/cursorTitle.ts
+  s_666089fd138caa::t_d1e78d535413db 1-2
+src/integrations/harness/providers/devin/devin.ts
+  s_666089fd138caa::t_3b7dc4b3033600 1-2
+src/integrations/harness/providers/devin/devinAuth.ts
+  s_666089fd138caa::t_22783a37a114e2 1-2
+src/integrations/harness/providers/devin/devinCatalog.ts
+  s_666089fd138caa::t_2b28aa1239436f 1-2
+src/integrations/harness/providers/devin/devinLive.test.ts
+  s_666089fd138caa::t_05856c045fddc2 8,33
+src/integrations/harness/providers/devin/devinProtocol.ts
+  s_666089fd138caa::t_a73b5e26973a52 1-2
+src/integrations/harness/providers/devin/devinSubagents.ts
+  s_666089fd138caa::t_0a1c353033f197 1-2
+src/integrations/harness/providers/fx/fx.ts
+  s_666089fd138caa::t_b42fb852348f54 1-2
+src/integrations/harness/providers/fx/fxCatalog.ts
+  s_666089fd138caa::t_6474a6a3e7eede 1-2
+src/integrations/harness/providers/fx/fxLive.test.ts
+  s_666089fd138caa::t_623e6815deddcd 7
+src/integrations/harness/providers/fx/fxProtocol.ts
+  s_666089fd138caa::t_85bd4939c84220 1-2
+src/integrations/harness/providers/fx/fxTool.ts
+  s_666089fd138caa::t_b0a82c91d02f1b 1-2
+src/integrations/harness/providers/grok/grok.ts
+  s_666089fd138caa::t_9938eee996bad0 1-2
+src/integrations/harness/providers/grok/grokCatalog.ts
+  s_666089fd138caa::t_d38f260196e0cb 1-2
+src/integrations/harness/providers/grok/grokLive.test.ts
+  s_666089fd138caa::t_12e2c3831186bd 7
+src/integrations/harness/providers/grok/grokProtocol.ts
+  s_666089fd138caa::t_1888e6013699be 1-2
+src/integrations/harness/providers/grok/grokText.ts
+  s_666089fd138caa::t_adba8f58fcf249 1-2
+src/integrations/harness/providers/grok/grokTitle.ts
+  s_666089fd138caa::t_7354474cc4263a 1-2
+src/integrations/harness/providers/hermes/hermes.ts
+  s_666089fd138caa::t_441d0da8768b14 1-2
+src/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_666089fd138caa::t_0e5ffcc10f55ad 1-2
+src/integrations/harness/providers/hermes/hermesLive.test.ts
+  s_666089fd138caa::t_c0ead17514b220 8
+src/integrations/harness/providers/hermes/hermesProtocol.ts
+  s_666089fd138caa::t_ad8ab473c98244 1-2
+src/integrations/harness/providers/kiro/kiro.ts
+  s_666089fd138caa::t_29620b0dcfb87b 1-2
+src/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_666089fd138caa::t_9b45134b6b56fd 1-2
+src/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_666089fd138caa::t_fe8146097c3f2a 1-2
+src/integrations/harness/providers/kiro/kiroLive.test.ts
+  s_666089fd138caa::t_a92a707f977480 12
+src/integrations/harness/providers/kiro/kiroProtocol.ts
+  s_666089fd138caa::t_d0457cdb610434 1-2
+src/integrations/harness/providers/omp/omp.ts
+  s_666089fd138caa::t_aad122661a1002 1-2
+src/integrations/harness/providers/omp/ompLive.test.ts
+  s_666089fd138caa::t_700fcf2dcde534 19
+src/integrations/harness/providers/opencode/opencode.ts
+  s_666089fd138caa::t_409d7710db01b4 1-2
+src/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_666089fd138caa::t_59f2191d8b84d6 1-2
+src/integrations/harness/providers/opencode/opencodeClient.ts
+  s_666089fd138caa::t_30f93b15da9d84 1-2
+src/integrations/harness/providers/opencode/opencodeLive.test.ts
+  s_666089fd138caa::t_baee7330151806 90
+src/integrations/harness/providers/opencode/opencodeProtocol.ts
+  s_666089fd138caa::t_8c6ab9b5a1fa8c 1-2
+src/integrations/harness/providers/opencode/opencodeService.ts
+  s_666089fd138caa::t_933d94afd84cee 1-2
+src/integrations/harness/providers/opencode/opencodeText.ts
+  s_666089fd138caa::t_0ec92e7c8d083d 1-2
+src/integrations/harness/providers/opencode/opencodeTitle.ts
+  s_666089fd138caa::t_18f6375d97b823 1-2
+src/integrations/harness/providers/opencode/opencodeV2Events.ts
+  s_666089fd138caa::t_91efacf0f7e231 1-2
+src/integrations/harness/providers/pi/pi.ts
+  s_666089fd138caa::t_269809a2943acb 1-2
+src/integrations/harness/providers/pi/piCatalog.ts
+  s_666089fd138caa::t_3b41e6cbe3f7e3 1-2
+src/integrations/harness/providers/pi/piClient.ts
+  s_666089fd138caa::t_e953a621ef8a00 1-2
+src/integrations/harness/providers/pi/piFamily.ts
+  s_666089fd138caa::t_e2fc23c15f2c63 1-2
+src/integrations/harness/providers/pi/piFlavor.ts
+  s_666089fd138caa::t_8fc85e4a61af13 1-2
+src/integrations/harness/providers/pi/piLive.test.ts
+  s_666089fd138caa::t_f190626244d2da 12,22
+src/integrations/harness/providers/pi/piProtocol.ts
+  s_666089fd138caa::t_2d1c457f710161 1-2
+src/integrations/harness/providers/pi/piSkills.ts
+  s_666089fd138caa::t_83f8e7fc7fcf5c 1-2
+src/integrations/harness/providers/pi/piSubagents.ts
+  s_666089fd138caa::t_d5f5d1118bb42b 1-2
+src/integrations/harness/providers/pi/piText.ts
+  s_666089fd138caa::t_b1502804e3b1ca 1-2
+src/integrations/harness/providers/pi/piTitle.ts
+  s_666089fd138caa::t_45262952546c01 1-2
+src/platform/tauri/fs.ts
+  s_666089fd138caa::t_b0b005010b3daf 1-2
+src/platform/tauri/platform.ts
+  s_666089fd138caa::t_d5402295c8fc38 1-2
+src/shared/lib/branchOwnership.ts
+  s_666089fd138caa::t_066380c5f3a88c 1-2
+src/shared/lib/jsonText.ts
+  s_666089fd138caa::t_ac843e43d0958d 1-2
+src/shared/lib/paths.ts
+  s_666089fd138caa::t_7baf0c4501e29c 1-2
+src/shared/lib/remotePaths.ts
+  s_666089fd138caa::t_8209b296c5283a 1-2
+src/test/sharedContracts.test.ts
+  s_666089fd138caa::t_2017d9a996055e 53-54,98,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7f79e70b45dafd3fa0b782713b3a5ed916e4253",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
