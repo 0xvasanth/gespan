@@ -4282,7 +4282,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod menu_tests {
+pub(super) mod menu_tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
@@ -4822,7 +4822,7 @@ mod menu_tests {
             .unwrap();
     }
 
-    fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
+    pub(super) fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let summary = store.create("claude", "/work/gespan").unwrap();
         let store = Arc::new(Mutex::new(store));

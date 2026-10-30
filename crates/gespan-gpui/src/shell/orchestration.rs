@@ -38,6 +38,7 @@ pub(super) struct Run {
     cwd: String,
     provider: String,
     settings: Settings,
+    max_workers: usize,
     tasks: Vec<Assignment>,
     stopped: bool,
 }
@@ -98,6 +99,7 @@ impl Shell {
         settings.environment.clear();
         settings.attachments.clear();
         let provider = conversation.summary.provider.clone();
+        let max_workers = plan.max_workers;
         let tasks = plan
             .tasks
             .into_iter()
@@ -114,6 +116,7 @@ impl Shell {
                 cwd,
                 provider,
                 settings,
+                max_workers,
                 tasks,
                 stopped: false,
             },
@@ -215,7 +218,7 @@ impl Shell {
         let mut jobs = Vec::new();
         if !run.stopped {
             for (ix, task) in run.tasks.iter_mut().enumerate() {
-                if occupied.len() >= 4 {
+                if occupied.len() >= run.max_workers {
                     break;
                 }
                 if task.state != State::Pending
@@ -478,6 +481,7 @@ mod tests {
                         title: "Review".into(),
                         summary: String::new(),
                         tasks: vec![own, task("inherits", "docs")],
+                        max_workers: orchestration::MAX_WORKERS,
                     },
                     cx,
                 );
@@ -487,6 +491,49 @@ mod tests {
                 assert_eq!(tasks[0].model.as_deref(), Some("gpt-6"));
                 assert_eq!(tasks[1].provider, provider);
                 assert_eq!(tasks[1].model.as_deref(), Some("lead-model"));
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn the_worker_count_chosen_on_the_card_limits_dispatch(cx: &mut TestAppContext) {
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&lead].update(cx, |v, cx| {
+                    v.install_transfer(Settings::default(), None, cx)
+                });
+                let tasks = ["src", "tests", "docs"]
+                    .into_iter()
+                    .map(|file| Task {
+                        id: file.into(),
+                        title: file.into(),
+                        prompt: "Work".into(),
+                        files: vec![file.into()],
+                        depends_on: Vec::new(),
+                        harness: None,
+                        model: None,
+                        model_settings: Default::default(),
+                    })
+                    .collect();
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Review".into(),
+                        summary: String::new(),
+                        tasks,
+                        max_workers: 2,
+                    },
+                    cx,
+                );
+                let run = shell.orchestrations.get(&lead).unwrap();
+                let starting = run
+                    .tasks
+                    .iter()
+                    .filter(|t| t.state == State::Starting)
+                    .count();
+                assert_eq!(starting, 2);
                 shell.stop_orchestration(lead, cx);
             })
             .unwrap();
@@ -522,6 +569,7 @@ mod tests {
                         title: "Review".into(),
                         summary: String::new(),
                         tasks,
+                        max_workers: orchestration::MAX_WORKERS,
                     },
                     cx,
                 );

@@ -86,6 +86,13 @@ pub struct Plan {
     pub title: String,
     pub summary: String,
     pub tasks: Vec<Task>,
+    /// How many workers run at once. The card edits it; plans don't choose it.
+    #[serde(default = "default_workers", alias = "maxWorkers")]
+    pub max_workers: usize,
+}
+pub const MAX_WORKERS: usize = 4;
+fn default_workers() -> usize {
+    MAX_WORKERS
 }
 impl Plan {
     /// The card's model pick. Settings belong to the model they were set on.
@@ -94,6 +101,12 @@ impl Plan {
             task.harness = Some(kind.id().to_owned());
             task.model = model;
             task.model_settings.clear();
+        }
+    }
+    pub fn set_task_text(&mut self, id: &str, title: &str, prompt: &str) {
+        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id) {
+            task.title = title.to_owned();
+            task.prompt = prompt.to_owned();
         }
     }
     pub fn set_task_setting(&mut self, id: &str, key: &str, value: &str) {
@@ -182,6 +195,9 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
         || plan.tasks.len() > 12
     {
         return Err("Provide a title and 1–12 assignments.".into());
+    }
+    if plan.max_workers == 0 || plan.max_workers > MAX_WORKERS {
+        return Err("Choose 1 to 4 parallel workers.".into());
     }
     let mut ids = HashSet::new();
     for task in &plan.tasks {
@@ -359,6 +375,35 @@ mod tests {
         assert!(plan.tasks[1].model.is_none());
     }
     #[test]
+    fn a_plan_defaults_to_four_workers_and_the_card_may_lower_it() {
+        let mut plan = parse(&plan_text(json!([
+            {"id":"a","title":"A","prompt":"Do","files":["src"]}
+        ])))
+        .unwrap();
+        assert_eq!(plan.max_workers, 4);
+        plan.max_workers = 1;
+        assert!(validate(&plan).is_ok());
+        for refused in [0, 5] {
+            plan.max_workers = refused;
+            assert!(validate(&plan).unwrap_err().contains("1 to 4"));
+        }
+    }
+    #[test]
+    fn edited_text_replaces_the_task_and_blank_text_is_refused() {
+        let mut plan = parse(&plan_text(json!([
+            {"id":"a","title":"A","prompt":"Do","files":["src"]}
+        ])))
+        .unwrap();
+        plan.set_task_text("a", "Renamed", "Do it this way");
+        assert_eq!(plan.tasks[0].title, "Renamed");
+        assert_eq!(plan.tasks[0].prompt, "Do it this way");
+        assert!(worker_prompt(&plan.tasks[0], "").contains("Do it this way"));
+        plan.set_task_text("a", "  ", "Do it");
+        assert!(validate(&plan).is_err());
+        plan.set_task_text("a", "Renamed", "\n");
+        assert!(validate(&plan).is_err());
+    }
+    #[test]
     fn a_plan_naming_an_unknown_harness_is_refused() {
         let text = plan_text(json!([
             {"id":"a","title":"A","prompt":"Do","files":["src"],"harness":"nope"}
@@ -371,6 +416,7 @@ mod tests {
             title: "Work".into(),
             summary: String::new(),
             tasks: vec![task("a", &[], "src")],
+            max_workers: MAX_WORKERS,
         };
         plan.set_task_setting("a", "effort", "high");
         plan.set_task_model("a", Kind::Codex, Some("gpt-6".into()));
@@ -444,6 +490,7 @@ mod tests {
             title: "Work".into(),
             summary: String::new(),
             tasks: vec![task("a", &["b"], "src"), task("b", &["a"], "tests")],
+            max_workers: MAX_WORKERS,
         };
         assert!(validate(&plan).is_err());
         plan.tasks[1].depends_on.clear();

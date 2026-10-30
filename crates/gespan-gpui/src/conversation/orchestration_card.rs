@@ -4,7 +4,7 @@ use super::composer_features::{StartOrchestration, StopOrchestration};
 use super::*;
 use gespan_core::{app_access, catalog, orchestration::Task};
 use gpui::App;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// One task's open picker.
 struct TaskMenu {
@@ -13,10 +13,19 @@ struct TaskMenu {
     _events: Vec<Subscription>,
 }
 
+/// One open task's fields. Each edit lands in the plan as it is typed.
+struct TaskEditor {
+    title: Entity<input::Input>,
+    prompt: Entity<input::Input>,
+    _changed: [Subscription; 2],
+}
+
 #[derive(Default)]
 pub(super) struct PlanCard {
     anchors: HashMap<(String, &'static str), AnchorSlot>,
     menu: Option<TaskMenu>,
+    expanded: HashSet<String>,
+    editors: HashMap<String, TaskEditor>,
 }
 
 impl PlanCard {
@@ -73,6 +82,148 @@ impl Conversation {
         catalog::cached_models_for(kind, &self.task_account(kind, cx))?
             .into_iter()
             .find(|entry| entry.id == model)
+    }
+    fn toggle_task(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.plan_card.expanded.remove(&id) {
+            self.plan_card.expanded.insert(id.clone());
+            let task = self
+                .orchestration_plan
+                .as_ref()
+                .and_then(|plan| plan.tasks.iter().find(|task| task.id == id))
+                .cloned();
+            if let Some(task) = task.filter(|_| !self.plan_card.editors.contains_key(&id)) {
+                let title = cx.new(|cx| {
+                    let mut input = input::Input::field("Task", "Task", content(0.4), cx);
+                    input.set_text(task.title.clone(), cx);
+                    input
+                });
+                let prompt = cx.new(|cx| {
+                    let mut input =
+                        input::Input::multiline_field("Instructions", "Instructions", cx);
+                    input.set_text(task.prompt.clone(), cx);
+                    input
+                });
+                let changed = [&title, &prompt].map(|field| {
+                    let id = id.clone();
+                    cx.subscribe(field, move |this, _, _: &input::Changed, cx| {
+                        this.task_edited(&id, cx)
+                    })
+                });
+                self.plan_card.editors.insert(
+                    id,
+                    TaskEditor {
+                        title,
+                        prompt,
+                        _changed: changed,
+                    },
+                );
+            }
+        }
+        cx.notify();
+    }
+    fn task_edited(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(editor) = self.plan_card.editors.get(id) else {
+            return;
+        };
+        let title = editor.title.read(cx).content.to_string();
+        let prompt = editor.prompt.read(cx).content.to_string();
+        if let Some(plan) = &mut self.orchestration_plan {
+            plan.set_task_text(id, &title, &prompt);
+        }
+        self.orchestration_error = None;
+        cx.notify();
+    }
+    fn set_plan_workers(&mut self, workers: usize, cx: &mut Context<Self>) {
+        if let Some(plan) = &mut self.orchestration_plan {
+            plan.max_workers = workers;
+        }
+        cx.notify();
+    }
+    /// A blank edit stays on the card with the reason; nothing starts.
+    fn start_plan(&mut self, cx: &mut Context<Self>) {
+        let Some(plan) = self.orchestration_plan.clone() else {
+            return;
+        };
+        match gespan_core::orchestration::validate(&plan) {
+            Ok(()) => {
+                self.orchestration_error = None;
+                cx.emit(StartOrchestration(plan));
+            }
+            Err(error) => self.orchestration_error = Some(error),
+        }
+        cx.notify();
+    }
+    fn workers_row(&self, workers: usize, cx: &mut Context<Self>) -> AnyElement {
+        let row = div()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .text_size(px(11.))
+            .text_color(content(0.45));
+        if self.orchestration_progress.is_some() {
+            return row.child(format!("{workers} parallel")).into_any_element();
+        }
+        row.child("Parallel workers")
+            .children((1..=gespan_core::orchestration::MAX_WORKERS).map(|number| {
+                let selected = number == workers;
+                div()
+                    .id(("plan-workers", number))
+                    .role(Role::Button)
+                    .aria_label(SharedString::from(format!("{number} parallel workers")))
+                    .size(px(20.))
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(content(0.14)).text_color(content(1.)))
+                    .when(!selected, |d| d.hover(|s| s.bg(content(0.08))))
+                    .child(number.to_string())
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_plan_workers(number, cx)))
+            }))
+            .into_any_element()
+    }
+    fn task_details(&self, task: &Task) -> AnyElement {
+        let details = div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .pt_1()
+            .pl_4()
+            .text_size(px(11.))
+            .text_color(content(0.45));
+        match self
+            .plan_card
+            .editors
+            .get(&task.id)
+            .filter(|_| self.orchestration_progress.is_none())
+        {
+            Some(editor) => {
+                let field = |label: &'static str, input: Entity<input::Input>| {
+                    div().child(label).child(
+                        div()
+                            .mt_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(content(0.12))
+                            .text_color(content(1.))
+                            .child(input),
+                    )
+                };
+                details
+                    .child(field("Task", editor.title.clone()))
+                    .child(field("Instructions", editor.prompt.clone()))
+            }
+            None => details.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(content(0.6))
+                    .child(task.prompt.clone()),
+            ),
+        }
+        .into_any_element()
     }
     fn close_task_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.plan_card.menu = None;
@@ -286,7 +437,9 @@ impl Conversation {
                 .iter()
                 .map(|task| {
                     let pills = self.task_pills(task, cx);
-                    div()
+                    let open = self.plan_card.expanded.contains(&task.id);
+                    let id = task.id.clone();
+                    let header = div()
                         .py_1()
                         .flex()
                         .items_start()
@@ -294,8 +447,35 @@ impl Conversation {
                         .gap_2()
                         .child(
                             div()
+                                .id(SharedString::from(format!("task-details-{}", task.id)))
+                                .role(Role::Button)
+                                .aria_label(SharedString::from(format!(
+                                    "Details for {}",
+                                    task.title
+                                )))
                                 .min_w_0()
-                                .child(format!("{} · {}", task.id, task.title))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_task(id.clone(), cx)
+                                }))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            icon(
+                                                if open {
+                                                    "chevron-down"
+                                                } else {
+                                                    "chevron-right"
+                                                },
+                                                12.,
+                                            )
+                                            .text_color(content(0.5)),
+                                        )
+                                        .child(format!("{} · {}", task.id, task.title)),
+                                )
                                 .child(div().text_size(px(10.)).text_color(content(0.4)).child(
                                     format!(
                                         "{}{}",
@@ -308,7 +488,10 @@ impl Conversation {
                                     ),
                                 )),
                         )
-                        .child(pills)
+                        .child(pills);
+                    div()
+                        .child(header)
+                        .when(open, |d| d.child(self.task_details(task)))
                 })
                 .collect();
             card = card
@@ -320,10 +503,11 @@ impl Conversation {
                 .child(
                     div()
                         .id("orchestration-tasks")
-                        .max_h(px(200.))
+                        .max_h(px(320.))
                         .overflow_y_scroll()
                         .children(rows),
-                );
+                )
+                .child(self.workers_row(plan.max_workers, cx));
             if self.orchestration_progress.is_none() {
                 card = card.child(
                     div()
@@ -333,11 +517,7 @@ impl Conversation {
                             tool_pill("start-orchestration", "Start agents")
                                 .bg(content(0.1))
                                 .child("Start agents")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(plan) = this.orchestration_plan.clone() {
-                                        cx.emit(StartOrchestration(plan));
-                                    }
-                                })),
+                                .on_click(cx.listener(|this, _, _, cx| this.start_plan(cx))),
                         )
                         .child(
                             tool_pill("dismiss-orchestration", "Dismiss plan")
@@ -376,5 +556,116 @@ impl Conversation {
             menu_popover(&open.menu, Anchor::Slot(open.anchor.clone()), cx).side(Side::Top)
         }));
         Some(card.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::menu_tests::conversation;
+    use super::*;
+    use gespan_core::orchestration::{MAX_WORKERS, Plan};
+    use gpui::{TestAppContext, WindowHandle};
+
+    fn with_plan(window: WindowHandle<Conversation>, cx: &mut TestAppContext) {
+        window
+            .update(cx, |view, _, _| {
+                view.orchestration_plan = Some(Plan {
+                    title: "Work".into(),
+                    summary: String::new(),
+                    tasks: vec![Task {
+                        id: "a".into(),
+                        title: "First".into(),
+                        prompt: "Do it".into(),
+                        files: vec!["src".into()],
+                        depends_on: Vec::new(),
+                        harness: None,
+                        model: None,
+                        model_settings: Default::default(),
+                    }],
+                    max_workers: MAX_WORKERS,
+                });
+            })
+            .unwrap();
+    }
+
+    fn edit(
+        window: WindowHandle<Conversation>,
+        cx: &mut TestAppContext,
+        title: &str,
+        prompt: &str,
+    ) {
+        window
+            .update(cx, |view, _, cx| {
+                let editor = &view.plan_card.editors["a"];
+                let (title_field, prompt_field) = (editor.title.clone(), editor.prompt.clone());
+                title_field.update(cx, |input, cx| input.set_text(title.to_owned(), cx));
+                prompt_field.update(cx, |input, cx| input.set_text(prompt.to_owned(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn opening_a_task_fills_its_fields_and_edits_reach_the_plan(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        with_plan(window, cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.toggle_task("a".into(), cx);
+                let editor = &view.plan_card.editors["a"];
+                assert_eq!(editor.title.read(cx).content.as_ref(), "First");
+                assert_eq!(editor.prompt.read(cx).content.as_ref(), "Do it");
+            })
+            .unwrap();
+        edit(window, cx, "Renamed", "Do it differently");
+        window
+            .update(cx, |view, _, cx| {
+                let task = &view.orchestration_plan.as_ref().unwrap().tasks[0];
+                assert_eq!(task.title, "Renamed");
+                assert_eq!(task.prompt, "Do it differently");
+                // Closing and reopening keeps what was typed.
+                view.toggle_task("a".into(), cx);
+                view.toggle_task("a".into(), cx);
+                let editor = &view.plan_card.editors["a"];
+                assert_eq!(editor.title.read(cx).content.as_ref(), "Renamed");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_blank_edit_refuses_to_start_and_typing_clears_the_reason(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        with_plan(window, cx);
+        window
+            .update(cx, |view, _, cx| view.toggle_task("a".into(), cx))
+            .unwrap();
+        edit(window, cx, "", "Do it");
+        window
+            .update(cx, |view, _, cx| {
+                view.start_plan(cx);
+                let error = view.orchestration_error.clone().unwrap();
+                assert!(error.contains("needs a title"), "{error}");
+            })
+            .unwrap();
+        edit(window, cx, "Back", "Do it");
+        window
+            .update(cx, |view, _, cx| {
+                assert!(view.orchestration_error.is_none());
+                view.start_plan(cx);
+                assert!(view.orchestration_error.is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_worker_count_lands_in_the_plan(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        with_plan(window, cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.set_plan_workers(2, cx);
+                assert_eq!(view.orchestration_plan.as_ref().unwrap().max_workers, 2);
+            })
+            .unwrap();
     }
 }
