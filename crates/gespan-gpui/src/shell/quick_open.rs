@@ -27,9 +27,10 @@ impl Shell {
         };
         match command {
             BoardCommand::Show => {}
-            BoardCommand::CreateCard => {
-                board.update(cx, |board, cx| board.open_new_card(window, cx))
-            }
+            BoardCommand::CreateCard => board.update(cx, |board, cx| {
+                board.ensure_board(cx);
+                board.open_new_card(window, cx)
+            }),
             BoardCommand::SwitchBoard => {
                 board.update(cx, |board, cx| board.open_switcher(window, cx))
             }
@@ -524,10 +525,10 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 let board = shell.board.as_ref().expect("the board is open").read(cx);
-                let detail = board.detail.as_ref().expect("a board is loaded");
-                detail
-                    .cards
+                board
+                    .detail
                     .iter()
+                    .flat_map(|detail| &detail.cards)
                     .map(|card| {
                         (
                             card.title.clone(),

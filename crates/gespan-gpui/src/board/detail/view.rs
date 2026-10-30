@@ -1284,6 +1284,19 @@ impl BoardView {
                     .gap_2()
                     .cursor_pointer()
                     .hover(|s| s.bg(content(0.04)))
+                    .when_some(detail.subtask_focus.get(&subtask.id), |d, focus| {
+                        d.track_focus(focus).tab_index(0)
+                    })
+                    .focus_visible(|s| s.bg(content(0.08)))
+                    .on_key_down(cx.listener({
+                        let id = subtask.id.clone();
+                        move |this, event: &gpui::KeyDownEvent, _, cx| {
+                            if let Some(by) = super::subtask_shift(&event.keystroke) {
+                                cx.stop_propagation();
+                                this.shift_subtask(&id, by, cx);
+                            }
+                        }
+                    }))
                     .child(
                         div()
                             .size(px(14.))

@@ -95,7 +95,7 @@ impl BoardView {
             self.load_connected_trackers(cx);
             self.refresh_card_ticket(card_id, true, false, cx);
         }
-        self.refresh_detail_lists();
+        self.refresh_detail_lists(cx);
         cx.notify();
     }
 
@@ -104,7 +104,7 @@ impl BoardView {
         self.ticket_requests.remove(card_id);
         self.stale_tickets.remove(card_id);
         self.write(cx, |service| service.set_card_ticket(&id, None));
-        self.refresh_detail_lists();
+        self.refresh_detail_lists(cx);
         cx.notify();
     }
 
@@ -225,7 +225,7 @@ impl BoardView {
                     service.set_card_ticket(&id, Some(&fresh))?;
                     retitle_from_ticket(service, &id, &key, &fresh)
                 });
-                self.refresh_detail_lists();
+                self.refresh_detail_lists(cx);
             }
             Err(error) => {
                 if matches!(error, TicketError::NotConnected(_)) {

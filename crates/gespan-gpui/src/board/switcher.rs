@@ -294,6 +294,34 @@ impl BoardView {
         cx.notify();
     }
 
+    /// "No boards yet": Create board names one and picks its template.
+    pub(super) fn render_no_boards(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .debug_selector(|| "board-no-boards".into())
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(content(0.6))
+                    .child("No boards yet"),
+            )
+            .child(
+                crate::modal::primary_button("board-create-first", "Create board")
+                    .debug_selector(|| "board-create-first".into())
+                    .child(self.switcher_anchor.probe())
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.start_board_name(false, window, cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn render_switcher_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.open_board_name();
         let open = self.switcher.is_some();
@@ -354,7 +382,9 @@ impl BoardView {
                 .into_any_element(),
             );
         }
-        rows.push(div().h(px(1.)).my_1().bg(content(0.07)).into_any_element());
+        if !rows.is_empty() {
+            rows.push(div().h(px(1.)).my_1().bg(content(0.07)).into_any_element());
+        }
         match &switcher.mode {
             Mode::New(input) => {
                 rows.push(name_field("board-new-name", input));
