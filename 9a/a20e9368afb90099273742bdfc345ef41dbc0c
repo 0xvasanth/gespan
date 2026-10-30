@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/shell.rs
+  s_e86ce54257af83::t_d46221d8ceefce 3628-3629,3632-3633
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9aa20e9368afb90099273742bdfc345ef41dbc0c",
+  "prompts": {},
+  "sessions": {
+    "s_e86ce54257af83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "117db5a4-2c1a-4e88-bda8-65eec1ea3d63",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
