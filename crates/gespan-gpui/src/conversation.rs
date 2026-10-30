@@ -4100,7 +4100,8 @@ fn send_button(
     // Without an accent the button is the inverse of the surface: white with
     // black ink on dark, black with white ink on light.
     let light = crate::theme::is_light();
-    let (solid, ink): (fn(f32) -> gpui::Hsla, fn(f32) -> gpui::Hsla) = if light {
+    type Shade = fn(f32) -> gpui::Hsla;
+    let (solid, ink): (Shade, Shade) = if light {
         (black, white)
     } else {
         (white, black)
