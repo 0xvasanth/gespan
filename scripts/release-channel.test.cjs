@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -163,6 +163,69 @@ test("the native endpoint can be overridden, but only with HTTPS", () => {
     "https://mirror.example.com/native.json",
   );
   assert.throws(() => nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "http://mirror.example.com/native.json" }), /HTTPS/);
+});
+
+test("a stable tag reads the stable feed, and each channel has its own override", () => {
+  const stable = { GITHUB_REF_NAME: "v1.2.0" };
+  const preview = { GITHUB_REF_NAME: "v1.2.0-beta" };
+  assert.equal(GITHUB_NATIVE_STABLE_FEED, "https://github.com/0xvasanth/gespan/releases/latest/download/native-latest.json");
+  assert.equal(nativeUpdaterEndpoint(stable), GITHUB_NATIVE_STABLE_FEED);
+  assert.equal(nativeUpdaterEndpoint(preview), GITHUB_NATIVE_FEED);
+  const overrides = {
+    NATIVE_UPDATER_ENDPOINT: "https://mirror.example.com/preview.json",
+    NATIVE_STABLE_UPDATER_ENDPOINT: "https://mirror.example.com/stable.json",
+  };
+  assert.equal(nativeUpdaterEndpoint({ ...stable, ...overrides }), overrides.NATIVE_STABLE_UPDATER_ENDPOINT);
+  assert.equal(nativeUpdaterEndpoint({ ...preview, ...overrides }), overrides.NATIVE_UPDATER_ENDPOINT);
+  // The preview override must not point stable builds at a feed they refuse.
+  assert.equal(nativeUpdaterEndpoint({ ...stable, NATIVE_UPDATER_ENDPOINT: overrides.NATIVE_UPDATER_ENDPOINT }), GITHUB_NATIVE_STABLE_FEED);
+  assert.throws(() => nativeUpdaterEndpoint({ ...stable, NATIVE_STABLE_UPDATER_ENDPOINT: "http://mirror.example.com/s.json" }), /HTTPS/);
+});
+
+test("only a stable tag becomes GitHub's latest release and mirrors outside native-preview", () => {
+  assert.deepEqual(nativeChannel({ GITHUB_REF_NAME: "v1.2.0" }), {
+    prerelease: false, mirrorPrefix: "native-stable", releaseFlags: "--prerelease=false --latest",
+  });
+  for (const tag of ["v1.2.0-beta", "v1.2.0-beta.3", "v1.2.0-preview.1"]) {
+    assert.deepEqual(nativeChannel({ GITHUB_REF_NAME: tag }), {
+      prerelease: true, mirrorPrefix: "native-preview", releaseFlags: "--prerelease --latest=false",
+    });
+  }
+  assert.throws(() => nativeChannel({ GITHUB_REF_NAME: "main" }), /release tag/);
+});
+
+test("only a stable tag moves the fixed download links, one per Mac architecture", () => {
+  assert.deepEqual(nativeFixedDownloads({ GITHUB_REF_NAME: "v1.2.0" }), [
+    { file: "GespanNative_1.2.0_aarch64.dmg", key: "Gespan.dmg" },
+    { file: "GespanNative_1.2.0_x64.dmg", key: "Gespan_x64.dmg" },
+  ]);
+  assert.deepEqual(nativeFixedDownloads({ GITHUB_REF_NAME: "v1.2.0-beta" }), []);
+});
+
+test("the release workflow takes its channel from the tag at every step", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-channel-"));
+  const envFile = path.join(dir, "env");
+  const cli = (command, tag) => {
+    fs.writeFileSync(envFile, "");
+    const stdout = execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), command], {
+      env: { PATH: process.env.PATH, GITHUB_ENV: envFile, GITHUB_REF_NAME: tag }, encoding: "utf8",
+    });
+    return { stdout, env: fs.readFileSync(envFile, "utf8") };
+  };
+  const stable = cli("native-release-tag", "v1.2.0").env;
+  assert.match(stable, /^NATIVE_RELEASE_TAG=v1\.2\.0$/m);
+  assert.match(stable, /^NATIVE_PRERELEASE=false$/m);
+  assert.match(stable, /^NATIVE_MIRROR_PREFIX=native-stable$/m);
+  assert.match(stable, /^NATIVE_RELEASE_FLAGS=--prerelease=false --latest$/m);
+  assert.match(cli("native-release-tag", "v1.2.0-beta").env, /^NATIVE_PRERELEASE=true$/m);
+  assert.equal(cli("native-fixed-downloads", "v1.2.0").stdout,
+    "GespanNative_1.2.0_aarch64.dmg Gespan.dmg\nGespanNative_1.2.0_x64.dmg Gespan_x64.dmg\n");
+  assert.equal(cli("native-fixed-downloads", "v1.2.0-beta").stdout, "");
+
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  assert.doesNotMatch(workflow, /gh release (create|edit) "\$NATIVE_RELEASE_TAG".* --prerelease/, "the channel must come from NATIVE_RELEASE_FLAGS");
+  assert.doesNotMatch(workflow, /s3:\/\/\$\{R2_BUCKET_NAME\}\/native-preview/, "the mirror must come from NATIVE_MIRROR_PREFIX");
+  assert.match(workflow, /native-fixed-downloads/);
 });
 
 test("native packages are referenced from the version's shared release, not the feed release", () => {

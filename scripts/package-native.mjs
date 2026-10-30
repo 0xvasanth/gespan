@@ -14,27 +14,31 @@ import { join, resolve, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-// A prerelease version: X.Y.Z-preview.N, X.Y.Z-beta or X.Y.Z-beta.N. Windows
-// version resources need four numbers, so the sequence (0 when absent) is
-// the fourth.
-export function previewVersion(version) {
+// A stable X.Y.Z, or a prerelease: X.Y.Z-preview.N, X.Y.Z-beta or X.Y.Z-beta.N.
+// Windows version resources need four numbers, so the sequence (0 when absent)
+// is the fourth.
+export function nativeVersion(version) {
   const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:preview\.(0|[1-9]\d*)|beta(?:\.(0|[1-9]\d*))?)$/.exec(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(?:preview\.(0|[1-9]\d*)|beta(?:\.(0|[1-9]\d*))?))?$/.exec(
       version,
     );
-  const sequence = match && (match[4] ?? match[5] ?? "0");
+  const sequence = match && (match[5] ?? match[6] ?? "0");
   const numbers = match ? [...match.slice(1, 4), sequence] : [];
   if (!match || numbers.some((n) => Number(n) > 65535))
     throw new Error(
-      "Expected a native prerelease version such as 0.16.0-preview.1 or 0.0.1-beta",
+      "Expected a native version such as 0.16.0, 0.16.0-preview.1 or 0.0.1-beta",
     );
   return {
     version,
-    label: match[4] === undefined ? "beta" : "preview",
+    label: !match[4] ? "stable" : match[5] === undefined ? "beta" : "preview",
     base: match.slice(1, 4).join("."),
     sequence,
     windows: numbers.join("."),
   };
+}
+// A stable release sorts after its own prereleases, whose Release starts with 0.
+export function rpmRelease({ label, sequence }) {
+  return label === "stable" ? "1" : `0.${label}.${sequence}`;
 }
 // hdiutil's -srcfolder estimate fell short of the app on the macOS 15
 // runner ("No space left on device" inside the image), so the staging
@@ -149,7 +153,9 @@ export async function packageNative({
   version,
   arch = "x86_64",
 }) {
-  const parsed = previewVersion(version);
+  const parsed = nativeVersion(version);
+  const summary =
+    parsed.label === "stable" ? "Gespan Native" : "Gespan Native experimental preview";
   binary = resolve(binary);
   out = resolve(out);
   const embedded = run(binary, ["--version"], {
@@ -278,7 +284,7 @@ export async function packageNative({
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
-      `Package: gespan-native\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: Gespan Native experimental preview\n`,
+      `Package: gespan-native\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
     );
     run("dpkg-deb", [
       "--build",
@@ -320,7 +326,7 @@ export async function packageNative({
     const spec = join(top, "SPECS/gespan-native.spec");
     await writeFile(
       spec,
-      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: 0.${parsed.label}.${parsed.sequence}%{?dist}\nSummary: Gespan Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nGespan Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
+      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
     );
     run("rpmbuild", [
       "--define",

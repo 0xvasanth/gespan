@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { feedNotes, nativeManifest, nativeTargets } from "./native-release.mjs";
-import { previewVersion } from "./package-native.mjs";
+import { nativeVersion, rpmRelease } from "./package-native.mjs";
 
 const artifacts = nativeTargets.map((target) => ({
   target,
@@ -64,15 +64,23 @@ test("duplicate targets, unsigned packages and path traversal are refused", () =
     );
   }
 });
-test("production tags and insecure download bases cannot create native releases", () => {
+test("a stable version gets its own signed channel", () => {
+  const result = manifest({
+    version: "0.16.0",
+    assetBaseUrl: "https://dl.example.test/releases/download/v0.16.0",
+  });
+  assert.equal(result.channel, "native-stable");
+  assert.equal(result.version, "0.16.0");
+  assert.equal(manifest({ version: "0.16.0-beta" }).channel, "native-preview");
+});
+test("loose tags and insecure download bases cannot create native releases", () => {
   for (const version of [
-    "0.16.0",
     "v0.16.0",
     "native-v0.16.0-preview.1",
     "0.16.0-rc.1",
     "0.16.0-preview.1/../latest.json",
   ]) {
-    assert.throws(() => manifest({ version }), /native prerelease version/);
+    assert.throws(() => manifest({ version }), /native version/);
   }
   for (const assetBaseUrl of [
     "http://dl.example.test",
@@ -83,22 +91,37 @@ test("production tags and insecure download bases cannot create native releases"
   }
 });
 test("preview sequence fits native Windows version resources", () => {
-  assert.equal(previewVersion("0.16.0-preview.12").windows, "0.16.0.12");
-  assert.throws(() => previewVersion("0.16.0-preview.65536"));
+  assert.equal(nativeVersion("0.16.0-preview.12").windows, "0.16.0.12");
+  assert.throws(() => nativeVersion("0.16.0-preview.65536"));
 });
 test("beta versions map to numeric Windows versions and their own label", () => {
-  assert.deepEqual(previewVersion("0.0.1-beta"), {
+  assert.deepEqual(nativeVersion("0.0.1-beta"), {
     version: "0.0.1-beta",
     label: "beta",
     base: "0.0.1",
     sequence: "0",
     windows: "0.0.1.0",
   });
-  assert.equal(previewVersion("0.0.1-beta.3").windows, "0.0.1.3");
-  assert.equal(previewVersion("0.16.0-preview.2").label, "preview");
-  for (const bad of ["0.0.1", "0.0.1-beta.", "0.0.1-alpha", "0.0.1-preview", "0.0.1-beta.65536"]) {
-    assert.throws(() => previewVersion(bad), bad);
+  assert.equal(nativeVersion("0.0.1-beta.3").windows, "0.0.1.3");
+  assert.equal(nativeVersion("0.16.0-preview.2").label, "preview");
+  for (const bad of ["v0.0.1", "0.0.1-beta.", "0.0.1-alpha", "0.0.1-preview", "0.0.1-beta.65536"]) {
+    assert.throws(() => nativeVersion(bad), bad);
   }
+});
+
+test("stable versions package with a label of their own", () => {
+  assert.deepEqual(nativeVersion("1.2.3"), {
+    version: "1.2.3",
+    label: "stable",
+    base: "1.2.3",
+    sequence: "0",
+    windows: "1.2.3.0",
+  });
+  assert.throws(() => nativeVersion("1.2.65536"));
+  // rpm compares Release as a version, so stable must beat its prereleases.
+  assert.equal(rpmRelease(nativeVersion("1.2.3")), "1");
+  assert.equal(rpmRelease(nativeVersion("1.2.3-beta.2")), "0.beta.2");
+  assert.equal(rpmRelease(nativeVersion("1.2.3-preview.4")), "0.preview.4");
 });
 
 test("the feed's notes are the version's CHANGELOG section", () => {

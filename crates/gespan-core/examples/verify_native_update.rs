@@ -11,10 +11,16 @@ fn verify() -> Result<(), String> {
     let key = env::var("TAURI_UPDATER_PUBKEY").map_err(|_| "Missing update public key")?;
     let expected =
         env::var("GESPAN_NATIVE_VERSION").map_err(|_| "Missing native release version")?;
+    // The client accepts only its own channel, so stand in for an older build on it.
+    let current = if expected.contains('-') {
+        "0.0.0-0"
+    } else {
+        "0.0.0"
+    };
     let config = Config::new(
-        "https://offline.example.test/native-preview/latest.json",
+        "https://offline.example.test/native/latest.json",
         &key,
-        "0.0.0-0",
+        current,
     )?;
     let feed = fs::read(directory.join("latest.json")).map_err(|e| e.to_string())?;
     let mut verified = 0;
