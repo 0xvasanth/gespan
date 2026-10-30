@@ -290,28 +290,30 @@ pub fn video_extension(bytes: &[u8]) -> Option<&'static str> {
         .then_some("webm")
 }
 
-/// Write `bytes` once under `dir`, named by `url`, and return the file.
+/// Write `bytes` under `dir`, named by `url`, and return the file. The bytes
+/// come from a signed-in fetch and may be private, so they go through a
+/// uniquely named file only this user can read, then replace any older copy.
 fn save_video(dir: &Path, url: &str, bytes: &[u8], extension: &str) -> Result<PathBuf, String> {
     use std::hash::{Hash, Hasher};
+    use std::io::Write;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     url.trim().hash(&mut hasher);
     let path = dir.join(format!("{:016x}.{extension}", hasher.finish()));
-    if path
-        .metadata()
-        .is_ok_and(|meta| meta.len() == bytes.len() as u64)
-    {
-        return Ok(path);
-    }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    // A partly written file must never be played, so write beside it first.
-    let partial = path.with_extension(format!("{extension}.part"));
-    std::fs::write(&partial, bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
+    file.write_all(bytes).map_err(|e| e.to_string())?;
+    file.persist(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
 
-fn video_dir() -> PathBuf {
-    std::env::temp_dir().join("gespan-inbox-media")
+/// Gespan's own folder for description videos, under its per-user data folder.
+static VIDEO_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Set where description videos are kept, and empty it: a video is only ever
+/// played from a copy this run fetched, never from one left behind.
+pub fn init_video_dir(dir: PathBuf) {
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = VIDEO_DIR.set(dir);
 }
 
 /// A description image as PNG bytes. A video is saved for [`video`] instead
@@ -319,7 +321,10 @@ fn video_dir() -> PathBuf {
 pub fn png(url: &str) -> Result<Vec<u8>, String> {
     let bytes = fetch(url)?;
     if let Some(extension) = video_extension(&bytes) {
-        let path = save_video(&video_dir(), url, &bytes, extension)?;
+        let dir = VIDEO_DIR
+            .get()
+            .ok_or_else(|| "Gespan has no folder for videos".to_owned())?;
+        let path = save_video(dir, url, &bytes, extension)?;
         if let Ok(mut videos) = VIDEOS.lock() {
             videos.insert(url.trim().to_owned(), path);
         }
@@ -358,27 +363,30 @@ mod tests {
     }
 
     #[test]
-    fn a_video_is_saved_once_per_url_and_never_half_written() {
+    fn a_video_is_saved_per_url_privately_and_never_half_written() {
         let dir = tempfile::tempdir().unwrap();
+        let videos = dir.path().join("inbox-media");
         let url = "https://github.com/user-attachments/assets/clip";
-        let first = save_video(dir.path(), url, b"movie", "mp4").unwrap();
-        assert_eq!(first.parent().unwrap(), dir.path());
+        let first = save_video(&videos, url, b"movie", "mp4").unwrap();
+        assert_eq!(first.parent().unwrap(), videos);
         assert_eq!(first.extension().unwrap(), "mp4");
         assert_eq!(std::fs::read(&first).unwrap(), b"movie");
-        let modified = first.metadata().unwrap().modified().unwrap();
-        let again = save_video(dir.path(), &format!(" {url} "), b"movie", "mp4").unwrap();
-        assert_eq!(again, first, "the same URL reuses its file");
-        assert_eq!(again.metadata().unwrap().modified().unwrap(), modified);
-        let other =
-            save_video(dir.path(), "https://uploads.linear.app/x", b"webm", "webm").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = first.metadata().unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "only this user can read a private attachment");
+        }
+        // A newer fetch of the same URL replaces the copy in place.
+        let again = save_video(&videos, &format!(" {url} "), b"movie 2", "mp4").unwrap();
+        assert_eq!(again, first);
+        assert_eq!(std::fs::read(&again).unwrap(), b"movie 2");
+        let other = save_video(&videos, "https://uploads.linear.app/x", b"webm", "webm").unwrap();
         assert_ne!(other, first);
-        let names: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect();
-        assert!(
-            names.iter().all(|name| !name.ends_with(".part")),
-            "{names:?}"
+        assert_eq!(
+            std::fs::read_dir(&videos).unwrap().count(),
+            2,
+            "no partial files are left"
         );
     }
 

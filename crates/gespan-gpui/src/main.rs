@@ -434,6 +434,12 @@ fn main() {
             .unwrap_or(std::path::Path::new("."))
             .join("checkpoints"),
     );
+    gespan_core::inbox::init_media_video_dir(
+        database
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("inbox-media"),
+    );
     let saved = db.ui_state().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
