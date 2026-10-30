@@ -53,6 +53,7 @@ crates/gespan-gpui/src/shell.rs
   s_943e8c7cbbf342::t_60fe1285d4445a 613-614,1018,1300
 crates/gespan-core/src/pilot/bridge.rs
   s_943e8c7cbbf342::t_60fe1285d4445a 125-127,129-131,134-137,219-241,244-250,255,299-300,306-307,345,362-381
+  s_943e8c7cbbf342::t_20b0c4f00616bb 291,361
 crates/gespan-gpui/src/questions.rs
   s_943e8c7cbbf342::t_60fe1285d4445a 44-48
 ---
