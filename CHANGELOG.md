@@ -7,27 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-31
+
+The first stable release of Gespan, for macOS, Windows and Linux, with the iOS
+app on TestFlight. The app is now called Gespan and is the only desktop app.
+
+**Betas don't update to this version on their own.** Install it from this
+release's assets. Your data stays where it is. On macOS, delete
+`Gespan Native.app` afterwards.
+
+This release is not signed with an Apple Developer ID or a Windows code-signing
+certificate. On macOS, open it the first time with Control-click → Open, and if
+macOS still refuses, run `xattr -dr com.apple.quarantine /Applications/Gespan.app`.
+On Windows, choose **More info → Run anyway** in SmartScreen.
+
 ### Changed
 
-- The app is now called Gespan: `Gespan.app`, `Gespan_*.dmg`, `Gespan_*-setup.exe`,
-  `Gespan_*.AppImage` and the `gespan` `.deb` and `.rpm` packages. Your data,
-  settings and logs stay where they are. On Linux the packages replace
-  `gespan-native` and the old `Gespan` package; on Windows a beta install is
-  updated in its existing folder.
+- The app is now called Gespan: `Gespan.app`, `Gespan_*.dmg`,
+  `Gespan_*-setup.exe`, `Gespan_*.AppImage` and the `gespan` `.deb` and
+  `.rpm` packages. Your data, settings and logs stay where they are. On
+  Linux the packages replace `gespan-native` and the old `Gespan` package;
+  on Windows a beta install is updated in its existing folder.
 
 ### Added
 
-- Gespan Native's GitHub Inbox works for projects on another machine. Issues,
-  pull requests, conversations, diffs, checks, job details, reruns of failed
-  jobs and actions go through Gespan Host and use that machine's `gh` account
-  and checkout, so they work even when GitHub CLI isn't signed in on this
+- Gespan has an Ask panel next to an inbox item. A resizable side chat keeps
+  one conversation per item, with Restart and Close. It stays out of the
+  sidebar, and only the agent receives the item's context.
+- Gespan's Checks tab repairs CI. Pick which failed checks to fix, open a
+  check's job steps and annotations, filter by Needs attention or All
+  checks, refresh, and rerun failed jobs. Each repair shows its progress
+  against the agent and the next CI results, and open pull requests keep
+  their checks up to date.
+- Gespan starts work from an inbox item, or from a note, with a card above
+  the composer. You can add a message or just send, and remove the card to
+  start over. A note stays a card on the sent message, and only the agent
+  receives its text. Fix with agent still sends straight away.
+- Gespan shows videos attached to inbox item descriptions. A GitHub or
+  Linear attachment that turns out to be a video shows as a play card in the
+  description and opens in the file viewer.
+- Gespan lets you undo or keep a session's changes one file at a time:
+  hovering a file in the changes card under the reply shows its own Undo and
+  Keep. Folders without Git now get these reviews too: each file a
+  structured edit writes is saved before and after the edit, and Undo is
+  offered only while the file is still as the session left it. Committing
+  files whole from a Pilot's Changes tab clears them from the Pilot
+  session's review.
+- Gespan's / picker has a New skill row. It opens a short form named from
+  the typed command, with Project or Personal skills, and writes a starter
+  SKILL.md that opens for editing. The command is cleared from the message
+  and the next / lists the new skill.
+- Gespan follows a renamed project folder. Each project's folder identity is
+  remembered, and when the saved folder is gone at launch, its former
+  siblings are checked for it. The project, its sessions, terminals and
+  settings move to the new name. A folder that cannot be found, or more than
+  one match, leaves the project as it was.
+- Gespan reads Cursor's own session store while a Cursor turn runs. Tool
+  calls Cursor sent without their arguments get them, so they show the file,
+  command or search they ran, and each Cursor subagent's card fills with its
+  own messages and tool calls, its model and a readable name. The store is
+  only ever opened read-only.
+- Gespan plays the Opus 5.5 and Astra welcome scenes when you pick either
+  model: a staff that writes itself with a short phrase of notes for Opus,
+  and a small sun with falling stars for Astra. The scene sits over the
+  session without taking clicks, and is skipped when the system asks for
+  reduced motion.
+- Gespan previews the change an Edit or Write tool proposes. Hovering the
+  file chip shows the first changed lines with their counts, read from the
+  tool itself rather than from git, for Claude, Codex and ACP agents. A
+  Write shows the written lines, since the file's old contents are not
+  known.
+- Gespan asks what to do when switching branches would overwrite your local
+  changes, instead of only showing Git's error. Stash & switch puts them in
+  a stash named "WIP before switching to <branch>" and leaves it for you to
+  apply later; Commit & switch commits everything on the current branch with
+  your message first. Cancel stays put.
+- Gespan can open several windows. New Window is in the File menu, the macOS
+  Dock menu and on ⌘⇧N (Ctrl+Shift+N). Each window is its own workspace over
+  the same data. Closing a further window moves its running chats to the
+  first window, and the app quits when the last workspace window closes.
+- You can edit an orchestration plan before starting it. Each task on the
+  plan card opens with editable Task and Instructions fields, and the card
+  sets Parallel workers from 1 to 4.
+- The lead of an orchestration can choose a harness, model and effort for
+  each task. The plan card shows them as pills you can change before
+  starting. A task without a choice inherits the lead's model.
+- Appearance has a Transparent window switch and a Blur radius setting.
+- Settings → Inbox connects GitLab, Azure DevOps, Jira, Plane and Linear in
+  place, without leaving Settings, and each row shows its real connection
+  status.
+- Agents without MCP tools, such as Pi and OpenCode, can read and update
+  tickets through the `app` command's `ticket.*` and `card.*` actions.
+- Gespan's GitHub Inbox works for projects on another machine. Issues, pull
+  requests, conversations, diffs, checks, job details, reruns of failed jobs
+  and actions go through Gespan Host and use that machine's `gh` account and
+  checkout, so they work even when GitHub CLI isn't signed in on this
   computer. Update Gespan Host to use this.
 
 ### Fixed
 
-- Installing the remote host on Windows over SSH no longer fails when Windows
-  or antivirus still holds `node.exe` right after the install checks its
-  version.
+- Claude and Codex plans show as plan cards again. A Claude turn no longer
+  says you declined a plan you never saw, and a Codex plan is no longer lost
+  when the turn ends.
+- An orchestration shows its plan card without the raw JSON plan in the
+  chat.
+- Escape closes the find bar in a chat. It no longer stops a running turn
+  while find is open, and it cancels a file drag over a chat.
+- A Claude turn no longer stays busy forever after an inline subagent
+  reports back.
+- Claude shell commands saved as a bare Shell row by older builds show the
+  command that ran again.
+- Installing the remote host on Windows over SSH no longer fails when
+  Windows or antivirus still holds `node.exe` right after the install checks
+  its version.
+
+### Known issues
+
+- The approval pop-up may not show the command it is asking about or a failed
+  worker's status. This is fixed in a later release.
+- Gespan on Windows and Linux, and SSH remotes, are less tested than on macOS.
 
 ## [0.0.3-beta] - 2026-10-30
 
@@ -41,54 +139,6 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Added
 
-- Gespan Native has an Ask panel next to an inbox item, as the Tauri app does.
-  A resizable side chat keeps one conversation per item, with Restart and
-  Close. It stays out of the sidebar, and only the agent receives the item's
-  context.
-- Gespan Native's Checks tab repairs CI as the Tauri app does. Pick which
-  failed checks to fix, open a check's job steps and annotations, filter by
-  Needs attention or All checks, refresh, and rerun failed jobs. Each repair
-  shows its progress against the agent and the next CI results, and open pull
-  requests keep their checks up to date.
-- Gespan Native starts work from an inbox item, or from a note, with a card
-  above the composer, as the Tauri app does. You can add a message or just
-  send, and remove the card to start over. A note stays a card on the sent
-  message, and only the agent receives its text. Fix with agent still sends
-  straight away.
-- Gespan Native shows videos attached to inbox item descriptions, as the Tauri
-  app does. A GitHub or Linear attachment that turns out to be a video shows
-  as a play card in the description and opens in the file viewer.
-- Gespan Native lets you undo or keep a session's changes one file at a time:
-  hovering a file in the changes card under the reply shows its own Undo and
-  Keep. Folders without Git now get these reviews too, as the Tauri app does:
-  each file a structured edit writes is saved before and after the edit, and
-  Undo is offered only while the file is still as the session left it.
-  Committing files whole from a Pilot's Changes tab clears them from the
-  Pilot session's review.
-- Gespan Native's / picker has a New skill row, as the Tauri app does. It
-  opens a short form named from the typed command, with Project or Personal
-  skills, and writes a starter SKILL.md that opens for editing. The command is
-  cleared from the message and the next / lists the new skill.
-- Gespan Native follows a renamed project folder, as the Tauri app does. Each
-  project's folder identity is remembered, and when the saved folder is gone
-  at launch, its former siblings are checked for it. The project, its
-  sessions, terminals and settings move to the new name. A folder that cannot
-  be found, or more than one match, leaves the project as it was.
-- Gespan Native reads Cursor's own session store while a Cursor turn runs, as
-  the Tauri app does. Tool calls Cursor sent without their arguments get them,
-  so they show the file, command or search they ran, and each Cursor subagent's
-  card fills with its own messages and tool calls, its model and a readable
-  name. The store is only ever opened read-only.
-- Gespan Native plays the Opus 5.5 and Astra welcome scenes when you pick
-  either model, as the Tauri app does: a staff that writes itself with a short
-  phrase of notes for Opus, and a small sun with falling stars for Astra. The
-  scene sits over the session without taking clicks, and is skipped when the
-  system asks for reduced motion.
-- Gespan Native previews the change an Edit or Write tool proposes, as the
-  Tauri app does. Hovering the file chip shows the first changed lines with
-  their counts, read from the tool itself rather than from git, for Claude,
-  Codex and ACP agents. A Write shows the written lines, since the file's old
-  contents are not known.
 - Gespan Native shows a reply's local images and videos in place, as the Tauri
   app does. A paragraph that starts with a local image, or with a link to a
   local image or video, shows the file in a 16:9 frame. Images open full screen
@@ -103,11 +153,6 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
   build it with. The card shows Building… and then Built. A Codex
   `<proposed_plan>` block becomes a plan card in any turn, and plans saved by
   the Tauri app show as cards too.
-- Gespan Native asks what to do when switching branches would overwrite your
-  local changes, as the Tauri app does, instead of only showing Git's error.
-  Stash & switch puts them in a stash named "WIP before switching to
-  <branch>" and leaves it for you to apply later; Commit & switch commits
-  everything on the current branch with your message first. Cancel stays put.
 - Gespan Native's Sessions heading has a + button beside the filter that
   starts a new session in the current project.
 - Gespan Native can find text in a conversation. Press ⌘F (Ctrl+F on Windows
