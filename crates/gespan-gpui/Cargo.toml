@@ -21,6 +21,7 @@ mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["font-kit", "runtime_shaders", "x11", "wayland"] }
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 unicode-segmentation = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 async-channel = "2"

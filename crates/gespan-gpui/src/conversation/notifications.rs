@@ -1,7 +1,7 @@
 //! Read-only notification snapshots and request-specific approval actions.
 
 use super::*;
-use crate::notifications::approvals::{InputKind, PendingInput, approval_detail, approval_omitted};
+use crate::notifications::approvals::{InputKind, PendingInput};
 
 impl Conversation {
     pub(crate) fn notification_was_cancelled(&self) -> bool {
@@ -10,13 +10,7 @@ impl Conversation {
     pub(crate) fn pending_notification_inputs(&self, cx: &gpui::App) -> Vec<PendingInput> {
         self.approvals
             .iter()
-            .map(|approval| PendingInput {
-                request_id: approval.id.clone(),
-                kind: InputKind::Approval,
-                label: approval.title.clone(),
-                detail: approval_detail(&approval.detail),
-                omitted: approval_omitted(&approval.detail),
-            })
+            .map(PendingInput::approval)
             .chain(self.questions.iter().map(|(card, _)| {
                 let question = card.read(cx);
                 PendingInput {
@@ -25,6 +19,7 @@ impl Conversation {
                     label: question.notification_label().to_owned(),
                     detail: String::new(),
                     omitted: String::new(),
+                    alerts: Vec::new(),
                 }
             }))
             .collect()
