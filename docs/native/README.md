@@ -68,8 +68,8 @@ verification.
 ## Releases and the update feed
 
 Releases run themselves. Set the new version with `bun run set-version`, add its
-CHANGELOG section, and merge that through a pull request. When CI and Gespan
-Native Preview have both passed on that commit, the **Release** workflow:
+CHANGELOG section, and merge that through a pull request. When CI has passed on
+that commit, the **Release** workflow:
 
 1. Creates the tag `v<version>` and a draft GitHub release.
 2. Runs **Mobile release** twice from the tag: the iOS build for TestFlight, and

@@ -9,8 +9,18 @@ const affected = (...files) => [...impact(files)].sort();
 const all = [...pieces].sort();
 
 test("a file no rule names runs every piece", () => {
-  for (const file of ["brand-new.toml", "package.json", "bun.lock", "Cargo.lock", "scripts/bump-version.mjs", ".github/workflows/native.yml", "tests/fixtures/shared/ticket-work-item.json", "public/gespan.png"])
+  for (const file of ["brand-new.toml", "package.json", "bun.lock", "Cargo.lock", "scripts/bump-version.mjs", ".github/workflows/ci.yml","tests/fixtures/shared/ticket-work-item.json", "public/gespan.png"])
     assert.deepEqual(affected(file), all, file);
+});
+
+test("CI keeps the job names main requires", async () => {
+  // Protect main requires these by name, so a renamed job blocks every PR.
+  const ci = await read(".github/workflows/ci.yml");
+  for (const name of ["name: Core (${{ matrix.os }})", "name: Gespan Native (${{ matrix.name }})", "name: Mobile checks", "name: Release channel isolation"])
+    assert.ok(ci.includes(name), name);
+  assert.match(ci, /^  host:\n    needs: impact\n/m);
+  assert.equal(ci.match(/os: \[ubuntu-latest, macos-latest, windows-latest\]/g).length, 2);
+  for (const name of ["macOS", "Linux", "Windows"]) assert.match(ci, new RegExp(`- name: ${name}\\n`));
 });
 
 test("no changed files, or an unreadable diff, runs every piece", () => {

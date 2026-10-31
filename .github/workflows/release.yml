@@ -1,16 +1,16 @@
 name: Release
 run-name: Release from ${{ github.event.workflow_run.head_sha || github.sha }}
 
-# A new version in package.json on main releases itself. When CI and Gespan
-# Native Preview have both passed on a commit whose version has no release yet,
-# this creates vX.Y.Z and a draft release, runs the mobile builds, then runs the
-# desktop release, which publishes the draft as its last step. Until then
-# nothing is public, and the stable feed is a file on that release, so a failure
-# leaves only a draft. Run this workflow again, or rerun it, to finish it: builds
-# that already passed for the tag are not repeated.
+# A new version in package.json on main releases itself. When CI has passed on a
+# commit whose version has no release yet, this creates vX.Y.Z and a draft
+# release, runs the mobile builds, then runs the desktop release, which publishes
+# the draft as its last step. Until then nothing is public, and the stable feed
+# is a file on that release, so a failure leaves only a draft. Run this workflow
+# again, or rerun it, to finish it: builds that already passed for the tag are
+# not repeated.
 on:
   workflow_run:
-    workflows: [CI, Gespan Native Preview]
+    workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
