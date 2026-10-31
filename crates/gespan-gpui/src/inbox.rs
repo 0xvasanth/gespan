@@ -1059,6 +1059,18 @@ impl Inbox {
         self.snapshot.linear_teams = teams;
         cx.notify();
     }
+    #[cfg(test)]
+    pub(crate) fn filters_open(&self) -> bool {
+        self.filters_open
+    }
+    #[cfg(test)]
+    pub(crate) fn test_open_filters(&mut self, cx: &mut Context<Self>) {
+        self.filters_open = true;
+        cx.notify();
+    }
+    pub(crate) fn holds_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
     /// Escape on the dialog Settings shows. True when it closed one.
     pub(crate) fn close_settings_dialog(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.connect_in_settings || self.connect_provider.is_none() || self.connecting {

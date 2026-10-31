@@ -3082,6 +3082,7 @@ impl TranscriptView {
                 .iter()
                 .any(|r| r.role == "tool")
         });
+        let target = target.map(|answer| self.fold_end(current_turn, answer));
         let layout_changed = self.fold_targets.get(&current_turn).copied().flatten() != target;
         let known_message = self.messages.iter().any(|m| {
             m.start <= start
@@ -3208,7 +3209,7 @@ impl TranscriptView {
         let mut at = source_start;
         let mut turn = 0;
         let mut turn_end = 0;
-        let mut final_answer = None;
+        let mut fold_end = None;
         let mut awaiting_answer = None;
         let mut has_work = false;
         let mut ready = false;
@@ -3266,7 +3267,7 @@ impl TranscriptView {
                     .rev()
                     .find(|&i| self.source[i].role == "assistant" && self.source[i].first)
                     .filter(|&i| !self.answer_visible(i));
-                final_answer = (turn..turn_end).rev().find(|&i| {
+                let final_answer = (turn..turn_end).rev().find(|&i| {
                     self.source[i].role == "assistant"
                         && self.source[i].first
                         && self.answer_visible(i)
@@ -3277,8 +3278,9 @@ impl TranscriptView {
                         self.source[turn..answer].iter().any(|r| r.role == "tool")
                     });
                 ready = final_answer.is_some_and(|answer| self.answer_visible(answer));
+                fold_end = final_answer.map(|answer| self.fold_end(turn, answer));
                 self.fold_targets
-                    .insert(turn, final_answer.filter(|_| has_work && ready));
+                    .insert(turn, fold_end.filter(|_| has_work && ready));
                 git_card = self.git_card(turn, turn_end, final_answer);
                 git_live_shown = false;
             }
@@ -3286,7 +3288,7 @@ impl TranscriptView {
                 && !activity.pinned.contains(&at)
                 && has_work
                 && ready
-                && final_answer.is_some_and(|answer| at < answer)
+                && fold_end.is_some_and(|end| at < end)
                 && !self.work_folds.get(&turn).copied().unwrap_or(false);
             let skipped = self.document
                 || is_prompt
@@ -3708,7 +3710,7 @@ impl TranscriptView {
                     && ready
                     && role != "visual"
                     && !activity.pinned.contains(&at)
-                    && final_answer.is_some_and(|answer| at < answer)
+                    && fold_end.is_some_and(|end| at < end)
                     && !matches!(row.body, Body::WorkLine { .. });
             }
             if let Some(row) = self.rows.get_mut(first) {
@@ -3729,7 +3731,7 @@ impl TranscriptView {
                 parser,
                 markdown_blocks,
                 user_link,
-                under_line: has_work && final_answer == Some(at),
+                under_line: has_work && fold_end == Some(at),
                 turn: if self.pilot {
                     self.pilot_group_start(turn)
                 } else {
@@ -4044,6 +4046,28 @@ impl TranscriptView {
             paced.settle(now);
         }
         paced.step(now, self.streaming && end == self.source.len());
+    }
+    /// Where a turn's work fold stops. A message the agent continued from
+    /// with reasoning alone, as after a Stop hook, has no work below it to
+    /// put away, so it stays visible above the final answer.
+    fn fold_end(&self, turn: usize, answer: usize) -> usize {
+        let mut end = answer;
+        let mut reasoned = false;
+        for at in (turn..answer).rev() {
+            match self.source[at].role.as_str() {
+                "tool" => break,
+                "reasoning" => reasoned = true,
+                "assistant" if self.source[at].first && self.answer_visible(at) => {
+                    if !reasoned {
+                        break;
+                    }
+                    end = at;
+                    reasoned = false;
+                }
+                _ => {}
+            }
+        }
+        end
     }
     fn answer_visible(&self, answer: usize) -> bool {
         if self.source[answer].text.trim().is_empty() {

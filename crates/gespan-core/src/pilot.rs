@@ -248,17 +248,25 @@ impl Roster {
             &serde_json::to_string(self).map_err(|e| e.to_string())?,
         )
     }
-    pub fn create(&mut self, projects: Vec<String>) -> &Pilot {
-        let mut pilot = Pilot {
-            mascot: MASCOTS
+    /// The mascot and color the next Pilot gets: the first of each not in
+    /// use, or the next in turn once all are.
+    pub fn next_look(&self) -> (&'static str, u32) {
+        (
+            MASCOTS
                 .iter()
                 .find(|name| !self.pilots.iter().any(|m| &m.mascot == *name))
-                .unwrap_or(&MASCOTS[self.pilots.len() % MASCOTS.len()])
-                .to_string(),
-            color: *COLORS_PILOT
+                .unwrap_or(&MASCOTS[self.pilots.len() % MASCOTS.len()]),
+            *COLORS_PILOT
                 .iter()
                 .find(|color| !self.pilots.iter().any(|m| m.color == **color))
                 .unwrap_or(&COLORS_PILOT[self.pilots.len() % COLORS_PILOT.len()]),
+        )
+    }
+    pub fn create(&mut self, projects: Vec<String>) -> &Pilot {
+        let (mascot, color) = self.next_look();
+        let mut pilot = Pilot {
+            mascot: mascot.to_string(),
+            color,
             projects,
             ..Default::default()
         };

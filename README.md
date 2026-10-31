@@ -217,6 +217,29 @@ Developer ID or a Windows code-signing certificate, so your system warns you onc
 Every release is listed on the
 [Releases page](https://github.com/0xvasanth/gespan/releases).
 
+### Move from Gespan to Gespan Native
+
+Gespan Native is a separate app, so Gespan can't update itself into it. Your
+data doesn't need copying: Gespan Native opens the same `dev.gespan.desktop`
+folder, so your conversations, notes and Pilots are there on first launch.
+
+1. Install Gespan Native from the table above.
+2. Quit Gespan, and check it isn't still running in the menu bar or system tray.
+3. Back up your data folder:
+
+   | Platform | Data folder |
+   | :-- | :-- |
+   | macOS | `~/Library/Application Support/dev.gespan.desktop` |
+   | Windows | `%APPDATA%\dev.gespan.desktop` |
+   | Linux | `~/.local/share/dev.gespan.desktop` (or under `$XDG_DATA_HOME`) |
+
+4. Open Gespan Native.
+5. Once you're happy, uninstall Gespan. On Windows, leave **Delete the
+   application data** unticked: that folder is now Gespan Native's data too.
+
+Don't keep the same conversation open in both apps. Gespan saves whole
+conversations and can overwrite turns added in Gespan Native.
+
 ## Quick start
 
 1. **Open a project folder.** Gespan groups your sessions by project.

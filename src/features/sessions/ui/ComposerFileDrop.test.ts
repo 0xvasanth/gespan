@@ -21,7 +21,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
     onDragDropEvent: listen,
   }),
 }));
-vi.mock("../../../platform/tauri/platform", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/platform", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../platform/tauri/platform")
   >()),

@@ -15,7 +15,7 @@ const actions = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock("../../../platform/tauri/fs", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../platform/tauri/fs")>()),
   copyFileToClipboard: actions.copyFileToClipboard,
   openPathWithDefaultApp: actions.openPathWithDefaultApp,
@@ -34,7 +34,7 @@ vi.mock("../model/fileWatch", () => ({
   watchFile: () => () => {},
 }));
 
-vi.mock("../../../platform/tauri/platform", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/platform", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   IS_MAC: true,
   IS_WIN: false,

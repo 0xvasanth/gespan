@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     branch: args.branch,
   })),
 }));
-vi.mock("../../../platform/tauri/fs", () => ({ notifyGitChanged: vi.fn() }));
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({ notifyGitChanged: vi.fn() }));
 
 afterEach(() => vi.restoreAllMocks());
 

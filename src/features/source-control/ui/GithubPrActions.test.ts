@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../inbox/model/githubTasks", async (original) => ({
+vi.mock("../../../../host/core/features/inbox/model/githubTasks", async (original) => ({
   ...(await original<typeof import("../../inbox/model/githubTasks")>()),
   githubPrAction: vi.fn(),
 }));

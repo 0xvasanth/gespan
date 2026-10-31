@@ -39,7 +39,7 @@ vi.mock("../../source-control/hooks/useProjectWorktrees", () => ({
     },
   }),
 }));
-vi.mock("../../../platform/tauri/fs", async (actual) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (actual) => ({
   ...(await actual<object>()),
   gitCheckout: vi.fn().mockResolvedValue(undefined),
   gitCreateBranch: vi.fn(),

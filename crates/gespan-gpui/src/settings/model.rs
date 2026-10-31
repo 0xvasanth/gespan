@@ -414,12 +414,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "zoom font size bigger smaller ui",
     ),
     (
-        "collapsed-project-rail",
-        Section::Appearance,
-        "Collapsed project rail",
-        "sidebar compact icons hidden navigation layout",
-    ),
-    (
         "show-excluded-files",
         Section::Appearance,
         "Show excluded files",
@@ -685,6 +679,18 @@ mod tests {
     #[test]
     fn board_is_on_until_turned_off() {
         assert!(crate::settings::preferences::Preferences::default().board);
+    }
+
+    #[test]
+    fn the_retired_collapsed_project_rail_is_not_searchable() {
+        for query in ["collapsed project rail", "collapsed rail"] {
+            assert!(
+                search(query, "")
+                    .iter()
+                    .all(|r| r.setting != Some("collapsed-project-rail")),
+                "{query}"
+            );
+        }
     }
 
     #[test]

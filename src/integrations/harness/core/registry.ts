@@ -2,7 +2,6 @@ import type {
   Block,
   HarnessId,
   TaskListMeta,
-  TurnIntent,
 } from "../../../features/sessions/model/session";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { transferProviderSession } from "./child";
@@ -11,10 +10,10 @@ import type { PrContent } from "../../../features/source-control/model/gitText";
 import { hasLiveCatalog } from "../../../features/sessions/model/models";
 import type { UserQuestionReply } from "../../../features/sessions/model/userQuestion";
 import type { NativeCommandProvider } from "./nativeCommands";
+import type { TextPromptInput } from "../../../../host/core/integrations/harness/core/textPrompt";
 import type {
   ApprovalDecision,
   CompactContextInput,
-  HarnessEvent,
   RewindLastTurnInput,
   RewindLastTurnResult,
   SendTurnInput,
@@ -28,23 +27,7 @@ export type TitleInput = {
   providerAccountId?: string;
 };
 
-/** One-shot, isolated text generation shared by titles and side questions. */
-export type TextPromptInput = {
-  cwd: string;
-  providerAccountId?: string;
-  model?: string;
-  modelSettings?: Record<string, string>;
-  /** Codex defaults to unsaved threads; false allows resumable side questions. */
-  ephemeral?: boolean;
-  codexStore?: "pilot";
-  threadId?: string;
-  onThreadId?: (threadId: string) => void;
-  intent?: TurnIntent;
-  prompt: string;
-  timeoutMs?: number;
-  signal?: AbortSignal;
-  onEvent?: (event: HarnessEvent) => void;
-};
+export type { TextPromptInput };
 
 /**
  * Lifecycle contract for a live harness adapter.

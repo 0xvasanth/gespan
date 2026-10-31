@@ -561,11 +561,7 @@ impl Inbox {
         cx: &mut Context<Self>,
     ) -> Div {
         let summary = Counts { fail: 0, ..*counts }.describe();
-        let reruns = if gespan_core::inbox::ci_repair::can_rerun(item) {
-            rerun_run_ids(&checks.checks, &item.repo)
-        } else {
-            Vec::new()
-        };
+        let reruns = rerun_run_ids(&checks.checks, &item.repo);
         let blocked = self.repair_blocked();
         div()
             .mb(px(12.))

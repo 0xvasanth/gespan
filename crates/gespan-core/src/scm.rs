@@ -410,10 +410,13 @@ pub use crate::inbox::github::{GitHubPrCheck as PrCheck, GitHubPrChecks as PrChe
 
 /// The checks on GitHub pull request `number` of `repo` (`owner/name`), read
 /// with `gh` (no HTTP client of our own) from `cwd`. Blocking; call it off the
-/// UI thread. A remote workspace has no local `gh` to ask, so it is refused.
+/// UI thread. A remote workspace asks `gh` on its own machine.
 pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String> {
     if remote_workspace::is_remote(cwd) {
-        return Err("Pull request checks aren't available for remote workspaces".into());
+        return remote_workspace::command(
+            "git_github_pr_checks",
+            json!({"cwd":cwd,"repo":repo,"number":number}),
+        );
     }
     crate::inbox::github::git_github_pr_checks_for(&expand_home(cwd), repo, number)
 }
@@ -421,7 +424,7 @@ pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String
 /// The working copy's GitHub `owner/name`, via `gh` (Tauri's git_github_repo).
 pub fn github_repo(cwd: &Path) -> Result<String, String> {
     if remote_workspace::is_remote(cwd) {
-        return Err("GitHub repository lookup is local only".into());
+        return remote_workspace::command("git_github_repo", json!({"cwd":cwd}));
     }
     github_repo_for(&expand_home(cwd))
 }

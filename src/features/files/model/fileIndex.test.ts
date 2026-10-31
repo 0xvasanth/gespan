@@ -37,7 +37,7 @@ const extra: ProjectFile = {
   relative: "pasted.ts",
 };
 
-vi.mock("../../../platform/tauri/fs", async (importOriginal) => {
+vi.mock("../../../../host/core/platform/tauri/fs", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../../platform/tauri/fs")>();
   return {

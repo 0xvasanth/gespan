@@ -161,7 +161,11 @@ impl ProjectGit {
                             .into_iter()
                             .filter(|dir| !dir.starts_with(&project)),
                     );
-                    crate::fs_watch::watch(&roots)
+                    // Window tests on real folders must not be woken from the
+                    // watcher's thread, so they read on the timer instead.
+                    (!cfg!(test))
+                        .then(|| crate::fs_watch::watch(&roots))
+                        .flatten()
                 })
                 .await;
             let Some((_watch, changes)) = watch else {

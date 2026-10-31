@@ -17,7 +17,7 @@ use gespan_core::board::{
     Activity,
     extras::{CardLink, Comment, Field, Relation, Subtask},
 };
-use gpui::{ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
+use gpui::{App, ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
 use std::collections::HashMap;
 
 const ACTIVITY_LIMIT: usize = 50;
@@ -70,6 +70,19 @@ enum Choice {
     LinkAdd,
 }
 
+/// Alt+↑ and Alt+↓ on a subtask row: how far it moves.
+fn subtask_shift(keystroke: &gpui::Keystroke) -> Option<isize> {
+    let m = &keystroke.modifiers;
+    if !m.alt || m.control || m.shift || m.platform || m.function {
+        return None;
+    }
+    match keystroke.key.as_str() {
+        "up" => Some(-1),
+        "down" => Some(1),
+        _ => None,
+    }
+}
+
 pub(crate) struct CardDetail {
     pub card_id: String,
     title: Entity<Input>,
@@ -81,6 +94,8 @@ pub(crate) struct CardDetail {
     /// The card has more activity than the drawer loads.
     activity_more: bool,
     subtasks: Vec<Subtask>,
+    /// One per subtask id, so focus follows a row Alt+↑/↓ moved.
+    pub(super) subtask_focus: HashMap<String, gpui::FocusHandle>,
     comments: Vec<Comment>,
     tab: Tab,
     picker: Option<Picker>,
@@ -276,6 +291,7 @@ impl BoardView {
             activity: None,
             activity_more: false,
             subtasks: Vec::new(),
+            subtask_focus: HashMap::new(),
             comments: Vec::new(),
             tab: Tab::Comments,
             picker: None,
@@ -315,7 +331,7 @@ impl BoardView {
             full_page: self.open_in_page,
             _subscriptions: subscriptions,
         });
-        self.refresh_detail_lists();
+        self.refresh_detail_lists(cx);
         self.menu = None;
         if self.card_tickets.contains_key(&card.id) {
             self.load_connected_trackers(cx);
@@ -442,7 +458,7 @@ impl BoardView {
 
     /// Re-read the drawer's subtasks, comments and activity. Each list keeps
     /// what it showed when its own read fails, and the failure is reported.
-    pub(super) fn refresh_detail_lists(&mut self) {
+    pub(super) fn refresh_detail_lists(&mut self, cx: &App) {
         let Some(card) = self.detail_card() else {
             return;
         };
@@ -503,6 +519,15 @@ impl BoardView {
                         .entry(format!("subtask-{index}"))
                         .or_default();
                 }
+                detail
+                    .subtask_focus
+                    .retain(|id, _| subtasks.iter().any(|s| s.id == *id));
+                for subtask in &subtasks {
+                    detail
+                        .subtask_focus
+                        .entry(subtask.id.clone())
+                        .or_insert_with(|| cx.focus_handle().tab_stop(true));
+                }
                 detail.subtasks = subtasks
             }
             Err(error) => failed = Some(error),
@@ -524,7 +549,7 @@ impl BoardView {
         action: impl FnOnce(&mut gespan_core::board::Service) -> Result<(), String>,
     ) -> bool {
         let ok = self.write(cx, action);
-        self.refresh_detail_lists();
+        self.refresh_detail_lists(cx);
         cx.notify();
         ok
     }
@@ -747,7 +772,7 @@ impl BoardView {
                     && current.as_ref() != Some(&column)
                 {
                     self.move_with_undo(&card_id, &column, usize::MAX, cx);
-                    self.refresh_detail_lists();
+                    self.refresh_detail_lists(cx);
                     cx.notify();
                 }
             }
@@ -999,7 +1024,7 @@ impl BoardView {
                     detail.picker = None;
                 }
                 self.reload(cx);
-                self.refresh_detail_lists();
+                self.refresh_detail_lists(cx);
                 cx.notify();
                 true
             }
@@ -1143,7 +1168,7 @@ impl BoardView {
                     detail.inline_error = None;
                 }
                 self.reload(cx);
-                self.refresh_detail_lists();
+                self.refresh_detail_lists(cx);
                 cx.notify();
             }
             Err(error) => self.inline_error(error, cx),
@@ -1376,7 +1401,20 @@ impl BoardView {
 
     /// Move a subtask one place up (`-1`) or down (`1`). A subtask that is
     /// already at that end, or is gone, is left alone.
-    fn shift_subtask(&mut self, subtask_id: &str, by: isize, cx: &mut Context<Self>) {
+    #[cfg(test)]
+    pub(crate) fn test_focus_subtask(&self, index: usize, window: &mut Window, cx: &mut App) {
+        let detail = self.card_detail.as_ref().expect("a card is open");
+        let handle = detail.subtask_focus[&detail.subtasks[index].id].clone();
+        window.focus(&handle, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_subtask_titles(&self) -> Vec<String> {
+        let detail = self.card_detail.as_ref().expect("a card is open");
+        detail.subtasks.iter().map(|s| s.title.clone()).collect()
+    }
+
+    pub(super) fn shift_subtask(&mut self, subtask_id: &str, by: isize, cx: &mut Context<Self>) {
         let Some(detail) = &self.card_detail else {
             return;
         };
@@ -1470,7 +1508,7 @@ impl BoardView {
         match self.done_column() {
             Some(done) if done != card.column_id => {
                 self.move_with_undo(&card.id, &done, usize::MAX, cx);
-                self.refresh_detail_lists();
+                self.refresh_detail_lists(cx);
                 cx.notify();
             }
             Some(_) => {}

@@ -6,7 +6,7 @@ import {
   synchronizeProjectLocation,
 } from "./projectLocation";
 
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   resolveProjectLocation: vi.fn(),
 }));
 

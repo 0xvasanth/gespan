@@ -5,7 +5,7 @@ const sent: Array<{ method: string; params: { input?: unknown[] } }> = [];
 let onLine: ((line: string) => void) | undefined;
 let keepTurnOpen = false;
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/fake/codex" }),
   spawnChild: async () => undefined,
   killChild: async () => undefined,

@@ -14,7 +14,7 @@ import { SidebarWorktreeSwitcher } from "./SidebarWorktreeSwitcher";
 vi.mock("../hooks/useProjectWorktrees", () => ({
   useProjectWorktrees: vi.fn(),
 }));
-vi.mock("../model/worktrees", async (original) => ({
+vi.mock("../../../../host/core/features/source-control/model/worktrees", async (original) => ({
   ...(await original<typeof import("../model/worktrees")>()),
   createWorktree: vi.fn(),
 }));

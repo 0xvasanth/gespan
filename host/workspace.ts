@@ -16,11 +16,11 @@ import type {
   GitChangedFile,
   GitDiffIndex,
   GitFileDiff,
-} from "../src/platform/tauri/fs";
+} from "./core/platform/tauri/fs";
 import type {
   ProjectSearchMatch,
   ProjectSearchResult,
-} from "../src/features/search/model/search";
+} from "./core/features/search/model/search";
 
 const exec = promisify(execFile);
 const MAX_FILE = 1024 * 1024;

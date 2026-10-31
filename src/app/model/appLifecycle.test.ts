@@ -46,7 +46,7 @@ vi.mock("../../integrations/harness/core/registry", () => ({
   isLiveHarness: vi.fn(),
   forgetHarnessSession: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../integrations/harness/core/child", () => ({
+vi.mock("../../../host/core/integrations/harness/core/child", () => ({
   killAllChildren: vi.fn().mockResolvedValue(undefined),
 }));
 

@@ -210,6 +210,7 @@ pub(crate) struct Conversation {
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
     plan_card: orchestration_card::PlanCard,
+    orchestration_paused: bool,
     orchestration_error: Option<String>,
     pub(crate) orchestration_progress: Option<String>,
     status: String,
@@ -223,6 +224,8 @@ pub(crate) struct Conversation {
     pub(crate) busy: bool,
     /// The UI is idle; serialize the next launch behind the worker's last save.
     stopping: bool,
+    /// Alive while this chat's turn is running, agent included.
+    turn_alive: std::sync::Weak<()>,
     notification_cancelled: bool,
     /// The store's saved-draft flag, until the conversation loads its own.
     pub(crate) draft_hint: bool,
@@ -435,6 +438,14 @@ impl Conversation {
     #[cfg(test)]
     pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
         self.approvals = approvals.into();
+    }
+    /// Ends once the running turn's agent has exited.
+    pub(crate) fn turn_exit(&self) -> std::sync::Weak<()> {
+        self.turn_alive.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn set_turn_exit_for_test(&mut self, turn: std::sync::Weak<()>) {
+        self.turn_alive = turn;
     }
     pub(crate) fn responding(&self) -> bool {
         self.busy && !self.stopping
@@ -720,6 +731,7 @@ impl Conversation {
             planning_orchestration: false,
             orchestration_plan: None,
             plan_card: Default::default(),
+            orchestration_paused: false,
             orchestration_error: None,
             orchestration_progress: None,
             status: "Loading conversation…".into(),
@@ -731,13 +743,20 @@ impl Conversation {
             loading: false,
             busy: false,
             stopping: false,
+            turn_alive: std::sync::Weak::new(),
             notification_cancelled: false,
             draft_hint: false,
             model: std::env::var(format!("GESPAN_{}_MODEL", summary.provider.to_uppercase())).ok(),
             resolved_model: None,
             settings: Settings {
                 account,
-                access: default_access(cx),
+                // The app's last-used access is for new chats. A conversation
+                // that exists has its own, which this must never stand in for.
+                access: if summary.has_messages {
+                    AccessMode::Supervised
+                } else {
+                    default_access(cx)
+                },
                 effort: preferred_effort(&summary.provider, cx),
                 ..Default::default()
             },
@@ -1339,8 +1358,11 @@ impl Conversation {
             self.summary.id,
             settings.prepared_prompt.as_deref().unwrap_or(&prompt),
         );
+        let alive = Arc::new(());
+        self.turn_alive = Arc::downgrade(&alive);
         cx.background_executor()
             .spawn(async move {
+                let _alive = alive;
                 if let Some(client) = remote_client {
                     crate::runtime::remote::run_with_client(
                         client, summary, prompt, settings, control_rx, store, cancel, tx,
@@ -1731,6 +1753,7 @@ impl EventEmitter<OpenSessionChanges> for Conversation {}
 impl EventEmitter<Transfer> for Conversation {}
 impl EventEmitter<composer_features::StartOrchestration> for Conversation {}
 impl EventEmitter<composer_features::StopOrchestration> for Conversation {}
+impl EventEmitter<composer_features::ResumeOrchestration> for Conversation {}
 
 impl Conversation {
     pub(crate) fn install_transfer(
@@ -2150,7 +2173,21 @@ impl Conversation {
         self.settings = settings;
         cx.notify();
     }
+    /// An existing chat's own settings haven't arrived yet.
+    pub(super) fn settings_pending(&self) -> bool {
+        !self.loaded && self.summary.has_messages
+    }
     fn save_settings(&mut self, cx: &mut Context<Self>) {
+        // Until an existing chat's settings load, these are placeholders.
+        // Saving them would replace what's stored, access included, and the
+        // newer revision would make the load discard the real values.
+        if self.settings_pending() {
+            tracing::warn!(
+                session_id = self.summary.id,
+                "dropped a settings save before the session loaded"
+            );
+            return;
+        }
         self.settings.revision = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -2182,6 +2219,13 @@ impl Conversation {
     }
     fn menu_choice(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.git_action_choice(id, cx) {
+            return;
+        }
+        // A choice made while settings load must outlive them: the load would
+        // otherwise bring back what the user just changed.
+        if self.settings_pending() {
+            let id = id.to_owned();
+            self.defer_history_action(move |this, cx| this.menu_choice(&id, cx), cx);
             return;
         }
         if let Some(choice) = id.strip_prefix("recent-model:") {
@@ -4888,6 +4932,125 @@ pub(super) mod menu_tests {
                 assert_eq!(next.read(cx).settings.access, AccessMode::Auto);
             })
             .unwrap();
+    }
+
+    /// A saved Supervised chat, a Full access default, and one save that lands
+    /// before the chat's own settings have loaded.
+    fn a_save_before_loading(
+        access: AccessMode,
+        cx: &mut TestAppContext,
+    ) -> (AccessMode, AccessMode) {
+        cx.update(|cx| {
+            cx.set_global(crate::settings::Preferences {
+                default_access: Some("full-access".into()),
+                ..Default::default()
+            })
+        });
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut summary = store.create("codex", "/work").unwrap();
+        summary.has_messages = true;
+        store
+            .configure_agent(
+                summary.id,
+                "codex",
+                &Settings {
+                    access,
+                    revision: 7,
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+        let id = summary.id;
+        let store = Arc::new(Mutex::new(store));
+        let window = cx
+            .update(|cx| {
+                cx.open_window(Default::default(), |_, cx| {
+                    cx.new(|cx| Conversation::new(summary, store.clone(), cx))
+                })
+            })
+            .unwrap();
+        window
+            .update(cx, |view, _, cx| {
+                view.save_settings(cx);
+                view.load(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let live = window
+            .read_with(cx, |view, _| view.settings.access)
+            .unwrap();
+        let saved = locked(&store).unwrap().agent_settings(id).unwrap().unwrap();
+        (live, saved.access)
+    }
+
+    #[gpui::test]
+    fn a_save_before_loading_never_changes_a_chats_access(cx: &mut TestAppContext) {
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::FullAccess,
+        ] {
+            assert_eq!(a_save_before_loading(access, cx), (access, access));
+        }
+    }
+
+    #[gpui::test]
+    fn access_chosen_while_a_chat_loads_is_kept(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(crate::settings::Preferences::default()));
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let mut summary = store.create("codex", "/work").unwrap();
+        summary.has_messages = true;
+        store
+            .configure_agent(
+                summary.id,
+                "codex",
+                &Settings {
+                    access: AccessMode::FullAccess,
+                    revision: 7,
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+        let id = summary.id;
+        let store = Arc::new(Mutex::new(store));
+        let window = cx
+            .update(|cx| {
+                cx.open_window(Default::default(), |_, cx| {
+                    cx.new(|cx| Conversation::new(summary, store.clone(), cx))
+                })
+            })
+            .unwrap();
+        window
+            .update(cx, |view, _, cx| view.menu_choice("access:read-only", cx))
+            .unwrap();
+        cx.run_until_parked();
+        let live = window
+            .read_with(cx, |view, _| view.settings.access)
+            .unwrap();
+        let saved = locked(&store).unwrap().agent_settings(id).unwrap().unwrap();
+        assert_eq!(live, AccessMode::ReadOnly);
+        assert_eq!(saved.access, AccessMode::ReadOnly, "lowering access sticks");
+    }
+
+    #[gpui::test]
+    fn only_a_new_chat_starts_from_the_last_used_access(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(crate::settings::Preferences {
+                default_access: Some("full-access".into()),
+                ..Default::default()
+            })
+        });
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let fresh = store.create("codex", "/work").unwrap();
+        let mut existing = store.create("codex", "/work").unwrap();
+        existing.has_messages = true;
+        let store = Arc::new(Mutex::new(store));
+        cx.update(|cx| {
+            let view = cx.new(|cx| Conversation::new(fresh, store.clone(), cx));
+            assert_eq!(view.read(cx).settings.access, AccessMode::FullAccess);
+            let view = cx.new(|cx| Conversation::new(existing, store, cx));
+            assert_eq!(view.read(cx).settings.access, AccessMode::Supervised);
+        });
     }
 
     pub(super) fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {

@@ -525,6 +525,17 @@ impl Store {
         let value = serde_json::to_string(summary).map_err(|e| e.to_string())?;
         self.save_setting(&format!("orchestration:{lead}"), &value)
     }
+    /// Every saved run, by lead. A run that ended saves as empty.
+    pub fn orchestration_runs(&self) -> Result<Vec<(i64, crate::orchestration::run::Run)>, String> {
+        Ok(self
+            .settings_with_prefix("orchestration-run:")?
+            .into_iter()
+            .filter_map(|(lead, value)| Some((lead, serde_json::from_str(&value).ok()?)))
+            .collect())
+    }
+    pub fn save_orchestration_run(&self, lead: i64, state: &str) -> Result<(), String> {
+        self.save_setting(&format!("orchestration-run:{lead}"), state)
+    }
     /// `prefix<session id>` settings, by session id.
     fn settings_with_prefix(&self, prefix: &str) -> Result<Vec<(i64, String)>, String> {
         if self.shared.is_some() {
@@ -1096,7 +1107,7 @@ impl Store {
         tx.execute("DELETE FROM native_reminders WHERE session_id=?1", [id])
             .map_err(|e| e.to_string())?;
         tx.execute(
-            "DELETE FROM native_settings WHERE key IN (?1,?2,?3,?5,?6,?7,?8) OR key LIKE ?4",
+            "DELETE FROM native_settings WHERE key IN (?1,?2,?3,?5,?6,?7,?8,?9) OR key LIKE ?4",
             params![
                 format!("agent:{id}"),
                 format!("context:{id}"),
@@ -1104,6 +1115,7 @@ impl Store {
                 format!("pilot-delivered:{id}:%"),
                 format!("started-by:{id}"),
                 format!("orchestration:{id}"),
+                format!("orchestration-run:{id}"),
                 format!("inbox-ask:{id}"),
                 format!("automation:{id}")
             ],
@@ -1386,6 +1398,41 @@ mod tests {
         assert!(!store.sessions().unwrap()[0].archived);
     }
     #[test]
+    fn a_saved_run_survives_restart_and_goes_with_its_lead() {
+        use crate::orchestration::{
+            run::{Run, RunStatus},
+            Plan,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        let store = Store::open(&path).unwrap();
+        let lead = store.create("codex", "/p").unwrap().id;
+        let other = store.create("codex", "/p").unwrap().id;
+        let run = Run::new(
+            Plan {
+                title: "Work".into(),
+                summary: String::new(),
+                tasks: Vec::new(),
+                max_workers: 2,
+            },
+            "/p".into(),
+            "codex".into(),
+            Vec::new(),
+        );
+        let state = serde_json::to_string(&run).unwrap();
+        store.save_orchestration_run(lead, &state).unwrap();
+        store.save_orchestration_run(other, "").unwrap();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        let saved = store.orchestration_runs().unwrap();
+        assert_eq!(saved.len(), 1, "an ended run loads as nothing");
+        assert_eq!(saved[0].0, lead);
+        assert_eq!(saved[0].1.status, RunStatus::Active);
+        assert_eq!(saved[0].1.max_workers, 2);
+        store.delete(lead).unwrap();
+        assert!(store.orchestration_runs().unwrap().is_empty());
+    }
+    #[test]
     fn started_links_and_orchestration_summaries_survive_restart_and_delete() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sqlite3");
@@ -1402,6 +1449,7 @@ mod tests {
                 status: "running".into(),
             }],
             live: true,
+            paused: false,
         };
         store.save_orchestration_summary(lead, &summary).unwrap();
         drop(store);

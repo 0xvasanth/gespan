@@ -6,11 +6,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ setTheme: native.setTheme }),
 }));
-vi.mock("../../platform/tauri/platform", () => ({
+vi.mock("../../../host/core/platform/tauri/platform", () => ({
   IS_MAC: true,
   IS_LINUX: false,
 }));
-vi.mock("../../platform/tauri/fs", () => ({ homeDir: async () => "/tmp" }));
+vi.mock("../../../host/core/platform/tauri/fs", () => ({ homeDir: async () => "/tmp" }));
 vi.mock("react-dom/client", () => ({
   default: { createRoot: () => ({ render() {} }) },
 }));

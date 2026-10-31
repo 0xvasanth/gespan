@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { syncNativeGlass } from "./appearance";
 
 const platform = vi.hoisted(() => ({ isLinux: false, isMac: false }));
-vi.mock("../../../platform/tauri/platform", async (importOriginal) => ({
+vi.mock("../../../../host/core/platform/tauri/platform", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../platform/tauri/platform")
   >()),

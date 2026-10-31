@@ -286,9 +286,9 @@ pub(crate) fn list_skills_from(
     };
 
     // Highest priority first so later roots cannot replace a name.
-    add_root(project.join(".agents/skills"), "project", "agents");
+    add_root(project.join(".agents").join("skills"), "project", "agents");
     if let Some(home) = home {
-        add_root(home.join(".agents/skills"), "user", "agents");
+        add_root(home.join(".agents").join("skills"), "user", "agents");
     }
 
     for (dir, source) in [

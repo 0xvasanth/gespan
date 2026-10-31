@@ -13,6 +13,9 @@ use std::{
     path::{Component, Path},
 };
 
+pub mod run;
+pub mod worktree;
+
 /// orchestrationSummary.ts: what the sidebar shows of a lead's run, kept after
 /// it ends so the lead still lists its agents.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -21,6 +24,8 @@ pub struct Summary {
     pub tasks: Vec<SummaryTask>,
     /// The run is still dispatching or waiting on its workers.
     pub live: bool,
+    /// It stopped itself, and Resume continues it.
+    pub paused: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,7 +34,8 @@ pub struct SummaryTask {
     pub title: String,
     pub provider: String,
     pub model: Option<String>,
-    /// queued, running, completed, failed or blocked.
+    /// queued, running, cancelling, completed, failed, blocked, interrupted
+    /// or cancelled.
     pub status: String,
 }
 impl SummaryTask {
@@ -38,8 +44,11 @@ impl SummaryTask {
         if needs_input {
             return "Needs input";
         }
-        if !summary.live && matches!(self.status.as_str(), "running" | "queued") {
+        if !summary.live && matches!(self.status.as_str(), "running" | "cancelling" | "queued") {
             return "Saved";
+        }
+        if summary.paused && self.status == "queued" {
+            return "Paused";
         }
         match self.status.as_str() {
             "queued" => "Queued",
@@ -47,6 +56,9 @@ impl SummaryTask {
             "completed" => "Done",
             "failed" => "Failed",
             "blocked" => "Needs review",
+            "cancelling" => "Stopping",
+            "interrupted" => "Interrupted",
+            "cancelled" => "Cancelled",
             _ => "Queued",
         }
     }
@@ -238,22 +250,7 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
                 task.id
             ));
         }
-        for file in &task.files {
-            if file.trim().is_empty()
-                || file.len() > 512
-                || file.contains('\\')
-                || file.contains(':')
-                || Path::new(file).is_absolute()
-                || Path::new(file).components().any(|c| {
-                    matches!(
-                        c,
-                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                    )
-                })
-            {
-                return Err(format!("Invalid file scope: {file}"));
-            }
-        }
+        validate_scopes(&task.files)?;
     }
     let mut completed = HashSet::new();
     loop {
@@ -275,6 +272,26 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
         }
     }
 }
+/// Project-relative paths that stay inside the checkout.
+pub fn validate_scopes(files: &[String]) -> Result<(), String> {
+    for file in files {
+        if file.trim().is_empty()
+            || file.len() > 512
+            || file.contains('\\')
+            || file.contains(':')
+            || Path::new(file).is_absolute()
+            || Path::new(file).components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!("Invalid file scope: {file}"));
+        }
+    }
+    Ok(())
+}
 pub fn overlaps(a: &[String], b: &[String]) -> bool {
     a.iter().any(|a| {
         b.iter().any(|b| {
@@ -282,6 +299,105 @@ pub fn overlaps(a: &[String], b: &[String]) -> bool {
         })
     })
 }
+pub const CONTROL_HELP: &str = r#"Gespan local control: supervise this orchestration run from the lead agent.
+
+Usage: gespan-gpui control ACTION [--json JSON | --input FILE|-] [--request-id ID]
+
+Actions, with the JSON object each one takes:
+  list      {}
+            The run, every task with its status and latest result, and the
+            harness/model IDs you may assign.
+  delegate  {"title":"Short title","harness":"<id from list>",
+             "model":"<id from list>","prompt":"Self-contained instructions",
+             "files":["src/feature"],"dependsOn":["<taskId>"]}
+            Queue a worker and return its taskId. "model" is optional and
+            defaults to the first model list allows for that harness.
+            "files" is the write scope: project-relative paths, where a
+            directory covers its descendants and ["."] reserves the whole
+            checkout. "dependsOn" holds taskIds that must be reviewed first.
+  get       {"taskId":"..."}
+            One task, including its latest result.
+  wait      {"timeoutSeconds":20}
+            Block until a task changes state, or until the timeout (0-25).
+            Returns at once when paused, stopped, or nothing is running or queued.
+  respond   {"taskId":"...","requestId":"...","decision":"allow"|"deny"}
+            Answer an approval an agent is blocked on. Agents never prompt the
+            user; list, get and wait report the prompt as that task's
+            "needsInput", and it stays stopped until you decide.
+  answer    {"taskId":"...","requestId":"...","answers":{"<questionId>":["<optionId>"]}}
+            Answer a question an agent asked, or pass "skip":true instead of
+            "answers". The question and its options come from needsInput.
+  steer     {"taskId":"...","text":"..."}
+            Redirect an agent that is still running, without discarding the
+            work it has already done. Use this the moment you see it going
+            the wrong way; message only lands once it has stopped.
+  message   {"taskId":"...","text":"..."}
+            Send a stopped worker another turn within its existing scope; it
+            keeps its session, checkout and history.
+  retry     {"taskId":"...","text":"...","files":["src/feature"]}
+            Retry a stopped worker with corrected project-relative write
+            scopes. Use this only when the additional files are required.
+  cancel    {"taskId":"..."}
+            Cancel a task, whether it is running or still queued.
+  review    {"taskId":"..."}
+            Accept a completed task's result.
+  finish    {}
+            End the run, once every task is accepted or cancelled.
+
+Usual loop: list -> delegate ... -> wait or get -> steer an agent that drifts,
+unblock one with respond or answer -> inspect the changes yourself -> message
+for corrections -> review each task -> finish.
+
+When paused, list, get and wait still return the reason and recovery steps.
+Do not keep polling or retry mutations. Explain the pause and ask the user to
+click Resume in Gespan.
+
+Output is one JSON line: {"ok":true,"result":...} or {"ok":false,"error":"..."}.
+The exit code is 0 only when "ok" is true.
+
+Input must be a JSON object; unknown fields are rejected rather than ignored.
+--json takes it inline, --input FILE reads a file, --input - reads stdin.
+
+Every call carries a request ID, and the run applies each ID at most once. A
+failed response reports the ID it used whenever the outcome is unknown. Retry
+that exact call with --request-id ID; retrying a delegate under a fresh ID
+instead would queue a second worker.
+
+Tasks run inside the Gespan app, not in this process. Exiting this CLI, or a
+failure here, never cancels a task that was already accepted.
+
+Gespan sets GESPAN_CONTROL_ENDPOINT and GESPAN_CONTROL_TOKEN for the lead
+agent's process only. They are already in your environment; never print them.
+"#;
+
+/// Added to every lead turn while its run is active.
+pub fn lead_prompt(cli: &str) -> String {
+    format!(
+        r#"<gespan_orchestration>
+You are the lead of a local Gespan run. Coordinate the user's task using {cli}. Run `{cli} --help` before your first command; it documents every action, its exact JSON fields and the retry rule. Credentials are already in your environment; never print them.
+Each call prints one JSON line and exits non-zero unless "ok" is true; read the "error" text, it says what to do next. Unknown JSON fields are rejected rather than ignored, so fix the field name instead of guessing. If a call fails before reaching Gespan, retry it with the "requestId" from that response so the work is never queued twice.
+Use list to discover allowed harness/model IDs. Delegate bounded tasks with project-relative files (directories reserve their descendants), self-contained prompts and dependsOn task IDs. You may read and plan; leave project file edits to workers. Never start workers outside this CLI. Workers with overlapping files are queued. For project-wide validation, generators or broad formatting, assign a separate task with files ["."] and wait for other workers to finish. Workers must never commit, push, switch branches or write outside the selected checkout. If the user requested those final operations, review and integrate every worker, call finish, then perform the explicitly authorized finalization yourself.
+Agents never prompt the user. When one needs an approval or answers a question, list, get and wait report it as needsInput on that task, and you decide with respond or answer; it stays stopped until you do. Judge the request against the task you assigned, and put it to the user in this conversation only when the call is genuinely theirs.
+Steer a running agent with steer to correct its course without losing its work; use message only once it has stopped. Read results with get or wait; completed means a turn finished, not that the work passed review. Review the actual changes, message a worker for fixes, and use review to accept each completed task. Call finish only when required work and combined validation are complete. You receive worker results automatically when idle; use bounded wait calls while supervising. If the run is paused, list/get/wait remain readable and explain the reason. Stop polling, report that reason, and ask the user to click Resume. Do not expose credentials, create worktrees, switch branches or silently escalate worker permissions.
+</gespan_orchestration>"#
+    )
+}
+
+/// The lead's first turn: what the user confirmed, already queued.
+pub fn approved_prompt(request: &str, run: &run::Run) -> String {
+    let tasks: Vec<_> = run
+        .tasks
+        .iter()
+        .map(|task| {
+            json!({"taskId":task.id,"title":task.title,"prompt":task.prompt,"harness":task.harness,"model":task.model,"files":task.files,"dependsOn":task.depends_on})
+        })
+        .collect();
+    format!(
+        "The user confirmed the orchestration card, including any edits. The app has already queued the exact assignments below; do not delegate duplicates. Supervise them through the control CLI, review their changes, request corrections when needed, and finish the original request.\n\nOriginal request:\n{request}\n\nApproved assignments:\n{}",
+        serde_json::to_string(&tasks).unwrap_or_default()
+    )
+}
+
 /// A task with its own choice needs the harness's live model list to check it.
 pub fn needs_catalog(task: &Task, lead_provider: &str) -> bool {
     task.model.is_some()
@@ -322,8 +438,12 @@ pub fn worker_settings(
 }
 pub const UNAVAILABLE: &str =
     "The assigned harness/model is no longer available. Review this task before retrying.";
-pub fn worker_prompt(task: &Task, previous: &str) -> String {
-    format!("You are completing assignment {} in a Gespan orchestration.\n{}\n\n{}\n\nWrite only within these project-relative scopes: {}. Other agents may work in this checkout; preserve their changes and do not reset the repository. If you need a change outside your scopes, report the blocker. Run focused checks and report your changes, validation and any remaining issues.\n\nDependency reports:\n{}", task.id, task.title, task.prompt, task.files.join(", "), previous)
+/// The worker's turn: its instructions in the envelope the lead's rules need.
+pub fn worker_prompt(prompt: &str, files: &[String]) -> String {
+    format!(
+        "{prompt}\n\n<gespan_assignment>\nYou are a worker managed by a Gespan lead. Work only in the checkout selected for this run. The workspace, scope and Git rules in this assignment envelope override any contradictory wording in the task text above. Your assigned write scope is: {}. Read other files as needed, but do not edit outside your scope. If another file or shared operation is needed, report the blocker and stop so the lead can expand or create a new assignment. Do not spawn agents, create worktrees, switch branches, stage, commit, push, install dependencies or run broad formatters/generators. A task owning '.' may run explicitly requested project-wide validation or generation, but Git finalization remains the lead's responsibility. Other workers may be working concurrently in separate checkouts; do not rely on their work until the lead has accepted it. Report focused checks, changed files, remaining issues and a concise final result.\n</gespan_assignment>",
+        files.join(", ")
+    )
 }
 #[cfg(test)]
 mod tests {
@@ -397,7 +517,9 @@ mod tests {
         plan.set_task_text("a", "Renamed", "Do it this way");
         assert_eq!(plan.tasks[0].title, "Renamed");
         assert_eq!(plan.tasks[0].prompt, "Do it this way");
-        assert!(worker_prompt(&plan.tasks[0], "").contains("Do it this way"));
+        assert!(
+            worker_prompt(&plan.tasks[0].prompt, &plan.tasks[0].files).contains("Do it this way")
+        );
         plan.set_task_text("a", "  ", "Do it");
         assert!(validate(&plan).is_err());
         plan.set_task_text("a", "Renamed", "\n");

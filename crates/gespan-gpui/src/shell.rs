@@ -45,6 +45,7 @@ mod session_groups;
 mod session_loading;
 mod session_preview;
 mod session_shortcuts;
+mod session_worktree;
 mod settings;
 mod shortcuts;
 mod sidebar_list;
@@ -615,7 +616,8 @@ pub(crate) struct Shell {
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
-    orchestrations: HashMap<i64, orchestration::Run>,
+    orchestrations: HashMap<i64, orchestration::Live>,
+    control_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
     orchestration_summaries: HashMap<i64, gespan_core::orchestration::Summary>,
     /// Sessions an /operator thread started, by the session that started them.
@@ -709,6 +711,9 @@ pub(crate) struct Shell {
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
+    /// A removal prompt or its worktree lookup is under way.
+    removal_prompt: bool,
+    worktree_cleanups: HashMap<i64, session_worktree::WorktreeCleanup>,
     group_writes: Option<gpui::Task<()>>,
     selected_sessions: HashSet<i64>,
     selection_anchor: Option<i64>,
@@ -1048,6 +1053,7 @@ impl Shell {
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
             orchestrations: HashMap::new(),
+            control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
             started_by: sidebar_metadata.started_by,
             rails: Default::default(),
@@ -1119,6 +1125,8 @@ impl Shell {
             editor_menu: Default::default(),
             action_terminals: HashMap::new(),
             deleting: HashSet::new(),
+            removal_prompt: false,
+            worktree_cleanups: HashMap::new(),
             group_writes: None,
             selected_sessions: HashSet::new(),
             selection_anchor: None,
@@ -1292,6 +1300,19 @@ impl Shell {
             ));
             this.observations.push(cx.subscribe(
                 &pilots,
+                |_, _, _: &crate::pilots::HidePilots, cx| {
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            let mut prefs = this.workspace.preferences.clone();
+                            prefs.pilots = false;
+                            this.set_preferences(prefs, window, cx);
+                        });
+                    })
+                    .detach();
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
                 |_, _, request: &crate::pilots::ShowDetails, cx| {
                     let id = request.0.clone();
                     cx.spawn(async move |this, cx| {
@@ -1336,6 +1357,8 @@ impl Shell {
             this.bind_notices(cx);
             this.init_app_bridge(cx);
         }
+        // Every window hosts its own runs, so each has its own control bridge.
+        this.init_control_bridge(cx);
         for summary in summaries {
             if this
                 .pilots
@@ -1350,6 +1373,7 @@ impl Shell {
         if !secondary {
             this.init_mobile_host(cx);
             this.restore_hold(cx);
+            this.restore_orchestrations(cx);
             this.resume_interrupted(cx);
         }
         if let Some(id) = this.workspace.active {
@@ -1559,6 +1583,7 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.sessions.insert(id, view);
+        self.orchestration_view_added(id, cx);
         // Restored after a restart, a held session has no view state of its own.
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
@@ -1658,8 +1683,10 @@ impl Shell {
                             this.invalidate_chrome(cx);
                             cx.notify();
                         }
+                        this.session_removed(id, true, cx);
                     }
                     Err(error) => {
+                        this.session_removed(id, false, cx);
                         this.error = Some(format!("Could not update archive: {error}"));
                         this.invalidate_chrome(cx);
                         cx.notify();
@@ -5985,7 +6012,7 @@ impl Shell {
     ) {
         if let MenuTarget::Tab(id) = target {
             match action {
-                "archive" => return self.toggle_archive(id, cx),
+                "archive" => return self.archive_session(id, window, cx),
                 "delete" => return self.confirm_delete_session(id, window, cx),
                 _ => {}
             }
@@ -6667,9 +6694,9 @@ impl Shell {
                 icon("archive", 12.).group_hover("session-archive", |s| s.text_color(content(1.))),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.toggle_archive(id, cx);
+                this.archive_session(id, window, cx);
             }))
             .into_any()
     }
@@ -8961,6 +8988,20 @@ impl Render for Shell {
                 if let Some(pilots) = this.pilots.clone()
                     && pilots.update(cx, |m, cx| m.dismiss_settings(window, cx))
                 {
+                    return;
+                }
+                // These views have layers of their own: Escape closes the
+                // innermost, so it has to reach their key handlers.
+                let layered = match this.active_app_view {
+                    Some(app_views::AppView::Board) => true,
+                    Some(app_views::AppView::Inbox) => this
+                        .inbox
+                        .as_ref()
+                        .is_some_and(|inbox| inbox.read(cx).holds_focus(window, cx)),
+                    _ => false,
+                };
+                if layered {
+                    cx.propagate();
                     return;
                 }
                 if this.app_view_open() {

@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   refresh: (() => {}) as () => void,
   models: [] as UnifiedDiffFileModel[],
 }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitDiffFiles: vi.fn(),
   gitFileDiff: vi.fn(),
   gitStageFile: vi.fn(),

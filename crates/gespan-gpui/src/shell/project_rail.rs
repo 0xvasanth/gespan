@@ -1903,6 +1903,95 @@ mod tests {
     }
 
     #[gpui::test]
+    fn meet_pilots_card_stands_in_until_there_is_a_pilot_and_can_hide_pilots(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = true;
+                shell.workspace.preferences.pilots = true;
+                shell.apply_preferences(cx);
+                assert!(shell.pilot_manager().read(cx).roster.pilots.is_empty());
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-intro").is_some());
+        assert!(
+            visual.debug_bounds("new-pilot").is_none(),
+            "the card replaces the empty section's New pilot row"
+        );
+
+        let hide = visual.debug_bounds("pilot-intro-hide").unwrap();
+        visual.simulate_click(hide.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-intro").is_none());
+        window
+            .update(visual, |shell, w, cx| {
+                assert!(!shell.workspace.preferences.pilots);
+                assert!(!cx.global::<crate::settings::Preferences>().pilots);
+                let saved = shell.latest_state.lock().unwrap().clone();
+                assert!(
+                    !Workspace::restore(Some(&saved), &[], "/work/gespan")
+                        .preferences
+                        .pilots
+                );
+                let mut prefs = shell.workspace.preferences.clone();
+                prefs.pilots = true;
+                shell.set_preferences(prefs, w, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+
+        let create = visual.debug_bounds("pilot-intro-create").unwrap();
+        visual.simulate_click(create.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-intro").is_none());
+        window
+            .update(visual, |shell, _, cx| {
+                let manager = shell.pilot_manager();
+                let manager = manager.read(cx);
+                assert_eq!(manager.roster.pilots.len(), 1);
+                assert!(
+                    manager.roster.pilots[0].projects.is_empty(),
+                    "the rail's Pilot starts with no project of its own"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_icon_rail_has_no_room_for_the_meet_pilots_card(cx: &mut TestAppContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = false;
+                shell.workspace.preferences.pilots = true;
+                shell.apply_preferences(cx);
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-intro").is_none());
+    }
+
+    #[gpui::test]
     fn original_project_rail_reorders_groups_and_projects(cx: &mut TestAppContext) {
         cx.update(crate::shell::bind_keys);
         cx.update(|cx| cx.set_reduce_motion(true));

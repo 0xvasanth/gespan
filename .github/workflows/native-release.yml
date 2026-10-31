@@ -60,6 +60,7 @@ jobs:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
       NATIVE_UPDATER_ENDPOINT: ${{ vars.NATIVE_UPDATER_ENDPOINT }}
+      NATIVE_STABLE_UPDATER_ENDPOINT: ${{ vars.NATIVE_STABLE_UPDATER_ENDPOINT }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,10 +81,11 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
+          node --input-type=module -e 'import { nativeVersion } from "./scripts/package-native.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
-          # variable, or the GitHub native-latest feed when that is unset.
+          # Requires TAURI_UPDATER_PUBKEY. The endpoint is the NATIVE_UPDATER_ENDPOINT repository
+          # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
+          # feed when that is unset.
           node scripts/release-channel.cjs native-config
       - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
@@ -208,6 +210,7 @@ jobs:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
       NATIVE_UPDATER_ENDPOINT: ${{ vars.NATIVE_UPDATER_ENDPOINT }}
+      NATIVE_STABLE_UPDATER_ENDPOINT: ${{ vars.NATIVE_STABLE_UPDATER_ENDPOINT }}
     steps:
       - run: dnf install -y git
       - uses: actions/checkout@v7
@@ -227,10 +230,11 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
+          node --input-type=module -e 'import { nativeVersion } from "./scripts/package-native.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
-          # variable, or the GitHub native-latest feed when that is unset.
+          # Requires TAURI_UPDATER_PUBKEY. The endpoint is the NATIVE_UPDATER_ENDPOINT repository
+          # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
+          # feed when that is unset.
           node scripts/release-channel.cjs native-config
       - run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --release
@@ -356,6 +360,8 @@ jobs:
           GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}"
           echo "GESPAN_NATIVE_VERSION=$GESPAN_NATIVE_VERSION" >> "$GITHUB_ENV"
           # The packages go on vX.Y.Z, shared with the Gespan (Tauri) release.
+          # NATIVE_RELEASE_FLAGS keeps a prerelease off releases/latest and puts
+          # a stable release on it, which is what publishes the stable feed.
           # Published files are never replaced: when this build's files are
           # already there, only the native-latest feed is refreshed (this lets
           # a failed run recover). See releasePlan in scripts/release-channel.cjs.
@@ -371,7 +377,7 @@ jobs:
           fi
           if [ "$NATIVE_CREATE_RELEASE" = true ]; then
             node scripts/release-channel.cjs release-notes "$GESPAN_NATIVE_VERSION" > "$RUNNER_TEMP/release-notes.md"
-            gh release create "$NATIVE_RELEASE_TAG" --draft --prerelease --latest=false --target "$GITHUB_SHA" --title "Gespan ${GESPAN_NATIVE_VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"
+            gh release create "$NATIVE_RELEASE_TAG" --draft $NATIVE_RELEASE_FLAGS --target "$GITHUB_SHA" --title "Gespan ${GESPAN_NATIVE_VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           if [ "$NATIVE_UPLOAD_PACKAGES" = true ]; then
             FILES=()
@@ -381,19 +387,22 @@ jobs:
             # The signed feed rides along so a failed run can republish it unsigned.
             FILES+=(native-dist/native-latest.json)
             gh release upload "$NATIVE_RELEASE_TAG" "${FILES[@]}" --clobber
-            # Publish a draft; a release the other app already published keeps
+            # Publish a draft; a prerelease the other app already published keeps
             # its title, notes and channel.
-            if [ "$(gh release view "$NATIVE_RELEASE_TAG" --json isDraft --jq .isDraft)" = true ]; then
-              gh release edit "$NATIVE_RELEASE_TAG" --draft=false --prerelease --latest=false
+            if [ "$NATIVE_PRERELEASE" = false ] || [ "$(gh release view "$NATIVE_RELEASE_TAG" --json isDraft --jq .isDraft)" = true ]; then
+              gh release edit "$NATIVE_RELEASE_TAG" --draft=false $NATIVE_RELEASE_FLAGS
             fi
           fi
           # The feed references the assets of the versioned release above, so
           # the fixed native-latest release only ever holds this one feed file.
-          # Publish it after every platform asset exists.
-          if ! gh release view native-latest >/dev/null 2>&1; then
-            gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Update feed: Gespan Native (do not delete)" --notes 'This is not a release. It holds only latest.json, the signed update feed that installed Gespan Native builds check for new versions. Packages live on the vX.Y.Z releases.'
+          # Publish it after every platform asset exists. A stable release needs
+          # none of this: its native-latest.json is the stable feed.
+          if [ "$NATIVE_PRERELEASE" = true ]; then
+            if ! gh release view native-latest >/dev/null 2>&1; then
+              gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Update feed: Gespan Native (do not delete)" --notes 'This is not a release. It holds only latest.json, the signed update feed that installed Gespan Native builds check for new versions. Packages live on the vX.Y.Z releases.'
+            fi
+            gh release upload native-latest "$RUNNER_TEMP/native-feed/latest.json" --clobber
           fi
-          gh release upload native-latest "$RUNNER_TEMP/native-feed/latest.json" --clobber
       - name: Publish standalone host packages
         run: |
           set -euo pipefail
@@ -412,6 +421,11 @@ jobs:
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           while IFS= read -r file; do
-            aws s3 cp "native-dist/$file" "s3://${R2_BUCKET_NAME}/native-preview/${GESPAN_NATIVE_VERSION}/$file" --cache-control 'public,max-age=31536000,immutable' --endpoint-url "$ENDPOINT"
+            aws s3 cp "native-dist/$file" "s3://${R2_BUCKET_NAME}/${NATIVE_MIRROR_PREFIX}/${GESPAN_NATIVE_VERSION}/$file" --cache-control 'public,max-age=31536000,immutable' --endpoint-url "$ENDPOINT"
           done < "$RUNNER_TEMP/native-files.txt"
-          aws s3 cp native-dist/latest.json "s3://${R2_BUCKET_NAME}/native-preview/latest.json" --content-type application/json --cache-control 'no-store,max-age=0,must-revalidate' --endpoint-url "$ENDPOINT"
+          aws s3 cp native-dist/latest.json "s3://${R2_BUCKET_NAME}/${NATIVE_MIRROR_PREFIX}/latest.json" --content-type application/json --cache-control 'no-store,max-age=0,must-revalidate' --endpoint-url "$ENDPOINT"
+          # Stable links for both Mac architectures. The CDN must never keep an
+          # older release under these mutable names. Prereleases list nothing.
+          node scripts/release-channel.cjs native-fixed-downloads | while read -r file key; do
+            aws s3 cp "native-dist/$file" "s3://${R2_BUCKET_NAME}/$key" --cache-control 'no-store,max-age=0,must-revalidate' --endpoint-url "$ENDPOINT"
+          done

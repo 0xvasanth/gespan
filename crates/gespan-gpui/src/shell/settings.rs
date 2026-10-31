@@ -212,7 +212,11 @@ impl Shell {
                     if this.session_summaries.contains_key(id)
                         && this.session_metadata(*id, cx).summary.archived != *archived
                     {
-                        this.toggle_archive(*id, cx);
+                        if *archived {
+                            this.archive_session(*id, window, cx);
+                        } else {
+                            this.toggle_archive(*id, cx);
+                        }
                     }
                 }
                 SettingsEvent::Delete(id) => this.delete_from_settings(*id, window, cx),
@@ -555,27 +559,34 @@ impl Shell {
                 gespan_core::worktree_management::remove(Path::new(&main.path),Path::new(&worker_path))?;
                 locked(&store)?.detach_worktree(&worker_path,&main.path)
             });let result=work.await;
-            let _=this.update(cx,|this,cx|{let result=result.map(|detached|{for(summary,settings)in detached{this.session_summaries.insert(summary.id, summary.clone());this.session_worktrees.insert(summary.id,settings.worktree_cwd.clone());if let Some(view)=this.sessions.get(&summary.id){view.update(cx,|v,cx|v.worktree_deleted(summary,settings,cx));}}this.worktree_focus.retain(|_,focus|!is_equal_or_inside(&focus.path,&path));});this.finish_worktree_action(result,cx);});
+            let _=this.update(cx,|this,cx|{let result=result.map(|detached|this.worktree_detached(detached,&path,cx));this.finish_worktree_action(result,cx);});
         }).detach();
         let _ = window;
     }
-    fn delete_from_settings(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        let prompt = window.prompt(
-            gpui::PromptLevel::Warning,
-            "Delete this conversation permanently?",
-            Some("Its messages and saved settings will be removed."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if prompt.await != Ok(0) {
-                return;
+    /// The worktree at `path` is gone; its sessions keep their transcripts.
+    pub(super) fn worktree_detached(
+        &mut self,
+        detached: Vec<(Session, gespan_core::agent::Settings)>,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) {
+        for (summary, settings) in detached {
+            self.session_summaries.insert(summary.id, summary.clone());
+            self.session_worktrees
+                .insert(summary.id, settings.worktree_cwd.clone());
+            if let Some(view) = self.sessions.get(&summary.id) {
+                view.update(cx, |v, cx| v.worktree_deleted(summary, settings, cx));
             }
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.delete_session(id, window, cx);
-            });
-        })
-        .detach();
+        }
+        self.worktree_focus
+            .retain(|_, focus| !gespan_core::files::is_equal_or_inside(&focus.path, path));
+    }
+    fn delete_from_settings(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let ask = session_worktree::Ask {
+            title: "Delete this conversation permanently?".into(),
+            detail: "Its messages and saved settings will be removed.".into(),
+        };
+        self.remove_session(id, session_worktree::Removal::Delete, Some(ask), window, cx);
     }
 }
 fn this_update(this: &mut Shell, cx: &mut Context<Shell>) {
@@ -1170,6 +1181,11 @@ mod tests {
 
     #[gpui::test]
     fn last_used_controls_follow_into_a_new_session(cx: &mut TestAppContext) {
+        // The catalog cache outlives each test, and a cached model decides
+        // which controls carry over.
+        for kind in [Kind::Claude, Kind::Codex] {
+            gespan_core::catalog::invalidate(kind, &Default::default());
+        }
         let (window, _, _) = window(cx);
         only_installed(&[Kind::Claude, Kind::Codex], cx);
         let chat = window.update(cx, |shell, _, _| active_chat(shell)).unwrap();

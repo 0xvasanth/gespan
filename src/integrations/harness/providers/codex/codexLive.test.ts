@@ -28,9 +28,9 @@ const prepareCodexPilotContext = vi.hoisted(() =>
     hasThread: true,
   })),
 );
-vi.mock("./codexStore", () => ({ prepareCodexPilotContext }));
+vi.mock("../../../../../host/core/integrations/harness/providers/codex/codexStore", () => ({ prepareCodexPilotContext }));
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/fake/codex" }),
   spawnChild,
   restoreGespanxAgentState,
@@ -42,7 +42,7 @@ vi.mock("../../core/child", () => ({
   writeChild,
 }));
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../../host/core/platform/tauri/fs", () => ({
   saveGeneratedImage,
   deleteGeneratedImages,
 }));

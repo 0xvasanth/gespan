@@ -11,7 +11,7 @@ const { invalidateWatchedFiles } = vi.hoisted(() => ({
   invalidateWatchedFiles: vi.fn(),
 }));
 
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitDiffIndex: vi.fn(),
   gitHistory: vi.fn(async () => []),
   gitPrStatus: vi.fn(async () => null),
@@ -43,7 +43,7 @@ vi.mock("../../files/model/fileWatch", () => ({
   nudgeWatchedFiles: vi.fn(),
 }));
 
-vi.mock("../../inbox/model/inboxSelfActivity", () => ({
+vi.mock("../../../../host/core/features/inbox/model/inboxSelfActivity", () => ({
   recordInboxSelfActivity: vi.fn(),
 }));
 

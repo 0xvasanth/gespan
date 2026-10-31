@@ -1555,6 +1555,62 @@ fn closing_work_above_the_answer_moves_it_one_way(cx: &mut TestAppContext) {
     }
 }
 
+/// Source rows of the prose left visible once the turn has settled.
+fn visible_prose(source: Vec<Row>, cx: &mut TestAppContext) -> Vec<usize> {
+    let window = chat_mode(cx, false);
+    window
+        .update(cx, |view, _, cx| {
+            view.patch(0, source, cx);
+            view.rows
+                .iter()
+                .filter(|r| matches!(r.body, Body::Markdown(_)))
+                .map(|r| r.key.0)
+                .collect()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_turn_continued_with_reasoning_alone_keeps_both_messages(cx: &mut TestAppContext) {
+    let source = vec![
+        row("user", "Summarize the report."),
+        row("assistant", "The complete answer."),
+        row("reasoning", "One more line was asked for."),
+        row("assistant", "One more short line."),
+    ];
+    assert_eq!(visible_prose(source, cx), [1, 3]);
+}
+
+#[gpui::test]
+fn an_answer_after_work_stays_visible_when_the_turn_continues_with_reasoning(
+    cx: &mut TestAppContext,
+) {
+    // A Stop hook sends the agent on after it answered. Nothing ran after the
+    // answer, so only the calls above it fold.
+    let source = vec![
+        row("user", "Summarize the report."),
+        tool(0, true),
+        row("assistant", "The complete answer."),
+        row("reasoning", "One more line was asked for."),
+        row("assistant", "One more short line."),
+    ];
+    assert_eq!(visible_prose(source, cx), [2, 4]);
+}
+
+#[gpui::test]
+fn commentary_still_folds_when_the_continuation_ran_tools(cx: &mut TestAppContext) {
+    let source = vec![
+        row("user", "Go"),
+        row("assistant", "Checking the other half now."),
+        tool(0, true),
+        row("assistant", "The complete answer."),
+        row("reasoning", "There is one more thing to run."),
+        tool(1, true),
+        row("assistant", "One more short line."),
+    ];
+    assert_eq!(visible_prose(source, cx), [6]);
+}
+
 fn tool(ix: usize, done: bool) -> Row {
     row(
         "tool",

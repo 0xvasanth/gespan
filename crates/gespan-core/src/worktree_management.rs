@@ -1,5 +1,10 @@
 //! Settings worktree guards; removal keeps the branch and commits.
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
+const REMOVE_RETRIES: usize = 10;
+const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(200);
 pub fn default_root(main: &Path) -> PathBuf {
     main.with_file_name(format!(
         "{}-worktrees",
@@ -65,6 +70,52 @@ fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     let tree = check(cwd, path)?;
     crate::provider::discard_worktree(Path::new(&tree.path));
     crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path]).map(|_| ())
+}
+/// Whether nothing but `session` works in the worktree at `path`.
+pub fn only_used_by(path: &str, session: i64, users: &[(i64, String)]) -> bool {
+    let real = |path: &str| {
+        Path::new(path)
+            .canonicalize()
+            .map_or_else(|_| path.to_owned(), |p| p.to_string_lossy().into_owned())
+    };
+    let root = real(path);
+    users
+        .iter()
+        .all(|(id, cwd)| *id == session || !crate::files::is_equal_or_inside(&real(cwd), &root))
+}
+/// The worktree at `path`, if removing `session` would leave it unused.
+pub fn unused_after(
+    cwd: &Path,
+    path: &Path,
+    session: i64,
+    users: &[(i64, String)],
+) -> Option<crate::git::Worktree> {
+    check(cwd, path)
+        .ok()
+        .filter(|tree| only_used_by(&tree.path, session, users))
+}
+/// Removes a worktree nobody asked to discard: uncommitted changes keep it.
+pub fn remove_unused(cwd: &Path, path: &Path) -> Result<(), String> {
+    let _span = tracing::info_span!("worktree_remove").entered();
+    crate::diagnostics::metrics::track("worktree.remove", remove_clean(cwd, path))
+        .inspect_err(|error| tracing::warn!(%error, "could not remove a worktree"))
+}
+fn remove_clean(cwd: &Path, path: &Path) -> Result<(), String> {
+    let tree = check(cwd, path)?;
+    if status(cwd, &tree).1 != Some(false) {
+        return Err("Files in this worktree have uncommitted changes.".into());
+    }
+    crate::provider::discard_worktree(Path::new(&tree.path));
+    let remove = || crate::git::git(cwd, &["worktree", "remove", "--", &tree.path]).map(|_| ());
+    // A discarded agent exits on its own thread. Windows refuses to delete a
+    // folder while a process still runs in it.
+    for _ in 0..REMOVE_RETRIES {
+        if remove().is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(REMOVE_RETRY_DELAY);
+    }
+    remove()
 }
 
 #[cfg(test)]
@@ -142,6 +193,91 @@ mod tests {
             &["worktree", "remove", "--force", path.to_str().unwrap()],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn only_used_by_ignores_the_session_itself_and_other_folders() {
+        let dir = repo();
+        let tree = crate::git::create_named_worktree(dir.path(), "shared").unwrap();
+        let elsewhere = dir.path().to_string_lossy().into_owned();
+        let inside = format!("{}/src", tree.path);
+        std::fs::create_dir(&inside).unwrap();
+        let unused = [(1, tree.path.clone()), (2, elsewhere)];
+        assert!(only_used_by(&tree.path, 1, &unused));
+        assert!(!only_used_by(&tree.path, 2, &unused), "1 still works there");
+        let nested = [(1, tree.path.clone()), (2, inside)];
+        assert!(!only_used_by(&tree.path, 1, &nested), "a subfolder counts");
+        assert!(only_used_by(&tree.path, 1, &[]));
+        remove(dir.path(), Path::new(&tree.path)).unwrap();
+        let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+    #[test]
+    fn only_used_by_sees_the_same_folder_through_another_spelling() {
+        let dir = repo();
+        let tree = crate::git::create_named_worktree(dir.path(), "spelled").unwrap();
+        let spelled = format!("{}/../spelled", tree.path);
+        assert!(!only_used_by(&tree.path, 1, &[(2, spelled)]));
+        remove(dir.path(), Path::new(&tree.path)).unwrap();
+        let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+    #[test]
+    fn unused_after_offers_only_a_removable_branch_worktree() {
+        let dir = repo();
+        let main = dir.path();
+        assert!(unused_after(main, main, 1, &[]).is_none(), "the main copy");
+        let tree = crate::git::create_named_worktree(main, "offered").unwrap();
+        let path = Path::new(&tree.path);
+        assert!(unused_after(main, path, 1, &[(1, tree.path.clone())]).is_some());
+        assert!(unused_after(main, path, 1, &[(2, tree.path.clone())]).is_none());
+        crate::git::git(main, &["worktree", "lock", "--", &tree.path]).unwrap();
+        assert!(unused_after(main, path, 1, &[]).is_none(), "locked");
+        crate::git::git(main, &["worktree", "unlock", "--", &tree.path]).unwrap();
+        remove(main, path).unwrap();
+        assert!(unused_after(main, path, 1, &[]).is_none(), "already gone");
+        let detached = main.join("detached");
+        let spot = detached.to_str().unwrap();
+        crate::git::git(main, &["worktree", "add", "--detach", spot, "HEAD"]).unwrap();
+        assert!(unused_after(main, &detached, 1, &[]).is_none(), "detached");
+        crate::git::git(main, &["worktree", "remove", "--force", spot]).unwrap();
+        let _ = std::fs::remove_dir(default_root(main));
+    }
+    #[test]
+    fn remove_unused_keeps_uncommitted_work_and_the_branch() {
+        let dir = repo();
+        let tree = crate::git::create_named_worktree(dir.path(), "careful").unwrap();
+        let path = Path::new(&tree.path);
+        std::fs::write(path.join("file"), "edited").unwrap();
+        let refused = remove_unused(dir.path(), path).unwrap_err();
+        assert!(refused.contains("uncommitted"), "{refused}");
+        crate::git::git(path, &["checkout", "--", "file"]).unwrap();
+        std::fs::write(path.join("untracked"), "keep me").unwrap();
+        assert!(remove_unused(dir.path(), path).is_err());
+        assert!(path.join("untracked").exists());
+        std::fs::remove_file(path.join("untracked")).unwrap();
+
+        remove_unused(dir.path(), path).unwrap();
+        assert!(!path.exists());
+        crate::git::git(dir.path(), &["show-ref", "--verify", "refs/heads/careful"]).unwrap();
+        let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+    #[test]
+    fn remove_unused_clears_ignored_files_and_is_counted() {
+        use crate::diagnostics::metrics::capture;
+        let dir = repo();
+        std::fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+        crate::git::git(dir.path(), &["add", ".gitignore"]).unwrap();
+        crate::git::git(dir.path(), &["commit", "-m", "Ignore"]).unwrap();
+        let tree = crate::git::create_named_worktree(dir.path(), "built").unwrap();
+        let path = Path::new(&tree.path);
+        std::fs::create_dir(path.join("build")).unwrap();
+        std::fs::write(path.join("build/out"), "cache").unwrap();
+        let (removed, counts) = capture(|| remove_unused(dir.path(), path));
+        removed.unwrap();
+        assert!(!path.exists());
+        assert!(counts
+            .iter()
+            .any(|c| c.name == "worktree.remove" && c.kind.is_none()));
+        let _ = std::fs::remove_dir(default_root(dir.path()));
     }
 
     #[test]
