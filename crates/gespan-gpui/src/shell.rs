@@ -53,6 +53,8 @@ mod sidebar_peek;
 mod space_reorder;
 mod terminal_dock;
 mod title_tabs;
+#[cfg(test)]
+mod transcript_find_tests;
 mod tray;
 pub(crate) use multi_window::WindowSeed;
 pub(crate) use tray::reopen;

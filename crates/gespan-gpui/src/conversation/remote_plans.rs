@@ -119,6 +119,21 @@ pub(crate) enum PlanAction {
     BuildWith,
 }
 
+#[cfg(test)]
+impl Conversation {
+    pub(crate) fn open_plan_reader_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.remote_plans.reader = Some(Reader {
+            id: "plan".into(),
+            text: text.into(),
+            view: cx.new(|cx| TranscriptView::document(text.into(), cx)),
+        });
+        cx.notify();
+    }
+    pub(crate) fn plan_reader_open(&self) -> bool {
+        self.remote_plans.reader.is_some()
+    }
+}
+
 impl Conversation {
     pub(super) fn close_remote_plan(&mut self, cx: &mut Context<Self>) -> bool {
         if self.remote_plans.reader.take().is_some() {
