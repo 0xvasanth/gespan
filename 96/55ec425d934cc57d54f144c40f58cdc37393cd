@@ -1,0 +1,23 @@
+.github/workflows/release.yml
+  s_1154382a283d10::t_c7510156af4a9e 57-58
+scripts/release-channel.cjs
+  s_1154382a283d10::t_8dd2d539394546 179-180,274
+scripts/release-channel.test.cjs
+  s_1154382a283d10::t_3aff104d91d134 436-437,439,465-466,470-471,475,480-490,494
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9655ec425d934cc57d54f144c40f58cdc37393cd",
+  "prompts": {},
+  "sessions": {
+    "s_1154382a283d10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a37ab1a8-59d8-4485-b51e-8ee41bb709ed",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
