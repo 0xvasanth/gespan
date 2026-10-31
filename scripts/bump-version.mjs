@@ -57,6 +57,7 @@ const lockfiles = {
   "src-tauri/Cargo.lock": ["gespan", "gespan-models", "gespan-speech"],
   "crates/gespan-gpui/Cargo.lock": [
     "gespan-core",
+    "gespan-first-launch",
     "gespan-gpui",
     "gespan-models",
     "gespan-speech",
