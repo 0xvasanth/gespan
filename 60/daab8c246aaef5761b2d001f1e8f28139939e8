@@ -1,0 +1,35 @@
+scripts/ci-impact.test.mjs
+  s_2b87d71bf69e35::t_926241acd59c4c 1-77
+scripts/ci-impact.mjs
+  s_2b87d71bf69e35::t_926241acd59c4c 1-59
+.github/workflows/ci.yml
+  s_2b87d71bf69e35::t_e005672cdd55b3 12
+  s_2b87d71bf69e35::t_926241acd59c4c 13-14,16-34,37-38,49,53-54,76-82,89-92,95-102
+.github/workflows/native.yml
+  s_2b87d71bf69e35::t_a0d67a28d5d872 131-133,136-137,142-144,147-148
+  s_2b87d71bf69e35::t_20dba90fec0a0e 71-75
+  s_2b87d71bf69e35::t_926241acd59c4c 8-9,20-38,41-47,54-57,60-61,64-65,69-70,76-83,86-87,98-104,117-120,124-125,129-130,134-135,138-141,145-146,149-150
+  s_2b87d71bf69e35::t_e005672cdd55b3 85
+.github/workflows/native-release.yml
+  s_2b87d71bf69e35::t_e005672cdd55b3 362,371
+crates/gespan-gpui/.config/nextest.toml
+  s_2b87d71bf69e35::t_457b20110aca1e 1-5
+docs/native/verification.md
+  s_2b87d71bf69e35::t_b4cf3bf1670198 14-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60daab8c246aaef5761b2d001f1e8f28139939e8",
+  "prompts": {},
+  "sessions": {
+    "s_2b87d71bf69e35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d185630-3163-4510-9f5a-9f0082eb85c3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
