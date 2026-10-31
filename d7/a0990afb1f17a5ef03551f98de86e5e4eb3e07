@@ -1,0 +1,41 @@
+.github/workflows/native.yml
+  s_2b87d71bf69e35::t_bb9f4e936f1902 138-140,144,147,149,153-155
+Cargo.toml
+  s_2b87d71bf69e35::t_a418de26e866cd 4
+crates/gespan-first-launch/Cargo.toml
+  s_2b87d71bf69e35::t_0f3c75eb28b4a7 1-15
+crates/gespan-first-launch/src/lib.rs
+  s_2b87d71bf69e35::t_e2f2e8f28429a1 1-2
+crates/gespan-first-launch/tests/first_launch.rs
+  s_2b87d71bf69e35::t_624197af85bc33 24-39,41
+crates/gespan-gpui/.config/ci-cargo.toml
+  s_2b87d71bf69e35::t_6959b73481fb4d 1-8
+crates/gespan-gpui/Cargo.lock
+  s_2b87d71bf69e35::t_34fd51f0284dd1 2400-2407
+crates/gespan-gpui/Cargo.toml
+  s_2b87d71bf69e35::t_7ca66baff8a5dc 107
+docs/native/verification.md
+  s_2b87d71bf69e35::t_78c555260f0e29 22-23,29
+package.json
+  s_2b87d71bf69e35::t_0be75fb3b83168 45-46
+scripts/ci-impact.mjs
+  s_2b87d71bf69e35::t_0f9481a4ceedcf 24
+scripts/ci-impact.test.mjs
+  s_2b87d71bf69e35::t_e1094fb1a27215 43-44,79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7a0990afb1f17a5ef03551f98de86e5e4eb3e07",
+  "prompts": {},
+  "sessions": {
+    "s_2b87d71bf69e35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d185630-3163-4510-9f5a-9f0082eb85c3",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
