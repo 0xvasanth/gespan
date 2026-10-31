@@ -1,0 +1,67 @@
+crates/gespan-core/src/orchestration.rs
+  s_666089fd138caa::t_2fc0c2fef49e00 12,191-192,195-196,206-236,486-551
+  s_666089fd138caa::t_3c452bd2a70faa 38-39,58
+crates/gespan-core/src/provider.rs
+  s_666089fd138caa::t_635ad60df897f6 93-95,133-134,708-713,1080-1089
+crates/gespan-gpui/src/conversation.rs
+  s_666089fd138caa::t_41530be971af9b 211,733
+crates/gespan-gpui/src/conversation/history.rs
+  s_666089fd138caa::t_3c3ccad601d225 21-37,39
+crates/gespan-gpui/src/transcript.rs
+  s_666089fd138caa::t_66aab0582106f6 3229-3235,6107-6130
+crates/gespan-core/src/plan.rs
+  s_666089fd138caa::t_e59f3d66ae1e98 123-143,252-293
+crates/gespan-core/src/provider/questions.rs
+  s_666089fd138caa::t_35ca679403ef3d 388-454
+crates/gespan-gpui/src/runtime.rs
+  s_666089fd138caa::t_deeeb150690b3e 949-957
+crates/gespan-gpui/src/hold_confirm.rs
+  s_666089fd138caa::t_a3596a7a53dfd3 6,212-213,238-241,250,252,254-255,264-266,274-275,277-278,280,282
+crates/gespan-gpui/src/shell/hold.rs
+  s_666089fd138caa::t_eff09f87347885 9,15-16,59-77,665-666,670-671,677-678,686-689,692-697,1277,1373,1390,1442
+  s_54b16d8ad285f5::t_f67ccbed08a1dc 1346,1351
+crates/gespan-gpui/src/visuals.rs
+  s_666089fd138caa::t_ac235238bf553c 24-36
+crates/gespan-gpui/src/visuals/charts.rs
+  s_666089fd138caa::t_96edb005bcd8a7 6-7,980-986
+crates/gespan-gpui/src/visuals/dither.rs
+  s_666089fd138caa::t_261cb5b098daba 70-117,584-615
+crates/gespan-gpui/src/conversation/submission_tests.rs
+  s_54b16d8ad285f5::t_5a6c22d45d258d 599-664
+crates/gespan-core/src/orchestration/run.rs
+  s_666089fd138caa::t_c80be1ed2ef908 94-96,339,437-441,453,632,647-656,1120
+crates/gespan-core/src/orchestration/run/tests.rs
+  s_666089fd138caa::t_3486f61f6c3b61 575-620
+crates/gespan-gpui/src/conversation/notifications.rs
+  s_666089fd138caa::t_d028fd8f0b5596 4,17,25
+crates/gespan-gpui/src/notifications/approvals.rs
+  s_666089fd138caa::t_7cb55cb2b1e487 21-36,254-267,342-374
+crates/gespan-gpui/src/shell/orchestration.rs
+  s_666089fd138caa::t_67c9ac8f0a5733 736-738,743-773
+crates/gespan-gpui/src/shell/rails.rs
+  s_666089fd138caa::t_6ae78f20933cd4 771-772
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57f1e291d3584b26ef5a333a7a3f64ae96b2c014",
+  "prompts": {},
+  "sessions": {
+    "s_54b16d8ad285f5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ee91194-d516-49d5-9b66-f2c60317175c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
