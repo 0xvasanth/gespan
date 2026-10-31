@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -171,38 +172,76 @@ it.skipIf(!shell)(
   90_000,
 );
 
-const lockedRuntime = (failures: number) => `
-$script:moveFailures = ${failures}
-function Move-Item {
-  param([string] $LiteralPath, [string] $Destination, $ErrorAction)
-  if ($script:moveFailures -gt 0) {
-    $script:moveFailures--
-    throw [IO.IOException]::new("The process cannot access the file 'node.exe' because it is being used by another process.")
-  }
-  Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination -ErrorAction Stop
+// Holds node.exe open the way a process that is still exiting, or a scanner,
+// does. Only a real handle shows what a blocked move leaves on disk, and only
+// Windows blocks the move for it. The install's waits stand in for time passing.
+const heldRuntime = (waits: number) => `
+$script:held = $null
+$script:waits = ${waits}
+function Release-Runtime {
+  if ($null -eq $script:held) { return }
+  $script:held.Dispose()
+  $script:held = $null
+  Add-Content -LiteralPath $env:GESPAN_TEST_EVENTS -Value 'runtime released'
+}
+function Expand-Archive([string] $LiteralPath, [string] $DestinationPath) {
+  Microsoft.PowerShell.Archive\\Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath
+  $script:held = [IO.File]::Open((Join-Path $DestinationPath 'node.exe'), 'Open', 'Read', 'Read')
+}
+function Start-Sleep([int] $Milliseconds) {
+  $script:waits--
+  if ($script:waits -eq 0) { Release-Runtime }
+}
+function Remove-Item {
+  param([string] $LiteralPath, [switch] $Recurse, [switch] $Force)
+  Release-Runtime
+  Microsoft.PowerShell.Management\\Remove-Item -LiteralPath $LiteralPath -Recurse -Force
 }`;
 
-it.skipIf(!shell)(
-  "waits for a runtime that is briefly locked after its version check",
+const eventsOf = (file: string) =>
+  readFileSync(file, "utf8").trim().split(/\r?\n/);
+
+it.skipIf(!windows)(
+  "publishes a whole runtime after waiting for one that is briefly locked",
   async () => {
-    const fixture = await install(false, lockedRuntime(3));
+    const fixture = await install(false, heldRuntime(1));
     const result = await fixture.run();
     expect(JSON.parse(result.stdout)).toEqual({ port: 3774, pid: 123 });
-    expect(
-      existsSync(
-        join(readFileSync(join(fixture.base, "runtime-path"), "utf8"), "node.exe"),
-      ),
-    ).toBe(true);
+    const runtime = readFileSync(join(fixture.base, "runtime-path"), "utf8");
+    expect(readdirSync(runtime).sort()).toEqual(["host.mjs", "node.exe"]);
+    expect(eventsOf(fixture.events)).toEqual([
+      "runtime released",
+      "service install",
+    ]);
   },
   90_000,
 );
 
-it.skipIf(!shell)(
-  "gives up on a runtime that stays locked",
+it.skipIf(!windows)(
+  "keeps an update whole when the new runtime is briefly locked",
   async () => {
-    const fixture = await install(false, lockedRuntime(1000));
-    await expect(fixture.run()).rejects.toThrow("being used by another process");
+    const fixture = await install(false, heldRuntime(3));
+    await fixture.run();
+    const oldRuntime = readFileSync(join(fixture.base, "runtime-path"), "utf8");
+    const result = await fixture.run(true);
+    expect(JSON.parse(result.stdout)).toEqual({ port: 3774, pid: 123 });
+    const runtime = readFileSync(join(fixture.base, "runtime-path"), "utf8");
+    expect(runtime).not.toBe(oldRuntime);
+    expect(readdirSync(runtime).sort()).toEqual(["host.mjs", "node.exe"]);
+  },
+  90_000,
+);
+
+it.skipIf(!windows)(
+  "gives up on a runtime that stays locked and leaves nothing half moved",
+  async () => {
+    const fixture = await install(false, heldRuntime(1000));
+    await expect(fixture.run()).rejects.toThrow(
+      /denied|being used by another process/,
+    );
     expect(existsSync(join(fixture.base, "runtime-path"))).toBe(false);
+    expect(readdirSync(join(fixture.base, "runtime"))).toEqual([]);
+    expect(eventsOf(fixture.events)).toEqual(["runtime released"]);
   },
   90_000,
 );
