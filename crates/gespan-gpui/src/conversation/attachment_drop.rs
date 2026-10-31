@@ -3,6 +3,10 @@ use crate::explorer::DraggedFile;
 use gpui::ExternalPaths;
 
 impl Conversation {
+    #[cfg(test)]
+    pub(crate) fn file_drag_for_test(&self) -> bool {
+        self.file_drag
+    }
     /// Like the session drop region, accepts files over the transcript as well
     /// as the input. Both sources go through the same attachment validation.
     pub(super) fn attachment_drop_target(
@@ -33,13 +37,16 @@ impl Conversation {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.set_file_drag(false, cx)),
             )
+            // The shell binds Escape, and a bound key never reaches key listeners.
+            .capture_action(
+                cx.listener(|this, _: &crate::shell::DismissMenu, window, cx| {
+                    if this.dismiss_layer(window, cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" && this.file_drag {
-                    cx.stop_active_drag(window);
-                    this.set_file_drag(false, cx);
-                    cx.stop_propagation();
-                } else if event.keystroke.key == "escape" && this.find.open {
-                    this.close_find(window, cx);
+                if event.keystroke.key == "escape" && this.dismiss_layer(window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -61,6 +68,30 @@ impl Conversation {
                 this.add_attachments(vec![file.0.clone()], cx);
                 window.focus(&this.input.focus_handle(cx), cx);
             }))
+    }
+
+    /// Esc: ends the file drag, else closes this session's topmost layer. False
+    /// leaves the key to the shell, whose `Session: Stop` must not run under one.
+    fn dismiss_layer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.file_drag {
+            cx.stop_active_drag(window);
+            self.set_file_drag(false, cx);
+            return true;
+        }
+        if self.close_remote_plan(cx) {
+            return true;
+        }
+        // BtwSheet: Esc anywhere in this pane folds an open sheet away.
+        if let Some(btw) = self.btw.clone()
+            && btw.update(cx, |btw, cx| btw.dismiss(window, cx))
+        {
+            return true;
+        }
+        if self.find.open {
+            self.close_find(window, cx);
+            return true;
+        }
+        false
     }
 
     fn set_file_drag(&mut self, over: bool, cx: &mut Context<Self>) {

@@ -4101,20 +4101,6 @@ impl Render for Conversation {
         }
         self.attachment_drop_target("session-chat", cx)
             .relative()
-            .capture_action(
-                cx.listener(|this, _: &crate::shell::DismissMenu, window, cx| {
-                    if this.close_remote_plan(cx) {
-                        cx.stop_propagation();
-                        return;
-                    }
-                    // BtwSheet: Esc anywhere in this pane folds an open sheet away.
-                    if let Some(btw) = this.btw.clone()
-                        && btw.update(cx, |btw, cx| btw.dismiss(window, cx))
-                    {
-                        cx.stop_propagation();
-                    }
-                }),
-            )
             .flex()
             .flex_col()
             .size_full()
