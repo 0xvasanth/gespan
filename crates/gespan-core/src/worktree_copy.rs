@@ -248,6 +248,7 @@ mod tests {
         run(&main, &["config", "user.name", "Test"]);
         run(&main, &["config", "user.email", "test@example.invalid"]);
         run(&main, &["config", "commit.gpgsign", "false"]);
+        run(&main, &["config", "core.autocrlf", "false"]);
         write(&main, ".gitignore", ignored);
         write(&main, "tracked.txt", "from git\n");
         run(&main, &["add", "."]);
