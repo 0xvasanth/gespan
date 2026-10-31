@@ -580,6 +580,8 @@ pub(crate) struct TranscriptView {
     hovered_action: Option<(usize, &'static str)>,
     pub(crate) target_action: Option<(usize, gespan_core::response::TransferKind)>,
     document: bool,
+    /// A Pilot's Activity tab: every group starts open.
+    activity_list: bool,
     side_question: bool,
     pub(crate) file_link_base: Option<String>,
     expanded: HashSet<usize>,
@@ -639,6 +641,7 @@ impl TranscriptView {
     pub(crate) fn activity(rows: Vec<Row>, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
         view.document = true;
+        view.activity_list = true;
         view.patch(0, rows, cx);
         view
     }
@@ -2473,6 +2476,7 @@ impl TranscriptView {
             hovered_action: None,
             target_action: None,
             document: false,
+            activity_list: false,
             side_question: false,
             file_link_base: None,
             expanded: HashSet::new(),
@@ -3347,9 +3351,8 @@ impl TranscriptView {
                 self.streaming
                     && (group.end == self.source.len() || awaiting_answer == Some(group.end))
             });
-            let phase_open = phase.is_none_or(|group| {
-                !grouped || self.phases.get(&group.start).copied().unwrap_or(active)
-            });
+            let phase_open =
+                phase.is_none_or(|group| !grouped || self.phase_open(group.start, active));
             // A running pill turn shows one status line in place of its work
             // and prose; a settled one's card leads its reply.
             let git_stand_in = git_card.clone().filter(|card| {
@@ -3953,7 +3956,7 @@ impl TranscriptView {
                 Body::Phase { group, active, .. }
                     if active
                         || (self.phase_scrolls.contains_key(&group)
-                            && !self.phases.get(&group).copied().unwrap_or(active)) =>
+                            && !self.phase_open(group, active)) =>
                 {
                     Some(group)
                 }
@@ -4681,7 +4684,7 @@ impl TranscriptView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let header = self.row_body(ix, true, window, cx);
-        let open = self.phases.get(&group).copied().unwrap_or(active);
+        let open = self.phase_open(group, active);
         let indices: Vec<_> = (ix + 1..self.rows.len())
             .take_while(|&i| self.rows[i].phase_group() == Some(group))
             .collect();
@@ -4980,7 +4983,7 @@ impl TranscriptView {
                 icon: glyph,
                 active,
             } => {
-                let open = self.phases.get(&group).copied().unwrap_or(active);
+                let open = self.phase_open(group, active);
                 let rotation = self
                     .motions
                     .values()
@@ -5721,6 +5724,13 @@ impl TranscriptView {
         measurements::shape_prompt(text, Some(bubble - PROMPT_PAD_X), window)
             .map(|line| line.wrap_boundaries.len() + 1)
             .sum()
+    }
+    /// The user's choice for the group, or its default.
+    fn phase_open(&self, group: usize, active: bool) -> bool {
+        self.phases
+            .get(&group)
+            .copied()
+            .unwrap_or(active || self.activity_list)
     }
     fn toggle_phase(&mut self, group: usize, open: bool, cx: &mut Context<Self>) {
         self.phase_toggle = Some(group);

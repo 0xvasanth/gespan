@@ -67,6 +67,13 @@ pub(crate) struct OverviewChrome {
     routed: bool,
     counts: (usize, usize, usize, usize),
 }
+/// The turn's commands in the Activity tab.
+struct ActivityList {
+    turn: (String, usize),
+    content: String,
+    count: usize,
+    view: Entity<crate::transcript::TranscriptView>,
+}
 struct RunningHabit {
     pilot: String,
     habit: String,
@@ -133,7 +140,7 @@ pub(crate) struct Pilots {
     html_documents: HashMap<String, Entity<html::Html>>,
     project_changes: changes::ProjectChanges,
     review: Option<Entity<crate::review::ReviewPane>>,
-    activity: Option<(String, Entity<crate::transcript::TranscriptView>)>,
+    activity: Option<ActivityList>,
     activity_turn: Option<usize>,
     rail_ids: Vec<String>,
     running: HashMap<i64, RunningHabit>,

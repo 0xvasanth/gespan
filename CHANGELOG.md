@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A Pilot's Activity list now opens with its commands showing and stays open
+  as new ones arrive, instead of collapsing each time.
+
 ### Security
 
 - Inbox sessions, automation Inbox events and board cards made from tracker

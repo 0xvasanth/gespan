@@ -523,6 +523,60 @@ fn overview_activity_returns_to_its_previous_tab_and_uses_the_shared_reveal(
 }
 
 #[gpui::test]
+fn activity_list_keeps_its_view_as_commands_arrive(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let tool = |n: usize| {
+        let mut call = gespan_core::tool::ToolCall::new(&format!("call-{n}"), "Bash");
+        call.input = format!(r#"{{"command":"echo step {n}"}}"#);
+        call.state = gespan_core::tool::ToolState::Completed;
+        gespan_core::transcript::Row {
+            role: "tool".into(),
+            text: serde_json::to_string(&call).unwrap(),
+            first: true,
+            sent_at: None,
+        }
+    };
+    let prompt = gespan_core::transcript::Row {
+        role: "user".into(),
+        text: "Run the steps".into(),
+        first: true,
+        sent_at: None,
+    };
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = visual.update(|_, cx| s.manager.read(cx).chat().unwrap());
+    let transcript = visual.update(|_, cx| chat.read(cx).transcript.clone());
+    visual.update(|_, cx| {
+        transcript.update(cx, |t, cx| {
+            t.patch(0, vec![prompt.clone(), tool(1), tool(2)], cx)
+        });
+        s.manager.update(cx, |m, cx| {
+            m.activity_turn = Some(0);
+            m.show_overview(cx);
+            m.route = None;
+            m.overview_tab = OverviewTab::Activity;
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    let first = visual.update(|_, cx| s.manager.read(cx).activity.as_ref().unwrap().view.clone());
+
+    visual.update(|_, cx| {
+        chat.update(cx, |v, cx| {
+            v.transcript
+                .update(cx, |t, cx| t.patch(3, vec![tool(3)], cx));
+            cx.emit(SessionChanged);
+        })
+    });
+    visual.run_until_parked();
+    let (same, count) = visual.update(|_, cx| {
+        let list = s.manager.read(cx).activity.as_ref().unwrap().view.clone();
+        (list == first, list.read(cx).history_rows().len())
+    });
+    assert!(same, "a new command must not replace the list");
+    assert_eq!(count, 3);
+}
+
+#[gpui::test]
 fn floating_chat_opens_after_releasing_the_manager_and_shares_the_runtime(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| {
