@@ -48,9 +48,12 @@ test("shared crates and vendored GPUI run both Native jobs", () => {
   assert.deepEqual(affected("crates/board-store/src/ops.rs", "vendor/gpui-pre/src/lib.rs"), ["core", "desktop"]);
 });
 
-test("the host package script reaches Core, the rest of the host does not", async () => {
-  assert.deepEqual(affected("host/package.mjs"), ["core", "host", "mobile"]);
-  assert.match(await read("crates/gespan-core/tests/shared_contracts.rs"), /host\/package\.mjs/);
+test("every host file a Core contract test reads runs Core, the rest of the host does not", async () => {
+  const source = await read("crates/gespan-core/tests/shared_contracts.rs");
+  const hostFiles = [...source.matchAll(/"(host\/[^"\s]+)"/g)].map((match) => match[1]);
+  assert.ok(hostFiles.includes("host/package.mjs"));
+  assert.ok(hostFiles.includes("host/windows-acl.ps1"));
+  for (const file of hostFiles) assert.deepEqual(affected(file), ["core", "host", "mobile"], file);
   assert.deepEqual(affected("host/core/index.ts"), ["host", "mobile"]);
 });
 

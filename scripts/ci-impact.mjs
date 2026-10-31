@@ -24,8 +24,8 @@ const rules = [
   [/^crates\/gespan-gpui\/(tests|assets)\//, ["desktop"]],
   [/^crates\/(board-store|gespan-models|gespan-redact|gespan-speech|keep-awake|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
   [/^vendor\//, ["core", "desktop"]],
-  // Core's shared_contracts test reads this one.
-  [/^host\/package\.mjs$/, ["core", "host", "mobile"]],
+  // Core's shared_contracts test reads these.
+  [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host", "mobile"]],
   // mobile imports src/, and src/ re-exports host/core.
   [/^host\//, ["host", "mobile"]],
   [/^src\//, ["host", "mobile"]],
