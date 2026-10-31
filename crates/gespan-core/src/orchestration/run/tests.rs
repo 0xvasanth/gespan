@@ -572,3 +572,49 @@ fn only_a_paused_run_resumes() {
     run.stop();
     assert!(run.resume().is_err());
 }
+
+#[test]
+fn a_finished_worker_with_no_changes_is_not_ready_for_review() {
+    let mut run = run(vec![task("a", "a.md", &[]), task("b", "b.md", &[])], 2);
+    run.dispatch();
+    let (a, b) = (id(&run, "a"), id(&run, "b"));
+    run.settle(&a, Outcome::Completed, "Wrote it", None);
+    run.settle(&b, Outcome::Completed, "My write was rejected", None);
+    run.mark_no_changes(&b);
+
+    assert_eq!(
+        run.progress(),
+        "a: ready for review\nb: finished with no changes"
+    );
+    let summary = run.summary();
+    assert_eq!(summary.tasks[0].status, "completed");
+    assert_eq!(summary.tasks[1].status, "unchanged");
+    assert_eq!(summary.tasks[1].label(&summary, false), "No changes");
+}
+
+#[test]
+fn no_changes_only_applies_to_a_finished_worker_and_clears_on_its_next_turn() {
+    let mut run = run(vec![task("a", "a.md", &[])], 1);
+    let a = id(&run, "a");
+    run.mark_no_changes(&a);
+    run.dispatch();
+    assert!(
+        run.tasks[0].status.active(),
+        "a queued or running task is left alone"
+    );
+    assert!(!run.tasks[0].no_changes);
+
+    run.settle(&a, Outcome::Failed, "", Some("Broke".into()));
+    run.mark_no_changes(&a);
+    assert_eq!(
+        run.summary().tasks[0].status,
+        "failed",
+        "a failure stays a failure"
+    );
+
+    run.tasks[0].status = Status::Completed;
+    run.mark_no_changes(&a);
+    run.tasks[0].status = Status::Running;
+    run.settle(&a, Outcome::Completed, "Second try", None);
+    assert_eq!(run.summary().tasks[0].status, "completed");
+}
