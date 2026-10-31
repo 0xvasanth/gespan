@@ -3328,6 +3328,8 @@ mod tests {
             Inbox::new_inner(store, vec![], cwd, false, cx)
         });
         inbox.update(cx, |inbox, _| {
+            // The disconnect is read back through a refresh of this keychain.
+            inbox.live_refresh = true;
             let status = inbox.service.status("plane").unwrap();
             inbox.snapshot.connections.insert("plane".into(), status);
         });

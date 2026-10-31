@@ -11,7 +11,13 @@ bun run native:check
 ```
 
 Core tests run in parallel. GPUI tests run serially to isolate rendering state
-and avoid CPU contention with the interpreter's wall-clock limits.
+and avoid CPU contention with the interpreter's wall-clock limits. CI gets the
+same isolation by running each GPUI test in its own process with
+[cargo-nextest](https://nexte.st), which lets them run in parallel:
+
+```sh
+cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci
+```
 
 For focused work, run the relevant part:
 

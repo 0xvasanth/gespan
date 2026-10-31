@@ -1,0 +1,10 @@
+# CI runs GUI tests in parallel, one process per test, so no test shares
+# rendering state with another. Retries stay off: a flaky test must fail.
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The JS interpreter has a wall-clock limit that CPU contention can exceed.
+[[profile.ci.overrides]]
+filter = 'test(large_tsx_analysis)'
+threads-required = "num-test-threads"

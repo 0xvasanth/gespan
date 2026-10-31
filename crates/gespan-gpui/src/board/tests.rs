@@ -19,14 +19,13 @@ use std::{
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "gespan-board-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        // Not the process id: Windows reuses it at once, and a folder whose
+        // removal failed would hand the next test its database.
+        let dir = tempfile::Builder::new()
+            .prefix("gespan-board-")
+            .tempdir()
+            .unwrap();
+        Self(dir.keep())
     }
 }
 impl Drop for Scratch {

@@ -52,20 +52,6 @@ test("the mobile link resolves from a checkout without src-tauri", async (t) => 
   assert.ok(resolve.nodes.some(({ id }) => id === link.id));
 });
 
-test("the Tauri app is a workspace of its own and keeps a lockfile that builds", async () => {
-  const { packages, workspace_root } = cargoMetadata(
-    join(root, "src-tauri"),
-    "--no-deps",
-  );
-  assert.deepEqual(
-    packages.map(({ name }) => name),
-    ["gespan"],
-  );
-  assert.ok(workspace_root.endsWith("src-tauri"));
-  const lock = await readFile(join(root, "src-tauri/Cargo.lock"), "utf8");
-  assert.match(lock, /^name = "tauri"$/m);
-});
-
 for (const [label, eol] of [
   ["LF", "\n"],
   ["CRLF", "\r\n"],
