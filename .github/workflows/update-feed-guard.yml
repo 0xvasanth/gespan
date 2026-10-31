@@ -1,0 +1,54 @@
+name: Update feed guard
+
+# Preview builds read their update feed from the fixed native-latest release,
+# and each one has that address built in. Losing the release stops them finding
+# updates and nothing would rebuild it until the next prerelease, so this puts
+# it back from the newest prerelease's copy of the same signed file. It signs
+# nothing and needs no signing key.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Shared with the release, which writes the same feed.
+concurrency:
+  group: native-preview-release
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: Restore the preview update feed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      FEED: https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Restore the feed if it is gone
+        run: |
+          set -euo pipefail
+          if curl -fsSIL -o /dev/null "$FEED"; then
+            echo "The feed is there"
+            exit 0
+          fi
+          echo "::warning::The native-latest update feed was missing. Restoring it."
+          gh api "repos/$GH_REPO/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          TAG="$(node scripts/release-channel.cjs preview-feed-source "$RUNNER_TEMP/releases.json")"
+          mkdir "$RUNNER_TEMP/feed"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/feed" --pattern native-latest.json
+          node scripts/release-channel.cjs verify-preview-feed "$RUNNER_TEMP/feed/native-latest.json" "$TAG"
+          cp "$RUNNER_TEMP/feed/native-latest.json" "$RUNNER_TEMP/feed/latest.json"
+          if ! gh release view native-latest >/dev/null 2>&1; then
+            gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Update feed: Gespan Native (do not delete)" --notes 'This is not a release. It holds only latest.json, the signed update feed that installed Gespan Native builds check for new versions. Packages live on the vX.Y.Z releases.'
+          fi
+          gh release upload native-latest "$RUNNER_TEMP/feed/latest.json" --clobber
+          curl -fsSIL -o /dev/null "$FEED"
+          echo "Restored the feed from $TAG"

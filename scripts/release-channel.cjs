@@ -129,6 +129,32 @@ function requireNativeTagRef(env) {
 // it never collides with the stable Tauri feed (latest.json) on the same release.
 const NATIVE_FEED_ASSET = "native-latest.json";
 
+// The newest published prerelease with a signed feed. If the native-latest
+// release is lost, its copy of the feed restores it without signing anything.
+function previewFeedSource(releases) {
+  const source = releases
+    .filter((release) => release.prerelease && !release.draft)
+    .filter((release) => RELEASE_TAG.test(release.tag_name))
+    .filter((release) => release.assets.some(({ name }) => name === NATIVE_FEED_ASSET))
+    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
+  if (!source) throw new Error(`No published prerelease holds ${NATIVE_FEED_ASSET}`);
+  return source.tag_name;
+}
+
+// A stable feed here would be refused by every preview build, so check before
+// publishing. The signature itself is checked by the client.
+function verifyPreviewFeed(feedJson, tag) {
+  const { payload, signature } = JSON.parse(feedJson);
+  if (!payload || !signature) throw new Error("The feed is not signed");
+  const manifest = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
+  if (manifest.channel !== "native-preview") {
+    throw new Error(`The feed is on the ${manifest.channel} channel`);
+  }
+  if (`v${manifest.version}` !== tag) {
+    throw new Error(`The feed is for ${manifest.version}, not ${tag}`);
+  }
+}
+
 // Files the versioned release must hold: every package and its .sig, plus the
 // signed feed the original run produced. Recovery republishes that exact
 // file; it never signs anything, so the signing key cannot be used as an oracle
@@ -235,6 +261,8 @@ function verifyRecoveredFeed({ latestJson, sigs, tag, expected }) {
 }
 
 module.exports = {
+  previewFeedSource,
+  verifyPreviewFeed,
   verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
   GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
@@ -295,6 +323,13 @@ if (require.main === module && process.argv[2] === "native-ref") {
   requireNativeTagRef(process.env);
   verifyRecoveredFeed({ latestJson: fs.readFileSync(`${dir}/${NATIVE_FEED_ASSET}`, "utf8"), sigs, tag: nativeReleaseTag(process.env), expected });
   console.log("Recovered feed matches the published signatures");
+} else if (require.main === module && process.argv[2] === "preview-feed-source") {
+  // usage: preview-feed-source <file holding the releases API response>
+  console.log(previewFeedSource(JSON.parse(fs.readFileSync(process.argv[3], "utf8"))));
+} else if (require.main === module && process.argv[2] === "verify-preview-feed") {
+  // usage: verify-preview-feed <feed file> <tag it came from>
+  verifyPreviewFeed(fs.readFileSync(process.argv[3], "utf8"), process.argv[4]);
+  console.log(`The feed from ${process.argv[4]} is on the preview channel`);
 } else if (require.main === module && process.argv[2] === "native-config") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   const pubkey = updaterPubkey(process.env);
