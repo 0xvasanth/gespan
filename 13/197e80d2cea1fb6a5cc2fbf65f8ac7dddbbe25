@@ -1,0 +1,44 @@
+crates/gespan-mcp-config/Cargo.toml
+  s_3fe9bd9fb765be::t_241b5e70b53b3b 1-15
+src-tauri/src/mcp.rs
+  s_3fe9bd9fb765be::t_31674613321854 3,104,110-158,602-620,622-638,640-696
+.github/workflows/native.yml
+  s_3fe9bd9fb765be::t_7ff96461f671eb 104
+src-tauri/Cargo.toml
+  s_3fe9bd9fb765be::t_7ff96461f671eb 21
+scripts/ci-impact.mjs
+  s_3fe9bd9fb765be::t_7ff96461f671eb 25
+crates/gespan-core/Cargo.toml
+  s_3fe9bd9fb765be::t_7ff96461f671eb 53
+crates/gespan-mcp-config/src/lib.rs
+  s_3fe9bd9fb765be::t_31674613321854 227,347,543-546,583-586,636-643,687-693,706-709,772-773,791-794,922-929
+  s_3fe9bd9fb765be::t_c9d7e9682bfb2c 1-226,228-346,348-542,547-582,587-635,644-686,694-705,710-771,774-790,795-921,930-943
+Cargo.toml
+  s_3fe9bd9fb765be::t_7ff96461f671eb 3
+crates/gespan-core/src/mcp.rs
+  s_3fe9bd9fb765be::t_31674613321854 3,137-139,728-731
+  s_3fe9bd9fb765be::t_d70b6e665312b8 764
+  s_3fe9bd9fb765be::t_e3a197826e7d8e 680-727,732-763,765-777
+Cargo.lock
+  s_3fe9bd9fb765be::t_7d9ba9ecae9e01 1101-1111,2646-2654,3011-3025,3056-3061
+crates/gespan-gpui/Cargo.lock
+  s_3fe9bd9fb765be::t_f5ff101f8544ef 2356,2486-2495
+src-tauri/Cargo.lock
+  s_3fe9bd9fb765be::t_2a2860ce4e5d76 1838,1907-1916
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13197e80d2cea1fb6a5cc2fbf65f8ac7dddbbe25",
+  "prompts": {},
+  "sessions": {
+    "s_3fe9bd9fb765be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e0545bd-99b5-4edc-93ab-220578622e22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
