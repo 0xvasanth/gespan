@@ -2399,7 +2399,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-first-launch"
-version = "0.0.3-beta"
+version = "0.0.4"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -2468,6 +2468,7 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "unicode-properties",
  "unicode-segmentation",
  "url",
  "windows",
