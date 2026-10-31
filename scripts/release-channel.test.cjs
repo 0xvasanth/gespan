@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseDecision, RELEASE_CHECKS, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
+const { releaseDecision, RELEASE_CHECKS, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, previewFeedSource, verifyPreviewFeed, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -518,4 +518,64 @@ test("the Release workflow finishes on the draft and publishes only through the 
   const desktop = workflow.indexOf("native-release.yml");
   assert.ok(mobile > 0 && mobile < desktop);
   assert.ok(!workflow.includes("allow_unsigned=true"));
+});
+
+const publishedRelease = (tag_name, published_at, extra = {}) => ({
+  tag_name,
+  published_at,
+  prerelease: true,
+  draft: false,
+  assets: [{ name: NATIVE_FEED_ASSET }],
+  ...extra,
+});
+
+test("the preview feed is restored from the newest published prerelease", () => {
+  const releases = [
+    publishedRelease("v0.0.4", "2026-10-31T14:00:00Z", { prerelease: false }),
+    publishedRelease("pr-videos", "2026-10-31T15:00:00Z", { assets: [] }),
+    publishedRelease("v0.0.2-beta", "2026-10-30T01:00:00Z"),
+    publishedRelease("v0.0.3-beta", "2026-10-30T13:00:00Z"),
+  ];
+  assert.equal(previewFeedSource(releases), "v0.0.3-beta");
+});
+
+test("the preview feed never comes from a draft, a non-version tag or a release without one", () => {
+  const releases = [
+    publishedRelease("v0.0.9-beta", "2026-10-31T15:00:00Z", { draft: true }),
+    publishedRelease("v0.0.8-beta", "2026-10-31T14:00:00Z", { assets: [{ name: "a.dmg" }] }),
+    publishedRelease("native-latest", "2026-10-31T13:00:00Z"),
+    publishedRelease("v0.0.3-beta", "2026-10-30T13:00:00Z"),
+  ];
+  assert.equal(previewFeedSource(releases), "v0.0.3-beta");
+  assert.throws(() => previewFeedSource(releases.slice(0, 3)), /No published prerelease/);
+});
+
+const signedFeed = (manifest, signature = "sig") => JSON.stringify({
+  payload: Buffer.from(JSON.stringify(manifest)).toString("base64"),
+  signature,
+});
+
+test("only a signed preview feed for its own release can restore native-latest", () => {
+  const preview = { channel: "native-preview", version: "0.0.3-beta" };
+  assert.doesNotThrow(() => verifyPreviewFeed(signedFeed(preview), "v0.0.3-beta"));
+  assert.throws(() => verifyPreviewFeed(signedFeed(preview, ""), "v0.0.3-beta"), /not signed/);
+  assert.throws(() => verifyPreviewFeed(signedFeed(preview), "v0.0.2-beta"), /not v0.0.2-beta/);
+  const stable = { channel: "native-stable", version: "0.0.4" };
+  assert.throws(() => verifyPreviewFeed(signedFeed(stable), "v0.0.4"), /native-stable channel/);
+});
+
+test("the feed guard republishes a signed file and never touches the signing key", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/update-feed-guard.yml"), "utf8");
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.ok(workflow.includes(GITHUB_NATIVE_FEED));
+  assert.doesNotMatch(workflow, /secrets\.TAURI_SIGNING/);
+  assert.match(workflow, /verify-preview-feed/);
+  assert.match(workflow, /gh release create native-latest --prerelease --latest=false/);
+  const release = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  assert.equal(
+    workflow.match(/group: (.+)/)[1],
+    release.match(/group: (.+)/)[1],
+    "it must never run during a release",
+  );
 });
