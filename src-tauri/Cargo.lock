@@ -1835,6 +1835,7 @@ dependencies = [
  "block2",
  "gespan-board-store",
  "gespan-keep-awake",
+ "gespan-mcp-config",
  "gespan-mobile-link",
  "gespan-models",
  "gespan-speech",
@@ -1901,6 +1902,16 @@ name = "gespan-keep-awake"
 version = "0.1.0"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "gespan-mcp-config"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "toml 1.1.8+spec-1.1.0",
+ "url",
+ "uuid",
 ]
 
 [[package]]
