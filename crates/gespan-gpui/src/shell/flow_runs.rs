@@ -92,6 +92,9 @@ impl SessionDriver for Driver<'_, '_> {
     }
     fn run_finished(&mut self, run_id: &str, status: RunStatus) {
         let run_id = run_id.to_owned();
+        if status == RunStatus::Succeeded {
+            self.shell.clean_up_after_flow_run(run_id.clone(), self.cx);
+        }
         self.shell
             .pilot_flow_event(PilotFlowEvent::Finished { run_id, status }, self.cx);
     }
@@ -441,6 +444,36 @@ impl Shell {
     }
 
     /// Writes run in order, one after another, like automation results.
+    /// After the run's last write, so its visits are all there to read.
+    fn clean_up_after_flow_run(&mut self, run_id: String, cx: &mut Context<Self>) {
+        let Some(store) = self.flows_state.store.clone() else {
+            return;
+        };
+        let previous = self.flows_state.writes.take();
+        self.flows_state.writes = Some(cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            let work = cx.background_executor().spawn(async move {
+                let store = store_lock(&store)?;
+                let run = store.run(&run_id)?.ok_or("The Flow run no longer exists")?;
+                Ok::<_, String>((run, store.visits(&run_id)?))
+            });
+            let Ok((run, visits)) = work.await else {
+                return;
+            };
+            let Some(path) = run.worktree_cwd else {
+                return;
+            };
+            let ids = visits
+                .iter()
+                .filter_map(|visit| visit.session_id.as_deref()?.parse().ok())
+                .collect();
+            let _ = this.update(cx, |this, cx| {
+                this.remove_finished_run_worktree(run.flow.cwd.clone(), path, ids, cx)
+            });
+        }));
+    }
     fn persist_flow_run(&mut self, run: FlowRun, visit: Option<FlowVisit>, cx: &mut Context<Self>) {
         let Some(store) = self.flows_state.store.clone() else {
             return;
@@ -595,6 +628,192 @@ mod tests {
             .unwrap();
         drop(flows);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    struct FinishedRun {
+        _repo: tempfile::TempDir,
+        repo: std::path::PathBuf,
+        tree: String,
+        session: i64,
+        run: FlowRun,
+        window: WindowHandle<Shell>,
+    }
+    impl FinishedRun {
+        fn git(&self, args: &[&str]) -> bool {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&self.repo)
+                .output()
+                .is_ok_and(|output| output.status.success())
+        }
+        fn branch_kept(&self) -> bool {
+            self.git(&["show-ref", "--verify", "refs/heads/flow-run"])
+        }
+        fn finish(&self, status: RunStatus, cx: &mut TestAppContext) {
+            let (run, tree) = (self.run.clone(), self.tree.clone());
+            self.window
+                .update(cx, |shell, _, cx| {
+                    let mut saved = run;
+                    saved.status = status;
+                    saved.worktree_cwd = Some(tree);
+                    let id = saved.id.clone();
+                    store_lock(shell.flows_state.store.as_ref().unwrap())
+                        .unwrap()
+                        .save_run(&saved)
+                        .unwrap();
+                    Driver { shell, cx }.run_finished(&id, status);
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+    /// A run with one saved visit, in a real worktree, with a clean checkout.
+    fn finished_run(cx: &mut TestAppContext) -> FinishedRun {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output();
+            assert!(
+                output.is_ok_and(|output| output.status.success()),
+                "{args:?}"
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "fixture@example.invalid"]);
+        git(&["config", "user.name", "Fixture"]);
+        std::fs::write(repo.join("file"), "before").unwrap();
+        git(&["add", "file"]);
+        git(&["commit", "-m", "Initial"]);
+        let tree = gespan_core::git::create_named_worktree(&repo, "flow-run").unwrap();
+        let cwd = repo.to_string_lossy().into_owned();
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, &cwd, cx);
+        let path = tree.path.clone();
+        let (session, run) = window
+            .update(cx, |shell, _, cx| {
+                shell.flows_state.held_launches = Some(Vec::new());
+                let flow = store_lock(shell.flows_state.store.as_ref().unwrap())
+                    .unwrap()
+                    .upsert(&fix_an_issue(&cwd))
+                    .unwrap();
+                let run = shell.start_flow(&flow, &inputs(&flow), cx).unwrap();
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("claude", &cwd)
+                    .unwrap();
+                let id = summary.id;
+                {
+                    let store = locked(&shell.store).unwrap();
+                    let mut settings = store.agent_settings(id).unwrap().unwrap_or_default();
+                    settings.worktree_cwd = Some(path.clone());
+                    store.save_agent_settings(id, &settings).unwrap();
+                }
+                shell.session_summaries.insert(id, summary);
+                shell.session_worktrees.insert(id, Some(path.clone()));
+                (id, run)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                store_lock(shell.flows_state.store.as_ref().unwrap())
+                    .unwrap()
+                    .save_visit(&FlowVisit {
+                        id: "finished-visit".into(),
+                        run_id: run.id.clone(),
+                        seq: 900,
+                        state_id: "fix".into(),
+                        status: gespan_core::flow::VisitStatus::Completed,
+                        prompt: None,
+                        session_id: Some(session.to_string()),
+                        outputs: None,
+                        error: None,
+                        retried: false,
+                        note: None,
+                        started_at: 0,
+                        finished_at: Some(1),
+                    })
+                    .unwrap();
+            })
+            .unwrap();
+        FinishedRun {
+            _repo: dir,
+            repo,
+            tree: tree.path,
+            session,
+            run,
+            window,
+        }
+    }
+
+    #[gpui::test]
+    fn a_succeeded_run_leaves_no_worktree_and_keeps_its_branch(cx: &mut TestAppContext) {
+        let run = finished_run(cx);
+        run.finish(RunStatus::Succeeded, cx);
+        assert!(!std::path::Path::new(&run.tree).exists());
+        assert!(run.branch_kept());
+        let session = run.session;
+        run.window
+            .update(cx, |shell, _, _| {
+                let store = locked(&shell.store).unwrap();
+                let settings = store.agent_settings(session).unwrap().unwrap();
+                assert!(settings.worktree_removed, "the record is detached");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_failed_or_cancelled_run_keeps_its_worktree_for_resume(cx: &mut TestAppContext) {
+        let run = finished_run(cx);
+        run.finish(RunStatus::Failed, cx);
+        run.finish(RunStatus::Cancelled, cx);
+        assert!(std::path::Path::new(&run.tree).exists());
+    }
+
+    #[gpui::test]
+    fn uncommitted_work_keeps_a_succeeded_runs_worktree(cx: &mut TestAppContext) {
+        let run = finished_run(cx);
+        std::fs::write(std::path::Path::new(&run.tree).join("new"), "work").unwrap();
+        run.finish(RunStatus::Succeeded, cx);
+        assert!(std::path::Path::new(&run.tree).join("new").exists());
+    }
+
+    #[gpui::test]
+    fn an_open_session_or_another_user_keeps_a_succeeded_runs_worktree(cx: &mut TestAppContext) {
+        let run = finished_run(cx);
+        let (session, tree) = (run.session, run.tree.clone());
+        run.window
+            .update(cx, |shell, _, _| shell.workspace.open(session))
+            .unwrap();
+        run.finish(RunStatus::Succeeded, cx);
+        assert!(
+            std::path::Path::new(&tree).exists(),
+            "someone is reading it"
+        );
+
+        let other = run
+            .window
+            .update(cx, |shell, _, _| {
+                shell.workspace.close(session);
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("claude", &tree)
+                    .unwrap();
+                let id = summary.id;
+                shell.session_summaries.insert(id, summary);
+                shell.session_worktrees.insert(id, Some(tree.clone()));
+                id
+            })
+            .unwrap();
+        run.finish(RunStatus::Succeeded, cx);
+        assert!(
+            std::path::Path::new(&run.tree).exists(),
+            "session {other} works there"
+        );
     }
 
     #[gpui::test]

@@ -48,6 +48,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["s
 tracing-appender = "0.2"
 log = "0.4"
 tracing-log = { version = "0.2", default-features = false, features = ["log-tracer", "std"] }
+# Worktree copies: copy-on-write where the disk has it, and `.worktreeinclude`.
+reflink-copy = "0.1"
+ignore = "0.4"
+rayon = "1"
 # Report an issue: the scrubber and the bundle zip.
 gespan-redact = { path = "../gespan-redact" }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }

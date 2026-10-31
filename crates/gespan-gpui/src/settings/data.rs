@@ -35,6 +35,8 @@ pub(super) struct Tree {
     pub locked: bool,
     pub dirty: Option<bool>,
     pub unpushed: usize,
+    /// How its branch reached the default branch, when it has.
+    pub merged: Option<gespan_core::branch_merged::Merged>,
 }
 #[derive(Default)]
 pub(super) struct ResultTrees {
@@ -99,11 +101,16 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                     .map(|tree| {
                         let status =
                             gespan_core::worktree_management::status(Path::new(cwd), &tree);
+                        let merged =
+                            gespan_core::worktree_management::merged(Path::new(cwd), &tree);
                         Tree {
                             tree,
                             locked: status.0,
                             dirty: status.1,
-                            unpushed: status.2,
+                            // A squash merge leaves the commits off every remote
+                            // while their work is published.
+                            unpushed: if merged.is_some() { 0 } else { status.2 },
+                            merged,
                         }
                     })
                     .collect();

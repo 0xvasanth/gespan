@@ -80,6 +80,55 @@ fn git_with(cwd: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String, 
         e.to_string()
     })
 }
+/// Runs Git for commands that answer with their exit code, so a non-zero exit
+/// is an answer and not a failure. `input` goes to the command's stdin.
+pub(crate) fn git_answer(
+    cwd: &Path,
+    args: &[&str],
+    envs: &[(&str, &Path)],
+    input: Option<&[u8]>,
+) -> Result<(Option<i32>, Vec<u8>), String> {
+    if crate::files::remote::is_remote(cwd) {
+        return Err("This isn’t available for projects on another machine yet.".into());
+    }
+    let _span = tracing::info_span!("git", op = subcommand(args)).entered();
+    let mut command = Command::new("git");
+    command
+        .current_dir(cwd)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .envs(envs.iter().copied())
+        .stdin(if input.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    crate::process::configure_child(&mut command);
+    let could_not_run = |error: std::io::Error| {
+        tracing::error!(%error, "could not run Git");
+        metrics::failure("git.command", metrics::ErrorKind::of_spawn(&error));
+        format!("Could not run Git: {error}")
+    };
+    let mut child = command.spawn().map_err(could_not_run)?;
+    // A writer thread: Git can fill its stdout while it still reads stdin.
+    let writer = input.map(|input| {
+        let input = input.to_vec();
+        let stdin = child.stdin.take();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            if let Some(mut stdin) = stdin {
+                let _ = stdin.write_all(&input);
+            }
+        })
+    });
+    let output = child.wait_with_output().map_err(could_not_run)?;
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    Ok((output.status.code(), output.stdout))
+}
 /// Where a session's own paths stand against `HEAD`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SessionChanges {
@@ -564,7 +613,27 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             commit.trim(),
         ],
     )?;
+    copy_included(main, &path);
     Ok(path)
+}
+
+/// A worktree missing its ignored files still works, so this never fails the
+/// creation around it.
+fn copy_included(main: &Path, worktree: &Path) {
+    match crate::worktree_copy::copy_included(main, worktree) {
+        Ok(copied) if copied.files + copied.skipped > 0 => tracing::info!(
+            files = copied.files,
+            bytes = copied.bytes,
+            shared = copied.shared,
+            skipped = copied.skipped,
+            "copied a project's included files into a worktree"
+        ),
+        Ok(_) => {}
+        Err(error) => {
+            metrics::failure("worktree.copy", metrics::ErrorKind::Other);
+            tracing::warn!(%error, "could not copy a project's included files");
+        }
+    }
 }
 
 /// SidebarWorktreeSwitcher: create a named copy from the selected checkout's
@@ -668,6 +737,7 @@ fn create_branch_worktree(
             ],
         )?;
     }
+    copy_included(main, &path);
     snapshot(cwd)?
         .worktrees
         .into_iter()
