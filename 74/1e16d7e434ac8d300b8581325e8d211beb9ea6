@@ -1,0 +1,19 @@
+crates/gespan-gpui/Cargo.lock
+  s_1154382a283d10::t_01927eccbf64ad 2402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "741e16d7e434ac8d300b8581325e8d211beb9ea6",
+  "prompts": {},
+  "sessions": {
+    "s_1154382a283d10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a37ab1a8-59d8-4485-b51e-8ee41bb709ed",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
