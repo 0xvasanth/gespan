@@ -103,6 +103,13 @@ enum Menu {
     Column { column_id: String, roles: bool },
 }
 
+/// The date field "Pick a date…" opens from a card face.
+pub(super) struct DueEntry {
+    card_id: String,
+    anchor: Option<Anchor>,
+    input: Entity<Input>,
+    _submit: Subscription,
+}
 pub(super) struct CardMenu {
     card_id: String,
     /// Where the menu opens when it isn't under the card's own "…".
@@ -308,6 +315,7 @@ pub(crate) struct BoardView {
     /// element screen readers read.
     drag_announcement: Option<String>,
     card_menu: Option<CardMenu>,
+    due_entry: Option<DueEntry>,
     /// One tab stop per collapsed column's strip.
     pub(crate) collapsed_focus: HashMap<String, FocusHandle>,
     /// One windowed list per column: only the cards in (or near) view mount.
@@ -554,6 +562,7 @@ impl BoardView {
             drag_announcement: None,
             settling: None,
             card_menu: None,
+            due_entry: None,
             collapsed_focus: HashMap::new(),
             column_lists: HashMap::new(),
             column_ids: HashMap::new(),
@@ -704,7 +713,7 @@ impl BoardView {
         }
         self.sync_card_detail(cx);
         if self.load_error.is_none() && self.card_detail.is_some() {
-            self.refresh_detail_lists();
+            self.refresh_detail_lists(cx);
         }
         cx.notify();
     }
@@ -787,6 +796,7 @@ impl BoardView {
     /// Adds a card to the first column, as a test fixture outside this module.
     #[cfg(test)]
     pub(crate) fn add_test_card(&mut self, title: &str, cx: &mut Context<Self>) {
+        self.ensure_board(cx);
         let column = self.detail.as_ref().expect("a board is open").columns[0]
             .id
             .clone();
@@ -801,6 +811,26 @@ impl BoardView {
             self.service = Some(Service::open(&self.db_path)?);
         }
         Ok(self.service.as_mut().expect("opened above"))
+    }
+
+    /// Asked for a card from outside the board, with no board to hold it.
+    pub(crate) fn ensure_board(&mut self, cx: &mut Context<Self>) {
+        if !self.boards.is_empty() {
+            return;
+        }
+        if let Err(error) = self.service().and_then(|service| service.default_board()) {
+            self.error = Some(error);
+        }
+        self.reload(cx);
+    }
+
+    fn clear_boards(&mut self) {
+        self.boards.clear();
+        self.detail = None;
+        self.open_board_id = None;
+        self.selected_board_id = None;
+        self.fell_back = false;
+        self.card_detail = None;
     }
 
     fn load(&mut self, cx: &App) -> Result<(), String> {
@@ -822,6 +852,13 @@ impl BoardView {
         let version = service.data_version()?;
         reads.note("list");
         let boards = service.list()?;
+        // No boards: the empty state offers the templates, rather than making
+        // a blank one nobody asked for.
+        if boards.is_empty() {
+            self.last_data_version = version;
+            self.clear_boards();
+            return Ok(());
+        }
         let board = match wanted.and_then(|id| boards.iter().find(|b| b.id == id).cloned()) {
             Some(board) => board,
             None => {
@@ -1495,6 +1532,7 @@ impl BoardView {
             || self.settings_escape(window, cx)
             || self.renaming.take().is_some()
             || self.pop.take().is_some()
+            || self.due_entry.take().is_some()
             || self.table_edit.take().is_some()
             || self.menu.take().is_some()
             || self.close_detail_layer(cx)
@@ -1989,6 +2027,10 @@ impl gpui::Render for BoardView {
                             })
                     }))
             });
+        if self.detail.is_none() && self.boards.is_empty() && self.load_error.is_none() {
+            let switcher = self.render_switcher(cx);
+            return root.child(self.render_no_boards(cx)).children(switcher);
+        }
         let Some(detail) = self.detail.as_ref() else {
             return root.child(
                 div()
@@ -2018,6 +2060,7 @@ impl gpui::Render for BoardView {
             });
             crate::popover::menu_popover(&open.menu, anchor, cx)
         });
+        let due_entry = self.render_due_entry(cx);
         let mut card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
         let sort = self.render_sort(cx);
@@ -2102,6 +2145,7 @@ impl gpui::Render for BoardView {
             .children(switcher)
             .children(menu)
             .children(card_menu)
+            .children(due_entry)
             .children(pop_menu)
             .children(selection_bar)
             .children(undo_toast)

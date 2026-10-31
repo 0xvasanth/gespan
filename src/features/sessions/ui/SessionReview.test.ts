@@ -26,7 +26,7 @@ vi.mock("../model/checkpoint", () => ({
     return () => window.removeEventListener("test-review-changed", handle);
   },
 }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   basename: (path: string) => path.split("/").at(-1),
   subscribeGitChanged: (listener: () => void) => {
     window.addEventListener("test-git-changed", listener);

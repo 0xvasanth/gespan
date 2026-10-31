@@ -62,6 +62,10 @@ pub(crate) struct SettingsContext {
     pub quick_error: Option<String>,
     pub catalogs: HashMap<String, Vec<(String, String)>>,
     pub inbox_connections: HashMap<String, (bool, String)>,
+    /// Holds the connect dialog Settings shows.
+    pub inbox: Option<Entity<crate::inbox::Inbox>>,
+    /// Linear's teams and whether each stays in the inbox.
+    pub linear_teams: Vec<(gespan_core::inbox::OptionRow, bool)>,
     /// Mobile access, or `None` when this desktop cannot offer it.
     pub mobile: Option<gespan_core::mobile::Status>,
     /// The pairing code on show.
@@ -86,6 +90,8 @@ impl PartialEq for SettingsContext {
             && self.quick_error == other.quick_error
             && self.catalogs == other.catalogs
             && self.inbox_connections == other.inbox_connections
+            && self.inbox == other.inbox
+            && self.linear_teams == other.linear_teams
             && self.mobile == other.mobile
             && self.mobile_invite == other.mobile_invite
     }
@@ -104,6 +110,7 @@ pub(crate) enum SettingsEvent {
     CheckAppUpdates,
     CheckHarnessUpdates,
     ManageInboxProvider(String),
+    ToggleLinearTeam(String),
     Changed(Box<Preferences>),
     /// The Appearance page's Layout picker: true for Focused, false for Classic.
     NewLayout(bool),
@@ -140,6 +147,7 @@ pub(crate) enum SliderKind {
     Saturation,
     DarkLightness,
     SidebarOpacity,
+    Blur,
     BackgroundEmpty,
     BackgroundSession,
 }
@@ -150,6 +158,7 @@ impl SliderKind {
             SliderKind::Saturation => "saturation",
             SliderKind::DarkLightness => "dark-lightness",
             SliderKind::SidebarOpacity => "sidebar-opacity",
+            SliderKind::Blur => "blur",
             SliderKind::BackgroundEmpty => "background-empty",
             SliderKind::BackgroundSession => "background-session",
         }
@@ -160,6 +169,7 @@ impl SliderKind {
             SliderKind::Saturation => "Saturation",
             SliderKind::DarkLightness => "Dark-mode lightness",
             SliderKind::SidebarOpacity => "Sidebar opacity",
+            SliderKind::Blur => "Blur radius",
             SliderKind::BackgroundEmpty => "Empty chat background visibility",
             SliderKind::BackgroundSession => "Session background visibility",
         }
@@ -170,6 +180,7 @@ impl SliderKind {
             SliderKind::Saturation => (0, 100),
             SliderKind::DarkLightness => (0, 30),
             SliderKind::SidebarOpacity => (15, 100),
+            SliderKind::Blur => (1, 64),
             SliderKind::BackgroundEmpty | SliderKind::BackgroundSession => (5, 65),
         }
     }
@@ -179,6 +190,7 @@ impl SliderKind {
             SliderKind::Saturation => p.theme_saturation,
             SliderKind::DarkLightness => p.theme_dark_lightness,
             SliderKind::SidebarOpacity => p.sidebar_opacity,
+            SliderKind::Blur => p.sidebar_blur,
             SliderKind::BackgroundEmpty => p.chat_background_empty,
             SliderKind::BackgroundSession => p.chat_background_session,
         }
@@ -189,6 +201,7 @@ impl SliderKind {
             SliderKind::Saturation => p.theme_saturation = value,
             SliderKind::DarkLightness => p.theme_dark_lightness = value,
             SliderKind::SidebarOpacity => p.sidebar_opacity = value,
+            SliderKind::Blur => p.sidebar_blur = value,
             SliderKind::BackgroundEmpty => p.chat_background_empty = value,
             SliderKind::BackgroundSession => p.chat_background_session = value,
         }
@@ -253,6 +266,7 @@ pub(crate) struct SettingsView {
     mobile: pages::MobileState,
     diagnostics: pages::DiagnosticsState,
     dictation: pages::DictationState,
+    inbox_watch: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -387,6 +401,7 @@ impl SettingsView {
             accent_custom,
             accent_custom_open: false,
             accent_anchor: AnchorSlot::default(),
+            inbox_watch: None,
             mobile: pages::MobileState::default(),
             diagnostics: pages::DiagnosticsState::new(),
             dictation: Default::default(),
@@ -439,7 +454,16 @@ impl SettingsView {
                 (None, None) => false,
                 _ => true,
             };
+            let inbox_changed = self.ctx.inbox != ctx.inbox;
             self.ctx = ctx;
+            if inbox_changed {
+                // The dialog's fields and errors live in the Inbox.
+                self.inbox_watch = self
+                    .ctx
+                    .inbox
+                    .as_ref()
+                    .map(|inbox| cx.observe(inbox, |_, _, cx| cx.notify()));
+            }
             self.mobile_context_changed(cx);
             if remote_changed {
                 self.leave_connections(cx);
@@ -484,6 +508,12 @@ impl SettingsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some(inbox) = self.ctx.inbox.clone()
+            && inbox.update(cx, |inbox, cx| inbox.close_settings_dialog(cx))
+        {
+            window.focus(&self.focus, cx);
+            return true;
+        }
         if self.dismiss_notification_transient(window, cx) {
             return true;
         }
@@ -957,6 +987,11 @@ impl Render for SettingsView {
         self.notification_window_state(window, cx);
         self.connections_window_state(window, cx);
         let page = self.page(window, cx);
+        let inbox_dialog = self
+            .ctx
+            .inbox
+            .clone()
+            .and_then(|inbox| inbox.update(cx, |inbox, cx| inbox.settings_dialog(window, cx)));
         let narrow = self
             .scroll
             .bounds()
@@ -1027,6 +1062,7 @@ impl Render for SettingsView {
             })
             .children(self.management_overlay(window, cx))
             .children(self.notification_overlay(cx))
+            .children(inbox_dialog)
     }
 }
 

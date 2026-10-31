@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitHistory: vi.fn(),
   subscribeGitChanged: () => () => {},
 }));

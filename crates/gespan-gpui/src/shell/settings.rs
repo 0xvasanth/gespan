@@ -74,6 +74,12 @@ impl Shell {
                 .as_ref()
                 .map(|inbox| inbox.read(cx).connection_statuses())
                 .unwrap_or_default(),
+            inbox: self.inbox.clone(),
+            linear_teams: self
+                .inbox
+                .as_ref()
+                .map(|inbox| inbox.read(cx).linear_teams())
+                .unwrap_or_default(),
             sessions: self
                 .order
                 .iter()
@@ -132,6 +138,7 @@ impl Shell {
         self.leave_app_search(cx);
         self.close_preview(cx);
         self.menu = None;
+        self.load_inbox_for_settings(section, window, cx);
         if self.settings.is_some() {
             self.select_settings(section, cx);
             return;
@@ -144,11 +151,22 @@ impl Shell {
             &view,
             window,
             |this, _, event: &SettingsEvent, window, cx| match event {
-                SettingsEvent::Section(section) => this.select_settings(*section, cx),
+                SettingsEvent::Section(section) => {
+                    this.load_inbox_for_settings(*section, window, cx);
+                    this.select_settings(*section, cx)
+                }
                 SettingsEvent::ManageInboxProvider(provider) => {
-                    this.open_inbox(window, cx);
+                    this.ensure_background_inbox(window, cx);
                     if let Some(inbox) = &this.inbox {
-                        inbox.update(cx, |inbox, cx| inbox.open_connection(provider.clone(), cx));
+                        inbox.update(cx, |inbox, cx| {
+                            inbox.open_connection_in_settings(provider.clone(), window, cx)
+                        });
+                    }
+                    this.sync_settings(cx);
+                }
+                SettingsEvent::ToggleLinearTeam(id) => {
+                    if let Some(inbox) = &this.inbox {
+                        inbox.update(cx, |inbox, cx| inbox.toggle_linear_team(id.clone(), cx));
                     }
                 }
                 SettingsEvent::WhatsNew => {
@@ -194,7 +212,11 @@ impl Shell {
                     if this.session_summaries.contains_key(id)
                         && this.session_metadata(*id, cx).summary.archived != *archived
                     {
-                        this.toggle_archive(*id, cx);
+                        if *archived {
+                            this.archive_session(*id, window, cx);
+                        } else {
+                            this.toggle_archive(*id, cx);
+                        }
                     }
                 }
                 SettingsEvent::Delete(id) => this.delete_from_settings(*id, window, cx),
@@ -259,6 +281,22 @@ impl Shell {
         window.focus(&view.focus_handle(cx), cx);
         this_update(self, cx);
     }
+    /// The Inbox page shows each connection, which the Inbox reads.
+    fn load_inbox_for_settings(
+        &mut self,
+        section: Section,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if section != Section::Inbox {
+            return;
+        }
+        let first = self.inbox.is_none();
+        self.ensure_background_inbox(window, cx);
+        if first && let Some(inbox) = &self.inbox {
+            inbox.update(cx, |inbox, cx| inbox.refresh(cx));
+        }
+    }
     pub(super) fn select_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         if let Some(view) = &self.settings {
             view.update(cx, |v, cx| v.select_section(section, cx));
@@ -276,6 +314,9 @@ impl Shell {
         }
     }
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(inbox) = &self.inbox {
+            inbox.update(cx, |inbox, cx| inbox.close_settings_dialog(cx));
+        }
         self.settings = None;
         self.settings_events = None;
         self.settings_overlay_watch = None;
@@ -518,27 +559,34 @@ impl Shell {
                 gespan_core::worktree_management::remove(Path::new(&main.path),Path::new(&worker_path))?;
                 locked(&store)?.detach_worktree(&worker_path,&main.path)
             });let result=work.await;
-            let _=this.update(cx,|this,cx|{let result=result.map(|detached|{for(summary,settings)in detached{this.session_summaries.insert(summary.id, summary.clone());this.session_worktrees.insert(summary.id,settings.worktree_cwd.clone());if let Some(view)=this.sessions.get(&summary.id){view.update(cx,|v,cx|v.worktree_deleted(summary,settings,cx));}}this.worktree_focus.retain(|_,focus|!is_equal_or_inside(&focus.path,&path));});this.finish_worktree_action(result,cx);});
+            let _=this.update(cx,|this,cx|{let result=result.map(|detached|this.worktree_detached(detached,&path,cx));this.finish_worktree_action(result,cx);});
         }).detach();
         let _ = window;
     }
-    fn delete_from_settings(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        let prompt = window.prompt(
-            gpui::PromptLevel::Warning,
-            "Delete this conversation permanently?",
-            Some("Its messages and saved settings will be removed."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if prompt.await != Ok(0) {
-                return;
+    /// The worktree at `path` is gone; its sessions keep their transcripts.
+    pub(super) fn worktree_detached(
+        &mut self,
+        detached: Vec<(Session, gespan_core::agent::Settings)>,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) {
+        for (summary, settings) in detached {
+            self.session_summaries.insert(summary.id, summary.clone());
+            self.session_worktrees
+                .insert(summary.id, settings.worktree_cwd.clone());
+            if let Some(view) = self.sessions.get(&summary.id) {
+                view.update(cx, |v, cx| v.worktree_deleted(summary, settings, cx));
             }
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.delete_session(id, window, cx);
-            });
-        })
-        .detach();
+        }
+        self.worktree_focus
+            .retain(|_, focus| !gespan_core::files::is_equal_or_inside(&focus.path, path));
+    }
+    fn delete_from_settings(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let ask = session_worktree::Ask {
+            title: "Delete this conversation permanently?".into(),
+            detail: "Its messages and saved settings will be removed.".into(),
+        };
+        self.remove_session(id, session_worktree::Removal::Delete, Some(ask), window, cx);
     }
 }
 fn this_update(this: &mut Shell, cx: &mut Context<Shell>) {
@@ -1133,6 +1181,11 @@ mod tests {
 
     #[gpui::test]
     fn last_used_controls_follow_into_a_new_session(cx: &mut TestAppContext) {
+        // The catalog cache outlives each test, and a cached model decides
+        // which controls carry over.
+        for kind in [Kind::Claude, Kind::Codex] {
+            gespan_core::catalog::invalidate(kind, &Default::default());
+        }
         let (window, _, _) = window(cx);
         only_installed(&[Kind::Claude, Kind::Codex], cx);
         let chat = window.update(cx, |shell, _, _| active_chat(shell)).unwrap();

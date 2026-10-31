@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => undefined),
 }));
 
-vi.mock("../../inbox/model/githubTasks", () => ({
+vi.mock("../../../../host/core/features/inbox/model/githubTasks", () => ({
   formatRelativeTime: () => "2 hours ago",
   githubWorkItem: vi.fn(async () => ({
     kind: "pr",

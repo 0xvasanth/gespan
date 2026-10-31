@@ -87,6 +87,7 @@ impl BoardView {
             || self.table_edit.is_some()
             || self.menu.is_some()
             || self.card_menu.is_some()
+            || self.due_entry.is_some()
             || self.views.menu.is_some()
             || self.views.naming.is_some()
     }
@@ -99,11 +100,16 @@ impl BoardView {
     }
 
     /// The card that has keyboard focus, if any.
-    fn focused_card(&self, window: &Window, cx: &App) -> Option<String> {
+    pub(super) fn focused_card(&self, window: &Window, cx: &App) -> Option<String> {
         self.card_focus
             .iter()
             .find(|(_, handle)| handle.contains_focused(window, cx))
             .map(|(id, _)| id.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_focused_card(&self, window: &Window, cx: &App) -> Option<String> {
+        self.focused_card(window, cx)
     }
 
     /// `E`: open the focused card's detail. False when no card has focus.
@@ -175,6 +181,30 @@ impl BoardView {
         };
         window.focus(&handle, cx);
         cx.notify();
+        true
+    }
+
+    /// Handles a key on a list or table row: Enter opens it, as a click does.
+    /// Only the row itself counts, never a field inside it. True when used.
+    pub(super) fn row_key(
+        &mut self,
+        card_id: &str,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let on_row = self
+            .card_focus
+            .get(card_id)
+            .is_some_and(|handle| handle.is_focused(window));
+        if !on_row
+            || event.keystroke.key != "enter"
+            || event.keystroke.modifiers.modified()
+            || self.shortcuts_blocked()
+        {
+            return false;
+        }
+        self.open_card_detail(card_id.to_string(), window, cx);
         true
     }
 

@@ -15,12 +15,12 @@ import { HostEngine } from "./engine";
 import { HostStore } from "./store";
 import { createHostServer } from "./server";
 import { HostChildBackend } from "./child-backend";
-import { configureChildBackend } from "../src/integrations/harness/core/child";
-import type { SendTurnInput } from "../src/integrations/harness/core/types";
-import type { RemoteProvider } from "../src/features/connections/model/protocol";
+import { configureChildBackend } from "./core/integrations/harness/core/child";
+import type { SendTurnInput } from "./core/integrations/harness/core/types";
+import type { RemoteProvider } from "./core/features/connections/model/protocol";
 
 const modelProbe = vi.hoisted(() => vi.fn());
-vi.mock("../src/integrations/harness/providers/codex/codexCatalog", () => ({
+vi.mock("./core/integrations/harness/providers/codex/codexCatalog", () => ({
   discoverCodexModels: modelProbe,
 }));
 // Catalog tests point the host at a stand-in provider CLI.

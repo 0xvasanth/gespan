@@ -21,7 +21,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     return () => {};
   },
 }));
-vi.mock("../../../platform/tauri/fs", async (actual) => ({
+vi.mock("../../../../host/core/platform/tauri/fs", async (actual) => ({
   ...(await actual<object>()),
   gitBranches: vi.fn(),
   subscribeGitChanged: () => () => {},

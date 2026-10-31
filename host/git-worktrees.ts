@@ -3,7 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { isTemporaryWorktreeBranch } from "../src/shared/lib/branchOwnership";
+import { isTemporaryWorktreeBranch } from "./core/shared/lib/branchOwnership";
 
 const exec = promisify(execFile);
 const options = (cwd: string) => ({

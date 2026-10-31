@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => true) }));
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => {}),
 }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitLocateFiles: vi.fn(),
   gitDiffIndex: vi.fn(),
   gitPrStatus: vi.fn(async () => null),
@@ -32,7 +32,7 @@ vi.mock("../../../integrations/harness", () => ({
 vi.mock("../../files/model/fileWatch", () => ({
   invalidateWatchedFiles: vi.fn(),
 }));
-vi.mock("../../inbox/model/inboxSelfActivity", () => ({
+vi.mock("../../../../host/core/features/inbox/model/inboxSelfActivity", () => ({
   recordInboxSelfActivity: vi.fn(),
 }));
 vi.mock("../../sessions/model/checkpoint", () => ({
@@ -42,7 +42,7 @@ vi.mock("../../sessions/model/checkpoint", () => ({
   subscribeReviewChanged: () => () => {},
 }));
 
-vi.mock("../../source-control/model/worktrees", () => ({
+vi.mock("../../../../host/core/features/source-control/model/worktrees", () => ({
   listWorktrees: vi.fn(async (cwd: string) => ({
     defaultRoot: "",
     worktrees: [{ path: cwd.replace(/-wt$/, ""), isMain: true }],

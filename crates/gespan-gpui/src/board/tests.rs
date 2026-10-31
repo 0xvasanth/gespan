@@ -43,12 +43,20 @@ struct Fixture {
 }
 
 fn open(cx: &mut TestAppContext) -> Fixture {
+    open_seeded(cx, true)
+}
+
+/// The board with no boards in its database when `seed` is false.
+fn open_seeded(cx: &mut TestAppContext, seed: bool) -> Fixture {
     cx.update(crate::input::bind);
     cx.update(crate::popover::bind);
     cx.update(bind);
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("gespan.db");
+    if seed {
+        Service::open(&db).unwrap().default_board().unwrap();
+    }
     let store: crate::runtime::Database = Arc::new(Mutex::new(
         Store::open_gespan(Path::new(":memory:")).unwrap(),
     ));
@@ -346,18 +354,15 @@ fn deleting_the_open_board_opens_another(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn deleting_the_last_board_creates_a_default_one(cx: &mut TestAppContext) {
+fn deleting_the_last_board_offers_the_templates(cx: &mut TestAppContext) {
     let f = with_board(cx);
-    let old = open_id(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-switcher");
     click(visual, "board-delete");
     click(visual, "board-delete-confirm");
-    let now = boards(&f);
-    assert_eq!(now.len(), 1);
-    assert_ne!(now[0].id, old);
-    assert_eq!(open_id(&f, visual), now[0].id);
-    assert_eq!(detail(&f, visual).columns.len(), 4);
+    visual.refresh().unwrap();
+    assert!(boards(&f).is_empty());
+    assert!(visual.debug_bounds("board-no-boards").is_some());
 }
 
 #[gpui::test]
@@ -4509,6 +4514,7 @@ fn the_workspace_new_codex_shortcut_still_works_outside_the_board(cx: &mut TestA
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("gespan.db");
+    Service::open(&db).unwrap().default_board().unwrap();
     let store: crate::runtime::Database = Arc::new(Mutex::new(
         Store::open_gespan(Path::new(":memory:")).unwrap(),
     ));
@@ -8620,6 +8626,7 @@ mod keyboard_scale;
 mod lanes_scale;
 mod layout_fit;
 mod link_run;
+mod native_lag;
 mod scale;
 mod ux_batch;
 

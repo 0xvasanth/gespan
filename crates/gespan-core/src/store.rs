@@ -2,6 +2,7 @@
 mod app_access;
 mod gespan_import;
 mod in_flight;
+mod inbox_ask;
 mod managed_sessions;
 mod notes;
 mod pilots;
@@ -59,6 +60,27 @@ pub struct Reminder {
     /// Unix milliseconds.
     pub due_at: u64,
     pub fired_at: Option<u64>,
+}
+
+const LOCAL_SESSION_COLUMNS: &str = "native_sessions.id,title,provider,cwd,provider_id,
+    (EXISTS(SELECT 1 FROM native_rows WHERE session_id=native_sessions.id)
+     OR EXISTS(SELECT 1 FROM native_settings WHERE key='follow-up:'||native_sessions.id AND json_valid(value) AND (json_type(value,'$.draft')='object' OR json_array_length(value,'$.messages')>0))),updated_at,archived,
+    pinned,work_item";
+fn local_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
+    Ok(Session {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        provider: r.get(2)?,
+        cwd: r.get(3)?,
+        provider_id: r.get(4)?,
+        has_messages: r.get(5)?,
+        updated_at: r.get::<_, i64>(6)?.max(0) as u64,
+        archived: r.get(7)?,
+        pinned: r.get(8)?,
+        work_item: r
+            .get::<_, Option<String>>(9)?
+            .and_then(|text| serde_json::from_str(&text).ok()),
+    })
 }
 
 pub struct Store {
@@ -439,31 +461,29 @@ impl Store {
 
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id,title,provider,cwd,provider_id,
-                 (EXISTS(SELECT 1 FROM native_rows WHERE session_id=native_sessions.id)
-                  OR EXISTS(SELECT 1 FROM native_settings WHERE key='follow-up:'||native_sessions.id AND json_valid(value) AND (json_type(value,'$.draft')='object' OR json_array_length(value,'$.messages')>0))),updated_at,archived,
-                 pinned,work_item
+            .prepare(&format!(
+                "SELECT {LOCAL_SESSION_COLUMNS}
                  FROM native_sessions WHERE NOT EXISTS(SELECT 1 FROM native_settings WHERE key='inbox-ask:'||native_sessions.id) ORDER BY updated_at DESC,id DESC",
-            )
+            ))
             .map_err(|e| e.to_string())?;
         let result = stmt
-            .query_map([], |r| {
-                Ok(Session {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    provider: r.get(2)?,
-                    cwd: r.get(3)?,
-                    provider_id: r.get(4)?,
-                    has_messages: r.get(5)?,
-                    updated_at: r.get::<_, i64>(6)?.max(0) as u64,
-                    archived: r.get(7)?,
-                    pinned: r.get(8)?,
-                    work_item: r
-                        .get::<_, Option<String>>(9)?
-                        .and_then(|text| serde_json::from_str(&text).ok()),
-                })
-            })
+            .query_map([], local_session)
+            .map_err(|e| e.to_string())?;
+        result
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+    /// Ask sessions with their raw context, which `local_sessions` hides.
+    fn local_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "SELECT {LOCAL_SESSION_COLUMNS},a.value
+                 FROM native_sessions JOIN native_settings a ON a.key='inbox-ask:'||native_sessions.id ORDER BY updated_at DESC,id DESC",
+            ))
+            .map_err(|e| e.to_string())?;
+        let result = stmt
+            .query_map([], |r| Ok((local_session(r)?, r.get(10)?)))
             .map_err(|e| e.to_string())?;
         result
             .collect::<Result<Vec<_>, _>>()
@@ -504,6 +524,17 @@ impl Store {
     ) -> Result<(), String> {
         let value = serde_json::to_string(summary).map_err(|e| e.to_string())?;
         self.save_setting(&format!("orchestration:{lead}"), &value)
+    }
+    /// Every saved run, by lead. A run that ended saves as empty.
+    pub fn orchestration_runs(&self) -> Result<Vec<(i64, crate::orchestration::run::Run)>, String> {
+        Ok(self
+            .settings_with_prefix("orchestration-run:")?
+            .into_iter()
+            .filter_map(|(lead, value)| Some((lead, serde_json::from_str(&value).ok()?)))
+            .collect())
+    }
+    pub fn save_orchestration_run(&self, lead: i64, state: &str) -> Result<(), String> {
+        self.save_setting(&format!("orchestration-run:{lead}"), state)
     }
     /// `prefix<session id>` settings, by session id.
     fn settings_with_prefix(&self, prefix: &str) -> Result<Vec<(i64, String)>, String> {
@@ -1076,7 +1107,7 @@ impl Store {
         tx.execute("DELETE FROM native_reminders WHERE session_id=?1", [id])
             .map_err(|e| e.to_string())?;
         tx.execute(
-            "DELETE FROM native_settings WHERE key IN (?1,?2,?3,?5,?6,?7,?8) OR key LIKE ?4",
+            "DELETE FROM native_settings WHERE key IN (?1,?2,?3,?5,?6,?7,?8,?9) OR key LIKE ?4",
             params![
                 format!("agent:{id}"),
                 format!("context:{id}"),
@@ -1084,6 +1115,7 @@ impl Store {
                 format!("pilot-delivered:{id}:%"),
                 format!("started-by:{id}"),
                 format!("orchestration:{id}"),
+                format!("orchestration-run:{id}"),
                 format!("inbox-ask:{id}"),
                 format!("automation:{id}")
             ],
@@ -1366,6 +1398,41 @@ mod tests {
         assert!(!store.sessions().unwrap()[0].archived);
     }
     #[test]
+    fn a_saved_run_survives_restart_and_goes_with_its_lead() {
+        use crate::orchestration::{
+            run::{Run, RunStatus},
+            Plan,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        let store = Store::open(&path).unwrap();
+        let lead = store.create("codex", "/p").unwrap().id;
+        let other = store.create("codex", "/p").unwrap().id;
+        let run = Run::new(
+            Plan {
+                title: "Work".into(),
+                summary: String::new(),
+                tasks: Vec::new(),
+                max_workers: 2,
+            },
+            "/p".into(),
+            "codex".into(),
+            Vec::new(),
+        );
+        let state = serde_json::to_string(&run).unwrap();
+        store.save_orchestration_run(lead, &state).unwrap();
+        store.save_orchestration_run(other, "").unwrap();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        let saved = store.orchestration_runs().unwrap();
+        assert_eq!(saved.len(), 1, "an ended run loads as nothing");
+        assert_eq!(saved[0].0, lead);
+        assert_eq!(saved[0].1.status, RunStatus::Active);
+        assert_eq!(saved[0].1.max_workers, 2);
+        store.delete(lead).unwrap();
+        assert!(store.orchestration_runs().unwrap().is_empty());
+    }
+    #[test]
     fn started_links_and_orchestration_summaries_survive_restart_and_delete() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sqlite3");
@@ -1382,6 +1449,7 @@ mod tests {
                 status: "running".into(),
             }],
             live: true,
+            paused: false,
         };
         store.save_orchestration_summary(lead, &summary).unwrap();
         drop(store);

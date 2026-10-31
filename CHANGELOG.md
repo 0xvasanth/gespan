@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gespan Native's GitHub Inbox works for projects on another machine. Issues,
+  pull requests, conversations, diffs, checks, job details, reruns of failed
+  jobs and actions go through Gespan Host and use that machine's `gh` account
+  and checkout, so they work even when GitHub CLI isn't signed in on this
+  computer. Update Gespan Host to use this.
+
 ### Fixed
 
 - Installing the remote host on Windows over SSH no longer fails when Windows
@@ -25,6 +33,15 @@ Open; on Windows, choose **More info → Run anyway** in SmartScreen.
 
 ### Added
 
+- Gespan Native has an Ask panel next to an inbox item, as the Tauri app does.
+  A resizable side chat keeps one conversation per item, with Restart and
+  Close. It stays out of the sidebar, and only the agent receives the item's
+  context.
+- Gespan Native's Checks tab repairs CI as the Tauri app does. Pick which
+  failed checks to fix, open a check's job steps and annotations, filter by
+  Needs attention or All checks, refresh, and rerun failed jobs. Each repair
+  shows its progress against the agent and the next CI results, and open pull
+  requests keep their checks up to date.
 - Gespan Native starts work from an inbox item, or from a note, with a card
   above the composer, as the Tauri app does. You can add a message or just
   send, and remove the card to start over. A note stays a card on the sent

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const missing = vi.hoisted(
   () => () => Promise.reject(new Error("not found")),
 );
-vi.mock("./child", () => ({
+vi.mock("../../../../host/core/integrations/harness/core/child", () => ({
   resolveAntigravityBinary: missing,
   resolveClaudeBinary: missing,
   resolveCodexBinary: missing,
@@ -18,7 +18,7 @@ vi.mock("./child", () => ({
   resolvePiBinary: missing,
 }));
 vi.mock("./registry", () => ({ isLiveHarness: () => true }));
-vi.mock("../../../platform/tauri/platform", () => ({ IS_WIN: false }));
+vi.mock("../../../../host/core/platform/tauri/platform", () => ({ IS_WIN: false }));
 
 import {
   hasProbedHarnessAvailability,

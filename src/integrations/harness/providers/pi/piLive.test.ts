@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   frames: [] as Array<(record: Record<string, unknown>) => void>,
 }));
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   killChild: mocks.killChild,
   resolveOmpBinary: vi.fn(),
   resolvePiBinary: mocks.resolveBinary,
@@ -19,7 +19,7 @@ vi.mock("../../core/child", () => ({
   writeChild: vi.fn(),
 }));
 
-vi.mock("./piClient", () => ({
+vi.mock("../../../../../host/core/integrations/harness/providers/pi/piClient", () => ({
   PiRpc: class {
     constructor(
       _sessionId: string,

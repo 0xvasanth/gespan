@@ -13,7 +13,7 @@ const native = vi.hoisted(() => ({
   listeners: new Set<(id: string) => void>(),
   models: [] as UnifiedDiffFileModel[],
 }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   gitCommitFiles: native.commits,
   gitCommitFileDiff: native.commitFile,
 }));

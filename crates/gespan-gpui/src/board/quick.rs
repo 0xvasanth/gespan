@@ -2,14 +2,15 @@
 //! and used by both the task drawer and the card face. On the face they open
 //! in place, anchored to the card.
 use super::{
-    BoardView, CardMenu,
-    detail::Picker,
+    BoardView, CardMenu, DueEntry, style,
     undo::{Undo, archived_label, moved_label},
 };
+use crate::input::{self, Input};
 use crate::popover::{Menu, MenuAction, MenuEvent, MenuItem};
+use crate::theme::content;
 use chrono::NaiveDate;
 use gespan_core::board::extras::{ColumnDisplayPatch, Label, PRIORITIES, PriorityScheme};
-use gpui::{Context, Window, prelude::*};
+use gpui::{Context, Focusable, Window, div, prelude::*};
 
 /// Which quick-edit menu a card face opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -499,7 +500,7 @@ impl BoardView {
                     return;
                 };
                 if let MenuEvent::Picked(id, _) = event {
-                    this.apply_face(face, id, &open.card_id, window, cx);
+                    this.apply_face(face, id, &open.card_id, open.anchor, window, cx);
                 }
                 cx.notify();
             },
@@ -511,6 +512,97 @@ impl BoardView {
             _events: events,
         });
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_open_due_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let card = self.detail.as_ref().expect("a board is open").cards[0]
+            .id
+            .clone();
+        self.open_face_menu(card, Face::Due, window, cx);
+    }
+
+    /// "Pick a date…" on a card face: a date field where the menu was.
+    fn open_due_entry(
+        &mut self,
+        card_id: String,
+        anchor: Option<crate::popover::Anchor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let due = self
+            .extras
+            .get(&card_id)
+            .and_then(|extras| extras.due_at)
+            .and_then(style::local_day);
+        let input = cx.new(|cx| Input::field("Due date", "YYYY-MM-DD", content(0.4), cx));
+        if let Some(due) = due {
+            input.update(cx, |input, cx| {
+                input.set_text(due.format("%Y-%m-%d").to_string(), cx)
+            });
+        }
+        let id = card_id.clone();
+        let submit = cx.subscribe(&input, move |this, input, _: &input::Submitted, cx| {
+            let text = input.read(cx).content.trim().to_string();
+            this.submit_due_entry(&id, &text, cx);
+        });
+        window.focus(&input.focus_handle(cx), cx);
+        self.due_entry = Some(DueEntry {
+            card_id,
+            anchor,
+            input,
+            _submit: submit,
+        });
+        cx.notify();
+    }
+
+    /// An empty field clears the date; anything else must be one. A mistake
+    /// leaves the field open to fix.
+    fn submit_due_entry(&mut self, card_id: &str, text: &str, cx: &mut Context<Self>) {
+        if text.is_empty() {
+            self.due_entry = None;
+            self.write(cx, |service| service.set_due(card_id, None));
+            return;
+        }
+        match NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+            Ok(day) => {
+                self.due_entry = None;
+                self.set_due_day(card_id, day, cx);
+            }
+            Err(_) => {
+                self.error = Some(format!("“{text}” is not a date like 2026-11-02"));
+                cx.notify();
+            }
+        }
+    }
+
+    pub(super) fn render_due_entry(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let entry = self.due_entry.as_ref()?;
+        let anchor = entry.anchor.clone().unwrap_or_else(|| {
+            crate::popover::Anchor::Slot(
+                self.card_anchors
+                    .get(&entry.card_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        });
+        let weak = cx.weak_entity();
+        Some(
+            crate::popover::popover("board-due-entry", anchor)
+                .width(180.)
+                .padding(8.)
+                .on_dismiss(move |_, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.due_entry = None;
+                        cx.notify();
+                    });
+                })
+                .children([div()
+                    .debug_selector(|| "board-due-entry".into())
+                    .child(entry.input.clone())
+                    .into_any_element()])
+                .into_any_element(),
+        )
     }
 
     /// One row per column, ticked for the card's own.
@@ -539,6 +631,7 @@ impl BoardView {
         face: Face,
         id: &str,
         card_id: &str,
+        anchor: Option<crate::popover::Anchor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -559,11 +652,7 @@ impl BoardView {
                 Some(DueChoice::Clear) => {
                     self.write(cx, |service| service.set_due(&card_id, None));
                 }
-                // A typed date needs the drawer's field.
-                Some(DueChoice::Pick) => {
-                    self.open_card_detail(card_id, window, cx);
-                    self.open_picker(Picker::DueDate, window, cx);
-                }
+                Some(DueChoice::Pick) => self.open_due_entry(card_id, anchor, window, cx),
                 None => {}
             },
             Face::Labels => {

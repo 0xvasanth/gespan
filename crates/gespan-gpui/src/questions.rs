@@ -41,6 +41,11 @@ pub(crate) struct QuestionCard {
     _events: Vec<Subscription>,
     _clock: Option<gpui::Task<()>>,
 }
+impl QuestionCard {
+    pub(crate) fn request(&self) -> &Question {
+        &self.request
+    }
+}
 impl EventEmitter<Answered> for QuestionCard {}
 impl EventEmitter<KeptOpen> for QuestionCard {}
 impl Focusable for QuestionCard {

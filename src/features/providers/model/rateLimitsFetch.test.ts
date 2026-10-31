@@ -7,10 +7,10 @@ const child = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   homeDir: async () => "/home/test",
 }));
-vi.mock("../../../integrations/harness/core/child", () => ({
+vi.mock("../../../../host/core/integrations/harness/core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/bin/codex" }),
   inspectHarnessBinary: async () => ({
     path: "/bin/devin",
@@ -33,7 +33,7 @@ vi.mock("../../../integrations/harness/core/child", () => ({
   },
   killChild: async () => undefined,
 }));
-vi.mock("../../../integrations/harness/core/jsonRpc", () => ({
+vi.mock("../../../../host/core/integrations/harness/core/jsonRpc", () => ({
   JsonRpcClient: class {
     close() {}
     pushLine() {}

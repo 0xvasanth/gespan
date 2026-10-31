@@ -16,7 +16,7 @@ vi.mock("../../features/sessions/data/sessionStore", async (original) => ({
   ...store,
 }));
 vi.mock("../../integrations/harness/core/registry", () => ({}));
-vi.mock("../../integrations/harness/core/child", () => ({}));
+vi.mock("../../../host/core/integrations/harness/core/child", () => ({}));
 
 beforeEach(() => {
   vi.resetModules();

@@ -1048,7 +1048,7 @@ mod tests {
                 "sidebar-navigation-Automations",
             ),
             ("menu-action-sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("menu-action-sidebar-pilots", "new-pilot"),
+            ("menu-action-sidebar-pilots", "pilot-intro"),
         ] {
             assert!(visual.debug_bounds(navigation).is_some());
             let row = visual.debug_bounds(action).unwrap();
@@ -1094,7 +1094,7 @@ mod tests {
                 "sidebar-navigation-Automations",
             ),
             ("menu-action-sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("menu-action-sidebar-pilots", "new-pilot"),
+            ("menu-action-sidebar-pilots", "pilot-intro"),
         ] {
             let row = visual.debug_bounds(action).unwrap();
             visual.simulate_click(row.center(), Default::default());
@@ -1121,7 +1121,7 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("new-pilot").is_none());
+        assert!(visual.debug_bounds("pilot-intro").is_none());
         let options = visual.debug_bounds("sidebar-options").unwrap();
         visual.simulate_click(options.center(), Default::default());
         visual.run_until_parked();

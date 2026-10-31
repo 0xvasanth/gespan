@@ -3,7 +3,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { previewVersion } from "./package-native.mjs";
+import { nativeVersion } from "./package-native.mjs";
 
 const { nativeAssetBase, releaseNotes } = createRequire(import.meta.url)("./release-channel.cjs");
 
@@ -22,7 +22,7 @@ export const nativeTargets = [
   "linux-x86_64-rpm",
 ];
 export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" }) {
-  previewVersion(version);
+  const { label } = nativeVersion(version);
   const base = new URL(assetBaseUrl);
   if (
     base.protocol !== "https:" ||
@@ -58,7 +58,7 @@ export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" })
       throw new Error(`Missing native package: ${target}`);
   return {
     app_id: "dev.gespan.native",
-    channel: "native-preview",
+    channel: label === "stable" ? "native-stable" : "native-preview",
     version,
     notes,
     platforms,
@@ -67,7 +67,7 @@ export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" })
 
 export async function prepareNativeRelease(directory, env = process.env) {
   const version = env.GESPAN_NATIVE_VERSION;
-  previewVersion(version);
+  nativeVersion(version);
   const missing = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_UPDATER_PUBKEY"].filter(
     (name) => !env[name],
   );

@@ -19,8 +19,8 @@ mod acp;
 mod agent_registry;
 mod commands;
 pub use commands::{
-    compact, discover_commands, native_invocation, native_prompt, prepare_prompt, supports_compact,
-    NativeCommand, NativeSubcommand,
+    compact, discover_commands, is_raw_command, native_invocation, native_prompt, prepare_prompt,
+    supports_compact, NativeCommand, NativeSubcommand,
 };
 mod attachments;
 mod compaction;

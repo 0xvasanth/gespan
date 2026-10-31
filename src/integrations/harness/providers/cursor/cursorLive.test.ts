@@ -4,7 +4,7 @@ const sent: string[] = [];
 let onLine: ((line: string) => void) | undefined;
 let onExit: ((code: number) => void) | undefined;
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveCursorBinary: async () => ({ path: "/fake/cursor-agent" }),
   spawnChild: async () => undefined,
   killChild: async () => undefined,
@@ -23,7 +23,7 @@ vi.mock("../../core/child", () => ({
 }));
 
 const stores = vi.hoisted(() => ({ tools: vi.fn(), subagents: vi.fn() }));
-vi.mock("./cursorStore", () => ({
+vi.mock("../../../../../host/core/integrations/harness/providers/cursor/cursorStore", () => ({
   readStoredCursorToolCalls: stores.tools,
   readStoredCursorSubagentRuns: stores.subagents,
 }));

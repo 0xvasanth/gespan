@@ -486,10 +486,7 @@ fn run_turn_using(
         // These providers parse slash arguments themselves. App context before
         // the command would turn it into an ordinary message instead.
         let prompt = settings.prepared_prompt.take().unwrap_or(prompt);
-        let raw_native_command = matches!(kind, Kind::Omp | Kind::Devin)
-            && provider::native_prompt(kind, &prompt)
-                .trim_start()
-                .starts_with('/');
+        let raw_native_command = provider::is_raw_command(kind, &prompt);
         let prompt = if raw_native_command {
             prompt
         } else if let Some(pilot) = &settings.pilot {
@@ -581,6 +578,18 @@ fn run_turn_using(
                 gespan_core::orchestration::instructions(&gespan_core::orchestration::choices(
                     std::mem::take(&mut settings.orchestration_profiles)
                 ))
+            );
+        }
+        if !raw_native_command
+            && settings
+                .environment
+                .contains_key(gespan_core::pilot::bridge::CONTROL_ENDPOINT)
+        {
+            let cli = std::env::current_exe().map_err(|e| e.to_string())?;
+            let cli = format!("{} control", shlex_quote(&cli.to_string_lossy()));
+            prompt = format!(
+                "{prompt}\n\n{}",
+                gespan_core::orchestration::lead_prompt(&cli)
             );
         }
         if !raw_native_command && settings.operator_enabled {

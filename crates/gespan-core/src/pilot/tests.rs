@@ -230,3 +230,13 @@ fn context_explains_pilot_flows_supervision_and_memory() {
         "Each delegated session reports back as soon as it stops; reports that arrive while you are busy come together in one message. Act on each result as it arrives, continuing that task without waiting for unrelated sessions, and give the user an integrated update when related work is done."
     ));
 }
+
+#[test]
+fn next_look_is_the_look_the_next_pilot_gets() {
+    let mut roster = Roster::default();
+    for _ in 0..MASCOTS.len() + 2 {
+        let (mascot, color) = roster.next_look();
+        let pilot = roster.create(Vec::new());
+        assert_eq!((pilot.mascot.as_str(), pilot.color), (mascot, color));
+    }
+}

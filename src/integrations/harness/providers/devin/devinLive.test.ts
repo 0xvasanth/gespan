@@ -5,7 +5,7 @@ let onLine: ((line: string) => void) | undefined;
 const textFiles = new Map<string, string>();
 const children = { spawned: 0, killed: 0, askEdits: [] as boolean[] };
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveDevinBinary: async () => ({ path: "/fake/devin" }),
   spawnChild: async (...args: unknown[]) => {
     children.spawned += 1;
@@ -30,7 +30,7 @@ vi.mock("../../core/child", () => ({
   },
 }));
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../../host/core/platform/tauri/fs", () => ({
   homeDir: async () => "/home/me",
 }));
 

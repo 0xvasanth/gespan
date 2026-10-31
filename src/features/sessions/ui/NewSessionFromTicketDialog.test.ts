@@ -13,7 +13,7 @@ vi.mock("../../files/model/fileIndex", () => ({
   recentOpenedFiles: vi.fn(() => []),
   rememberOpenedFile: vi.fn(),
 }));
-vi.mock("../../projects/model/recents", () => ({
+vi.mock("../../../../host/core/features/projects/model/recents", () => ({
   looksLikeProject: (path: string) => path !== "~",
 }));
 

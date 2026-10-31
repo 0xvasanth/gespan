@@ -1301,3 +1301,372 @@ fn escape_steps_back_inside_the_board_and_never_leaves_it(cx: &mut TestAppContex
     visual.run_until_parked();
     assert!(on_board(visual), "Escape on the focused board stays on it");
 }
+
+mod inbox_settings {
+    use super::*;
+    use crate::settings::Section;
+    use gespan_core::inbox::{OptionRow, Status};
+
+    fn inbox_page(cx: &mut TestAppContext) -> (WindowHandle<Shell>, VisualTestContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(2200.)));
+        window
+            .update(&mut visual, |shell, w, cx| {
+                shell.open_settings(Section::Inbox, w, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (window, visual)
+    }
+
+    fn click(visual: &mut VisualTestContext, target: String) {
+        let target: &'static str = target.leak();
+        visual.refresh().unwrap();
+        let bounds = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn settings_opens_the_connect_dialog_in_place_for_each_provider(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        for provider in ["gitlab", "azuredevops", "jira", "plane", "linear"] {
+            click(visual, format!("settings-connect-{provider}"));
+            assert!(
+                visual.debug_bounds("inbox-connect-dialog").is_some(),
+                "{provider} opens the dialog"
+            );
+            window
+                .update(visual, |shell, _, cx| {
+                    assert!(shell.settings.is_some(), "{provider} stays in Settings");
+                    assert_eq!(shell.active_app_view, None);
+                    assert!(
+                        shell
+                            .inbox
+                            .as_ref()
+                            .unwrap()
+                            .read(cx)
+                            .connecting_to(provider)
+                    );
+                })
+                .unwrap();
+            // Escape closes the dialog alone, in the field that has focus.
+            visual.simulate_keystrokes("escape");
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+            assert!(visual.debug_bounds("inbox-connect-dialog").is_none());
+            window
+                .update(visual, |shell, _, _| assert!(shell.settings.is_some()))
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn the_inbox_view_does_not_show_a_dialog_opened_from_settings(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        click(visual, "settings-connect-plane".into());
+        window
+            .update(visual, |shell, w, cx| {
+                shell.close_settings(w, cx);
+                shell.open_inbox(w, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-connect-dialog").is_none());
+    }
+
+    #[gpui::test]
+    fn linear_teams_are_picked_in_settings_once_connected(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        assert!(visual.debug_bounds("settings-linear-teams").is_none());
+        // A toggle refetches, and this test has no Linear to answer: seed again.
+        let seed = |visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    shell.inbox.as_ref().unwrap().update(cx, |inbox, cx| {
+                        inbox.seed_linear_teams(
+                            Status {
+                                connected: true,
+                                ..Default::default()
+                            },
+                            ["Web", "Mobile"]
+                                .map(|name| OptionRow {
+                                    id: name.to_lowercase(),
+                                    name: name.into(),
+                                    key: name[..3].to_uppercase(),
+                                })
+                                .to_vec(),
+                            cx,
+                        )
+                    });
+                    shell.sync_settings(cx);
+                })
+                .unwrap();
+            visual.run_until_parked();
+        };
+        seed(visual);
+        click(visual, "settings-linear-team-1".into());
+        let hidden = |window: WindowHandle<Shell>, visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    shell
+                        .inbox
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .hidden_linear_teams()
+                        .to_vec()
+                })
+                .unwrap()
+        };
+        assert_eq!(hidden(window, visual), ["mobile"]);
+        seed(visual);
+        click(visual, "settings-linear-team-1".into());
+        assert!(hidden(window, visual).is_empty());
+    }
+}
+
+/// With the shell's real key bindings, which the Board's own fixture lacks:
+/// its Escape binding runs before any view's key handler.
+mod real_keys {
+    use super::*;
+
+    fn board(cx: &mut TestAppContext) -> (WindowHandle<Shell>, VisualTestContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(crate::input::bind);
+        cx.update(crate::popover::bind);
+        cx.update(crate::board::bind);
+        let (window, _) = setup(cx, false, false);
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(&mut visual, |shell, window, cx| {
+                Surface::Board.open(shell, window, cx);
+                shell
+                    .board
+                    .as_ref()
+                    .unwrap()
+                    .update(cx, |board, cx| board.add_test_card("Task", cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (window, visual)
+    }
+
+    fn view(
+        window: WindowHandle<Shell>,
+        visual: &mut VisualTestContext,
+    ) -> Option<app_views::AppView> {
+        window
+            .read_with(visual, |shell, _| shell.active_app_view)
+            .unwrap()
+    }
+
+    fn escape(visual: &mut VisualTestContext) {
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    fn tap(visual: &mut VisualTestContext, target: &'static str) {
+        visual.refresh().unwrap();
+        let at = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"))
+            .center();
+        visual.simulate_click(at, Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn escape_closes_the_new_card_box_and_stays_on_the_board(cx: &mut TestAppContext) {
+        let (window, mut visual) = board(cx);
+        let visual = &mut visual;
+        window
+            .update(visual, |shell, window, cx| {
+                shell
+                    .board
+                    .as_ref()
+                    .unwrap()
+                    .update(cx, |board, cx| board.open_new_card(window, cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.simulate_input("half a title");
+        escape(visual);
+        window
+            .update(visual, |shell, _, cx| {
+                assert!(!shell.board.as_ref().unwrap().read(cx).new_card_open());
+            })
+            .unwrap();
+        assert_eq!(view(window, visual), Some(app_views::AppView::Board));
+    }
+
+    #[gpui::test]
+    fn escape_closes_a_board_menu_and_nothing_else_ever_leaves(cx: &mut TestAppContext) {
+        let (window, mut visual) = board(cx);
+        let visual = &mut visual;
+        tap(visual, "board-sort");
+        assert!(visual.debug_bounds("board-sort-manual").is_some());
+        escape(visual);
+        assert!(visual.debug_bounds("board-sort-manual").is_none());
+        assert_eq!(view(window, visual), Some(app_views::AppView::Board));
+        // With nothing left to close the Board still stays open, as in Tauri.
+        escape(visual);
+        assert_eq!(view(window, visual), Some(app_views::AppView::Board));
+    }
+
+    #[gpui::test]
+    fn escape_steps_out_of_the_inbox_one_layer_at_a_time(cx: &mut TestAppContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(crate::popover::bind);
+        let (window, _) = setup(cx, false, false);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, window, cx| {
+                Surface::Inbox.open(shell, window, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let inbox = window
+            .read_with(visual, |shell, _| shell.inbox.clone().unwrap())
+            .unwrap();
+        // No tracker is connected here, so the header has no filter button.
+        inbox.update(visual, |inbox, cx| inbox.test_open_filters(cx));
+        visual.run_until_parked();
+        inbox.read_with(visual, |inbox, _| assert!(inbox.filters_open()));
+        escape(visual);
+        inbox.read_with(visual, |inbox, _| assert!(!inbox.filters_open()));
+        assert_eq!(view(window, visual), Some(app_views::AppView::Inbox));
+        escape(visual);
+        assert_eq!(
+            view(window, visual),
+            None,
+            "the last Escape leaves the Inbox"
+        );
+    }
+
+    #[gpui::test]
+    fn alt_arrows_move_a_focused_subtask(cx: &mut TestAppContext) {
+        let (window, mut visual) = board(cx);
+        let visual = &mut visual;
+        tap(visual, "board-card-1");
+        tap(visual, "board-subtask-add");
+        for title in ["one", "two"] {
+            visual.simulate_input(title);
+            visual.simulate_keystrokes("enter");
+            visual.run_until_parked();
+        }
+        escape(visual);
+        let board = window
+            .read_with(visual, |shell, _| shell.board.clone().unwrap())
+            .unwrap();
+        window
+            .update(visual, |_, window, cx| {
+                board.update(cx, |board, cx| {
+                    board.test_focus_subtask(1, window, cx);
+                })
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.simulate_keystrokes("alt-up");
+        visual.run_until_parked();
+        board.read_with(visual, |board, _| {
+            assert_eq!(board.test_subtask_titles(), ["two", "one"])
+        });
+    }
+
+    #[gpui::test]
+    fn tab_reaches_a_list_row_and_enter_opens_it(cx: &mut TestAppContext) {
+        let (window, mut visual) = board(cx);
+        let visual = &mut visual;
+        tap(visual, "board-layout-list");
+        let board = window
+            .read_with(visual, |shell, _| shell.board.clone().unwrap())
+            .unwrap();
+        let reached = (0..40).any(|_| {
+            visual.simulate_keystrokes("tab");
+            visual.run_until_parked();
+            window
+                .update(visual, |_, window, cx| {
+                    board.read(cx).test_focused_card(window, cx).is_some()
+                })
+                .unwrap()
+        });
+        assert!(reached, "Tab reaches the row");
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        board.read_with(visual, |board, _| assert!(board.card_detail.is_some()));
+    }
+
+    #[gpui::test]
+    fn pick_a_date_saves_from_the_card_face(cx: &mut TestAppContext) {
+        let (window, mut visual) = board(cx);
+        let visual = &mut visual;
+        let board = window
+            .read_with(visual, |shell, _| shell.board.clone().unwrap())
+            .unwrap();
+        window
+            .update(visual, |_, window, cx| {
+                board.update(cx, |board, cx| board.test_open_due_menu(window, cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+        tap(visual, "menu-action-due-pick");
+        assert!(visual.debug_bounds("board-due-entry").is_some());
+        // Escape backs out of the field, and the Board stays.
+        escape(visual);
+        assert!(visual.debug_bounds("board-due-entry").is_none());
+        assert_eq!(view(window, visual), Some(app_views::AppView::Board));
+
+        window
+            .update(visual, |_, window, cx| {
+                board.update(cx, |board, cx| board.test_open_due_menu(window, cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+        tap(visual, "menu-action-due-pick");
+        visual.simulate_input("2030-03-14");
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("board-due-entry").is_none());
+        assert!(visual.debug_bounds("board-card-due-1").is_some());
+    }
+
+    #[gpui::test]
+    fn the_focused_layout_shows_the_meet_pilots_card(cx: &mut TestAppContext) {
+        cx.update(crate::shell::bind_keys);
+        let (window, _) = setup(cx, false, false);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-intro").is_some());
+        assert!(visual.debug_bounds("new-pilot").is_none());
+        tap(visual, "pilot-intro-create");
+        assert!(visual.debug_bounds("pilot-intro").is_none());
+        window
+            .update(visual, |shell, _, cx| {
+                let project = shell.workspace.project.clone();
+                let manager = shell.pilot_manager();
+                let manager = manager.read(cx);
+                assert_eq!(
+                    manager.roster.pilots[0].projects,
+                    [project],
+                    "a Pilot made in a project starts on that project"
+                );
+            })
+            .unwrap();
+    }
+}

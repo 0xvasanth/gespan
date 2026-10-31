@@ -22,8 +22,10 @@ pub fn gespan_database() -> PathBuf {
     #[cfg(windows)]
     let base = PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default());
     #[cfg(not(any(target_os = "macos", windows)))]
+    // Tauri ignores an unset or relative XDG_DATA_HOME, so this must too.
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
         .unwrap_or_else(|| {
             crate::accounts::home()
                 .unwrap_or_default()

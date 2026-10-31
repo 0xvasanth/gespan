@@ -217,8 +217,9 @@ impl Shell {
     }
     pub(super) fn delete_sidebar_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ids: Vec<_> = self.selected_sessions.iter().copied().collect();
+        let chosen = ids.len();
         for id in ids {
-            self.delete_session(id, window, cx);
+            self.delete_chosen_session(id, chosen, window, cx);
         }
     }
     pub(super) fn sidebar_drop_at(
@@ -683,6 +684,9 @@ impl Shell {
                 let archived = !ids
                     .iter()
                     .all(|id| self.session_metadata(*id, cx).summary.archived);
+                if let ([id], true) = (ids.as_slice(), archived) {
+                    return self.archive_session(*id, window, cx);
+                }
                 for id in ids {
                     if self.session_metadata(id, cx).summary.archived != archived {
                         self.toggle_archive(id, cx);
@@ -690,8 +694,9 @@ impl Shell {
                 }
             }
             "delete" => {
+                let chosen = ids.len();
                 for id in ids {
-                    self.delete_session(id, window, cx);
+                    self.delete_chosen_session(id, chosen, window, cx);
                 }
             }
             _ => {}
@@ -880,8 +885,12 @@ impl Shell {
             let _ = this.update(cx, |this, cx| {
                 this.deleting.remove(&id);
                 match result {
-                    Ok(()) => this.forget_session(id, cx),
+                    Ok(()) => {
+                        this.forget_session(id, cx);
+                        this.session_removed(id, true, cx);
+                    }
                     Err(error) => {
+                        this.session_removed(id, false, cx);
                         this.error = Some(format!("Could not delete the session: {error}"))
                     }
                 }
@@ -891,7 +900,21 @@ impl Shell {
             });
         }));
     }
-    fn forget_session(&mut self, id: i64, cx: &mut Context<Self>) {
+    /// One chosen chat can offer its worktree; a bulk delete just deletes.
+    fn delete_chosen_session(
+        &mut self,
+        id: i64,
+        chosen: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if chosen == 1 {
+            self.remove_session(id, session_worktree::Removal::Delete, None, window, cx);
+        } else {
+            self.delete_session(id, window, cx);
+        }
+    }
+    pub(super) fn forget_session(&mut self, id: i64, cx: &mut Context<Self>) {
         // A tab opened on it while the store was deleting keeps it alive.
         if self.workspace.tab_of(id).is_some() {
             return;

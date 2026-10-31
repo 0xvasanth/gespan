@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 pub(crate) struct StartOrchestration(pub gespan_core::orchestration::Plan);
 pub(crate) struct StopOrchestration;
+pub(crate) struct ResumeOrchestration;
 
 impl Conversation {
     pub(crate) fn request_folder(&mut self, cx: &mut Context<Self>) {
@@ -25,6 +26,22 @@ impl Conversation {
         environment: std::collections::HashMap<String, String>,
     ) {
         self.app_environment = environment;
+    }
+    /// A lead's control capability, for as long as its run is live. Worker
+    /// sessions never get it: only a lead's turns carry these variables.
+    pub(crate) fn set_control_environment(
+        &mut self,
+        environment: std::collections::HashMap<String, String>,
+    ) {
+        self.app_environment
+            .retain(|key, _| !key.starts_with("GESPAN_CONTROL_"));
+        self.app_environment.extend(environment);
+    }
+    #[cfg(test)]
+    pub(crate) fn has_control_environment(&self) -> bool {
+        self.app_environment
+            .keys()
+            .any(|key| key.starts_with("GESPAN_CONTROL_"))
     }
     pub(crate) fn enable_mode(&mut self, id: &str, cx: &mut Context<Self>) {
         let enabled = match id {
@@ -437,6 +454,10 @@ impl Conversation {
             Err(error) => self.orchestration_error = Some(error),
         }
     }
+    pub(crate) fn set_orchestration_paused(&mut self, paused: bool, cx: &mut Context<Self>) {
+        self.orchestration_paused = paused;
+        cx.notify();
+    }
     pub(crate) fn set_orchestration_progress(
         &mut self,
         progress: Option<String>,
@@ -447,6 +468,73 @@ impl Conversation {
             self.load(cx);
         }
         cx.notify();
+    }
+    /// A turn the app sends a worker it already has.
+    pub(crate) fn has_follow_ups(&self) -> bool {
+        !self.follow_ups.state.messages.is_empty()
+    }
+    pub(crate) fn send_worker_turn(&mut self, prompt: String, cx: &mut Context<Self>) {
+        self.launch_prompt(prompt, cx);
+    }
+    /// Guidance for the running turn, whatever the user's follow-up setting.
+    pub(crate) fn steer_worker(&mut self, text: String, cx: &mut Context<Self>) {
+        let mut message = self.message(text, Vec::new(), None, cx);
+        message.steer = true;
+        self.follow_ups.state.messages.push(message);
+        self.save_follow_ups(cx);
+        self.pump_follow_ups(cx);
+    }
+    /// What this session is blocked on, as its lead reads it.
+    pub(crate) fn pending_input(
+        &self,
+        cx: &gpui::App,
+    ) -> Option<gespan_core::orchestration::run::NeedsInput> {
+        use gespan_core::orchestration::run::NeedsInput;
+        if let Some((card, _)) = self.questions.front() {
+            let request = card.read(cx).request();
+            return Some(NeedsInput {
+                kind: "question",
+                request_id: request.id.clone(),
+                label: request.title.clone(),
+                detail: None,
+                questions: Some(serde_json::Value::Array(
+                    request.items.iter().map(question_json).collect(),
+                )),
+            });
+        }
+        self.approvals.front().map(|approval| NeedsInput {
+            kind: "approval",
+            request_id: approval.id.clone(),
+            label: approval.title.clone(),
+            detail: (!approval.detail.is_empty()).then(|| approval.detail.clone()),
+            questions: None,
+        })
+    }
+    /// The lead's reply takes the same path as the question card's.
+    pub(crate) fn answer_pending_question(
+        &mut self,
+        id: &str,
+        answers: Option<Vec<Vec<String>>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((card, _)) = self.questions.front() {
+            let reply = crate::questions::Answered {
+                id: id.to_owned(),
+                answers,
+            };
+            card.update(cx, |_, cx| cx.emit(reply));
+        }
+    }
+    /// The newest request the user made: what a run was started to do.
+    pub(crate) fn last_user_text(&self, cx: &gpui::App) -> String {
+        self.transcript
+            .read(cx)
+            .source_rows()
+            .iter()
+            .rev()
+            .find(|row| row.role == "user")
+            .map(|row| row.text.clone())
+            .unwrap_or_default()
     }
     pub(crate) fn external_outcome(&self, cx: &gpui::App) -> (bool, String) {
         let rows = self.transcript.read(cx).source_rows();
@@ -506,4 +594,18 @@ impl Conversation {
         self.launch_prompt(prompt, cx);
         self.settings.internal_message = internal;
     }
+}
+
+fn question_json(item: &gespan_core::agent::QuestionItem) -> serde_json::Value {
+    serde_json::json!({
+        "id": item.id,
+        "prompt": item.prompt,
+        "multiple": item.multiple,
+        "allowCustom": item.allow_custom,
+        "options": item.options.iter().map(|option| serde_json::json!({
+            "id": option.id,
+            "label": option.label,
+            "description": option.description,
+        })).collect::<Vec<_>>(),
+    })
 }

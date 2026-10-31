@@ -100,6 +100,7 @@ mod transcript;
 mod tray;
 mod usage_footer;
 mod visuals;
+mod window_blur;
 mod window_state;
 mod windows;
 mod workspace;
@@ -290,8 +291,16 @@ fn main() {
         }
         return;
     }
-    if cli_args.first().is_some_and(|a| a == "app") {
-        match gespan_core::pilot::bridge::client(&cli_args[1..]) {
+    if cli_args
+        .first()
+        .is_some_and(|a| a == "app" || a == "control")
+    {
+        let call = if cli_args[0] == "app" {
+            gespan_core::pilot::bridge::client
+        } else {
+            gespan_core::pilot::bridge::control_client
+        };
+        match call(&cli_args[1..]) {
             Ok(value) => {
                 println!("{value}");
                 if value.get("ok") == Some(&serde_json::Value::Bool(false)) {

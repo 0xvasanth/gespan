@@ -6,7 +6,7 @@ import type { Attachment, GeneratedImageMeta } from "../model/session";
 import * as fs from "../../../platform/tauri/fs";
 import { GeneratedImage } from "./GeneratedImage";
 
-vi.mock("../../../platform/tauri/fs", () => ({
+vi.mock("../../../../host/core/platform/tauri/fs", () => ({
   readBinaryFile: vi.fn(),
 }));
 vi.mock("../../../platform/tauri/trackpadZoom", () => ({

@@ -1,5 +1,6 @@
 //! Native Inbox services. Provider adapters preserve the Tauri API's requests,
 //! validation, response parsers and saved credential formats.
+pub mod ask;
 mod avatar;
 mod media;
 pub use media::init_video_dir as init_media_video_dir;
@@ -9,6 +10,7 @@ pub use media::remember_video;
 pub use media::video as media_video;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
+pub mod ci_repair;
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -16,10 +18,12 @@ pub mod linear;
 pub use gespan_tracker_client::credentials::plane;
 
 use crate::{
-    desktop_preferences::DesktopPreferences, session_groups::GithubWorkItem, store::Store,
+    desktop_preferences::DesktopPreferences, files::remote as remote_workspace,
+    session_groups::GithubWorkItem, store::Store,
 };
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
@@ -249,7 +253,7 @@ pub struct Diff {
     pub patch: String,
     pub truncated: bool,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Check {
     pub name: String,
@@ -259,7 +263,7 @@ pub struct Check {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Checks {
     pub head_oid: String,
@@ -277,7 +281,7 @@ pub struct Status {
     pub organization: String,
     pub workspace: String,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OptionRow {
     pub id: String,
     pub name: String,
@@ -627,6 +631,73 @@ fn active_first(projects: &[PathBuf], cwd: &Path) -> Vec<PathBuf> {
     ordered
 }
 
+/// What the host answers for a project that has no GitHub repository.
+const NOT_ON_GITHUB: &str = "GitHub did not return a repository";
+
+/// Each machine signs in to GitHub on its own, so one that can't read a
+/// repository says nothing about another.
+fn github_account(project: &Path) -> &str {
+    project
+        .to_str()
+        .and_then(|path| path.strip_prefix(crate::remote::REMOTE_PATH_PREFIX))
+        .and_then(|path| path.split('/').next())
+        .unwrap_or("")
+}
+
+/// The projects GitHub can be asked about. Without a local `gh` account, the
+/// projects on other machines still answer with theirs.
+fn github_reachable(signed_in: bool, projects: &[PathBuf]) -> Vec<PathBuf> {
+    projects
+        .iter()
+        .filter(|project| signed_in || remote_workspace::is_remote(project))
+        .cloned()
+        .collect()
+}
+
+/// Runs a GitHub Inbox operation with the project's own `gh`: a remote
+/// project's checkout and account are on its machine.
+fn github_call<T: DeserializeOwned, L: Serialize>(
+    project: &Path,
+    command: &str,
+    mut args: Value,
+    local: impl FnOnce() -> Result<L, String>,
+) -> Result<T, String> {
+    if remote_workspace::is_remote(project) {
+        args["cwd"] = json!(project);
+        return remote_workspace::command(command, args);
+    }
+    convert(local()?)
+}
+
+fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
+    github_call(project, "git_github_repositories", json!({}), || {
+        github::git_github_repositories_for(project)
+    })
+}
+
+fn github_work_items(
+    project: &Path,
+    repo: &str,
+    kind: &str,
+    assigned_to_me: bool,
+    state: &str,
+    limit: u32,
+) -> Result<Vec<Item>, String> {
+    github_call(
+        project,
+        "git_github_work_items",
+        json!({
+            "repo": repo,
+            "kind": kind,
+            "assignedToMe": assigned_to_me,
+            "state": state,
+            "search": "",
+            "limit": limit,
+        }),
+        || github::git_github_work_items_for(project, repo, kind, assigned_to_me, state, "", limit),
+    )
+}
+
 fn collect_repo_items(
     provider: &str,
     projects: &[PathBuf],
@@ -636,11 +707,24 @@ fn collect_repo_items(
     let mut out = RepoFetch::default();
     let mut visited = HashSet::new();
     for project in projects {
-        let Ok(repos) = repos_for(project) else {
-            continue;
+        let repos = match repos_for(project) {
+            Ok(repos) => repos,
+            // A folder that isn't on this forge has nothing to list, but a
+            // machine that can't answer would otherwise just go quiet.
+            Err(error) if remote_workspace::is_remote(project) && error != NOT_ON_GITHUB => {
+                out.errors
+                    .insert(repo_scope(provider, project, "", "repositories"), error);
+                continue;
+            }
+            Err(_) => continue,
         };
         for repo in repos {
-            if !visited.insert(repo.to_lowercase()) {
+            let account = if provider == "github" {
+                github_account(project)
+            } else {
+                ""
+            };
+            if !visited.insert(format!("{account}:{}", repo.to_lowercase())) {
                 continue;
             }
             for kind in ["issue", "pr"] {
@@ -650,7 +734,9 @@ fn collect_repo_items(
                         for mut item in rows {
                             item.provider = provider.into();
                             item.project_path = project.to_string_lossy().into_owned();
-                            out.item_scopes.insert(item.key(), scope.clone());
+                            out.item_scopes
+                                .entry(item.key())
+                                .or_insert_with(|| scope.clone());
                             out.items.push(item);
                         }
                         out.fetched.insert(scope);
@@ -773,7 +859,7 @@ impl Service {
                 let installed = crate::scm::resolve_gui_binary("gh").is_some();
                 let authenticated = installed
                     && run_gh(
-                        &self.cwd,
+                        &gh_root(&self.cwd),
                         &["auth", "status", "--active", "--hostname", "github.com"],
                         true,
                     )
@@ -839,7 +925,8 @@ impl Service {
             };
             let connected = status.connected;
             snapshot.connections.insert(provider.into(), status);
-            if !connected {
+            let github = (provider == "github").then(|| github_reachable(connected, projects));
+            if !connected && github.as_ref().is_none_or(Vec::is_empty) {
                 continue;
             }
             let result: Result<Vec<Item>, String> = (|| {
@@ -914,9 +1001,9 @@ impl Service {
                 }
                 let fetch = collect_repo_items(
                     provider,
-                    &active_first(projects, &self.cwd),
+                    &active_first(github.as_deref().unwrap_or(projects), &self.cwd),
                     |project| match provider {
-                        "github" => github::git_github_repositories_for(project),
+                        "github" => github_repositories(project),
                         "gitlab" => gitlab::gitlab_repo(
                             self.data_dir.clone(),
                             project.to_string_lossy().into_owned(),
@@ -929,15 +1016,14 @@ impl Service {
                         .map(|r| vec![r]),
                     },
                     |project, repo, kind| match provider {
-                        "github" => convert(github::git_github_work_items_for(
+                        "github" => github_work_items(
                             project,
                             repo,
                             kind,
                             state.filters.assigned_to_me,
                             state.filters.fetch_state(),
-                            "",
                             limit,
-                        )?),
+                        ),
                         "gitlab" => convert(gitlab::gitlab_list_work_items(
                             self.data_dir.clone(),
                             project.to_string_lossy().into_owned(),
@@ -956,6 +1042,12 @@ impl Service {
                         )?),
                     },
                 )?;
+                if !fetch.fetched.is_empty() {
+                    // Another machine's account is a connection too.
+                    if let Some(status) = snapshot.connections.get_mut(provider) {
+                        status.connected = true;
+                    }
+                }
                 snapshot.fetched.extend(fetch.fetched);
                 snapshot.repo_errors.extend(fetch.errors);
                 snapshot.item_scopes.extend(fetch.item_scopes);
@@ -1007,12 +1099,19 @@ impl Service {
                 item.kind.clone(),
                 item.number,
             )?),
-            _ => convert(github::git_github_work_item_details_for(
+            _ => github_call(
                 self.project(item),
-                &item.repo,
-                &item.kind,
-                item.number,
-            )?),
+                "git_github_work_item_details",
+                json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
+                || {
+                    github::git_github_work_item_details_for(
+                        self.project(item),
+                        &item.repo,
+                        &item.kind,
+                        item.number,
+                    )
+                },
+            ),
         }
     }
     fn project<'a>(&'a self, item: &'a Item) -> &'a Path {
@@ -1044,12 +1143,19 @@ impl Service {
                 item.kind.clone(),
                 item.number,
             )?),
-            _ => convert(github::git_github_work_item_thread_for(
+            _ => github_call(
                 self.project(item),
-                &item.repo,
-                &item.kind,
-                item.number,
-            )?),
+                "git_github_work_item_thread",
+                json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
+                || {
+                    github::git_github_work_item_thread_for(
+                        self.project(item),
+                        &item.repo,
+                        &item.kind,
+                        item.number,
+                    )
+                },
+            ),
         }
     }
     pub fn comment(&self, item: &Item, body: String, reply_to: String) -> Result<String, String> {
@@ -1074,13 +1180,26 @@ impl Service {
                 item.number,
                 body,
             ),
-            _ => github::git_github_work_item_comment_for(
+            _ => github_call(
                 self.project(item),
-                &item.repo,
-                &item.kind,
-                item.number,
-                &body,
-                &reply_to,
+                "git_github_work_item_comment",
+                json!({
+                    "repo": item.repo,
+                    "kind": item.kind,
+                    "number": item.number,
+                    "body": body,
+                    "inReplyTo": reply_to,
+                }),
+                || {
+                    github::git_github_work_item_comment_for(
+                        self.project(item),
+                        &item.repo,
+                        &item.kind,
+                        item.number,
+                        &body,
+                        &reply_to,
+                    )
+                },
             ),
         }
     }
@@ -1099,29 +1218,44 @@ impl Service {
                 item.repo.clone(),
                 item.number,
             )?),
-            "github" => convert(github::git_github_pr_diff_for(
+            "github" => github_call(
                 self.project(item),
-                &item.repo,
-                item.number,
-                full_context,
-            )?),
+                "git_github_pr_diff",
+                json!({"repo": item.repo, "number": item.number, "fullContext": full_context}),
+                || {
+                    github::git_github_pr_diff_for(
+                        self.project(item),
+                        &item.repo,
+                        item.number,
+                        full_context,
+                    )
+                },
+            ),
             _ => Err("This issue has no pull request diff".into()),
         }
     }
     pub fn checks(&self, item: &Item) -> Result<Checks, String> {
-        convert(github::git_github_pr_checks_for(
+        github_call(
             self.project(item),
-            &item.repo,
-            item.number,
-        )?)
+            "git_github_pr_checks",
+            json!({"repo": item.repo, "number": item.number}),
+            || github::git_github_pr_checks_for(self.project(item), &item.repo, item.number),
+        )
     }
     pub fn action(&self, item: &Item, action: &str) -> Result<Item, String> {
-        let mut updated: Item = convert(github::git_github_pr_action_for(
+        let mut updated: Item = github_call(
             self.project(item),
-            &item.repo,
-            item.number,
-            action,
-        )?)?;
+            "git_github_pr_action",
+            json!({"repo": item.repo, "number": item.number, "action": action}),
+            || {
+                github::git_github_pr_action_for(
+                    self.project(item),
+                    &item.repo,
+                    item.number,
+                    action,
+                )
+            },
+        )?;
         updated.provider = item.provider.clone();
         updated.project_path = item.project_path.clone();
         Ok(updated)
@@ -1133,12 +1267,16 @@ pub(super) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
 /// githubWorkItem: one GitHub issue or pull request a message links to,
 /// looked up with `gh` from `cwd` (any folder, when the session's is gone).
 pub fn github_work_item(cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
-    let mut item: Item = convert(github::git_github_work_item_for(
-        &gh_root(cwd),
-        repo,
-        kind,
-        number,
-    )?)?;
+    let host = host_lookup(cwd, "git_github_work_item", repo, kind, number);
+    let mut item: Item = match host {
+        Some(item) => item,
+        None => convert(github::git_github_work_item_for(
+            &gh_root(cwd),
+            repo,
+            kind,
+            number,
+        )?)?,
+    };
     item.provider = "github".into();
     Ok(item)
 }
@@ -1149,12 +1287,35 @@ pub fn github_work_item_details(
     kind: &str,
     number: i64,
 ) -> Result<Details, String> {
-    convert(github::git_github_work_item_details_for(
-        &gh_root(cwd),
-        repo,
-        kind,
-        number,
-    )?)
+    let host = host_lookup(cwd, "git_github_work_item_details", repo, kind, number);
+    match host {
+        Some(details) => Ok(details),
+        None => convert(github::git_github_work_item_details_for(
+            &gh_root(cwd),
+            repo,
+            kind,
+            number,
+        )?),
+    }
+}
+/// A link in a remote session, read by its machine's account. A host that
+/// can't answer leaves it to the local `gh`, which still reads public links.
+fn host_lookup<T: DeserializeOwned>(
+    cwd: &Path,
+    command: &str,
+    repo: &str,
+    kind: &str,
+    number: i64,
+) -> Option<T> {
+    remote_workspace::is_remote(cwd)
+        .then(|| {
+            remote_workspace::command(
+                command,
+                json!({"cwd": cwd, "repo": repo, "kind": kind, "number": number}),
+            )
+            .ok()
+        })
+        .flatten()
 }
 fn gh_root(cwd: &Path) -> PathBuf {
     let cwd = crate::scm::expand_home(cwd);
@@ -1763,5 +1924,384 @@ mod self_activity_tests {
         other.id = "xyz".into();
         assert!(!ours.consume(&other, 1));
         assert!(ours.consume(&issue, 1));
+    }
+}
+
+#[cfg(test)]
+mod remote_github_tests {
+    use super::*;
+    use crate::files::remote::TEST_HOST;
+    use std::{cell::RefCell, rc::Rc};
+
+    const PROJECT: &str = "remote://env/home/me/web";
+
+    type Calls = Rc<RefCell<Vec<(String, Value)>>>;
+
+    /// Answers like the host's GitHub Inbox and records what it was asked.
+    fn host(answer: impl Fn(&str, &Value) -> Result<Value, String> + 'static) -> Calls {
+        let calls = Calls::default();
+        let seen = calls.clone();
+        TEST_HOST.set(Some(Box::new(move |environment, params| {
+            assert_eq!(environment, "env");
+            let command = params["command"].as_str().unwrap().to_owned();
+            let args = params["args"].clone();
+            seen.borrow_mut().push((command.clone(), args.clone()));
+            answer(&command, &args)
+        })));
+        calls
+    }
+
+    fn host_item() -> Value {
+        json!({
+            "kind": "pr",
+            "repo": "acme/web",
+            "number": 42,
+            "title": "Remote PR",
+            "url": "https://github.com/acme/web/pull/42",
+            "state": "open",
+            "stateReason": "",
+            "createdAt": "",
+            "updatedAt": "2026-10-10",
+            "draft": true,
+            "labels": [{"name": "bug", "color": ""}],
+            "assignees": [{"login": "remote-user", "avatarUrl": ""}],
+        })
+    }
+
+    fn item() -> Item {
+        Item {
+            provider: "github".into(),
+            kind: "pr".into(),
+            repo: "acme/web".into(),
+            number: 42,
+            project_path: PROJECT.into(),
+            ..Default::default()
+        }
+    }
+
+    fn service() -> Service {
+        Service {
+            data_dir: std::env::temp_dir(),
+            cwd: PathBuf::from("/nonexistent/local/checkout"),
+        }
+    }
+
+    #[test]
+    fn every_item_operation_runs_with_the_gh_of_the_items_machine() {
+        let calls = host(|command, _| {
+            Ok(match command {
+                "git_github_work_item_details" => json!({
+                    "body": "Hello", "author": "octo", "authorAvatarUrl": "",
+                    "baseRefName": "main", "headRefName": "fix", "reviewDecision": "",
+                }),
+                "git_github_work_item_thread" => json!({
+                    "comments": [{
+                        "id": "c1", "kind": "review_comment", "author": "octo",
+                        "authorAvatarUrl": "", "body": "Nit", "createdAt": "2026-10-10",
+                        "url": "", "state": "", "path": "a.rs", "line": null,
+                        "resolved": false, "threadId": "T_1", "replies": [],
+                    }],
+                    "commits": [],
+                    "truncated": false,
+                    "reviewDecision": "",
+                    "baseRefName": "main",
+                    "headRefName": "fix",
+                }),
+                "git_github_work_item_comment" => json!("https://github.com/c/1"),
+                "git_github_pr_diff" => json!({
+                    "files": [{"path": "a.rs", "additions": 1, "deletions": 0}],
+                    "patch": "diff", "truncated": false, "additions": 1, "deletions": 0,
+                }),
+                "git_github_pr_checks" => json!({
+                    "headOid": "abc",
+                    "checks": [{
+                        "name": "build", "workflow": "CI", "state": "fail",
+                        "url": null, "startedAt": null, "completedAt": null,
+                    }],
+                }),
+                "git_github_pr_action" => host_item(),
+                other => panic!("unexpected command {other}"),
+            })
+        });
+        let service = service();
+        let item = item();
+        assert_eq!(service.details(&item).unwrap().body, "Hello");
+        assert_eq!(service.thread(&item).unwrap().comments[0].thread_id, "T_1");
+        assert_eq!(
+            service
+                .comment(&item, "Thanks".into(), "T_1".into())
+                .unwrap(),
+            "https://github.com/c/1"
+        );
+        assert_eq!(service.diff_context(&item, true).unwrap().files.len(), 1);
+        assert_eq!(service.checks(&item).unwrap().checks[0].state, "fail");
+        let updated = service.action(&item, "ready").unwrap();
+        TEST_HOST.set(None);
+        // The item stays tied to its machine after a host round trip.
+        assert_eq!(updated.provider, "github");
+        assert_eq!(updated.project_path, PROJECT);
+        assert!(updated.draft);
+
+        let base = json!({"cwd": "/home/me/web", "repo": "acme/web", "number": 42});
+        let with = |extra: Value| {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        assert_eq!(
+            *calls.borrow(),
+            [
+                (
+                    "git_github_work_item_details".to_owned(),
+                    with(json!({"kind": "pr"}))
+                ),
+                (
+                    "git_github_work_item_thread".to_owned(),
+                    with(json!({"kind": "pr"}))
+                ),
+                (
+                    "git_github_work_item_comment".to_owned(),
+                    with(json!({"kind": "pr", "body": "Thanks", "inReplyTo": "T_1"}))
+                ),
+                (
+                    "git_github_pr_diff".to_owned(),
+                    with(json!({"fullContext": true}))
+                ),
+                ("git_github_pr_checks".to_owned(), base.clone()),
+                (
+                    "git_github_pr_action".to_owned(),
+                    with(json!({"action": "ready"}))
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_remote_project_lists_its_items_whatever_the_local_gh_account_says() {
+        let calls = host(|command, args| {
+            Ok(match command {
+                "git_github_repositories" => json!(["acme/web"]),
+                "git_github_work_items" if args["kind"] == "pr" => json!([host_item()]),
+                "git_github_work_items" => json!([]),
+                other => panic!("unexpected command {other}"),
+            })
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service {
+            data_dir: dir.path().to_path_buf(),
+            cwd: PathBuf::from(PROJECT),
+        };
+        let snapshot = service.list(&[PathBuf::from(PROJECT)], &ViewState::default());
+        TEST_HOST.set(None);
+        assert_eq!(snapshot.errors.get("github"), None);
+        assert!(snapshot.connections["github"].connected);
+        let item = snapshot
+            .items
+            .iter()
+            .find(|item| item.provider == "github")
+            .expect("the remote pull request");
+        assert_eq!(item.number, 42);
+        assert_eq!(item.project_path, PROJECT);
+        let calls = calls.borrow();
+        assert_eq!(calls[0].1, json!({"cwd": "/home/me/web"}));
+        assert_eq!(calls[1].1["repo"], "acme/web");
+        assert_eq!(calls[1].1["cwd"], "/home/me/web");
+        assert_eq!(calls[1].1["search"], "");
+    }
+
+    #[test]
+    fn without_a_local_account_only_remote_projects_are_asked() {
+        let local = PathBuf::from("/code/web");
+        let remote = PathBuf::from(PROJECT);
+        let projects = [local.clone(), remote.clone()];
+        assert_eq!(github_reachable(true, &projects), projects);
+        assert_eq!(github_reachable(false, &projects), [remote]);
+        assert!(github_reachable(false, &[local]).is_empty());
+    }
+
+    #[test]
+    fn a_repository_is_asked_once_per_machine_because_accounts_differ() {
+        let local = PathBuf::from("/code/web");
+        let projects = [
+            local.clone(),
+            PathBuf::from("/code/web-copy"),
+            PathBuf::from(PROJECT),
+            PathBuf::from("remote://env/home/me/web-copy"),
+            PathBuf::from("remote://other/home/me/web"),
+        ];
+        let mut asked = Vec::new();
+        let fetch = collect_repo_items(
+            "github",
+            &projects,
+            |_| Ok(vec!["Acme/Web".into()]),
+            |project, _, kind| {
+                if kind == "pr" {
+                    asked.push(project.to_path_buf());
+                }
+                Ok(vec![])
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            asked,
+            [
+                local,
+                PathBuf::from(PROJECT),
+                PathBuf::from("remote://other/home/me/web")
+            ]
+        );
+        assert_eq!(fetch.fetched.len(), 6);
+    }
+
+    #[test]
+    fn a_machine_that_cant_answer_is_reported_but_a_non_github_folder_is_not() {
+        let quiet = collect_repo_items(
+            "github",
+            &[PathBuf::from(PROJECT)],
+            |_| Err(NOT_ON_GITHUB.into()),
+            |_, _, _| Ok(vec![]),
+        )
+        .unwrap();
+        assert!(quiet.errors.is_empty());
+        let error = collect_repo_items(
+            "github",
+            &[PathBuf::from(PROJECT)],
+            |_| Err("Machine is no longer connected".into()),
+            |_, _, _| Ok(vec![]),
+        )
+        .unwrap_err();
+        assert_eq!(error, "Machine is no longer connected");
+        // A local folder keeps being skipped, and one bad machine leaves the rest.
+        let partial = collect_repo_items(
+            "github",
+            &[PathBuf::from("/code/web"), PathBuf::from(PROJECT)],
+            |project| {
+                if remote_workspace::is_remote(project) {
+                    Err("Machine is no longer connected".into())
+                } else {
+                    Ok(vec!["acme/web".into()])
+                }
+            },
+            |_, _, _| Ok(vec![]),
+        )
+        .unwrap();
+        assert_eq!(partial.errors.len(), 1);
+        assert_eq!(partial.fetched.len(), 2);
+        let local = collect_repo_items(
+            "github",
+            &[PathBuf::from("/code/web")],
+            |_| Err("no git remotes found".into()),
+            |_, _, _| Ok(vec![]),
+        )
+        .unwrap();
+        assert!(local.errors.is_empty());
+    }
+
+    #[test]
+    fn a_failed_jobs_details_come_from_the_items_machine() {
+        let calls = host(|command, _| {
+            assert_eq!(command, "git_github_check_details");
+            Ok(json!({
+                "steps": [{
+                    "name": "Test",
+                    "state": "fail",
+                    "startedAt": "2026-10-10T00:00:00Z",
+                    "completedAt": null,
+                }],
+                "annotations": [{
+                    "path": "src/a.rs",
+                    "line": 7,
+                    "message": "boom",
+                    "level": "failure",
+                }],
+                "notice": null,
+            }))
+        });
+        let details = service().check_details(&item(), "123").unwrap();
+        TEST_HOST.set(None);
+        assert_eq!(details.failed_steps(), ["Test"]);
+        assert_eq!(
+            details.steps[0].started_at.as_deref(),
+            Some("2026-10-10T00:00:00Z")
+        );
+        assert_eq!(details.annotations[0].location(), "src/a.rs:7");
+        assert_eq!(details.notice, None);
+        assert_eq!(
+            calls.borrow()[0].1,
+            json!({"cwd": "/home/me/web", "repo": "acme/web", "jobId": "123"})
+        );
+    }
+
+    #[test]
+    fn a_rerun_asks_the_items_machine_once_per_workflow_run() {
+        let calls = host(|_, _| Ok(Value::Null));
+        let runs = ["5".to_string(), "6".to_string()];
+        let asked = service().rerun_failed(&item(), &runs);
+        TEST_HOST.set(None);
+        assert_eq!(asked, Ok(2));
+        assert_eq!(
+            *calls.borrow(),
+            ["5", "6"].map(|run| (
+                "git_github_run_rerun_failed".to_string(),
+                json!({"cwd": "/home/me/web", "repo": "acme/web", "runId": run}),
+            ))
+        );
+    }
+
+    #[test]
+    fn a_rerun_stops_at_the_first_run_the_host_refuses() {
+        let calls = host(|_, _| Err("run 5 is still in progress".into()));
+        let runs = ["5".to_string(), "6".to_string()];
+        let error = service().rerun_failed(&item(), &runs).unwrap_err();
+        TEST_HOST.set(None);
+        assert!(error.contains("run 5 is still in progress"), "{error}");
+        assert_eq!(calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn an_invalid_run_never_reaches_the_host() {
+        let calls = host(|_, _| Ok(Value::Null));
+        let runs = ["5; rm -rf /".to_string()];
+        let error = service().rerun_failed(&item(), &runs).unwrap_err();
+        TEST_HOST.set(None);
+        assert_eq!(error, "Invalid GitHub workflow run ID");
+        assert!(calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_outdated_host_is_named_on_a_rerun() {
+        host(|_, _| Err("Unsupported workspace command".into()));
+        let error = service()
+            .rerun_failed(&item(), &["5".to_string()])
+            .unwrap_err();
+        TEST_HOST.set(None);
+        assert!(error.contains("Update Gespan Host"), "{error}");
+    }
+
+    #[test]
+    fn an_outdated_host_is_named_on_the_item_fetch() {
+        host(|_, _| Err("Unsupported workspace command".into()));
+        let error = service().checks(&item()).unwrap_err();
+        TEST_HOST.set(None);
+        assert!(error.contains("Update Gespan Host"), "{error}");
+        assert!(error.contains("GitHub Inbox"), "{error}");
+    }
+
+    #[test]
+    fn a_link_in_a_remote_session_is_read_by_that_machines_account() {
+        let calls = host(|command, _| {
+            assert_eq!(command, "git_github_work_item");
+            Ok(host_item())
+        });
+        let item = github_work_item(Path::new(PROJECT), "acme/web", "pr", 42).unwrap();
+        TEST_HOST.set(None);
+        assert_eq!(item.provider, "github");
+        assert_eq!(item.title, "Remote PR");
+        assert_eq!(
+            calls.borrow()[0].1,
+            json!({"cwd": "/home/me/web", "repo": "acme/web", "kind": "pr", "number": 42})
+        );
     }
 }

@@ -20,7 +20,7 @@ import {
 } from "../model/inboxSeen";
 import { useInboxActivity } from "../hooks/useInboxUnseen";
 
-vi.mock("../model/githubTasks", async (importOriginal) => ({
+vi.mock("../../../../host/core/features/inbox/model/githubTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../model/githubTasks")>()),
   listInboxItems: vi.fn(),
 }));

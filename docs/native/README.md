@@ -67,8 +67,10 @@ verification.
 
 ## Releases and the update feed
 
-**Native preview release** runs only when started by hand, so pushing a tag
-never publishes anything. To cut a preview:
+**Native preview release** publishes previews and stable releases. The tag picks
+which: `v1.2.0` is stable, `v1.2.0-beta` or `v1.2.0-preview.1` is a preview. It
+runs only when started by hand, so pushing a tag never publishes anything. To
+cut a release:
 
 1. Tag the commit as `v<version>` (for example `v0.0.4-beta`) and push the
    tag.
@@ -90,6 +92,18 @@ Releases:
   it if missing and overwrites the asset on every native release. The signed
   feed's package URLs point at the versioned release's assets.
 
+A stable tag differs in three ways:
+
+- `v<version>` is published as a full release and marked latest.
+- `native-latest` is left alone. The stable feed is the `native-latest.json` on
+  that release, at
+  `https://github.com/0xvasanth/gespan/releases/latest/download/native-latest.json`.
+  Stable and preview builds each accept only their own signed channel
+  (`native-stable` or `native-preview`), so neither moves to the other, and a
+  preview user is offered a stable version only after installing it.
+- With R2 set up, the Mac DMGs are also copied to `Gespan.dmg` and
+  `Gespan_x64.dmg` at the bucket root, uncached.
+
 If a run fails after the versioned release was published but before the feed was
 updated, run the workflow again from the same tag. Nothing is signed and no
 package is re-uploaded on a rerun. When `v<version>` already has all of the
@@ -110,16 +124,17 @@ The app's default endpoint is therefore
 GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
 native feed deliberately uses its own tag and never competes with it. To
 override the default (HTTPS only), set the `NATIVE_UPDATER_ENDPOINT` repository
-variable (Settings, Secrets and variables, Actions, Variables) for CI releases,
-which the workflow passes to `scripts/release-channel.cjs native-config`. For a
+variable, or `NATIVE_STABLE_UPDATER_ENDPOINT` for stable tags (Settings, Secrets
+and variables, Actions, Variables) for CI releases, which the workflow passes to
+`scripts/release-channel.cjs native-config`. For a
 local build, set `GESPAN_NATIVE_UPDATER_ENDPOINT` yourself instead.
 
 Required repository secrets: `TAURI_UPDATER_PUBKEY` (embedded in the app),
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, plus the
 Apple signing secrets. Cloudflare R2 is optional: when all of `R2_PUBLIC_BASE_URL`,
 `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
-are set, packages and `latest.json` are also mirrored under `native-preview/`;
-otherwise that step is skipped. The channel logic lives in
+are set, packages and `latest.json` are also mirrored under `native-preview/`
+(`native-stable/` for a stable tag); otherwise that step is skipped. The channel logic lives in
 `scripts/release-channel.cjs` and is tested in `scripts/release-channel.test.cjs`.
 
 The macOS app icon is `crates/gespan-gpui/packaging/icon.icns`.
@@ -137,6 +152,28 @@ you use Gespan Native with your real data:
 
 Opening different conversations in each app is fine. A code safeguard for this is
 planned but not built yet.
+### AppImage desktop integration
+
+Move the AppImage to a permanent location and make it executable, then opt in
+to a per-user application menu entry and Wayland icon registration:
+
+```sh
+./GespanNative.AppImage --install-desktop
+```
+
+This installs `dev.gespan.native.desktop` and the app icon under
+`$XDG_DATA_HOME` (default: `~/.local/share`). The launcher points to the AppImage,
+not its temporary mount. Normal launches do not install anything. Run the
+command again after moving or renaming the AppImage.
+
+## Moving from Tauri Gespan
+
+No update can move a Tauri install: Tauri (`dev.gespan.desktop`) and Native
+(`dev.gespan.native`) are separate apps with separate update feeds, and no Tauri
+release is left to ship the change. The move is manual, and there is no data to
+copy, because a release build of Native opens `dev.gespan.desktop/gespan.db`
+where Tauri left it. The [README](../../README.md#move-from-gespan-to-gespan-native)
+has the steps.
 
 ## Data and configuration
 

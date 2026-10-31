@@ -80,7 +80,7 @@ impl Updater {
         let setup = (|| {
             let endpoint = option_env!("GESPAN_NATIVE_UPDATER_ENDPOINT")
                 .filter(|v| !v.is_empty())
-                .unwrap_or(app_update::DEFAULT_ENDPOINT);
+                .unwrap_or_else(|| app_update::default_endpoint(version()));
             let key = option_env!("GESPAN_NATIVE_UPDATER_PUBKEY")
                 .filter(|v| !v.is_empty())
                 .ok_or("This build has no update verification key")?;

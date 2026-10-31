@@ -134,20 +134,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let title = self.session_metadata(id, cx).display_title();
-        let prompt = window.prompt(
-            gpui::PromptLevel::Warning,
-            &format!("Delete “{title}”?"),
-            Some("This conversation and its saved settings will be removed permanently."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if prompt.await != Ok(0) {
-                return;
-            }
-            let _ = this.update_in(cx, |this, window, cx| this.delete_session(id, window, cx));
-        })
-        .detach();
+        let ask = session_worktree::Ask {
+            title: format!("Delete “{title}”?"),
+            detail: "This conversation and its saved settings will be removed permanently.".into(),
+        };
+        self.remove_session(id, session_worktree::Removal::Delete, Some(ask), window, cx);
     }
 
     fn project_sessions(&self, path: &str) -> Vec<i64> {

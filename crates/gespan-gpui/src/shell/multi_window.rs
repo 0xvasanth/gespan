@@ -300,6 +300,8 @@ impl Shell {
             });
         }
         self.attach_session(id, view, cx);
+        // A lead's capability named the closing window's bridge.
+        self.orchestration_view_added(id, cx);
         self.refresh_session_mark(id, cx);
         self.sync_keep_awake();
     }
@@ -389,6 +391,193 @@ mod tests {
         window
             .update(cx, |_, _, cx| crate::windows::is_hidden(cx.entity_id(), cx))
             .unwrap()
+    }
+
+    /// A Supervised lead, a Full access default, and a run saved mid-flight.
+    fn restart_into_a_saved_run(
+        shared: bool,
+        cx: &mut TestAppContext,
+    ) -> (WindowHandle<Shell>, i64, tempfile::TempDir) {
+        use gespan_core::{
+            agent::{AccessMode, Settings},
+            orchestration::{Plan, Task, run::Run},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.db");
+        let mut store = if shared {
+            Store::open_gespan(&path).unwrap()
+        } else {
+            Store::open(&path).unwrap()
+        };
+        let lead = store.create("codex", CWD).unwrap();
+        store
+            .configure_agent(
+                lead.id,
+                "codex",
+                &Settings {
+                    access: AccessMode::Supervised,
+                    revision: 7,
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+        store
+            .write_rows(
+                lead.id,
+                0,
+                &[gespan_core::transcript::Row {
+                    role: "user".into(),
+                    text: "Make the videos".into(),
+                    first: true,
+                    sent_at: None,
+                }],
+            )
+            .unwrap();
+        let mut run = Run::new(
+            Plan {
+                title: "Work".into(),
+                summary: String::new(),
+                tasks: vec![Task {
+                    id: "a".into(),
+                    title: "A".into(),
+                    prompt: "Work".into(),
+                    files: vec!["src".into()],
+                    depends_on: Vec::new(),
+                    harness: None,
+                    model: None,
+                    model_settings: Default::default(),
+                }],
+                max_workers: 1,
+            },
+            CWD.into(),
+            "codex".into(),
+            Vec::new(),
+        );
+        run.dispatch();
+        store
+            .save_orchestration_run(lead.id, &serde_json::to_string(&run).unwrap())
+            .unwrap();
+        let id = lead.id;
+        drop(lead);
+        let window = first_window(store, cx);
+        // The window installs preferences of its own as it opens.
+        cx.update(|cx| {
+            cx.update_global::<crate::settings::Preferences, _>(|prefs, _| {
+                prefs.default_access = Some("full-access".into());
+            })
+        });
+        (window, id, dir)
+    }
+
+    fn lead_access(
+        window: WindowHandle<Shell>,
+        lead: i64,
+        cx: &mut TestAppContext,
+    ) -> (
+        gespan_core::agent::AccessMode,
+        gespan_core::agent::AccessMode,
+    ) {
+        window
+            .update(cx, |shell, _, cx| {
+                let live = shell.sessions[&lead].read(cx).settings.access;
+                let saved = locked(&shell.store)
+                    .unwrap()
+                    .agent_settings(lead)
+                    .unwrap()
+                    .unwrap()
+                    .access;
+                (live, saved)
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn resume_keeps_the_leads_access(cx: &mut TestAppContext) {
+        use gespan_core::agent::AccessMode;
+        for shared in [false, true] {
+            let (window, lead, _dir) = restart_into_a_saved_run(shared, cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    assert!(shell.in_live_orchestration(lead));
+                    // As when the lead's tab wasn't the one reopened: its view
+                    // comes after the app's preferences do.
+                    shell.sessions.remove(&lead);
+                    shell.ensure_session(lead, cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                lead_access(window, lead, cx),
+                (AccessMode::Supervised, AccessMode::Supervised),
+                "after the view loads, shared {shared}"
+            );
+            window
+                .update(cx, |shell, _, cx| shell.resume_orchestration(lead, cx))
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                lead_access(window, lead, cx),
+                (AccessMode::Supervised, AccessMode::Supervised),
+                "after Resume, shared {shared}"
+            );
+            window
+                .update(cx, |shell, _, cx| shell.stop_orchestration(lead, cx))
+                .unwrap();
+            cx.run_until_parked();
+            close(window, cx);
+        }
+    }
+
+    #[gpui::test]
+    fn closing_a_window_hands_its_run_to_the_primary_still_under_control(cx: &mut TestAppContext) {
+        use gespan_core::orchestration::{Plan, Task};
+        let (first, second, _) = two_windows(cx);
+        let lead = active(second, cx);
+        second
+            .update(cx, |shell, _, cx| {
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "Work".into(),
+                        summary: String::new(),
+                        tasks: vec![Task {
+                            id: "a".into(),
+                            title: "A".into(),
+                            prompt: "Work".into(),
+                            files: vec!["src".into()],
+                            depends_on: Vec::new(),
+                            harness: None,
+                            model: None,
+                            model_settings: Default::default(),
+                        }],
+                        max_workers: 1,
+                    },
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        close(second, cx);
+        let (reply, result) = std::sync::mpsc::channel();
+        first
+            .update(cx, |shell, _, cx| {
+                assert!(shell.sessions.contains_key(&lead));
+                shell.handle_control_call(
+                    gespan_core::pilot::bridge::Call {
+                        session: lead,
+                        request_id: "r1".into(),
+                        action: "list".into(),
+                        input: serde_json::json!({}),
+                        reply,
+                    },
+                    cx,
+                );
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        let listed = result.try_recv().unwrap().unwrap();
+        assert_eq!(listed["run"]["tasks"][0]["title"], "A");
+        cx.run_until_parked();
     }
 
     #[gpui::test]

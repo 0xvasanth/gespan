@@ -365,7 +365,7 @@ impl BoardView {
     ) -> Stateful<gpui::Div> {
         let number = card.number;
         let selected = self.is_selected(&card.id);
-        let (click_id, menu_id) = (card.id.clone(), card.id.clone());
+        let (click_id, menu_id, key_id) = (card.id.clone(), card.id.clone(), card.id.clone());
         div()
             .id(gpui::SharedString::from(format!(
                 "board-card-{scope}-{number}"
@@ -387,6 +387,17 @@ impl BoardView {
             .cursor_pointer()
             .hover(|s| s.bg(content(0.04)))
             .when(selected, |d| d.bg(accent_color().opacity(0.14)))
+            .when_some(self.card_focus.get(&card.id), |d, focus| {
+                d.track_focus(focus).tab_index(0)
+            })
+            .focus_visible(|s| s.bg(content(0.08)))
+            .on_key_down(
+                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                    if this.row_key(&key_id, event, window, cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .on_click(cx.listener(move |this, event, window, cx| {
                 this.card_click(&click_id, event, window, cx)
             }))

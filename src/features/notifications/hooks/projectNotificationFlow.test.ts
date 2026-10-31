@@ -27,7 +27,7 @@ const { listInboxItems, play } = vi.hoisted(() => ({
   listInboxItems: vi.fn(),
   play: vi.fn(),
 }));
-vi.mock("../../inbox/model/githubTasks", async (importOriginal) => ({
+vi.mock("../../../../host/core/features/inbox/model/githubTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../inbox/model/githubTasks")>()),
   listInboxItems,
 }));

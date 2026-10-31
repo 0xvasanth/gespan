@@ -16,7 +16,7 @@ const transport = vi.hoisted(() => ({
   stateSessionId: undefined as string | undefined,
 }));
 
-vi.mock("../../core/child", () => ({
+vi.mock("../../../../../host/core/integrations/harness/core/child", () => ({
   resolveOmpBinary: async () => ({ path: "/fake/omp" }),
   resolvePiBinary: async () => ({ path: "/fake/pi" }),
   acquireHarnessBridge: async () => () => undefined,

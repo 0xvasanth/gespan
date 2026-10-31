@@ -6,6 +6,10 @@ import {
   writeTextFile,
   type DiscoveredSkill,
 } from "../../../platform/tauri/fs";
+import type {
+  BuiltinSkill,
+  SkillCommon,
+} from "../../../../host/core/features/skills/model/builtinSkill";
 import { invalidateProjectFiles } from "../../files/model/fileIndex";
 import { joinPath } from "../../../shared/lib/paths";
 import { isLocalProject, normalizeProjectPath } from "../../projects/model/recents";
@@ -78,12 +82,6 @@ export type SkillSource =
   | "devin"
   | "gespan";
 
-type SkillCommon = {
-  name: string;
-  description: string;
-  invocation: string;
-};
-
 export type FileSkill = SkillCommon & {
   kind: "file";
   path: string;
@@ -91,11 +89,7 @@ export type FileSkill = SkillCommon & {
   source: SkillSource;
 };
 
-export type BuiltinSkill = SkillCommon & {
-  kind: "builtin";
-  scope: "builtin";
-  source: "gespan";
-};
+export type { BuiltinSkill };
 
 export type NativeSkill = NativeCommand & {
   kind: "native";

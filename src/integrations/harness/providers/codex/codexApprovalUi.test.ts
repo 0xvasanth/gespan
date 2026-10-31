@@ -28,7 +28,7 @@ const invoke = vi.hoisted(() =>
   }),
 );
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("../../core/child", async (importOriginal) => {
+vi.mock("../../../../../host/core/integrations/harness/core/child", async (importOriginal) => {
   const actual = await importOriginal<typeof ChildModule>();
   return {
     ...actual,

@@ -165,7 +165,7 @@ fn handle(key: EntityId, cx: &App) -> Option<WindowHandle<Shell>> {
     cx.try_global::<Windows>()?.handles.get(&key).copied()
 }
 
-fn handles_elsewhere(key: EntityId, cx: &App) -> Vec<WindowHandle<Shell>> {
+pub(crate) fn handles_elsewhere(key: EntityId, cx: &App) -> Vec<WindowHandle<Shell>> {
     let Some(windows) = cx.try_global::<Windows>() else {
         return Vec::new();
     };

@@ -16,6 +16,7 @@ mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
 mod in_flight;
+mod inbox_ask;
 mod layout;
 mod live_agents;
 mod menu_bar;
@@ -44,6 +45,7 @@ mod session_groups;
 mod session_loading;
 mod session_preview;
 mod session_shortcuts;
+mod session_worktree;
 mod settings;
 mod shortcuts;
 mod sidebar_list;
@@ -614,7 +616,8 @@ pub(crate) struct Shell {
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
-    orchestrations: HashMap<i64, orchestration::Run>,
+    orchestrations: HashMap<i64, orchestration::Live>,
+    control_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
     orchestration_summaries: HashMap<i64, gespan_core::orchestration::Summary>,
     /// Sessions an /operator thread started, by the session that started them.
@@ -708,6 +711,9 @@ pub(crate) struct Shell {
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
+    /// A removal prompt or its worktree lookup is under way.
+    removal_prompt: bool,
+    worktree_cleanups: HashMap<i64, session_worktree::WorktreeCleanup>,
     group_writes: Option<gpui::Task<()>>,
     selected_sessions: HashSet<i64>,
     selection_anchor: Option<i64>,
@@ -757,6 +763,7 @@ pub(crate) struct Shell {
     shortcuts: Option<shortcuts::Shortcuts>,
     window_active: bool,
     window_glass: Option<bool>,
+    window_blur: Option<crate::window_blur::Applied>,
     /// The project whose colors were last painted; leaving it blends colors.
     theme_project: Option<String>,
     quit_prompted: bool,
@@ -1046,6 +1053,7 @@ impl Shell {
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
             orchestrations: HashMap::new(),
+            control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
             started_by: sidebar_metadata.started_by,
             rails: Default::default(),
@@ -1117,6 +1125,8 @@ impl Shell {
             editor_menu: Default::default(),
             action_terminals: HashMap::new(),
             deleting: HashSet::new(),
+            removal_prompt: false,
+            worktree_cleanups: HashMap::new(),
             group_writes: None,
             selected_sessions: HashSet::new(),
             selection_anchor: None,
@@ -1163,6 +1173,7 @@ impl Shell {
             shortcuts: None,
             window_active: false,
             window_glass: None,
+            window_blur: None,
             theme_project: None,
             quit_prompted: false,
             in_flight_written: None,
@@ -1289,6 +1300,19 @@ impl Shell {
             ));
             this.observations.push(cx.subscribe(
                 &pilots,
+                |_, _, _: &crate::pilots::HidePilots, cx| {
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            let mut prefs = this.workspace.preferences.clone();
+                            prefs.pilots = false;
+                            this.set_preferences(prefs, window, cx);
+                        });
+                    })
+                    .detach();
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
                 |_, _, request: &crate::pilots::ShowDetails, cx| {
                     let id = request.0.clone();
                     cx.spawn(async move |this, cx| {
@@ -1333,6 +1357,8 @@ impl Shell {
             this.bind_notices(cx);
             this.init_app_bridge(cx);
         }
+        // Every window hosts its own runs, so each has its own control bridge.
+        this.init_control_bridge(cx);
         for summary in summaries {
             if this
                 .pilots
@@ -1347,6 +1373,7 @@ impl Shell {
         if !secondary {
             this.init_mobile_host(cx);
             this.restore_hold(cx);
+            this.restore_orchestrations(cx);
             this.resume_interrupted(cx);
         }
         if let Some(id) = this.workspace.active {
@@ -1417,6 +1444,16 @@ impl Shell {
                     .and_then(|m| m.read(cx).routed_session()),
             );
         }
+        if self.active_app_view == Some(app_views::AppView::Inbox)
+            && self.settings.is_none()
+            && self.app_search.is_none()
+            && let Some(id) = self
+                .inbox
+                .as_ref()
+                .and_then(|inbox| inbox.read(cx).shown_ask_session())
+        {
+            shown.insert(id);
+        }
         // Hidden tabs keep their prepared image and any in-flight load. Only
         // closing a tab/pane should discard its background.
         let open: HashSet<i64> = self.workspace.open_sessions().into_iter().collect();
@@ -1451,6 +1488,14 @@ impl Shell {
             return;
         }
         self.session_summaries.insert(id, summary.clone());
+        self.attach_conversation(summary, cx);
+        if !self.order.contains(&id) {
+            self.order.push(id);
+        }
+    }
+    /// A live Conversation wired to the shell, without a sidebar row of its own.
+    fn attach_conversation(&mut self, summary: Session, cx: &mut Context<Self>) {
+        let id = summary.id;
         self.session_marks
             .insert(id, cx.new(|_| SessionMark::new(summary.provider.clone())));
         self.tab_marks
@@ -1538,9 +1583,7 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.sessions.insert(id, view);
-        if !self.order.contains(&id) {
-            self.order.push(id);
-        }
+        self.orchestration_view_added(id, cx);
         // Restored after a restart, a held session has no view state of its own.
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
@@ -1640,8 +1683,10 @@ impl Shell {
                             this.invalidate_chrome(cx);
                             cx.notify();
                         }
+                        this.session_removed(id, true, cx);
                     }
                     Err(error) => {
+                        this.session_removed(id, false, cx);
                         this.error = Some(format!("Could not update archive: {error}"));
                         this.invalidate_chrome(cx);
                         cx.notify();
@@ -5967,7 +6012,7 @@ impl Shell {
     ) {
         if let MenuTarget::Tab(id) = target {
             match action {
-                "archive" => return self.toggle_archive(id, cx),
+                "archive" => return self.archive_session(id, window, cx),
                 "delete" => return self.confirm_delete_session(id, window, cx),
                 _ => {}
             }
@@ -6649,9 +6694,9 @@ impl Shell {
                 icon("archive", 12.).group_hover("session-archive", |s| s.text_color(content(1.))),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.toggle_archive(id, cx);
+                this.archive_session(id, window, cx);
             }))
             .into_any()
     }
@@ -8516,6 +8561,7 @@ impl Render for Shell {
             cx.window_appearance(),
             gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
         );
+        let classic_layout = self.workspace.classic_layout;
         let project = &self.workspace.project;
         let animate = !cx.reduce_motion()
             && self
@@ -8528,7 +8574,7 @@ impl Render for Shell {
             .get(project)
             .and_then(|a| a.theme.as_ref());
         // Repainting bypasses cached views, so every surface follows the blend.
-        if configure_project(p, project_theme, system_light, animate) {
+        if configure_project(p, project_theme, !classic_layout, system_light, animate) {
             cx.refresh_windows();
         }
         if tweening() {
@@ -8537,10 +8583,15 @@ impl Render for Shell {
         if self.theme_project.as_ref() != Some(project) {
             self.theme_project = Some(project.clone());
         }
-        let glass = window_glass(p, system_light);
+        let glass = layout_glass(p, !classic_layout, system_light);
         if self.window_glass != Some(glass) {
             self.window_glass = Some(glass);
             window.set_background_appearance(crate::theme::window_backdrop(glass));
+        }
+        if glass {
+            crate::window_blur::sync(&mut self.window_blur, p.sidebar_blur, window);
+        } else {
+            self.window_blur = None;
         }
         self.sync_settings(cx);
         self.sidebar_fraction = match &self.sidebar_slide {
@@ -8937,6 +8988,20 @@ impl Render for Shell {
                 if let Some(pilots) = this.pilots.clone()
                     && pilots.update(cx, |m, cx| m.dismiss_settings(window, cx))
                 {
+                    return;
+                }
+                // These views have layers of their own: Escape closes the
+                // innermost, so it has to reach their key handlers.
+                let layered = match this.active_app_view {
+                    Some(app_views::AppView::Board) => true,
+                    Some(app_views::AppView::Inbox) => this
+                        .inbox
+                        .as_ref()
+                        .is_some_and(|inbox| inbox.read(cx).holds_focus(window, cx)),
+                    _ => false,
+                };
+                if layered {
+                    cx.propagate();
                     return;
                 }
                 if this.app_view_open() {

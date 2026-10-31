@@ -718,6 +718,10 @@ impl Shell {
                 {
                     return;
                 }
+                if this.reveal_inbox_ask(id, window, cx) {
+                    window.activate_window();
+                    return;
+                }
                 // Habit runs share their live Conversation with the Pilot
                 // manager. Adopt that entity so controls answer the running
                 // provider, rather than constructing a disconnected history.

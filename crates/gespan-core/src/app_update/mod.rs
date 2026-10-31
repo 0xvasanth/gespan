@@ -18,12 +18,17 @@ use std::{
 };
 
 pub const APP_ID: &str = "dev.gespan.native";
-pub const CHANNEL: &str = "native-preview";
+pub const PREVIEW_CHANNEL: &str = "native-preview";
+pub const STABLE_CHANNEL: &str = "native-stable";
 /// Signed feed on the fixed `native-latest` GitHub release. It is separate from
-/// the Tauri app's `releases/latest` feed. Builds may override it with
-/// `GESPAN_NATIVE_UPDATER_ENDPOINT`.
+/// the Tauri app's `releases/latest/download/latest.json` feed. Builds may
+/// override it with `GESPAN_NATIVE_UPDATER_ENDPOINT`.
 pub const DEFAULT_ENDPOINT: &str =
     "https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json";
+/// GitHub's `releases/latest` skips prereleases, so this is the newest stable
+/// version's own copy of the signed feed.
+pub const STABLE_ENDPOINT: &str =
+    "https://github.com/0xvasanth/gespan/releases/latest/download/native-latest.json";
 const MAX_FEED: u64 = 2 * 1024 * 1024;
 const MAX_PACKAGE: u64 = 1024 * 1024 * 1024;
 
@@ -148,6 +153,23 @@ impl Config {
     }
 }
 
+/// A build stays on the channel it was released on.
+pub fn channel(version: &Version) -> &'static str {
+    if version.pre.is_empty() {
+        STABLE_CHANNEL
+    } else {
+        PREVIEW_CHANNEL
+    }
+}
+
+/// The feed for a build that set no endpoint of its own.
+pub fn default_endpoint(current: &str) -> &'static str {
+    match Version::parse(current).as_ref().map(channel) {
+        Ok(STABLE_CHANNEL) => STABLE_ENDPOINT,
+        _ => DEFAULT_ENDPOINT,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct Artifact {
     url: String,
@@ -258,11 +280,17 @@ fn verify(bytes: &[u8], signature: &str, key: &str) -> Result<(), String> {
 }
 
 fn select(manifest: Manifest, config: &Config, target: &str) -> Result<Option<Update>, String> {
-    if manifest.app_id != APP_ID || manifest.channel != CHANNEL {
-        return Err("The update feed belongs to a different application or release channel".into());
+    let wrong_feed =
+        || Err("The update feed belongs to a different application or release channel".into());
+    if manifest.app_id != APP_ID {
+        return wrong_feed();
     }
     if manifest.version <= config.current {
         return Ok(None);
+    }
+    // After the version check: nothing newer to offer is not a problem with the feed.
+    if manifest.channel != channel(&config.current) {
+        return wrong_feed();
     }
     let artifact = manifest
         .platforms

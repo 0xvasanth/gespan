@@ -41,6 +41,13 @@ pub fn native_prompt(kind: Kind, text: &str) -> String {
     text.into()
 }
 
+/// OMP and Devin parse a leading slash command themselves, so app context
+/// ahead of it would turn the command into an ordinary message.
+pub fn is_raw_command(kind: Kind, prompt: &str) -> bool {
+    matches!(kind, Kind::Omp | Kind::Devin)
+        && native_prompt(kind, prompt).trim_start().starts_with('/')
+}
+
 /// OMP and Devin own slash arguments, including @file-like text. Expanding a
 /// local skill or mention ahead of them would turn a command into normal text.
 pub fn prepare_prompt(

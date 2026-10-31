@@ -1284,6 +1284,23 @@ fn a_steer_with_an_earlier_turns_start_still_joins_the_running_turn() {
     assert_eq!(turns[&5].started_at, None);
 }
 
+#[test]
+fn a_database_without_the_ask_column_refuses_rather_than_listing_the_session() {
+    let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
+    store.shared.as_mut().unwrap().columns.remove("inbox_ask");
+    let context = crate::inbox::ask::Context {
+        key: "github:github.com:/acme/widgets/pull/1".into(),
+        title: "Item".into(),
+        ..Default::default()
+    };
+    let error = store
+        .open_inbox_ask("codex", "/project", &context, &Default::default())
+        .unwrap_err();
+    assert!(error.contains("Ask"), "{error}");
+    assert!(store.sessions().unwrap().is_empty());
+    assert!(store.inbox_ask(&context.key).unwrap().is_none());
+}
+
 fn bare_shell_session(store: &Store, data: &Path, harness: &str) -> i64 {
     let (id, original) = saved(
         store,

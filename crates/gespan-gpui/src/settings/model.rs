@@ -378,10 +378,22 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "black brightness contrast background",
     ),
     (
+        "inset-glass",
+        Section::Appearance,
+        "Transparent window",
+        "glass inset translucent transparency opaque desktop blur layout",
+    ),
+    (
         "sidebar-opacity",
         Section::Appearance,
         "Sidebar opacity",
         "glass translucent transparency vibrancy",
+    ),
+    (
+        "blur",
+        Section::Appearance,
+        "Blur radius",
+        "glass translucent vibrancy backdrop",
     ),
     (
         "main-pane-glass",
@@ -400,12 +412,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Appearance,
         "Interface scale",
         "zoom font size bigger smaller ui",
-    ),
-    (
-        "collapsed-project-rail",
-        Section::Appearance,
-        "Collapsed project rail",
-        "sidebar compact icons hidden navigation layout",
     ),
     (
         "show-excluded-files",
@@ -590,6 +596,9 @@ pub(crate) fn search(query: &str, compositor: &str) -> Vec<SearchResult> {
         if id == "wayland-window-decorations" && compositor != "Wayland" {
             continue;
         }
+        if id == "blur" && !crate::window_blur::BLUR_ADJUSTABLE {
+            continue;
+        }
         if let Some(s) = score(&needle, label, keywords) {
             scored.push((
                 s,
@@ -670,6 +679,18 @@ mod tests {
     #[test]
     fn board_is_on_until_turned_off() {
         assert!(crate::settings::preferences::Preferences::default().board);
+    }
+
+    #[test]
+    fn the_retired_collapsed_project_rail_is_not_searchable() {
+        for query in ["collapsed project rail", "collapsed rail"] {
+            assert!(
+                search(query, "")
+                    .iter()
+                    .all(|r| r.setting != Some("collapsed-project-rail")),
+                "{query}"
+            );
+        }
     }
 
     #[test]

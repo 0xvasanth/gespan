@@ -1154,10 +1154,39 @@ fn pr_checks_refuses_bad_numbers_repos_and_remote_workspaces_before_running_gh()
         pr_checks(dir.path(), "owner/repo/extra", 3).unwrap_err(),
         "GitHub did not return a repository"
     );
-    assert_eq!(
-        pr_checks(Path::new("remote://env-1/work"), "owner/repo", 3).unwrap_err(),
-        "Pull request checks aren't available for remote workspaces"
-    );
+}
+
+#[test]
+fn a_remote_workspace_asks_github_on_its_own_machine() {
+    crate::files::remote::TEST_HOST.set(Some(Box::new(|environment, params| {
+        assert_eq!(environment, "env-1");
+        assert_eq!(params["args"]["cwd"], "/work");
+        match params["command"].as_str().unwrap() {
+            "git_github_repo" => Ok(serde_json::json!("owner/repo")),
+            "git_github_pr_checks" => {
+                assert_eq!(params["args"]["repo"], "owner/repo");
+                assert_eq!(params["args"]["number"], 3);
+                Ok(serde_json::json!({
+                    "headOid": "abc",
+                    "checks": [{
+                        "name": "build",
+                        "workflow": "CI",
+                        "state": "fail",
+                        "url": null,
+                        "startedAt": null,
+                        "completedAt": null
+                    }]
+                }))
+            }
+            other => panic!("unexpected command {other}"),
+        }
+    })));
+    let cwd = Path::new("remote://env-1/work");
+    assert_eq!(github_repo(cwd).unwrap(), "owner/repo");
+    let checks = pr_checks(cwd, "owner/repo", 3).unwrap();
+    crate::files::remote::TEST_HOST.set(None);
+    assert_eq!(checks.head_oid, "abc");
+    assert_eq!(checks.checks[0].state, "fail");
 }
 
 #[test]

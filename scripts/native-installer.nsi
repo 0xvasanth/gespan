@@ -9,7 +9,7 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 VIProductVersion "@WINDOWS_VERSION@"
 VIAddVersionKey "ProductName" "Gespan Native"
-VIAddVersionKey "FileDescription" "Gespan Native preview installer"
+VIAddVersionKey "FileDescription" "Gespan Native installer"
 VIAddVersionKey "FileVersion" "@VERSION@"
 !define MUI_ICON "@ICON@"
 !insertmacro MUI_PAGE_DIRECTORY
