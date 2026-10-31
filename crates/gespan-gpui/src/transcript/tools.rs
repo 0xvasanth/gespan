@@ -606,6 +606,24 @@ mod tests {
     }
 
     #[gpui::test]
+    fn activity_list_steps_in_new_commands_only(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| TranscriptView::activity(activity_rows(2), cx));
+        window
+            .update(cx, |view, _, cx| {
+                assert!(view.motions.is_empty(), "opening the list shows it at once");
+                view.patch(0, activity_rows(3), cx);
+                let stepped: Vec<_> = view
+                    .rows
+                    .iter()
+                    .filter(|row| view.motions.get(&row.key).is_some_and(|m| m.step))
+                    .map(|row| row.key.0)
+                    .collect();
+                assert_eq!(stepped, [2]);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn activity_list_stays_closed_once_the_user_closes_it(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, cx| TranscriptView::activity(activity_rows(2), cx));
         window

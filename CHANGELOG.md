@@ -10,7 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A Pilot's Activity list now opens with its commands showing and stays open
-  as new ones arrive, instead of collapsing each time.
+  as new ones arrive, instead of collapsing each time. New commands step in
+  with the same motion as the chat, and the list follows the newest one.
+- A Pilot's answer no longer blanks the top of the chat and slides up from
+  below when it arrives as one large block.
 
 ### Security
 

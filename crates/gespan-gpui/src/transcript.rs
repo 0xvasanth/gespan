@@ -248,6 +248,10 @@ struct Follow {
     until: Option<Instant>,
 }
 /// Units are px per 60fps frame, as in useBottomChatMotion.ts.
+/// The most a single block of growth may be held below where it lands. The
+/// list paints nothing above its scroll position, so holding a tall block
+/// back would leave that much of the chat blank.
+const CHAT_FOLLOW_MAX_JUMP: f32 = 48.;
 const SPRING_FRAME: f32 = 1000. / 60.;
 /// Pilot replies can appear together; keep their glide below 1080px/second.
 const CHAT_FOLLOW_MAX_SPEED: f32 = 18.;
@@ -301,6 +305,15 @@ impl FollowMeasure {
             + self.slack
             - previous.slack
             - f32::from(self.bottom - previous.bottom)
+    }
+}
+/// How much of new content's growth to ease. A Pilot chat lands a tall block
+/// almost at once.
+fn eased_growth(shift: f32, pilot: bool, sent: bool) -> f32 {
+    if pilot && !sent {
+        shift.min(CHAT_FOLLOW_MAX_JUMP)
+    } else {
+        shift
     }
 }
 impl Follow {
@@ -642,7 +655,11 @@ impl TranscriptView {
         let mut view = Self::new();
         view.document = true;
         view.activity_list = true;
+        view.list.set_follow_mode(FollowMode::Tail);
         view.patch(0, rows, cx);
+        // Commands already run show at once; only new ones step in.
+        view.motions.clear();
+        view.step_queue.clear();
         view
     }
     /// AgentTranscript with `agentMascot`, `bottomAligned` and `inlineWork`.
@@ -1497,8 +1514,17 @@ impl TranscriptView {
                 self.follow.last_step = Some(now);
             }
             self.follow.settled_at = None;
-            self.follow
-                .add_shift(shift, f32::from(self.viewport.size.height), self.pilot);
+            // A prompt the user just sent keeps its glide, which also absorbs
+            // the composer shrinking.
+            let sent = self.entrances.iter().any(|(ix, born)| {
+                born.elapsed().as_secs_f32() < 0.88
+                    && self.source.get(*ix).is_some_and(|row| row.is_prompt())
+            });
+            self.follow.add_shift(
+                eased_growth(shift, self.pilot, sent),
+                f32::from(self.viewport.size.height),
+                self.pilot,
+            );
         }
         if let Some(overflow) = prompt_overflow {
             self.follow.offset = self.follow.offset.min(overflow);
@@ -4226,11 +4252,8 @@ impl TranscriptView {
                     false
                 };
                 let phase = row.phase_group().filter(|g| Some(*g) == phase_toggle);
-                let step = phase.is_none()
-                    && self.streaming
-                    && row.key.0 >= self.live_start
-                    && unseen
-                    && !row.work;
+                let live = self.activity_list || (self.streaming && row.key.0 >= self.live_start);
+                let step = phase.is_none() && live && unseen && !row.work;
                 if step
                     || matches!(row.body, Body::Tool { .. } | Body::Reasoning)
                     || self.expanded.contains(&row.key.0)

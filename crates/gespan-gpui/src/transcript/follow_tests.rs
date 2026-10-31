@@ -1306,6 +1306,31 @@ fn measurements_follow_surviving_rows_across_footer_changes_and_window_boundarie
 }
 
 #[test]
+fn a_large_block_in_a_pilot_chat_is_not_held_below_where_it_lands() {
+    assert_eq!(eased_growth(600., true, false), CHAT_FOLLOW_MAX_JUMP);
+}
+
+#[test]
+fn small_pilot_growth_still_eases_in_full() {
+    assert_eq!(eased_growth(30., true, false), 30.);
+}
+
+#[test]
+fn a_prompt_the_user_sent_keeps_its_full_glide() {
+    assert_eq!(eased_growth(600., true, true), 600.);
+}
+
+#[test]
+fn large_growth_in_an_ordinary_chat_is_unchanged() {
+    assert_eq!(eased_growth(300., false, false), 300.);
+}
+
+#[test]
+fn shrinking_is_never_limited() {
+    assert_eq!(eased_growth(-400., true, false), -400.);
+}
+
+#[test]
 fn the_follow_spring_never_overshoots_and_keeps_momentum_across_brief_pauses() {
     let mut follow = Follow::default();
     let mut previous = 940.;
@@ -1342,7 +1367,7 @@ fn bubble_top(window: &mut Window) -> f32 {
 }
 
 #[gpui::test]
-fn a_document_and_final_reply_preserve_position_then_glide_up_without_reversing(
+fn a_document_and_final_reply_preserve_position_then_land_without_reversing(
     cx: &mut TestAppContext,
 ) {
     let window = chat(cx);
@@ -1397,8 +1422,8 @@ fn a_document_and_final_reply_preserve_position_then_glide_up_without_reversing(
     let mut previous = window
         .update(cx, |view, _, _| {
             assert!(
-                view.follow.offset > 2000.,
-                "keep the full reveal distance even beyond the 80-row measurement window"
+                view.follow.offset < 300.,
+                "a tall reply lands almost at once, so the rows above it aren't left blank"
             );
             view.follow.offset
         })
