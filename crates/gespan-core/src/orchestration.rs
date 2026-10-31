@@ -35,8 +35,8 @@ pub struct SummaryTask {
     pub title: String,
     pub provider: String,
     pub model: Option<String>,
-    /// queued, running, cancelling, completed, failed, blocked, interrupted
-    /// or cancelled.
+    /// queued, running, cancelling, completed, unchanged, failed, blocked,
+    /// interrupted or cancelled.
     pub status: String,
 }
 impl SummaryTask {
@@ -55,6 +55,7 @@ impl SummaryTask {
             "queued" => "Queued",
             "running" => "Working",
             "completed" => "Done",
+            "unchanged" => "No changes",
             "failed" => "Failed",
             "blocked" => "Needs review",
             "cancelling" => "Stopping",

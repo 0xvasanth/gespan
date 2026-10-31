@@ -91,6 +91,9 @@ pub struct RunTask {
     pub status: Status,
     #[serde(default)]
     pub accepted: bool,
+    /// Its turn ended well, but its worktree holds nothing to review.
+    #[serde(default)]
+    pub no_changes: bool,
     #[serde(default)]
     pub result: String,
     #[serde(default)]
@@ -333,6 +336,7 @@ impl Run {
                     model_settings: task.model_settings,
                     status: Status::Queued,
                     accepted: false,
+                    no_changes: false,
                     result: String::new(),
                     error: None,
                     recovery_prompt: None,
@@ -430,7 +434,11 @@ impl Run {
                         .clone()
                         .unwrap_or_else(|| self.provider.clone()),
                     model: task.model.clone(),
-                    status: task.status.name().to_owned(),
+                    status: if task.status == Status::Completed && task.no_changes {
+                        "unchanged".to_owned()
+                    } else {
+                        task.status.name().to_owned()
+                    },
                 })
                 .collect(),
         }
@@ -442,6 +450,7 @@ impl Run {
             .map(|task| {
                 let state = match task.status {
                     Status::Completed if task.accepted => "accepted",
+                    Status::Completed if task.no_changes => "finished with no changes",
                     Status::Completed => "ready for review",
                     Status::Queued => "waiting",
                     Status::Running => "working",
@@ -620,6 +629,7 @@ impl Run {
                     task.recovery_prompt = None;
                     task.delivered = false;
                     task.accepted = false;
+                    task.no_changes = false;
                 }
                 Status::Cancelling => {
                     task.status = Status::Cancelled;
@@ -632,6 +642,16 @@ impl Run {
                 }
                 _ => (),
             }
+        }
+    }
+    /// A finished worker left its worktree as it found it, so a turn that
+    /// ended well has still delivered nothing to review.
+    pub fn mark_no_changes(&mut self, id: &str) {
+        if let Some(task) = self
+            .task_mut(id)
+            .filter(|task| task.status == Status::Completed)
+        {
+            task.no_changes = true;
         }
     }
     /// A paused run has no supervisor, so its agents stop with it. Queued work
@@ -1097,6 +1117,7 @@ impl Run {
             model_settings: BTreeMap::new(),
             status: Status::Queued,
             accepted: false,
+            no_changes: false,
             result: String::new(),
             error: None,
             recovery_prompt: None,

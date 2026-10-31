@@ -18,6 +18,22 @@ pub(crate) struct PendingInput {
     pub request_id: String,
     pub kind: InputKind,
     pub label: String,
+    /// What is being approved, so the card can be decided without the chat.
+    pub detail: String,
+}
+
+/// An approval's detail as a card shows it. Claude sends the tool's input as
+/// JSON, where the command or file is what the reader has to judge.
+pub(crate) fn approval_detail(detail: &str) -> String {
+    let detail = detail.trim();
+    serde_json::from_str::<serde_json::Value>(detail)
+        .ok()
+        .and_then(|input| {
+            ["command", "file_path", "path", "url"]
+                .iter()
+                .find_map(|key| input[*key].as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| detail.to_owned())
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -235,6 +251,20 @@ impl Render for ApprovalNotices {
                                             .text_color(content(0.7))
                                             .child(input.label.clone()),
                                     )
+                                    .when(!input.detail.is_empty(), |card| {
+                                        card.child(
+                                            div()
+                                                .id(("approval-toast-detail", ix))
+                                                .debug_selector(|| "approval-toast-detail".into())
+                                                .font_family(crate::fonts::monospace())
+                                                .text_size(px(11.))
+                                                .line_height(px(17.))
+                                                .max_h(px(102.))
+                                                .overflow_y_scroll()
+                                                .text_color(content(0.85))
+                                                .child(input.detail.clone()),
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .text_size(px(11.))
@@ -307,5 +337,38 @@ impl Render for ApprovalNotices {
                             })
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::approval_detail;
+
+    #[test]
+    fn a_shell_command_shows_as_it_was_sent() {
+        assert_eq!(
+            approval_detail("  /bin/zsh -lc 'sleep 150'\n"),
+            "/bin/zsh -lc 'sleep 150'"
+        );
+    }
+
+    #[test]
+    fn claude_tool_input_shows_the_part_to_judge() {
+        assert_eq!(
+            approval_detail(r#"{"command":"rm -rf build","description":"Clean"}"#),
+            "rm -rf build"
+        );
+        assert_eq!(
+            approval_detail(r#"{"file_path":"/repo/a.md","content":"x"}"#),
+            "/repo/a.md"
+        );
+    }
+
+    #[test]
+    fn other_input_is_shown_in_full_rather_than_hidden() {
+        let input = r#"{"query":"gespan"}"#;
+        assert_eq!(approval_detail(input), input);
+        assert_eq!(approval_detail("["), "[");
+        assert_eq!(approval_detail(""), "");
     }
 }

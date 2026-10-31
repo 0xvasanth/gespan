@@ -768,8 +768,8 @@ impl Shell {
                         let open = self.rails.open_tasks.contains(&(lead, ix)) || needs_input;
                         let label = task.label(summary, needs_input);
                         let working = summary.live && task.status == "running" && !needs_input;
-                        let alert =
-                            needs_input || matches!(task.status.as_str(), "failed" | "blocked");
+                        let alert = needs_input
+                            || matches!(task.status.as_str(), "failed" | "blocked" | "unchanged");
                         let done = task.status == "completed";
                         let tone: gpui::Hsla = if alert {
                             rgb(0xfbbf24).into()

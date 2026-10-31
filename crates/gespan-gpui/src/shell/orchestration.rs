@@ -733,9 +733,43 @@ impl Shell {
                 };
                 let error = (!success).then(|| report.clone());
                 live.run.settle(&task, outcome, &report, error);
+                if success {
+                    self.check_worker_changes(lead, task, cx);
+                }
             }
             self.schedule_orchestration(lead, cx);
         }
+    }
+    /// A worker can end its turn without error and still have done nothing,
+    /// such as when its writes were refused. Its worktree says which.
+    fn check_worker_changes(&mut self, lead: i64, task: String, cx: &mut Context<Self>) {
+        let workspace = self.orchestrations.get(&lead).and_then(|live| {
+            live.run
+                .tasks
+                .iter()
+                .find(|entry| entry.id == task)
+                .and_then(|entry| entry.workspace.clone())
+        });
+        let Some(workspace) = workspace else {
+            return;
+        };
+        let id = task.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { worktree::unchanged(&workspace, &id) });
+        cx.spawn(async move |this, cx| {
+            if !work.await.unwrap_or(false) {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                if let Some(live) = this.orchestrations.get_mut(&lead) {
+                    live.run.mark_no_changes(&task);
+                    this.save_orchestration(lead, cx);
+                    this.publish_orchestration(lead, cx);
+                }
+            });
+        })
+        .detach();
     }
     fn publish_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
         let Some(live) = self.orchestrations.get(&lead) else {
