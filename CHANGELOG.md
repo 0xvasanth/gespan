@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Installing or updating the Windows host no longer leaves a broken runtime
+  when `node.exe` is briefly locked, which failed with `node.exe is not
+  recognized`.
+
 ## [0.0.4] - 2026-10-31
 
 The first stable release of Gespan, for macOS, Windows and Linux, with the iOS
