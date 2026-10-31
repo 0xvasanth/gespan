@@ -20,34 +20,46 @@ pub(crate) struct PendingInput {
     pub label: String,
     /// What is being approved, so the card can be decided without the chat.
     pub detail: String,
+    /// Names the fields `detail` leaves out. It sits outside the scrolling
+    /// detail, so a long command can't push it out of view.
+    pub omitted: String,
+}
+
+fn tool_input(detail: &str) -> Option<(serde_json::Value, &'static str)> {
+    let input = serde_json::from_str::<serde_json::Value>(detail.trim()).ok()?;
+    let key = ["command", "file_path", "path", "url"]
+        .into_iter()
+        .find(|key| input[*key].is_string())?;
+    Some((input, key))
 }
 
 /// An approval's detail as a card shows it. Claude sends the tool's input as
-/// JSON, where the command or file is what the reader has to judge. Other
-/// fields are named, so a card never reads as the whole request when it isn't.
+/// JSON, where the command or file is what the reader has to judge.
 pub(crate) fn approval_detail(detail: &str) -> String {
-    let detail = detail.trim();
-    serde_json::from_str::<serde_json::Value>(detail)
-        .ok()
-        .and_then(|input| {
-            let key = ["command", "file_path", "path", "url"]
-                .into_iter()
-                .find(|key| input[*key].is_string())?;
-            let mut others: Vec<&str> = input
-                .as_object()?
-                .keys()
-                .map(String::as_str)
-                .filter(|other| *other != key && *other != "description")
-                .collect();
-            others.sort_unstable();
-            let shown = input[key].as_str()?;
-            Some(if others.is_empty() {
-                shown.to_owned()
-            } else {
-                format!("{shown}\n+ {}", others.join(", "))
-            })
-        })
-        .unwrap_or_else(|| detail.to_owned())
+    tool_input(detail)
+        .and_then(|(input, key)| input[key].as_str().map(str::to_owned))
+        .unwrap_or_else(|| detail.trim().to_owned())
+}
+
+/// The fields [`approval_detail`] leaves out, so a card never reads as the
+/// whole request when it isn't.
+pub(crate) fn approval_omitted(detail: &str) -> String {
+    let Some((input, key)) = tool_input(detail) else {
+        return String::new();
+    };
+    let mut others: Vec<String> = input
+        .as_object()
+        .into_iter()
+        .flat_map(|fields| fields.keys())
+        .filter(|other| *other != key && *other != "description")
+        .map(|other| other.chars().filter(|c| !c.is_control()).collect())
+        .collect();
+    others.sort_unstable();
+    if others.is_empty() {
+        String::new()
+    } else {
+        format!("+ {}", others.join(", "))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -279,6 +291,17 @@ impl Render for ApprovalNotices {
                                                 .child(input.detail.clone()),
                                         )
                                     })
+                                    .when(!input.omitted.is_empty(), |card| {
+                                        card.child(
+                                            div()
+                                                .debug_selector(|| "approval-toast-omitted".into())
+                                                .font_family(crate::fonts::monospace())
+                                                .text_size(px(11.))
+                                                .line_height(px(17.))
+                                                .text_color(content(0.85))
+                                                .child(input.omitted.clone()),
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .text_size(px(11.))
@@ -356,7 +379,7 @@ impl Render for ApprovalNotices {
 
 #[cfg(test)]
 mod detail_tests {
-    use super::approval_detail;
+    use super::{approval_detail, approval_omitted};
 
     #[test]
     fn a_shell_command_shows_as_it_was_sent() {
@@ -380,15 +403,33 @@ mod detail_tests {
 
     #[test]
     fn fields_the_card_leaves_out_are_named() {
+        let write = r#"{"file_path":"/repo/a.md","content":"x"}"#;
+        assert_eq!(approval_detail(write), "/repo/a.md");
+        assert_eq!(approval_omitted(write), "+ content");
+        let shell =
+            r#"{"timeout":5,"dangerouslyDisableSandbox":true,"command":"ls","description":"List"}"#;
+        assert_eq!(approval_detail(shell), "ls");
         assert_eq!(
-            approval_detail(r#"{"file_path":"/repo/a.md","content":"x"}"#),
-            "/repo/a.md\n+ content"
+            approval_omitted(shell),
+            "+ dangerouslyDisableSandbox, timeout"
         );
+    }
+
+    #[test]
+    fn nothing_is_named_when_nothing_is_left_out() {
         assert_eq!(
-            approval_detail(
-                r#"{"timeout":5,"dangerouslyDisableSandbox":true,"command":"ls","description":"List"}"#
-            ),
-            "ls\n+ dangerouslyDisableSandbox, timeout"
+            approval_omitted(r#"{"command":"ls","description":"List"}"#),
+            ""
+        );
+        assert_eq!(approval_omitted(r#"{"query":"gespan"}"#), "");
+        assert_eq!(approval_omitted("/bin/zsh -lc ls"), "");
+    }
+
+    #[test]
+    fn a_field_name_cannot_break_the_line_it_is_named_on() {
+        assert_eq!(
+            approval_omitted(r#"{"command":"ls","a\n+ nothing else":1}"#),
+            "+ a+ nothing else"
         );
     }
 
