@@ -164,8 +164,8 @@ function releasePlan({ release, expected }) {
 }
 const nativePublishPlan = releasePlan;
 
-// Both must pass on a main commit before it can be released.
-const RELEASE_CHECKS = ["CI", "Gespan Native Preview"];
+// Must pass on a main commit before it can be released.
+const RELEASE_CHECKS = ["CI"];
 
 // What the Release workflow does for the version on main at `sha`. One release
 // per version: a published release ends it, and a draft or a tag on the same

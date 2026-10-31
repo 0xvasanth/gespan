@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseDecision, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
+const { releaseDecision, RELEASE_CHECKS, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -429,10 +429,7 @@ test("the recovery CLI checks the native feed copy against the shared release", 
   }
 });
 
-const greenRuns = [
-  { workflowName: "CI", conclusion: "success" },
-  { workflowName: "Gespan Native Preview", conclusion: "success" },
-];
+const greenRuns = [{ workflowName: "CI", conclusion: "success" }];
 const commit = "a".repeat(40);
 const otherCommit = "b".repeat(40);
 const decide = (changes) =>
@@ -445,20 +442,28 @@ test("a new version on a green commit is released", () => {
   );
 });
 
-test("a version is not released until every check has passed on that commit", () => {
+test("a version is not released until CI has passed on that commit", () => {
   assert.equal(decide({ runs: [] }).release, false);
-  assert.equal(decide({ runs: greenRuns.slice(0, 1) }).release, false);
-  const failed = decide({ runs: [{ workflowName: "CI", conclusion: "failure" }, greenRuns[1]] });
+  assert.equal(decide({ runs: [{ workflowName: "Mobile development", conclusion: "success" }] }).release, false);
+  const failed = decide({ runs: [{ workflowName: "CI", conclusion: "failure" }] });
   assert.equal(failed.release, false);
   assert.match(failed.reason, /CI has not passed/);
-  assert.equal(decide({ runs: [{ workflowName: "CI", conclusion: null }, greenRuns[1]] }).release, false);
+  assert.equal(decide({ runs: [{ workflowName: "CI", conclusion: null }] }).release, false);
+});
+
+test("the Release workflow runs after the checks it requires, and they exist", () => {
+  const workflows = path.join(__dirname, "..", ".github", "workflows");
+  const trigger = fs.readFileSync(path.join(workflows, "release.yml"), "utf8").match(/^\s+workflows: \[(.*)\]$/m);
+  assert.deepEqual(trigger[1].split(", "), RELEASE_CHECKS);
+  const names = fs.readdirSync(workflows).map((file) => fs.readFileSync(path.join(workflows, file), "utf8").match(/^name: (.*)$/m)[1]);
+  for (const check of RELEASE_CHECKS) assert.ok(names.includes(check), check);
 });
 
 test("the newest run of a check decides, so a rerun that passed counts and one that failed doesn't", () => {
   const passed = { workflowName: "CI", conclusion: "success" };
   const failed = { workflowName: "CI", conclusion: "failure" };
-  assert.equal(decide({ runs: [passed, failed, greenRuns[1]] }).release, true);
-  assert.equal(decide({ runs: [failed, passed, greenRuns[1]] }).release, false);
+  assert.equal(decide({ runs: [passed, failed] }).release, true);
+  assert.equal(decide({ runs: [failed, passed] }).release, false);
 });
 
 test("a published version is never released again", () => {
