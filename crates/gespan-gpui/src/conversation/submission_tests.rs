@@ -596,6 +596,72 @@ fn planned(cx: &mut TestAppContext) -> (WindowHandle<Conversation>, &'static str
     (window, plan)
 }
 
+/// Opens a saved chat from the store, as after a restart.
+fn reopened(rows: Vec<gespan_core::transcript::Row>, cx: &mut TestAppContext) -> Option<String> {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            locked(&view.store)
+                .unwrap()
+                .write_rows(view.summary.id, 0, &rows)
+                .unwrap();
+            view.loaded = false;
+            view.summary.has_messages = true;
+            view.load(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |view, cx| {
+            assert_eq!(
+                view.transcript.read(cx).source_rows().len(),
+                rows.len(),
+                "the history loaded"
+            );
+            view.orchestration_plan
+                .as_ref()
+                .map(|plan| plan.title.clone())
+        })
+        .unwrap()
+}
+
+fn row(role: &str, text: &str) -> gespan_core::transcript::Row {
+    gespan_core::transcript::Row {
+        role: role.into(),
+        text: text.into(),
+        first: true,
+        sent_at: None,
+    }
+}
+
+const PLAN_REPLY: &str = "Here is the plan.\n<gespan_orchestration>{\"title\":\"Docs\",\"summary\":\"Files\",\"tasks\":[{\"id\":\"task-1\",\"title\":\"A\",\"prompt\":\"Write a\",\"files\":[\"docs\"],\"dependsOn\":[]}]}</gespan_orchestration>";
+
+#[gpui::test]
+fn an_unstarted_orchestration_plan_comes_back_as_a_card_on_reload(cx: &mut TestAppContext) {
+    let rows = vec![row("user", "Split it up"), row("assistant", PLAN_REPLY)];
+    assert_eq!(reopened(rows, cx).as_deref(), Some("Docs"));
+}
+
+#[gpui::test]
+fn a_started_or_broken_orchestration_plan_stays_gone_on_reload(cx: &mut TestAppContext) {
+    let started = vec![
+        row("user", "Split it up"),
+        row("assistant", PLAN_REPLY),
+        row("pilot-system", "Run the approved plan"),
+        row("assistant", "Delegating now."),
+    ];
+    assert_eq!(reopened(started, cx), None);
+
+    let broken = vec![
+        row("user", "Split it up"),
+        row(
+            "assistant",
+            "<gespan_orchestration>{oops}</gespan_orchestration>",
+        ),
+    ];
+    assert_eq!(reopened(broken, cx), None);
+}
+
 fn prompts(view: &Conversation, cx: &gpui::App) -> Vec<String> {
     view.transcript
         .read(cx)

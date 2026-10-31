@@ -1343,12 +1343,12 @@ mod tests {
         assert_eq!(phase(visual), None, "released after 0.3 s");
 
         shortcut_down(visual);
-        for _ in 0..12 {
+        for _ in 0..22 {
             // Key auto-repeat must not restart or speed up the fill.
             advance(visual, 90);
             visual.simulate_keystrokes(SHORTCUT);
         }
-        assert_eq!(phase(visual), None, "1.08 s in");
+        assert_eq!(phase(visual), None, "1.98 s in");
         advance(visual, 200);
         assert!(!visual.has_pending_prompt());
         assert_eq!(phase(visual), Some(Phase::Holding));
