@@ -15,6 +15,10 @@ pub use gespan_board_store::{
 };
 use std::collections::BTreeMap;
 
+/// The most of a tracker description a "Run with..." prompt carries, in
+/// characters.
+const MAX_PROMPT_TICKET_BODY: usize = 10_000;
+
 /// The pre-v3 native tables. Nothing reads them now that board-store has
 /// copied them into its v3 tables; they are still created, and never dropped,
 /// for one release so a build from before v3 opening this file finds what it
@@ -608,10 +612,28 @@ impl Service {
         store::running_card_ids(&self.conn, board_id, running)
     }
 
-    /// The prompt "Run with..." starts a session with.
+    /// The prompt "Run with..." starts a session with: the store's prompt, and
+    /// a description that came from a tracker in an external text block.
     pub fn run_prompt(&mut self, card_id: &str) -> Result<String, String> {
         validate_id(card_id, "card")?;
-        store::run_prompt(&self.conn, card_id)
+        let prompt = store::run_prompt(&self.conn, card_id)?;
+        Ok(match store::ticket_body(&self.conn, card_id)? {
+            Some(body) => format!(
+                "{prompt}\n\n{}",
+                crate::external_text::external_block(&body, MAX_PROMPT_TICKET_BODY)
+            ),
+            None => prompt,
+        })
+    }
+
+    /// Sets a card's description to text from a tracker.
+    pub fn card_set_body_from_ticket(
+        &mut self,
+        card_id: &str,
+        body: &str,
+    ) -> Result<String, String> {
+        validate_id(card_id, "card")?;
+        store::set_body_from_ticket(&self.conn, card_id, body)
     }
 
     /// The session's own "may change ticket status" override, if set

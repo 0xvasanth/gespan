@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Inbox sessions, automation Inbox events and board cards made from tracker
+  text now mark that text as data, not instructions. Anyone can write it, so
+  agents are told not to follow it, and a forged closing marker can't end the
+  block early. This reduces prompt injection but doesn't stop it; see
+  `docs/tracker-text.md`.
+
 ## [0.0.4] - 2026-10-31
 
 The first stable release of Gespan, for macOS, Windows and Linux, with the iOS

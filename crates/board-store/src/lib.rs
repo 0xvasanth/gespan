@@ -45,7 +45,8 @@ pub use labels::{
 };
 pub use links::{
     add_link, board_links, board_tickets, card_links, create_card_from_ticket, remove_link,
-    retitle_card_from_ticket, set_ticket, ticket, title_from_ticket, CardLink,
+    retitle_card_from_ticket, set_body_from_ticket, set_ticket, ticket, ticket_body,
+    title_from_ticket, CardLink,
 };
 pub use meta::{
     archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,

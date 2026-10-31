@@ -12,6 +12,7 @@ pub mod desktop_preferences;
 pub mod diagnostics;
 pub mod diff;
 pub mod external_editor;
+pub mod external_text;
 pub mod files;
 pub mod flow;
 pub mod follow_up;

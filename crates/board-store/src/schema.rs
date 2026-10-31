@@ -1,7 +1,7 @@
 use crate::migrate;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 6;
+pub const VERSION: i64 = 7;
 
 /// The tables as both apps created them before `board_schema` existed.
 pub(crate) const V2_TABLES: &str = "
@@ -196,10 +196,20 @@ pub(crate) const V5_COLUMNS: [(&str, &str, &str); 5] = [
 /// Columns v6 adds. `title_from_ticket` is 1 when the card's title was
 /// copied from a ticket (made from one, or retitled from one) and the user
 /// has not edited it since. Third-party ticket text never reaches the
-/// "Run with…" prompt, so the prompt leaves such a title out.
+/// store's "Run with…" prompt, so the prompt leaves such a title out.
 pub(crate) const V6_COLUMNS: [(&str, &str, &str); 1] = [(
     "board_cards",
     "title_from_ticket",
+    "INTEGER NOT NULL DEFAULT 0",
+)];
+
+/// Columns v7 adds. `body_from_ticket` is 1 when the card's description came
+/// from a tracker. Editing it doesn't clear the mark, because an edit can
+/// leave the tracker's text in place; emptying it does. `0` means the user
+/// wrote it, and such a description is sent to agents as it is.
+pub(crate) const V7_COLUMNS: [(&str, &str, &str); 1] = [(
+    "board_cards",
+    "body_from_ticket",
     "INTEGER NOT NULL DEFAULT 0",
 )];
 
