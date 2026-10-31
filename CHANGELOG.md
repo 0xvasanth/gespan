@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and checkout, so they work even when GitHub CLI isn't signed in on this
   computer. Update Gespan Host to use this.
 
+### Fixed
+
+- Installing the remote host on Windows over SSH no longer fails when Windows
+  or antivirus still holds `node.exe` right after the install checks its
+  version.
+
 ## [0.0.3-beta] - 2026-10-30
 
 This release ships Gespan Native for macOS, Windows and Linux, and the iOS app
