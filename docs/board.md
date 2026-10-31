@@ -153,7 +153,7 @@ A session with a linked ticket gives its agent three tools: `ticket_get`, `ticke
 
 Status changes are separate. "Agent may change ticket status" decides whether `ticket_status` may move the ticket. It is set per board in Automation, and per session from the chip menu (Board default, On or Off). The session setting wins, then the strictest linked board, then On.
 
-Ticket titles are not put into the prompts Gespan sends automatically. They carry the key only, because titles and descriptions are text anyone can write in a tracker.
+Ticket titles are not put into the prompts Gespan sends automatically. They carry the key only, because titles and descriptions are text anyone can write in a tracker. A card description that came from a tracker goes into "Run with…" as marked data, never as instructions. See [Tracker text in agent prompts](tracker-text.md).
 
 ## Large boards
 
@@ -178,7 +178,7 @@ Boards are built and tested to stay responsive with 1,000 cards. Each expanded c
 - Tracker tokens stay in the system keychain. They are never in the board, in prompts or in the agent's environment.
 - An agent only reaches the ticket linked to its own session, with a token that belongs to that session alone.
 - Read-only and plan sessions can read tickets and cards but can't write to them (Gespan's write-back may still post a plan turn's plan as a card comment).
-- Ticket titles and descriptions are never added to automatic prompts.
+- Ticket titles are never added to automatic prompts. Text that came from a tracker reaches an agent only as [marked data](tracker-text.md).
 
 ## Upgrading
 

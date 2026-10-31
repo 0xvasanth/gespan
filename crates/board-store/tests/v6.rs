@@ -68,8 +68,7 @@ fn v6_migration_from_v5_adds_the_ticket_title_mark_idempotently() {
     .unwrap();
 
     ensure_tables(&conn).unwrap();
-    assert_eq!(SCHEMA_VERSION, 6);
-    assert_eq!(migrate::version(&conn).unwrap(), 6);
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert!(has_column(&conn));
     let schema_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM board_schema", [], |row| row.get(0))
@@ -112,12 +111,12 @@ fn v6_migration_from_v5_adds_the_ticket_title_mark_idempotently() {
     assert!(title_from_ticket(&conn, &card.id).unwrap());
     migrate::run(&conn).unwrap();
     ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 6);
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert!(title_from_ticket(&conn, &card.id).unwrap());
 
     // A second connection opening the same file finds the work done.
     let other = open(path.path());
-    assert_eq!(migrate::version(&other).unwrap(), 6);
+    assert_eq!(migrate::version(&other).unwrap(), SCHEMA_VERSION);
     assert!(title_from_ticket(&other, &card.id).unwrap());
 }
 

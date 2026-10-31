@@ -152,8 +152,8 @@ pub fn convert_subtask(conn: &Connection, subtask_id: &str) -> Result<Card, Stri
 
 /// Copies a card to "{title} (copy)" right after the original, with its body,
 /// priority, due, start, estimate, labels, projects, field values and
-/// subtasks (all reset to not done), and the mark that its title came from a
-/// ticket. Links, ticket, comments, relations,
+/// subtasks (all reset to not done), and the marks that its title and
+/// description came from a ticket. Links, ticket, comments, relations,
 /// archive and completion state are not copied.
 pub fn duplicate_card(conn: &Connection, card_id: &str) -> Result<Card, String> {
     let tx = write_tx(conn)?;
@@ -164,11 +164,12 @@ pub fn duplicate_card(conn: &Connection, card_id: &str) -> Result<Card, String> 
     let title = format!("{base}{COPY_SUFFIX}");
     let index = live_index(&tx, &original)?;
     let copy = insert_card_at(&tx, &original.column_id, &title, &original.body, index)?;
-    // The copy drops the ticket link but keeps its title, so a title that
-    // came from a ticket stays marked as ticket text.
+    // The copy drops the ticket link but keeps its text, so text that came
+    // from a ticket stays marked as ticket text.
     tx.execute(
-        "UPDATE board_cards SET title_from_ticket =
-           (SELECT title_from_ticket FROM board_cards WHERE id = ?1)
+        "UPDATE board_cards SET
+           title_from_ticket = (SELECT title_from_ticket FROM board_cards WHERE id = ?1),
+           body_from_ticket = (SELECT body_from_ticket FROM board_cards WHERE id = ?1)
          WHERE id = ?2",
         params![original.id, copy.id],
     )
