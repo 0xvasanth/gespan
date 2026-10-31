@@ -54,7 +54,8 @@ jobs:
             exit 0
           fi
           VERSION="$(node -p 'require("./package.json").version')"
-          TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/v$VERSION" --jq .sha 2>/dev/null || true)"
+          # Not gh api: on a 404 it writes the error body to stdout.
+          TAG_SHA="$(git ls-remote origin "refs/tags/v$VERSION" | cut -f1)"
           RELEASE_JSON="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null || true)"
           RUNS_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$SHA" --event push --limit 50 --json workflowName,conclusion)"
           export VERSION TAG_SHA RELEASE_JSON RUNS_JSON
