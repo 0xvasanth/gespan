@@ -570,6 +570,71 @@ mod tests {
     use gespan_core::transcript::Row;
     use gpui::{TestAppContext, point};
 
+    fn activity_rows(steps: usize) -> Vec<Row> {
+        (1..=steps)
+            .map(|n| {
+                let mut call = ToolCall::new(&format!("call-{n}"), "Bash");
+                call.input = format!(r#"{{"command":"echo step {n}"}}"#);
+                call.state = ToolState::Completed;
+                Row {
+                    role: "tool".into(),
+                    text: serde_json::to_string(&call).unwrap(),
+                    first: true,
+                    sent_at: None,
+                }
+            })
+            .collect()
+    }
+
+    fn shown_tools(view: &TranscriptView) -> usize {
+        view.rows
+            .iter()
+            .filter(|row| matches!(row.body, Body::Tool { .. }))
+            .count()
+    }
+
+    #[gpui::test]
+    fn activity_list_opens_its_commands_and_keeps_them_open(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| TranscriptView::activity(activity_rows(2), cx));
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(shown_tools(view), 2);
+                view.patch(0, activity_rows(3), cx);
+                assert_eq!(shown_tools(view), 3);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn activity_list_steps_in_new_commands_only(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| TranscriptView::activity(activity_rows(2), cx));
+        window
+            .update(cx, |view, _, cx| {
+                assert!(view.motions.is_empty(), "opening the list shows it at once");
+                view.patch(0, activity_rows(3), cx);
+                let stepped: Vec<_> = view
+                    .rows
+                    .iter()
+                    .filter(|row| view.motions.get(&row.key).is_some_and(|m| m.step))
+                    .map(|row| row.key.0)
+                    .collect();
+                assert_eq!(stepped, [2]);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn activity_list_stays_closed_once_the_user_closes_it(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| TranscriptView::activity(activity_rows(2), cx));
+        window
+            .update(cx, |view, _, cx| {
+                view.toggle_phase(0, false, cx);
+                view.patch(0, activity_rows(3), cx);
+                assert!(!view.phase_open(0, false));
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn search_pills_and_overflow_count_share_a_single_compact_row(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));

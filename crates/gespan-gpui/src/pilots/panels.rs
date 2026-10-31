@@ -1352,16 +1352,31 @@ impl Pilots {
         if rows.is_empty() {
             return empty_state("list-bullet", "No activity in this turn yet.");
         }
-        let key = pilot::files::content_hash(&format!("{rows:?}"));
-        if self.activity.as_ref().is_none_or(|(old, _)| old != &key) {
-            self.activity = Some((
-                key,
-                cx.new(|cx| crate::transcript::TranscriptView::activity(rows, cx)),
-            ));
+        let turn = (pilot.id.clone(), start);
+        let content = pilot::files::content_hash(&format!("{rows:?}"));
+        let count = rows.len();
+        // The same turn keeps its view, so what's open and the scroll position
+        // survive each new command.
+        match &mut self.activity {
+            Some(list) if list.turn == turn && count >= list.count => {
+                if list.content != content {
+                    list.content = content;
+                    list.count = count;
+                    list.view.update(cx, |view, cx| view.patch(0, rows, cx));
+                }
+            }
+            _ => {
+                self.activity = Some(ActivityList {
+                    turn,
+                    content,
+                    count,
+                    view: cx.new(|cx| crate::transcript::TranscriptView::activity(rows, cx)),
+                });
+            }
         }
         div()
             .size_full()
-            .child(self.activity.as_ref().unwrap().1.clone())
+            .child(self.activity.as_ref().unwrap().view.clone())
             .into_any_element()
     }
     pub(super) fn settings_modal(

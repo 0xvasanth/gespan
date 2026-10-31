@@ -5,7 +5,7 @@
 //! database at call time from the session key the app supplies, never from
 //! agent input.
 use crate::comments::{add_comment, list_comments};
-use crate::links::{board_links, title_from_ticket};
+use crate::links::{board_links, ticket_body, title_from_ticket};
 use crate::ops::{cards_for_link, db, get_card, write_tx};
 use crate::settings::{board_settings, check_session_key};
 use crate::subtasks::{get_subtask, list_subtasks, toggle_subtask_in};
@@ -126,7 +126,10 @@ fn agent_title(conn: &Connection, card: &Card) -> Result<Option<String>, String>
 /// The first prompt of a session started from the card ("Run with…"): its
 /// title, description, subtasks and the newest 10 user comments (oldest
 /// first), empty sections left out, capped at 20,000 characters. Ticket
-/// snapshot fields and agent-written comments are never included.
+/// snapshot fields, a description that came from a tracker and agent-written
+/// comments are never included: `gespan-core`'s `run_prompt` adds the
+/// description as a marked block, because the text here is sent to the agent
+/// as the user's own.
 pub fn run_prompt(conn: &Connection, card_id: &str) -> Result<String, String> {
     let card = get_card(conn, card_id)?;
     let mut sections = vec![match agent_title(conn, &card)? {
@@ -134,7 +137,7 @@ pub fn run_prompt(conn: &Connection, card_id: &str) -> Result<String, String> {
         None => format!("Work on board card #{}", card.number),
     }];
     let description = card.body.trim();
-    if !description.is_empty() {
+    if !description.is_empty() && ticket_body(conn, card_id)?.is_none() {
         sections.push(description.to_string());
     }
     let subtasks = list_subtasks(conn, card_id)?;

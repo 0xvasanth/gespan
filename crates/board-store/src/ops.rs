@@ -52,7 +52,7 @@ pub fn clean_text(value: &str, label: &str, max: usize) -> Result<String, String
     Ok(trimmed.to_string())
 }
 
-fn check_body(body: &str) -> Result<(), String> {
+pub(crate) fn check_body(body: &str) -> Result<(), String> {
     if body.len() > MAX_BODY {
         return Err("Card body is too long".into());
     }
@@ -573,10 +573,12 @@ pub fn update_card(
         return Ok(card.board_id);
     }
     // A title the user edits is theirs, so it no longer counts as ticket
-    // text; a body-only edit leaves the mark as it was.
+    // text; a body-only edit leaves the mark as it was. A description stays
+    // marked as ticket text until it is emptied, since an edit can keep it.
     tx.execute(
         "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3,
-           title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END
+           title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END,
+           body_from_ticket = CASE WHEN trim(?2) = '' THEN 0 ELSE body_from_ticket END
          WHERE id = ?4",
         params![title, body, now_millis(), card_id],
     )

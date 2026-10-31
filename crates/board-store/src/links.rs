@@ -2,8 +2,8 @@
 //! single link both apps show today (`link_card`) is the row with role
 //! `primary`; `board_cards.link_kind`/`link_id` mirror it for older readers.
 use crate::ops::{
-    clean_text, create_card_in, db, get_card, log_activity, touch, write_tx, NewActivity,
-    LINK_KINDS, MAX_TITLE,
+    check_body, clean_text, create_card_in, db, get_card, log_activity, touch, write_tx,
+    NewActivity, LINK_KINDS, MAX_TITLE,
 };
 use crate::{now_millis, Card};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -459,6 +459,41 @@ pub fn title_from_ticket(conn: &Connection, card_id: &str) -> Result<bool, Strin
     .map_err(db)?
     .map(|flag| flag != 0)
     .ok_or_else(|| "Card not found".to_string())
+}
+
+/// Sets a card's description to text from a tracker and marks it, so it only
+/// reaches an agent as untrusted text. Returns the owning board id.
+pub fn set_body_from_ticket(
+    conn: &Connection,
+    card_id: &str,
+    body: &str,
+) -> Result<String, String> {
+    check_body(body)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
+    tx.execute(
+        "UPDATE board_cards SET body = ?1, body_from_ticket = ?2, updated_at = ?3 WHERE id = ?4",
+        params![body, !body.trim().is_empty(), now_millis(), card_id],
+    )
+    .map_err(db)?;
+    tx.commit().map_err(db)?;
+    Ok(card.board_id)
+}
+
+/// The card's trimmed description when it came from a tracker, for the caller
+/// to wrap as untrusted text; `None` when it is empty or the user's own.
+pub fn ticket_body(conn: &Connection, card_id: &str) -> Result<Option<String>, String> {
+    let (body, marked) = conn
+        .query_row(
+            "SELECT body, body_from_ticket FROM board_cards WHERE id = ?1",
+            [card_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0)),
+        )
+        .optional()
+        .map_err(db)?
+        .ok_or_else(|| "Card not found".to_string())?;
+    let body = body.trim();
+    Ok((marked && !body.is_empty()).then(|| body.to_string()))
 }
 
 fn mark_title_from_ticket(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {

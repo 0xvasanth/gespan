@@ -248,6 +248,10 @@ struct Follow {
     until: Option<Instant>,
 }
 /// Units are px per 60fps frame, as in useBottomChatMotion.ts.
+/// The most a single block of growth may be held below where it lands. The
+/// list paints nothing above its scroll position, so holding a tall block
+/// back would leave that much of the chat blank.
+const CHAT_FOLLOW_MAX_JUMP: f32 = 48.;
 const SPRING_FRAME: f32 = 1000. / 60.;
 /// Pilot replies can appear together; keep their glide below 1080px/second.
 const CHAT_FOLLOW_MAX_SPEED: f32 = 18.;
@@ -301,6 +305,15 @@ impl FollowMeasure {
             + self.slack
             - previous.slack
             - f32::from(self.bottom - previous.bottom)
+    }
+}
+/// How much of new content's growth to ease. A Pilot chat lands a tall block
+/// almost at once.
+fn eased_growth(shift: f32, pilot: bool, sent: bool) -> f32 {
+    if pilot && !sent {
+        shift.min(CHAT_FOLLOW_MAX_JUMP)
+    } else {
+        shift
     }
 }
 impl Follow {
@@ -580,6 +593,8 @@ pub(crate) struct TranscriptView {
     hovered_action: Option<(usize, &'static str)>,
     pub(crate) target_action: Option<(usize, gespan_core::response::TransferKind)>,
     document: bool,
+    /// A Pilot's Activity tab: every group starts open.
+    activity_list: bool,
     side_question: bool,
     pub(crate) file_link_base: Option<String>,
     expanded: HashSet<usize>,
@@ -639,7 +654,12 @@ impl TranscriptView {
     pub(crate) fn activity(rows: Vec<Row>, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
         view.document = true;
+        view.activity_list = true;
+        view.list.set_follow_mode(FollowMode::Tail);
         view.patch(0, rows, cx);
+        // Commands already run show at once; only new ones step in.
+        view.motions.clear();
+        view.step_queue.clear();
         view
     }
     /// AgentTranscript with `agentMascot`, `bottomAligned` and `inlineWork`.
@@ -1494,8 +1514,17 @@ impl TranscriptView {
                 self.follow.last_step = Some(now);
             }
             self.follow.settled_at = None;
-            self.follow
-                .add_shift(shift, f32::from(self.viewport.size.height), self.pilot);
+            // A prompt the user just sent keeps its glide, which also absorbs
+            // the composer shrinking.
+            let sent = self.entrances.iter().any(|(ix, born)| {
+                born.elapsed().as_secs_f32() < 0.88
+                    && self.source.get(*ix).is_some_and(|row| row.is_prompt())
+            });
+            self.follow.add_shift(
+                eased_growth(shift, self.pilot, sent),
+                f32::from(self.viewport.size.height),
+                self.pilot,
+            );
         }
         if let Some(overflow) = prompt_overflow {
             self.follow.offset = self.follow.offset.min(overflow);
@@ -2473,6 +2502,7 @@ impl TranscriptView {
             hovered_action: None,
             target_action: None,
             document: false,
+            activity_list: false,
             side_question: false,
             file_link_base: None,
             expanded: HashSet::new(),
@@ -3347,9 +3377,8 @@ impl TranscriptView {
                 self.streaming
                     && (group.end == self.source.len() || awaiting_answer == Some(group.end))
             });
-            let phase_open = phase.is_none_or(|group| {
-                !grouped || self.phases.get(&group.start).copied().unwrap_or(active)
-            });
+            let phase_open =
+                phase.is_none_or(|group| !grouped || self.phase_open(group.start, active));
             // A running pill turn shows one status line in place of its work
             // and prose; a settled one's card leads its reply.
             let git_stand_in = git_card.clone().filter(|card| {
@@ -3953,7 +3982,7 @@ impl TranscriptView {
                 Body::Phase { group, active, .. }
                     if active
                         || (self.phase_scrolls.contains_key(&group)
-                            && !self.phases.get(&group).copied().unwrap_or(active)) =>
+                            && !self.phase_open(group, active)) =>
                 {
                     Some(group)
                 }
@@ -4223,11 +4252,8 @@ impl TranscriptView {
                     false
                 };
                 let phase = row.phase_group().filter(|g| Some(*g) == phase_toggle);
-                let step = phase.is_none()
-                    && self.streaming
-                    && row.key.0 >= self.live_start
-                    && unseen
-                    && !row.work;
+                let live = self.activity_list || (self.streaming && row.key.0 >= self.live_start);
+                let step = phase.is_none() && live && unseen && !row.work;
                 if step
                     || matches!(row.body, Body::Tool { .. } | Body::Reasoning)
                     || self.expanded.contains(&row.key.0)
@@ -4681,7 +4707,7 @@ impl TranscriptView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let header = self.row_body(ix, true, window, cx);
-        let open = self.phases.get(&group).copied().unwrap_or(active);
+        let open = self.phase_open(group, active);
         let indices: Vec<_> = (ix + 1..self.rows.len())
             .take_while(|&i| self.rows[i].phase_group() == Some(group))
             .collect();
@@ -4980,7 +5006,7 @@ impl TranscriptView {
                 icon: glyph,
                 active,
             } => {
-                let open = self.phases.get(&group).copied().unwrap_or(active);
+                let open = self.phase_open(group, active);
                 let rotation = self
                     .motions
                     .values()
@@ -5721,6 +5747,13 @@ impl TranscriptView {
         measurements::shape_prompt(text, Some(bubble - PROMPT_PAD_X), window)
             .map(|line| line.wrap_boundaries.len() + 1)
             .sum()
+    }
+    /// The user's choice for the group, or its default.
+    fn phase_open(&self, group: usize, active: bool) -> bool {
+        self.phases
+            .get(&group)
+            .copied()
+            .unwrap_or(active || self.activity_list)
     }
     fn toggle_phase(&mut self, group: usize, open: bool, cx: &mut Context<Self>) {
         self.phase_toggle = Some(group);

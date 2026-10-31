@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A Pilot's Activity list now opens with its commands showing and stays open
+  as new ones arrive, instead of collapsing each time. New commands step in
+  with the same motion as the chat, and the list follows the newest one.
+- A Pilot's answer no longer blanks the top of the chat and slides up from
+  below when it arrives as one large block.
+
+### Security
+
+- Inbox sessions, automation Inbox events and board cards made from tracker
+  text now mark that text as data, not instructions. Anyone can write it, so
+  agents are told not to follow it, and a forged closing marker can't end the
+  block early. This reduces prompt injection but doesn't stop it; see
+  `docs/tracker-text.md`.
+
 ## [0.0.4] - 2026-10-31
 
 The first stable release of Gespan, for macOS, Windows and Linux, with the iOS
