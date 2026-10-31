@@ -67,6 +67,54 @@ impl Grid {
     }
 }
 
+/// A comet: sparse at the start, solid at the head.
+fn comet(col: i32, row: i32, head: i32) -> bool {
+    let tone = 0.3 + 0.7 * (col as f32 / head.max(1) as f32).powf(1.5);
+    col < head && (col >= head - 3 || inked(col, row, tone))
+}
+
+/// Whether a cell falls outside the rounded corners of a `cols` by `rows` grid.
+fn outside_corner(col: i32, row: i32, cols: i32, rows: i32) -> bool {
+    col.min(cols - 1 - col) + row.min(rows - 1 - row) < 2
+}
+
+/// The dithered progress fill over `bounds`, left to right. `tint` colours
+/// each column by how far across `bounds` it sits; without a `track`, the
+/// corners are rounded to sit on whatever is behind the fill.
+pub(super) fn paint_progress(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    ratio: f32,
+    tint: impl Fn(f32) -> Hsla,
+    track: Option<Hsla>,
+) {
+    let (width, height) = (bounds.size.width.as_f32(), bounds.size.height.as_f32());
+    let grid = Grid::new(bounds.origin, width, height);
+    let head = (grid.cols as f32 * ratio).round() as i32;
+    if head > 0 {
+        glow(
+            window,
+            Bounds::new(
+                grid.origin,
+                size(px(head as f32 * CELL), px(grid.rows as f32 * CELL)),
+            ),
+            tint(ratio),
+            0.3,
+        );
+    }
+    let cols = grid.cols.max(1) as f32;
+    let rounded = track.is_none();
+    grid.paint(window, |col, row| {
+        if rounded && outside_corner(col, row, grid.cols, grid.rows) {
+            None
+        } else if comet(col, row, head) {
+            Some(tint(col as f32 / cols))
+        } else {
+            track
+        }
+    });
+}
+
 /// A soft bloom over `bounds`, inside as well as around it, so it shows
 /// through the gaps of a dithered fill painted on top.
 pub(super) fn glow(window: &mut Window, bounds: Bounds<Pixels>, color: Hsla, strength: f32) {
@@ -532,6 +580,38 @@ pub(super) fn swatch(color: Hsla) -> gpui::Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rounded_fill_leaves_only_its_corners_empty() {
+        let (cols, rows) = (26, 7);
+        for (col, row) in [
+            (0, 0),
+            (1, 0),
+            (0, 1),
+            (25, 6),
+            (24, 6),
+            (25, 5),
+            (0, 6),
+            (25, 0),
+        ] {
+            assert!(outside_corner(col, row, cols, rows), "({col}, {row})");
+        }
+        for (col, row) in [(2, 0), (1, 1), (0, 2), (13, 0), (13, 3), (24, 5)] {
+            assert!(!outside_corner(col, row, cols, rows), "({col}, {row})");
+        }
+    }
+
+    #[test]
+    fn a_progress_comet_is_sparse_behind_a_solid_head() {
+        let inked_in = |col| (0..4).filter(|&row| comet(col, row, 40)).count();
+        assert_eq!(inked_in(40), 0, "nothing past the head");
+        assert_eq!(inked_in(38), 4, "the head is solid");
+        assert!(inked_in(2) < 4, "the start is dithered");
+        assert!(
+            (0..40).all(|col| (0..4).all(|row| !comet(col, row, 0))),
+            "empty at zero"
+        );
+    }
 
     #[test]
     fn tones_ink_their_share_of_a_tile() {

@@ -3226,6 +3226,13 @@ impl TranscriptView {
                 .iter()
                 .map(|r| r.text.as_str())
                 .collect();
+            // The orchestration card stands in for the plan's JSON.
+            let text = if role == "assistant" {
+                let streaming = self.streaming && end == self.source.len();
+                gespan_core::orchestration::hide_block(&text, streaming).into_owned()
+            } else {
+                text
+            };
             // Older native versions saved user cancellation as an error row.
             let stopped_notice = role == "error" && text.trim() == "Stopped";
             let (display_text, attachments) = if role == "user" {
@@ -6095,6 +6102,30 @@ mod scroll_tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_plan_reply_shows_its_explanation_without_the_json(cx: &mut TestAppContext) {
+        let reply = "Here is the plan.\n\n<gespan_orchestration>{\"title\":\"Docs\",\"summary\":\"Files\",\"tasks\":[{\"id\":\"task-1\",\"title\":\"A\",\"prompt\":\"Write a\",\"files\":[\"docs\"]}]}</gespan_orchestration>";
+        let view = cx.new(|_| TranscriptView::new());
+        view.update(cx, |view, cx| {
+            view.patch(0, vec![row("user", "Do it"), row("assistant", reply)], cx);
+            settle(view, cx);
+            let shown: Vec<_> = view
+                .rows
+                .iter()
+                .filter_map(|row| match &row.body {
+                    Body::Markdown(md) => Some(markdown::row_text(md).to_string()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(shown, ["Here is the plan."]);
+            assert_eq!(
+                view.source_rows()[1].text,
+                reply,
+                "the saved reply is untouched"
+            );
+        });
     }
 
     #[gpui::test]

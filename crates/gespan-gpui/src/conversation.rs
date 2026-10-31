@@ -208,6 +208,7 @@ pub(crate) struct Conversation {
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
+    orchestration_plan_checked: bool,
     pub(crate) orchestration_plan: Option<gespan_core::orchestration::Plan>,
     plan_card: orchestration_card::PlanCard,
     orchestration_paused: bool,
@@ -729,6 +730,7 @@ impl Conversation {
             app_environment: Default::default(),
             app_read_only: false,
             planning_orchestration: false,
+            orchestration_plan_checked: false,
             orchestration_plan: None,
             plan_card: Default::default(),
             orchestration_paused: false,

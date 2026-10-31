@@ -3,7 +3,7 @@
 //! ⌘⇧H shortcut drive the same press, and tests can step its clock.
 use std::time::{Duration, Instant};
 
-pub(crate) const HOLD: Duration = Duration::from_millis(1200);
+pub(crate) const HOLD: Duration = Duration::from_millis(2000);
 /// A release sooner than this is a tap: show the hint instead.
 pub(crate) const TAP: Duration = Duration::from_millis(250);
 pub(crate) const HINT: Duration = Duration::from_millis(1800);
@@ -209,8 +209,8 @@ mod tests {
         let t = Instant::now();
         let mut press = Press::default();
         press.start(t);
-        assert!((press.progress(t + ms(600)) - 0.5).abs() < 1e-3);
-        assert_eq!(press.tick(t + ms(1199)), None);
+        assert!((press.progress(t + ms(1000)) - 0.5).abs() < 1e-3);
+        assert_eq!(press.tick(t + ms(1999)), None);
         assert_eq!(press.tick(t + HOLD), Some(Event::Confirmed));
         assert_eq!(press.label(t + HOLD), Label::Done);
         assert_eq!(press.progress(t + HOLD + ms(500)), 1.);
@@ -235,10 +235,10 @@ mod tests {
         let mut press = Press::default();
         press.start(t);
         // Key auto-repeat sends more key-downs; the fill keeps its own clock.
-        press.start(t + ms(300));
-        press.start(t + ms(600));
-        assert!((press.progress(t + ms(600)) - 0.5).abs() < 1e-3);
-        assert_eq!(press.tick(t + ms(1100)), None);
+        press.start(t + ms(500));
+        press.start(t + ms(1000));
+        assert!((press.progress(t + ms(1000)) - 0.5).abs() < 1e-3);
+        assert_eq!(press.tick(t + ms(1900)), None);
         assert_eq!(press.tick(t + HOLD), Some(Event::Confirmed));
     }
 
@@ -247,12 +247,12 @@ mod tests {
         let t = Instant::now();
         let mut press = Press::default();
         press.start(t);
-        assert_eq!(press.release(t + ms(600)), Released::Drain);
+        assert_eq!(press.release(t + ms(1000)), Released::Drain);
         // 0.5 progress drains in max(180, 250) = 250 ms, eased out.
-        let mid = press.progress(t + ms(725));
+        let mid = press.progress(t + ms(1125));
         assert!(mid > 0. && mid < 0.25, "ease-out passes half early: {mid}");
-        assert_eq!(press.progress(t + ms(850)), 0.);
-        assert!(!press.animating(t + ms(851)));
+        assert_eq!(press.progress(t + ms(1250)), 0.);
+        assert!(!press.animating(t + ms(1251)));
         assert_eq!(press.tick(t + ms(5000)), None);
     }
 
@@ -261,9 +261,9 @@ mod tests {
         let t = Instant::now();
         let mut press = Press::default();
         press.start(t);
-        press.cancel(t + ms(300)); // 0.25 → 125 ms, floored at 180 ms
-        assert!(press.progress(t + ms(300 + 170)) > 0.);
-        assert_eq!(press.progress(t + ms(300 + 180)), 0.);
+        press.cancel(t + ms(500)); // 0.25 → 125 ms, floored at 180 ms
+        assert!(press.progress(t + ms(500 + 170)) > 0.);
+        assert_eq!(press.progress(t + ms(500 + 180)), 0.);
     }
 
     #[test]
@@ -271,15 +271,15 @@ mod tests {
         let t = Instant::now();
         let mut press = Press::default();
         press.start(t);
-        press.release(t + ms(900)); // 0.75, drains over 375 ms
-        let left = press.progress(t + ms(950));
+        press.release(t + ms(1500)); // 0.75, drains over 375 ms
+        let left = press.progress(t + ms(1550));
         assert!(left > 0.4 && left < 0.75, "ease-out: {left}");
-        press.start(t + ms(950));
-        assert!((press.progress(t + ms(950)) - left).abs() < 1e-4);
+        press.start(t + ms(1550));
+        assert!((press.progress(t + ms(1550)) - left).abs() < 1e-4);
         let remaining = ((1. - left) * HOLD.as_millis() as f32) as u64;
-        assert_eq!(press.tick(t + ms(950 + remaining - 5)), None);
+        assert_eq!(press.tick(t + ms(1550 + remaining - 5)), None);
         assert_eq!(
-            press.tick(t + ms(950 + remaining + 1)),
+            press.tick(t + ms(1550 + remaining + 1)),
             Some(Event::Confirmed)
         );
     }

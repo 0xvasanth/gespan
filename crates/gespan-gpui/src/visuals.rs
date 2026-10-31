@@ -21,6 +21,19 @@ mod scene;
 #[cfg(test)]
 mod tests;
 
+/// The chart progress bar's dithered fill with rounded corners, to sit on a
+/// control's rounded background.
+pub(crate) fn dither_fill(
+    ratio: f32,
+    tint: impl Fn(f32) -> gpui::Hsla + 'static,
+) -> impl gpui::IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| dither::paint_progress(window, bounds, ratio, &tint, None),
+    )
+    .size_full()
+}
+
 /// The transcript must remeasure this row when its content changes.
 pub(crate) struct VisualChanged;
 pub(crate) struct VisualView {

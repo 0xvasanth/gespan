@@ -120,6 +120,27 @@ fn proposed_plan(text: &str) -> Option<(&str, &str, &str)> {
     None
 }
 
+/// Adds the plan a provider handed over to the turn from `turn_start`, unless
+/// it is blank or that turn already shows it. Returns the new row.
+pub fn add(rows: &mut Vec<Row>, turn_start: usize, plan: &str) -> Option<usize> {
+    let plan = plan.trim();
+    let turn = turn_start.min(rows.len());
+    if plan.is_empty()
+        || rows[turn..]
+            .iter()
+            .any(|row| row.role == ROLE && row.text == plan)
+    {
+        return None;
+    }
+    rows.push(Row {
+        role: ROLE.into(),
+        text: plan.into(),
+        first: true,
+        sent_at: Some(crate::time::now_ms()),
+    });
+    Some(rows.len() - 1)
+}
+
 /// Lifts the plan out of a finished turn's rows from `turn_start`: a
 /// `<proposed_plan>` block in any reply, or else, after a plan-mode turn,
 /// its last reply when it reads as a plan. Returns the first changed row.
@@ -227,6 +248,48 @@ pub enum BuildState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_provider_plan_becomes_one_row_of_this_turn() {
+        let mut rows = vec![row("user", "Plan it"), row("tool", "{}")];
+        assert_eq!(add(&mut rows, 0, "  # Plan\n- one\n"), Some(2));
+        assert_eq!(
+            (rows[2].role.as_str(), rows[2].text.as_str()),
+            (ROLE, "# Plan\n- one")
+        );
+        assert!(rows[2].first);
+
+        assert_eq!(
+            add(&mut rows, 0, "# Plan\n- one"),
+            None,
+            "a repeated proposal"
+        );
+        assert_eq!(add(&mut rows, 0, "  \n "), None, "nothing to review");
+        assert_eq!(rows.len(), 3);
+
+        assert_eq!(
+            add(&mut rows, 3, "# Plan\n- one"),
+            Some(3),
+            "a later turn may repeat it"
+        );
+        assert_eq!(
+            add(&mut rows, 0, "# Plan\n- two"),
+            Some(4),
+            "a revision is its own card"
+        );
+    }
+
+    #[test]
+    fn a_provider_plan_is_not_promoted_again_when_the_turn_ends() {
+        let mut rows = vec![row("user", "Plan it")];
+        add(&mut rows, 0, "# Plan\n- one\n- two");
+        rows.push(row(
+            "assistant",
+            "# Waiting\n- for your review\n- then build",
+        ));
+        assert_eq!(promote(&mut rows, 0, true), None);
+        assert_eq!(rows.iter().filter(|row| row.role == ROLE).count(), 1);
+    }
 
     fn row(role: &str, text: &str) -> Row {
         Row {

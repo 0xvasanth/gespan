@@ -9,6 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashSet},
     path::{Component, Path},
 };
@@ -186,10 +187,12 @@ Schema: {{"title":"short title","summary":"approach","tasks":[{{"id":"task-1","t
 Use 1 to 12 assignments, unique ASCII IDs, exact project-relative file or directory scopes ('.' for the whole project), and dependency IDs. Independent assignments may run concurrently (up to four); overlapping scopes run serially. {workers} Include verification in the assignments. Never claim that workers have already started."#
     )
 }
+const OPEN_TAG: &str = "<gespan_orchestration>";
+const CLOSE_TAG: &str = "</gespan_orchestration>";
 pub fn parse(text: &str) -> Result<Plan, String> {
     let body = text
-        .split_once("<gespan_orchestration>")
-        .and_then(|(_, s)| s.split_once("</gespan_orchestration>").map(|(s, _)| s))
+        .split_once(OPEN_TAG)
+        .and_then(|(_, s)| s.split_once(CLOSE_TAG).map(|(s, _)| s))
         .ok_or("The response did not include a task plan. Retry Orchestrator to prepare one.")?;
     if body.len() > 256 * 1024 {
         return Err("Task plan is too large.".into());
@@ -198,6 +201,37 @@ pub fn parse(text: &str) -> Result<Plan, String> {
         serde_json::from_str(body.trim()).map_err(|e| format!("Invalid task plan: {e}"))?;
     validate(&plan)?;
     Ok(plan)
+}
+/// A reply as the chat shows it: the card stands in for a plan's JSON block.
+/// The block stays while it can't become a card, so a bad plan stays readable.
+/// While it streams, the block is hidden from its opening tag.
+pub fn hide_block(text: &str, streaming: bool) -> Cow<'_, str> {
+    let Some((before, rest)) = text.split_once(OPEN_TAG) else {
+        return Cow::Borrowed(text);
+    };
+    match rest.split_once(CLOSE_TAG) {
+        Some((_, after)) if parse(text).is_ok() => {
+            let (before, after) = (before.trim_end(), after.trim_start());
+            if before.is_empty() || after.is_empty() {
+                Cow::Owned(format!("{before}{after}"))
+            } else {
+                Cow::Owned(format!("{before}\n\n{after}"))
+            }
+        }
+        None if streaming => Cow::Borrowed(before.trim_end()),
+        _ => Cow::Borrowed(text),
+    }
+}
+/// The plan a finished planning turn is still waiting on. Starting a run sends
+/// the lead a new prompt, so only an unstarted plan is in the latest turn.
+pub fn pending_plan(rows: &[crate::transcript::Row]) -> Option<Plan> {
+    let start = rows.iter().rposition(|row| row.is_prompt())?;
+    let text: String = rows[start..]
+        .iter()
+        .filter(|row| row.role == "assistant")
+        .map(|row| row.text.as_str())
+        .collect();
+    parse(&text).ok()
 }
 pub fn validate(plan: &Plan) -> Result<(), String> {
     if plan.title.trim().is_empty()
@@ -448,6 +482,72 @@ pub fn worker_prompt(prompt: &str, files: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn planned_reply() -> String {
+        let plan = json!({"title":"Docs","summary":"Two files","tasks":[
+            {"id":"task-1","title":"A","prompt":"Write a","files":["docs"],"dependsOn":[]}
+        ]});
+        format!("Here is the plan.\n\n<gespan_orchestration>\n{plan}\n</gespan_orchestration>\n\nReady when you are.")
+    }
+    fn message(role: &str, text: &str) -> crate::transcript::Row {
+        crate::transcript::Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    #[test]
+    fn a_valid_block_leaves_only_the_explanation_around_it() {
+        let reply = planned_reply();
+        assert!(parse(&reply).is_ok(), "{:?}", parse(&reply).err());
+        assert_eq!(
+            hide_block(&reply, false),
+            "Here is the plan.\n\nReady when you are."
+        );
+        let bare = reply
+            .split_once("<gespan")
+            .map(|(_, r)| format!("<gespan{r}"))
+            .unwrap();
+        assert_eq!(hide_block(&bare, false), "Ready when you are.");
+    }
+
+    #[test]
+    fn a_block_still_streaming_is_hidden_from_its_opening_tag() {
+        let reply = planned_reply();
+        let partial = &reply[..reply.find("Write a").unwrap()];
+        assert_eq!(hide_block(partial, true), "Here is the plan.");
+    }
+
+    #[test]
+    fn a_block_that_cannot_become_a_card_stays_readable() {
+        let broken = "Plan.\n<gespan_orchestration>{oops}</gespan_orchestration>";
+        assert_eq!(hide_block(broken, false), broken);
+        let cut_off = "Plan.\n<gespan_orchestration>{\"title\":";
+        assert_eq!(
+            hide_block(cut_off, false),
+            cut_off,
+            "the turn ended mid-block"
+        );
+        assert_eq!(hide_block("No plan here.", true), "No plan here.");
+    }
+
+    #[test]
+    fn only_an_unstarted_plan_is_pending() {
+        let reply = planned_reply();
+        let mut rows = vec![message("user", "Do it"), message("assistant", &reply)];
+        assert_eq!(pending_plan(&rows).unwrap().title, "Docs");
+
+        // Starting a run sends the lead an internal prompt.
+        rows.push(message("pilot-system", "Run the approved plan"));
+        assert!(pending_plan(&rows).is_none());
+        rows.push(message("assistant", "Delegating now."));
+        assert!(pending_plan(&rows).is_none());
+
+        assert!(pending_plan(&[message("user", "Hi"), message("assistant", "Hello")]).is_none());
+        assert!(pending_plan(&[]).is_none());
+    }
     fn task(id: &str, deps: &[&str], file: &str) -> Task {
         Task {
             id: id.into(),

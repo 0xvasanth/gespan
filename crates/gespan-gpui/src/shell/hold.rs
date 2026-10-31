@@ -6,13 +6,14 @@ use crate::conversation::HoldChanged;
 use crate::hold::Hold;
 use crate::hold_confirm::{Label, Press, Released};
 use gespan_core::hold::{HoldState, Phase, Reason, ResumeQueue};
-use gpui::{ClickEvent, Div, Hsla, Stateful, relative};
+use gpui::{ClickEvent, Div, Stateful};
 use std::time::Duration;
 
 /// At most this many held sessions start again at once.
 const RESUME_LIMIT: usize = 3;
 /// Wide enough for the longest label, so the button never resizes.
-const PRESS_WIDTH: f32 = 172.;
+/// Hold all's fill, left to right: indigo, violet, pink.
+const FILL: [u32; 3] = [0x5b5bff, 0xb14cff, 0xff3d9a];
 const PRESS_FRAME: Duration = Duration::from_millis(16);
 /// How often a waiting hint or armed label checks whether it expired.
 const LABEL_FRAME: Duration = Duration::from_millis(250);
@@ -53,6 +54,25 @@ fn covers(have: &gpui::Modifiers, need: &gpui::Modifiers) -> bool {
 fn shortcut_down(window: &Window) -> Option<gpui::Keystroke> {
     let chord = hold_chord(window)?;
     covers(&window.modifiers(), &chord.modifiers).then_some(chord)
+}
+
+/// The fill's colour `at` a share of the button's width.
+fn fill_color(at: f32) -> gpui::Hsla {
+    let scaled = at.clamp(0., 1.) * (FILL.len() - 1) as f32;
+    let stop = (scaled as usize).min(FILL.len() - 2);
+    let (from, to, t) = (
+        gpui::rgb(FILL[stop]),
+        gpui::rgb(FILL[stop + 1]),
+        scaled - stop as f32,
+    );
+    let mix = |a: f32, b: f32| a + (b - a) * t;
+    gpui::Rgba {
+        r: mix(from.r, to.r),
+        g: mix(from.g, to.g),
+        b: mix(from.b, to.b),
+        a: 1.,
+    }
+    .into()
 }
 
 impl Shell {
@@ -642,50 +662,39 @@ impl Shell {
             .child(control)
             .into_any_element()
     }
-    /// Hold all: press and hold. The fill is an inverted copy of the label,
-    /// clipped to the progress, so the text changes colour under the edge.
+    /// Hold all: press and hold. The chart progress bar's dithered fill runs
+    /// across the button in the Ultraviolet gradient, in place of the icon and label.
     fn hold_press_button(&self, chip: Stateful<Div>, cx: &mut Context<Self>) -> AnyElement {
         let now = cx.background_executor().now();
         let progress = self.hold.press.progress(now);
-        let text = match self.hold.press.label(now) {
+        let label = self.hold.press.label(now);
+        let text = match label {
             Label::Rest => "Hold all",
             Label::Hint => "Hold to confirm",
             Label::Armed => "Press again to confirm",
             Label::Done => "Holding…",
         };
-        let face = |color: Hsla| {
-            div()
-                .w(px(PRESS_WIDTH))
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(5.))
-                .text_color(color)
-                .child(icon("queue-pause", 12.).text_color(color))
-                .child(text)
-        };
-        let mut ink = crate::theme::shell_fill();
-        ink.a = 1.;
+        // The dots alone say how far along it is; the label keeps the width.
+        let filling = progress > 0. && !matches!(label, Label::Armed | Label::Done);
         chip.relative()
-            .w(px(PRESS_WIDTH))
-            .px_0()
             .overflow_hidden()
             .aria_label("Hold everything: press and hold (⌘⇧H)")
-            .child(face(content(0.6)))
             .when(progress > 0., |chip| {
                 chip.child(
                     div()
                         .absolute()
-                        .top_0()
-                        .left_0()
-                        .bottom_0()
-                        .w(relative(progress))
-                        .overflow_hidden()
-                        .bg(content(0.85))
-                        .child(face(ink)),
+                        .inset_0()
+                        .rounded_md()
+                        .bg(content(0.08))
+                        .child(crate::visuals::dither_fill(progress, fill_color)),
                 )
             })
+            .child(
+                div()
+                    .when(filling, |d| d.invisible())
+                    .child(icon("queue-pause", 12.)),
+            )
+            .child(div().when(filling, |d| d.invisible()).child(text))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -1265,7 +1274,7 @@ mod tests {
         busy_and_idle(window, &ids, cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         press_control(visual);
-        advance(visual, 1100);
+        advance(visual, 1900);
         assert_eq!(phase(visual), None, "not before the fill completes");
         advance(visual, 150);
         assert!(!visual.has_pending_prompt(), "no dialog");
@@ -1334,12 +1343,12 @@ mod tests {
         assert_eq!(phase(visual), None, "released after 0.3 s");
 
         shortcut_down(visual);
-        for _ in 0..12 {
+        for _ in 0..22 {
             // Key auto-repeat must not restart or speed up the fill.
             advance(visual, 90);
             visual.simulate_keystrokes(SHORTCUT);
         }
-        assert_eq!(phase(visual), None, "1.08 s in");
+        assert_eq!(phase(visual), None, "1.98 s in");
         advance(visual, 200);
         assert!(!visual.has_pending_prompt());
         assert_eq!(phase(visual), Some(Phase::Holding));
@@ -1361,7 +1370,7 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         // The old chord no longer starts a press.
         shortcut_down(visual);
-        advance(visual, 1500);
+        advance(visual, 2300);
         assert_eq!(phase(visual), None);
         visual.simulate_modifiers_change(gpui::Modifiers::none());
         // Releasing ⌥ ends a held ⌥J early.
@@ -1378,7 +1387,7 @@ mod tests {
         // Held long enough, it holds.
         visual.simulate_modifiers_change(alt);
         visual.simulate_keystrokes("alt-j");
-        advance(visual, 1400);
+        advance(visual, 2200);
         assert!(!visual.has_pending_prompt());
         assert_eq!(phase(visual), Some(Phase::Holding));
     }
@@ -1430,7 +1439,7 @@ mod tests {
         let window = shell(store, cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         shortcut_down(visual);
-        advance(visual, 1250);
+        advance(visual, 2050);
         assert_eq!(phase(visual), Some(Phase::OnHold), "nothing running");
         visual.simulate_keystrokes(SHORTCUT);
         advance(visual, 100);

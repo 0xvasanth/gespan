@@ -3,8 +3,8 @@
 use super::{
     color,
     dither::{
-        Align, CELL, Curve, Grid, Label, Motion, Scale, compact, crosshair, glow, glowing_line,
-        hoverable, inked, marker, pointer, readout, swatch,
+        Align, CELL, Curve, Grid, Label, Motion, Scale, compact, crosshair, glowing_line,
+        hoverable, inked, marker, paint_progress, pointer, readout, swatch,
     },
 };
 use crate::theme::content;
@@ -976,33 +976,14 @@ pub(super) fn progress(
         |_, _, _| {},
         move |bounds, _, window, cx| {
             let tint = color(&token);
-            let track = faint(tint, 0.14);
-            let grid = Grid::new(bounds.origin, bounds.size.width.as_f32(), 3. * CELL);
             let grow = motion.at(0., 800., window, cx);
-            let head = (grid.cols as f32 * ratio * grow).round() as i32;
-            if head > 0 {
-                glow(
-                    window,
-                    Bounds::new(
-                        grid.origin,
-                        gpui::size(px(head as f32 * CELL), px(3. * CELL)),
-                    ),
-                    tint,
-                    0.3,
-                );
-            }
-            grid.paint(window, |col, row| {
-                if col >= head {
-                    return Some(track);
-                }
-                // A comet: sparse at the start, solid at the head.
-                let tone = 0.3 + 0.7 * (col as f32 / head.max(1) as f32).powf(1.5);
-                Some(if col >= head - 3 || inked(col, row, tone) {
-                    tint
-                } else {
-                    track
-                })
-            });
+            paint_progress(
+                window,
+                bounds,
+                ratio * grow,
+                |_| tint,
+                Some(faint(tint, 0.14)),
+            );
         },
     )
     .w_full()
