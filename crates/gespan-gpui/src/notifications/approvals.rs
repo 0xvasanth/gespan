@@ -23,15 +23,29 @@ pub(crate) struct PendingInput {
 }
 
 /// An approval's detail as a card shows it. Claude sends the tool's input as
-/// JSON, where the command or file is what the reader has to judge.
+/// JSON, where the command or file is what the reader has to judge. Other
+/// fields are named, so a card never reads as the whole request when it isn't.
 pub(crate) fn approval_detail(detail: &str) -> String {
     let detail = detail.trim();
     serde_json::from_str::<serde_json::Value>(detail)
         .ok()
         .and_then(|input| {
-            ["command", "file_path", "path", "url"]
-                .iter()
-                .find_map(|key| input[*key].as_str().map(str::to_owned))
+            let key = ["command", "file_path", "path", "url"]
+                .into_iter()
+                .find(|key| input[*key].is_string())?;
+            let mut others: Vec<&str> = input
+                .as_object()?
+                .keys()
+                .map(String::as_str)
+                .filter(|other| *other != key && *other != "description")
+                .collect();
+            others.sort_unstable();
+            let shown = input[key].as_str()?;
+            Some(if others.is_empty() {
+                shown.to_owned()
+            } else {
+                format!("{shown}\n+ {}", others.join(", "))
+            })
         })
         .unwrap_or_else(|| detail.to_owned())
 }
@@ -359,8 +373,22 @@ mod detail_tests {
             "rm -rf build"
         );
         assert_eq!(
+            approval_detail(r#"{"url":"https://a.dev"}"#),
+            "https://a.dev"
+        );
+    }
+
+    #[test]
+    fn fields_the_card_leaves_out_are_named() {
+        assert_eq!(
             approval_detail(r#"{"file_path":"/repo/a.md","content":"x"}"#),
-            "/repo/a.md"
+            "/repo/a.md\n+ content"
+        );
+        assert_eq!(
+            approval_detail(
+                r#"{"timeout":5,"dangerouslyDisableSandbox":true,"command":"ls","description":"List"}"#
+            ),
+            "ls\n+ dangerouslyDisableSandbox, timeout"
         );
     }
 
