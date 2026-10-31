@@ -50,6 +50,7 @@ log = "0.4"
 tracing-log = { version = "0.2", default-features = false, features = ["log-tracer", "std"] }
 # Report an issue: the scrubber and the bundle zip.
 gespan-redact = { path = "../gespan-redact" }
+gespan-mcp-config = { path = "../gespan-mcp-config" }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

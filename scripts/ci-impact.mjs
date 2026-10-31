@@ -22,7 +22,7 @@ const rules = [
   // Core's shared_contracts test scans crates/gespan-gpui/src.
   [/^crates\/gespan-gpui\/src\//, ["core", "desktop"]],
   [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch)\//, ["desktop"]],
-  [/^crates\/(board-store|gespan-models|gespan-redact|gespan-speech|keep-awake|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
+  [/^crates\/(board-store|gespan-mcp-config|gespan-models|gespan-redact|gespan-speech|keep-awake|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
   [/^vendor\//, ["core", "desktop"]],
   // Core's shared_contracts test reads these.
   [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host", "mobile"]],

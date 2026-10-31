@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SHARED=(-p gespan-mobile-link -p gespan-keep-awake -p gespan-redact -p gespan-tracker-secrets -p gespan-tracker-client -p gespan-board-store -p gespan-models -p gespan-speech)
+          SHARED=(-p gespan-mobile-link -p gespan-keep-awake -p gespan-redact -p gespan-mcp-config -p gespan-tracker-secrets -p gespan-tracker-client -p gespan-board-store -p gespan-models -p gespan-speech)
           cargo fmt --check "${SHARED[@]}"
           cargo clippy --locked "${SHARED[@]}" --all-targets -- -D warnings
           cargo test --locked "${SHARED[@]}"

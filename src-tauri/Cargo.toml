@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 gespan-mobile-link = { path = "../crates/mobile-link" }
 gespan-keep-awake = { path = "../crates/keep-awake" }
+gespan-mcp-config = { path = "../crates/gespan-mcp-config" }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets" }
 gespan-tracker-client = { path = "../crates/tracker-client" }
 gespan-board-store = { path = "../crates/board-store" }

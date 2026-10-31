@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use gespan_mcp_config::{strip_jsonc, write_json_config, write_json_server};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -133,13 +134,13 @@ pub fn mcp_add(
                 );
                 write_opencode_server(&path, &name, server, major)
             }
-            "claude" | "codex" => add_mcp_via_cli(
+            "claude" | "codex" => gespan_mcp_config::add_agent_server(
+                Path::new(&home),
+                &project,
                 &provider,
                 &scope,
-                &cwd,
                 &name,
                 &server,
-                binary_path.as_deref(),
             ),
             _ => Err("Unsupported MCP provider".into()),
         }
@@ -340,82 +341,6 @@ fn write_opencode_server(path: &Path, name: &str, server: Value, major: u32) -> 
         servers.insert(name.to_owned(), server);
         Ok(())
     })
-}
-
-fn write_json_server(path: &Path, name: &str, server: Value) -> Result<(), String> {
-    write_json_config(path, |root| {
-        let object = root
-            .as_object_mut()
-            .ok_or("Existing config must be a JSON object")?;
-        let servers = object
-            .entry("mcpServers")
-            .or_insert_with(|| serde_json::json!({}));
-        let servers = servers
-            .as_object_mut()
-            .ok_or("Existing mcpServers must be an object")?;
-        if servers.contains_key(name) {
-            return Err(format!("{name} is already configured in this file"));
-        }
-        servers.insert(name.to_owned(), server);
-        Ok(())
-    })
-}
-
-fn write_json_config(
-    path: &Path,
-    update: impl FnOnce(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
-    let parent = path.parent().ok_or("Invalid config path")?;
-    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let lock_path = parent.join(format!(
-        ".{}.lock",
-        path.file_name()
-            .and_then(|part| part.to_str())
-            .unwrap_or("mcp")
-    ));
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path)
-        .map_err(|e| e.to_string())?;
-    lock.lock().map_err(|e| e.to_string())?;
-    let mut root: Value = if path.exists() {
-        let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw)
-            .or_else(|_| serde_json::from_str(&strip_jsonc(&raw)))
-            .map_err(|e| format!("Existing config is invalid JSON: {e}"))?
-    } else {
-        serde_json::json!({})
-    };
-    update(&mut root)?;
-    let encoded = serde_json::to_vec_pretty(&root).map_err(|e| e.to_string())?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("mcp"),
-        rand::random::<u128>()
-    ));
-    let result = (|| -> std::io::Result<()> {
-        use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(&encoded)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result.map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -662,71 +587,6 @@ fn read_json(path: &Path) -> Option<Value> {
         .ok()
 }
 
-/// Remove JSONC comments and trailing commas without touching quoted text.
-fn strip_jsonc(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    let mut clean = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    let mut quoted = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if quoted {
-            clean.push(byte);
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 1;
-                clean.push(bytes[index]);
-            } else if byte == b'"' {
-                quoted = false;
-            }
-        } else if byte == b'"' {
-            quoted = true;
-            clean.push(byte);
-        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-            clean.push(b'\n');
-        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            index += 2;
-            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
-                index += 1;
-            }
-            index = (index + 1).min(bytes.len() - 1);
-        } else {
-            clean.push(byte);
-        }
-        index += 1;
-    }
-    let mut result = Vec::with_capacity(clean.len());
-    quoted = false;
-    let mut escaped = false;
-    for (index, byte) in clean.iter().enumerate() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if *byte == b'\\' {
-                escaped = true;
-            } else if *byte == b'"' {
-                quoted = false;
-            }
-        } else if *byte == b'"' {
-            quoted = true;
-        }
-        if !quoted
-            && *byte == b','
-            && clean[index + 1..]
-                .iter()
-                .find(|b| !b.is_ascii_whitespace())
-                .is_some_and(|b| *b == b'}' || *b == b']')
-        {
-            continue;
-        }
-        result.push(*byte);
-    }
-    String::from_utf8(result).unwrap_or_default()
-}
-
 use std::time::Duration;
 fn resolve_mcp_binary(provider: &str, path: Option<&str>) -> Result<PathBuf, String> {
     path.map(PathBuf::from)
@@ -741,19 +601,6 @@ fn mcp_command(
 ) -> Result<String, String> {
     crate::cli::output(&binary, &args, &expand_home(&cwd), timeout)
 }
-pub(crate) fn add_mcp_via_cli(
-    provider: &str,
-    scope: &str,
-    cwd: &str,
-    name: &str,
-    config: &serde_json::Value,
-    binary_path: Option<&str>,
-) -> Result<(), String> {
-    let (binary, args) = mcp_add_args(provider, scope, name, config, binary_path)?;
-    mcp_command(binary, args, cwd.to_owned(), Duration::from_secs(30))?;
-    Ok(())
-}
-
 pub(crate) fn opencode_major_version(cwd: &str, binary_path: Option<&str>) -> Result<u32, String> {
     let binary = resolve_mcp_binary("opencode", binary_path)?;
     let version = mcp_command(
@@ -773,118 +620,6 @@ pub(crate) fn opencode_major_version(cwd: &str, binary_path: Option<&str>) -> Re
         })
         .filter(|major| matches!(major, 1 | 2))
         .ok_or_else(|| format!("Unsupported OpenCode version: {version}"))
-}
-
-fn mcp_add_args(
-    provider: &str,
-    scope: &str,
-    name: &str,
-    config: &serde_json::Value,
-    binary_path: Option<&str>,
-) -> Result<(PathBuf, Vec<String>), String> {
-    if provider == "claude" {
-        if !matches!(scope, "local" | "project" | "user") {
-            return Err("Invalid Claude MCP scope".into());
-        }
-        let binary = resolve_mcp_binary("claude", binary_path)?;
-        let config = serde_json::to_string(config).map_err(|e| e.to_string())?;
-        return Ok((
-            binary,
-            vec![
-                "mcp".into(),
-                "add-json".into(),
-                name.into(),
-                config,
-                "--scope".into(),
-                scope.into(),
-            ],
-        ));
-    }
-    if provider == "codex" && scope != "user" {
-        return Err("Codex CLI adds user-scoped servers only".into());
-    }
-    let binary = match provider {
-        "codex" => resolve_mcp_binary("codex", binary_path)?,
-        _ => return Err("Unsupported MCP provider".into()),
-    };
-    let object = config
-        .as_object()
-        .ok_or("Server configuration must be an object")?;
-    let remote = object.get("url").and_then(serde_json::Value::as_str);
-    let allowed: &[&str] = if remote.is_some() {
-        &["type", "url", "bearerTokenEnvVar"]
-    } else {
-        &["type", "command", "args", "env"]
-    };
-    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
-        return Err(format!(
-            "{provider} add cannot preserve '{key}'; edit its config file instead"
-        ));
-    }
-    let kind = object.get("type").and_then(serde_json::Value::as_str);
-    if remote.is_some() && !matches!(kind, None | Some("http") | Some("remote")) {
-        return Err(format!("{provider} CLI supports HTTP URLs only"));
-    }
-    if remote.is_none() && !matches!(kind, None | Some("stdio") | Some("local")) {
-        return Err("Local server type must be stdio".into());
-    }
-    let mut args = vec!["mcp".into(), "add".into(), name.into()];
-    if let Some(url) = remote {
-        let parsed = url::Url::parse(url).map_err(|_| "Invalid server URL")?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err("MCP URL must use HTTP or HTTPS".into());
-        }
-        args.extend(["--url".into(), url.into()]);
-        if let Some(var) = object
-            .get("bearerTokenEnvVar")
-            .and_then(serde_json::Value::as_str)
-        {
-            args.extend(["--bearer-token-env-var".into(), var.into()]);
-        }
-    } else {
-        args.extend(mcp_key_values(config, "env", "--env")?);
-        let command = object
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .filter(|s| !s.is_empty())
-            .ok_or("Local server needs a command")?;
-        let parameters = object
-            .get("args")
-            .map(|value| value.as_array().ok_or("args must be an array"))
-            .transpose()?;
-        args.push("--".into());
-        args.push(command.into());
-        for parameter in parameters.into_iter().flatten() {
-            args.push(
-                parameter
-                    .as_str()
-                    .ok_or("args must contain strings")?
-                    .into(),
-            );
-        }
-    }
-    Ok((binary, args))
-}
-
-fn mcp_key_values(
-    config: &serde_json::Value,
-    field: &str,
-    flag: &str,
-) -> Result<Vec<String>, String> {
-    let Some(value) = config.get(field) else {
-        return Ok(Vec::new());
-    };
-    let values = value
-        .as_object()
-        .ok_or_else(|| format!("{field} must be an object"))?;
-    let mut args = Vec::new();
-    for (key, value) in values {
-        let value = value
-            .as_str()
-            .ok_or_else(|| format!("{field} values must be strings"))?;
-        args.extend([flag.to_owned(), format!("{key}={value}")]);
-    }
-    Ok(args)
 }
 
 pub fn login(cwd: &str, provider: &str, name: &str) -> Result<(), String> {
@@ -941,6 +676,104 @@ pub fn claude_health(cwd: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The real entry point, in a child so its HOME and CLI paths are its own.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "run by adding_a_server_keeps_its_secrets_out_of_cli_arguments"]
+    fn add_server_in_child_process() {
+        let variable = |name: &str| std::env::var(name).unwrap();
+        let provider = variable("GESPAN_TEST_PROVIDER");
+        crate::cli::initialize(&std::collections::HashMap::from([(
+            provider.clone(),
+            variable("GESPAN_TEST_CLI"),
+        )]));
+        mcp_add(
+            variable("GESPAN_TEST_PROJECT"),
+            provider,
+            "user".into(),
+            "docs".into(),
+            variable("GESPAN_TEST_SERVER"),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adding_a_server_keeps_its_secrets_out_of_cli_arguments() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const ENV_SECRET: &str = "env-secret-value";
+        const HEADER_SECRET: &str = "Bearer header-secret-value";
+        let servers = [
+            serde_json::json!({"command":"node","env":{"API_KEY":ENV_SECRET}}),
+            serde_json::json!({
+                "type":"http",
+                "url":"https://example.com/mcp",
+                "headers":{"Authorization":HEADER_SECRET},
+            }),
+        ];
+        for (provider, config_file) in [("claude", ".claude.json"), ("codex", ".codex/config.toml")]
+        {
+            for server in &servers {
+                let root = tempfile::tempdir().unwrap();
+                let home = root.path().join("home");
+                let project = root.path().join("project");
+                std::fs::create_dir_all(&home).unwrap();
+                std::fs::create_dir_all(&project).unwrap();
+                let arguments = root.path().join("arguments");
+                let cli = root.path().join("fake-cli");
+                std::fs::write(
+                    &cli,
+                    format!(
+                        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n",
+                        arguments.display()
+                    ),
+                )
+                .unwrap();
+                std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--ignored",
+                        "--exact",
+                        "mcp::tests::add_server_in_child_process",
+                    ])
+                    .env("HOME", &home)
+                    .env_remove("CLAUDE_CONFIG_DIR")
+                    .env_remove("CODEX_HOME")
+                    .env("GESPAN_TEST_PROVIDER", provider)
+                    .env("GESPAN_TEST_CLI", &cli)
+                    .env("GESPAN_TEST_PROJECT", &project)
+                    .env("GESPAN_TEST_SERVER", server.to_string())
+                    .output()
+                    .unwrap();
+                assert!(
+                    status.status.success(),
+                    "{provider} {server}: {}",
+                    String::from_utf8_lossy(&status.stdout)
+                );
+
+                let spawned = std::fs::read_to_string(&arguments).unwrap_or_default();
+                let secret = if server.get("env").is_some() {
+                    ENV_SECRET
+                } else {
+                    HEADER_SECRET
+                };
+                assert!(!spawned.contains(secret), "{provider} argv: {spawned}");
+                let saved = std::fs::read_to_string(home.join(config_file)).unwrap();
+                assert!(saved.contains(secret), "{provider} lost the secret");
+                assert_eq!(
+                    std::fs::metadata(home.join(config_file))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o600
+                );
+            }
+        }
+    }
 
     #[test]
     fn parses_single_server_from_standard_json() {
