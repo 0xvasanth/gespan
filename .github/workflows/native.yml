@@ -75,6 +75,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: env.RUN == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # The tests' databases live in temp. On C: each flush takes about 4 ms,
+      # on D: about 0.3 ms, and the tests commit thousands of times.
+      - if: env.RUN == 'true' && runner.os == 'Windows'
+        name: Keep temp on the fast disk
+        run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - if: env.RUN == 'true'
         run: bun run native:test:dev
       - if: env.RUN == 'true'
@@ -135,9 +142,13 @@ jobs:
         uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-nextest@0.9.150
+      # The tests' databases live in temp. On C: each flush takes about 4 ms,
+      # on D: about 0.3 ms, and the tests commit thousands of times.
       - if: env.RUN == 'true' && runner.os == 'Windows'
-        name: Report Windows Defender state
-        run: Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, IsTamperProtected, AMRunningMode | Format-List
+        name: Keep temp on the fast disk
+        run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - if: env.RUN == 'true'
         run: cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
       - if: env.RUN == 'true'
