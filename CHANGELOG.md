@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The app is now called Gespan: `Gespan.app`, `Gespan_*.dmg`, `Gespan_*-setup.exe`,
+  `Gespan_*.AppImage` and the `gespan` `.deb` and `.rpm` packages. Your data,
+  settings and logs stay where they are. On Linux the packages replace
+  `gespan-native` and the old `Gespan` package; on Windows a beta install is
+  updated in its existing folder.
+
 ### Added
 
 - Gespan Native's GitHub Inbox works for projects on another machine. Issues,

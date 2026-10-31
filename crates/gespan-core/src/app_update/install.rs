@@ -142,7 +142,7 @@ fn extract_app(package: &Path, directory: &Path) -> Result<(), String> {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
         let mut components = path.components();
-        if components.next() != Some(Component::Normal("Gespan Native.app".as_ref()))
+        if components.next() != Some(Component::Normal("Gespan.app".as_ref()))
             || components.any(|c| !matches!(c, Component::Normal(_)))
         {
             return Err("The update archive contains an invalid app path".into());
@@ -182,7 +182,7 @@ fn install_mac(update: &Update, package: &Path, target: &Path) -> Result<Install
         Err(e) => return Err(e.to_string()),
     };
     extract_app(package, stage.path())?;
-    let prepared = stage.path().join("Gespan Native.app");
+    let prepared = stage.path().join("Gespan.app");
     let plist =
         fs::read_to_string(prepared.join("Contents/Info.plist")).map_err(|e| e.to_string())?;
     for expected in [
@@ -268,19 +268,18 @@ mod tests {
         let package = temp.path().join("package.tar.gz");
         let stage = temp.path().join("stage");
         fs::create_dir(&stage).unwrap();
-        archive(
-            &package,
-            "Gespan Native.app/Contents/MacOS/gespan-gpui",
-            false,
-        );
+        archive(&package, "Gespan.app/Contents/MacOS/gespan-gpui", false);
         extract_app(&package, &stage).unwrap();
         assert_eq!(
-            fs::read(stage.join("Gespan Native.app/Contents/MacOS/gespan-gpui")).unwrap(),
+            fs::read(stage.join("Gespan.app/Contents/MacOS/gespan-gpui")).unwrap(),
             b"hello"
         );
         archive(&package, "Another.app/Contents/file", false);
         assert!(extract_app(&package, &stage).is_err());
-        archive(&package, "Gespan Native.app/escape", true);
+        // A package built under the app's beta name is not this app.
+        archive(&package, "Gespan Native.app/Contents/file", false);
+        assert!(extract_app(&package, &stage).is_err());
+        archive(&package, "Gespan.app/escape", true);
         assert!(extract_app(&package, &stage).is_err());
         assert!(!temp.path().join("outside").exists());
     }

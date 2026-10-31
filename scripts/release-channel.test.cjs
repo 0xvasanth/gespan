@@ -196,8 +196,8 @@ test("only a stable tag becomes GitHub's latest release and mirrors outside nati
 
 test("only a stable tag moves the fixed download links, one per Mac architecture", () => {
   assert.deepEqual(nativeFixedDownloads({ GITHUB_REF_NAME: "v1.2.0" }), [
-    { file: "GespanNative_1.2.0_aarch64.dmg", key: "Gespan.dmg" },
-    { file: "GespanNative_1.2.0_x64.dmg", key: "Gespan_x64.dmg" },
+    { file: "Gespan_1.2.0_aarch64.dmg", key: "Gespan.dmg" },
+    { file: "Gespan_1.2.0_x64.dmg", key: "Gespan_x64.dmg" },
   ]);
   assert.deepEqual(nativeFixedDownloads({ GITHUB_REF_NAME: "v1.2.0-beta" }), []);
 });
@@ -219,7 +219,7 @@ test("the release workflow takes its channel from the tag at every step", () => 
   assert.match(stable, /^NATIVE_RELEASE_FLAGS=--prerelease=false --latest$/m);
   assert.match(cli("native-release-tag", "v1.2.0-beta").env, /^NATIVE_PRERELEASE=true$/m);
   assert.equal(cli("native-fixed-downloads", "v1.2.0").stdout,
-    "GespanNative_1.2.0_aarch64.dmg Gespan.dmg\nGespanNative_1.2.0_x64.dmg Gespan_x64.dmg\n");
+    "Gespan_1.2.0_aarch64.dmg Gespan.dmg\nGespan_1.2.0_x64.dmg Gespan_x64.dmg\n");
   assert.equal(cli("native-fixed-downloads", "v1.2.0-beta").stdout, "");
 
   const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");

@@ -461,7 +461,7 @@ pub(crate) fn options(
         // its controls as native titlebar double-click/drag gestures.
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         titlebar: Some(TitlebarOptions {
-            title: Some("Gespan Native".into()),
+            title: Some("Gespan".into()),
             // Windows also drops its caption: the app's drag areas
             // hit-test as the caption and the frame still resizes.
             appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),

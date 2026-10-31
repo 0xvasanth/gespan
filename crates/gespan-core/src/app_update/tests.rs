@@ -165,7 +165,7 @@ fn fixture_update() -> Update {
 fn installation() -> Installation {
     Installation {
         kind: PackageKind::App,
-        path: PathBuf::from("/Applications/Gespan Native.app"),
+        path: PathBuf::from("/Applications/Gespan.app"),
     }
 }
 #[test]

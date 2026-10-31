@@ -75,7 +75,7 @@ fn init_prunes_writes_both_apis_and_flushes() {
 
     let summary = diagnostics::summary();
     assert!(
-        summary.starts_with("Gespan Native 3.2.1 build 4f2a9c1e0b7d (release)\n"),
+        summary.starts_with("Gespan 3.2.1 build 4f2a9c1e0b7d (release)\n"),
         "{summary}"
     );
     assert!(

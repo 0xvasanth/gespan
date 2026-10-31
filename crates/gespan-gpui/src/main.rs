@@ -259,7 +259,7 @@ fn main() {
         .first()
         .is_some_and(|arg| arg == "--version" || arg == "-V")
     {
-        println!("Gespan Native {}", notifications::updater::version());
+        println!("Gespan {}", notifications::updater::version());
         return;
     }
     // stdout carries MCP frames only, and tracing is not set up yet.
@@ -400,7 +400,7 @@ fn main() {
             Ok(instance::Acquired::Lock(lock)) => Some(lock),
             Ok(instance::Acquired::Running(pid)) => {
                 if !pid.is_some_and(instance::activate) {
-                    tracing::info!("Gespan Native is already running with this data");
+                    tracing::info!("Gespan is already running with this data");
                 }
                 exit(0);
             }
@@ -547,7 +547,7 @@ fn main() {
         // Windows registers this AppUserModelID for toasts, which are
         // unavailable without it; Linux names notifications with it.
         #[cfg(not(target_os = "macos"))]
-        cx.set_app_identity("dev.gespan.native", "Gespan Native");
+        cx.set_app_identity("dev.gespan.native", "Gespan");
         flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
         #[cfg(debug_assertions)]
         dev_reload::install(cx);

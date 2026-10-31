@@ -262,7 +262,7 @@ impl Updater {
                         this.phase = Phase::Available;
                         this.message = Some(error.clone());
                         cx.emit(Event::Error(format!(
-                            "The update was installed. Reopen Gespan Native to finish: {error}"
+                            "The update was installed. Reopen Gespan to finish: {error}"
                         )));
                         this.changed(cx);
                     } else {
@@ -392,7 +392,7 @@ pub(crate) fn row(entity: Entity<Updater>, cx: &App) -> gpui::AnyElement {
         );
     if available {
         button = button
-            .aria_label("Install the available Gespan Native update")
+            .aria_label("Install the available Gespan update")
             .cursor_pointer()
             .hover(|s| s.bg(content(0.1)))
             .on_click(move |_, _, cx| action.update(cx, |updater, cx| updater.install(cx)));

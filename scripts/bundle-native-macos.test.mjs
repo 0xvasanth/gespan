@@ -47,7 +47,7 @@ test("Finder launches use development data for dev bundles and installed data fo
       assert.equal(packaged.status, 0, packaged.stdout + packaged.stderr);
       // Development data must never run under the installed app's name or identifier.
       const [name, id] =
-        mode === "dev-data" ? ["Gespan Native Dev", "dev.gespan.native.dev"] : ["Gespan Native", "dev.gespan.native"];
+        mode === "dev-data" ? ["Gespan Dev", "dev.gespan.native.dev"] : ["Gespan", "dev.gespan.native"];
       const bundle = join(output, `${name}.app/Contents`);
       const plist = await readFile(join(bundle, "Info.plist"), "utf8");
       assert.ok(plist.includes(`<key>GespanDataMode</key><string>${mode}</string>`));

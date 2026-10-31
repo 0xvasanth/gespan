@@ -164,7 +164,7 @@ test("macOS bundles automatically and preserves the selected data mode for Finde
       const packaged = f.calls.find((call) => call.command === "bash");
       assert.deepEqual(packaged.args, ["scripts/bundle-native-macos.sh", "native-dev", join(f.root, "custom-target"), "0.15.0", mode]);
       const app = f.calls.find((call) => !["cargo", "bash"].includes(call.command));
-      const appName = mode === "dev-data" ? "Gespan Native Dev.app" : "Gespan Native.app";
+      const appName = mode === "dev-data" ? "Gespan Dev.app" : "Gespan.app";
       assert.equal(app.command, join(f.root, `custom-target/native-dev/${appName}/Contents/MacOS/gespan-gpui`));
       assert.deepEqual(app.args, args);
       const events = await f.events();

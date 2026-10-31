@@ -2,7 +2,7 @@
 set -eu
 
 if [ "${1-}" != "--install-desktop" ]; then
-    exec "$APPDIR/usr/lib/gespan-native/gespan-gpui" "$@"
+    exec "$APPDIR/usr/lib/gespan/gespan-gpui" "$@"
 fi
 
 if [ "$#" -ne 1 ]; then
@@ -33,7 +33,7 @@ icons="$data_home/icons/hicolor/256x256/apps"
 exec_path=$(printf '%s' "$APPIMAGE" | sed 's/\\/\\\\\\\\/g; s/["`$]/\\\\&/g; s/%/%%/g')
 
 mkdir -p "$applications" "$icons"
-install -m 644 "$APPDIR/gespan-native.png" "$icons/gespan-native.png"
+install -m 644 "$APPDIR/gespan.png" "$icons/gespan.png"
 desktop=$(mktemp "$applications/.dev.gespan.native.desktop.XXXXXX")
 trap 'rm -f "$desktop"' 0
 sed '/^Exec=/d' "$APPDIR/dev.gespan.native.desktop" > "$desktop"
