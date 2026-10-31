@@ -51,6 +51,8 @@ tracing-log = { version = "0.2", default-features = false, features = ["log-trac
 # Report an issue: the scrubber and the bundle zip.
 gespan-redact = { path = "../gespan-redact" }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+# Spike for #295, throwaway branch.
+worktrunk = { version = "=0.81.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }

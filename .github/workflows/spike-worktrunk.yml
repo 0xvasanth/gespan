@@ -1,0 +1,61 @@
+name: Spike worktrunk (#295, do not merge)
+
+on:
+  push:
+    branches: [spike/worktrunk-295]
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: e320c90f
+
+jobs:
+  spike:
+    name: Spike (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        name: Install Linux GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libasound2-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libdbus-1-dev
+      - name: Build the spike
+        shell: bash
+        run: |
+          rustc --version
+          time cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --example worktrunk_spike --profile native-dev
+      - name: Run the spike
+        shell: bash
+        run: |
+          EXT=""; [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          crates/gespan-gpui/target/native-dev/examples/worktrunk_spike$EXT | tee spike-report.txt
+          { echo '```'; cat spike-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Release build with worktrunk
+        shell: bash
+        run: |
+          time cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --release --timings
+          EXT=""; [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          wc -c < crates/gespan-gpui/target/release/gespan-gpui$EXT > size-with.txt
+          cat size-with.txt
+          du -sh crates/gespan-gpui/target
+      - name: Release build at the base commit
+        shell: bash
+        run: |
+          git checkout "$BASE_SHA" -- crates/gespan-core/Cargo.toml crates/gespan-core/src/lib.rs crates/gespan-gpui/Cargo.lock crates/gespan-gpui/src/main.rs
+          rm crates/gespan-core/src/worktrunk_spike.rs crates/gespan-core/examples/worktrunk_spike.rs
+          time cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --release
+          EXT=""; [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          wc -c < crates/gespan-gpui/target/release/gespan-gpui$EXT > size-base.txt
+          WITH=$(cat size-with.txt); BASE=$(cat size-base.txt)
+          echo "SIZE $RUNNER_OS base=$BASE with=$WITH delta=$((WITH - BASE))" | tee -a "$GITHUB_STEP_SUMMARY"

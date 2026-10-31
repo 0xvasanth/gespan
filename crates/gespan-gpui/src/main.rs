@@ -254,6 +254,23 @@ fn main() {
     if let Some(code) = gespan_core::remote::ssh_askpass::maybe_run() {
         exit(code);
     }
+    // Spike for #295: only here so the release binary links the wrapper.
+    let spike: Vec<String> = std::env::args().collect();
+    if spike.len() == 5 && spike[1] == "worktrunk-spike" {
+        println!(
+            "{:?}",
+            gespan_core::worktrunk_spike::merged(spike[2].as_ref(), &spike[3], &spike[4])
+        );
+        println!(
+            "{:?}",
+            gespan_core::worktrunk_spike::copy(
+                spike[2].as_ref(),
+                spike[3].as_ref(),
+                spike[4].as_ref()
+            )
+        );
+        exit(0);
+    }
     let cli_args: Vec<_> = std::env::args().skip(1).collect();
     if cli_args
         .first()
