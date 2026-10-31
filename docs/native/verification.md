@@ -19,12 +19,14 @@ same isolation by running each GPUI test in its own process with
 cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci
 ```
 
+`gespan-first-launch` launches the binary `cargo build` made, so build it first.
+
 For focused work, run the relevant part:
 
 ```sh
 bun run native:test:dev
 cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
-cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings
+cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui -p gespan-first-launch --all-targets --profile native-dev -- -D warnings
 bun run native:test
 ```
 
