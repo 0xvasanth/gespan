@@ -1,0 +1,14 @@
+.github/workflows/native.yml
+  h_7bb0b8336911f0 75,133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eac80d3094980d20a1564e79d9f9201276662135",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
