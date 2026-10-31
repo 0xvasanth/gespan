@@ -359,7 +359,7 @@ jobs:
           set -euo pipefail
           GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}"
           echo "GESPAN_NATIVE_VERSION=$GESPAN_NATIVE_VERSION" >> "$GITHUB_ENV"
-          # The packages go on vX.Y.Z, shared with the Gespan (Tauri) release.
+          # The packages go on vX.Y.Z.
           # NATIVE_RELEASE_FLAGS keeps a prerelease off releases/latest and puts
           # a stable release on it, which is what publishes the stable feed.
           # Published files are never replaced: when this build's files are
@@ -368,8 +368,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/native-feed"
           if [ "$NATIVE_UPLOAD_PACKAGES" = true ]; then
             cp native-dist/latest.json "$RUNNER_TEMP/native-feed/latest.json"
-            # The versioned release keeps the signed feed under its own name, so
-            # it never collides with a stable Tauri release's latest.json.
+            # The versioned release keeps the signed feed under its own name.
             cp native-dist/latest.json native-dist/native-latest.json
             node --input-type=module -e 'import { readFileSync } from "node:fs"; for (const file of JSON.parse(readFileSync("native-dist/release-files.json"))) console.log(file);' > "$RUNNER_TEMP/native-files.txt"
           else

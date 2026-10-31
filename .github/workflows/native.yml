@@ -5,7 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
   # Every PR runs this workflow: its jobs are required checks on main, and a
-  # path filter would leave them unreported.
+  # path filter would leave them unreported. Unaffected jobs skip their steps
+  # instead; see scripts/ci-impact.mjs.
   pull_request:
 
 permissions:
@@ -16,34 +17,74 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  impact:
+    name: Impact
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      core: ${{ steps.impact.outputs.core }}
+      desktop: ${{ steps.impact.outputs.desktop }}
+      host: ${{ steps.impact.outputs.host }}
+      mobile: ${{ steps.impact.outputs.mobile }}
+      release: ${{ steps.impact.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: impact
+        run: node scripts/ci-impact.mjs
+
   core:
     name: Core (${{ matrix.os }})
+    needs: impact
+    # Always reports: these names are required checks on main, and a job-level
+    # skip would report a matrix name unexpanded. If impact fails, outputs are
+    # empty, so every step runs.
+    if: ${{ !cancelled() }}
+    env:
+      RUN: ${{ needs.impact.outputs.core != 'false' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - if: env.RUN == 'true'
+        uses: actions/checkout@v7
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Install Linux core dependencies
-        if: runner.os == 'Linux'
+      - if: env.RUN == 'true' && runner.os == 'Linux'
+        name: Install Linux core dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libdbus-1-dev libasound2-dev pkg-config
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - run: bun run native:test:dev
-      - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
-      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: |
+            crates/gespan-gpui -> target
+            . -> target
+          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pr-checks' }}
+      - if: env.RUN == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - if: env.RUN == 'true'
+        run: bun run native:test:dev
+      - if: env.RUN == 'true'
+        run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
+      - if: env.RUN == 'true'
+        run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
       # The crates Native shares with the mobile link are root-workspace
-      # members, so they run there. The Tauri app is its own workspace and is
-      # not built.
-      - name: Shared crates
+      # members, so they run there.
+      - if: env.RUN == 'true'
+        name: Shared crates
         shell: bash
         run: |
           set -euo pipefail
@@ -54,6 +95,13 @@ jobs:
 
   desktop:
     name: Gespan Native (${{ matrix.name }})
+    needs: impact
+    # Always reports: these names are required checks on main, and a job-level
+    # skip would report a matrix name unexpanded. If impact fails, outputs are
+    # empty, so every step runs.
+    if: ${{ !cancelled() }}
+    env:
+      RUN: ${{ needs.impact.outputs.desktop != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -66,19 +114,38 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - if: env.RUN == 'true'
+        uses: actions/checkout@v7
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       # The same GUI dependencies the release build installs.
-      - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
+      - if: env.RUN == 'true' && runner.os == 'Linux'
+        name: Install Linux GUI dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libasound2-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libdbus-1-dev
-      - run: cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
-      - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings
-      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
-      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev -- --test-threads=1
-      - run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: crates/gespan-gpui -> target
+          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pr-checks' }}
+      - if: env.RUN == 'true'
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-nextest@0.9.150
+      - if: env.RUN == 'true'
+        run: cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
+      - if: env.RUN == 'true'
+        run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings
+      # gespan-core's tests run in the Core job on the same OS. Each GUI test
+      # gets its own process, which isolates rendering state while they run in
+      # parallel. See crates/gespan-gpui/.config/nextest.toml.
+      - if: env.RUN == 'true'
+        run: cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci
+      # Not redundant: the tests enable gpui's test-support feature, so this is
+      # the only step that builds what ships.
+      - if: env.RUN == 'true'
+        run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev
 
