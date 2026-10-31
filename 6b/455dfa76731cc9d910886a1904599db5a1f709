@@ -1,0 +1,32 @@
+crates/gespan-core/src/lib.rs
+  s_cb876a427660a9::t_fece43c3d309e7 63
+crates/gespan-gpui/src/main.rs
+  s_cb876a427660a9::t_fece43c3d309e7 257-273
+.github/workflows/spike-worktrunk.yml
+  s_cb876a427660a9::t_562ea2be16bd28 1-61
+crates/gespan-core/src/worktrunk_spike.rs
+  s_cb876a427660a9::t_fece43c3d309e7 1-23
+crates/gespan-core/Cargo.toml
+  s_cb876a427660a9::t_aa60e7f3fe898e 54-55
+crates/gespan-core/examples/worktrunk_spike.rs
+  s_cb876a427660a9::t_387c9c1c89252b 1-229,242-504,506,508-625
+  s_cb876a427660a9::t_fece43c3d309e7 230-241,505,507
+crates/gespan-gpui/Cargo.lock
+  s_cb876a427660a9::t_542eed9326812d 166,225-302,383-429,927-949,1149-1154,1236-1256,1263-1268,1650-1697,1968-1973,2149-2158,2641,2880-2941,2953-2965,3744-3749,3781-3786,3802-3817,3965-3970,4508-4516,4777-4782,4808-4813,5004-5012,5371-5376,5447-5462,5517-5528,5583-5603,5846-5855,6417-6428,6467-6476,6752-6760,7066-7091,7121-7131,7364-7390,7418-7423,7479-7491,7621-7630,7702,7704,7870-7871,7874,8314-8319,8353-8358,8395-8432,8459-8468,9356-9431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b455dfa76731cc9d910886a1904599db5a1f709",
+  "prompts": {},
+  "sessions": {
+    "s_cb876a427660a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0837e8bd-ae1f-451b-b40f-52b04dccb54e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
