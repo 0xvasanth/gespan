@@ -5,6 +5,7 @@ pub mod app_access;
 pub mod app_update;
 pub mod automations;
 pub mod board;
+pub mod branch_merged;
 pub mod catalog;
 pub mod checkpoint;
 pub mod context;
@@ -59,4 +60,5 @@ pub mod search;
 pub mod cli;
 pub mod mcp;
 
+pub mod worktree_copy;
 pub mod worktree_management;

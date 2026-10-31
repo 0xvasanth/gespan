@@ -1,8 +1,12 @@
-//! Settings worktree guards; removal keeps the branch and commits.
+//! Settings worktree guards. Removal keeps the branch and commits, unless the
+//! branch is confirmed merged and the user asked for it to go too.
+use crate::branch_merged::{self, Merged};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+const NOT_MERGED: &str = "This branch isn’t merged, so it was kept.";
+const BRANCH_MOVED: &str = "This branch moved after it was checked, so it was kept.";
 const REMOVE_RETRIES: usize = 10;
 const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(200);
 pub fn default_root(main: &Path) -> PathBuf {
@@ -71,17 +75,72 @@ fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     crate::provider::discard_worktree(Path::new(&tree.path));
     crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path]).map(|_| ())
 }
+/// How the worktree's branch reached the default branch, if it has. A check
+/// that can't finish reads as not merged, which keeps the branch.
+pub fn merged(cwd: &Path, tree: &crate::git::Worktree) -> Option<Merged> {
+    let branch = tree.branch.as_deref()?;
+    branch_merged::merged(cwd, branch)
+        .inspect_err(|error| tracing::debug!(%error, "could not check a branch"))
+        .ok()
+        .flatten()
+}
+/// Deletes a merged local branch, if it is still at the commit that was checked
+/// and nothing has it checked out.
+pub fn delete_merged_branch(cwd: &Path, branch: &str, checked: &str) -> Result<(), String> {
+    let _span = tracing::info_span!("branch_delete").entered();
+    crate::diagnostics::metrics::track("branch.delete", delete_checked(cwd, branch, checked))
+        .inspect_err(|error| tracing::warn!(%error, "could not delete a branch"))
+}
+fn delete_checked(cwd: &Path, branch: &str, checked: &str) -> Result<(), String> {
+    let merged = branch_merged::merged(cwd, branch)?.ok_or(NOT_MERGED)?;
+    if merged.branch_sha != checked {
+        return Err(BRANCH_MOVED.into());
+    }
+    let open = crate::git::snapshot(cwd)?
+        .worktrees
+        .iter()
+        .any(|tree| tree.branch.as_deref() == Some(branch));
+    if open {
+        return Err("This branch is checked out in a worktree, so it was kept.".into());
+    }
+    delete_ref(cwd, branch, checked)
+}
+/// Git refuses unless the branch is still at `checked`, which closes the gap
+/// between the last check and the deletion.
+fn delete_ref(cwd: &Path, branch: &str, checked: &str) -> Result<(), String> {
+    let reference = format!("refs/heads/{branch}");
+    crate::git::git(cwd, &["update-ref", "-d", &reference, checked])
+        .map(|_| ())
+        .map_err(|_| BRANCH_MOVED.to_owned())
+}
+/// Removes a worktree and its branch together, when both are finished: clean,
+/// and merged. Anything less keeps both.
+pub fn remove_finished(cwd: &Path, path: &Path) -> Result<(), String> {
+    let tree = check(cwd, path)?;
+    if status(cwd, &tree).1 != Some(false) {
+        return Err("Files in this worktree have uncommitted changes.".into());
+    }
+    let merged = merged(cwd, &tree).ok_or(NOT_MERGED)?;
+    let branch = tree.branch.as_deref().ok_or(NOT_MERGED)?;
+    remove_unused(cwd, path)?;
+    delete_merged_branch(cwd, branch, &merged.branch_sha)
+}
+
 /// Whether nothing but `session` works in the worktree at `path`.
 pub fn only_used_by(path: &str, session: i64, users: &[(i64, String)]) -> bool {
+    only_used_by_any(path, &[session], users)
+}
+/// Whether nothing but `sessions` works in the worktree at `path`.
+pub fn only_used_by_any(path: &str, sessions: &[i64], users: &[(i64, String)]) -> bool {
     let real = |path: &str| {
         Path::new(path)
             .canonicalize()
             .map_or_else(|_| path.to_owned(), |p| p.to_string_lossy().into_owned())
     };
     let root = real(path);
-    users
-        .iter()
-        .all(|(id, cwd)| *id == session || !crate::files::is_equal_or_inside(&real(cwd), &root))
+    users.iter().all(|(id, cwd)| {
+        sessions.contains(id) || !crate::files::is_equal_or_inside(&real(cwd), &root)
+    })
 }
 /// The worktree at `path`, if removing `session` would leave it unused.
 pub fn unused_after(
@@ -212,6 +271,15 @@ mod tests {
         let _ = std::fs::remove_dir(default_root(dir.path()));
     }
     #[test]
+    fn a_run_owns_a_worktree_only_when_no_outside_session_uses_it() {
+        let users = [
+            (1, "/repo-tree".to_owned()),
+            (2, "/repo-tree/sub".to_owned()),
+        ];
+        assert!(only_used_by_any("/repo-tree", &[1, 2], &users));
+        assert!(!only_used_by_any("/repo-tree", &[1], &users));
+    }
+    #[test]
     fn only_used_by_sees_the_same_folder_through_another_spelling() {
         let dir = repo();
         let tree = crate::git::create_named_worktree(dir.path(), "spelled").unwrap();
@@ -278,6 +346,144 @@ mod tests {
             .iter()
             .any(|c| c.name == "worktree.remove" && c.kind.is_none()));
         let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+
+    /// A worktree on `name`, with one commit that `main` then squash-merges.
+    fn merged_tree(dir: &Path, name: &str) -> crate::git::Worktree {
+        let git = |cwd: &Path, args: &[&str]| crate::git::git(cwd, args).unwrap();
+        let tree = crate::git::create_named_worktree(dir, name).unwrap();
+        let path = Path::new(&tree.path);
+        std::fs::write(path.join(name), "work").unwrap();
+        git(path, &["add", "."]);
+        git(path, &["commit", "-m", "Work"]);
+        git(dir, &["merge", "--squash", name]);
+        git(dir, &["commit", "-m", "Squash"]);
+        tree
+    }
+    fn branch_exists(dir: &Path, name: &str) -> bool {
+        let reference = format!("refs/heads/{name}");
+        crate::git::git(dir, &["show-ref", "--verify", &reference]).is_ok()
+    }
+    #[test]
+    fn a_finished_worktree_goes_with_its_branch_in_one_action() {
+        let dir = repo();
+        let tree = merged_tree(dir.path(), "finished");
+        assert!(merged(dir.path(), &tree).is_some());
+        remove_finished(dir.path(), Path::new(&tree.path)).unwrap();
+        assert!(!Path::new(&tree.path).exists());
+        assert!(!branch_exists(dir.path(), "finished"));
+        let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+    #[test]
+    fn an_unfinished_worktree_keeps_everything() {
+        let dir = repo();
+        let main = dir.path();
+        let tree = crate::git::create_named_worktree(main, "unfinished").unwrap();
+        let path = Path::new(&tree.path);
+        std::fs::write(path.join("new"), "work").unwrap();
+        crate::git::git(path, &["add", "."]).unwrap();
+        crate::git::git(path, &["commit", "-m", "Work"]).unwrap();
+        assert!(merged(main, &tree).is_none());
+        let refused = remove_finished(main, path).unwrap_err();
+        assert_eq!(refused, NOT_MERGED);
+        assert!(path.exists());
+        assert!(branch_exists(main, "unfinished"));
+        remove(main, path).unwrap();
+        let _ = std::fs::remove_dir(default_root(main));
+    }
+    #[test]
+    fn dirty_locked_and_detached_worktrees_are_refused() {
+        let dir = repo();
+        let main = dir.path();
+        let tree = merged_tree(main, "guarded");
+        let path = Path::new(&tree.path);
+        std::fs::write(path.join("untracked"), "keep me").unwrap();
+        let refused = remove_finished(main, path).unwrap_err();
+        assert!(refused.contains("uncommitted"), "{refused}");
+        std::fs::remove_file(path.join("untracked")).unwrap();
+        crate::git::git(main, &["worktree", "lock", "--", &tree.path]).unwrap();
+        let refused = remove_finished(main, path).unwrap_err();
+        assert!(refused.contains("locked"), "{refused}");
+        crate::git::git(main, &["worktree", "unlock", "--", &tree.path]).unwrap();
+        crate::git::git(path, &["checkout", "--detach"]).unwrap();
+        let refused = remove_finished(main, path).unwrap_err();
+        assert!(refused.contains("detached"), "{refused}");
+        assert!(path.exists());
+        assert!(branch_exists(main, "guarded"));
+        crate::git::git(main, &["worktree", "remove", "--force", "--", &tree.path]).unwrap();
+        let _ = std::fs::remove_dir(default_root(main));
+    }
+    #[test]
+    fn a_branch_that_moved_after_the_check_is_kept() {
+        let dir = repo();
+        let main = dir.path();
+        let tree = merged_tree(main, "moving");
+        let path = Path::new(&tree.path);
+        let checked = merged(main, &tree).unwrap().branch_sha;
+        std::fs::write(path.join("more"), "more work").unwrap();
+        crate::git::git(path, &["add", "."]).unwrap();
+        crate::git::git(path, &["commit", "-m", "More"]).unwrap();
+        let moved = crate::git::git(main, &["rev-parse", "moving"]).unwrap();
+        remove_unused(main, path).unwrap();
+        // Still merged-looking checks can't hide the move: it is refused first
+        // as unmerged, and Git itself refuses the stale commit.
+        assert_eq!(
+            delete_merged_branch(main, "moving", &checked),
+            Err(NOT_MERGED.into())
+        );
+        assert_eq!(
+            delete_ref(main, "moving", &checked),
+            Err(BRANCH_MOVED.into())
+        );
+        assert_eq!(
+            crate::git::git(main, &["rev-parse", "moving"]).unwrap(),
+            moved
+        );
+        let _ = std::fs::remove_dir(default_root(main));
+    }
+    #[test]
+    fn a_merged_branch_at_a_new_commit_is_kept_too() {
+        let dir = repo();
+        let main = dir.path();
+        crate::git::git(main, &["branch", "stale"]).unwrap();
+        let checked = crate::git::git(main, &["rev-parse", "stale"]).unwrap();
+        std::fs::write(main.join("file"), "after").unwrap();
+        crate::git::git(main, &["commit", "-am", "Move main"]).unwrap();
+        crate::git::git(main, &["branch", "-f", "stale", "main"]).unwrap();
+        assert_eq!(
+            delete_merged_branch(main, "stale", checked.trim()),
+            Err(BRANCH_MOVED.into())
+        );
+        assert!(branch_exists(main, "stale"));
+    }
+    #[test]
+    fn a_checked_out_branch_is_kept() {
+        let dir = repo();
+        let main = dir.path();
+        let tree = merged_tree(main, "open");
+        let checked = merged(main, &tree).unwrap().branch_sha;
+        let refused = delete_merged_branch(main, "open", &checked).unwrap_err();
+        assert!(refused.contains("checked out"), "{refused}");
+        assert!(branch_exists(main, "open"));
+        remove(main, Path::new(&tree.path)).unwrap();
+        let _ = std::fs::remove_dir(default_root(main));
+    }
+    #[test]
+    fn a_new_worktree_gets_its_included_files() {
+        let dir = repo();
+        let main = dir.path();
+        std::fs::write(main.join(".gitignore"), ".env\n").unwrap();
+        std::fs::write(main.join(".worktreeinclude"), ".env\n").unwrap();
+        crate::git::git(main, &["add", "."]).unwrap();
+        crate::git::git(main, &["commit", "-m", "Rules"]).unwrap();
+        std::fs::write(main.join(".env"), "local").unwrap();
+        let tree = crate::git::create_named_worktree(main, "seeded").unwrap();
+        assert!(Path::new(&tree.path).join(".env").exists());
+        let session = crate::git::create_worktree(main, "HEAD", 7).unwrap();
+        assert!(session.join(".env").exists());
+        remove(main, Path::new(&tree.path)).unwrap();
+        remove(main, &session).unwrap();
+        let _ = std::fs::remove_dir(default_root(main));
     }
 
     #[test]

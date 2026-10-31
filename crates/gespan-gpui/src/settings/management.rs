@@ -21,6 +21,7 @@ pub(super) struct Editor {
     pub base: String,
     pub existing: bool,
     pub delete_sessions: bool,
+    pub delete_branch: bool,
     pub busy: bool,
     pub error: Option<String>,
     pub editing: bool,
@@ -113,6 +114,7 @@ impl SettingsView {
             base: "HEAD".into(),
             existing: false,
             delete_sessions: false,
+            delete_branch: false,
             busy: false,
             error: None,
             editing: false,
@@ -239,6 +241,12 @@ impl SettingsView {
                 cwd,
                 path: tree.tree.path,
                 delete_sessions: editor.delete_sessions,
+                delete_branch: tree
+                    .tree
+                    .branch
+                    .clone()
+                    .zip(tree.merged.as_ref().map(|merged| merged.branch_sha.clone()))
+                    .filter(|_| editor.delete_branch && tree.dirty == Some(false)),
             });
             cx.notify();
             return;
@@ -287,6 +295,7 @@ impl SettingsView {
         let existing = e.existing;
         let base = e.base.clone();
         let deleting = e.delete_sessions;
+        let deleting_branch = e.delete_branch;
         let editing = e.editing;
         let inspection = e.inspection.clone();
         let mut rows = Vec::new();
@@ -598,10 +607,23 @@ impl SettingsView {
                             .child("All uncommitted and untracked changes here are discarded."),
                     );
                 }
-                consequences = consequences.child(format!(
-                    "The {} branch and its commits are kept.",
-                    tree.tree.branch.as_deref().unwrap_or("worktree")
-                ));
+                let branch = tree.tree.branch.as_deref().unwrap_or("worktree");
+                let can_delete_branch = tree.merged.is_some() && tree.dirty == Some(false);
+                if let Some(merged) = &tree.merged {
+                    consequences = consequences.child(format!("Merged: {}.", merged.reason()));
+                    if merged.how == gespan_core::branch_merged::How::SameChange {
+                        consequences = consequences.child(
+                            div()
+                                .text_color(gpui::rgb(0xfbbf24))
+                                .child("A later commit may have undone that change."),
+                        );
+                    }
+                }
+                consequences = consequences.child(if deleting_branch && can_delete_branch {
+                    format!("The {branch} branch is deleted.")
+                } else {
+                    format!("The {branch} branch and its commits are kept.")
+                });
                 if tree.unpushed > 0 {
                     consequences = consequences.child(format!(
                         "{} unpublished commits stay on the branch.",
@@ -609,6 +631,35 @@ impl SettingsView {
                     ));
                 }
                 rows.push(consequences.into_any_element());
+                if can_delete_branch {
+                    rows.push(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .gap_3()
+                            .p_3()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(content(0.1))
+                            .text_size(px(12.5))
+                            .child("Also delete the merged branch")
+                            .child(self.toggle(
+                                "delete-worktree-branch",
+                                "Also delete the merged branch",
+                                deleting_branch,
+                                busy,
+                                cx,
+                                |this, on, cx| {
+                                    if let Some(e) = &mut this.management {
+                                        e.delete_branch = on;
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                            .into_any_element(),
+                    );
+                }
                 if count > 0 {
                     rows.push(
                         div()
@@ -734,11 +785,12 @@ impl SettingsView {
                     "Reset Pilot"
                 }
             }
-            Target::DeleteTree(_) => {
-                if deleting {
-                    "Delete worktree and sessions"
-                } else {
-                    "Delete worktree"
+            Target::DeleteTree(ref tree) => {
+                match (deleting, deleting_branch && tree.merged.is_some()) {
+                    (true, true) => "Delete worktree, branch and sessions",
+                    (true, false) => "Delete worktree and sessions",
+                    (false, true) => "Delete worktree and branch",
+                    (false, false) => "Delete worktree",
                 }
             }
         };
