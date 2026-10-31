@@ -95,4 +95,12 @@ for (const [label, eol] of [
       assert.match(await read("src-tauri/Cargo.lock"), locked(name));
     for (const name of ["gespan-models", "gespan-speech"])
       assert.match(await read("Cargo.lock"), locked(name));
+    for (const name of [
+      "gespan-core",
+      "gespan-first-launch",
+      "gespan-gpui",
+      "gespan-models",
+      "gespan-speech",
+    ])
+      assert.match(await read("crates/gespan-gpui/Cargo.lock"), locked(name));
   });
