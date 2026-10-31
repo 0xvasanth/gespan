@@ -32,6 +32,16 @@ pub struct Copied {
     pub skipped: usize,
 }
 
+/// Git lists entries with `/`, which a canonical Windows path (`\\?\...`) takes
+/// literally. So files are reached through the paths as given, and the real
+/// paths are only for checking where something leads.
+struct Roots<'a> {
+    main: &'a Path,
+    worktree: &'a Path,
+    real_main: PathBuf,
+    real_worktree: PathBuf,
+}
+
 #[derive(Default)]
 struct Tally {
     files: AtomicUsize,
@@ -73,12 +83,16 @@ pub fn copy_included(main: &Path, worktree: &Path) -> Result<Copied, String> {
                 .is_ignore()
         })
         .collect();
-    let root = worktree.canonicalize().map_err(|error| error.to_string())?;
-    let source_root = main.canonicalize().map_err(|error| error.to_string())?;
+    let roots = Roots {
+        main,
+        worktree,
+        real_main: main.canonicalize().map_err(|error| error.to_string())?,
+        real_worktree: worktree.canonicalize().map_err(|error| error.to_string())?,
+    };
     let tally = Tally::default();
     let copy = || {
         entries.par_iter().try_for_each(|entry| {
-            copy_entry(&source_root, &root, Path::new(entry), &tally)
+            copy_entry(&roots, Path::new(entry), &tally)
                 .map_err(|error| format!("Could not copy {entry}: {error}"))
         })
     };
@@ -99,9 +113,9 @@ fn is_in_git_folder(path: &Path) -> bool {
         .any(|part| matches!(part, Component::Normal(name) if name == ".git"))
 }
 
-fn copy_entry(main: &Path, worktree: &Path, entry: &Path, tally: &Tally) -> io::Result<()> {
-    let source = main.join(entry);
-    let dest = worktree.join(entry);
+fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
+    let source = roots.main.join(entry);
+    let dest = roots.worktree.join(entry);
     let metadata = match fs::symlink_metadata(&source) {
         Ok(metadata) => metadata,
         // A running build can delete files behind Git's listing.
@@ -117,13 +131,13 @@ fn copy_entry(main: &Path, worktree: &Path, entry: &Path, tally: &Tally) -> io::
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
         // A tracked symlink in the worktree must not carry the copy elsewhere.
-        if !parent.canonicalize()?.starts_with(worktree) {
+        if !parent.canonicalize()?.starts_with(&roots.real_worktree) {
             tally.skipped.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
     }
     if metadata.is_symlink() {
-        let copied = copy_symlink(main, &source, &dest)?;
+        let copied = copy_symlink(&roots.real_main, &source, &dest)?;
         let counter = if copied { &tally.files } else { &tally.skipped };
         counter.fetch_add(1, Ordering::Relaxed);
         return Ok(());
@@ -228,8 +242,7 @@ mod tests {
     /// A repository with a linked worktree, and `ignored` in `.gitignore`.
     fn repo(ignored: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let main = root.join("main");
+        let main = dir.path().join("main");
         fs::create_dir(&main).unwrap();
         run(&main, &["init", "-qb", "main"]);
         run(&main, &["config", "user.name", "Test"]);
@@ -239,7 +252,7 @@ mod tests {
         write(&main, "tracked.txt", "from git\n");
         run(&main, &["add", "."]);
         run(&main, &["commit", "-qm", "Start"]);
-        let tree = root.join("tree");
+        let tree = dir.path().join("tree");
         run(
             &main,
             &["worktree", "add", "-q", "-b", "w", tree.to_str().unwrap()],
