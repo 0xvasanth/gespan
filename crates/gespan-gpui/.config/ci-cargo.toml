@@ -1,0 +1,8 @@
+# CI's build and test steps only: the app keeps opt-level 1 for development.
+# opt-level 0 compiles gespan-gpui at least twice as fast. rust-lld links faster
+# than link.exe.
+[profile.native-dev.package.gespan-gpui]
+opt-level = 0
+
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

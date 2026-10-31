@@ -40,8 +40,8 @@ test("a change to the GUI crate runs Core, because a Core test scans its source"
   assert.match(await read("crates/gespan-core/tests/shared_contracts.rs"), /\["gespan-core", "gespan-gpui"\]/);
 });
 
-test("GUI tests and assets stay with the GUI job", () => {
-  assert.deepEqual(affected("crates/gespan-gpui/tests/first_launch.rs", "crates/gespan-gpui/assets/gespan.png"), ["desktop"]);
+test("GUI fixtures, assets and the first-launch tests stay with the GUI job", () => {
+  assert.deepEqual(affected("crates/gespan-gpui/tests/fixtures/large.tsx", "crates/gespan-gpui/assets/gespan.png", "crates/gespan-first-launch/tests/first_launch.rs"), ["desktop"]);
 });
 
 test("shared crates and vendored GPUI run both Native jobs", () => {
@@ -76,5 +76,5 @@ test("one unknown file among known ones still runs every piece", () => {
 });
 
 test("pieces union across files", () => {
-  assert.deepEqual(affected("mobile/src/app.tsx", "crates/gespan-gpui/tests/first_launch.rs"), ["desktop", "mobile"]);
+  assert.deepEqual(affected("mobile/src/app.tsx", "crates/gespan-gpui/tests/fixtures/large.tsx"), ["desktop", "mobile"]);
 });

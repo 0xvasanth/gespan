@@ -2398,6 +2398,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-first-launch"
+version = "0.0.3-beta"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+]
+
+[[package]]
 name = "gespan-gpui"
 version = "0.0.3-beta"
 dependencies = [

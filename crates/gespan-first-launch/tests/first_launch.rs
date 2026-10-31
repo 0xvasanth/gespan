@@ -21,8 +21,24 @@ fn tauri_data_dir(home: &Path) -> PathBuf {
     base.join("dev.gespan.desktop")
 }
 
+/// The binary that ships, which a test build would not be.
+fn binary() -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../gespan-gpui/target"),
+        PathBuf::from,
+    );
+    let name = format!("gespan-gpui{}", std::env::consts::EXE_SUFFIX);
+    let path = target.join("native-dev").join(name);
+    assert!(
+        path.is_file(),
+        "{} is missing: build gespan-gpui with --profile native-dev first",
+        path.display()
+    );
+    path
+}
+
 fn launch(home: &Path, xdg_data_home: Option<&Path>) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_gespan-gpui"));
+    let mut command = Command::new(binary());
     command
         .args(["--gespan-data", "--check-data"])
         .env("HOME", home)
