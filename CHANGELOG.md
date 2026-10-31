@@ -16,10 +16,9 @@ app on TestFlight. The app is now called Gespan and is the only desktop app.
 release's assets. Your data stays where it is. On macOS, delete
 `Gespan Native.app` afterwards.
 
-This release is not signed with an Apple Developer ID or a Windows code-signing
-certificate. On macOS, open it the first time with Control-click → Open, and if
-macOS still refuses, run `xattr -dr com.apple.quarantine /Applications/Gespan.app`.
-On Windows, choose **More info → Run anyway** in SmartScreen.
+The macOS app is signed with an Apple Developer ID and notarized. The Windows
+installer isn't code-signed yet, so choose **More info → Run anyway** in
+SmartScreen the first time.
 
 ### Changed
 
