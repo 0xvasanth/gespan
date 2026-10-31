@@ -385,6 +385,73 @@ mod tests {
             }
         }
     }
+    fn exit_plan_mode(input: Value) -> Value {
+        json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":input}})
+    }
+    fn written(out: &[u8]) -> Value {
+        serde_json::from_slice(out).unwrap()
+    }
+    #[test]
+    fn claude_exit_plan_mode_hands_over_the_plan_without_refusing_it() {
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.plan = true;
+        let mut out = Vec::new();
+        let events = p
+            .frame(exit_plan_mode(json!({"plan":"# Plan\n- one"})), &mut out)
+            .unwrap();
+        assert_eq!(events, vec![Event::Plan("# Plan\n- one".into())]);
+        let response = &written(&out)["response"];
+        assert_eq!(response["request_id"], "r");
+        assert_eq!(response["response"]["behavior"], "deny");
+        let message = response["response"]["message"].as_str().unwrap();
+        assert!(message.contains("captured your proposed plan"), "{message}");
+        assert!(
+            !message.contains("Denied"),
+            "the user refused nothing: {message}"
+        );
+    }
+    #[test]
+    fn claude_exit_plan_mode_without_a_plan_still_ends_the_request() {
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.plan = true;
+        let mut out = Vec::new();
+        let events = p.frame(exit_plan_mode(json!({})), &mut out).unwrap();
+        assert_eq!(events, Vec::<Event>::new());
+        assert_eq!(written(&out)["response"]["response"]["behavior"], "deny");
+    }
+    #[test]
+    fn other_claude_tools_stay_denied_in_a_plan_turn() {
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.plan = true;
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}), &mut out)
+            .unwrap();
+        assert!(!events.iter().any(|event| matches!(event, Event::Plan(_))));
+        assert_eq!(
+            written(&out)["response"]["response"]["message"],
+            "Denied by the user"
+        );
+    }
+    #[test]
+    fn a_codex_plan_item_is_handed_over_when_it_completes() {
+        let mut p = protocol(Kind::Codex);
+        let mut out = Vec::new();
+        let item = |method: &str, text: &str| json!({"method":method,"params":{"item":{"type":"plan","id":"p","text":text}}});
+        assert_eq!(
+            p.frame(item("item/started", ""), &mut out).unwrap(),
+            Vec::<Event>::new()
+        );
+        assert_eq!(
+            p.frame(item("item/completed", "## Add it\n- one"), &mut out)
+                .unwrap(),
+            vec![Event::Plan("## Add it\n- one".into())]
+        );
+        assert_eq!(
+            p.frame(item("item/completed", ""), &mut out).unwrap(),
+            Vec::<Event>::new()
+        );
+    }
     #[test]
     fn claude_questions_return_the_original_input_and_typed_answers() {
         let mut p = protocol(Kind::Claude);

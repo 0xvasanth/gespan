@@ -90,6 +90,9 @@ pub struct Request {
     pub settings: Settings,
 }
 
+/// Claude's ExitPlanMode answer: the card is the review, so it stops here.
+const PLAN_CAPTURED: &str = "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.";
+
 // Events are short-lived batches; boxing every tool snapshot would only move
 // the same bytes to the heap and touch every consumer's pattern.
 #[allow(clippy::large_enum_variant)]
@@ -127,6 +130,8 @@ pub enum Event {
         custom_type: String,
         severity: Option<String>,
     },
+    /// A plan the provider hands over for review, as the Tauri app's `plan` event.
+    Plan(String),
     /// A finished image as base64 PNG data, which the runtime saves.
     GeneratedImage {
         id: String,
@@ -700,6 +705,12 @@ impl Protocol {
                         );
                     }
                     "item/started" if p["item"]["type"] == "agentMessage" => {}
+                    "item/started" if p["item"]["type"] == "plan" => {}
+                    "item/completed" if p["item"]["type"] == "plan" => {
+                        if let Some(plan) = p["item"]["text"].as_str().filter(|t| !t.is_empty()) {
+                            events.push(Event::Plan(plan.into()));
+                        }
+                    }
                     "item/started" if p["item"]["type"] == "imageGeneration" => {}
                     "item/completed" if p["item"]["type"] == "imageGeneration" => {
                         let item = &p["item"];
@@ -1063,6 +1074,16 @@ impl Protocol {
                                     request.clone(),
                                     &mut events,
                                     stdin,
+                                )?;
+                                return Ok(events);
+                            }
+                            if request["tool_name"] == "ExitPlanMode" {
+                                if let Some(plan) = request["input"]["plan"].as_str() {
+                                    events.push(Event::Plan(plan.into()));
+                                }
+                                write_json(
+                                    stdin,
+                                    json!({"type":"control_response","response":{"subtype":"success","request_id":v["request_id"],"response":{"behavior":"deny","message":PLAN_CAPTURED}}}),
                                 )?;
                                 return Ok(events);
                             }

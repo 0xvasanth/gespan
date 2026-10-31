@@ -946,6 +946,15 @@ fn run_turn_using(
                             pending.changed(at);
                             boundary = true;
                         }
+                        Event::Plan(plan) => {
+                            if let Some(at) =
+                                gespan_core::plan::add(&mut transcript.rows, turn_start, &plan)
+                            {
+                                start = start.min(at);
+                                pending.changed(at);
+                                boundary = true;
+                            }
+                        }
                         Event::GeneratedImage { id, data, alt } => {
                             // GeneratedImage.tsx: the PNG is a file in the data
                             // folder and the row names it.

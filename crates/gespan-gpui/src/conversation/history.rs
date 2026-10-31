@@ -18,7 +18,25 @@ impl Conversation {
         self.history_actions.push_back(Box::new(action));
         self.load(cx);
     }
+    /// A plan waiting to start was only held in memory, and the chat no longer
+    /// shows its JSON, so the first load brings its card back.
+    fn restore_orchestration_plan(&mut self, cx: &mut Context<Self>) {
+        if self.orchestration_plan_checked || !self.history_ready() {
+            return;
+        }
+        self.orchestration_plan_checked = true;
+        if self.orchestration_plan.is_none()
+            && !self.busy
+            && !self.planning_orchestration
+            && let Some(plan) =
+                gespan_core::orchestration::pending_plan(self.transcript.read(cx).source_rows())
+        {
+            self.set_orchestration_plan(Some(plan));
+            cx.notify();
+        }
+    }
     pub(super) fn run_history_actions(&mut self, cx: &mut Context<Self>) {
+        self.restore_orchestration_plan(cx);
         while self.history_ready() && !self.stopping && !self.editing_last_turn.pending() {
             let Some(action) = self.history_actions.pop_front() else {
                 break;
