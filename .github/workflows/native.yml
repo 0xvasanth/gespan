@@ -141,11 +141,12 @@ jobs:
         run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings
       # gespan-core's tests run in the Core job on the same OS. Each GUI test
       # gets its own process, which isolates rendering state while they run in
-      # parallel. See crates/gespan-gpui/.config/nextest.toml.
+      # parallel. See crates/gespan-gpui/.config/nextest.toml. opt-level 0 builds
+      # this crate about four times faster, and the tests run no slower.
       - if: env.RUN == 'true'
-        run: cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci
+        run: cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci --config 'profile.native-dev.package.gespan-gpui.opt-level=0'
       # Not redundant: the tests enable gpui's test-support feature, so this is
       # the only step that builds what ships.
       - if: env.RUN == 'true'
-        run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev
+        run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev --config 'profile.native-dev.package.gespan-gpui.opt-level=0'
 

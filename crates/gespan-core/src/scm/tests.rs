@@ -885,6 +885,45 @@ fn pr_create_rejects_empty_title() {
     );
 }
 
+#[test]
+fn git_is_not_started_for_a_folder_that_is_gone() {
+    let dir = tmp();
+    let gone = dir.path().join("deleted-project");
+    assert!(git_output(&gone, &["status"]).is_none());
+    assert!(git_stdout(&gone, &["rev-parse", "HEAD"]).is_none());
+    // git's own failure here would read "cannot change to", so this message
+    // shows no process was started.
+    assert_eq!(
+        git_checked(&gone, &["status"]).unwrap_err(),
+        format!("{} is not a folder", gone.display())
+    );
+    assert_eq!(diff_index_with(&gone, true).files.len(), 0);
+}
+
+#[test]
+fn git_is_not_started_for_a_file() {
+    let dir = tmp();
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "x").unwrap();
+    assert!(git_output(&file, &["status"]).is_none());
+    assert_eq!(
+        git_checked(&file, &["status"]).unwrap_err(),
+        format!("{} is not a folder", file.display())
+    );
+}
+
+#[test]
+fn a_project_deleted_after_it_loaded_stops_reporting_changes() {
+    let dir = tmp();
+    let project = dir.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    assert!(init_git(&project, "main"));
+    std::fs::write(project.join("a.txt"), "one\n").unwrap();
+    assert!(git_stdout(&project, &["rev-parse", "--is-inside-work-tree"]).is_some());
+    std::fs::remove_dir_all(&project).unwrap();
+    assert!(git_stdout(&project, &["rev-parse", "--is-inside-work-tree"]).is_none());
+}
+
 fn git_cmd_path(cmd: &Command) -> Vec<PathBuf> {
     let path = cmd
         .get_envs()

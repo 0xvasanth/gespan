@@ -1233,6 +1233,9 @@ fn git_cmd_for_args(args: &[&str]) -> Command {
 }
 
 fn git_checked(root: &Path, args: &[&str]) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("{} is not a folder", root.display()));
+    }
     let mut cmd = git_cmd_for_args(args);
     let output = cmd
         .arg("--no-pager")
@@ -1277,7 +1280,12 @@ fn git_run(root: &Path, args: &[&str]) -> Option<String> {
     git_output(root, args).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// A deleted project still gets polled, and each git launch can take 50ms on
+/// Windows only to fail.
 fn git_output(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    if !root.is_dir() {
+        return None;
+    }
     let output = git_cmd_for_args(args)
         .arg("--no-pager")
         .arg("-C")
@@ -1445,6 +1453,9 @@ pub fn git_dirs(root: &Path) -> Vec<std::path::PathBuf> {
 }
 
 fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
+    if !root.is_dir() {
+        return None;
+    }
     let output = git_cmd().arg("-C").arg(root).args(args).output().ok()?;
     if !output.status.success() {
         return None;

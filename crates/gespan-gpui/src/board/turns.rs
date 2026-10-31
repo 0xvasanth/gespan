@@ -562,13 +562,11 @@ mod tests {
     }
 
     fn setup(cx: &mut TestAppContext, link: Option<(&str, &str)>) -> Setup {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "gespan-board-turns-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("gespan-board-turns-")
+            .tempdir()
+            .unwrap()
+            .keep();
         let db = dir.join("gespan.db");
         let store = Store::open_gespan(Path::new(":memory:")).unwrap();
         let session = store.create("codex", "/work").unwrap().id;

@@ -148,6 +148,9 @@ pub(crate) struct Inbox {
     ask: ask_panel::AskPanel,
     #[cfg(test)]
     offline: Offline,
+    /// Refreshes stay away from the real gh and trackers unless a test opts in.
+    #[cfg(test)]
+    live_refresh: bool,
     active: bool,
     refresh_queued: bool,
     notifications: model::NotificationTracker,
@@ -385,6 +388,8 @@ impl Inbox {
             ask: Default::default(),
             #[cfg(test)]
             offline: Offline::Live,
+            #[cfg(test)]
+            live_refresh: false,
             active: false,
             refresh_queued: false,
             notifications: model::NotificationTracker::default(),
@@ -566,8 +571,16 @@ impl Inbox {
         let projects = self.projects.clone();
         let scope = self.fetch_scope();
         let store = self.store.clone();
+        #[cfg(not(test))]
+        let live = true;
+        #[cfg(test)]
+        let live = self.live_refresh;
         let task = cx.background_executor().spawn(async move {
-            let snapshot = service.list(&projects, &state);
+            let snapshot = if live {
+                service.list(&projects, &state)
+            } else {
+                Default::default()
+            };
             let sessions = locked(&store)
                 .and_then(|db| db.sessions())
                 .unwrap_or_default();
