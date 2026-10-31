@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
+const { releaseDecision, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -427,4 +427,77 @@ test("the recovery CLI checks the native feed copy against the shared release", 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const greenRuns = [
+  { workflowName: "CI", conclusion: "success" },
+  { workflowName: "Gespan Native Preview", conclusion: "success" },
+];
+const decide = (changes) =>
+  releaseDecision({ version: "0.0.4", sha: "abc", tagSha: "", release: null, runs: greenRuns, ...changes });
+
+test("a new version on a green commit is released", () => {
+  assert.deepEqual(
+    { ...decide({}), reason: undefined },
+    { release: true, tag: "v0.0.4", reason: undefined },
+  );
+});
+
+test("a version is not released until every check has passed on that commit", () => {
+  assert.equal(decide({ runs: [] }).release, false);
+  assert.equal(decide({ runs: greenRuns.slice(0, 1) }).release, false);
+  const failed = decide({ runs: [{ workflowName: "CI", conclusion: "failure" }, greenRuns[1]] });
+  assert.equal(failed.release, false);
+  assert.match(failed.reason, /CI has not passed/);
+  assert.equal(decide({ runs: [{ workflowName: "CI", conclusion: null }, greenRuns[1]] }).release, false);
+});
+
+test("the newest run of a check decides, so a rerun that passed counts and one that failed doesn't", () => {
+  const passed = { workflowName: "CI", conclusion: "success" };
+  const failed = { workflowName: "CI", conclusion: "failure" };
+  assert.equal(decide({ runs: [passed, failed, greenRuns[1]] }).release, true);
+  assert.equal(decide({ runs: [failed, passed, greenRuns[1]] }).release, false);
+});
+
+test("a published version is never released again", () => {
+  assert.deepEqual(decide({ tagSha: "abc", release: { isDraft: false } }).release, false);
+  assert.match(decide({ tagSha: "old", release: { isDraft: false } }).reason, /already published/);
+});
+
+test("a tag or draft from a failed run on the same commit is finished by a rerun", () => {
+  assert.equal(decide({ tagSha: "abc" }).release, true);
+  assert.equal(decide({ tagSha: "abc", release: { isDraft: true } }).release, true);
+});
+
+test("a tag on another commit stops the release instead of moving the tag", () => {
+  const moved = decide({ tagSha: "old", release: { isDraft: true } });
+  assert.equal(moved.release, false);
+  assert.match(moved.reason, /Bump the version/);
+});
+
+test("the release-decision CLI writes the workflow's outputs", () => {
+  const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "release-decision-")), "output");
+  execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "release-decision"], {
+    env: { ...process.env, VERSION: "0.0.4", SHA: "abc", TAG_SHA: "", RELEASE_JSON: "", RUNS_JSON: JSON.stringify(greenRuns), GITHUB_OUTPUT: output },
+    stdio: "pipe",
+  });
+  assert.equal(fs.readFileSync(output, "utf8"), "release=true\ntag=v0.0.4\n");
+});
+
+test("nothing goes public until the host packages are on the draft", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  const host = workflow.indexOf('gh release upload "$NATIVE_RELEASE_TAG" "${HOST_FILES[@]}"');
+  const publish = workflow.indexOf('gh release edit "$NATIVE_RELEASE_TAG" --draft=false');
+  assert.ok(host > 0 && host < publish);
+  assert.ok(workflow.includes("if: ${{ !inputs.dry_run }}"));
+});
+
+test("the Release workflow finishes on the draft and publishes only through the desktop release", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/release.yml"), "utf8");
+  assert.ok(workflow.includes("--draft --verify-tag"));
+  assert.ok(!workflow.includes("--draft=false"));
+  const mobile = workflow.indexOf("mobile-release.yml");
+  const desktop = workflow.indexOf("native-release.yml");
+  assert.ok(mobile > 0 && mobile < desktop);
+  assert.ok(!workflow.includes("allow_unsigned=true"));
 });

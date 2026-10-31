@@ -164,6 +164,31 @@ function releasePlan({ release, expected }) {
 }
 const nativePublishPlan = releasePlan;
 
+// Both must pass on a main commit before it can be released.
+const RELEASE_CHECKS = ["CI", "Gespan Native Preview"];
+
+// What the Release workflow does for the version on main at `sha`. One release
+// per version: a published release ends it, and a draft or a tag on the same
+// commit is a run to finish, so a rerun picks up where the last one failed.
+//   tagSha: the commit vVERSION points at, or "" when there is no tag.
+//   release: null (absent) or { isDraft } from `gh release view`.
+//   runs: this commit's push runs, newest first, from `gh run list`.
+function releaseDecision({ version, sha, tagSha, release, runs }) {
+  const tag = `v${version}`;
+  if (!RELEASE_TAG.test(tag)) throw new Error(`${version} is not a release version`);
+  if (release && !release.isDraft) return { release: false, tag, reason: `${tag} is already published` };
+  if (tagSha && tagSha !== sha) {
+    return { release: false, tag, reason: `${tag} is on ${tagSha}, not ${sha}. Bump the version to release this commit.` };
+  }
+  for (const name of RELEASE_CHECKS) {
+    const run = (runs || []).find((candidate) => candidate.workflowName === name);
+    if (!run || run.conclusion !== "success") {
+      return { release: false, tag, reason: `${name} has not passed on ${sha}` };
+    }
+  }
+  return { release: true, tag, reason: `Releasing ${tag} from ${sha}` };
+}
+
 // A version's CHANGELOG section, as release notes.
 function releaseNotes(changelog, version) {
   const lines = changelog.split("\n");
@@ -212,7 +237,7 @@ module.exports = {
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
   GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
   nativeChannel, nativeFixedDownloads,
-  nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes,
+  nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes, releaseDecision, RELEASE_CHECKS,
 };
 
 if (require.main === module && process.argv[2] === "native-ref") {
@@ -236,6 +261,17 @@ if (require.main === module && process.argv[2] === "native-ref") {
   const raw = (process.env.RELEASE_JSON || "").trim();
   const plan = releasePlan({ release: raw ? JSON.parse(raw) : null, expected });
   console.log(`${plan.createRelease} ${plan.uploadPackages}`);
+} else if (require.main === module && process.argv[2] === "release-decision") {
+  // usage: release-decision; reads VERSION, SHA, TAG_SHA, RELEASE_JSON and RUNS_JSON.
+  const { VERSION, SHA, TAG_SHA, RELEASE_JSON, RUNS_JSON } = process.env;
+  const raw = (RELEASE_JSON || "").trim();
+  const decision = releaseDecision({
+    version: VERSION, sha: SHA, tagSha: (TAG_SHA || "").trim(),
+    release: raw ? JSON.parse(raw) : null, runs: JSON.parse(RUNS_JSON || "[]"),
+  });
+  console.log(decision.reason);
+  if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
+  fs.appendFileSync(process.env.GITHUB_OUTPUT, `release=${decision.release}\ntag=${decision.tag}\n`);
 } else if (require.main === module && process.argv[2] === "release-notes") {
   // usage: release-notes <version>; prints that version's CHANGELOG section.
   process.stdout.write(releaseNotes(fs.readFileSync("CHANGELOG.md", "utf8"), process.argv[3]));

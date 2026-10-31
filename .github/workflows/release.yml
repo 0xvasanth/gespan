@@ -1,0 +1,120 @@
+name: Release
+run-name: Release from ${{ github.event.workflow_run.head_sha || github.sha }}
+
+# A new version in package.json on main releases itself. When CI and Gespan
+# Native Preview have both passed on a commit whose version has no release yet,
+# this creates vX.Y.Z and a draft release, runs the mobile builds, then runs the
+# desktop release, which publishes the draft as its last step. Until then
+# nothing is public, and the stable feed is a file on that release, so a failure
+# leaves only a draft. Run this workflow again, or rerun it, to finish it: builds
+# that already passed for the tag are not repeated.
+on:
+  workflow_run:
+    workflows: [CI, Gespan Native Preview]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: Decide whether to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      tag: ${{ steps.decide.outputs.tag }}
+      sha: ${{ env.SHA }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: decide
+        run: |
+          set -euo pipefail
+          # Only main's newest commit releases; older runs finishing late do nothing.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" != "$SHA" ]; then
+            echo "$SHA is no longer the newest commit on main."
+            { echo release=false; echo tag=; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          VERSION="$(node -p 'require("./package.json").version')"
+          TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/v$VERSION" --jq .sha 2>/dev/null || true)"
+          RELEASE_JSON="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null || true)"
+          RUNS_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$SHA" --event push --limit 50 --json workflowName,conclusion)"
+          export VERSION TAG_SHA RELEASE_JSON RUNS_JSON
+          node scripts/release-channel.cjs release-decision
+
+  release:
+    name: Tag and release ${{ needs.decide.outputs.tag }}
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # The desktop release alone takes about two hours; EAS can queue for longer.
+    timeout-minutes: 720
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.decide.outputs.tag }}
+      SHA: ${{ needs.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Create the tag
+        run: |
+          set -euo pipefail
+          # The decision already refused a tag on any other commit.
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$SHA" >/dev/null
+          fi
+      - name: Create the draft release
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            node scripts/release-channel.cjs release-notes "${TAG#v}" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --draft --verify-tag --title "Gespan ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+      # A tag made with this workflow's token starts no other workflow, and a
+      # dispatch does, so each build is dispatched on the tag and waited for.
+      - name: Build iOS and Android
+        run: |
+          scripts/release-run.sh mobile-release.yml "Mobile build ios $TAG" -f release=build -f platform=ios -f submit=true &
+          ios=$!
+          scripts/release-run.sh mobile-release.yml "Mobile apk android $TAG" -f release=apk -f platform=android -f submit=false &
+          android=$!
+          status=0
+          wait "$ios" || status=1
+          wait "$android" || status=1
+          exit "$status"
+      - name: Build and publish desktop
+        run: scripts/release-run.sh native-release.yml "Desktop $TAG" -f dry_run=false
+      - name: Check the published release
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json isDraft,isPrerelease --jq 'if .isDraft then error("still a draft") else "published" end'
+          [ "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "$TAG" ]
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx native-latest.json
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx "Gespan_${TAG#v}_android.apk"

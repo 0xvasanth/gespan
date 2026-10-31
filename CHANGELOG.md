@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.4] - 2026-10-31
 
 The first stable release of Gespan, for macOS, Windows and Linux, with the iOS
-app on TestFlight. The app is now called Gespan and is the only desktop app.
+app on TestFlight and an Android APK. The app is now called Gespan and is the only desktop app.
 
 **Betas don't update to this version on their own.** Install it from this
 release's assets. Your data stays where it is. On macOS, delete
@@ -18,7 +18,8 @@ release's assets. Your data stays where it is. On macOS, delete
 
 The macOS app is signed with an Apple Developer ID and notarized. The Windows
 installer isn't code-signed yet, so choose **More info → Run anyway** in
-SmartScreen the first time.
+SmartScreen the first time. On Android, install the APK from this release; the
+app isn't on Google Play yet.
 
 ### Changed
 
