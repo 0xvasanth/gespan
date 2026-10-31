@@ -14,6 +14,10 @@ use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 const SANDBOX_OVERRIDE: &str = "dangerouslyDisableSandbox";
 const MAX_NAMED_FIELDS: usize = 4;
 const MAX_FIELD_CHARS: usize = 40;
+/// The rows the card's scrolling detail shows before anything is out of view.
+const DETAIL_ROWS: usize = 6;
+/// Fewer cells than a row really holds, so an estimate can't undercount.
+const DETAIL_ROW_CELLS: usize = 44;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum InputKind {
@@ -33,19 +37,27 @@ pub(crate) struct PendingInput {
     pub omitted: String,
     /// What the reader must not miss. These sit above the scrolling detail.
     pub alerts: Vec<String>,
+    /// The request has something the card can't fully show, so Allow is only
+    /// offered in the chat.
+    pub needs_review: bool,
 }
 
 impl PendingInput {
     /// What a card shows for `approval`. Only the id goes back with a decision,
     /// so none of this cleanup reaches what runs.
     pub(crate) fn approval(approval: &Approval) -> Self {
+        let detail = approval_detail(&approval.detail);
+        let alerts = approval_alerts(&approval.detail);
         Self {
             request_id: approval.id.clone(),
             kind: InputKind::Approval,
             label: mark_hidden(&approval.title),
-            detail: approval_detail(&approval.detail),
+            needs_review: !alerts.is_empty()
+                || approval.title.contains(distorts_text)
+                || overflows_detail(&detail),
+            detail,
             omitted: approval_omitted(&approval.detail),
-            alerts: approval_alerts(&approval.detail),
+            alerts,
         }
     }
 }
@@ -102,6 +114,38 @@ fn judged_text(detail: &str) -> String {
 /// An approval's detail as a card shows it.
 fn approval_detail(detail: &str) -> String {
     mark_hidden(&judged_text(detail))
+}
+
+/// Rows `line` takes at most. Wrapping only at spaces can't give fewer rows
+/// than the card's own wrapping, and wide characters count double.
+fn wrapped_rows(line: &str) -> usize {
+    let (mut rows, mut used) = (1, 0);
+    for word in line.split_inclusive(' ') {
+        let cells: usize = word
+            .chars()
+            .map(|c| match c {
+                '\t' => 4,
+                c if c.is_ascii() => 1,
+                _ => 2,
+            })
+            .sum();
+        if used > 0 && used + cells > DETAIL_ROW_CELLS {
+            rows += 1;
+            used = 0;
+        }
+        used += cells;
+        while used > DETAIL_ROW_CELLS {
+            rows += 1;
+            used -= DETAIL_ROW_CELLS;
+        }
+    }
+    rows
+}
+
+/// Worked out from the text rather than measured, because a measurement only
+/// exists after the first frame, and that frame would offer Allow.
+fn overflows_detail(detail: &str) -> bool {
+    detail.lines().map(wrapped_rows).sum::<usize>() > DETAIL_ROWS
 }
 
 /// A field name or value cut down to something that fits on the card.
@@ -337,6 +381,12 @@ impl Render for ApprovalNotices {
                         let allow_session = session.session_id.clone();
                         let deny_session = session.session_id.clone();
                         let allow_request = input.request_id.clone();
+                        let needs_review = input.needs_review;
+                        let primary = if needs_review {
+                            "Review in chat"
+                        } else {
+                            "Allow"
+                        };
                         let deny_request = input.request_id.clone();
                         super::surface::toast_frame()
                             .id(("approval-toast", ix))
@@ -475,9 +525,15 @@ impl Render for ApprovalNotices {
                                         .child(
                                             div()
                                                 .id(("approval-toast-allow", ix))
-                                                .debug_selector(|| "approval-toast-allow".into())
+                                                .debug_selector(move || {
+                                                    if needs_review {
+                                                        "approval-toast-review".into()
+                                                    } else {
+                                                        "approval-toast-allow".into()
+                                                    }
+                                                })
                                                 .role(Role::Button)
-                                                .aria_label("Allow")
+                                                .aria_label(primary)
                                                 .cursor_pointer()
                                                 .flex_1()
                                                 .rounded_md()
@@ -492,12 +548,18 @@ impl Render for ApprovalNotices {
                                                     color
                                                 })
                                                 .hover(|s| s.bg(content(0.8)))
-                                                .child("Allow")
+                                                .child(primary)
                                                 .on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.emit(Action::Decide {
-                                                        session_id: allow_session.clone(),
-                                                        request_id: allow_request.clone(),
-                                                        decision: Decision::Allow,
+                                                    cx.emit(if needs_review {
+                                                        Action::OpenSession {
+                                                            session_id: allow_session.clone(),
+                                                        }
+                                                    } else {
+                                                        Action::Decide {
+                                                            session_id: allow_session.clone(),
+                                                            request_id: allow_request.clone(),
+                                                            decision: Decision::Allow,
+                                                        }
                                                     })
                                                 })),
                                         )
@@ -805,6 +867,58 @@ mod detail_tests {
         assert_eq!(approval.title, "Allow \u{202E}Bash?");
     }
 
+    fn card_for(detail: &str) -> PendingInput {
+        PendingInput::approval(&Approval {
+            id: "request".into(),
+            title: "Allow Bash?".into(),
+            detail: detail.to_owned(),
+            can_remember: true,
+        })
+    }
+
+    #[test]
+    fn a_plain_request_can_be_allowed_from_the_card() {
+        assert!(!card_for("ls").needs_review);
+        assert!(!card_for(r#"{"file_path":"/repo/a.md","content":"x"}"#).needs_review);
+        assert!(!card_for(r#"{"command":"ls","dangerouslyDisableSandbox":false}"#).needs_review);
+        let names: Vec<String> = (0..500).map(|i| format!("f{i:03}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(!card_for(&input_with_fields(&names)).needs_review);
+    }
+
+    #[test]
+    fn a_request_with_an_alert_needs_the_chat() {
+        assert!(card_for(r#"{"command":"ls","dangerouslyDisableSandbox":true}"#).needs_review);
+        assert!(card_for("ls\u{202E}").needs_review);
+    }
+
+    #[test]
+    fn a_hidden_character_in_the_title_needs_the_chat() {
+        let card = PendingInput::approval(&Approval {
+            id: "request".into(),
+            title: "Allow \u{202E}Bash?".into(),
+            detail: "ls".into(),
+            can_remember: true,
+        });
+        assert!(card.needs_review);
+    }
+
+    #[test]
+    fn a_command_needs_the_chat_once_it_passes_the_rows_on_the_card() {
+        assert!(!card_for(&["ls"; 6].join("\n")).needs_review);
+        assert!(card_for(&["ls"; 7].join("\n")).needs_review);
+        assert!(!card_for(&"x".repeat(6 * 44)).needs_review);
+        assert!(card_for(&"x".repeat(6 * 44 + 1)).needs_review);
+        assert!(!card_for(&"漢".repeat(6 * 22)).needs_review);
+        assert!(card_for(&"漢".repeat(6 * 22 + 1)).needs_review);
+    }
+
+    #[test]
+    fn long_words_cannot_wrap_past_the_card_unnoticed() {
+        // 7 rows once wrapped, though it would fit 6 rows if it broke anywhere.
+        assert!(card_for(&vec!["x".repeat(30); 7].join(" ")).needs_review);
+    }
+
     #[test]
     fn plain_unicode_is_left_alone() {
         let text = "echo café 漢字 🙂";
@@ -817,6 +931,7 @@ mod detail_tests {
 mod render_tests {
     use super::*;
     use gpui::{Bounds, Pixels, TestAppContext, VisualTestContext, point, size};
+    use std::{cell::RefCell, rc::Rc};
 
     const WINDOW_HEIGHT: f32 = 900.;
 
@@ -833,22 +948,24 @@ mod render_tests {
         }
     }
 
-    fn card(detail: &str, cx: &mut TestAppContext) -> VisualTestContext {
-        card_with(
-            PendingInput {
-                request_id: "r".into(),
-                kind: InputKind::Approval,
-                label: "Run a command".into(),
-                detail: approval_detail(detail),
-                omitted: approval_omitted(detail),
-                alerts: approval_alerts(detail),
-            },
-            cx,
-        )
+    fn pending(detail: &str) -> PendingInput {
+        PendingInput::approval(&Approval {
+            id: "r".into(),
+            title: "Run a command".into(),
+            detail: detail.to_owned(),
+            can_remember: true,
+        })
     }
 
-    fn card_with(input: PendingInput, cx: &mut TestAppContext) -> VisualTestContext {
-        let window = cx.update(|cx| {
+    fn card(detail: &str, cx: &mut TestAppContext) -> VisualTestContext {
+        card_with(pending(detail), cx)
+    }
+
+    fn window_with(
+        input: PendingInput,
+        cx: &mut TestAppContext,
+    ) -> gpui::WindowHandle<ApprovalNotices> {
+        cx.update(|cx| {
             cx.open_window(
                 gpui::WindowOptions {
                     window_bounds: Some(gpui::WindowBounds::Windowed(Bounds {
@@ -866,7 +983,11 @@ mod render_tests {
                 },
             )
             .unwrap()
-        });
+        })
+    }
+
+    fn card_with(input: PendingInput, cx: &mut TestAppContext) -> VisualTestContext {
+        let window = window_with(input, cx);
         let mut visual = VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
         visual
@@ -879,9 +1000,40 @@ mod render_tests {
     }
 
     fn assert_decisions_on_screen(visual: &mut VisualTestContext) {
-        for button in ["approval-toast-allow", "approval-toast-deny"] {
-            assert!(bounds(visual, button).bottom() <= gpui::px(WINDOW_HEIGHT));
-        }
+        let primary = visual
+            .debug_bounds("approval-toast-allow")
+            .or_else(|| visual.debug_bounds("approval-toast-review"))
+            .expect("a primary button");
+        assert!(primary.bottom() <= gpui::px(WINDOW_HEIGHT));
+        assert!(bounds(visual, "approval-toast-deny").bottom() <= gpui::px(WINDOW_HEIGHT));
+    }
+
+    /// Clicks `selector` on a card for `detail`, and names the action it sent.
+    fn click(detail: &str, selector: &'static str, cx: &mut TestAppContext) -> Vec<String> {
+        let window = window_with(pending(detail), cx);
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        let output = actions.clone();
+        window
+            .update(cx, |_, _, cx| {
+                cx.subscribe(&cx.entity(), move |_, _, action: &Action, _| {
+                    output.borrow_mut().push(match action {
+                        Action::OpenSession { session_id } => format!("open {session_id}"),
+                        Action::Decide {
+                            request_id,
+                            decision,
+                            ..
+                        } => format!("decide {request_id} {decision:?}"),
+                    })
+                })
+                .detach()
+            })
+            .unwrap();
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        let target = bounds(&mut visual, selector);
+        visual.simulate_click(target.center(), Default::default());
+        visual.run_until_parked();
+        actions.take()
     }
 
     fn assert_stacked(visual: &mut VisualTestContext, selectors: &[&'static str]) {
@@ -908,7 +1060,7 @@ mod render_tests {
             &[
                 "approval-toast-detail",
                 "approval-toast-omitted",
-                "approval-toast-allow",
+                "approval-toast-review",
             ],
         );
         assert!(bounds(&mut visual, "approval-toast-detail").size.height <= gpui::px(102.));
@@ -925,6 +1077,7 @@ mod render_tests {
                 detail: "ls".into(),
                 omitted: vec!["field"; 500].join("\n"),
                 alerts: Vec::new(),
+                needs_review: false,
             },
             cx,
         );
@@ -953,8 +1106,39 @@ mod render_tests {
                 "approval-toast-alert-1",
                 "approval-toast-detail",
                 "approval-toast-omitted",
-                "approval-toast-allow",
+                "approval-toast-review",
             ],
+        );
+    }
+
+    #[gpui::test]
+    fn a_plain_request_is_allowed_from_the_card(cx: &mut TestAppContext) {
+        assert_eq!(click("ls", "approval-toast-allow", cx), ["decide r Allow"]);
+    }
+
+    #[gpui::test]
+    fn a_risky_request_opens_the_chat_and_is_not_allowed(cx: &mut TestAppContext) {
+        let sandbox = r#"{"command":"ls","dangerouslyDisableSandbox":true}"#;
+        assert_eq!(click(sandbox, "approval-toast-review", cx), ["open s"]);
+    }
+
+    #[gpui::test]
+    fn an_overflowing_command_opens_the_chat_and_is_not_allowed(cx: &mut TestAppContext) {
+        let command = vec!["echo line"; 50].join("\n");
+        assert_eq!(click(&command, "approval-toast-review", cx), ["open s"]);
+    }
+
+    #[gpui::test]
+    fn a_risky_card_has_no_allow_button(cx: &mut TestAppContext) {
+        let mut visual = card("ls\u{202E}", cx);
+        assert!(visual.debug_bounds("approval-toast-allow").is_none());
+    }
+
+    #[gpui::test]
+    fn a_risky_request_can_still_be_denied_from_the_card(cx: &mut TestAppContext) {
+        assert_eq!(
+            click("ls\u{202E}", "approval-toast-deny", cx),
+            ["decide r Deny"]
         );
     }
 
