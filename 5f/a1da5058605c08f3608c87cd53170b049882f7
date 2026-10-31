@@ -1,0 +1,25 @@
+src-tauri/src/remote_bootstrap.ps1
+  s_0ba268ce974d9c::t_50fab37740a799 81-82,85
+CHANGELOG.md
+  s_0ba268ce974d9c::t_bf064678e902b0 10-15
+crates/gespan-core/src/remote/remote_bootstrap.ps1
+  s_0ba268ce974d9c::t_911a5ec1ba9984 81-82,85
+crates/gespan-core/tests/fixtures/desktop/src-tauri/src/remote_bootstrap.ps1.excerpt
+  s_0ba268ce974d9c::t_50fab37740a799 81-82,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fa1da5058605c08f3608c87cd53170b049882f7",
+  "prompts": {},
+  "sessions": {
+    "s_0ba268ce974d9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87d4a492-366b-4a36-a32e-c09db4efad33",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
