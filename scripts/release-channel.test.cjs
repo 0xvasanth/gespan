@@ -433,8 +433,10 @@ const greenRuns = [
   { workflowName: "CI", conclusion: "success" },
   { workflowName: "Gespan Native Preview", conclusion: "success" },
 ];
+const commit = "a".repeat(40);
+const otherCommit = "b".repeat(40);
 const decide = (changes) =>
-  releaseDecision({ version: "0.0.4", sha: "abc", tagSha: "", release: null, runs: greenRuns, ...changes });
+  releaseDecision({ version: "0.0.4", sha: commit, tagSha: "", release: null, runs: greenRuns, ...changes });
 
 test("a new version on a green commit is released", () => {
   assert.deepEqual(
@@ -460,25 +462,36 @@ test("the newest run of a check decides, so a rerun that passed counts and one t
 });
 
 test("a published version is never released again", () => {
-  assert.deepEqual(decide({ tagSha: "abc", release: { isDraft: false } }).release, false);
-  assert.match(decide({ tagSha: "old", release: { isDraft: false } }).reason, /already published/);
+  assert.deepEqual(decide({ tagSha: commit, release: { isDraft: false } }).release, false);
+  assert.match(decide({ tagSha: otherCommit, release: { isDraft: false } }).reason, /already published/);
 });
 
 test("a tag or draft from a failed run on the same commit is finished by a rerun", () => {
-  assert.equal(decide({ tagSha: "abc" }).release, true);
-  assert.equal(decide({ tagSha: "abc", release: { isDraft: true } }).release, true);
+  assert.equal(decide({ tagSha: commit }).release, true);
+  assert.equal(decide({ tagSha: commit, release: { isDraft: true } }).release, true);
 });
 
 test("a tag on another commit stops the release instead of moving the tag", () => {
-  const moved = decide({ tagSha: "old", release: { isDraft: true } });
+  const moved = decide({ tagSha: otherCommit, release: { isDraft: true } });
   assert.equal(moved.release, false);
   assert.match(moved.reason, /Bump the version/);
+});
+
+test("a failed tag lookup stops the run instead of skipping the release", () => {
+  const error = '{ "message": "Not Found", "status": "404" }';
+  assert.throws(() => decide({ tagSha: error }), /Could not read the commit of v0\.0\.4/);
+});
+
+test("the Release workflow looks the tag up with git, which prints nothing for a missing tag", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/release.yml"), "utf8");
+  assert.ok(workflow.includes('git ls-remote origin "refs/tags/v$VERSION"'));
+  assert.ok(!/TAG_SHA="\$\(gh /.test(workflow));
 });
 
 test("the release-decision CLI writes the workflow's outputs", () => {
   const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "release-decision-")), "output");
   execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "release-decision"], {
-    env: { ...process.env, VERSION: "0.0.4", SHA: "abc", TAG_SHA: "", RELEASE_JSON: "", RUNS_JSON: JSON.stringify(greenRuns), GITHUB_OUTPUT: output },
+    env: { ...process.env, VERSION: "0.0.4", SHA: commit, TAG_SHA: "", RELEASE_JSON: "", RUNS_JSON: JSON.stringify(greenRuns), GITHUB_OUTPUT: output },
     stdio: "pipe",
   });
   assert.equal(fs.readFileSync(output, "utf8"), "release=true\ntag=v0.0.4\n");

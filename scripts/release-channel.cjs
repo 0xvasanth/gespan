@@ -176,6 +176,8 @@ const RELEASE_CHECKS = ["CI", "Gespan Native Preview"];
 function releaseDecision({ version, sha, tagSha, release, runs }) {
   const tag = `v${version}`;
   if (!RELEASE_TAG.test(tag)) throw new Error(`${version} is not a release version`);
+  // A failed lookup must stop the run, not read as a tag on another commit.
+  if (tagSha && !/^[0-9a-f]{40}$/.test(tagSha)) throw new Error(`Could not read the commit of ${tag}: ${tagSha}`);
   if (release && !release.isDraft) return { release: false, tag, reason: `${tag} is already published` };
   if (tagSha && tagSha !== sha) {
     return { release: false, tag, reason: `${tag} is on ${tagSha}, not ${sha}. Bump the version to release this commit.` };
@@ -269,7 +271,7 @@ if (require.main === module && process.argv[2] === "native-ref") {
     version: VERSION, sha: SHA, tagSha: (TAG_SHA || "").trim(),
     release: raw ? JSON.parse(raw) : null, runs: JSON.parse(RUNS_JSON || "[]"),
   });
-  console.log(decision.reason);
+  console.log(`::notice::${decision.reason}`);
   if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `release=${decision.release}\ntag=${decision.tag}\n`);
 } else if (require.main === module && process.argv[2] === "release-notes") {
