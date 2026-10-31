@@ -1,0 +1,21 @@
+scripts/ci-impact.mjs
+  s_2b87d71bf69e35::t_9175cb400349c7 27-28
+scripts/ci-impact.test.mjs
+  s_2b87d71bf69e35::t_93fd7e9cede508 51-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49511ab9ce6e1bd8c2b37d29b1e6290795770290",
+  "prompts": {},
+  "sessions": {
+    "s_2b87d71bf69e35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d185630-3163-4510-9f5a-9f0082eb85c3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
