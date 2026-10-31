@@ -120,11 +120,14 @@ On Windows, choose **More info → Run anyway** in SmartScreen.
 - Installing the remote host on Windows over SSH no longer fails when
   Windows or antivirus still holds `node.exe` right after the install checks
   its version.
+- An approval pop-up shows the whole command, so you can decide without
+  opening the chat.
+- A finished orchestration worker that changed nothing reads "finished with no
+  changes" in the lead chat and has a "No changes" label in the sidebar, instead
+  of showing Done and ready for review.
 
 ### Known issues
 
-- The approval pop-up may not show the command it is asking about or a failed
-  worker's status. This is fixed in a later release.
 - Gespan on Windows and Linux, and SSH remotes, are less tested than on macOS.
 
 ## [0.0.3-beta] - 2026-10-30
