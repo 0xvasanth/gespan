@@ -1,0 +1,32 @@
+.github/workflows/native-release.yml
+  s_1154382a283d10::t_37a3fcee96b03e 2,5-7,10-13,353-354,364,396-407,425
+.github/workflows/mobile-release.yml
+  s_1154382a283d10::t_37a3fcee96b03e 2,14-17,22,24,35-38,63-64,66,102-119
+mobile/eas.json
+  s_1154382a283d10::t_37a3fcee96b03e 26-32
+scripts/release-channel.cjs
+  s_1154382a283d10::t_37a3fcee96b03e 167-191,240,264-274
+scripts/release-channel.test.cjs
+  s_1154382a283d10::t_37a3fcee96b03e 7,431-502
+  s_1154382a283d10::t_5b1fbeafbb07a0 503
+scripts/release-run.sh
+  s_1154382a283d10::t_37a3fcee96b03e 1-33
+.github/workflows/release.yml
+  s_1154382a283d10::t_37a3fcee96b03e 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e2776cb14f2d5b5395a9d64cdb74b5e45f45157",
+  "prompts": {},
+  "sessions": {
+    "s_1154382a283d10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a37ab1a8-59d8-4485-b51e-8ee41bb709ed",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
