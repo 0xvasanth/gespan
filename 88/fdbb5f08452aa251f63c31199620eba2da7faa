@@ -1,0 +1,36 @@
+crates/gespan-gpui/src/board/turns.rs
+  s_2b87d71bf69e35::t_54f46805d6398e 565-569
+crates/gespan-gpui/.config/nextest.toml
+  s_2b87d71bf69e35::t_54f46805d6398e 6-10
+crates/gespan-core/src/scm.rs
+  s_2b87d71bf69e35::t_15cc041b12f0af 1236-1238,1283-1284,1286-1288,1456-1458
+.github/workflows/native.yml
+  s_2b87d71bf69e35::t_15cc041b12f0af 144-145,147,151
+crates/gespan-core/src/scm/tests.rs
+  s_2b87d71bf69e35::t_15cc041b12f0af 888-906,908-918,920,922,924-926
+  s_2b87d71bf69e35::t_3b63ac1042d76d 907,919,921,923
+crates/gespan-gpui/src/notifications/harness_updates.rs
+  s_2b87d71bf69e35::t_15cc041b12f0af 36-37
+crates/gespan-gpui/src/board/tests.rs
+  s_2b87d71bf69e35::t_54f46805d6398e 22-28
+crates/gespan-gpui/src/inbox.rs
+  s_2b87d71bf69e35::t_46502f298b343e 151-153,391-392,574-577,579-583
+crates/gespan-gpui/src/inbox/ui.rs
+  s_2b87d71bf69e35::t_5e1be58b42ecfd 3331-3332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88fdbb5f08452aa251f63c31199620eba2da7faa",
+  "prompts": {},
+  "sessions": {
+    "s_2b87d71bf69e35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d185630-3163-4510-9f5a-9f0082eb85c3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
