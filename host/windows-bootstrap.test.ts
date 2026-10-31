@@ -204,7 +204,7 @@ const eventsOf = (file: string) =>
 it.skipIf(!windows)(
   "publishes a whole runtime after waiting for one that is briefly locked",
   async () => {
-    const fixture = await install(false, heldRuntime(3));
+    const fixture = await install(false, heldRuntime(1));
     const result = await fixture.run();
     expect(JSON.parse(result.stdout)).toEqual({ port: 3774, pid: 123 });
     const runtime = readFileSync(join(fixture.base, "runtime-path"), "utf8");
