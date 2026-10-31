@@ -491,7 +491,8 @@ pub async fn claude_mcp_list(host: State<'_, HarnessHost>, cwd: String) -> Resul
             Duration::from_secs(30),
             binary_path.as_deref(),
         )?;
-        for name in configured_ws_mcp_servers(&expand_home(&cwd)) {
+        let home = dirs_home();
+        for name in configured_ws_mcp_servers(home.as_deref().map(Path::new), &expand_home(&cwd)) {
             if !output
                 .lines()
                 .any(|line| line.starts_with(&format!("{name}:")))
@@ -507,7 +508,7 @@ pub async fn claude_mcp_list(host: State<'_, HarnessHost>, cwd: String) -> Resul
     .map_err(|e| e.to_string())?
 }
 
-fn configured_ws_mcp_servers(cwd: &Path) -> Vec<String> {
+fn configured_ws_mcp_servers(home: Option<&Path>, cwd: &Path) -> Vec<String> {
     let mut names = Vec::new();
     let read = |path: &Path| -> Option<serde_json::Value> {
         serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
@@ -524,13 +525,13 @@ fn configured_ws_mcp_servers(cwd: &Path) -> Vec<String> {
             }
         }
     };
-    if let Some(home) = dirs_home() {
-        if let Some(settings) = read(&Path::new(&home).join(".claude.json")) {
+    if let Some(home) = home {
+        if let Some(settings) = read(&home.join(".claude.json")) {
             collect(settings.get("mcpServers"), &mut names);
             collect(
                 settings
                     .get("projects")
-                    .and_then(|projects| projects.get(cwd.to_string_lossy().as_ref()))
+                    .and_then(|projects| projects.get(gespan_mcp_config::claude_project_key(cwd)))
                     .and_then(|project| project.get("mcpServers")),
                 &mut names,
             );
@@ -2701,6 +2702,97 @@ fn existing_binary(path: PathBuf) -> Option<PathBuf> {
         }
     }
     is_executable_file(&path).then_some(path)
+}
+
+#[cfg(test)]
+mod ws_mcp_server_tests {
+    use super::*;
+
+    fn git(directory: &Path, arguments: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=Gespan", "-c", "user.email=test@gespan.dev"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(arguments)
+            .current_dir(directory)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// A repository and its linked worktree, each with a subdirectory.
+    fn repository_with_worktree(root: &Path) -> (PathBuf, PathBuf) {
+        let repository = root.join("repository");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(repository.join("docs")).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        git(
+            &repository,
+            &["commit", "--quiet", "--allow-empty", "-m", "Start"],
+        );
+        let target = worktree.to_string_lossy();
+        git(&repository, &["worktree", "add", "--quiet", &target]);
+        std::fs::create_dir_all(worktree.join("src/app")).unwrap();
+        (repository, worktree)
+    }
+
+    #[test]
+    fn local_ws_server_is_found_from_every_checkout_of_a_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let (repository, worktree) = repository_with_worktree(root.path());
+        let key = gespan_mcp_config::claude_project_key(&repository);
+        let unread = worktree.to_string_lossy();
+        std::fs::write(
+            home.join(".claude.json"),
+            serde_json::json!({"projects":{
+                &key:{"mcpServers":{"shared":{"type":"ws"}}},
+                unread.as_ref():{"mcpServers":{
+                    "shared":{"type":"ws"},
+                    "unread":{"type":"ws"},
+                }},
+            }})
+            .to_string(),
+        )
+        .unwrap();
+
+        for project in [
+            repository.clone(),
+            repository.join("docs"),
+            worktree.clone(),
+            worktree.join("src/app"),
+        ] {
+            assert_eq!(
+                configured_ws_mcp_servers(Some(&home), &project),
+                ["shared"],
+                "found from {}",
+                project.display()
+            );
+        }
+    }
+
+    #[test]
+    fn local_ws_server_outside_a_repository_stays_with_its_own_path() {
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let home = root.join("home");
+        let project = root.join("project");
+        let nested = project.join("nested");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        let key = gespan_mcp_config::claude_project_key(&project);
+        #[cfg(not(windows))]
+        assert_eq!(key, project.to_string_lossy());
+        std::fs::write(
+            home.join(".claude.json"),
+            serde_json::json!({"projects":{&key:{"mcpServers":{"plain":{"type":"ws"}}}}})
+                .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(configured_ws_mcp_servers(Some(&home), &project), ["plain"]);
+        assert!(configured_ws_mcp_servers(Some(&home), &nested).is_empty());
+    }
 }
 
 #[cfg(all(test, windows))]
