@@ -190,26 +190,24 @@ in from your phone.
 > [!IMPORTANT]
 > Install and sign in to at least one [supported agent](docs/providers.md) first.
 
-Gespan is in public beta. The current release is
-[**0.0.1-beta**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.1-beta).
-It comes as two desktop apps that share the same data: **Gespan Native**, the
-fast native app recommended on macOS, and **Gespan**, recommended on Windows and Linux.
+The current release is
+[**0.0.4**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.4).
 
-| Platform | Recommended | Also available |
-| :-- | :-- | :-- |
-| macOS, Apple Silicon | [Gespan Native (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_aarch64.dmg) | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_aarch64.dmg) |
-| macOS, Intel | [Gespan Native (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_x64.dmg) | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_x64.dmg) |
-| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_x64-setup.exe) | [Gespan Native (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_x64-setup.exe) |
-| Linux, x64 | [Gespan (AppImage)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan_0.0.1-beta_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/Gespan-0.0.1-0.beta.x86_64.rpm) | [Gespan Native (AppImage)](https://github.com/0xvasanth/gespan/releases/download/v0.0.1-beta/GespanNative_0.0.1-beta_amd64.AppImage) |
+| Platform | Download |
+| :-- | :-- |
+| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/Gespan_0.0.4_aarch64.dmg) |
+| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/Gespan_0.0.4_x64.dmg) |
+| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/Gespan_0.0.4_x64-setup.exe) |
+| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/Gespan_0.0.4_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/gespan_0.0.4_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.4/gespan-0.0.4-1.el10.x86_64.rpm) |
 
-Gespan Native on Windows and Linux is experimental and less tested than on macOS.
+Gespan on Windows and Linux is less tested than on macOS.
 
-**Opening it the first time.** The beta is not yet signed with an Apple
+**Opening it the first time.** Gespan is not yet signed with an Apple
 Developer ID or a Windows code-signing certificate, so your system warns you once.
 
 - **macOS:** open the DMG and drag the app to Applications. The first time,
   Control-click the app, choose **Open**, then confirm. If macOS still refuses, run
-  `xattr -dr com.apple.quarantine "/Applications/Gespan Native.app"` (or `Gespan.app`).
+  `xattr -dr com.apple.quarantine /Applications/Gespan.app`.
 - **Windows:** in the SmartScreen prompt, choose **More info → Run anyway**.
 - **Linux:** make the AppImage executable (`chmod +x`) and run it. See
   [Linux installation](docs/install.md) for dependencies and the `.deb` and `.rpm` packages.
@@ -217,28 +215,13 @@ Developer ID or a Windows code-signing certificate, so your system warns you onc
 Every release is listed on the
 [Releases page](https://github.com/0xvasanth/gespan/releases).
 
-### Move from Gespan to Gespan Native
+### Coming from a beta
 
-Gespan Native is a separate app, so Gespan can't update itself into it. Your
-data doesn't need copying: Gespan Native opens the same `dev.gespan.desktop`
-folder, so your conversations, notes and Pilots are there on first launch.
-
-1. Install Gespan Native from the table above.
-2. Quit Gespan, and check it isn't still running in the menu bar or system tray.
-3. Back up your data folder:
-
-   | Platform | Data folder |
-   | :-- | :-- |
-   | macOS | `~/Library/Application Support/dev.gespan.desktop` |
-   | Windows | `%APPDATA%\dev.gespan.desktop` |
-   | Linux | `~/.local/share/dev.gespan.desktop` (or under `$XDG_DATA_HOME`) |
-
-4. Open Gespan Native.
-5. Once you're happy, uninstall Gespan. On Windows, leave **Delete the
-   application data** unticked: that folder is now Gespan Native's data too.
-
-Don't keep the same conversation open in both apps. Gespan saves whole
-conversations and can overwrite turns added in Gespan Native.
+Betas, including Gespan Native, don't update to this version on their own.
+Install Gespan from the table above. Your data doesn't need copying: it opens
+the same `dev.gespan.desktop` folder, so your conversations, notes and Pilots
+are there on first launch. Quit the beta first, and on macOS delete
+`Gespan Native.app` afterwards.
 
 ## Quick start
 
@@ -267,7 +250,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |
 | [Privacy](docs/privacy.md) | What is recorded locally and what never leaves your machine |
-| [Gespan Native](docs/native/README.md) | The Rust + GPUI app: building, checks and current limitations |
+| [Native guide](docs/native/README.md) | The Rust + GPUI app: building, checks and current limitations |
 
 ## Build from source
 
@@ -309,14 +292,12 @@ Run it with `cd mobile && bun install && bun run start`.
 
 </details>
 
-## Gespan Native
+## Run from source
 
-Gespan Native is a rewrite of Gespan in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
-It is the recommended app on macOS. On Windows and Linux, the React/Tauri app is
-still the main app, and Native there is experimental.
+Gespan is written in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
 
 <details>
-<summary><strong>Run Gespan Native from source</strong></summary>
+<summary><strong>Run Gespan from source</strong></summary>
 
 <br/>
 
@@ -333,12 +314,6 @@ data. See the [native guide](docs/native/README.md) for prerequisites, build
 output, checks and current limitations.
 
 </details>
-
-> [!WARNING]
-> Gespan Native shares `~/Library/Application Support/dev.gespan.desktop/gespan.db`
-> with Gespan. Close both apps and back up `gespan.db` before you first use
-> Gespan Native. Do not open the same conversation in both apps at once: Gespan
-> saves whole conversations and can overwrite turns added in Gespan Native.
 
 ## FAQ
 
@@ -383,16 +358,6 @@ You can, and Gespan runs those same CLIs. What it adds is the layer around
 them: sessions as tabs and split panes, a worktree for each parallel task, a
 diff you can keep or undo for each turn, approvals in one place, and a board,
 inbox, automations and Pilots that hand work to the agents.
-
-</details>
-
-<details>
-<summary><strong>Which app should I install, Gespan or Gespan Native?</strong></summary>
-
-<br/>
-
-On macOS, Gespan Native. On Windows and Linux, Gespan. They share the same data,
-so you can switch later. See [Install](#install).
 
 </details>
 

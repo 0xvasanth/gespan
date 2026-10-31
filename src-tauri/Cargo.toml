@@ -1,6 +1,6 @@
 [package]
 name = "gespan"
-version = "0.0.3-beta"
+version = "0.0.4"
 edition = "2021"
 description = "Gespan — one UI for every agent harness"
 authors = ["vasanth"]

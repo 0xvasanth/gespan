@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "gespan"
-version = "0.0.3-beta"
+version = "0.0.4"
 dependencies = [
  "arboard",
  "base64 0.23.1",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-models"
-version = "0.0.3-beta"
+version = "0.0.4"
 dependencies = [
  "dirs",
  "sha2 0.11.1",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-speech"
-version = "0.0.3-beta"
+version = "0.0.4"
 dependencies = [
  "cpal",
  "gespan-models",
