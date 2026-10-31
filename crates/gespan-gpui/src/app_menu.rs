@@ -55,19 +55,19 @@ pub(crate) fn dock_menu() -> Vec<MenuItem> {
 /// minimize and maximize.
 pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu> {
     let mut menus = vec![
-        Menu::new("Gespan Native").items([
-            MenuItem::action("About Gespan Native", About),
+        Menu::new("Gespan").items([
+            MenuItem::action("About Gespan", About),
             MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
             MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Hold Everything", ToggleHold),
             MenuItem::separator(),
-            MenuItem::action("Hide Gespan Native", Hide),
+            MenuItem::action("Hide Gespan", Hide),
             MenuItem::action("Hide Others", HideOthers),
             MenuItem::action("Show All", ShowAll),
             MenuItem::separator(),
-            MenuItem::action("Quit Gespan Native", Quit),
+            MenuItem::action("Quit Gespan", Quit),
         ]),
         Menu::new("File").items([
             MenuItem::action("New Window", NewWindow),
@@ -183,7 +183,7 @@ pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu
             help.items.splice(
                 0..0,
                 [
-                    MenuItem::action("About Gespan Native", About),
+                    MenuItem::action("About Gespan", About),
                     MenuItem::action("Check for Updates…", CheckForUpdates),
                     MenuItem::separator(),
                 ],

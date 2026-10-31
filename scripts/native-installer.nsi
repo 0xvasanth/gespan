@@ -1,15 +1,17 @@
 Unicode True
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
-Name "Gespan Native"
+Name "Gespan"
 OutFile "@OUTFILE@"
-InstallDir "$LOCALAPPDATA\Programs\Gespan Native"
+InstallDir "$LOCALAPPDATA\Programs\Gespan"
+; The registry keys keep their beta names: a beta upgrades in place, and the
+; old Gespan app's own "Gespan" uninstall entry is left alone.
 InstallDirRegKey HKCU "Software\Gespan Native" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 VIProductVersion "@WINDOWS_VERSION@"
-VIAddVersionKey "ProductName" "Gespan Native"
-VIAddVersionKey "FileDescription" "Gespan Native installer"
+VIAddVersionKey "ProductName" "Gespan"
+VIAddVersionKey "FileDescription" "Gespan installer"
 VIAddVersionKey "FileVersion" "@VERSION@"
 !define MUI_ICON "@ICON@"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -29,10 +31,10 @@ Function .onInit
   System::Call 'kernel32::WaitForSingleObject(p r1, i 120000) i .r2'
   System::Call 'kernel32::CloseHandle(p r1)'
   StrCmp $2 0 ready
-  Abort "Gespan Native did not close. Please try updating again."
+  Abort "Gespan did not close. Please try updating again."
   ready:
 FunctionEnd
-Section "Gespan Native"
+Section "Gespan"
   SetOutPath "$INSTDIR"
   ClearErrors
   File /oname=gespan-gpui.next.exe "@STAGE@\gespan-gpui.exe"
@@ -52,11 +54,13 @@ Section "Gespan Native"
   File /r "@STAGE@\licenses"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Gespan Native" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayName" "Gespan Native"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayName" "Gespan"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayVersion" "@VERSION@"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "UninstallString" '"$INSTDIR\Uninstall.exe"'
-  CreateShortcut "$SMPROGRAMS\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
-  CreateShortcut "$DESKTOP\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
+  Delete "$SMPROGRAMS\Gespan Native.lnk"
+  Delete "$DESKTOP\Gespan Native.lnk"
+  CreateShortcut "$SMPROGRAMS\Gespan.lnk" "$INSTDIR\gespan-gpui.exe"
+  CreateShortcut "$DESKTOP\Gespan.lnk" "$INSTDIR\gespan-gpui.exe"
   Delete "$INSTDIR\gespan-gpui.previous.exe"
   Goto install_done
   rollback_binary:
@@ -64,7 +68,7 @@ Section "Gespan Native"
   Rename "$INSTDIR\gespan-gpui.previous.exe" "$INSTDIR\gespan-gpui.exe"
   install_failed:
   Delete "$INSTDIR\gespan-gpui.next.exe"
-  MessageBox MB_ICONSTOP "Gespan Native could not be updated. The previous executable was retained. Close other Gespan Native processes and try again."
+  MessageBox MB_ICONSTOP "Gespan could not be updated. The previous executable was retained. Close other Gespan processes and try again."
   Abort
   install_done:
 SectionEnd
@@ -80,8 +84,8 @@ Function .onInstSuccess
   done:
 FunctionEnd
 Section "Uninstall"
-  Delete "$SMPROGRAMS\Gespan Native.lnk"
-  Delete "$DESKTOP\Gespan Native.lnk"
+  Delete "$SMPROGRAMS\Gespan.lnk"
+  Delete "$DESKTOP\Gespan.lnk"
   Delete "$INSTDIR\gespan-gpui.exe"
   Delete "$INSTDIR\native-install.json"
   Delete "$INSTDIR\Uninstall.exe"

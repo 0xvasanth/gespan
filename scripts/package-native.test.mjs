@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { dmgMegabytes, linuxTree, packageNative, runStapler } from "./package-native.mjs";
+import { dmgMegabytes, linuxTree, nativeVersion, packageNative, rpmSpec, runStapler } from "./package-native.mjs";
 
 test("the DMG staging image is sized from its contents with headroom", () => {
   const MiB = 2 ** 20;
@@ -74,7 +74,34 @@ test("Linux desktop identity resolves the bundled application icon on Wayland", 
   assert.ok(icon);
   const bundled = await readFile(join(tree, "usr/share/icons/hicolor/256x256/apps", `${icon}.png`));
   assert.deepEqual(bundled, await readFile(new URL("../public/gespan.png", import.meta.url)));
-  await access(join(tree, "usr/bin/gespan-native"));
+  await access(join(tree, "usr/bin/gespan"));
+});
+
+test("rpm replaces the beta package and the old Gespan app, and only those older versions", () => {
+  const spec = rpmSpec(nativeVersion("0.0.4"), "Gespan");
+  assert.match(spec, /^Name: gespan$/m);
+  assert.match(spec, /^Version: 0\.0\.4$/m);
+  assert.match(spec, /^Release: 1%\{\?dist\}$/m);
+  assert.match(spec, /^Obsoletes: gespan-native < 0\.0\.4$/m);
+  assert.match(spec, /^Obsoletes: Gespan < 0\.0\.4$/m);
+  assert.match(spec, /^\/usr\/bin\/gespan$/m);
+  assert.match(spec, /^\/usr\/lib\/gespan$/m);
+  assert.doesNotMatch(spec, /^\/usr\/.*gespan-native/m);
+});
+
+test("the Windows installer takes over a beta install without touching the old app's entry", async () => {
+  // Windows checkouts turn this file's line endings into CRLF.
+  const script = (await readFile(new URL("./native-installer.nsi", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  assert.ok(script.includes('Name "Gespan"\n'));
+  assert.ok(script.includes('InstallDir "$LOCALAPPDATA\\Programs\\Gespan"\n'));
+  assert.ok(script.includes('InstallDirRegKey HKCU "Software\\Gespan Native" "InstallDir"'));
+  assert.ok(script.includes('CurrentVersion\\Uninstall\\GespanNative" "DisplayName" "Gespan"'));
+  assert.ok(!script.includes('CurrentVersion\\Uninstall\\Gespan"'));
+  const install = script.slice(script.indexOf('Section "Gespan"'), script.indexOf('Section "Uninstall"'));
+  for (const place of ["SMPROGRAMS", "DESKTOP"]) {
+    const legacy = install.indexOf(`Delete "$${place}\\Gespan Native.lnk"`);
+    assert.ok(legacy >= 0 && legacy < install.indexOf(`CreateShortcut "$${place}\\Gespan.lnk"`));
+  }
 });
 
 test("AppImage desktop registration is opt-in and launches the permanent image", {
@@ -90,7 +117,7 @@ test("AppImage desktop registration is opt-in and launches the permanent image",
     await chmod(tool, 0o755);
   }
   const binary = join(directory, "gespan-gpui");
-  await writeFile(binary, '#!/bin/sh\nif [ "${1-}" = "--version" ]; then\nprintf "Gespan Native 0.16.0-preview.2\\n"\nelse\nprintf "<%s>\\n" "$@"\nfi\n');
+  await writeFile(binary, '#!/bin/sh\nif [ "${1-}" = "--version" ]; then\nprintf "Gespan 0.16.0-preview.2\\n"\nelse\nprintf "<%s>\\n" "$@"\nfi\n');
   await chmod(binary, 0o755);
   const out = join(directory, "packages");
   const originalPath = process.env.PATH;
@@ -104,7 +131,15 @@ test("AppImage desktop registration is opt-in and launches the permanent image",
     if (originalTool === undefined) delete process.env.APPIMAGETOOL;
     else process.env.APPIMAGETOOL = originalTool;
   }
-  const appDir = join(out, "work/GespanNative.AppDir");
+  const control = await readFile(join(out, "work/deb/DEBIAN/control"), "utf8");
+  assert.match(control, /^Package: gespan$/m);
+  assert.match(control, /^Replaces: gespan-native$/m);
+  assert.match(control, /^Conflicts: gespan-native$/m);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(out, "artifacts-linux-x86_64.json"), "utf8")).map((a) => a.filename),
+    ["gespan_0.16.0-preview.2_amd64.deb", "Gespan_0.16.0-preview.2_amd64.AppImage"],
+  );
+  const appDir = join(out, "work/Gespan.AppDir");
   const appImage = join(directory, 'Gespan " $ ` %F \\.AppImage');
   await writeFile(appImage, '#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$NATIVE_TEST_LAUNCH"\n');
   await chmod(appImage, 0o755);
@@ -138,7 +173,7 @@ test("AppImage desktop registration is opt-in and launches the permanent image",
   const entry = await readFile(desktop, "utf8");
   assert.ok(entry.includes("StartupWMClass=dev.gespan.native\n"));
   assert.ok(!entry.includes(appDir));
-  assert.deepEqual(await readFile(join(data, "icons/hicolor/256x256/apps/gespan-native.png")),
+  assert.deepEqual(await readFile(join(data, "icons/hicolor/256x256/apps/gespan.png")),
     await readFile(new URL("../public/gespan.png", import.meta.url)));
   const repeated = launch(["--install-desktop"]);
   assert.equal(repeated.status, 0, repeated.stderr);
@@ -188,7 +223,7 @@ test(
     const binary = join(release, "gespan-gpui");
     await writeFile(
       binary,
-      "#!/bin/sh\nprintf 'Gespan Native 0.16.0-preview.2\\n'\n",
+      "#!/bin/sh\nprintf 'Gespan 0.16.0-preview.2\\n'\n",
     );
     await chmod(binary, 0o755);
     const fakeTool = `#!/usr/bin/env node
@@ -292,7 +327,7 @@ if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER
       "Applications symlink is not traversed",
     );
     const plist = await readFile(
-      join(release, "Gespan Native.app/Contents/Info.plist"),
+      join(release, "Gespan.app/Contents/Info.plist"),
       "utf8",
     );
     assert.ok(
@@ -380,7 +415,7 @@ if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER
     );
     await writeFile(
       binary,
-      "#!/bin/sh\nprintf 'Gespan Native 0.16.0-preview.3\\n'\n",
+      "#!/bin/sh\nprintf 'Gespan 0.16.0-preview.3\\n'\n",
     );
     await assert.rejects(
       () =>
@@ -407,7 +442,7 @@ test(
     await mkdir(bin);
     await mkdir(release, { recursive: true });
     const binary = join(release, "gespan-gpui");
-    await writeFile(binary, "#!/bin/sh\nprintf 'Gespan Native 0.0.1-beta\\n'\n");
+    await writeFile(binary, "#!/bin/sh\nprintf 'Gespan 0.0.1-beta\\n'\n");
     await chmod(binary, 0o755);
     const calls = join(directory, "calls.log");
     const fakeTool = `#!/usr/bin/env node
@@ -458,7 +493,7 @@ if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
     for (const step of [/^xcrun notarytool/m, /^xcrun stapler/m, /^spctl /m, /^codesign --sign .*\.dmg$/m]) {
       assert.doesNotMatch(log, step);
     }
-    const plist = await readFile(join(release, "Gespan Native.app/Contents/Info.plist"), "utf8");
+    const plist = await readFile(join(release, "Gespan.app/Contents/Info.plist"), "utf8");
     assert.ok(plist.includes("<key>CFBundleShortVersionString</key><string>0.0.1</string>"));
     assert.ok(plist.includes("<key>GespanNativeVersion</key><string>0.0.1-beta</string>"));
   },

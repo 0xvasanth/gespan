@@ -2129,7 +2129,7 @@ impl Shell {
         };
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
-            "Reload Gespan Native?",
+            "Reload Gespan?",
             Some(detail),
             &["Reload", "Cancel"],
             cx,
@@ -8738,7 +8738,7 @@ impl Render for Shell {
             .id("gespan-workspace")
             .relative()
             .role(Role::Application)
-            .aria_label("Gespan Native")
+            .aria_label("Gespan")
             .key_context("Workspace")
             .track_focus(&self.focus)
             .capture_key_up(cx.listener(|this, _, _, _| this.archive_shortcut_held = false))
@@ -8841,7 +8841,7 @@ impl Render for Shell {
                 let detail = format!("Version {}", crate::notifications::updater::version());
                 drop(window.prompt(
                     gpui::PromptLevel::Info,
-                    "Gespan Native",
+                    "Gespan",
                     Some(&detail),
                     &["OK"],
                     cx,

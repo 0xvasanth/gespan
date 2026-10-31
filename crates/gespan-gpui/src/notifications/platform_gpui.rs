@@ -27,7 +27,7 @@ pub fn initialize(cx: &App) -> bool {
     true
 }
 
-/// Whether Windows Settings blocks toasts for Gespan Native. `None` when it
+/// Whether Windows Settings blocks toasts for Gespan. `None` when it
 /// can't be asked, such as before the first toast registers the app.
 #[cfg(windows)]
 fn blocked() -> Option<bool> {
@@ -67,7 +67,7 @@ pub fn show(notification: Notification, cx: &App) -> Receiver<Result<(), String>
     #[cfg(windows)]
     if blocked() == Some(true) {
         return resolved(Err(
-            "Notifications are turned off for Gespan Native in Windows Settings".into(),
+            "Notifications are turned off for Gespan in Windows Settings".into(),
         ));
     }
     cx.show_system_notification(system_notification(&notification, cfg!(not(windows))));

@@ -23,10 +23,10 @@ esac
 # Development data gets its own app identity, so a dev build never shares the
 # installed app's name, Dock icon, defaults or notification permissions.
 if [ "$native_data_mode" = dev-data ]; then
-  native_app_name="Gespan Native Dev"
+  native_app_name="Gespan Dev"
   native_bundle_id="dev.gespan.native.dev"
 else
-  native_app_name="Gespan Native"
+  native_app_name="Gespan"
   native_bundle_id="dev.gespan.native"
 fi
 native_bundle="$native_target/$native_app_name.app"

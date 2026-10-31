@@ -40,6 +40,11 @@ export function nativeVersion(version) {
 export function rpmRelease({ label, sequence }) {
   return label === "stable" ? "1" : `0.${label}.${sequence}`;
 }
+// Installing over a beta replaces its gespan-native package, or the old Gespan
+// app's package, which own the same desktop entry or /usr/bin/gespan.
+export function rpmSpec(parsed, summary) {
+  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
+}
 // hdiutil's -srcfolder estimate fell short of the app on the macOS 15
 // runner ("No space left on device" inside the image), so the staging
 // image is sized from its contents, with headroom for file system metadata:
@@ -115,7 +120,7 @@ async function notices(directory) {
   );
 }
 export async function linuxTree(directory, binary, kind) {
-  const app = join(directory, "usr/lib/gespan-native");
+  const app = join(directory, "usr/lib/gespan");
   await mkdir(app, { recursive: true });
   await cp(binary, join(app, "gespan-gpui"));
   await chmod(join(app, "gespan-gpui"), 0o755);
@@ -126,13 +131,13 @@ export async function linuxTree(directory, binary, kind) {
   await notices(join(app, "licenses"));
   await mkdir(join(directory, "usr/bin"), { recursive: true });
   await writeFile(
-    join(directory, "usr/bin/gespan-native"),
-    '#!/bin/sh\nexec /usr/lib/gespan-native/gespan-gpui "$@"\n',
+    join(directory, "usr/bin/gespan"),
+    '#!/bin/sh\nexec /usr/lib/gespan/gespan-gpui "$@"\n',
     { mode: 0o755 },
   );
   await mkdir(join(directory, "usr/share/applications"), { recursive: true });
   const desktop =
-    "[Desktop Entry]\nType=Application\nName=Gespan Native\nExec=gespan-native %F\nIcon=gespan-native\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n";
+    "[Desktop Entry]\nType=Application\nName=Gespan\nExec=gespan %F\nIcon=gespan\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n";
   await writeFile(
     join(directory, "usr/share/applications/dev.gespan.native.desktop"),
     desktop,
@@ -141,7 +146,7 @@ export async function linuxTree(directory, binary, kind) {
   await mkdir(icons, { recursive: true });
   await cp(
     join(root, "public/gespan.png"),
-    join(icons, "gespan-native.png"),
+    join(icons, "gespan.png"),
   );
   return { app, desktop };
 }
@@ -155,14 +160,14 @@ export async function packageNative({
 }) {
   const parsed = nativeVersion(version);
   const summary =
-    parsed.label === "stable" ? "Gespan Native" : "Gespan Native experimental preview";
+    parsed.label === "stable" ? "Gespan" : "Gespan experimental preview";
   binary = resolve(binary);
   out = resolve(out);
   const embedded = run(binary, ["--version"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
   }).stdout.trim();
-  if (embedded !== `Gespan Native ${version}`)
+  if (embedded !== `Gespan ${version}`)
     throw new Error(`Native executable version does not match ${version}`);
   await mkdir(out, { recursive: true });
   const work = join(out, "work");
@@ -197,7 +202,7 @@ export async function packageNative({
         },
       },
     );
-    const app = join(dirname(binary), "Gespan Native.app");
+    const app = join(dirname(binary), "Gespan.app");
     const identity = process.env.APPLE_SIGNING_IDENTITY || "";
     // Without a Developer ID the app keeps the bundle script's ad-hoc
     // signature and is not notarized; only an explicit opt-in publishes that.
@@ -248,21 +253,21 @@ export async function packageNative({
     if (developerId) run("spctl", ["--assess", "--type", "execute", app]);
     const name = arch === "aarch64" ? "aarch64" : "x64";
     const archive = add(
-      `GespanNative_${version}_${name}.app.tar.gz`,
+      `Gespan_${version}_${name}.app.tar.gz`,
       `darwin-${arch}-app`,
     );
-    run("tar", ["-czf", archive, "-C", dirname(app), "Gespan Native.app"], {
+    run("tar", ["-czf", archive, "-C", dirname(app), "Gespan.app"], {
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     const imageRoot = join(work, "dmg");
     await mkdir(imageRoot);
-    run("ditto", [app, join(imageRoot, "Gespan Native.app")]);
+    run("ditto", [app, join(imageRoot, "Gespan.app")]);
     run("ln", ["-s", "/Applications", join(imageRoot, "Applications")]);
-    const dmg = add(`GespanNative_${version}_${name}.dmg`);
+    const dmg = add(`Gespan_${version}_${name}.dmg`);
     run("hdiutil", [
       "create",
       "-volname",
-      "Gespan Native",
+      "Gespan",
       "-srcfolder",
       imageRoot,
       "-size",
@@ -284,23 +289,23 @@ export async function packageNative({
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
-      `Package: gespan-native\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
+      `Package: gespan\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nReplaces: gespan-native\nConflicts: gespan-native\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
     );
     run("dpkg-deb", [
       "--build",
       "--root-owner-group",
       debRoot,
-      add(`gespan-native_${version}_amd64.deb`, "linux-x86_64-deb"),
+      add(`gespan_${version}_amd64.deb`, "linux-x86_64-deb"),
     ]);
-    const appDir = join(work, "GespanNative.AppDir");
+    const appDir = join(work, "Gespan.AppDir");
     const { desktop } = await linuxTree(appDir, binary, "appimage");
     await writeFile(
       join(appDir, "dev.gespan.native.desktop"),
-      desktop.replace("Exec=gespan-native %F", "Exec=gespan-gpui %F"),
+      desktop.replace("Exec=gespan %F", "Exec=gespan-gpui %F"),
     );
     await cp(
       join(root, "public/gespan.png"),
-      join(appDir, "gespan-native.png"),
+      join(appDir, "gespan.png"),
     );
     await cp(join(root, "scripts/native-appimage-apprun.sh"), join(appDir, "AppRun"));
     await chmod(join(appDir, "AppRun"), 0o755);
@@ -309,7 +314,7 @@ export async function packageNative({
       [
         appDir,
         add(
-          `GespanNative_${version}_amd64.AppImage`,
+          `Gespan_${version}_amd64.AppImage`,
           "linux-x86_64-appimage",
         ),
       ],
@@ -323,10 +328,10 @@ export async function packageNative({
       await mkdir(join(top, name), { recursive: true });
     const tree = join(top, "SOURCES/tree");
     await linuxTree(tree, binary, "rpm");
-    const spec = join(top, "SPECS/gespan-native.spec");
+    const spec = join(top, "SPECS/gespan.spec");
     await writeFile(
       spec,
-      `Name: gespan-native\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan-native\n/usr/lib/gespan-native\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan-native.png\n`,
+      rpmSpec(parsed, summary),
     );
     run("rpmbuild", [
       "--define",
@@ -357,7 +362,7 @@ export async function packageNative({
     );
     await notices(join(stage, "licenses"));
     const installer = add(
-      `GespanNative_${version}_x64-setup.exe`,
+      `Gespan_${version}_x64-setup.exe`,
       "windows-x86_64-nsis",
     );
     const quote = (value) =>

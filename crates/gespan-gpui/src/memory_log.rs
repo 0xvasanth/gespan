@@ -1,6 +1,6 @@
 //! A memory readout for profiling: launched with `GESPAN_MEMORY_LOG=<file>`,
 //! the app appends its footprint and GPU usage to that file every 10 seconds.
-//! `open --env GESPAN_MEMORY_LOG=/tmp/gespan-memory.log "Gespan Native.app"`
+//! `open --env GESPAN_MEMORY_LOG=/tmp/gespan-memory.log "Gespan.app"`
 use gpui::App;
 use std::{io::Write, time::Duration};
 

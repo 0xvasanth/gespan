@@ -1,4 +1,4 @@
-//! One Gespan Native per database on Windows, as the Tauri app's
+//! One Gespan per database on Windows, as the Tauri app's
 //! single-instance plugin: Close to tray leaves the process running with no
 //! taskbar entry, so a second launch brings that window back and exits
 //! instead of starting another process on the same database.
@@ -71,7 +71,7 @@ pub(crate) fn activate(pid: u32) -> bool {
     }
     // GPUI's window class, and the main window's title (see `main`).
     const CLASS: &str = "Zed::Window";
-    const TITLE: &str = "Gespan Native";
+    const TITLE: &str = "Gespan";
 
     unsafe extern "system" fn visit(hwnd: HWND, param: LPARAM) -> BOOL {
         // SAFETY: `param` is the `Search` passed to EnumWindows below.

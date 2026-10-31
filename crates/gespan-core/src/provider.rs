@@ -1797,7 +1797,7 @@ fn launch(
         } else if protocol.request.kind == Kind::Codex {
             write_json(
                 &mut stdin,
-                json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"gespan_native","title":"Gespan Native","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}}),
+                json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"gespan_native","title":"Gespan","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}}),
             )?;
         } else {
             write_json(

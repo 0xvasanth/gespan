@@ -102,8 +102,8 @@ function nativeFixedDownloads(env) {
   if (nativeChannel(env).prerelease) return [];
   const version = nativeReleaseTag(env).slice(1);
   return [
-    { file: `GespanNative_${version}_aarch64.dmg`, key: "Gespan.dmg" },
-    { file: `GespanNative_${version}_x64.dmg`, key: "Gespan_x64.dmg" },
+    { file: `Gespan_${version}_aarch64.dmg`, key: "Gespan.dmg" },
+    { file: `Gespan_${version}_x64.dmg`, key: "Gespan_x64.dmg" },
   ];
 }
 

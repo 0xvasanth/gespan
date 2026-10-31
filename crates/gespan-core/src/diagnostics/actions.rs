@@ -25,7 +25,7 @@ pub fn summary_for(log_dir: &Path, version: &str, channel: Channel, home: Option
         Channel::Dev => "dev",
     };
     let mut text = format!(
-        "Gespan Native {version} ({channel})\nOS: {} {}\nLogs: {}\nLog files: {} ({})\nCrash files: {}",
+        "Gespan {version} ({channel})\nOS: {} {}\nLogs: {}\nLog files: {} ({})\nCrash files: {}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         shown,
@@ -63,7 +63,7 @@ fn size(bytes: u64) -> String {
 /// The summary for the running app.
 pub fn summary() -> String {
     let Some(config) = STARTED.get() else {
-        return "Gespan Native diagnostics have not started.".into();
+        return "Gespan diagnostics have not started.".into();
     };
     // The same home `log_dir` uses, so the `~` form always applies.
     let home = crate::scm::shell::dirs_home().map(PathBuf::from);
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "Gespan Native 0.16.0 (release)\nOS: {} {}\nLogs: ~{sep}Library{sep}Logs{sep}dev.gespan.native\nLog files: 2 (2.0 KB)\nCrash files: 2 (latest: 2026-10-24T09-15-30.123Z.json)",
+                "Gespan 0.16.0 (release)\nOS: {} {}\nLogs: ~{sep}Library{sep}Logs{sep}dev.gespan.native\nLog files: 2 (2.0 KB)\nCrash files: 2 (latest: 2026-10-24T09-15-30.123Z.json)",
                 std::env::consts::OS,
                 std::env::consts::ARCH,
                 sep = std::path::MAIN_SEPARATOR
@@ -150,7 +150,7 @@ mod tests {
         let logs = dir.path().join("absent");
         let text = summary_for(&logs, "0.16.0", Channel::Dev, None);
         let lines: Vec<_> = text.lines().collect();
-        assert_eq!(lines[0], "Gespan Native 0.16.0 (dev)");
+        assert_eq!(lines[0], "Gespan 0.16.0 (dev)");
         assert_eq!(lines[2], format!("Logs: {}", logs.display()));
         assert_eq!(lines[3], "Log files: 0 (0 B)");
         assert_eq!(lines[4], "Crash files: 0");

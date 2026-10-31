@@ -70,9 +70,9 @@ impl Installation {
                 .nth(3)
                 .ok_or("Cannot locate the app bundle")?;
             let plist = std::fs::read_to_string(app.join("Contents/Info.plist"))
-                .map_err(|_| "Updates require an installed Gespan Native app bundle")?;
+                .map_err(|_| "Updates require an installed Gespan app bundle")?;
             if !plist.contains(&format!("<string>{APP_ID}</string>")) {
-                return Err("This is not a Gespan Native bundle".into());
+                return Err("This is not a Gespan bundle".into());
             }
             Ok(Self {
                 kind: PackageKind::App,
@@ -102,7 +102,7 @@ impl Installation {
             }
             let marker: Marker = serde_json::from_slice(
                 &std::fs::read(marker)
-                    .map_err(|_| "Updates require an installed Gespan Native package")?,
+                    .map_err(|_| "Updates require an installed Gespan package")?,
             )
             .map_err(|e| e.to_string())?;
             let supported = if cfg!(windows) {

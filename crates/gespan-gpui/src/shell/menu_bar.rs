@@ -254,7 +254,7 @@ mod tests {
         let menus = crate::app_menu::menus(&Default::default(), true);
         assert_eq!(
             names(&menus),
-            ["Gespan Native", "File", "Edit", "View", "Window", "Help"]
+            ["Gespan", "File", "Edit", "View", "Window", "Help"]
         );
     }
 
@@ -297,10 +297,7 @@ mod tests {
             ["Settings…", "Hold Everything", "-", "Quit"]
         );
         let help = labels(find(&menus, "Help"));
-        assert_eq!(
-            &help[..3],
-            ["About Gespan Native", "Check for Updates…", "-"]
-        );
+        assert_eq!(&help[..3], ["About Gespan", "Check for Updates…", "-"]);
         assert!(help.iter().any(|label| label == "Gespan Website"));
         // Nothing hides the app or its others: those are macOS-only.
         let all: Vec<String> = menus.iter().flat_map(labels).collect();

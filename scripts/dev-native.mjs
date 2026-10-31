@@ -105,7 +105,7 @@ export async function startDev({
             continue;
           }
           // Matches bundle-native-macos.sh: development data runs as its own app.
-          const appName = dataMode === "dev-data" ? "Gespan Native Dev.app" : "Gespan Native.app";
+          const appName = dataMode === "dev-data" ? "Gespan Dev.app" : "Gespan.app";
           executable = join(target, "native-dev", appName, "Contents", "MacOS", "gespan-gpui");
         }
         if (builtRevision !== revision) continue;

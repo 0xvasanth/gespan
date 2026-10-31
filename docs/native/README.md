@@ -1,6 +1,6 @@
-# Gespan Native preview
+# Gespan preview
 
-Gespan Native is the experimental Rust + GPUI app. The production app still
+Gespan is the experimental Rust + GPUI app. The production app still
 uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
 
 ## Requirements
@@ -37,7 +37,7 @@ Type `r` then Enter in the terminal to rebuild and restart. The current app stay
 open until the new build succeeds. Ctrl+C stops the app and runner. There is no
 hot reload or automatic rebuild on save.
 
-On macOS, the command packages and launches `Gespan Native.app`. Other
+On macOS, the command packages and launches `Gespan.app`. Other
 platforms launch the executable directly.
 
 ## Build
@@ -52,7 +52,7 @@ installed Gespan database, and changes save there.** No extra flags are needed.
 On macOS, open:
 
 ```sh
-open "crates/gespan-gpui/target/release/Gespan Native.app"
+open "crates/gespan-gpui/target/release/Gespan.app"
 ```
 
 The app has a separate name and application ID (`dev.gespan.native`) so it can be
@@ -62,7 +62,7 @@ produce a standalone executable
 under `crates/gespan-gpui/target/release/`. `CARGO_TARGET_DIR` and
 `CARGO_BUILD_TARGET` can change these output paths.
 
-The **Gespan Native Preview** GitHub Actions workflow runs checks and build
+The **Gespan Preview** GitHub Actions workflow runs checks and build
 verification.
 
 ## Releases and the update feed
@@ -143,12 +143,12 @@ The macOS app icon is `crates/gespan-gpui/packaging/icon.icns`.
 
 Gespan Native and the Tauri Gespan app share one database,
 `~/Library/Application Support/dev.gespan.desktop/gespan.db` on macOS. Before
-you use Gespan Native with your real data:
+you use Gespan with your real data:
 
 - Back up `gespan.db` with both apps closed.
 - Do not have the same conversation open in both apps at the same time. Tauri
   Gespan saves whole conversations, so it can overwrite turns that were added in
-  Gespan Native.
+  Gespan.
 
 Opening different conversations in each app is fine. A code safeguard for this is
 planned but not built yet.
@@ -194,7 +194,7 @@ database in `gespan.db.gpui.sqlite3`.
 
 Failure counters (how often worktree creation, agent starts, Git, updates and
 similar operations failed each day, by a short fixed error code) are kept in
-`gespan-native.db`, also beside the database. Only Gespan Native opens that
+`gespan-native.db`, also beside the database. Only Gespan opens that
 file; nothing is added to `gespan.db`. The counts stay on this machine.
 
 Supported desktop preferences and workspace state are read from the installed
