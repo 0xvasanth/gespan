@@ -90,7 +90,8 @@ test("rpm replaces the beta package and the old Gespan app, and only those older
 });
 
 test("the Windows installer takes over a beta install without touching the old app's entry", async () => {
-  const script = await readFile(new URL("./native-installer.nsi", import.meta.url), "utf8");
+  // Windows checkouts turn this file's line endings into CRLF.
+  const script = (await readFile(new URL("./native-installer.nsi", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   assert.ok(script.includes('Name "Gespan"\n'));
   assert.ok(script.includes('InstallDir "$LOCALAPPDATA\\Programs\\Gespan"\n'));
   assert.ok(script.includes('InstallDirRegKey HKCU "Software\\Gespan Native" "InstallDir"'));
