@@ -104,7 +104,7 @@ parking_lot = "0.12"
 # Experimental native builds resolve separately from the production Tauri app.
 [workspace]
 resolver = "2"
-members = [".", "../gespan-core"]
+members = [".", "../gespan-core", "../gespan-first-launch"]
 
 [workspace.package]
 version = "0.0.4"
