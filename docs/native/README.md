@@ -67,27 +67,33 @@ verification.
 
 ## Releases and the update feed
 
-**Native preview release** publishes previews and stable releases. The tag picks
-which: `v1.2.0` is stable, `v1.2.0-beta` or `v1.2.0-preview.1` is a preview. It
-runs only when started by hand, so pushing a tag never publishes anything. To
-cut a release:
+Releases run themselves. Set the new version with `bun run set-version`, add its
+CHANGELOG section, and merge that through a pull request. When CI and Gespan
+Native Preview have both passed on that commit, the **Release** workflow:
 
-1. Tag the commit as `v<version>` (for example `v0.0.4-beta`) and push the
-   tag.
-2. In the Actions tab, open **Native preview release**, choose **Run workflow**,
-   set **Use workflow from** to that tag, and run it. Dispatching from a branch or
-   any tag that is not a `vX.Y.Z` version fails at once in the first job.
+1. Creates the tag `v<version>` and a draft GitHub release.
+2. Runs **Mobile release** twice from the tag: the iOS build for TestFlight, and
+   an Android APK that goes on the draft.
+3. Runs **Native preview release** from the tag, which adds the desktop packages
+   and publishes the draft as its last step.
+
+The tag picks the channel: `v1.2.0` is stable, `v1.2.0-beta` or
+`v1.2.0-preview.1` is a preview. Nothing is public until step 3 finishes, so a
+failed build leaves only a draft. Run **Release** again to finish: a build that
+already passed for the tag is not repeated. A fix that needs a new commit needs
+a new version, because a tag never moves.
+
+To test a build without publishing, push a preview tag such as
+`v0.0.4-preview.1` and run **Native preview release** from it with `dry_run` on,
+or **Mobile release** with `release` set to `apk` and `dry_run` on.
 
 The workflow builds and signs every platform package, then publishes to GitHub
 Releases:
 
 - The packages and their `.sig` files go on the version's one GitHub release,
-  `v<version>` (a prerelease, never marked latest), which the Gespan (Tauri)
-  release shares. Whichever workflow runs first creates it, titled
-  `Gespan <version>` with that version's CHANGELOG section as its notes; the
-  other adds its files. The signed feed is kept there as `native-latest.json`.
-  Published files are never replaced; use a new tag to ship a fix. Run the two
-  workflows one after the other, not at the same time.
+  `v<version>`, titled `Gespan <version>` with that version's CHANGELOG section
+  as its notes. The signed feed is kept there as `native-latest.json`. Published
+  files are never replaced; use a new tag to ship a fix.
 - A fixed `native-latest` release holds only `latest.json`. The workflow creates
   it if missing and overwrites the asset on every native release. The signed
   feed's package URLs point at the versioned release's assets.

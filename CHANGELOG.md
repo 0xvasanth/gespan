@@ -10,16 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.4] - 2026-10-31
 
 The first stable release of Gespan, for macOS, Windows and Linux, with the iOS
-app on TestFlight. The app is now called Gespan and is the only desktop app.
+app on TestFlight and an Android APK. The app is now called Gespan and is the only desktop app.
 
 **Betas don't update to this version on their own.** Install it from this
 release's assets. Your data stays where it is. On macOS, delete
 `Gespan Native.app` afterwards.
 
-This release is not signed with an Apple Developer ID or a Windows code-signing
-certificate. On macOS, open it the first time with Control-click → Open, and if
-macOS still refuses, run `xattr -dr com.apple.quarantine /Applications/Gespan.app`.
-On Windows, choose **More info → Run anyway** in SmartScreen.
+The macOS app is signed with an Apple Developer ID and notarized. The Windows
+installer isn't code-signed yet, so choose **More info → Run anyway** in
+SmartScreen the first time. On Android, install the APK from this release; the
+app isn't on Google Play yet.
 
 ### Changed
 
@@ -120,11 +120,14 @@ On Windows, choose **More info → Run anyway** in SmartScreen.
 - Installing the remote host on Windows over SSH no longer fails when
   Windows or antivirus still holds `node.exe` right after the install checks
   its version.
+- An approval pop-up shows the whole command, so you can decide without
+  opening the chat.
+- A finished orchestration worker that changed nothing reads "finished with no
+  changes" in the lead chat and has a "No changes" label in the sidebar, instead
+  of showing Done and ready for review.
 
 ### Known issues
 
-- The approval pop-up may not show the command it is asking about or a failed
-  worker's status. This is fixed in a later release.
 - Gespan on Windows and Linux, and SSH remotes, are less tested than on macOS.
 
 ## [0.0.3-beta] - 2026-10-30

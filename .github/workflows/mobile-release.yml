@@ -1,4 +1,5 @@
 name: Mobile release
+run-name: Mobile ${{ inputs.release }} ${{ inputs.platform }} ${{ github.ref_name }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
 # Releases the mobile app (Expo project @gespan/gespan). Started by hand from
 # the same vX.Y.Z tag as the Native preview release, so one tag ships
@@ -10,13 +11,17 @@ name: Mobile release
 # update only reaches builds whose native fingerprint matches, so release a
 # build after any native change (native modules, app.json, Expo upgrades,
 # crates/mobile-link).
+#
+# "apk" builds an installable Android APK with the apk profile, signed with the
+# project's EAS keystore, for people outside Google Play. It goes on the draft
+# of the tag's GitHub release, which the Release workflow creates.
 on:
   workflow_dispatch:
     inputs:
       release:
-        description: build makes store builds; update ships JavaScript over the air
+        description: build makes store builds; update ships JavaScript over the air; apk adds an Android APK to the release
         type: choice
-        options: [build, update]
+        options: [build, update, apk]
         default: build
       platform:
         description: Android submission needs a Google service account in EAS and one manual upload in Play Console first
@@ -27,6 +32,10 @@ on:
         description: Submit builds to TestFlight / Google Play
         type: boolean
         default: true
+      dry_run:
+        description: For apk, build it and leave the release alone
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,7 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     # Waits for the EAS build, so a failed build or submission fails this run.
     timeout-minutes: 240
+    permissions:
+      contents: write
     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       PLATFORM: ${{ inputs.platform }}
       SUBMIT: ${{ inputs.submit }}
@@ -87,6 +99,24 @@ jobs:
           args=(--platform "$PLATFORM" --profile production --non-interactive)
           if [ "$SUBMIT" = true ]; then args+=(--auto-submit); fi
           eas build "${args[@]}"
+      - name: Build the APK
+        if: inputs.release == 'apk'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          eas build --platform android --profile apk --non-interactive --json > "$RUNNER_TEMP/eas-apk.json"
+          url="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1]))[0].artifacts.applicationArchiveUrl' "$RUNNER_TEMP/eas-apk.json")"
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/Gespan_${GITHUB_REF_NAME#v}_android.apk"
+      - name: Add the APK to the draft release
+        if: inputs.release == 'apk' && !inputs.dry_run
+        run: |
+          set -euo pipefail
+          # Published files are never replaced.
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != true ]; then
+            echo "$GITHUB_REF_NAME is not a draft release." >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/Gespan_${GITHUB_REF_NAME#v}_android.apk" --clobber
       - name: Publish update
         if: inputs.release == 'update'
         working-directory: mobile

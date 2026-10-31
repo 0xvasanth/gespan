@@ -1,12 +1,16 @@
 name: Native preview release
+run-name: Desktop ${{ github.ref_name }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
 on:
-  # Manual only until the signing secrets exist; see "Releases and the update
-  # feed" in docs/native/README.md. Start it from a release tag (Run workflow
-  # -> Use workflow from -> Tags -> vX.Y.Z): the tag name is the version, and
-  # the guard job rejects any other ref.
+  # The Release workflow starts this from a version's tag; see "Releases and the
+  # update feed" in docs/native/README.md. The tag name is the version, and the
+  # guard job rejects any other ref.
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: "Build, sign and verify everything, and publish nothing"
+        type: boolean
+        default: false
       allow_unsigned:
         description: "Publish ad-hoc signed, unnotarized macOS packages when the Apple signing secrets are missing"
         type: boolean
@@ -346,6 +350,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # A dry-run tag may have no CHANGELOG section.
+          NATIVE_RELEASE_NOTES: ${{ inputs.dry_run && 'Dry run' || '' }}
         run: |
           echo "GESPAN_NATIVE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}" node scripts/native-release.mjs native-dist
@@ -355,6 +361,7 @@ jobs:
       - name: Check optional R2 mirror
         run: node scripts/release-channel.cjs native-r2
       - name: Publish native preview assets
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}"
@@ -386,6 +393,18 @@ jobs:
             # The signed feed rides along so a failed run can republish it unsigned.
             FILES+=(native-dist/native-latest.json)
             gh release upload "$NATIVE_RELEASE_TAG" "${FILES[@]}" --clobber
+          fi
+          # On the draft before it goes public, so a failure here publishes nothing.
+          # Published files are never replaced, so a rerun only adds missing ones.
+          EXISTING="$(gh release view "$NATIVE_RELEASE_TAG" --json assets --jq '.assets[].name')"
+          HOST_FILES=()
+          for file in host-packages/*; do
+            grep -qxF "$(basename "$file")" <<<"$EXISTING" || HOST_FILES+=("$file")
+          done
+          if (( ${#HOST_FILES[@]} )); then
+            gh release upload "$NATIVE_RELEASE_TAG" "${HOST_FILES[@]}"
+          fi
+          if [ "$NATIVE_UPLOAD_PACKAGES" = true ]; then
             # Publish a draft; a prerelease the other app already published keeps
             # its title, notes and channel.
             if [ "$NATIVE_PRERELEASE" = false ] || [ "$(gh release view "$NATIVE_RELEASE_TAG" --json isDraft --jq .isDraft)" = true ]; then
@@ -402,20 +421,8 @@ jobs:
             fi
             gh release upload native-latest "$RUNNER_TEMP/native-feed/latest.json" --clobber
           fi
-      - name: Publish standalone host packages
-        run: |
-          set -euo pipefail
-          # Published files are never replaced, so a rerun only adds missing ones.
-          EXISTING="$(gh release view "$NATIVE_RELEASE_TAG" --json assets --jq '.assets[].name')"
-          FILES=()
-          for file in host-packages/*; do
-            grep -qxF "$(basename "$file")" <<<"$EXISTING" || FILES+=("$file")
-          done
-          if (( ${#FILES[@]} )); then
-            gh release upload "$NATIVE_RELEASE_TAG" "${FILES[@]}"
-          fi
       - name: Mirror native preview to R2 (optional)
-        if: env.R2_ENABLED == 'true' && env.NATIVE_UPLOAD_PACKAGES == 'true'
+        if: env.R2_ENABLED == 'true' && env.NATIVE_UPLOAD_PACKAGES == 'true' && !inputs.dry_run
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"

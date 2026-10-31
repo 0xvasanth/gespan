@@ -202,13 +202,12 @@ The current release is
 
 Gespan on Windows and Linux is less tested than on macOS.
 
-**Opening it the first time.** Gespan is not yet signed with an Apple
-Developer ID or a Windows code-signing certificate, so your system warns you once.
+**Opening it the first time.**
 
-- **macOS:** open the DMG and drag the app to Applications. The first time,
-  Control-click the app, choose **Open**, then confirm. If macOS still refuses, run
-  `xattr -dr com.apple.quarantine /Applications/Gespan.app`.
-- **Windows:** in the SmartScreen prompt, choose **More info → Run anyway**.
+- **macOS:** open the DMG and drag the app to Applications. The app is signed
+  and notarized.
+- **Windows:** the installer isn't code-signed yet. In the SmartScreen prompt,
+  choose **More info → Run anyway**.
 - **Linux:** make the AppImage executable (`chmod +x`) and run it. See
   [Linux installation](docs/install.md) for dependencies and the `.deb` and `.rpm` packages.
 
