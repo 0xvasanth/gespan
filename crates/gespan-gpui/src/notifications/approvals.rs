@@ -18,6 +18,48 @@ pub(crate) struct PendingInput {
     pub request_id: String,
     pub kind: InputKind,
     pub label: String,
+    /// What is being approved, so the card can be decided without the chat.
+    pub detail: String,
+    /// Names the fields `detail` leaves out. It sits outside the scrolling
+    /// detail, so a long command can't push it out of view.
+    pub omitted: String,
+}
+
+fn tool_input(detail: &str) -> Option<(serde_json::Value, &'static str)> {
+    let input = serde_json::from_str::<serde_json::Value>(detail.trim()).ok()?;
+    let key = ["command", "file_path", "path", "url"]
+        .into_iter()
+        .find(|key| input[*key].is_string())?;
+    Some((input, key))
+}
+
+/// An approval's detail as a card shows it. Claude sends the tool's input as
+/// JSON, where the command or file is what the reader has to judge.
+pub(crate) fn approval_detail(detail: &str) -> String {
+    tool_input(detail)
+        .and_then(|(input, key)| input[key].as_str().map(str::to_owned))
+        .unwrap_or_else(|| detail.trim().to_owned())
+}
+
+/// The fields [`approval_detail`] leaves out, so a card never reads as the
+/// whole request when it isn't.
+pub(crate) fn approval_omitted(detail: &str) -> String {
+    let Some((input, key)) = tool_input(detail) else {
+        return String::new();
+    };
+    let mut others: Vec<String> = input
+        .as_object()
+        .into_iter()
+        .flat_map(|fields| fields.keys())
+        .filter(|other| *other != key && *other != "description")
+        .map(|other| other.chars().filter(|c| !c.is_control()).collect())
+        .collect();
+    others.sort_unstable();
+    if others.is_empty() {
+        String::new()
+    } else {
+        format!("+ {}", others.join(", "))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -235,6 +277,31 @@ impl Render for ApprovalNotices {
                                             .text_color(content(0.7))
                                             .child(input.label.clone()),
                                     )
+                                    .when(!input.detail.is_empty(), |card| {
+                                        card.child(
+                                            div()
+                                                .id(("approval-toast-detail", ix))
+                                                .debug_selector(|| "approval-toast-detail".into())
+                                                .font_family(crate::fonts::monospace())
+                                                .text_size(px(11.))
+                                                .line_height(px(17.))
+                                                .max_h(px(102.))
+                                                .overflow_y_scroll()
+                                                .text_color(content(0.85))
+                                                .child(input.detail.clone()),
+                                        )
+                                    })
+                                    .when(!input.omitted.is_empty(), |card| {
+                                        card.child(
+                                            div()
+                                                .debug_selector(|| "approval-toast-omitted".into())
+                                                .font_family(crate::fonts::monospace())
+                                                .text_size(px(11.))
+                                                .line_height(px(17.))
+                                                .text_color(content(0.85))
+                                                .child(input.omitted.clone()),
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .text_size(px(11.))
@@ -307,5 +374,70 @@ impl Render for ApprovalNotices {
                             })
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::{approval_detail, approval_omitted};
+
+    #[test]
+    fn a_shell_command_shows_as_it_was_sent() {
+        assert_eq!(
+            approval_detail("  /bin/zsh -lc 'sleep 150'\n"),
+            "/bin/zsh -lc 'sleep 150'"
+        );
+    }
+
+    #[test]
+    fn claude_tool_input_shows_the_part_to_judge() {
+        assert_eq!(
+            approval_detail(r#"{"command":"rm -rf build","description":"Clean"}"#),
+            "rm -rf build"
+        );
+        assert_eq!(
+            approval_detail(r#"{"url":"https://a.dev"}"#),
+            "https://a.dev"
+        );
+    }
+
+    #[test]
+    fn fields_the_card_leaves_out_are_named() {
+        let write = r#"{"file_path":"/repo/a.md","content":"x"}"#;
+        assert_eq!(approval_detail(write), "/repo/a.md");
+        assert_eq!(approval_omitted(write), "+ content");
+        let shell =
+            r#"{"timeout":5,"dangerouslyDisableSandbox":true,"command":"ls","description":"List"}"#;
+        assert_eq!(approval_detail(shell), "ls");
+        assert_eq!(
+            approval_omitted(shell),
+            "+ dangerouslyDisableSandbox, timeout"
+        );
+    }
+
+    #[test]
+    fn nothing_is_named_when_nothing_is_left_out() {
+        assert_eq!(
+            approval_omitted(r#"{"command":"ls","description":"List"}"#),
+            ""
+        );
+        assert_eq!(approval_omitted(r#"{"query":"gespan"}"#), "");
+        assert_eq!(approval_omitted("/bin/zsh -lc ls"), "");
+    }
+
+    #[test]
+    fn a_field_name_cannot_break_the_line_it_is_named_on() {
+        assert_eq!(
+            approval_omitted(r#"{"command":"ls","a\n+ nothing else":1}"#),
+            "+ a+ nothing else"
+        );
+    }
+
+    #[test]
+    fn other_input_is_shown_in_full_rather_than_hidden() {
+        let input = r#"{"query":"gespan"}"#;
+        assert_eq!(approval_detail(input), input);
+        assert_eq!(approval_detail("["), "[");
+        assert_eq!(approval_detail(""), "");
     }
 }

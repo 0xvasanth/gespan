@@ -1,7 +1,7 @@
 //! Read-only notification snapshots and request-specific approval actions.
 
 use super::*;
-use crate::notifications::approvals::{InputKind, PendingInput};
+use crate::notifications::approvals::{InputKind, PendingInput, approval_detail, approval_omitted};
 
 impl Conversation {
     pub(crate) fn notification_was_cancelled(&self) -> bool {
@@ -14,6 +14,8 @@ impl Conversation {
                 request_id: approval.id.clone(),
                 kind: InputKind::Approval,
                 label: approval.title.clone(),
+                detail: approval_detail(&approval.detail),
+                omitted: approval_omitted(&approval.detail),
             })
             .chain(self.questions.iter().map(|(card, _)| {
                 let question = card.read(cx);
@@ -21,6 +23,8 @@ impl Conversation {
                     request_id: question.id().to_owned(),
                     kind: InputKind::Question,
                     label: question.notification_label().to_owned(),
+                    detail: String::new(),
+                    omitted: String::new(),
                 }
             }))
             .collect()
