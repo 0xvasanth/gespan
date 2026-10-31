@@ -34,8 +34,9 @@ extern "system" {
 }
 
 fn main() {
-    if let Ok(real_git) = env::var("SPIKE_REAL_GIT") {
-        return fake_git(&real_git);
+    let exe = env::current_exe().unwrap();
+    if exe.file_stem().is_some_and(|stem| stem == "git") {
+        return fake_git(&env::var("SPIKE_REAL_GIT").unwrap());
     }
     if env::args().nth(1).as_deref() == Some("child") {
         return child();
@@ -614,6 +615,9 @@ fn real_repo() {
         let mut found = BTreeMap::new();
         for branch in &args[2..] {
             let (_, reason) = repo.integration_reason(&snapshot, branch, &args[1]).unwrap();
+            if pass == "warm" {
+                report!("branch {branch} {reason:?}");
+            }
             *found.entry(format!("{reason:?}")).or_insert(0) += 1;
         }
         report!(
