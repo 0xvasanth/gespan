@@ -106,8 +106,8 @@ async function notices(directory) {
   for (const file of [
     "LICENSE",
     "NOTICE",
-    "docs/native/LICENSE-GPUI-APACHE",
-    "docs/native/LICENSE-MERMAID-MIT",
+    "docs/desktop/LICENSE-GPUI-APACHE",
+    "docs/desktop/LICENSE-MERMAID-MIT",
     "crates/gespan-gpui/assets/hugeicons.LICENSE",
     "crates/gespan-gpui/assets/dark-plus.LICENSE",
     "crates/gespan-gpui/assets/native-editor.LICENSE.txt",
@@ -188,7 +188,7 @@ export async function packageNative({
     run(
       "bash",
       [
-        "scripts/bundle-native-macos.sh",
+        "scripts/bundle-macos.sh",
         "release",
         dirname(dirname(binary)),
         version,
@@ -307,7 +307,7 @@ export async function packageNative({
       join(root, "crates/gespan-gpui/assets/gespan.png"),
       join(appDir, "gespan.png"),
     );
-    await cp(join(root, "scripts/native-appimage-apprun.sh"), join(appDir, "AppRun"));
+    await cp(join(root, "scripts/appimage-apprun.sh"), join(appDir, "AppRun"));
     await chmod(join(appDir, "AppRun"), 0o755);
     run(
       process.env.APPIMAGETOOL || "appimagetool",
@@ -368,7 +368,7 @@ export async function packageNative({
     const quote = (value) =>
       value.replaceAll("$", "$$").replaceAll('"', '$\\"');
     const template = await readFile(
-      join(root, "scripts/native-installer.nsi"),
+      join(root, "scripts/installer.nsi"),
       "utf8",
     );
     const script = template

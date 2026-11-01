@@ -1,13 +1,13 @@
 # Board
 
-The board keeps your work in one place: cards you move through columns, with sessions, Pilots, pull requests and tracker tickets linked to them. Details on how it behaves are in [Board details](native/parity.md#board-details).
+The board keeps your work in one place: cards you move through columns, with sessions, Pilots, pull requests and tracker tickets linked to them. Details on how it behaves are in [Board details](desktop/parity.md#board-details).
 
 ## Boards
 
 Boards are global. A board is not tied to one project. Each card is tagged with the project it belongs to, and you can filter or group by project.
 
 - **Switcher.** The board header lists your boards. Pick one to open it.
-- **New board.** Choose "New board", give it a name and pick a template (see [Templates](#templates)). Gespan Native does not offer a template picker on the empty state; use the switcher there.
+- **New board.** Choose "New board", give it a name and pick a template (see [Templates](#templates)). Gespan does not offer a template picker on the empty state; use the switcher there.
 - **Rename and delete.** "Rename board" and "Delete board" are in the board actions menu (the switcher in Native). Deleting a board asks first, then removes it with its columns, cards and activity. To keep cards, move them first with Move to board… in the card's More menu.
 - **Board settings.** Also in the header menu. See [Board settings](#board-settings).
 - **Open cards in.** Choose whether a card opens in a side drawer or on a full page. It is in the board header menu.

@@ -1,4 +1,4 @@
-//! UI-independent services for Gespan Native.
+//! UI-independent services for Gespan.
 pub mod accounts;
 pub mod agent;
 pub mod app_access;

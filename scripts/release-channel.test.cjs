@@ -222,7 +222,7 @@ test("the release workflow takes its channel from the tag at every step", () => 
     "Gespan_1.2.0_aarch64.dmg Gespan.dmg\nGespan_1.2.0_x64.dmg Gespan_x64.dmg\n");
   assert.equal(cli("native-fixed-downloads", "v1.2.0-beta").stdout, "");
 
-  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/desktop-release.yml"), "utf8");
   assert.doesNotMatch(workflow, /gh release (create|edit) "\$NATIVE_RELEASE_TAG".* --prerelease/, "the channel must come from NATIVE_RELEASE_FLAGS");
   assert.doesNotMatch(workflow, /s3:\/\/\$\{R2_BUCKET_NAME\}\/native-preview/, "the mirror must come from NATIVE_MIRROR_PREFIX");
   assert.match(workflow, /native-fixed-downloads/);
@@ -384,7 +384,7 @@ test("recovery reuses the original signatures and signs nothing", () => {
 });
 
 test("the workflow exposes the signing key only to the normal-path signing step", () => {
-  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "native-release.yml"), "utf8");
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "desktop-release.yml"), "utf8");
   const publish = workflow.slice(workflow.indexOf("\n  publish:"));
   const holders = publish.split("\n      - ").filter((step) => step.includes("TAURI_SIGNING_PRIVATE_KEY"));
   assert.equal(holders.length, 1);
@@ -503,7 +503,7 @@ test("the release-decision CLI writes the workflow's outputs", () => {
 });
 
 test("nothing goes public until the host packages are on the draft", () => {
-  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/desktop-release.yml"), "utf8");
   const host = workflow.indexOf('gh release upload "$NATIVE_RELEASE_TAG" "${HOST_FILES[@]}"');
   const publish = workflow.indexOf('gh release edit "$NATIVE_RELEASE_TAG" --draft=false');
   assert.ok(host > 0 && host < publish);
@@ -515,7 +515,7 @@ test("the Release workflow finishes on the draft and publishes only through the 
   assert.ok(workflow.includes("--draft --verify-tag"));
   assert.ok(!workflow.includes("--draft=false"));
   const mobile = workflow.indexOf("mobile-release.yml");
-  const desktop = workflow.indexOf("native-release.yml");
+  const desktop = workflow.indexOf("desktop-release.yml");
   assert.ok(mobile > 0 && mobile < desktop);
   assert.ok(!workflow.includes("allow_unsigned=true"));
 });
@@ -572,7 +572,7 @@ test("the feed guard republishes a signed file and never touches the signing key
   assert.doesNotMatch(workflow, /secrets\.TAURI_SIGNING/);
   assert.match(workflow, /verify-preview-feed/);
   assert.match(workflow, /gh release create native-latest --prerelease --latest=false/);
-  const release = fs.readFileSync(path.join(__dirname, "../.github/workflows/native-release.yml"), "utf8");
+  const release = fs.readFileSync(path.join(__dirname, "../.github/workflows/desktop-release.yml"), "utf8");
   assert.equal(
     workflow.match(/group: (.+)/)[1],
     release.match(/group: (.+)/)[1],

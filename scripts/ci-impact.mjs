@@ -10,9 +10,9 @@ import { pathToFileURL } from "node:url";
 export const pieces = ["core", "desktop", "host", "mobile", "release"];
 
 const rules = [
-  // Nothing reads these. docs/native/examples is compiled into Native, and
+  // Nothing reads these. docs/desktop/examples is compiled into Native, and
   // Native and the release scripts read CHANGELOG.md, so neither matches.
-  [/^docs\/(?!native\/examples\/)/, []],
+  [/^docs\/(?!desktop\/examples\/)/, []],
   [/^(CODE_OF_CONDUCT|CONTRIBUTING|README|SECURITY)\.md$/, []],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],

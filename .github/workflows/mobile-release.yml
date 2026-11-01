@@ -2,7 +2,7 @@ name: Mobile release
 run-name: Mobile ${{ inputs.release }} ${{ inputs.platform }} ${{ github.ref_name }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
 # Releases the mobile app (Expo project @gespan/gespan). Started by hand from
-# the same vX.Y.Z tag as the Native preview release, so one tag ships
+# the same vX.Y.Z tag as the Desktop release, so one tag ships
 # both apps.
 #
 # "build" makes store builds on EAS with the production profile and, unless

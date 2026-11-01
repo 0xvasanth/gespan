@@ -1,4 +1,4 @@
-//! Flows in Gespan Native. `gespan_core::flow` owns the rules; this is the
+//! Flows in Gespan. `gespan_core::flow` owns the rules; this is the
 //! host that runs each agent visit as a background session, and the view.
 use gpui::App;
 

@@ -14,7 +14,7 @@ lockfile.
 The native commands do not require `bun install`.
 macOS is the primary preview target. A Linux ARM64 source build has been
 smoke-tested in a VM; Linux x64 packages and Windows GUI interaction still need
-runtime testing. See [preview limitations](parity.md).
+runtime testing. See [known limitations](parity.md).
 
 Fenced `mermaid` blocks render as native diagrams in Markdown previews and
 conversations. See [Mermaid diagrams](mermaid.md) for examples and limitations.
@@ -24,13 +24,13 @@ conversations. See [Mermaid diagrams](mermaid.md) for examples and limitations.
 From the repository root:
 
 ```sh
-bun run native:dev
+bun run dev
 ```
 
 Development uses a separate database. To open a particular project:
 
 ```sh
-bun run native:dev --cwd /path/to/project
+bun run dev --cwd /path/to/project
 ```
 
 Type `r` then Enter in the terminal to rebuild and restart. The current app stays
@@ -43,7 +43,7 @@ platforms launch the executable directly.
 ## Build
 
 ```sh
-bun run native:build
+bun run build
 ```
 
 This creates an optimized build without launching it. **The release app uses the
@@ -74,7 +74,7 @@ that commit, the **Release** workflow:
 1. Creates the tag `v<version>` and a draft GitHub release.
 2. Runs **Mobile release** twice from the tag: the iOS build for TestFlight, and
    an Android APK that goes on the draft.
-3. Runs **Native preview release** from the tag, which adds the desktop packages
+3. Runs **Desktop release** from the tag, which adds the desktop packages
    and publishes the draft as its last step.
 
 The tag picks the channel: `v1.2.0` is stable, `v1.2.0-beta` or
@@ -84,7 +84,7 @@ already passed for the tag is not repeated. A fix that needs a new commit needs
 a new version, because a tag never moves.
 
 To test a build without publishing, push a preview tag such as
-`v0.0.4-preview.1` and run **Native preview release** from it with `dry_run` on,
+`v0.0.4-preview.1` and run **Desktop release** from it with `dry_run` on,
 or **Mobile release** with `release` set to `apk` and `dry_run` on.
 
 The workflow builds and signs every platform package, then publishes to GitHub
@@ -121,7 +121,7 @@ there, the run fails and names the missing ones; use a new tag then.
 Keep the signing secrets in a GitHub Environment with required reviewers, so a
 release run needs an approval before it can use the signing key. If you move
 the secrets into an Environment, also add `environment: <name>` to the `publish`
-job in `native-release.yml`, and to the `build` and `rpm` jobs, which read
+job in `desktop-release.yml`, and to the `build` and `rpm` jobs, which read
 `TAURI_UPDATER_PUBKEY`. Without it those jobs cannot see the secrets, so the
 release breaks silently.
 
@@ -198,7 +198,7 @@ app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
 implemented and covered by synthetic fixtures on Linux; reading a real Windows
 profile remains unverified. Native preference edits are stored separately.
 Some desktop layout concepts still need native support; see
-[preview limitations](parity.md).
+[known limitations](parity.md).
 
 The Windows reader always opens a temporary copy of localStorage. If the old Tauri
 app is still running, the copy is best-effort and can leave desktop preferences
@@ -217,18 +217,18 @@ continues to use each provider's existing sign-in.
 ## Checks and fixtures
 
 ```sh
-bun run native:check
+bun run check:app
 ```
 
 This runs the script tests, Rust formatting, strict Clippy and native tests.
-See [native checks](verification.md) for individual commands and optional
+See [checks](verification.md) for individual commands and optional
 provider checks.
 
 A synthetic long-history fixture uses development data and makes no provider
 request:
 
 ```sh
-GESPAN_NATIVE_DATA_DIR=/tmp/gespan-native-lab bun run native:dev --fixture
+GESPAN_NATIVE_DATA_DIR=/tmp/gespan-native-lab bun run dev --fixture
 ```
 
 Fixtures are refused with production data. Use a fresh temporary directory when
@@ -237,6 +237,6 @@ you want an empty fixture store.
 ## Contributing
 
 See [architecture](migration.md) for the crate boundaries and renderer patches,
-and [preview limitations](parity.md) for remaining work. The
+and [known limitations](parity.md) for remaining work. The
 [session visuals guide](visuals.md) documents the agent-facing visual API and
 examples.

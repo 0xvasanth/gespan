@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { dmgMegabytes, linuxTree, nativeVersion, packageNative, rpmSpec, runStapler } from "./package-native.mjs";
+import { dmgMegabytes, linuxTree, nativeVersion, packageNative, rpmSpec, runStapler } from "./package.mjs";
 
 test("the DMG staging image is sized from its contents with headroom", () => {
   const MiB = 2 ** 20;
@@ -81,7 +81,7 @@ test("rpm replaces the beta package and the old Gespan app, and only those older
 
 test("the Windows installer takes over a beta install without touching the old app's entry", async () => {
   // Windows checkouts turn this file's line endings into CRLF.
-  const script = (await readFile(new URL("./native-installer.nsi", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const script = (await readFile(new URL("./installer.nsi", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   assert.ok(script.includes('Name "Gespan"\n'));
   assert.ok(script.includes('InstallDir "$LOCALAPPDATA\\Programs\\Gespan"\n'));
   assert.ok(script.includes('InstallDirRegKey HKCU "Software\\Gespan Native" "InstallDir"'));

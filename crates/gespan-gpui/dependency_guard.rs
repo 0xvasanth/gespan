@@ -1,4 +1,4 @@
-//! Std-only so scripts/native-dependencies.test.mjs can build it in an
+//! Std-only so scripts/dependencies.test.mjs can build it in an
 //! offline fixture crate.
 use std::{fs, path::Path};
 

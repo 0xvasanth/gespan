@@ -34,7 +34,7 @@ const target = process.env.CARGO_BUILD_TARGET
   ? join(metadata.target_directory, process.env.CARGO_BUILD_TARGET)
   : metadata.target_directory;
 if (process.platform === "darwin") {
-  run("bash", ["scripts/bundle-native-macos.sh", "release", target, app.version, "gespan-data"]);
+  run("bash", ["scripts/bundle-macos.sh", "release", target, app.version, "gespan-data"]);
 } else {
   const executable = process.platform === "win32" ? "gespan-gpui.exe" : "gespan-gpui";
   console.log(`Executable: ${join(target, "release", executable)}`);

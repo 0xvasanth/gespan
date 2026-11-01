@@ -3,7 +3,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { nativeVersion } from "./package-native.mjs";
+import { nativeVersion } from "./package.mjs";
 
 const { nativeAssetBase, releaseNotes } = createRequire(import.meta.url)("./release-channel.cjs");
 

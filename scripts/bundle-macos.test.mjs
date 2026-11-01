@@ -36,7 +36,7 @@ test("Finder launches use development data for dev bundles and installed data fo
       const executable = join(output, "gespan-gpui");
       await writeFile(executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
       await chmod(executable, 0o755);
-      const args = ["scripts/bundle-native-macos.sh", profile, target, "0.16.0"];
+      const args = ["scripts/bundle-macos.sh", profile, target, "0.16.0"];
       if (override) args.push(override);
       const packaged = spawnSync("bash", args, {
         cwd: root,

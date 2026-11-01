@@ -38,7 +38,7 @@ export type HarnessEvent =
   | ({
       type: "interjection";
       text: string;
-      /** When the row was written (epoch ms); Gespan Native stamps its rows. */
+      /** When the row was written (epoch ms); Gespan stamps its rows. */
       sentAt?: number;
     } & InterjectionMeta)
   | { type: "message.delta"; text: string }

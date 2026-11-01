@@ -11,7 +11,7 @@ You need Node.js 22+, [Bun](https://bun.sh), a current stable Rust toolchain, an
 macOS, Linux, and Windows are supported targets. See [building from source](docs/building.md) for platform prerequisites and packaging commands.
 
 ```bash
-bun run native:dev
+bun run dev
 ```
 
 ## Where things live
@@ -24,7 +24,7 @@ bun run native:dev
 
 `crates/gespan-core/src/provider/` is the most useful place to start if you want to fix something real. Each provider has a transport that turns the CLI's output into Gespan's own events, so you can fix a Codex parsing bug with only Claude Code installed. That's for the providers we already ship - please don't add a new one yet.
 
-See the [native guide](docs/native/README.md) and [architecture](docs/native/migration.md) for more.
+See the [desktop guide](docs/desktop/README.md) and [architecture](docs/desktop/migration.md) for more.
 
 ## Before you push
 
@@ -32,7 +32,7 @@ See the [native guide](docs/native/README.md) and [architecture](docs/native/mig
 bun run check
 ```
 
-That runs the host tests, then `cargo fmt`, `cargo clippy`, and `cargo test` for both Rust workspaces. If it's green locally it should be green on GitHub. `bun run test:host`, `bun run check:rust`, and `bun run native:check` run the parts separately when you only touched one side.
+That runs the host tests, then `cargo fmt`, `cargo clippy`, and `cargo test` for both Rust workspaces. If it's green locally it should be green on GitHub. `bun run test:host`, `bun run check:rust`, and `bun run check:app` run the parts separately when you only touched one side.
 
 ## New providers
 

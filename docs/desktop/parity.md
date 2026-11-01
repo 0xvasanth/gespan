@@ -1,7 +1,7 @@
-# Native preview limitations
+# Known limitations
 
 A feature being present in source does not establish that it has been tried by
-hand on every platform. See [native checks](verification.md) for the commands to
+hand on every platform. See [checks](verification.md) for the commands to
 check it locally.
 
 The Tauri app is retired, after every feature it had was ported (epic #217). Its
@@ -46,7 +46,7 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Inbox | Runtime/visual checks and linked-update notices |
 | Notes | Runtime/visual checks |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
-| Board | Runtime/visual checks in `bun run native:dev`. Details and known differences are listed under the table in [Board details](#board-details) |
+| Board | Runtime/visual checks in `bun run dev`. Details and known differences are listed under the table in [Board details](#board-details) |
 | Pilots | Existing-data checks, HTML accessibility and floating-document interactions |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |

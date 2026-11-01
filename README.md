@@ -249,7 +249,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |
 | [Privacy](docs/privacy.md) | What is recorded locally and what never leaves your machine |
-| [Native guide](docs/native/README.md) | The Rust + GPUI app: building, checks and current limitations |
+| [Native guide](docs/desktop/README.md) | The Rust + GPUI app: building, checks and current limitations |
 
 ## Build from source
 
@@ -260,7 +260,7 @@ dependencies and packaging.
 ```bash
 git clone https://github.com/0xvasanth/gespan.git
 cd gespan
-bun run native:dev
+bun run dev
 ```
 
 Before opening a pull request, run the same checks CI runs:
@@ -299,13 +299,13 @@ Gespan is written in Rust and [GPUI](https://github.com/zed-industries/zed/tree/
 On macOS you need Node.js 22+, Rust and Xcode:
 
 ```sh
-bun run native:dev     # launch with a separate development database
-bun run native:build   # create an optimized app using installed Gespan data
+bun run dev     # launch with a separate development database
+bun run build   # create an optimized app using installed Gespan data
 ```
 
 In the development terminal, type `r` and press Enter to rebuild and restart.
 There is no hot reload. The release app saves changes to your installed Gespan
-data. See the [native guide](docs/native/README.md) for prerequisites, build
+data. See the [desktop guide](docs/desktop/README.md) for prerequisites, build
 output, checks and current limitations.
 
 </details>

@@ -6,7 +6,7 @@ For the TypeScript side (`host/`, `mobile/`, `scripts/`, `tests/`), use Bun
 instead of npm/npx:
 
 - Install dependencies: `bun install`, not `npm install` / `npm ci`
-- Run package scripts: `bun run <script>` (e.g. `bun run native:dev`,
+- Run package scripts: `bun run <script>` (e.g. `bun run dev`,
   `bun run check`), not `npm run <script>`
 - One-off binaries: `bunx <tool>` (e.g. `bunx vitest run <file>`,
   `bunx tsc --noEmit`), not `npx <tool>`

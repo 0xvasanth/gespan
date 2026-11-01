@@ -1783,7 +1783,7 @@ function noteStep(
   steps.add(stepId);
 }
 
-/** Gespan Native bounds a child result to 16 KiB before storing it. */
+/** Gespan bounds a child result to 16 KiB before storing it. */
 const MAX_CHILD_DETAIL_BYTES = 16 * 1024;
 
 function boundDetail(text: string): string {
@@ -1796,7 +1796,7 @@ function boundDetail(text: string): string {
 }
 
 /**
- * Gespan Native's terminal set: any status it can read other than running.
+ * Gespan's terminal set: any status it can read other than running.
  * Unknown statuses are not terminal.
  */
 function isEndedStatus(status: string | undefined): boolean {
@@ -2074,7 +2074,7 @@ function noteResumedNotification(
 
 /**
  * Persisted as an interjection row (`customType: "task-notification"`), the
- * same row Gespan Native writes, so Claude's self-started follow-up is not
+ * same row Gespan writes, so Claude's self-started follow-up is not
  * read as a reply to the user.
  */
 function emitWakeMarker(live: Live, text: string): void {

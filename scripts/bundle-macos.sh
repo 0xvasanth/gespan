@@ -33,7 +33,7 @@ native_bundle="$native_target/$native_app_name.app"
 native_binary="$native_target/gespan-gpui"
 if [ ! -f "$native_binary" ]; then
   echo "Missing native executable: $native_binary" >&2
-  echo 'Build it with cargo first, or use bun run native:build.' >&2
+  echo 'Build it with cargo first, or use bun run build.' >&2
   exit 1
 fi
 
@@ -46,7 +46,7 @@ cp crates/gespan-gpui/packaging/icon.icns "$native_bundle/Contents/Resources/ges
 # Add these before signing so the signature covers the notices too.
 native_licenses="$native_bundle/Contents/Resources/licenses"
 mkdir -p "$native_licenses"
-cp LICENSE NOTICE docs/native/LICENSE-GPUI-APACHE docs/native/LICENSE-MERMAID-MIT "$native_licenses/"
+cp LICENSE NOTICE docs/desktop/LICENSE-GPUI-APACHE docs/desktop/LICENSE-MERMAID-MIT "$native_licenses/"
 cp crates/gespan-gpui/assets/hugeicons.LICENSE \
   crates/gespan-gpui/assets/dark-plus.LICENSE \
   crates/gespan-gpui/assets/native-editor.LICENSE.txt "$native_licenses/"

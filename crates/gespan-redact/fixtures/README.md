@@ -1,6 +1,6 @@
 # Redaction fixtures
 
-`redaction.json` is the contract for scrubbing diagnostics. Gespan Native runs
+`redaction.json` is the contract for scrubbing diagnostics. Gespan runs
 these cases in its tests.
 
 - `contexts` describes one machine per platform: its `home`, its `projects`

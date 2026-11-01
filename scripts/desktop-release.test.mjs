@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { feedNotes, nativeManifest, nativeTargets } from "./native-release.mjs";
-import { nativeVersion, rpmRelease, rpmSpec } from "./package-native.mjs";
+import { feedNotes, nativeManifest, nativeTargets } from "./desktop-release.mjs";
+import { nativeVersion, rpmRelease, rpmSpec } from "./package.mjs";
 
 const artifacts = nativeTargets.map((target) => ({
   target,
@@ -157,7 +157,7 @@ test("the rpm job installs the headers of every library the package requires", (
     .map(([, name]) => name)
     .filter((name) => name !== "polkit");
   assert.deepEqual(libraries, ["gtk3", "webkit2gtk4.1"]);
-  const workflow = readFileSync(new URL("../.github/workflows/native-release.yml", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../.github/workflows/desktop-release.yml", import.meta.url), "utf8");
   const packages = workflow
     .split("\n")
     .find((line) => line.includes("dnf install -y clang"))

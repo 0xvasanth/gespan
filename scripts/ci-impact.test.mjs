@@ -35,13 +35,13 @@ test("the crates other pieces read run every piece", () => {
 });
 
 test("files only people read run nothing", () => {
-  assert.deepEqual(affected("README.md", "docs/native/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
+  assert.deepEqual(affected("README.md", "docs/desktop/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
 });
 
 test("files Native compiles in are not documentation", async () => {
-  assert.deepEqual(affected("docs/native/examples/visual-scene.js"), all);
+  assert.deepEqual(affected("docs/desktop/examples/visual-scene.js"), all);
   assert.deepEqual(affected("CHANGELOG.md"), all);
-  assert.match(await read("crates/gespan-gpui/src/fixtures.rs"), /docs\/native\/examples\/visual-scene\.js/);
+  assert.match(await read("crates/gespan-gpui/src/fixtures.rs"), /docs\/desktop\/examples\/visual-scene\.js/);
   assert.match(await read("crates/gespan-gpui/src/notifications/app_update.rs"), /CHANGELOG\.md/);
 });
 

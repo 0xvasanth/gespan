@@ -1,5 +1,5 @@
 //! Tracker secrets (Linear, Jira, GitLab, Azure DevOps, Plane) in the OS
-//! keychain. Gespan Native reads the same entries older Tauri builds wrote.
+//! keychain. Gespan reads the same entries older Tauri builds wrote.
 //!
 //! One entry per tracker and data directory: service [`SERVICE`], account
 //! `<tracker>:<data dir>`. The value is exactly what the old `0600` file held,

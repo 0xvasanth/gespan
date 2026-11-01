@@ -1,6 +1,6 @@
 # Native Kiro end-to-end check
 
-`run_kiro_e2e.py` drives the real Gespan Native app on macOS through a Kiro
+`run_kiro_e2e.py` drives the real Gespan app on macOS through a Kiro
 conversation and fails (non-zero exit) if the integration breaks. No model is
 involved: Gespan's Kiro provider is pointed at `fake-kiro-cli`, a small ACP
 agent that always answers `GESPAN KIRO STUB REPLY: <your prompt>`.
@@ -31,7 +31,7 @@ real model, even if Kiro is broken.
   ```
 
   ```bash
-  bash scripts/bundle-native-macos.sh native-dev
+  bash scripts/bundle-macos.sh native-dev
   ```
 
 - **Accessibility** permission for the app that runs the script (Terminal,
@@ -46,7 +46,7 @@ the machine alone while it runs (about 15 seconds).
 ## Running
 
 ```bash
-python3 tests/native-kiro/run_kiro_e2e.py
+python3 tests/kiro-e2e/run_kiro_e2e.py
 ```
 
 Options: `--ocr` (also check the window text), `--keep` (keep the temp
@@ -60,7 +60,7 @@ To see it catch a broken integration, point Kiro at a missing binary; the run
 fails because no Kiro reply is ever saved:
 
 ```bash
-python3 tests/native-kiro/run_kiro_e2e.py --kiro-binary /nonexistent/kiro-cli --timeout 20
+python3 tests/kiro-e2e/run_kiro_e2e.py --kiro-binary /nonexistent/kiro-cli --timeout 20
 ```
 
 ## Related automated tests

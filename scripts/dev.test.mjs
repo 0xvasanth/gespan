@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import { parseDevArgs, startDev } from "./dev-native.mjs";
+import { parseDevArgs, startDev } from "./dev.mjs";
 
 test("forwards app options and rejects the retired runner flags", () => {
   assert.deepEqual(parseDevArgs([]), { args: [] });
@@ -162,7 +162,7 @@ test("macOS bundles automatically and preserves the selected data mode for Finde
       const f = await fixture(t, {}, { platform: "darwin", args });
       await f.until((events) => f.starts(events) === 1);
       const packaged = f.calls.find((call) => call.command === "bash");
-      assert.deepEqual(packaged.args, ["scripts/bundle-native-macos.sh", "native-dev", join(f.root, "custom-target"), "0.15.0", mode]);
+      assert.deepEqual(packaged.args, ["scripts/bundle-macos.sh", "native-dev", join(f.root, "custom-target"), "0.15.0", mode]);
       const app = f.calls.find((call) => !["cargo", "bash"].includes(call.command));
       const appName = mode === "dev-data" ? "Gespan Dev.app" : "Gespan.app";
       assert.equal(app.command, join(f.root, `custom-target/native-dev/${appName}/Contents/MacOS/gespan-gpui`));

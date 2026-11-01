@@ -15,9 +15,9 @@ sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-conf
 From the repository root:
 
 ```bash
-bun run native:dev     # launch with a separate development database
-bun run native:build   # create an optimized app using installed Gespan data
-bun run native:check   # run native checks
+bun run dev     # launch with a separate development database
+bun run build   # create an optimized app using installed Gespan data
+bun run check:app   # run native checks
 ```
 
 Native commands do not need JavaScript dependencies installed.
@@ -25,10 +25,10 @@ Native commands do not need JavaScript dependencies installed.
 Type `r` then Enter in the development terminal to rebuild and restart. There is
 no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
 
-`bun run native:dev` runs as **Gespan Dev** (`dev.gespan.native.dev`) with its own
+`bun run dev` runs as **Gespan Dev** (`dev.gespan.native.dev`) with its own
 database, so it never touches an installed Gespan you are using at the same time.
 On macOS that is `~/Library/Application Support/Gespan Development/`; the
-[native guide](native/README.md#data-and-configuration) has the other platforms.
+[desktop guide](desktop/README.md#data-and-configuration) has the other platforms.
 
 The build command does not launch the app. On macOS, open the result with:
 
@@ -38,12 +38,12 @@ open "crates/gespan-gpui/target/release/Gespan.app"
 
 The release app reads and writes your installed Gespan data.
 
-See the [native guide](native/README.md) for data paths, output locations and
+See the [desktop guide](desktop/README.md) for data paths, output locations and
 fixtures.
 
 ## Releases
 
-A release ships Gespan Native and the mobile app.
+A release ships Gespan and the mobile app.
 
 Both release workflows run only when started by hand from a `vX.Y.Z` tag,
 so pushing a tag never publishes anything on its own. The **Release** workflow starts them from the version's tag.
@@ -51,7 +51,7 @@ so pushing a tag never publishes anything on its own. The **Release** workflow s
 1. Add the secrets below under Settings → Secrets and variables → Actions.
 2. Bump the version (`bun run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
 
-When CI passes on that commit, the **Release** workflow creates the `vX.Y.Z` tag and a draft release, builds iOS for TestFlight and an Android APK, then runs the desktop release, which publishes the draft. See [Releases and the update feed](native/README.md#releases-and-the-update-feed).
+When CI passes on that commit, the **Release** workflow creates the `vX.Y.Z` tag and a draft release, builds iOS for TestFlight and an Android APK, then runs the desktop release, which publishes the draft. See [Releases and the update feed](desktop/README.md#releases-and-the-update-feed).
 
 | Secret | Needed for |
 | --- | --- |

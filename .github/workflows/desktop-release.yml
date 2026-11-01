@@ -1,9 +1,9 @@
-name: Native preview release
+name: Desktop release
 run-name: Desktop ${{ github.ref_name }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
 on:
   # The Release workflow starts this from a version's tag; see "Releases and the
-  # update feed" in docs/native/README.md. The tag name is the version, and the
+  # update feed" in docs/desktop/README.md. The tag name is the version, and the
   # guard job rejects any other ref.
   workflow_dispatch:
     inputs:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-preview-release
+  group: desktop-release
   cancel-in-progress: false
 
 jobs:
@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          node --input-type=module -e 'import { nativeVersion } from "./scripts/package-native.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
+          node --input-type=module -e 'import { nativeVersion } from "./scripts/package.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
           # Requires TAURI_UPDATER_PUBKEY. The endpoint is the NATIVE_UPDATER_ENDPOINT repository
           # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
@@ -139,7 +139,7 @@ jobs:
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/native-notary.p8" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
-      - run: node --test scripts/native-release.test.mjs scripts/package-native.test.mjs
+      - run: node --test scripts/desktop-release.test.mjs scripts/package.test.mjs
       - name: Test native update backend
         run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - name: Reclaim Mac updater-test build space
@@ -187,7 +187,7 @@ jobs:
           set -euo pipefail
           BINARY="crates/gespan-gpui/target/${{ matrix.target }}/release/gespan-gpui"
           if [ "$RUNNER_OS" = Windows ]; then BINARY="$BINARY.exe"; fi
-          node scripts/package-native.mjs '${{ matrix.kind }}' "$BINARY" native-dist '${{ matrix.arch }}'
+          node scripts/package.mjs '${{ matrix.kind }}' "$BINARY" native-dist '${{ matrix.arch }}'
       - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.target }}
@@ -234,7 +234,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          node --input-type=module -e 'import { nativeVersion } from "./scripts/package-native.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
+          node --input-type=module -e 'import { nativeVersion } from "./scripts/package.mjs"; nativeVersion(process.argv[1]);' "$VERSION"
           echo "GESPAN_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
           # Requires TAURI_UPDATER_PUBKEY. The endpoint is the NATIVE_UPDATER_ENDPOINT repository
           # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
@@ -242,7 +242,7 @@ jobs:
           node scripts/release-channel.cjs native-config
       - run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --release
-      - run: node scripts/package-native.mjs rpm crates/gespan-gpui/target/release/gespan-gpui native-dist x86_64
+      - run: node scripts/package.mjs rpm crates/gespan-gpui/target/release/gespan-gpui native-dist x86_64
       - uses: actions/upload-artifact@v7
         with:
           name: native-linux-rpm
@@ -354,7 +354,7 @@ jobs:
           NATIVE_RELEASE_NOTES: ${{ inputs.dry_run && 'Dry run' || '' }}
         run: |
           echo "GESPAN_NATIVE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}" node scripts/native-release.mjs native-dist
+          GESPAN_NATIVE_VERSION="${GITHUB_REF_NAME#v}" node scripts/desktop-release.mjs native-dist
       - name: Verify the signed feed and all packages with the native client
         if: env.NATIVE_UPLOAD_PACKAGES == 'true'
         run: cargo run --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --example verify_native_update --profile native-dev -- native-dist

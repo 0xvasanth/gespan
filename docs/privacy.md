@@ -1,6 +1,6 @@
 # Privacy: diagnostics and issue reports
 
-This page covers what Gespan and Gespan Native record when something goes
+This page covers what Gespan and Gespan record when something goes
 wrong, what can leave your machine, where it goes, how long it is kept and
 how to have it deleted. It covers errors and failures only: Gespan does no
 product analytics (no page views, feature usage, funnels or retention
@@ -70,7 +70,7 @@ email address is hidden, but everything else stays as you wrote it.
 
 - **Your machine**: the logs folder for each app (Settings → Diagnostics →
   Open logs folder). On macOS that is `~/Library/Logs/dev.gespan.native/`
-  for Gespan Native and `~/Library/Logs/dev.gespan.desktop/` for Gespan.
+  for Gespan and `~/Library/Logs/dev.gespan.desktop/` for Gespan.
   Saved reports go to your Downloads folder.
 - **By email, if you choose "Save zip and email"**: Gespan opens your mail
   app with a message to the Gespan maintainer (`itparser+gespan@gmail.com`)

@@ -98,13 +98,13 @@ export async function startDev({
             if (arg === "--gespan-data") return "gespan-data";
             return mode;
           }, "dev-data");
-          const packaged = await run("bash", ["scripts/bundle-native-macos.sh", "native-dev", target, pkg.version, dataMode]);
+          const packaged = await run("bash", ["scripts/bundle-macos.sh", "native-dev", target, pkg.version, dataMode]);
           if (closing) return;
           if (packaged.code !== 0) {
             log("App packaging failed. Fix the error, then type r to retry.");
             continue;
           }
-          // Matches bundle-native-macos.sh: development data runs as its own app.
+          // Matches bundle-macos.sh: development data runs as its own app.
           const appName = dataMode === "dev-data" ? "Gespan Dev.app" : "Gespan.app";
           executable = join(target, "native-dev", appName, "Contents", "MacOS", "gespan-gpui");
         }
@@ -176,7 +176,7 @@ export function parseDevArgs(argv) {
       break;
     }
     if (["--watch", "--bundle"].includes(arg)) {
-      throw new Error(`${arg} is not supported. Use bun run native:dev, then type r and Enter to rebuild and restart.`);
+      throw new Error(`${arg} is not supported. Use bun run dev, then type r and Enter to rebuild and restart.`);
     } else {
       options.args.push(arg);
       // Preserve values even when an app path happens to match a runner flag.

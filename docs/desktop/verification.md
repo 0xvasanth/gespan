@@ -1,13 +1,13 @@
 # Native checks
 
-The commands to check Gespan Native locally before you open a pull request.
+The commands to check Gespan locally before you open a pull request.
 
 ## Local checks
 
 Run the complete native check from the repository root:
 
 ```sh
-bun run native:check
+bun run check:app
 ```
 
 Core tests run in parallel. GPUI tests run serially to isolate rendering state
@@ -24,10 +24,10 @@ cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gesp
 For focused work, run the relevant part:
 
 ```sh
-bun run native:test:dev
+bun run test:scripts
 cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
 cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui -p gespan-first-launch --all-targets --profile native-dev -- -D warnings
-bun run native:test
+bun run test:rust
 ```
 
 On macOS with a Metal device, the renderer regression opens no window:
@@ -48,6 +48,6 @@ cargo run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core 
 ```
 
 For long-history interaction, use the isolated fixture from the
-[native guide](README.md#checks-and-fixtures). Check typing and scrolling while a
+[desktop guide](README.md#checks-and-fixtures). Check typing and scrolling while a
 separate real session streams, then switch tabs and verify draft/viewport state,
 Stop, and saved history after relaunch. Synthetic history is not sent to providers.
