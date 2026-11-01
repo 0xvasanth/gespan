@@ -69,7 +69,8 @@ email address is hidden, but everything else stays as you wrote it.
 ## Where it goes
 
 - **Your machine**: the logs folder (Settings → Diagnostics → Open logs
-  folder). On macOS that is `~/Library/Logs/dev.gespan.native/`.
+  folder). On macOS that is `~/Library/Logs/dev.gespan.native/`, or
+  `~/Library/Logs/dev.gespan.native.dev/` for a development build.
   Saved reports go to your Downloads folder.
 - **By email, if you choose "Save zip and email"**: Gespan opens your mail
   app with a message to the Gespan maintainer (`itparser+gespan@gmail.com`)

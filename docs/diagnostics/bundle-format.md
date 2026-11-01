@@ -2,8 +2,7 @@
 
 A diagnostics bundle is what "Report an issue" saves to the user's Downloads
 folder. Gespan never sends it: the user attaches it to an email to the
-maintainer or to a GitHub issue. This is
-`bundle_version: 1`.
+maintainer or to a GitHub issue. The bundle format is `bundle_version: 1`.
 
 Everything in a bundle is scrubbed on the user's machine by
 `crates/gespan-redact` **before** it is shown in the report preview. The
