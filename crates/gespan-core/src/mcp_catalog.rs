@@ -2,7 +2,7 @@
 //! agent through the hub. Imported from an agent's config once, never written
 //! back to it. Env values live in the OS keychain, and nothing runs until the
 //! user has approved the exact command and environment.
-use crate::mcp::Importable;
+use crate::{mcp::Importable, mcp_registry::Listing};
 use mcp_hub::{ServerSpec, Sharing, TokenStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,6 +57,8 @@ pub struct Entry {
     /// Fingerprint of the exact command and environment the user approved,
     /// sealed when that environment holds secrets.
     pub approved: Option<String>,
+    /// Settings it can't run without and doesn't have yet.
+    pub needed: Vec<String>,
     /// Where it was imported from, for showing the user.
     pub source: Option<String>,
     pub tools: Option<Vec<Value>>,
@@ -252,6 +254,50 @@ impl Catalog {
         Ok(added)
     }
 
+    /// Adds a registry listing, off and unapproved. Its required settings are
+    /// named with no value, so it can't be approved until they're given.
+    pub fn install(&mut self, data_dir: &Path, listing: &Listing) -> Result<String, String> {
+        // What it runs says if it's here: its settings differ once they're set.
+        let server = listing.importable();
+        let here = self.entries.iter().any(|entry| match &server.url {
+            Some(url) => entry.url.as_deref() == Some(url),
+            None => entry.command == server.command && entry.args == server.args,
+        });
+        if here {
+            return Err("That server is already here".into());
+        }
+        let before = self.entries.len();
+        self.import(data_dir, vec![server])?;
+        let entry = self
+            .entries
+            .get_mut(before)
+            .ok_or("That server is already here")?;
+        entry.source = Some(format!("MCP Registry {}", listing.version));
+        entry.needed = listing
+            .inputs
+            .iter()
+            .filter(|input| input.required)
+            .map(|input| input.name.clone())
+            .collect();
+        Ok(entry.id.clone())
+    }
+
+    /// Sets a server's env values in the keychain.
+    pub fn set_secrets(
+        &mut self,
+        data_dir: &Path,
+        id: &str,
+        values: BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        let entry = self.entry_mut(id).ok_or("Unknown server")?;
+        entry.env = values.keys().cloned().collect();
+        entry.needed.retain(|name| !values.contains_key(name));
+        // The env changed, so what was approved no longer describes it.
+        entry.approved = None;
+        entry.enabled = false;
+        write_secrets(data_dir, id, &values)
+    }
+
     /// What the user is approving: the entry with its secrets resolved.
     fn resolved(&self, data_dir: &Path, entry: &Entry) -> Result<ServerSpec, String> {
         Ok(entry.spec(read_secrets(data_dir, entry)?))
@@ -264,6 +310,9 @@ impl Catalog {
             .iter()
             .find(|entry| entry.id == id)
             .ok_or("Unknown server")?;
+        if !entry.needed.is_empty() {
+            return Err(format!("Set {} first", entry.needed.join(", ")));
+        }
         let approval = approval(data_dir, &self.resolved(data_dir, entry)?)?;
         let entry = self.entry_mut(id).ok_or("Unknown server")?;
         entry.approved = Some(approval);
@@ -377,26 +426,40 @@ fn read_secrets(data_dir: &Path, entry: &Entry) -> Result<BTreeMap<String, Strin
 /// Removes a server, then its secrets and any sign-in: a failed save must leave
 /// a server that still has them, and a leftover secret harms nothing.
 pub fn remove(data_dir: &Path, id: &str) -> Result<Edited, String> {
+    let mut url = None;
     let edited = update(data_dir, |catalog| {
+        url = catalog
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.url.clone());
         catalog.entries.retain(|entry| entry.id != id);
         Ok(())
     })?;
-    SignIn::new(data_dir, id).clear()?;
+    if let Some(url) = url {
+        SignIn::new(data_dir, id, &url).clear()?;
+    }
     gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)?;
     Ok(edited)
 }
 
-/// A remote server's OAuth credentials, in the keychain. They go to that
-/// server's address alone, and no agent ever receives them.
+/// A remote server's OAuth credentials, in the keychain. Named after the exact
+/// address they were issued for, so a changed address finds nothing to send, and
+/// no agent ever receives them.
 pub struct SignIn {
     name: String,
     data_dir: PathBuf,
 }
 
 impl SignIn {
-    pub fn new(data_dir: &Path, id: &str) -> Self {
+    pub fn new(data_dir: &Path, id: &str, url: &str) -> Self {
+        let address: String = Sha256::digest(url.as_bytes())
+            .iter()
+            .take(16)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Self {
-            name: format!("mcp-sign-in:{id}"),
+            name: format!("mcp-sign-in:{id}:{address}"),
             data_dir: data_dir.to_owned(),
         }
     }
@@ -614,20 +677,80 @@ mod tests {
     fn a_sign_in_lives_in_the_keychain_and_goes_with_the_server() {
         let dir = setup();
         let mut catalog = Catalog::default();
-        let sign_in = SignIn::new(dir.path(), "docs");
+        let url = "https://mcp.example/mcp";
+        let sign_in = SignIn::new(dir.path(), "docs", url);
         assert!(!sign_in.exists());
         sign_in.save("{\"token\":1}").unwrap();
         assert!(sign_in.exists());
+        assert!(
+            !SignIn::new(dir.path(), "docs", "https://evil.example/mcp").exists(),
+            "a sign-in belongs to one address"
+        );
         assert!(!std::fs::read_dir(dir.path()).unwrap().any(|file| {
             std::fs::read_to_string(file.unwrap().path()).is_ok_and(|text| text.contains("token"))
         }));
         catalog.entries.push(Entry {
             id: "docs".into(),
+            url: Some(url.into()),
             ..Entry::default()
         });
         catalog.save(dir.path()).unwrap();
         remove(dir.path(), "docs").unwrap();
         assert!(!sign_in.exists());
+    }
+
+    fn listing() -> Listing {
+        Listing {
+            name: "com.acme/search".into(),
+            description: String::new(),
+            version: "1.2.0".into(),
+            install: crate::mcp_registry::Install::Command {
+                command: "npx".into(),
+                args: vec!["-y".into(), "acme@1.2.0".into()],
+            },
+            inputs: vec![crate::mcp_registry::Input {
+                name: "API_KEY".into(),
+                description: String::new(),
+                required: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn a_registry_server_lands_off_and_needs_its_settings_before_approval() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let id = catalog.install(dir.path(), &listing()).unwrap();
+        assert_eq!(id, "search");
+        let entry = &catalog.entries[0];
+        assert!(!entry.enabled && entry.approved.is_none());
+        assert_eq!(entry.source.as_deref(), Some("MCP Registry 1.2.0"));
+        assert_eq!(
+            catalog.approve(dir.path(), &id).unwrap_err(),
+            "Set API_KEY first"
+        );
+        let values = BTreeMap::from([("API_KEY".to_owned(), "k".to_owned())]);
+        catalog.set_secrets(dir.path(), &id, values).unwrap();
+        catalog.approve(dir.path(), &id).unwrap();
+        assert_eq!(catalog.specs(dir.path())[0].env["API_KEY"], "k");
+        assert!(
+            catalog.install(dir.path(), &listing()).is_err(),
+            "only once"
+        );
+    }
+
+    #[test]
+    fn changing_a_servers_settings_takes_it_back_to_approval() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("K", "1")])])
+            .unwrap();
+        catalog.approve(dir.path(), "docs").unwrap();
+        let values = BTreeMap::from([("K".to_owned(), "2".to_owned())]);
+        catalog.set_secrets(dir.path(), "docs", values).unwrap();
+        assert!(!catalog.entries[0].enabled);
+        assert!(catalog.specs(dir.path()).is_empty());
     }
 
     #[test]

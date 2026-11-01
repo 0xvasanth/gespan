@@ -225,6 +225,32 @@ fn owner<'a>(pid: u32, processes: &HashMap<u32, Process>, roots: &'a [Agent]) ->
     None
 }
 
+/// Memory held by each process and everything it started, for a process like
+/// `npx` whose real work is in a child. Blocking.
+pub fn tree_memory(roots: &[u32]) -> HashMap<u32, u64> {
+    process_snapshot().map_or_else(|_| HashMap::new(), |all| sum_trees(&all, roots))
+}
+
+fn sum_trees(processes: &HashMap<u32, Process>, roots: &[u32]) -> HashMap<u32, u64> {
+    let mut totals: HashMap<u32, u64> = HashMap::new();
+    for process in processes.values() {
+        let mut current = process.pid;
+        let mut steps = 0;
+        while steps < 64 {
+            if roots.contains(&current) {
+                *totals.entry(current).or_default() += process.memory;
+                break;
+            }
+            let Some(parent) = processes.get(&current) else {
+                break;
+            };
+            current = parent.parent;
+            steps += 1;
+        }
+    }
+    totals
+}
+
 fn verified_roots() -> Vec<Agent> {
     process::agents()
         .into_iter()
@@ -389,6 +415,31 @@ fn stop_tool_in(pid: u32, stamp: &str, roots: &[Agent]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_servers_memory_includes_what_it_started() {
+        let process = |pid, parent, memory| {
+            (
+                pid,
+                Process {
+                    pid,
+                    parent,
+                    command: String::new(),
+                    cpu: 0.,
+                    memory,
+                },
+            )
+        };
+        // npx (10) runs node (11), which runs a helper (12); 20 is unrelated.
+        let all = HashMap::from([
+            process(10, 1, 5),
+            process(11, 10, 100),
+            process(12, 11, 20),
+            process(20, 1, 999),
+        ]);
+        assert_eq!(sum_trees(&all, &[10]), HashMap::from([(10, 125)]));
+        assert!(sum_trees(&all, &[77]).is_empty());
+    }
 
     fn high() -> Sample {
         Sample {

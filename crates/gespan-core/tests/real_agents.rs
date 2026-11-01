@@ -194,6 +194,53 @@ fn check_proxied(folder: &Path, marker: &Path, seen: &Turn) {
     );
 }
 
+/// A real `app_call` reaching a stand-in for the app, as this session.
+fn pilot_tools_reach_the_app(kind: Kind, binary: &str, session: i64, model: Option<&str>) {
+    let folder = tempfile::tempdir().unwrap();
+    let (dispatcher, calls) = gespan_core::pilot::bridge::Server::start().unwrap();
+    let _route = dispatcher.environment(session);
+    let answering = std::thread::spawn(move || {
+        let call = calls.recv_blocking().unwrap();
+        let seen = (call.session, call.action.clone());
+        call.reply
+            .send(Ok(serde_json::json!({"notes":[{"title":"MANGO"}]})))
+            .unwrap();
+        seen
+    });
+    let seen = turn(
+        kind,
+        &installed(binary),
+        folder.path(),
+        model,
+        None,
+        mount(session, folder.path(), &[APP]),
+        "Call the app_call tool with action notes.list and input {}, then reply with only the title it returned.",
+    );
+    assert_eq!(
+        answering.join().unwrap(),
+        (session, "notes.list".to_owned())
+    );
+    assert!(seen.text.contains("MANGO"), "{}", seen.text);
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn claude_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Claude, "claude", 900_011, Some("claude-haiku-5-5"));
+}
+
+#[test]
+#[ignore = "a real, billed Codex turn"]
+fn codex_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Codex, "codex", 900_012, None);
+}
+
+#[test]
+#[ignore = "a real, billed Kiro turn"]
+fn kiro_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Kiro, "kiro-cli", 900_013, None);
+}
+
 const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP || true. Then reply with only the word DONE and the number that command printed.";
 
 fn check_reach(seen: &Turn) {
@@ -336,6 +383,60 @@ fn claude_uses_a_catalogue_server_and_loads_none_of_its_own() {
         PROXIED,
     );
     check_proxied(folder.path(), &marker, &seen);
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn a_server_turned_on_in_the_catalogue_reaches_a_running_claude() {
+    let folder = tempfile::tempdir().unwrap();
+    let binary = installed("claude");
+    let session = 900_010;
+    provider::configure_idle_agents(1);
+    with_catalogue(folder.path());
+    let data = folder.path().join("data");
+    let mut catalog = Catalog::load(&data).unwrap();
+    catalog.entry_mut("probe").unwrap().enabled = false;
+    catalog.save(&data).unwrap();
+    gespan_core::tool_servers::sync_servers();
+    let project = folder.path().to_string_lossy().into_owned();
+    let mut first_mount = mount(session, folder.path(), &[VISUAL]);
+    first_mount.project = project;
+    first_mount.exclusive = true;
+    let first = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        first_mount.clone(),
+        "Reply with only the word READY.",
+    );
+    // The user turns it on while the agent sits idle, process alive.
+    let mut catalog = Catalog::load(&data).unwrap();
+    catalog.entry_mut("probe").unwrap().enabled = true;
+    catalog.save(&data).unwrap();
+    gespan_core::tool_servers::sync_servers();
+    let mut second_mount = first_mount;
+    second_mount.servers = ["probe".to_owned()].into();
+    let second = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        first.provider_id.clone(),
+        second_mount,
+        PROXIED,
+    );
+    assert_eq!(first.process, second.process, "the process was restarted");
+    assert!(
+        second
+            .tools
+            .iter()
+            .any(|name| name.contains("gespan__probe__secret_word")),
+        "{:?}",
+        second.tools
+    );
+    assert!(second.text.contains("PINEAPPLE"), "{}", second.text);
 }
 
 #[test]
