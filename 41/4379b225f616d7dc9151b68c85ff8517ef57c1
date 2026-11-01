@@ -1,0 +1,36 @@
+src-tauri/Cargo.toml
+  s_a697a7155dfcff::t_2d539bf0e27958 3
+CHANGELOG.md
+  s_a697a7155dfcff::t_25a6556ad83212 10-11,14-24,42-44,59-71,75-78
+  s_a697a7155dfcff::t_572c93f1bc6f36 79
+crates/gespan-gpui/Cargo.toml
+  s_a697a7155dfcff::t_2d539bf0e27958 111
+src-tauri/tauri.conf.json
+  s_a697a7155dfcff::t_2d539bf0e27958 4
+Cargo.toml
+  s_a697a7155dfcff::t_2d539bf0e27958 7
+package.json
+  s_a697a7155dfcff::t_2d539bf0e27958 16
+Cargo.lock
+  s_a697a7155dfcff::t_132d430af427b1 1231,1254
+crates/gespan-gpui/Cargo.lock
+  s_a697a7155dfcff::t_5c09910e1c6350 2395,2453,2461,2567,2587
+src-tauri/Cargo.lock
+  s_a697a7155dfcff::t_dfcfbd1e0d2d68 1831,1938,1948
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "414379b225f616d7dc9151b68c85ff8517ef57c1",
+  "prompts": {},
+  "sessions": {
+    "s_a697a7155dfcff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4149efd8-65d6-4849-9b21-3042f0ee49fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
