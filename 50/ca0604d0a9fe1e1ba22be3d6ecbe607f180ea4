@@ -1,0 +1,23 @@
+crates/gespan-gpui/src/shell/title_tabs.rs
+  s_929eeb6c6959fd::t_83efa5ab09999c 73
+crates/gespan-gpui/src/pilots/tests.rs
+  s_929eeb6c6959fd::t_4ef83d502b9ab0 2630
+crates/gespan-gpui/src/shell/hidden_flows_tests.rs
+  s_929eeb6c6959fd::t_4a722bffd660ba 101-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50ca0604d0a9fe1e1ba22be3d6ecbe607f180ea4",
+  "prompts": {},
+  "sessions": {
+    "s_929eeb6c6959fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a5df9e3-dfd2-45af-b5c2-46931b9cf753",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
