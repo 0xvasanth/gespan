@@ -200,7 +200,17 @@ fn pilot_tools_reach_the_app(kind: Kind, binary: &str, session: i64, model: Opti
     let (dispatcher, calls) = gespan_core::pilot::bridge::Server::start().unwrap();
     let _route = dispatcher.environment(session);
     let answering = std::thread::spawn(move || {
-        let call = calls.recv_blocking().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let call = loop {
+            if let Ok(call) = calls.try_recv() {
+                break call;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the agent never made an app_call"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
         let seen = (call.session, call.action.clone());
         call.reply
             .send(Ok(serde_json::json!({"notes":[{"title":"MANGO"}]})))
@@ -393,7 +403,8 @@ fn a_server_turned_on_in_the_catalogue_reaches_a_running_claude() {
     let session = 900_010;
     provider::configure_idle_agents(1);
     with_catalogue(folder.path());
-    let data = folder.path().join("data");
+    // One process has one data folder, whichever test configured it first.
+    let data = shared_data().to_owned();
     let mut catalog = Catalog::load(&data).unwrap();
     catalog.entry_mut("probe").unwrap().enabled = false;
     catalog.save(&data).unwrap();
@@ -443,7 +454,8 @@ fn a_server_turned_on_in_the_catalogue_reaches_a_running_claude() {
 #[ignore = "a real, billed Claude turn"]
 fn claude_uses_a_public_remote_server_through_the_hub() {
     let folder = tempfile::tempdir().unwrap();
-    let data = folder.path().join("data");
+    // One process has one data folder, whichever test configured it first.
+    let data = shared_data().to_owned();
     let mut catalog = Catalog::default();
     catalog
         .import(

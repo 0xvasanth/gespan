@@ -23,6 +23,9 @@ const MAX_TOOL_NAME: usize = 63;
 const REMEMBERED_ERRORS: usize = 32;
 /// A server chooses what its errors say, so they're kept short.
 const MAX_ERROR_CHARS: usize = 500;
+/// Anything shorter in a server's environment is a setting, and hiding it would
+/// blank out ordinary words.
+const MIN_SECRET_CHARS: usize = 8;
 
 /// How many processes a server gets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -198,6 +201,10 @@ impl Pool {
     /// server: its message is the server's own text and may quote anything.
     fn record(&self, server: &str, message: String) {
         tracing::warn!(server, "an MCP server failed");
+        let message = match self.spec(server) {
+            Some(spec) => without_secrets(message, &spec.env),
+            None => message,
+        };
         let message = message.chars().take(MAX_ERROR_CHARS).collect();
         let mut errors = relock(&self.errors);
         if errors.len() >= REMEMBERED_ERRORS {
@@ -654,6 +661,18 @@ impl Pool {
     }
 }
 
+/// A server's error can quote what it was started with.
+fn without_secrets(mut message: String, env: &BTreeMap<String, String>) -> String {
+    let secrets = env
+        .values()
+        .flat_map(|value| value.split_whitespace())
+        .filter(|word| word.chars().count() >= MIN_SECRET_CHARS);
+    for secret in secrets {
+        message = message.replace(secret, "[hidden]");
+    }
+    message
+}
+
 fn changed(server: &str) -> String {
     format!("{server} changed while it was starting; try again")
 }
@@ -721,6 +740,32 @@ mod tests {
             sharing: Sharing::Shared,
             tools: None,
         }
+    }
+
+    #[test]
+    fn a_failure_never_keeps_the_secrets_a_server_quoted() {
+        struct Nothing;
+        impl Spawner for Nothing {
+            fn spawn(
+                &self,
+                _: &ServerSpec,
+                _: Option<&std::path::Path>,
+            ) -> std::io::Result<crate::Spawned> {
+                Err(std::io::ErrorKind::Unsupported.into())
+            }
+        }
+        let pool = Pool::new(
+            Arc::new(Nothing),
+            Arc::new(NoObserver),
+            Duration::from_secs(1),
+            1,
+        );
+        pool.set(vec![spec(
+            "a",
+            &[("Authorization", "Bearer s3cret-value"), ("LEVEL", "info")],
+        )]);
+        pool.record("a", "rejected s3cret-value at info".to_owned());
+        assert_eq!(pool.errors()[0].message, "rejected [hidden] at info");
     }
 
     #[test]

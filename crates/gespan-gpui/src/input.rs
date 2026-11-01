@@ -260,6 +260,11 @@ impl Input {
         self.focus = self.focus.clone().tab_stop(true);
     }
     /// Keep authentication text out of drawing, accessibility and clipboard.
+    #[cfg(test)]
+    pub(crate) fn is_secret(&self) -> bool {
+        self.secret
+    }
+
     pub(crate) fn set_secret(&mut self, secret: bool) {
         self.secret = secret;
     }

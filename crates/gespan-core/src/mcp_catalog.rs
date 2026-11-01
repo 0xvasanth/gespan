@@ -57,7 +57,9 @@ pub struct Entry {
     /// Fingerprint of the exact command and environment the user approved,
     /// sealed when that environment holds secrets.
     pub approved: Option<String>,
-    /// Settings it can't run without and doesn't have yet.
+    /// Settings it can't run without.
+    pub required: Vec<String>,
+    /// Those of them with no value yet.
     pub needed: Vec<String>,
     /// Where it was imported from, for showing the user.
     pub source: Option<String>,
@@ -239,7 +241,11 @@ impl Catalog {
             let id = id_for(&server.name, &self.ids());
             write_secrets(data_dir, &id, &server.env)?;
             self.entries.push(Entry {
-                class: class_for(&server.name, &server.command, &server.args),
+                class: if server.url.is_some() {
+                    Class::Shared
+                } else {
+                    class_for(&server.name, &server.command, &server.args)
+                },
                 id,
                 name: server.name,
                 command: server.command,
@@ -273,16 +279,17 @@ impl Catalog {
             .get_mut(before)
             .ok_or("That server is already here")?;
         entry.source = Some(format!("MCP Registry {}", listing.version));
-        entry.needed = listing
+        entry.required = listing
             .inputs
             .iter()
             .filter(|input| input.required)
             .map(|input| input.name.clone())
             .collect();
+        entry.needed = entry.required.clone();
         Ok(entry.id.clone())
     }
 
-    /// Sets a server's env values in the keychain.
+    /// Replaces a server's env values in the keychain.
     pub fn set_secrets(
         &mut self,
         data_dir: &Path,
@@ -291,11 +298,20 @@ impl Catalog {
     ) -> Result<(), String> {
         let entry = self.entry_mut(id).ok_or("Unknown server")?;
         entry.env = values.keys().cloned().collect();
-        entry.needed.retain(|name| !values.contains_key(name));
+        entry.needed = entry
+            .required
+            .iter()
+            .filter(|name| values.get(*name).is_none_or(String::is_empty))
+            .cloned()
+            .collect();
         // The env changed, so what was approved no longer describes it.
         entry.approved = None;
         entry.enabled = false;
-        write_secrets(data_dir, id, &values)
+        if values.is_empty() {
+            gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)
+        } else {
+            write_secrets(data_dir, id, &values)
+        }
     }
 
     /// What the user is approving: the entry with its secrets resolved.
@@ -737,6 +753,61 @@ mod tests {
             catalog.install(dir.path(), &listing()).is_err(),
             "only once"
         );
+    }
+
+    #[test]
+    fn a_required_setting_left_out_of_a_later_save_blocks_approval_again() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let id = catalog.install(dir.path(), &listing()).unwrap();
+        let set = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        catalog
+            .set_secrets(dir.path(), &id, set(&[("API_KEY", "k")]))
+            .unwrap();
+        for values in [set(&[]), set(&[("OTHER", "x")]), set(&[("API_KEY", "")])] {
+            catalog.set_secrets(dir.path(), &id, values).unwrap();
+            assert_eq!(
+                catalog.approve(dir.path(), &id).unwrap_err(),
+                "Set API_KEY first"
+            );
+        }
+        let saved = Catalog::load(dir.path()).unwrap_or_default();
+        assert!(saved.entries.is_empty(), "nothing saved it yet");
+        catalog.save(dir.path()).unwrap();
+        let reloaded = Catalog::load(dir.path()).unwrap();
+        assert_eq!(reloaded.entries[0].required, ["API_KEY"]);
+    }
+
+    #[test]
+    fn clearing_a_servers_settings_clears_the_keychain_too() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("K", "1")])])
+            .unwrap();
+        catalog
+            .set_secrets(dir.path(), "docs", BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            gespan_tracker_secrets::read_named("mcp-server:docs", dir.path()).unwrap(),
+            None
+        );
+        assert!(catalog.entries[0].env.is_empty());
+    }
+
+    #[test]
+    fn a_remote_server_is_listed_as_shared_from_the_start() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let mut server = found("Playwright", "", &[]);
+        server.url = Some("https://mcp.example/mcp".into());
+        catalog.import(dir.path(), vec![server]).unwrap();
+        assert_eq!(catalog.entries[0].class, Class::Shared);
     }
 
     #[test]

@@ -279,6 +279,7 @@ fn write_line(output: &Mutex<impl Write>, message: &Value) -> Result<(), String>
 }
 
 /// Reads the server-to-client stream, so a changed tool list reaches the agent.
+#[allow(clippy::result_large_err)] // ureq's error is the one it returns.
 fn listen(link: Link, output: Arc<Mutex<impl Write + Send + 'static>>) {
     thread::spawn(move || {
         let opened = link.with_fresh_token(|| {

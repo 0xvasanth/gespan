@@ -225,6 +225,7 @@ mod tests {
         for url in [
             "http://mcp.example/mcp",
             "http://127.0.0.1.mcp.example/mcp",
+            "http://localhost.evil.example/mcp",
             "ws://127.0.0.1:9/mcp",
             "not a url",
         ] {
