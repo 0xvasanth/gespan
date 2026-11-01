@@ -42,6 +42,15 @@ fn internal(error: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(error.to_string(), None)
 }
 
+/// Marks a result as final. Protocol 2026-07-28 requires it of the hub whatever
+/// version the server behind it speaks, and older agents ignore it.
+fn complete(mut result: Value) -> Value {
+    if result.get("resultType").is_none() {
+        result["resultType"] = "complete".into();
+    }
+    result
+}
+
 /// A server's list items. One that doesn't parse is left out, not fatal.
 fn decode_all<T: serde::de::DeserializeOwned>(items: Vec<Value>) -> Vec<T> {
     items
@@ -56,7 +65,7 @@ fn decode_answer<T: serde::de::DeserializeOwned>(
 ) -> Result<T, ErrorData> {
     match answer {
         None => Err(ErrorData::invalid_params(unknown.to_owned(), None)),
-        Some(Ok(result)) => serde_json::from_value(result).map_err(internal),
+        Some(Ok(result)) => serde_json::from_value(complete(result)).map_err(internal),
         Some(Err(error)) => Err(ErrorData::internal_error(
             error["message"]
                 .as_str()
@@ -140,9 +149,9 @@ impl ServerHandler for Session {
             };
             if let Some(answer) = answer {
                 let result = match answer {
-                    Ok(result) => {
-                        serde_json::from_value::<CallToolResult>(result).map_err(internal)?
-                    }
+                    Ok(result) => serde_json::from_value::<CallToolResult>(complete(result))
+                        .map_err(internal)?,
+
                     Err(error) => CallToolResult::error(vec![ContentBlock::text(
                         error["message"]
                             .as_str()

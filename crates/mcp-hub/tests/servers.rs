@@ -233,6 +233,22 @@ struct Agent {
 }
 
 fn exchange(agent: &Agent, session: Option<&str>, body: &str) -> (String, String) {
+    let extra = session.map_or_else(String::new, |session| {
+        format!("Mcp-Session-Id: {session}\r\nMCP-Protocol-Version: 2025-11-25\r\n")
+    });
+    send(agent, &extra, body)
+}
+
+fn exchange_as(agent: &Agent, version: &str, body: &str) -> (String, String) {
+    let method = serde_json::from_str::<Value>(body).unwrap()["method"].clone();
+    let extra = format!(
+        "MCP-Protocol-Version: {version}\r\nMcp-Method: {}\r\nMcp-Name: docs__who\r\n",
+        method.as_str().unwrap()
+    );
+    send(agent, &extra, body)
+}
+
+fn send(agent: &Agent, extra: &str, body: &str) -> (String, String) {
     let mut stream = TcpStream::connect(&agent.authority).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
@@ -243,9 +259,7 @@ fn exchange(agent: &Agent, session: Option<&str>, body: &str) -> (String, String
         agent.bearer,
         body.len()
     );
-    if let Some(session) = session {
-        request += &format!("Mcp-Session-Id: {session}\r\nMCP-Protocol-Version: 2025-11-25\r\n");
-    }
+    request += extra;
     stream
         .write_all(format!("{request}\r\n{body}").as_bytes())
         .unwrap();
@@ -439,6 +453,27 @@ fn listing_is_served_from_the_cache_and_starts_nothing() {
     assert_eq!(rig.processes.started.load(Ordering::SeqCst), 0, "lazy");
     agent.call("docs__who", json!({}));
     assert_eq!(rig.processes.started.load(Ordering::SeqCst), 1);
+}
+
+/// Kiro negotiates 2026-07-28, which requires this; old servers never send it.
+#[test]
+fn a_result_from_an_older_server_is_marked_complete_for_newer_agents() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    agent.tools();
+    let body = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"docs__who",
+        "arguments":{},
+        "_meta":{
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+            "io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},
+            "io.modelcontextprotocol/clientCapabilities":{},
+        },
+    }});
+    let (_, reply) = exchange_as(&agent, "2026-07-28", &body.to_string());
+    let reply = reply_of(&reply);
+    assert_eq!(reply["result"]["resultType"], "complete", "{reply}");
 }
 
 #[test]
