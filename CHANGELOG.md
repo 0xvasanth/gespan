@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-11-01
+
 ### Added
 
+- MCP servers can now run through Gespan's own catalogue, in Settings → MCP.
+  Each server runs once and is shared with your sessions, needs your approval
+  before it starts, and keeps its secrets in the keychain. Remote servers sign
+  in once in Gespan. You can install servers from the MCP Registry, see how they
+  are doing, and change the catalogue while sessions are running.
+- The Uncommitted changes dialog can write a commit message from your changes
+  when a branch switch is blocked. It can be cancelled, and a failure keeps what
+  you typed.
+- Gespan recognises branches that are already merged and offers to delete them.
+  Files listed in `.worktreeinclude` are copied into new worktrees, and a Flow
+  run that succeeds removes its worktree.
 - Each project can have a Setup and a Teardown script, in Settings → Worktrees.
   Setup runs in every new worktree before anything starts there, from sessions,
   "Run with…", the worktree switcher, Flow runs, orchestration workers and
@@ -26,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An approval card with a red alert, or with a command longer than the card can
+  show, now offers Review in chat instead of Allow, so one click can't approve
+  something you didn't see. Deny stays, and plain cards keep Allow.
 - Flows are hidden from the app for now: the Flows page and a Pilot's SOP
   Roadmap tab no longer appear. Saved Flows and their runs are kept, and
   Pilots still create and run Flows behind the scenes.
@@ -40,8 +56,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the same motion as the chat, and the list follows the newest one.
 - A Pilot's answer no longer blanks the top of the chat and slides up from
   below when it arrives as one large block.
+- A Pilot's work now records checkpoints, so its Changes count and Undo and
+  Keep work like any other session.
+- Sending from a project whose folder was renamed now finds the folder under its
+  new name and moves the chat with it. If the folder can't be found, your message
+  stays in the composer.
+- Stash & switch now works on remote projects.
+- The model picker lists only Default, your recent choices and the models it
+  found, instead of a fixed Sonnet, Opus and Haiku when discovery failed.
+- Older Cursor sessions show their subagents' details when reopened.
+- Claude's local MCP servers added from a linked worktree or a subdirectory now
+  show in Settings → MCP, and so do WebSocket servers.
+- Adding an MCP server on Windows no longer fails with Access denied just as
+  Claude Code releases its config lock.
 
 ### Security
+
+- Adding an MCP server through Claude or Codex no longer puts its env and header
+  values on the command line, where other local processes could read them.
+- Sign-ins for remote MCP servers are tied to the exact address they were issued
+  for, and credentials are refused over plain HTTP to anything but loopback.
 
 - Inbox sessions, automation Inbox events and board cards made from tracker
   text now mark that text as data, not instructions. Anyone can write it, so
