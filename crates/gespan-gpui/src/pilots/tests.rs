@@ -2627,7 +2627,7 @@ fn a_pilot_runs_a_flow_to_the_end_with_the_flows_ui_hidden(cx: &mut TestAppConte
         .as_str()
         .unwrap()
         .to_owned();
-    // A repeated request ID replays its first answer.
+    // Each read needs its own request ID: a repeated one gets its first answer.
     let status = |request: &str, cx: &mut TestAppContext| {
         let runs = flows_ok(&s, request, "flows.runs", json!({"goal":"g1"}), cx);
         (

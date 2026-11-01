@@ -98,3 +98,34 @@ fn no_route_opens_the_flows_view(cx: &mut TestAppContext) {
         .unwrap();
     assert!(visual.debug_bounds("flows-view").is_none());
 }
+
+/// A Flows tab already in the workspace shows no dead tab, and restoring its
+/// scope falls through so the caller can open something real.
+#[gpui::test]
+fn a_flows_tab_in_the_workspace_is_neither_shown_nor_restored(cx: &mut TestAppContext) {
+    let window = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let restored = window
+        .update(visual, |shell, window, cx| {
+            let flows = TitleTab::App(AppView::Flows);
+            shell.workspace.title_order.push(flows.clone());
+            shell.workspace.scope_focus.insert(shell.tab_scope(), flows);
+            cx.notify();
+            shell.restore_scope_tab(window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(!restored);
+    window
+        .update(visual, |shell, _, cx| {
+            assert!(
+                !shell
+                    .visible_tabs(cx)
+                    .contains(&TitleTab::App(AppView::Flows))
+            );
+            assert_eq!(shell.active_app_view, None);
+        })
+        .unwrap();
+    assert!(visual.debug_bounds("app-title-tab-Flows").is_none());
+}

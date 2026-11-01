@@ -70,6 +70,7 @@ impl Shell {
                     !self.workspace.classic_layout
                         && (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
                         && (*view != app_views::AppView::Board || self.workspace.preferences.board)
+                        && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
                 }
                 TitleTab::Session(tab) => {
                     self.workspace.tabs.contains(tab) && {
