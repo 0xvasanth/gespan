@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installing or updating the Windows host no longer leaves a broken runtime
+  when `node.exe` is briefly locked, which failed with `node.exe is not
+  recognized`.
 - A Pilot's Activity list now opens with its commands showing and stays open
   as new ones arrive, instead of collapsing each time. New commands step in
   with the same motion as the chat, and the list follows the newest one.

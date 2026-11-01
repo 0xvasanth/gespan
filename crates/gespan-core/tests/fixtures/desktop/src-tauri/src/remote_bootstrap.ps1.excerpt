@@ -78,9 +78,11 @@ try {
     $runtime = Join-Path $runtimeRoot ("$version-$target-" + [Guid]::NewGuid().ToString('N'))
     # The version check above just ran node.exe from here. Windows can hold the
     # file for a moment after a process exits, and antivirus scans new binaries.
+    # Rename the folder in one step. Move-Item isn't safe to retry here: it can
+    # leave $runtime half filled, and the next try nests unpacked inside it.
     for ($attempt = 1; ; $attempt++) {
       try {
-        Move-Item -LiteralPath $unpacked -Destination $runtime -ErrorAction Stop
+        [IO.Directory]::Move($unpacked, $runtime)
         break
       } catch [IO.IOException], [UnauthorizedAccessException] {
         if ($attempt -ge 40) { throw }
