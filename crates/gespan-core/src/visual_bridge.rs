@@ -554,7 +554,8 @@ impl mcp_hub::Toolkit for Toolkit {
 
     fn call(&self, grant: &mcp_hub::Grant, tool: &str, input: Value) -> Result<Value, String> {
         match tool {
-            "visual_docs" => Ok(documentation()),
+            // A caller here has the tools; only the CLI's own docs name the CLI.
+            "visual_docs" => Ok(json!({"documentation": DOCUMENTATION})),
             "visual_check" => input["source"]
                 .as_str()
                 .ok_or("source must be a JavaScript string".into())
@@ -567,6 +568,19 @@ impl mcp_hub::Toolkit for Toolkit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn docs_name_the_cli_only_to_those_who_can_run_it() {
+        use mcp_hub::Toolkit as _;
+        let grant = mcp_hub::Grant {
+            session: 1,
+            workspace: "/work".into(),
+            toolkits: Default::default(),
+        };
+        let tool = super::Toolkit.call(&grant, "visual_docs", serde_json::json!({}));
+        assert!(tool.unwrap().get("cli").is_none());
+        assert!(super::documentation()["cli"]["show"].is_string());
+    }
+
     use super::*;
 
     fn input() -> Value {
@@ -660,7 +674,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Style is inherited from the app"));
-        assert_eq!(reference, client(&["docs".into()]).unwrap());
+        assert_eq!(
+            reference["documentation"],
+            client(&["docs".into()]).unwrap()["documentation"]
+        );
         assert!(client(&["docs".into(), "--input".into(), "unused".into()]).is_err());
     }
 

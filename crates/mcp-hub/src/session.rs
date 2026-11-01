@@ -55,7 +55,13 @@ impl ServerHandler for Session {
             .inner
             .tools(&grant)
             .into_iter()
-            .filter_map(|tool| serde_json::from_value::<Tool>(tool).ok())
+            .filter_map(|tool| {
+                serde_json::from_value::<Tool>(tool)
+                    .inspect_err(
+                        |error| tracing::warn!(%error, "a toolkit offered a malformed tool"),
+                    )
+                    .ok()
+            })
             .collect();
         Ok(ListToolsResult::with_all_items(tools))
     }

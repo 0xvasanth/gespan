@@ -10,7 +10,7 @@ Gespan runs one local MCP endpoint for all its agents. Every capability it gives
 2. Register it in `tool_servers::hub`.
 3. Add its name to the turn's `Mount` in `runtime.rs` when the session should have it.
 
-No provider changes. A tool added to a live session reaches a running agent through `tools/list_changed`.
+No provider changes. A tool added to a live session reaches a running agent through `tools/list_changed`, for agents that honor it. Codex reads its MCP configuration only at `thread/start` and `thread/resume`, so it sees a new tool from its next thread.
 
 ## How each agent reaches it
 
@@ -27,7 +27,7 @@ Checked against real releases: Claude Code 2.1.316, Codex 0.166.0, Kiro CLI 2.36
 
 Pi ships without MCP, and Grok and fx don't refresh `mcpServers` on resume. On that last row every command the agent runs inherits the token, so it's a fallback, never a default.
 
-OpenCode v2 connects to one managed service shared by every session, so a server added there would give each session's token to the others. Its turns run without Gespan's tools until it can scope a server to one session.
+OpenCode v2 connects to one managed service shared by every session, so a server added there would give each session's token to the others. Its turns run without Gespan's tools until it can scope a server to one session, and the prompt says so. The CLIs aren't a way round this: the service keeps the environment it started with, so a session's commands never get its credential.
 
 Codex reads its tool list when a thread starts, so a tool added mid-session reaches it on its next session.
 

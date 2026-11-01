@@ -240,3 +240,44 @@ fn next_look_is_the_look_the_next_pilot_gets() {
         assert_eq!((pilot.mascot.as_str(), pilot.color), (mascot, color));
     }
 }
+
+#[test]
+fn a_pilot_is_told_the_route_its_provider_actually_has() {
+    use crate::provider::Kind;
+    let executable = std::path::Path::new("/usr/bin/gespan");
+    let cli = AppAccess::Cli(executable.to_owned());
+    for (kind, provider_id, expected) in [
+        (Kind::Claude, None, &AppAccess::Tools),
+        (Kind::Codex, Some("thread"), &AppAccess::Tools),
+        (Kind::Kiro, Some("thread"), &AppAccess::Tools),
+        (Kind::Grok, None, &AppAccess::Tools),
+        (Kind::Grok, Some("thread"), &cli),
+        (Kind::Pi, None, &cli),
+        (Kind::Omp, Some("thread"), &cli),
+    ] {
+        assert_eq!(
+            &AppAccess::for_provider(kind, provider_id, executable),
+            expected,
+            "{kind:?} {provider_id:?}"
+        );
+    }
+    let pilot = Pilot::default();
+    let files = files::AgentFiles {
+        id: "pilot".into(),
+        dir: "/agents/pilot".into(),
+        soul: None,
+        soul_hash: String::new(),
+        memory: String::new(),
+        memory_hash: String::new(),
+        memory_path: "/agents/pilot/MEMORY.md".into(),
+        topics: Vec::new(),
+    };
+    let tools = context(&pilot, &files, &AppAccess::Tools);
+    assert!(tools.contains("app_call") && tools.contains("app_help"));
+    assert!(
+        !tools.contains("environment"),
+        "it holds no credential there"
+    );
+    let shell = context(&pilot, &files, &cli);
+    assert!(shell.contains("/usr/bin/gespan app") && !shell.contains("app_call"));
+}

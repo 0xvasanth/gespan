@@ -261,6 +261,11 @@ impl Hub {
         relock(&self.inner.grants).has(session)
     }
 
+    /// Whether this token is still the one a session can use.
+    pub fn holds(&self, session: i64, token: &Token) -> bool {
+        relock(&self.inner.grants).holds(session, token)
+    }
+
     /// Changes what a session may reach and tells its agent, whose tool list
     /// then changes with no restart. Returns whether anything changed.
     pub fn update(&self, session: i64, toolkits: BTreeSet<String>) -> bool {

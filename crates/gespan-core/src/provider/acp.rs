@@ -1636,6 +1636,41 @@ mod tests {
         let text = String::from_utf8(std::mem::take(out)).unwrap();
         serde_json::from_str(text.lines().last().unwrap()).unwrap()
     }
+    /// How a new session offers the endpoint, given what `initialize` said.
+    fn servers_offered(session: i64, capabilities: Value) -> Value {
+        use crate::tool_servers::{Access, Mount, VISUAL};
+        let mut p = protocol(Kind::Kiro);
+        p.access = Access::open(&Mount {
+            session,
+            worktree: "/tmp".into(),
+            toolkits: [VISUAL.to_owned()].into(),
+        });
+        let mut out = Vec::new();
+        p.acp_start(&mut out).unwrap();
+        let mut request = last(&mut out);
+        let mut result = json!({"agentCapabilities":capabilities});
+        while request["method"] != "session/new" {
+            p.frame(json!({"id":request["id"],"result":result}), &mut out)
+                .unwrap();
+            request = last(&mut out);
+            result = json!({});
+        }
+        request["params"]["mcpServers"].clone()
+    }
+    #[test]
+    fn a_new_session_gets_http_only_from_an_agent_that_advertised_it() {
+        let http = servers_offered(5301, json!({"mcpCapabilities":{"http":true}}));
+        assert_eq!(http[0]["type"], "http");
+        assert!(http[0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1"));
+        for capabilities in [json!({}), json!({"mcpCapabilities":{"http":false}})] {
+            let relay = servers_offered(5302, capabilities);
+            assert!(relay[0].get("type").is_none());
+            assert_eq!(relay[0]["args"], json!(["mcp-relay"]));
+        }
+    }
     #[test]
     fn every_acp_provider_runs_its_native_session_lifecycle() {
         for kind in Kind::ALL.into_iter().filter(|k| k.is_acp()) {

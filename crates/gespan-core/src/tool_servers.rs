@@ -112,6 +112,11 @@ impl Access {
         })
     }
 
+    /// Whether this credential is still the one its session can use.
+    pub fn is_live(&self, session: i64) -> bool {
+        hub().is_ok_and(|hub| hub.holds(session, &self.token))
+    }
+
     pub fn claude_control(&self, request_id: &str) -> Value {
         json!({"type":"control_request","request_id":request_id,"request":{
             "subtype":"mcp_set_servers",
@@ -169,29 +174,38 @@ impl Access {
 /// session's turns so a parked provider stays reusable.
 pub fn environment(mount: &Mount) -> HashMap<String, String> {
     static ISSUED: OnceLock<Mutex<HashMap<i64, Token>>> = OnceLock::new();
-    let Ok(hub) = hub() else {
-        return HashMap::new();
+    let hub = match hub() {
+        Ok(hub) => hub,
+        Err(error) => {
+            tracing::warn!(%error, "the tool endpoint isn't running");
+            return HashMap::new();
+        }
     };
     let mut issued = ISSUED
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !hub.has_grant(mount.session) {
-        issued.remove(&mount.session);
-    }
-    let token = issued
-        .entry(mount.session)
-        .or_insert_with(|| hub.mint(mount.grant()));
+    // A session can change route between turns, and `Access::open` then
+    // replaces the token held here.
+    let token = match issued.get(&mount.session) {
+        Some(token) if hub.holds(mount.session, token) => token.clone(),
+        _ => {
+            let token = hub.mint(mount.grant());
+            issued.insert(mount.session, token.clone());
+            token
+        }
+    };
     HashMap::from([
         (ENV_URL.to_owned(), hub.url().to_owned()),
         (ENV_TOKEN.to_owned(), token.secret().to_owned()),
     ])
 }
 
-/// Applies this turn's reach to a session already holding a credential. An
-/// agent still running sees its tool list change.
+/// Applies this turn's reach to a session already holding a credential, which
+/// a turn with no toolkits empties. An agent still running sees its tool list
+/// change. With no endpoint yet there's no credential, and none is started.
 pub fn refresh(mount: &Mount) {
-    if let Ok(hub) = hub() {
+    if let Some(Ok(hub)) = HUB.get() {
         hub.update(mount.session, mount.toolkits.clone());
     }
 }
@@ -322,6 +336,48 @@ mod tests {
         assert!(first[ENV_URL].starts_with("http://127.0.0.1:"));
         revoke(5005);
         assert_ne!(first[ENV_TOKEN], environment(&mount)[ENV_TOKEN]);
+    }
+
+    #[test]
+    fn the_environment_route_replaces_a_token_a_new_process_took_over() {
+        let mount = mount(5007);
+        let stale = environment(&mount);
+        let access = Access::open(&mount).unwrap();
+        let fresh = environment(&mount);
+        assert_ne!(stale[ENV_TOKEN], fresh[ENV_TOKEN]);
+        let connection = Connection {
+            url: fresh[ENV_URL].clone(),
+            token: fresh[ENV_TOKEN].clone(),
+        };
+        let reply = mcp_hub::call_tool(connection, "no_such_tool", json!({}));
+        assert!(
+            reply.unwrap_err().contains("isn't available"),
+            "the credential itself was accepted"
+        );
+        assert!(!access.is_live(5007), "and it took over in turn");
+    }
+
+    #[test]
+    fn a_turn_with_no_toolkits_takes_them_from_a_process_still_running() {
+        let mut mount = mount(5008);
+        let access = Access::open(&mount).unwrap();
+        let connection = || Connection {
+            url: access.url.clone(),
+            token: access.token.secret().to_owned(),
+        };
+        let reachable = || {
+            mcp_hub::call_tool(connection(), "visual_docs", json!({}))
+                .map_err(|error| assert!(error.contains("isn't available"), "{error}"))
+                .is_ok()
+        };
+        assert!(reachable());
+        mount.toolkits.clear();
+        refresh(&mount);
+        assert!(
+            access.is_live(5008),
+            "the credential stays; its reach doesn't"
+        );
+        assert!(!reachable());
     }
 
     /// The fake toolkit the original ticket asked for: registered once, it
