@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { feedNotes, nativeManifest, nativeTargets } from "./native-release.mjs";
-import { nativeVersion, rpmRelease } from "./package-native.mjs";
+import { nativeVersion, rpmRelease, rpmSpec } from "./package-native.mjs";
 
 const artifacts = nativeTargets.map((target) => ({
   target,
@@ -148,4 +149,21 @@ test("the feed's notes are the version's CHANGELOG section", () => {
   // A version without a section fails the release rather than shipping other notes.
   assert.throws(() => feedNotes("0.0.3-beta", changelog), /no section for 0\.0\.3-beta/);
   assert.equal(feedNotes("0.0.2-beta", changelog, { NATIVE_RELEASE_NOTES: "Override" }), "Override");
+});
+
+// CI doesn't build the rpm, so a missing header only shows up in a release.
+test("the rpm job installs the headers of every library the package requires", () => {
+  const libraries = [...rpmSpec(nativeVersion("1.2.3"), "Gespan").matchAll(/^Requires: (\S+)$/gm)]
+    .map(([, name]) => name)
+    .filter((name) => name !== "polkit");
+  assert.deepEqual(libraries, ["gtk3", "webkit2gtk4.1"]);
+  const workflow = readFileSync(new URL("../.github/workflows/native-release.yml", import.meta.url), "utf8");
+  const packages = workflow
+    .split("\n")
+    .find((line) => line.includes("dnf install -y clang"))
+    .trim()
+    .split(/\s+/);
+  for (const library of libraries) {
+    assert.ok(packages.includes(`${library}-devel`), `${library}-devel`);
+  }
 });
