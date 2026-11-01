@@ -1,0 +1,19 @@
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_765ddcec531e1c::t_38c12f34b8a3fa 111-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a77137c7360b01a87351e4f834bb54ecce475b9",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
