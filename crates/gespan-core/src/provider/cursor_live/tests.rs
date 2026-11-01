@@ -187,6 +187,119 @@ fn a_subagents_own_work_fills_its_agent_card_by_lineage() {
     assert!(protocol.cursor_tick(false).is_empty());
 }
 
+/// A saved Agent row as older Cursor sessions left it: a bare placeholder.
+fn saved_agent_row(id: &str) -> Row {
+    let mut call = ToolCall::new(id, "Subagent task");
+    call.display = Some(json!({"kind":"agent","title":": Subagent task"}));
+    Row {
+        role: "tool".into(),
+        text: serde_json::to_string(&call).unwrap(),
+        first: true,
+        sent_at: None,
+    }
+}
+fn agent_of(row: &Row) -> crate::tool::tasks::AgentRun {
+    let call: ToolCall = serde_json::from_str(&row.text).unwrap();
+    let Some(Panel::Agent(run)) = call.panel() else {
+        panic!("an agent card")
+    };
+    run
+}
+
+#[test]
+fn a_reopened_placeholder_gets_its_name_model_and_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = child(dir.path(), "child", "parent", "spawn-1");
+    insert(
+        &work,
+        "user",
+        json!({"role":"user","content":[{"type":"text","text":"<user_query>Perform a code review of the parser in /repo/src.</user_query>"}]}),
+    );
+    insert(
+        &work,
+        "a",
+        json!({"role":"assistant","providerOptions":{"cursor":{"systemPromptFingerprint":{"model":"grok-4.6"}}},"content":[
+            {"type":"text","text":"Reading the parser."},
+            {"type":"tool-call","toolCallId":"read","toolName":"Read","args":{"path":"/repo/src/parse.rs"}}
+        ]}),
+    );
+    drop(work);
+    let user = Row {
+        role: "user".into(),
+        text: "Review the changes".into(),
+        first: true,
+        sent_at: None,
+    };
+    let mut rows = vec![user.clone(), saved_agent_row("spawn-1")];
+
+    recover_from(dir.path(), "parent", &mut rows);
+
+    assert_eq!(rows[0], user);
+    let run = agent_of(&rows[1]);
+    assert_eq!(run.name.as_deref(), Some("Review the parser"));
+    assert_eq!(run.model.as_deref(), Some("grok-4.6"));
+    assert_eq!(run.steps.len(), 2);
+
+    // Reopening again reads the same steps without doubling them.
+    recover_from(dir.path(), "parent", &mut rows);
+    assert_eq!(agent_of(&rows[1]).steps.len(), 2);
+}
+
+#[test]
+fn only_this_sessions_children_fill_a_reopened_card() {
+    let dir = tempfile::tempdir().unwrap();
+    let other = child(dir.path(), "stranger", "other-parent", "spawn-1");
+    insert(
+        &other,
+        "a",
+        json!({"role":"assistant","content":[{"type":"text","text":"Not mine."}]}),
+    );
+    drop(other);
+    let saved = saved_agent_row("spawn-1");
+    let mut rows = vec![saved.clone()];
+
+    recover_from(dir.path(), "parent", &mut rows);
+
+    assert_eq!(rows, vec![saved]);
+}
+
+#[test]
+fn rows_that_are_not_agents_and_a_missing_store_change_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plain = ToolCall::new("read", "Read");
+    plain.display = Some(json!({"kind":"read"}));
+    let text = serde_json::to_string(&plain).unwrap();
+    let mut rows = vec![
+        Row {
+            role: "tool".into(),
+            text: text.clone(),
+            first: true,
+            sent_at: None,
+        },
+        Row {
+            role: "tool".into(),
+            text: "not json".into(),
+            first: false,
+            sent_at: None,
+        },
+        saved_agent_row("spawn-1"),
+    ];
+    let before = rows.clone();
+
+    recover_from(dir.path(), "parent", &mut rows);
+
+    assert_eq!(rows, before);
+}
+
+#[test]
+fn other_providers_and_unsaved_sessions_are_left_alone() {
+    let saved = saved_agent_row("spawn-1");
+    let mut rows = vec![saved.clone()];
+    recover_cursor_subagents("claude", Some("parent"), &mut rows);
+    recover_cursor_subagents("cursor", None, &mut rows);
+    assert_eq!(rows, vec![saved]);
+}
+
 #[test]
 fn the_turn_end_reads_the_store_one_last_time() {
     let dir = tempfile::tempdir().unwrap();
