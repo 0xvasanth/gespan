@@ -45,6 +45,26 @@ fn a_worker_starts_with_the_leads_uncommitted_contents() {
 }
 
 #[test]
+fn setup_sees_the_seeded_files_and_what_it_writes_is_not_the_workers_delta() {
+    let repo = repo();
+    std::fs::write(repo.root.join("docs.txt"), "edited\n").unwrap();
+    let scripts = crate::worktree_scripts::Scripts {
+        setup: "echo setup>> docs.txt".into(),
+        teardown: String::new(),
+    };
+    crate::worktree_scripts::save_scripts(&repo.root, &scripts).unwrap();
+    let workspace = prepare(&repo.root, "setup").unwrap().unwrap();
+    let seen = read(&workspace.path, "docs.txt");
+    assert!(seen.starts_with("edited"), "{seen}");
+    assert!(seen.trim_end().ends_with("setup"), "{seen}");
+    assert!(unchanged(&workspace, "setup").unwrap());
+    let integrated = integrate(&repo.root, &workspace, "setup", &all()).unwrap();
+    assert!(integrated.files.is_empty());
+    assert_eq!(read(&repo.root, "docs.txt"), "edited\n");
+    remove(&repo.root, &workspace, "setup").unwrap();
+}
+
+#[test]
 fn integrate_applies_edits_additions_and_deletions_to_the_lead() {
     let repo = repo();
     let workspace = prepare(&repo.root, "t1").unwrap().unwrap();

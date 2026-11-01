@@ -577,9 +577,10 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
         )
         .map(|tree| PathBuf::from(tree.path));
     }
-    let state = snapshot(cwd)?;
-    let main = state.worktrees.first().ok_or("No working copies found")?;
+    let trees = worktrees(cwd)?;
+    let main = trees.first().ok_or("No working copies found")?;
     let main = Path::new(&main.path);
+    let turn = crate::worktree_scripts::turn(main);
     let parent = main.with_file_name(format!(
         "{}-worktrees",
         main.file_name().unwrap_or_default().to_string_lossy()
@@ -613,25 +614,31 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             commit.trim(),
         ],
     )?;
-    copy_included(main, &path);
+    let copied = copy_included(main, &path);
+    crate::worktree_scripts::set_up(turn, main, &path, Some(&name), copied)?;
     Ok(path)
 }
 
 /// A worktree missing its ignored files still works, so this never fails the
 /// creation around it.
-fn copy_included(main: &Path, worktree: &Path) {
+fn copy_included(main: &Path, worktree: &Path) -> crate::worktree_copy::Copied {
     match crate::worktree_copy::copy_included(main, worktree) {
-        Ok(copied) if copied.files + copied.skipped > 0 => tracing::info!(
-            files = copied.files,
-            bytes = copied.bytes,
-            shared = copied.shared,
-            skipped = copied.skipped,
-            "copied a project's included files into a worktree"
-        ),
-        Ok(_) => {}
+        Ok(copied) => {
+            if copied.files + copied.skipped > 0 {
+                tracing::info!(
+                    files = copied.files,
+                    bytes = copied.bytes,
+                    shared = copied.shared,
+                    skipped = copied.skipped,
+                    "copied a project's included files into a worktree"
+                );
+            }
+            copied
+        }
         Err(error) => {
             metrics::failure("worktree.copy", metrics::ErrorKind::Other);
             tracing::warn!(%error, "could not copy a project's included files");
+            Default::default()
         }
     }
 }
@@ -648,10 +655,21 @@ pub fn create_project_worktree(
     base: Option<&str>,
     existing: bool,
 ) -> Result<Worktree, String> {
+    create_seeded_worktree(cwd, branch, base, existing, |_| Ok(()))
+}
+/// [`create_project_worktree`] with `seed` run on the new checkout before its
+/// Setup script, so the script sees what the checkout will really hold.
+pub(crate) fn create_seeded_worktree(
+    cwd: &Path,
+    branch: &str,
+    base: Option<&str>,
+    existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
+) -> Result<Worktree, String> {
     let _span = tracing::info_span!("worktree_create", existing).entered();
     metrics::track(
         "worktree.create",
-        create_branch_worktree(cwd, branch, base, existing),
+        create_branch_worktree(cwd, branch, base, existing, seed),
     )
     .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
 }
@@ -660,27 +678,26 @@ fn create_branch_worktree(
     branch: &str,
     base: Option<&str>,
     existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
 ) -> Result<Worktree, String> {
     if crate::files::remote::is_remote(cwd) {
         return remote::create_worktree(cwd, branch.trim(), base, existing);
     }
     let branch = branch.trim();
     valid_branch(cwd, branch)?;
-    let state = snapshot(cwd)?;
-    if state
-        .worktrees
+    let main = worktrees(cwd)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?
+        .path;
+    let main = Path::new(&main);
+    let turn = crate::worktree_scripts::turn(main);
+    if worktrees(cwd)?
         .iter()
         .any(|tree| tree.branch.as_deref() == Some(branch))
     {
         return Err("This branch already has a working copy. Select it from the picker.".into());
     }
-    let main = Path::new(
-        &state
-            .worktrees
-            .first()
-            .ok_or("No working copies found")?
-            .path,
-    );
     let parent = main.with_file_name(format!(
         "{}-worktrees",
         main.file_name().unwrap_or_default().to_string_lossy()
@@ -737,14 +754,14 @@ fn create_branch_worktree(
             ],
         )?;
     }
-    copy_included(main, &path);
-    snapshot(cwd)?
-        .worktrees
+    let copied = copy_included(main, &path);
+    let tree = worktrees(cwd)?
         .into_iter()
         .find(|tree| Path::new(&tree.path) == path)
-        .ok_or_else(|| {
-            "Worktree created, but could not be found. Refresh the working copies.".into()
-        })
+        .ok_or("Worktree created, but could not be found. Refresh the working copies.")?;
+    seed(&tree)?;
+    crate::worktree_scripts::set_up(turn, main, &path, tree.branch.as_deref(), copied)?;
+    Ok(tree)
 }
 
 #[cfg(test)]

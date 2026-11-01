@@ -12,17 +12,18 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        LazyLock,
+        LazyLock, Mutex,
     },
 };
 
 const INCLUDE_FILE: &str = ".worktreeinclude";
+const MAX_NAMES: usize = 20;
 
 /// Four threads: this runs beside the app, and it mostly waits on the disk.
 static COPY_POOL: LazyLock<Result<rayon::ThreadPool, rayon::ThreadPoolBuildError>> =
     LazyLock::new(|| rayon::ThreadPoolBuilder::new().num_threads(4).build());
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Copied {
     pub files: usize,
     pub bytes: u64,
@@ -30,6 +31,8 @@ pub struct Copied {
     pub shared: usize,
     /// Symlinks that lead out of the checkout, and files that vanished.
     pub skipped: usize,
+    /// The first files copied, up to `MAX_NAMES`, sorted.
+    pub names: Vec<String>,
 }
 
 /// Git lists entries with `/`, which a canonical Windows path (`\\?\...`) takes
@@ -48,13 +51,27 @@ struct Tally {
     bytes: AtomicU64,
     shared: AtomicUsize,
     skipped: AtomicUsize,
+    names: Mutex<Vec<String>>,
+}
+
+impl Tally {
+    /// Keeps enough names for the sorted first `MAX_NAMES` to look sensible
+    /// without holding every path of a large copy.
+    fn note(&self, entry: &Path) {
+        if let Ok(mut names) = self.names.lock() {
+            if names.len() < MAX_NAMES * 4 {
+                names.push(entry.to_string_lossy().into_owned());
+            }
+        }
+    }
 }
 
 /// Copies `main`'s listed ignored files into the fresh `worktree`. Does nothing
 /// for a project without `.worktreeinclude`.
 pub fn copy_included(main: &Path, worktree: &Path) -> Result<Copied, String> {
     let include = main.join(INCLUDE_FILE);
-    if !include.is_file() {
+    // The list itself must not come from outside the repository.
+    if !fs::symlink_metadata(&include).is_ok_and(|meta| meta.is_file()) {
         return Ok(Copied::default());
     }
     let mut builder = GitignoreBuilder::new(main);
@@ -100,11 +117,15 @@ pub fn copy_included(main: &Path, worktree: &Path) -> Result<Copied, String> {
         Ok(pool) => pool.install(copy)?,
         Err(_) => copy()?,
     }
+    let mut names = tally.names.into_inner().unwrap_or_default();
+    names.sort();
+    names.truncate(MAX_NAMES);
     Ok(Copied {
         files: tally.files.into_inner(),
         bytes: tally.bytes.into_inner(),
         shared: tally.shared.into_inner(),
         skipped: tally.skipped.into_inner(),
+        names,
     })
 }
 
@@ -140,6 +161,9 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
         let copied = copy_symlink(&roots.real_main, &source, &dest)?;
         let counter = if copied { &tally.files } else { &tally.skipped };
         counter.fetch_add(1, Ordering::Relaxed);
+        if copied {
+            tally.note(entry);
+        }
         return Ok(());
     }
     let wrote = match reflink_copy::reflink_or_copy(&source, &dest) {
@@ -156,6 +180,7 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
     }
     tally.files.fetch_add(1, Ordering::Relaxed);
     tally.bytes.fetch_add(metadata.len(), Ordering::Relaxed);
+    tally.note(entry);
     Ok(())
 }
 
