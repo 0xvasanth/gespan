@@ -1,7 +1,7 @@
 # Gespan preview
 
-Gespan is the experimental Rust + GPUI app. The production app still
-uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
+Gespan is a Rust + GPUI app. Native builds have their own Cargo workspace and
+lockfile.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
   `pkg-config` on Debian/Ubuntu).
 - At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
 
-The native commands do not require `bun install` or a frontend build.
+The native commands do not require `bun install`.
 macOS is the primary preview target. A Linux ARM64 source build has been
 smoke-tested in a VM; Linux x64 packages and Windows GUI interaction still need
 runtime testing. See [preview limitations](parity.md).
@@ -127,8 +127,7 @@ release breaks silently.
 
 The app's default endpoint is therefore
 `https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json`.
-GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
-native feed deliberately uses its own tag and never competes with it. To
+The feed deliberately uses its own tag rather than GitHub's `releases/latest`. To
 override the default (HTTPS only), set the `NATIVE_UPDATER_ENDPOINT` repository
 variable, or `NATIVE_STABLE_UPDATER_ENDPOINT` for stable tags (Settings, Secrets
 and variables, Actions, Variables) for CI releases, which the workflow passes to
@@ -145,20 +144,7 @@ are set, packages and `latest.json` are also mirrored under `native-preview/`
 
 The macOS app icon is `crates/gespan-gpui/packaging/icon.icns`.
 
-## Running alongside Gespan
-
-Gespan Native and the Tauri Gespan app share one database,
-`~/Library/Application Support/dev.gespan.desktop/gespan.db` on macOS. Before
-you use Gespan with your real data:
-
-- Back up `gespan.db` with both apps closed.
-- Do not have the same conversation open in both apps at the same time. Tauri
-  Gespan saves whole conversations, so it can overwrite turns that were added in
-  Gespan.
-
-Opening different conversations in each app is fine. A code safeguard for this is
-planned but not built yet.
-### AppImage desktop integration
+## AppImage desktop integration
 
 Move the AppImage to a permanent location and make it executable, then opt in
 to a per-user application menu entry and Wayland icon registration:
@@ -176,10 +162,14 @@ command again after moving or renaming the AppImage.
 
 No update can move a Tauri install: Tauri (`dev.gespan.desktop`) and Native
 (`dev.gespan.native`) are separate apps with separate update feeds, and no Tauri
-release is left to ship the change. The move is manual, and there is no data to
-copy, because a release build of Native opens `dev.gespan.desktop/gespan.db`
-where Tauri left it. The [README](../../README.md#move-from-gespan-to-gespan-native)
-has the steps.
+release is left to ship the change. The move is manual: quit the old app, then
+install Gespan from [GitHub Releases](https://github.com/0xvasanth/gespan/releases).
+There is no data to copy, because a release build of Native opens
+`dev.gespan.desktop/gespan.db` where Tauri left it.
+
+The Tauri app saves whole conversations, so do not run the two side by side: it
+can overwrite turns that were added in Native. Back up `gespan.db` with both
+apps closed if you need to go back and forth.
 
 ## Data and configuration
 
@@ -210,10 +200,9 @@ profile remains unverified. Native preference edits are stored separately.
 Some desktop layout concepts still need native support; see
 [preview limitations](parity.md).
 
-The Windows reader always opens a temporary copy of localStorage. Copying while
-Tauri is writing is best-effort: an inconsistent copy can leave desktop
-preferences incomplete or unavailable for that launch. Close Tauri before
-starting GPUI for the first time.
+The Windows reader always opens a temporary copy of localStorage. If the old Tauri
+app is still running, the copy is best-effort and can leave desktop preferences
+incomplete for that launch. Close it before starting Gespan for the first time.
 
 To inspect the installed database without opening a window or changing it, use
 the executable from a release build:

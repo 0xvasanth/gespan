@@ -109,7 +109,6 @@ The headless host runs the reused TypeScript adapters with a Node process backen
 ```sh
 bun run host:build
 bun run test:host
-bun run check:web
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test

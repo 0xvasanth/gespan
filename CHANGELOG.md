@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The React/Tauri desktop app. Gespan Native is now the only desktop app, and the
+  sources for the old app are gone from the repository. Existing data keeps
+  working: Native opens the same database.
+
 ## [0.0.5] - 2026-11-01
 
 ### Added

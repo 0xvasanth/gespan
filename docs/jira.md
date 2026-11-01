@@ -24,7 +24,7 @@ inbox, after its initial snapshot. The project-key filter uses values such as
 **Disconnect** removes the saved credentials and clears cached Jira content.
 Credentials are stored in the OS keychain (macOS Keychain, Windows Credential
 Manager, or the Secret Service on Linux), under the service `dev.gespan.trackers`.
-The Tauri app and Gespan Native read the same entry. A `jira-config.json` file
+A `jira-config.json` file
 saved by an earlier version is moved into the keychain the first time it is
 read and then deleted. If the keychain is locked or unavailable, the file is
 kept so Jira stays connected, and the move is tried again on the next read.

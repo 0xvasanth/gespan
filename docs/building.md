@@ -1,80 +1,48 @@
 # Build from source
 
-Gespan supports macOS, Linux, and Windows. You need Node.js 20+ and a current stable Rust toolchain. Install and sign in to at least one agent CLI using [provider setup](providers.md).
+Gespan supports macOS, Linux, and Windows. You need Node.js 22+, a current stable Rust toolchain, and, on macOS, Xcode with macOS components. Install and sign in to at least one agent CLI using [provider setup](providers.md).
 
 ## Platform prerequisites
 
-On Linux, install the standard Tauri prerequisites, including `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, and `libjavascriptcoregtk-4.1-dev` on Debian/Ubuntu. The setup helpers below install the native dependencies and packaging tools for their distributions.
+On Debian or Ubuntu, install the GUI build dependencies:
 
-On Windows, the packaging script uses `stable-x86_64-pc-windows-msvc`. The installer bootstraps the [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) runtime when it is missing.
+```bash
+sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libasound2-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libdbus-1-dev
+```
 
 ## Run locally
 
 From the repository root:
 
 ```bash
-bun install
-bun run tauri dev
+bun run native:dev     # launch with a separate development database
+bun run native:build   # create an optimized app using installed Gespan data
+bun run native:check   # run native checks
 ```
 
-Development builds run as **Gespan Dev** (`dev.gespan.desktop.dev`), so they
-keep their own `gespan.db`, settings and notification permissions in
-`~/Library/Application Support/dev.gespan.desktop.dev/` and never touch an
-installed Gespan you are using at the same time. `bun run native:dev` likewise
-runs as **Gespan Native Dev** (`dev.gespan.native.dev`) with its database in
-`~/Library/Application Support/Gespan Development/`.
+Native commands do not need JavaScript dependencies installed.
 
-## Ubuntu / Debian packages
+Type `r` then Enter in the development terminal to rebuild and restart. There is
+no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
 
-On an Ubuntu/Debian workstation, the repository can install the native Tauri prerequisites and build distributable Linux packages directly:
+`bun run native:dev` runs as **Gespan Native Dev** (`dev.gespan.native.dev`) with
+its database in `~/Library/Application Support/Gespan Development/`, so it never
+touches an installed Gespan you are using at the same time.
 
-```bash
-bun run setup:linux:deb
-bun install --frozen-lockfile
-bun run build:linux
+The build command does not launch the app. On macOS, open the result with:
+
+```sh
+open "crates/gespan-gpui/target/release/Gespan Native.app"
 ```
 
-The Linux build emits `.deb` and AppImage bundles under `target/release/bundle/`, in the `deb/` and `appimage/` directories. `build:linux` repacks the AppImage so it uses the host WebKitGTK 4.1 stack instead of bundled Ubuntu libraries. See [Linux installation](install.md) for runtime dependencies and package instructions.
+The release app reads and writes your installed Gespan data.
 
-## Fedora / Enterprise Linux packages
-
-On Fedora or Enterprise Linux 10 (registered RHEL, Rocky, Alma, CentOS Stream, Oracle):
-
-```bash
-bun run setup:linux:fedora
-bun install --frozen-lockfile
-bun run build:fedora
-```
-
-On EL 10, the setup helper enables EPEL 10 and CRB automatically, since the development packages need CRB. On Oracle Linux it enables `ol10_codeready_builder` and `ol10_developer_EPEL`. Fedora does not need these extra repositories.
-
-The build emits a `.rpm` under `target/release/bundle/rpm/`, installable with:
-
-```bash
-sudo dnf install ./target/release/bundle/rpm/Gespan-*.rpm
-```
-
-EL 9 and older are unsupported (`webkit2gtk4.1-devel` only exists in EPEL 10). The published release `.rpm` is built on Enterprise Linux 10 so it loads on Fedora and EL 10. See [Linux installation](install.md#fedora--enterprise-linux-packages) for release package installation and runtime repository setup.
-
-## Windows packages
-
-```bash
-bun install --frozen-lockfile
-bun run build:windows
-```
-
-The Windows build emits an NSIS installer under `target/release/bundle/nsis/`.
-
-## Tauri configuration
-
-- [src-tauri/tauri.conf.json](../src-tauri/tauri.conf.json) contains the shared application and bundle configuration.
-- [src-tauri/tauri.linux.conf.json](../src-tauri/tauri.linux.conf.json) loads automatically for Linux development and builds.
-- [src-tauri/tauri.windows.conf.json](../src-tauri/tauri.windows.conf.json) loads automatically for Windows development and builds.
+See the [native guide](native/README.md) for data paths, output locations and
+fixtures.
 
 ## Releases
 
-A release ships Gespan Native and the mobile app. The Tauri app is no longer
-released or tested in CI.
+A release ships Gespan Native and the mobile app.
 
 Both release workflows run only when started by hand from a `vX.Y.Z` tag,
 so pushing a tag never publishes anything on its own. The **Release** workflow starts them from the version's tag.
@@ -86,7 +54,7 @@ When CI passes on that commit, the **Release** workflow creates the `vX.Y.Z` tag
 
 | Secret | Needed for |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying Native update packages (always required; the names predate Native) |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying Native update packages (always required). The names and the `@tauri-apps/cli` dev dependency stay because Native update packages are signed with Tauri's signer, in the format installed apps verify |
 | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | Signing the macOS app |
 | `APPLE_API_KEY`, `APPLE_API_KEY_P8`, `APPLE_API_ISSUER` | Notarizing the macOS app |
 | `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional R2 mirror. All or none |
@@ -95,33 +63,3 @@ When CI passes on that commit, the **Release** workflow creates the `vX.Y.Z` tag
 Until the Apple secrets exist, a prerelease can run with **allow_unsigned** ticked in the Run workflow form. The macOS app is then ad-hoc signed and not notarized, so macOS blocks its first launch until it is opened from Finder with Control-click → Open. Windows installers are not code-signed yet, so SmartScreen warns on first run.
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
-
-## Gespan Native preview
-
-The experimental GPUI app uses a separate Cargo workspace. The production
-commands above continue to build React/Tauri.
-
-Requires Node.js 22+, stable Rust, and Xcode with macOS components on macOS.
-Native commands do not need JavaScript dependencies installed.
-
-```sh
-bun run native:dev     # launch with a separate development database
-bun run native:build   # create an optimized app using installed Gespan data
-bun run native:check   # run native checks
-```
-
-Type `r` then Enter in the development terminal to rebuild and restart. There is
-no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
-
-The build command does not launch the app. On macOS, open the result with:
-
-```sh
-open "crates/gespan-gpui/target/release/Gespan Native.app"
-```
-
-The release app reads and writes your installed Gespan data. It is locally
-signed, without notarization or automatic updates. Linux/Windows GUI builds
-remain unverified.
-
-See the [native guide](native/README.md) for data paths, output locations,
-fixtures and preview limitations.

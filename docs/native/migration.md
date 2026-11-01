@@ -1,8 +1,8 @@
 # Native architecture
 
-The GPUI app is an experimental preview alongside the production React/Tauri
-app. The existing implementation in `src/` and `src-tauri/` is the behavior
-reference. Production builds, CI, releases and updater feeds continue to use Tauri.
+Gespan is a Rust and GPUI app, and it is the only desktop app. The earlier
+React/Tauri app was retired once Native had parity; its data formats live on
+because Native opens the databases it left behind.
 
 ## Code layout
 
@@ -16,7 +16,7 @@ reference. Production builds, CI, releases and updater feeds continue to use Tau
 | `scripts/native-editor/`, `scripts/native-settings/` | Generators for embedded JavaScript assets |
 | `vendor/gpui-pre*/` | Pinned framework and platform patches |
 
-`gespan-core` has no Tauri or GPUI dependency. Keep provider and storage
+`gespan-core` has no GPUI dependency. Keep provider and storage
 behavior in core services, with UI work in GPUI views. Development uses isolated
 data; release builds use the installed desktop database. See the
 [native guide](README.md#data-and-configuration) for paths and commands.
@@ -47,5 +47,4 @@ The vendored framework/platform crates remove the unused `zed-scap` dependency.
 The native build rejects lockfiles that reintroduce it, and the `screen-capture`
 feature remains disabled. Preserve these guards and the licenses in [NOTICE](../../NOTICE).
 
-See [preview limitations](parity.md) for current release work. Tauri remains the
-production app until an explicit cutover.
+See [preview limitations](parity.md) for known gaps.
