@@ -202,6 +202,11 @@ pub(crate) struct Conversation {
         Entity<crate::transcript::attachments::Photo>,
     >,
     attaching: bool,
+    /// A send is waiting to learn where this chat's project folder went.
+    locating_project: bool,
+    /// This chat's folder identity was recorded, so a later rename is found.
+    project_remembered: bool,
+    folder_is_missing: fn(&str) -> bool,
     file_drag: bool,
     attachment_error: Option<String>,
     app_environment: std::collections::HashMap<String, String>,
@@ -725,6 +730,14 @@ impl Conversation {
             pending_attachments: Vec::new(),
             attachment_photos: Default::default(),
             attaching: false,
+            locating_project: false,
+            project_remembered: false,
+            // Test chats use made-up folders.
+            folder_is_missing: if cfg!(test) {
+                |_| false
+            } else {
+                gespan_core::project_location::folder_is_missing
+            },
             file_drag: false,
             attachment_error: None,
             app_environment: Default::default(),
@@ -1038,6 +1051,91 @@ impl Conversation {
     fn send(&mut self, cx: &mut Context<Self>) {
         self.send_follow_up(false, cx);
     }
+    /// A send from a project whose folder is gone first looks for it under its
+    /// new name (submitAfterProjectSync), then sends from there. The message
+    /// stays in the composer until then, and when the folder cannot be found.
+    fn send_follows_moved_project(&mut self, invert: bool, cx: &mut Context<Self>) -> bool {
+        if self.locating_project {
+            return true;
+        }
+        let project = self.summary.cwd.clone();
+        if self.settings.worktree_cwd.is_some() {
+            return false;
+        }
+        let store = self.store.clone();
+        let lookup = project.clone();
+        if !(self.folder_is_missing)(&project) {
+            if !self.project_remembered {
+                self.project_remembered = true;
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Ok(store) = locked(&store) {
+                            gespan_core::project_location::follow_moved_projects(&store, &[lookup]);
+                        }
+                    })
+                    .detach();
+            }
+            return false;
+        }
+        self.locating_project = true;
+        let work = cx.background_executor().spawn(async move {
+            let store = locked(&store)?;
+            Ok::<_, String>(gespan_core::project_location::follow_moved_projects(
+                &store,
+                &[lookup],
+            ))
+        });
+        cx.spawn(async move |this, cx| {
+            let moved = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.locating_project = false;
+                match moved.map(|moved| moved.into_iter().next()) {
+                    Ok(Some(moved)) => {
+                        this.project_moved(&moved, cx);
+                        cx.emit(moved);
+                        this.send_follow_up(invert, cx);
+                    }
+                    Ok(None) => {
+                        this.status = format!("Project folder not found: {project}");
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        this.status = error;
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+        true
+    }
+    /// Follows a renamed project folder. Other chats hear of it from the shell,
+    /// and the chat that found the move has already applied it.
+    pub(crate) fn project_moved(
+        &mut self,
+        moved: &gespan_core::project_location::Moved,
+        cx: &mut Context<Self>,
+    ) {
+        use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
+        let same = path_key(&self.summary.cwd) == path_key(&moved.from);
+        if same {
+            self.summary.cwd = moved.to.clone();
+        }
+        let worktree = self
+            .settings
+            .worktree_cwd
+            .clone()
+            .filter(|path| is_equal_or_inside(path, &moved.from));
+        if let Some(path) = &worktree {
+            self.settings.worktree_cwd = Some(rebase_path(path, &moved.from, &moved.to));
+            self.save_settings(cx);
+        }
+        if same || worktree.is_some() {
+            self.sync_tool_paths(cx);
+            self.refresh_git(cx);
+            cx.notify();
+        }
+    }
     /// `invert` sends a mid-turn message the opposite way from the follow-up
     /// preference: queued when it steers, steering when it queues.
     fn send_follow_up(&mut self, invert: bool, cx: &mut Context<Self>) {
@@ -1099,6 +1197,9 @@ impl Conversation {
             return;
         }
         if self.input.read(cx).is_composing() {
+            return;
+        }
+        if self.send_follows_moved_project(invert, cx) {
             return;
         }
         let raw = self
@@ -1760,6 +1861,7 @@ impl EventEmitter<TicketChanged> for Conversation {}
 impl EventEmitter<ChooseFolder> for Conversation {}
 impl EventEmitter<OpenSessionChanges> for Conversation {}
 impl EventEmitter<Transfer> for Conversation {}
+impl EventEmitter<gespan_core::project_location::Moved> for Conversation {}
 impl EventEmitter<composer_features::StartOrchestration> for Conversation {}
 impl EventEmitter<composer_features::StopOrchestration> for Conversation {}
 impl EventEmitter<composer_features::ResumeOrchestration> for Conversation {}
@@ -4395,7 +4497,7 @@ pub(super) mod menu_tests {
     use super::*;
     use gespan_core::store::Store;
     use gpui::{TestAppContext, WindowHandle, point};
-    use std::sync::Mutex;
+    use std::{cell::RefCell, rc::Rc, sync::Mutex};
 
     #[gpui::test]
     fn no_agent_detected_disables_the_picker_and_send_with_the_settings_hint(
@@ -4579,6 +4681,205 @@ pub(super) mod menu_tests {
         assert_eq!(opened.get(), 1);
         window
             .update(visual, |c, _, _| assert!(c.pilot_menus_open().0))
+            .unwrap();
+    }
+
+    /// A chat in a real project folder, ready to queue what is sent.
+    fn chat_in_folder(
+        path: &Path,
+        cx: &mut TestAppContext,
+    ) -> (WindowHandle<Conversation>, Arc<Mutex<Store>>) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let cwd = path.to_string_lossy().into_owned();
+        let summary = store.create("claude", &cwd).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let database = store.clone();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Conversation::new(summary, database, cx))
+            })
+            .unwrap()
+        });
+        window.update(cx, |view, _, cx| view.load(cx)).unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                view.folder_is_missing = gespan_core::project_location::folder_is_missing;
+                view.busy = true;
+                view.follow_ups.ready = true;
+                view.input
+                    .update(cx, |input, cx| input.set_text("hello".into(), cx));
+            })
+            .unwrap();
+        (window, store)
+    }
+
+    fn remember_folder(store: &Arc<Mutex<Store>>, path: &Path) {
+        gespan_core::project_location::follow_moved_projects(
+            &store.lock().unwrap(),
+            &[path.to_string_lossy().into_owned()],
+        );
+    }
+
+    #[gpui::test]
+    fn a_send_remembers_the_folder_so_a_later_rename_is_followed(cx: &mut TestAppContext) {
+        let parent = tempfile::tempdir().unwrap();
+        let (old, new) = (parent.path().join("gespan"), parent.path().join("renamed"));
+        std::fs::create_dir(&old).unwrap();
+        let (window, _store) = chat_in_folder(&old, cx);
+
+        window.update(cx, |view, _, cx| view.send(cx)).unwrap();
+        cx.run_until_parked();
+        std::fs::rename(&old, &new).unwrap();
+        window
+            .update(cx, |view, _, cx| {
+                view.input
+                    .update(cx, |input, cx| input.set_text("again".into(), cx));
+                view.send(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.summary.cwd, new.to_string_lossy());
+                assert_eq!(view.follow_ups.state.messages.len(), 2);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn sending_from_a_renamed_folder_moves_the_chat_and_sends(cx: &mut TestAppContext) {
+        let parent = tempfile::tempdir().unwrap();
+        let (old, new) = (parent.path().join("gespan"), parent.path().join("renamed"));
+        std::fs::create_dir(&old).unwrap();
+        let (window, store) = chat_in_folder(&old, cx);
+        remember_folder(&store, &old);
+        std::fs::rename(&old, &new).unwrap();
+        let moved = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let moved = moved.clone();
+            let view = window.root(cx).unwrap();
+            cx.subscribe(
+                &view,
+                move |_, event: &gespan_core::project_location::Moved, _| {
+                    moved.borrow_mut().push(event.to.clone())
+                },
+            )
+        });
+
+        window.update(cx, |view, _, cx| view.send(cx)).unwrap();
+        cx.run_until_parked();
+
+        let new = new.to_string_lossy().into_owned();
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(view.summary.cwd, new);
+                assert_eq!(view.follow_ups.state.messages.len(), 1);
+                assert_eq!(view.follow_ups.state.messages[0].text, "hello");
+                assert_eq!(view.input.read(cx).content, "");
+            })
+            .unwrap();
+        assert_eq!(*moved.borrow(), vec![new.clone()]);
+        let id = window.update(cx, |view, _, _| view.summary.id).unwrap();
+        let sessions = store.lock().unwrap().sessions().unwrap();
+        let saved = sessions.into_iter().find(|s| s.id == id).unwrap();
+        assert_eq!(saved.cwd, new);
+    }
+
+    #[gpui::test]
+    fn sending_from_a_lost_folder_keeps_the_message(cx: &mut TestAppContext) {
+        let parent = tempfile::tempdir().unwrap();
+        let old = parent.path().join("gespan");
+        std::fs::create_dir(&old).unwrap();
+        let (window, _store) = chat_in_folder(&old, cx);
+        std::fs::remove_dir(&old).unwrap();
+
+        window.update(cx, |view, _, cx| view.send(cx)).unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(view.input.read(cx).content, "hello");
+                assert!(view.follow_ups.state.messages.is_empty());
+                assert_eq!(
+                    view.status,
+                    format!("Project folder not found: {}", old.display())
+                );
+                assert!(!view.locating_project, "the next send looks again");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn sending_twice_while_the_folder_is_found_sends_once(cx: &mut TestAppContext) {
+        let parent = tempfile::tempdir().unwrap();
+        let (old, new) = (parent.path().join("gespan"), parent.path().join("renamed"));
+        std::fs::create_dir(&old).unwrap();
+        let (window, store) = chat_in_folder(&old, cx);
+        remember_folder(&store, &old);
+        std::fs::rename(&old, &new).unwrap();
+
+        window
+            .update(cx, |view, _, cx| {
+                view.send(cx);
+                view.send(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.follow_ups.state.messages.len(), 1)
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_worktree_chat_does_not_depend_on_the_project_folder(cx: &mut TestAppContext) {
+        let parent = tempfile::tempdir().unwrap();
+        let old = parent.path().join("gespan");
+        std::fs::create_dir(&old).unwrap();
+        let (window, _store) = chat_in_folder(&old, cx);
+        std::fs::remove_dir(&old).unwrap();
+
+        window
+            .update(cx, |view, _, cx| {
+                view.settings.worktree_cwd = Some("/worktrees/one".into());
+                view.send(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.follow_ups.state.messages.len(), 1);
+                assert!(!view.status.contains("not found"));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_worktree_inside_a_renamed_project_moves_with_it(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.settings.worktree_cwd = Some("/work/gespan/.worktrees/one".into());
+                view.project_moved(
+                    &gespan_core::project_location::Moved {
+                        from: "/work/gespan".into(),
+                        to: "/work/renamed".into(),
+                    },
+                    cx,
+                );
+                assert_eq!(view.summary.cwd, "/work/renamed");
+                assert_eq!(
+                    view.settings.worktree_cwd.as_deref(),
+                    Some("/work/renamed/.worktrees/one")
+                );
+            })
             .unwrap();
     }
 
