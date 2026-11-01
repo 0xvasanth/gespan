@@ -100,6 +100,115 @@ impl SettingsView {
         cx.notify();
     }
 
+    /// A project's own answer: `same` follows the app.
+    fn project_choice(value: Option<bool>) -> &'static str {
+        match value {
+            None => "same",
+            Some(true) => "on",
+            Some(false) => "off",
+        }
+    }
+    fn chosen(value: &str) -> Option<bool> {
+        match value {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// What the delete dialog starts with: for all projects, then for this one.
+    fn delete_defaults_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        const ALL: [(&str, &str); 2] = [("off", "Off"), ("on", "On")];
+        const PROJECT: [(&str, &str); 3] = [("same", "Same"), ("off", "Off"), ("on", "On")];
+        let project = self.selected_project.clone();
+        let own = self
+            .prefs
+            .project_worktrees
+            .get(&project)
+            .copied()
+            .unwrap_or_default();
+        let on = |value: bool| if value { "on" } else { "off" };
+        let branch = vec![
+            self.segmented(
+                "worktree-delete-branch",
+                "Delete merged branch in all projects",
+                on(self.prefs.worktree_delete_branch),
+                &ALL,
+                cx,
+                |this, value, cx| this.update(cx, |p| p.worktree_delete_branch = value == "on"),
+            ),
+            self.segmented(
+                "worktree-delete-branch-project",
+                "Delete merged branch in this project",
+                Self::project_choice(own.delete_branch),
+                &PROJECT,
+                cx,
+                {
+                    let project = project.clone();
+                    move |this, value, cx| {
+                        let project = project.clone();
+                        this.update(cx, |p| {
+                            p.project_worktrees
+                                .entry(project)
+                                .or_default()
+                                .delete_branch = Self::chosen(value);
+                        });
+                    }
+                },
+            ),
+        ];
+        let sessions = vec![
+            self.segmented(
+                "worktree-delete-sessions",
+                "Delete sessions in all projects",
+                on(self.prefs.worktree_delete_sessions),
+                &ALL,
+                cx,
+                |this, value, cx| this.update(cx, |p| p.worktree_delete_sessions = value == "on"),
+            ),
+            self.segmented(
+                "worktree-delete-sessions-project",
+                "Delete sessions in this project",
+                Self::project_choice(own.delete_sessions),
+                &PROJECT,
+                cx,
+                move |this, value, cx| {
+                    let project = project.clone();
+                    this.update(cx, |p| {
+                        p.project_worktrees
+                            .entry(project)
+                            .or_default()
+                            .delete_sessions = Self::chosen(value);
+                    });
+                },
+            ),
+        ];
+        let rows = vec![
+            self.row(
+                Some("worktree-delete-branch"),
+                true,
+                "Also delete the merged branch",
+                Some("All projects, then this project. Same follows all projects.".into()),
+                branch,
+            ),
+            self.row(
+                Some("worktree-delete-sessions"),
+                false,
+                "Also delete associated sessions",
+                Some("All projects, then this project. Same follows all projects.".into()),
+                sessions,
+            ),
+        ];
+        self.group(
+            Some("worktree-delete-defaults"),
+            false,
+            "When deleting a worktree",
+            Some("What the delete dialog starts with. You can still change it there.".into()),
+            None,
+            rows,
+        )
+    }
+
     fn scripts_group(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let main = self.discovery.worktrees.main.clone();
         if main.is_empty() {
@@ -386,6 +495,7 @@ impl SettingsView {
         }
         if ready {
             page.extend(self.scripts_group(cx));
+            page.push(self.delete_defaults_group(cx));
             page.push(note(format!(
                 "New worktrees are created in {}.",
                 self.discovery.worktrees.default_root.display()

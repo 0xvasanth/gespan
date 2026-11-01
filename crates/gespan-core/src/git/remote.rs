@@ -330,13 +330,11 @@ mod tests {
     fn polled(lines: &[&str], next: u64, done: bool, code: Option<i32>) -> Value {
         json!({"lines":lines,"next":next,"done":done,"code":code,"copied":null,"error":null})
     }
+    type Asked = Arc<Mutex<Vec<(String, Value)>>>;
     /// Answers each request from a list, and keeps what it was asked.
     fn host(
         answers: Vec<Result<Value, String>>,
-    ) -> (
-        impl Fn(&str, Value) -> Result<Value, String>,
-        Arc<Mutex<Vec<(String, Value)>>>,
-    ) {
+    ) -> (impl Fn(&str, Value) -> Result<Value, String>, Asked) {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let answers = Mutex::new(answers.into_iter());
         let seen = asked.clone();

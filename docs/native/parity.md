@@ -211,10 +211,10 @@ Shared by both apps:
 - Templates: Blank, Agent pipeline, Bug triage and Release checklist, plus "Save as template". Built-ins can't be deleted.
 - Auto-move rules per event (started, needs input, completed, failed, PR opened, PR merged). Each is default, stay or a chosen column.
 - Link status chips on cards (session, Pilot, PR, worktree). They refresh when the board opens and when a linked turn settles, never on a timer.
-- Blocked cards show a lock, and "Run with…" asks first. "Run with…" starts a session with the store-built prompt, links it to the card and inherits the card's ticket.
+- Blocked cards show a lock, and "Run with…" asks first. "Run with…" starts a session with the store-built prompt, links it to the card and inherits the card's ticket. It lists installed agents, with the rest shown as not installed, and on new boards runs in a new worktree named after the card and linked to it.
 - Agent fields (provider, model, cost, run time) on cards and in the table; cost stays empty.
 - Agent write-back posts a comment marked Agent when a linked turn finishes (a plan turn posts its plan), and agent card tools manage subtasks.
-- Automation toggles in settings: "Run with…", write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
+- Automation toggles in settings: "Run with…", run in a new worktree by default, write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
 - If settings can't be read, the board still loads, the sections show "Couldn't load settings" with Retry, and nothing is saved.
 
 Known differences:

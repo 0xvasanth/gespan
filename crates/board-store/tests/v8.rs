@@ -79,7 +79,7 @@ fn the_choice_is_per_board_and_stays_out_of_templates() {
         .unwrap()
         .starts_in_worktree());
     let template = save_board_as_template(&conn, &one.id, "Saved").unwrap();
-    let copy = create_board_from_template(&conn, &template.id, "Copy").unwrap();
+    let copy = create_board_from_template(&conn, "Copy", &template.id).unwrap();
     assert_eq!(
         board_settings(&conn, &copy.id).unwrap().run_worktree_choice,
         None

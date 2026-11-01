@@ -1,6 +1,6 @@
 use super::*;
 use gpui::{TestAppContext, VisualTestContext};
-use std::path::PathBuf;
+use std::{cell::Cell, path::PathBuf, rc::Rc};
 
 fn run(id: u64, stage: Stage, copied: Copied, scripted: bool) -> Run {
     Run {
@@ -222,4 +222,60 @@ fn an_answer_nobody_can_give_cancels() {
     }
     answers.lock().unwrap().clear();
     assert_eq!(worker.join().unwrap(), Decision::Cancel);
+}
+
+#[gpui::test]
+fn a_click_on_the_panel_stays_on_the_panel(cx: &mut TestAppContext) {
+    struct Behind {
+        setups: Entity<WorktreeSetups>,
+        clicks: Rc<Cell<usize>>,
+    }
+    impl Render for Behind {
+        fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            div()
+                .id("behind")
+                .debug_selector(|| "behind".into())
+                .relative()
+                .size_full()
+                .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                .child(self.setups.clone())
+        }
+    }
+    let clicks = Rc::new(Cell::new(0));
+    let seen = clicks.clone();
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |_, cx| {
+            let setups = cx.new(|_| WorktreeSetups {
+                steps: Vec::new(),
+                answers: Answers::default(),
+            });
+            cx.new(|_| Behind {
+                setups,
+                clicks: seen,
+            })
+        })
+        .unwrap()
+    });
+    let view = window.root(cx).unwrap();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let setups = view.read_with(&visual, |view, _| view.setups.clone());
+    let (answer, answered) = mpsc::channel();
+    setups.update(&mut visual, |setups, cx| {
+        setups.answers.lock().unwrap().insert(5, answer);
+        setups.apply(
+            Event::Started(run(5, Stage::Setup, Copied::default(), true)),
+            cx,
+        );
+        setups.apply(
+            Event::Failed {
+                id: 5,
+                reason: "failed".into(),
+            },
+            cx,
+        );
+    });
+    click(&mut visual, "worktree-setup-retry-5");
+    assert_eq!(answered.try_recv(), Ok(Decision::Retry));
+    assert_eq!(clicks.get(), 0);
 }

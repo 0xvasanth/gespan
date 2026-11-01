@@ -138,7 +138,7 @@ fn start_anyway_goes_on_and_remembers_the_failure() {
     set_scripts(dir.path(), "exit 5", "");
     let path = create_worktree(dir.path(), "main", 1).unwrap();
     let failed = Outcome::Overridden("It exited with code 5.".into());
-    assert_eq!(outcomes(&host), [failed.clone()]);
+    assert_eq!(outcomes(&host), std::slice::from_ref(&failed));
     assert_eq!(record(&path).unwrap().outcome, Some(failed));
     let _ = std::fs::remove_dir_all(leftovers(dir.path()));
 }

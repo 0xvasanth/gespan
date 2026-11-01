@@ -229,6 +229,7 @@ fn settings_patch_changes_only_named_fields() {
         patched,
         BoardSettings {
             ticket_status_changes: false,
+            run_in_worktree: false,
             ..BoardSettings::default()
         }
     );

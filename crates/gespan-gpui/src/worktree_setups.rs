@@ -338,6 +338,8 @@ impl Render for WorktreeSetups {
         div()
             .id("worktree-setups")
             .debug_selector(|| "worktree-setups".into())
+            // A click here is not for the card or row underneath.
+            .occlude()
             .absolute()
             .top(px(48.))
             .right(px(12.))
