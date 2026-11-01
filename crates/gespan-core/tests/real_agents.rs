@@ -30,6 +30,7 @@ fn mount(session: i64, cwd: &Path, toolkits: &[&str]) -> Mount {
             .iter()
             .map(|name| (*name).to_owned())
             .collect::<BTreeSet<_>>(),
+        ..Mount::default()
     }
 }
 

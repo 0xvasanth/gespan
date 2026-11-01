@@ -126,6 +126,9 @@ fn relock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Lists by server and fingerprint, then by list name.
+type Lists = HashMap<(String, String), HashMap<&'static str, Vec<Value>>>;
+
 pub(crate) struct Pool {
     spawner: Arc<dyn Spawner>,
     pub(crate) observer: Arc<dyn Observer>,
@@ -134,8 +137,7 @@ pub(crate) struct Pool {
     specs: Mutex<HashMap<String, ServerSpec>>,
     running: Mutex<HashMap<Key, Arc<Upstream>>>,
     starting: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<()>>>>,
-    /// Lists by server and fingerprint, then by list name.
-    lists: Mutex<HashMap<(String, String), HashMap<&'static str, Vec<Value>>>>,
+    lists: Mutex<Lists>,
     errors: Mutex<VecDeque<ServerError>>,
     hub: Mutex<Weak<Inner>>,
 }

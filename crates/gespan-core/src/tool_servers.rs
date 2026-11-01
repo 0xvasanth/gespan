@@ -3,12 +3,14 @@
 //!
 //! Adding a capability means registering a toolkit in `hub` and naming it in
 //! the turn's [`Mount`]; no provider needs to change.
+use crate::mcp_catalog::Catalog;
 use crate::provider::Kind;
-use mcp_hub::{Config, Connection, Grant, Hub, Token};
+use mcp_hub::{Config, Connection, Grant, Hub, Observer, ServerSpec, Spawned, Spawner, Token};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeSet, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -26,10 +28,157 @@ const ENV_URL: &str = "GESPAN_MCP_URL";
 const ENV_TOKEN: &str = "GESPAN_MCP_TOKEN";
 
 static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where the catalogue and the record of running servers live. Set once at
+/// startup; without it the hub offers Gespan's own toolkits alone.
+pub fn configure(data_dir: &Path) {
+    let _ = DATA_DIR.set(data_dir.to_owned());
+}
+
+/// Hands the hub the catalogue's approved servers, when they've changed.
+pub fn sync_servers() {
+    static OFFERED: Mutex<Vec<ServerSpec>> = Mutex::new(Vec::new());
+    let (Some(data_dir), Ok(hub)) = (DATA_DIR.get(), hub()) else {
+        return;
+    };
+    let specs = match Catalog::load(data_dir) {
+        Ok(catalog) => catalog.specs(data_dir),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the MCP catalogue");
+            return;
+        }
+    };
+    let mut offered = OFFERED.lock().unwrap_or_else(|e| e.into_inner());
+    if *offered != specs {
+        hub.set_servers(specs.clone());
+        *offered = specs;
+    }
+}
+
+/// The processes the catalogue's servers are running as, for Settings.
+pub fn running_servers() -> Vec<mcp_hub::Running> {
+    match HUB.get() {
+        Some(Ok(hub)) => hub.running(),
+        _ => Vec::new(),
+    }
+}
+
+/// Recent failures of the catalogue's servers, for Settings.
+pub fn server_errors() -> Vec<mcp_hub::ServerError> {
+    match HUB.get() {
+        Some(Ok(hub)) => hub.errors(),
+        _ => Vec::new(),
+    }
+}
+
+/// The file listing server processes, read by the next launch's sweep.
+pub fn running_record(data_dir: &Path) -> PathBuf {
+    data_dir.join("mcp-servers.pids")
+}
+
+/// One Mutex for the file, since servers start and stop on many threads.
+fn edit_record(edit: impl FnOnce(&mut BTreeSet<u32>)) {
+    static RECORD: Mutex<()> = Mutex::new(());
+    let Some(data_dir) = DATA_DIR.get() else {
+        return;
+    };
+    let _held = RECORD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = running_record(data_dir);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut pids: BTreeSet<u32> = text.lines().filter_map(|line| line.parse().ok()).collect();
+    edit(&mut pids);
+    let text: String = pids.iter().map(|pid| format!("{pid}\n")).collect();
+    let _ = std::fs::write(path, text);
+}
+
+struct Processes;
+
+impl Spawner for Processes {
+    fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> std::io::Result<Spawned> {
+        // npx and uvx are scripts on Windows, which only cmd can start.
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/D", "/C", &spec.command]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = Command::new(&spec.command);
+        crate::scm::shell::apply_gui_env(&mut command);
+        command
+            .args(&spec.args)
+            .envs(&spec.env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if let Some(workspace) = workspace {
+            command.current_dir(workspace);
+        }
+        crate::process::isolate(&mut command);
+        let mut child = crate::process::spawn(&mut command)?;
+        let pid = child.id();
+        edit_record(|pids| {
+            pids.insert(pid);
+        });
+        let stdin = child.stdin.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+        let stdout = child.stdout.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+        Ok(Spawned {
+            pid,
+            stdin: Box::new(stdin),
+            stdout: Box::new(stdout),
+            stop: Box::new(move || {
+                crate::process::terminate(&mut child);
+                edit_record(|pids| {
+                    pids.remove(&pid);
+                });
+            }),
+        })
+    }
+}
+
+/// Keeps what the hub learns about a server with its catalogue entry.
+struct Keeper;
+
+impl Keeper {
+    fn edit(&self, edit: impl FnOnce(&mut Catalog)) {
+        static EDITS: Mutex<()> = Mutex::new(());
+        let Some(data_dir) = DATA_DIR.get() else {
+            return;
+        };
+        let _held = EDITS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(mut catalog) = Catalog::load(data_dir) {
+            edit(&mut catalog);
+            let _ = catalog.save(data_dir);
+        }
+    }
+}
+
+impl Observer for Keeper {
+    fn demoted(&self, server: &str, method: &str) {
+        tracing::info!(server, method, "a shared MCP server now runs per session");
+        self.edit(|catalog| {
+            if let Some(entry) = catalog.entry_mut(server) {
+                entry.class = crate::mcp_catalog::Class::PerSession;
+            }
+        });
+    }
+
+    fn listed(&self, server: &str, tools: &[Value]) {
+        self.edit(|catalog| {
+            if let Some(entry) = catalog.entry_mut(server) {
+                entry.tools = Some(tools.to_vec());
+            }
+        });
+    }
+}
 
 fn hub() -> Result<&'static Hub, String> {
     HUB.get_or_init(|| {
-        let hub = Hub::start(Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))?;
+        let mut config = Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION"));
+        config.spawner = Some(Arc::new(Processes));
+        config.observer = Arc::new(Keeper);
+        let hub = Hub::start(config)?;
         hub.register(Arc::new(crate::visual_bridge::Toolkit));
         hub.register(Arc::new(crate::ticket_bridge::Toolkit));
         hub.register(Arc::new(crate::pilot::bridge::Toolkit::APP));
@@ -47,6 +196,12 @@ pub struct Mount {
     pub session: i64,
     pub worktree: PathBuf,
     pub toolkits: BTreeSet<String>,
+    /// Catalogue servers this session may reach.
+    pub servers: BTreeSet<String>,
+    /// Gespan owns the user's servers, so the agent loads none of its own.
+    pub exclusive: bool,
+    /// Codex's own servers, switched off by name since its overrides merge.
+    pub codex_own: Vec<String>,
 }
 
 impl Mount {
@@ -55,6 +210,7 @@ impl Mount {
             session: self.session,
             workspace: self.worktree.clone(),
             toolkits: self.toolkits.clone(),
+            servers: self.servers.clone(),
         }
     }
 }
@@ -123,11 +279,19 @@ impl Access {
         }})
     }
 
-    pub fn codex_config(&self) -> Value {
-        json!({"mcp_servers":{SERVER_NAME:{
-            "url":self.url,
-            "http_headers":{"Authorization":self.token.bearer()},
-        }}})
+    pub fn codex_config(&self, mount: &Mount) -> Value {
+        let mut servers = serde_json::Map::new();
+        for name in &mount.codex_own {
+            servers.insert(name.clone(), json!({"enabled":false}));
+        }
+        servers.insert(
+            SERVER_NAME.to_owned(),
+            json!({
+                "url":self.url,
+                "http_headers":{"Authorization":self.token.bearer()},
+            }),
+        );
+        json!({"mcp_servers":servers})
     }
 
     pub fn opencode_server(&self) -> Value {
@@ -192,7 +356,7 @@ pub fn environment(mount: &Mount) -> HashMap<String, String> {
 /// agent still running sees its tool list change.
 pub fn refresh(mount: &Mount) {
     if let Ok(hub) = hub() {
-        hub.update(mount.session, mount.toolkits.clone());
+        hub.update(mount.session, mount.toolkits.clone(), mount.servers.clone());
     }
 }
 
@@ -244,6 +408,7 @@ mod tests {
             session,
             worktree: "/work".into(),
             toolkits: BTreeSet::from([VISUAL.to_owned(), TICKET.to_owned()]),
+            ..Mount::default()
         }
     }
 
@@ -269,7 +434,11 @@ mod tests {
     #[test]
     fn codex_gets_the_endpoint_in_its_thread_config() {
         let access = Access::open(&mount(5002)).unwrap();
-        let config = access.codex_config();
+        let config = access.codex_config(&Mount {
+            codex_own: vec!["github".into()],
+            ..mount(5002)
+        });
+        assert_eq!(config["mcp_servers"]["github"], json!({"enabled":false}));
         let server = &config["mcp_servers"]["gespan"];
         assert_eq!(server["url"], access.url);
         assert_eq!(
@@ -346,7 +515,7 @@ mod tests {
         let access = Access::open(&mount).unwrap();
         for delivered in [
             access.claude_control("x")["request"]["servers"]["gespan"]["url"].clone(),
-            access.codex_config()["mcp_servers"]["gespan"]["url"].clone(),
+            access.codex_config(&mount)["mcp_servers"]["gespan"]["url"].clone(),
             access.acp_servers(true)[0]["url"].clone(),
             access.opencode_server()["config"]["url"].clone(),
         ] {

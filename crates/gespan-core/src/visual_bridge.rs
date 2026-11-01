@@ -623,6 +623,7 @@ mod tests {
             session: 999_001,
             workspace: "/work".into(),
             toolkits: [crate::tool_servers::VISUAL.to_owned()].into(),
+            servers: Default::default(),
         }
     }
 

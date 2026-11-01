@@ -8,6 +8,8 @@
 //! Windows is not swept: there is no cheap way to read another process's
 //! environment, as in the Tauri app.
 #[cfg(any(unix, test))]
+use std::collections::HashSet;
+#[cfg(any(unix, test))]
 use std::path::Path;
 
 #[cfg(any(unix, test))]
@@ -16,14 +18,23 @@ const HARNESS_PARENT_ENV: &str = "GESPAN_HARNESS_PARENT";
 /// Off the UI thread: the sweep shells out to `ps` and waits on SIGKILL.
 /// Nothing this run spawns can be caught by it, since our own children carry
 /// our pid as the marker.
-pub fn reap() {
+///
+/// `record` lists processes that don't look like agents, such as MCP servers
+/// started by `npx`. They are swept on the same terms, and only with a dead
+/// parent in their marker, so a reused pid is safe. Windows has no need: those
+/// run in the kill-on-close job.
+pub fn reap(record: Option<std::path::PathBuf>) {
+    #[cfg(not(unix))]
+    let _ = record;
     #[cfg(unix)]
     {
         let our_pid = std::process::id();
         let _ = std::thread::Builder::new()
             .name("orphan-sweep".into())
             .spawn(move || {
-                let killed = reap_snapshots(&snapshot_processes(), our_pid);
+                let recorded = record.map_or_else(Default::default, |path| take_record(&path));
+                let rows = snapshot_processes(&recorded);
+                let killed = reap_snapshots(&rows, our_pid, &recorded);
                 if !killed.is_empty() {
                     tracing::info!(count = killed.len(), pids = ?killed, "stopped agents left by an earlier Gespan");
                 }
@@ -40,11 +51,19 @@ struct ProcessSnapshot {
     harness_parent: Option<u32>,
 }
 
+/// The pids an earlier run left. The file is emptied: this run starts its own.
 #[cfg(unix)]
-fn reap_snapshots(rows: &[ProcessSnapshot], our_pid: u32) -> Vec<u32> {
+fn take_record(path: &Path) -> HashSet<u32> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let _ = std::fs::remove_file(path);
+    text.lines().filter_map(|line| line.parse().ok()).collect()
+}
+
+#[cfg(unix)]
+fn reap_snapshots(rows: &[ProcessSnapshot], our_pid: u32, recorded: &HashSet<u32>) -> Vec<u32> {
     let pids: Vec<u32> = rows
         .iter()
-        .filter(|row| should_reap(row, our_pid, process_alive))
+        .filter(|row| should_reap(row, our_pid, recorded, process_alive))
         .map(|row| row.pid)
         .collect();
     terminate_all(&pids);
@@ -52,7 +71,12 @@ fn reap_snapshots(rows: &[ProcessSnapshot], our_pid: u32) -> Vec<u32> {
 }
 
 #[cfg(any(unix, test))]
-fn should_reap(proc: &ProcessSnapshot, our_pid: u32, parent_alive: impl Fn(u32) -> bool) -> bool {
+fn should_reap(
+    proc: &ProcessSnapshot,
+    our_pid: u32,
+    recorded: &HashSet<u32>,
+    parent_alive: impl Fn(u32) -> bool,
+) -> bool {
     if proc.pid == our_pid || proc.pid <= 1 || proc.ppid == our_pid {
         return false;
     }
@@ -62,7 +86,9 @@ fn should_reap(proc: &ProcessSnapshot, our_pid: u32, parent_alive: impl Fn(u32) 
     let Some(parent) = proc.harness_parent else {
         return false;
     };
-    looks_like_harness_argv(&proc.args) && parent != our_pid && !parent_alive(parent)
+    (looks_like_harness_argv(&proc.args) || recorded.contains(&proc.pid))
+        && parent != our_pid
+        && !parent_alive(parent)
 }
 
 /// Argv of an agent CLI we spawned, not a shell, tmux or `npm start` the user
@@ -139,12 +165,12 @@ fn harness_parent_from_bytes(buf: &[u8]) -> Option<u32> {
 /// orphans sit under `systemd --user`, not pid 1, so the marker (not ppid)
 /// identifies them.
 #[cfg(unix)]
-fn snapshot_processes() -> Vec<ProcessSnapshot> {
+fn snapshot_processes(recorded: &HashSet<u32>) -> Vec<ProcessSnapshot> {
     #[cfg(target_os = "linux")]
     let mut rows = snapshot_from_proc();
     #[cfg(not(target_os = "linux"))]
     let mut rows = snapshot_from_ps();
-    attach_markers_from_env(&mut rows);
+    attach_markers_from_env(&mut rows, recorded);
     rows
 }
 
@@ -190,10 +216,13 @@ fn snapshot_from_proc() -> Vec<ProcessSnapshot> {
 }
 
 #[cfg(unix)]
-fn attach_markers_from_env(rows: &mut [ProcessSnapshot]) {
+fn attach_markers_from_env(rows: &mut [ProcessSnapshot], recorded: &HashSet<u32>) {
     let pids: Vec<u32> = rows
         .iter()
-        .filter(|row| row.harness_parent.is_none() && looks_like_harness_argv(&row.args))
+        .filter(|row| {
+            row.harness_parent.is_none()
+                && (looks_like_harness_argv(&row.args) || recorded.contains(&row.pid))
+        })
         .map(|row| row.pid)
         .collect();
     if pids.is_empty() {
@@ -314,46 +343,57 @@ mod tests {
             "/opt/homebrew/bin/claude -p --output-format stream-json",
             Some(400),
         );
-        assert!(should_reap(&orphan, 100, |_| false));
+        assert!(should_reap(&orphan, 100, &HashSet::new(), |_| false));
     }
 
     #[test]
     fn agents_of_a_running_gespan_are_spared() {
         // Tauri and Native can run side by side; neither may kill the other's agents.
         let other_app = row(500, 1, "/usr/local/bin/codex app-server", Some(400));
-        assert!(!should_reap(&other_app, 100, |pid| pid == 400));
+        assert!(!should_reap(&other_app, 100, &HashSet::new(), |pid| pid == 400));
         let ours = row(501, 7, "/usr/local/bin/codex app-server", Some(100));
-        assert!(!should_reap(&ours, 100, |_| false));
+        assert!(!should_reap(&ours, 100, &HashSet::new(), |_| false));
         let direct_child = row(502, 100, "/usr/local/bin/codex app-server", Some(400));
-        assert!(!should_reap(&direct_child, 100, |_| false));
+        assert!(!should_reap(&direct_child, 100, &HashSet::new(), |_| false));
     }
 
     #[test]
     fn a_marked_process_that_is_not_an_agent_is_spared() {
         // A dev server started from a Gespan terminal inherits the marker.
         let server = row(500, 1, "node /work/app/node_modules/.bin/vite", Some(400));
-        assert!(!should_reap(&server, 100, |_| false));
+        assert!(!should_reap(&server, 100, &HashSet::new(), |_| false));
         let shell = row(501, 1, "/bin/zsh -l", Some(400));
-        assert!(!should_reap(&shell, 100, |_| false));
+        assert!(!should_reap(&shell, 100, &HashSet::new(), |_| false));
     }
 
     #[test]
     fn an_unmarked_agent_is_never_reaped() {
         // Started by the user or another tool, not by a Gespan.
         let users_own = row(500, 1, "/opt/homebrew/bin/claude", None);
-        assert!(!should_reap(&users_own, 100, |_| false));
+        assert!(!should_reap(&users_own, 100, &HashSet::new(), |_| false));
         let other_tools_cursor = row(501, 1, "/Users/n/.local/bin/cursor-agent acp", None);
-        assert!(!should_reap(&other_tools_cursor, 100, |_| false));
+        assert!(!should_reap(
+            &other_tools_cursor,
+            100,
+            &HashSet::new(),
+            |_| false
+        ));
     }
 
     #[test]
     fn init_and_this_process_are_never_reaped() {
-        assert!(!should_reap(&row(1, 0, "claude", Some(400)), 100, |_| {
-            false
-        }));
-        assert!(!should_reap(&row(100, 1, "claude", Some(400)), 100, |_| {
-            false
-        }));
+        assert!(!should_reap(
+            &row(1, 0, "claude", Some(400)),
+            100,
+            &HashSet::new(),
+            |_| { false }
+        ));
+        assert!(!should_reap(
+            &row(100, 1, "claude", Some(400)),
+            100,
+            &HashSet::new(),
+            |_| { false }
+        ));
     }
 
     #[test]
@@ -434,12 +474,58 @@ mod tests {
                     Some(DEAD_PARENT),
                 )],
                 std::process::id(),
+                &HashSet::new(),
             );
             assert_eq!(killed, vec![pid]);
             if !exited(&mut child) {
                 let _ = child.kill();
                 panic!("the orphan survived the sweep");
             }
+        }
+
+        /// An MCP server is an `npx` or `node` to anyone reading argv.
+        #[test]
+        fn a_recorded_server_left_by_a_crash_goes_and_its_children_with_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let record = dir.path().join("mcp-servers.pids");
+            let pid_file = dir.path().join("grandchild");
+            let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
+            let mut child = spawn(&script, DEAD_PARENT);
+            let pid = child.id();
+            std::fs::write(&record, format!("{pid}\n")).unwrap();
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !pid_file.exists() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let recorded = take_record(&record);
+            assert!(!record.exists(), "the next run starts a new record");
+            let rows = [row(pid, 1, "node /tmp/server.js", Some(DEAD_PARENT))];
+            assert_eq!(
+                reap_snapshots(&rows, std::process::id(), &HashSet::new()),
+                Vec::<u32>::new(),
+                "without the record it isn't ours to touch"
+            );
+            assert_eq!(reap_snapshots(&rows, std::process::id(), &recorded), [pid]);
+            assert!(exited(&mut child), "the server survived the sweep");
+            let grandchild = std::fs::read_to_string(&pid_file).unwrap();
+            assert!(
+                !process_alive(grandchild.trim().parse().unwrap()),
+                "what the server started survived"
+            );
+        }
+
+        #[test]
+        fn a_recorded_pid_with_a_live_parent_is_left_alone() {
+            let mut child = spawn("sleep 30", std::process::id());
+            let pid = child.id();
+            let recorded = HashSet::from([pid]);
+            let rows = [row(pid, 1, "node /tmp/server.js", Some(std::process::id()))];
+            let killed = reap_snapshots(&rows, std::process::id() + 1, &recorded);
+            let alive = child.try_wait().ok().flatten().is_none();
+            let _ = child.kill();
+            let _ = child.wait();
+            assert!(killed.is_empty());
+            assert!(alive, "the pid was reused by a live Gespan's child");
         }
 
         #[test]
@@ -454,6 +540,7 @@ mod tests {
                     Some(std::process::id()),
                 )],
                 std::process::id(),
+                &HashSet::new(),
             );
             let alive = child.try_wait().ok().flatten().is_none();
             let _ = child.kill();
@@ -497,7 +584,9 @@ mod tests {
             // A just-spawned process can show up before its environment does.
             let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
             let found = loop {
-                let found = snapshot_processes().into_iter().find(|row| row.pid == pid);
+                let found = snapshot_processes(&HashSet::new())
+                    .into_iter()
+                    .find(|row| row.pid == pid);
                 if found
                     .as_ref()
                     .is_some_and(|row| row.harness_parent.is_some())
@@ -513,9 +602,19 @@ mod tests {
             let found = found.expect("the snapshot lists the test process");
             assert_eq!(found.harness_parent, Some(DEAD_PARENT));
             // Still our child here; once its Gespan is gone it is reparented.
-            assert!(!should_reap(&found, std::process::id(), process_alive));
+            assert!(!should_reap(
+                &found,
+                std::process::id(),
+                &HashSet::new(),
+                process_alive
+            ));
             let orphaned = ProcessSnapshot { ppid: 1, ..found };
-            assert!(should_reap(&orphaned, std::process::id(), process_alive));
+            assert!(should_reap(
+                &orphaned,
+                std::process::id(),
+                &HashSet::new(),
+                process_alive
+            ));
         }
     }
 }

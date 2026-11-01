@@ -298,6 +298,7 @@ mod capability_tests {
             session,
             workspace: "/work".into(),
             toolkits: [crate::tool_servers::APP.to_owned()].into(),
+            servers: Default::default(),
         }
     }
 

@@ -120,6 +120,38 @@ pub fn delete(tracker: Tracker, data_dir: &Path) -> Result<(), String> {
     }
 }
 
+fn named_entry(name: &str, data_dir: &Path) -> Result<keyring::Entry, String> {
+    let resolved = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    keyring::Entry::new(SERVICE, &format!("{name}:{}", resolved.display()))
+        .map_err(|_| "Could not open the keychain".to_owned())
+}
+
+/// A secret that isn't a tracker's, under a name of the caller's. Unlike a
+/// tracker's, it never had a file to migrate.
+pub fn read_named(name: &str, data_dir: &Path) -> Result<Option<String>, String> {
+    match named_entry(name, data_dir)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(format!("Could not read the keychain. {KEYCHAIN_HINT}")),
+    }
+}
+
+pub fn write_named(name: &str, data_dir: &Path, value: &str) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
+    named_entry(name, data_dir)?
+        .set_password(value)
+        .map_err(|_| format!("Could not save to the keychain. {KEYCHAIN_HINT}"))
+}
+
+pub fn delete_named(name: &str, data_dir: &Path) -> Result<(), String> {
+    match named_entry(name, data_dir)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err(format!(
+            "Could not remove from the keychain. {KEYCHAIN_HINT}"
+        )),
+    }
+}
+
 fn entry(tracker: Tracker, data_dir: &Path) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, &account(tracker, data_dir))
         .map_err(|_| format!("Could not open the keychain for {}", tracker.label()))

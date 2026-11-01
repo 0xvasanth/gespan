@@ -677,7 +677,8 @@ fn run_turn_using(
         let (may_change_status, cards) = source
             .as_ref()
             .map_or((false, false), |source| source.board_scope());
-        if let (Some(source), Some(data_dir), Some(executable)) = (source, data_dir, executable)
+        if let (Some(source), Some(data_dir), Some(executable)) =
+            (source, data_dir.clone(), executable)
             && (ticket.is_some() || cards)
         {
             let scope = gespan_core::ticket_bridge::Scope {
@@ -739,7 +740,20 @@ fn run_turn_using(
             }
         }
         if !toolkits.is_empty() {
+            gespan_core::tool_servers::sync_servers();
+            let catalog = data_dir
+                .as_deref()
+                .and_then(|dir| gespan_core::mcp_catalog::Catalog::load(dir).ok())
+                .unwrap_or_default();
+            let exclusive = catalog.managed;
             let mount = gespan_core::tool_servers::Mount {
+                servers: catalog.for_project(&summary.cwd),
+                exclusive,
+                codex_own: if exclusive && kind == Kind::Codex {
+                    gespan_core::mcp::codex_server_names(&summary.cwd)
+                } else {
+                    Vec::new()
+                },
                 session: summary.id,
                 worktree: settings
                     .worktree_cwd

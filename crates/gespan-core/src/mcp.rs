@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use gespan_mcp_config::{claude_project_key, strip_jsonc, write_json_config, write_json_server};
 use serde::Serialize;
@@ -352,6 +355,81 @@ pub struct McpConnection {
     pub config_path: String,
     pub transport: String,
     pub enabled: bool,
+    /// The whole entry, secrets included, for importing. It never leaves here.
+    #[serde(skip)]
+    pub config: Value,
+}
+
+/// A server found in an agent's config, ready for Gespan's catalogue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Importable {
+    pub provider: String,
+    pub scope: String,
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub url: Option<String>,
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Reads one agent's entry. Claude, Codex and Cursor name `command`, `args` and
+/// `env`; OpenCode puts the whole command in an array, and `environment`.
+fn importable(connection: McpConnection) -> Option<Importable> {
+    let config = &connection.config;
+    let env = config
+        .get("env")
+        .or_else(|| config.get("environment"))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect();
+    let url = config.get("url").and_then(Value::as_str).map(str::to_owned);
+    let (command, args) = match config.get("command") {
+        Some(Value::String(command)) => (command.clone(), strings(&config["args"])),
+        Some(list @ Value::Array(_)) => {
+            let mut parts = strings(list).into_iter();
+            (parts.next()?, parts.collect())
+        }
+        _ if url.is_some() => (String::new(), Vec::new()),
+        _ => return None,
+    };
+    Some(Importable {
+        provider: connection.provider,
+        scope: connection.scope,
+        name: connection.name,
+        command,
+        args,
+        env,
+        url,
+    })
+}
+
+/// Every server in the agents' configs, for a one-time import.
+pub fn mcp_importable(cwd: String) -> Result<Vec<Importable>, String> {
+    Ok(mcp_discover(cwd)?
+        .into_iter()
+        .filter_map(importable)
+        .collect())
+}
+
+/// The names of Codex's own servers, to switch off in a session Gespan runs.
+pub fn codex_server_names(cwd: &str) -> Vec<String> {
+    mcp_discover(cwd.to_owned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|connection| connection.provider == "codex")
+        .map(|connection| connection.name)
+        .collect()
 }
 
 pub fn mcp_discover(cwd: String) -> Result<Vec<McpConnection>, String> {
@@ -536,6 +614,7 @@ fn add_json_servers(
             transport: transport(config).into(),
             enabled: config.get("enabled").and_then(Value::as_bool) != Some(false)
                 && config.get("disabled").and_then(Value::as_bool) != Some(true),
+            config: config.clone(),
         });
     }
 }
@@ -563,6 +642,7 @@ fn add_toml_file(connections: &mut Vec<McpConnection>, provider: &str, scope: &s
             }
             .into(),
             enabled: entry.get("enabled").and_then(toml::Value::as_bool) != Some(false),
+            config: serde_json::to_value(entry).unwrap_or_default(),
         });
     }
 }
