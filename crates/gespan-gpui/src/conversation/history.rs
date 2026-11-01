@@ -137,8 +137,10 @@ impl Conversation {
         let id = self.summary.id;
         let store = self.store.clone();
         let pilot = self.settings.pilot.is_some();
+        let provider = self.summary.provider.clone();
+        let provider_id = self.summary.provider_id.clone();
         let work = cx.background_executor().spawn(async move {
-            let (history, turns, before) = {
+            let (mut history, turns, before) = {
                 let store = locked(&store)?;
                 (
                     store.load(id)?,
@@ -146,6 +148,11 @@ impl Conversation {
                     store.history_before(id)?,
                 )
             };
+            gespan_core::provider::recover_cursor_subagents(
+                &provider,
+                provider_id.as_deref(),
+                &mut history.rows,
+            );
             Ok::<_, String>((
                 crate::transcript::PreparedHistory::new(history.rows, pilot),
                 turns,

@@ -553,6 +553,7 @@ impl Shell {
             .into_any()
     }
     fn original_rail_navigation(&self, cx: &mut Context<Self>) -> AnyElement {
+        let flows_visible = crate::flows::visible(cx);
         div()
             .pl(px(6.))
             .pr_2()
@@ -619,6 +620,7 @@ impl Shell {
                         self.workspace.preferences.notes && self.workspace.sidebar_notes_visible
                     }
                     "Automations" => self.workspace.sidebar_automations_visible,
+                    "Flows" => flows_visible,
                     "Board" => self.workspace.preferences.board,
                     _ => true,
                 })
@@ -862,7 +864,7 @@ impl Shell {
                         workspace::AppView::Automations,
                         self.workspace.sidebar_automations_visible,
                     ),
-                    (workspace::AppView::Flows, true),
+                    (workspace::AppView::Flows, crate::flows::visible(cx)),
                     (workspace::AppView::Board, self.workspace.preferences.board),
                 ]
                 .into_iter()
@@ -885,6 +887,7 @@ impl Shell {
                         view.label(),
                         glyph,
                     )
+                    .debug_selector(move || format!("rail-navigation-{}", view.label()))
                     .size(px(32.))
                     .relative()
                     .when(selected, |d| d.bg(content(0.1)))

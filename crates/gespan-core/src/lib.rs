@@ -60,6 +60,8 @@ pub mod search;
 
 pub mod cli;
 pub mod mcp;
+pub mod mcp_catalog;
+pub mod mcp_registry;
 
 pub mod worktree_copy;
 pub mod worktree_management;

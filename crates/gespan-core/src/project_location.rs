@@ -146,6 +146,12 @@ fn is_local(path: &str) -> bool {
         || crate::remote::parse_remote_path(path).is_some())
 }
 
+/// Whether a project on this machine has lost its folder. Remote projects and
+/// chats without a folder are never reported.
+pub fn folder_is_missing(path: &str) -> bool {
+    is_local(path) && !expand_home(Path::new(path)).is_dir()
+}
+
 fn read(store: &Store) -> BTreeMap<String, ProjectLocation> {
     let parse = |raw: &str| {
         serde_json::from_str::<BTreeMap<String, serde_json::Value>>(raw)
@@ -418,6 +424,19 @@ mod tests {
             .unwrap()
             .cwd;
         assert_eq!(cwd, text(&renamed));
+    }
+
+    #[test]
+    fn only_a_gone_local_folder_counts_as_missing() {
+        let parent = tempfile::tempdir().unwrap();
+        let kept = project(parent.path(), "kept");
+        assert!(!folder_is_missing(&text(&kept)));
+        assert!(folder_is_missing(&text(&parent.path().join("gone"))));
+        assert!(!folder_is_missing(""));
+        assert!(!folder_is_missing(&crate::remote::remote_path(
+            "env",
+            "/work/gone"
+        )));
     }
 
     #[test]

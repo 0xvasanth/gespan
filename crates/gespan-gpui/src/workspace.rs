@@ -503,6 +503,25 @@ impl Workspace {
         self.classic_layout || self.new_layout_boxy
     }
 
+    /// Moves this running workspace to a renamed project folder, using the same
+    /// rewrite as a saved one. What belongs to this run is not saved, so it is
+    /// carried over.
+    pub(crate) fn rebase_project(&mut self, from: &str, to: &str) -> Result<(), String> {
+        use gespan_core::files::path_key;
+        let mut state = serde_json::to_value(&*self).map_err(|error| error.to_string())?;
+        rebase_saved_project(&mut state, from, to);
+        let mut rebased: Self = serde_json::from_value(state).map_err(|error| error.to_string())?;
+        rebased.worktree_focus = std::mem::take(&mut self.worktree_focus);
+        rebased.tab_workspaces = std::mem::take(&mut self.tab_workspaces);
+        for path in rebased.tab_workspaces.values_mut() {
+            if path_key(path) == path_key(from) {
+                *path = to.into();
+            }
+        }
+        *self = rebased;
+        Ok(())
+    }
+
     pub fn restore(saved: Option<&str>, sessions: &[(i64, String)], cwd: &str) -> Self {
         let mut state = saved
             .and_then(|s| serde_json::from_str::<Self>(s).ok())
@@ -1361,6 +1380,35 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_running_workspace_follows_a_renamed_project_and_keeps_this_runs_state() {
+        let mut state = Workspace::default();
+        state.add_project("/work/gespan");
+        state.add_project("/work/other");
+        state.project = "/work/gespan".into();
+        state.open(7);
+        state.tab_workspaces.insert(7, "/work/gespan".into());
+        state.tab_workspaces.insert(8, "/work/other".into());
+        state.worktree_focus.insert(
+            "/work/gespan".into(),
+            crate::worktree_switcher::WorktreeFocus {
+                path: "/worktrees/one".into(),
+                branch: Some("one".into()),
+            },
+        );
+
+        state
+            .rebase_project("/work/gespan", "/work/renamed")
+            .unwrap();
+
+        assert_eq!(state.project, "/work/renamed");
+        assert_eq!(state.projects, ["/work/renamed", "/work/other"]);
+        assert_eq!(state.active, Some(7));
+        assert_eq!(state.tab_workspaces[&7], "/work/renamed");
+        assert_eq!(state.tab_workspaces[&8], "/work/other");
+        assert_eq!(state.worktree_focus.len(), 1);
+    }
+
     #[test]
     fn a_renamed_project_moves_its_saved_workspace_state() {
         use std::path::Path;

@@ -366,12 +366,14 @@ impl From<String> for CheckoutError {
         }
     }
 }
-/// Git's refusal to switch over local changes, the same test as the Tauri app.
+/// Git's refusal to switch over local changes, the same test as the Tauri app,
+/// and a host's own refusal, which it gives before asking git.
 fn blocked_by_changes(error: &str) -> bool {
     let text = error.to_ascii_lowercase();
     text.contains("would be overwritten")
         || text.contains("commit your changes or stash")
         || text.contains("please move or remove them before")
+        || text.contains("commit or stash changes on the host")
 }
 pub fn checkout(cwd: &Path, branch: &Branch) -> Result<(), CheckoutError> {
     if crate::files::remote::is_remote(cwd) {
@@ -400,13 +402,24 @@ pub fn switch_stash_message(branch: &str) -> String {
 /// then switch. The stash is kept for the user to apply later, not reapplied.
 pub fn stash_and_checkout(cwd: &Path, branch: &Branch) -> Result<(), String> {
     let message = switch_stash_message(&branch.name);
-    git(
-        cwd,
-        &["stash", "push", "--include-untracked", "-m", &message],
-    )?;
+    stash(cwd, &message)?;
     checkout(cwd, branch).map_err(|error| {
         format!("Your changes are stashed as “{message}”, but the switch failed: {error}")
     })
+}
+/// Sets tracked and untracked changes aside, here or on the project's host.
+fn stash(cwd: &Path, message: &str) -> Result<(), String> {
+    if crate::files::remote::is_remote(cwd) {
+        return crate::files::remote::command(
+            "git_stash",
+            serde_json::json!({"cwd":cwd,"message":message}),
+        );
+    }
+    git(
+        cwd,
+        &["stash", "push", "--include-untracked", "-m", message],
+    )
+    .map(|_| ())
 }
 /// SwitchBranchDialog's Commit & switch: commit every change on the current
 /// branch, then switch. An empty message is refused before anything is staged.
@@ -1121,6 +1134,46 @@ mod tests {
         assert!(!error.to_string().is_empty());
         let error = checkout(&cwd, &local("-bad")).unwrap_err();
         assert!(matches!(error, CheckoutError::Other(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_host_refusing_to_switch_over_changes_offers_stash_or_commit() {
+        let refused = "Commit or stash changes on the host before switching branches";
+        assert_eq!(
+            CheckoutError::from(refused.to_owned()),
+            CheckoutError::LocalChanges(refused.into())
+        );
+        assert_eq!(
+            CheckoutError::from("Choose an existing local branch".to_owned()),
+            CheckoutError::Other("Choose an existing local branch".into())
+        );
+    }
+
+    #[test]
+    fn a_remote_project_stashes_on_its_own_host() {
+        crate::files::remote::TEST_HOST.set(Some(Box::new(|environment, params| {
+            assert_eq!(environment, "env-1");
+            assert_eq!(params["command"], "git_stash");
+            assert_eq!(params["args"]["cwd"], "/work");
+            assert_eq!(params["args"]["message"], "WIP before switching to other");
+            Ok(serde_json::Value::Null)
+        })));
+        let cwd = Path::new("remote://env-1/work");
+        let stashed = stash(cwd, &switch_stash_message("other"));
+        crate::files::remote::TEST_HOST.set(None);
+        stashed.unwrap();
+    }
+
+    #[test]
+    fn a_failed_remote_stash_never_reaches_the_switch() {
+        crate::files::remote::TEST_HOST.set(Some(Box::new(|_, _| {
+            Err("the host could not stash".into())
+        })));
+        let error = stash_and_checkout(Path::new("remote://env-1/work"), &local("other"));
+        crate::files::remote::TEST_HOST.set(None);
+        let error = error.unwrap_err();
+        assert!(error.contains("the host could not stash"), "{error}");
+        assert!(!error.contains("are stashed"), "{error}");
     }
 
     #[test]

@@ -79,7 +79,10 @@ impl Surface {
 }
 
 fn setup(cx: &mut TestAppContext, classic: bool, boxy: bool) -> (WindowHandle<Shell>, i64) {
-    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update(|cx| {
+        cx.set_reduce_motion(true);
+        crate::flows::show_for_test(cx);
+    });
     let (window, _, session) = super::tests::window(cx);
     cx.simulate_window_resize(window.into(), gpui::size(px(1500.), px(900.)));
     window

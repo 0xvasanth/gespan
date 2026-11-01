@@ -9,6 +9,7 @@ mod general;
 mod inbox;
 mod keybindings;
 mod mcp;
+mod mcp_catalog;
 mod mobile;
 mod pilots;
 mod providers;

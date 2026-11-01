@@ -119,6 +119,71 @@ mod model_label_tests {
     use super::*;
 
     #[gpui::test]
+    fn claude_lists_no_models_it_has_not_discovered(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let list = cx
+                .new(|cx| ModelList::new_for(Kind::Claude, None, "/work", Default::default(), cx));
+            list.update(cx, |list, cx| {
+                list.tab = ModelTab::Harness(Kind::Claude);
+                let entries = list.entries(cx);
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].id, None);
+                assert_eq!(entries[0].name.as_ref(), "Default");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn claude_shows_what_discovery_found(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let list = cx
+                .new(|cx| ModelList::new_for(Kind::Claude, None, "/work", Default::default(), cx));
+            list.update(cx, |list, cx| {
+                list.tab = ModelTab::Harness(Kind::Claude);
+                list.catalogs = vec![(
+                    Kind::Claude,
+                    vec![Model {
+                        id: "claude-opus-5-5".into(),
+                        name: "Opus 5.5".into(),
+                        alias_target: None,
+                        efforts: Vec::new(),
+                        default_effort: None,
+                        fast: false,
+                        thinking: false,
+                        default: false,
+                        tiers: Vec::new(),
+                        controls: Vec::new(),
+                    }],
+                )];
+                let ids: Vec<_> = list.entries(cx).into_iter().map(|entry| entry.id).collect();
+                assert_eq!(ids, [None, Some("claude-opus-5-5".into())]);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn a_chosen_claude_model_stays_listed_when_discovery_finds_nothing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let list = cx.new(|cx| {
+                ModelList::new_for(
+                    Kind::Claude,
+                    Some("sonnet".into()),
+                    "/work",
+                    Default::default(),
+                    cx,
+                )
+            });
+            list.update(cx, |list, cx| {
+                list.tab = ModelTab::Harness(Kind::Claude);
+                let ids: Vec<_> = list.entries(cx).into_iter().map(|entry| entry.id).collect();
+                assert_eq!(ids, [None, Some("sonnet".into())]);
+            });
+        });
+    }
+
+    #[gpui::test]
     fn remote_model_availability_comes_from_the_host(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let list = cx.new(|cx| {
@@ -724,19 +789,6 @@ impl ModelList {
                     kind,
                     id: Some(model.id.clone()),
                     name: model_display_name(kind, &model.id, &model.name),
-                    enabled,
-                })
-                .collect();
-            entries.extend(additional);
-        } else if kind == Kind::Claude && self.remote_project.is_none() {
-            // Stable CLI aliases remain usable while discovery is loading.
-            let additional: Vec<_> = [("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")]
-                .into_iter()
-                .filter(|(id, _)| !entries.iter().any(|entry| entry.id.as_deref() == Some(*id)))
-                .map(|(id, name)| ModelEntry {
-                    kind,
-                    id: Some(id.into()),
-                    name: name.into(),
                     enabled,
                 })
                 .collect();

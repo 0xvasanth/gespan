@@ -245,6 +245,22 @@ pub(crate) struct SettingsView {
     mcp_show_all: bool,
     mcp_remove_scopes: HashMap<String, String>,
     mcp_busy: bool,
+    mcp_catalog: gespan_core::mcp_catalog::Catalog,
+    mcp_catalog_error: Option<String>,
+    mcp_running: Vec<(gespan_core::tool_servers::RunningServer, Option<u64>)>,
+    mcp_server_errors: Vec<gespan_core::tool_servers::ServerFailure>,
+    mcp_watching: bool,
+    mcp_search: Option<Entity<crate::input::Input>>,
+    mcp_listings: Vec<gespan_core::mcp_registry::Listing>,
+    mcp_searching: bool,
+    mcp_secrets: Option<(String, Entity<crate::input::Input>)>,
+    mcp_catalog_loaded: bool,
+    /// Servers turned on whose approval no longer matches.
+    mcp_catalog_stale: std::collections::BTreeSet<String>,
+    /// The newest edit shown, so an older read finishing late can't undo it.
+    mcp_catalog_revision: u64,
+    #[cfg(test)]
+    mcp_catalog_dir: Option<std::path::PathBuf>,
     mcp_health: Option<Task<()>>,
     discovery: data::Discovery,
     discovery_loading: bool,
@@ -385,6 +401,20 @@ impl SettingsView {
             mcp_show_all: false,
             mcp_remove_scopes: HashMap::new(),
             mcp_busy: false,
+            mcp_catalog: Default::default(),
+            mcp_catalog_error: None,
+            mcp_running: Vec::new(),
+            mcp_server_errors: Vec::new(),
+            mcp_watching: false,
+            mcp_search: None,
+            mcp_listings: Vec::new(),
+            mcp_searching: false,
+            mcp_secrets: None,
+            mcp_catalog_loaded: false,
+            mcp_catalog_stale: Default::default(),
+            mcp_catalog_revision: 0,
+            #[cfg(test)]
+            mcp_catalog_dir: None,
             mcp_health: None,
             discovery: data::Discovery::default(),
             discovery_loading: false,
@@ -431,6 +461,10 @@ impl SettingsView {
                     center.load_provider(kind, true, cx);
                 }
             });
+        }
+        if self.section == Section::Mcp {
+            self.mcp_catalog_loaded = true;
+            self.load_catalog(cx);
         }
         let cwd = self.selected_project.clone();
         self.discovery_loading = true;

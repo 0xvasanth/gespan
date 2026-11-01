@@ -493,14 +493,20 @@ fn run_turn_using(
             prompt
         } else if let Some(pilot) = &settings.pilot {
             let files = gespan_core::pilot::load_files(&pilot.root, &pilot.pilot)?;
-            let added = gespan_core::pilot::context(&pilot.pilot, &files, &pilot.executable);
-            let fingerprint = gespan_core::pilot::files::content_hash(&added);
-            pilot_fingerprint = Some(fingerprint.clone());
+            // First: a fresh conversation can reach the tools differently.
             let rotated = provider_id.is_some() && context.ratio().is_some_and(|r| r >= 0.8);
             if rotated {
                 provider_id = None;
                 locked(&store)?.reset_provider_id(summary.id)?;
             }
+            let access = gespan_core::pilot::AppAccess::for_provider(
+                kind,
+                provider_id.as_deref(),
+                &pilot.executable,
+            );
+            let added = gespan_core::pilot::context(&pilot.pilot, &files, &access);
+            let fingerprint = gespan_core::pilot::files::content_hash(&added);
+            pilot_fingerprint = Some(fingerprint.clone());
             let receipt = locked(&store)?.setting(&format!("pilot-context:{}", summary.id))?;
             let expected =
                 serde_json::json!({"provider":provider_id,"hash":fingerprint}).to_string();
@@ -584,20 +590,39 @@ fn run_turn_using(
         if !raw_native_command
             && settings
                 .environment
-                .contains_key(gespan_core::pilot::bridge::CONTROL_ENDPOINT)
+                .contains_key(gespan_core::pilot::bridge::CONTROL_MARKER)
         {
-            let cli = std::env::current_exe().map_err(|e| e.to_string())?;
-            let cli = format!("{} control", shlex_quote(&cli.to_string_lossy()));
+            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+            let access = gespan_core::pilot::AppAccess::for_provider(
+                kind,
+                provider_id.as_deref(),
+                &executable,
+            );
             prompt = format!(
                 "{prompt}\n\n{}",
-                gespan_core::orchestration::lead_prompt(&cli)
+                gespan_core::orchestration::lead_prompt(&access)
             );
         }
         if !raw_native_command && settings.operator_enabled {
-            let cli = std::env::current_exe().map_err(|e| e.to_string())?;
+            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+            let (how, scope_note) = match gespan_core::pilot::AppAccess::for_provider(
+                kind,
+                provider_id.as_deref(),
+                &executable,
+            ) {
+                gespan_core::pilot::AppAccess::Tools => {
+                    ("Use the app_call tool with {action,input}.".to_owned(), "")
+                }
+                gespan_core::pilot::AppAccess::Cli(executable) => (
+                    format!(
+                        "Use the CLI: {} app ACTION --json JSON.",
+                        shlex_quote(&executable.to_string_lossy())
+                    ),
+                    " App credentials are in the environment; never print them.",
+                ),
+            };
             prompt = format!(
-                "You have Gespan app access for this project. Use the CLI: {} app ACTION --json JSON. Supported actions: models.list {{}}, sessions.list {{}}, sessions.read {{sessionId}}, sessions.start {{prompt,harness?,model?,title?,draft?,reveal?}}, sessions.send/draft {{sessionId,prompt}}, sessions.stop {{sessionId}}, folders.list {{}}, folders.move {{sessionId,folderId?,newFolderName?}}, notes.list {{}}, notes.read {{id}}, notes.write {{id?,title,body}}, worktrees.list {{}}. Scope is this thread's project. App credentials are in the environment; never print them. Respect the user’s request and selected access policy.\n\n{prompt}",
-                shlex_quote(&cli.to_string_lossy())
+                "You have Gespan app access for this project. {how} Supported actions: models.list {{}}, sessions.list {{}}, sessions.read {{sessionId}}, sessions.start {{prompt,harness?,model?,title?,draft?,reveal?}}, sessions.send/draft {{sessionId,prompt}}, sessions.stop {{sessionId}}, folders.list {{}}, folders.move {{sessionId,folderId?,newFolderName?}}, notes.list {{}}, notes.read {{id}}, notes.write {{id?,title,body}}, worktrees.list {{}}. Scope is this thread's project.{scope_note} Respect the user’s request and selected access policy.\n\n{prompt}"
             );
         }
         // Every foreground session receives an independent visual capability.
@@ -608,11 +633,8 @@ fn run_turn_using(
         } else {
             None
         };
-        if let Some(visual_bridge) = &visual_bridge {
+        if visual_bridge.is_some() {
             let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-            settings
-                .environment
-                .extend(visual_bridge.environment(&executable));
             visual_introduction = visual_discovery::Discovery::prepare(
                 &*locked(&store)?,
                 summary.id,
@@ -657,7 +679,8 @@ fn run_turn_using(
         let (may_change_status, cards) = source
             .as_ref()
             .map_or((false, false), |source| source.board_scope());
-        if let (Some(source), Some(data_dir), Some(executable)) = (source, data_dir, executable)
+        if let (Some(source), Some(data_dir), Some(executable)) =
+            (source, data_dir.clone(), executable)
             && (ticket.is_some() || cards)
         {
             let scope = gespan_core::ticket_bridge::Scope {
@@ -668,7 +691,6 @@ fn run_turn_using(
             };
             if let Ok(server) = gespan_core::ticket_bridge::Server::start(summary.id, scope.clone())
             {
-                settings.environment.extend(server.environment(&executable));
                 let cli = ticket_cli(kind, provider_id.as_deref(), &executable);
                 if let Some(ticket) = ticket {
                     ticket_introduction = ticket_context::TicketContext::prepare(
@@ -693,6 +715,62 @@ fn run_turn_using(
                     scope,
                 ));
             }
+        }
+        // Everything this turn may reach through the tool endpoint. A process
+        // still running keeps its credential and sees its tool list change.
+        let mut toolkits = std::collections::BTreeSet::new();
+        for (held, toolkit) in [
+            (visual_bridge.is_some(), gespan_core::tool_servers::VISUAL),
+            (ticket_tools.is_some(), gespan_core::tool_servers::TICKET),
+            // Every session holds the marker; only these are told about it.
+            (
+                (settings.pilot.is_some() || settings.operator_enabled)
+                    && settings
+                        .environment
+                        .contains_key(gespan_core::pilot::bridge::APP_MARKER),
+                gespan_core::tool_servers::APP,
+            ),
+            (
+                settings
+                    .environment
+                    .contains_key(gespan_core::pilot::bridge::CONTROL_MARKER),
+                gespan_core::tool_servers::CONTROL,
+            ),
+        ] {
+            if held && tool_servers {
+                toolkits.insert(toolkit.to_owned());
+            }
+        }
+        let mut mount = gespan_core::tool_servers::Mount {
+            session: summary.id,
+            worktree: settings
+                .worktree_cwd
+                .as_deref()
+                .unwrap_or(&summary.cwd)
+                .into(),
+            toolkits,
+            ..Default::default()
+        };
+        if !mount.toolkits.is_empty() {
+            gespan_core::tool_servers::sync_servers();
+            (mount.servers, mount.exclusive) =
+                gespan_core::tool_servers::catalog_reach(data_dir.as_deref(), &summary.cwd);
+            if mount.exclusive && kind == Kind::Codex {
+                mount.codex_own = gespan_core::mcp::codex_server_names(&summary.cwd);
+            }
+        }
+        // Even with none: a process kept from an earlier turn loses what that
+        // turn could reach.
+        gespan_core::tool_servers::refresh(&mount);
+        if !mount.toolkits.is_empty() {
+            if gespan_core::tool_servers::delivery(kind, provider_id.as_deref())
+                == gespan_core::tool_servers::Delivery::Environment
+            {
+                settings
+                    .environment
+                    .extend(gespan_core::tool_servers::environment(&mount));
+            }
+            settings.mount = Some(mount);
         }
         if kind == Kind::Claude {
             // Seeds the provider's agent registry so a resumed sub-agent's
@@ -725,6 +803,7 @@ fn run_turn_using(
                 if cancel.load(Ordering::Relaxed) {
                     return Err("Stopped".into());
                 }
+                gespan_core::tool_servers::touch(summary.id);
                 let publications = visual_bridge
                     .as_ref()
                     .map(|bridge| bridge.drain())

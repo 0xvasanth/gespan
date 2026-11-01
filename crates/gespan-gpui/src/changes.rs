@@ -1909,6 +1909,14 @@ pub(crate) fn create_pr_blocking(
 
 /// A read-only one-shot turn, as the React text harness runs: the final
 /// assistant message's text.
+/// Diffs and branch names are untrusted, so these turns get no tools.
+fn text_settings() -> Settings {
+    Settings {
+        access: AccessMode::ReadOnly,
+        text_only: true,
+        ..Default::default()
+    }
+}
 fn text_prompt(
     kind: Kind,
     binary: PathBuf,
@@ -1923,10 +1931,7 @@ fn text_prompt(
         prompt,
         provider_id: None,
         model: None,
-        settings: Settings {
-            access: AccessMode::ReadOnly,
-            ..Default::default()
-        },
+        settings: text_settings(),
     };
     let mut text = String::new();
     provider::run(request, cancel.clone(), |events| {
@@ -2049,6 +2054,13 @@ mod tests {
             unstaged: true,
         }
     }
+    #[test]
+    fn generated_git_text_runs_without_tools() {
+        let settings = text_settings();
+        assert!(settings.text_only);
+        assert_eq!(settings.access, AccessMode::ReadOnly);
+    }
+
     #[test]
     fn tree_nests_sorts_and_rolls_status_up() {
         let files = vec![

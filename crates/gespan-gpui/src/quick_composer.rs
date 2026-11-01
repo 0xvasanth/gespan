@@ -564,8 +564,9 @@ impl QuickComposer {
                     .tree
                     .clone()
                     .unwrap_or_else(|| self.cwd.clone());
+                let kind = self.kind;
                 let picker_view = cx.new(|cx| {
-                    let picker = GitPicker::new(cwd.into(), mode, selected, cx);
+                    let picker = GitPicker::new(cwd.into(), mode, selected, kind, cx);
                     if mode == GitMode::Worktree {
                         picker.existing_worktrees()
                     } else {

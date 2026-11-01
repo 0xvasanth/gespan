@@ -614,6 +614,7 @@ impl Shell {
     }
 
     pub(super) fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let flows_visible = crate::flows::visible(cx);
         div()
             .w_full()
             .px_2()
@@ -710,6 +711,7 @@ impl Shell {
                         self.workspace.preferences.notes && self.workspace.sidebar_notes_visible
                     }
                     "Automations" => self.workspace.sidebar_automations_visible,
+                    "Flows" => flows_visible,
                     "Board" => self.workspace.preferences.board,
                     "Inbox" => self.workspace.sidebar_inbox_visible,
                     _ => true,

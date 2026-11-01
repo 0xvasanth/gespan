@@ -1267,6 +1267,7 @@ mod tests {
                     config_path: "/repo/config.toml".into(),
                     transport: "stdio".into(),
                     enabled: true,
+                    config: Default::default(),
                 }];
                 view.open_mcp(cx);
                 view.pick(0, window, cx);

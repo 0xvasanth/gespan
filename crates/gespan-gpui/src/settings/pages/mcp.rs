@@ -80,6 +80,7 @@ impl SettingsView {
                 )
                 .into_any_element(),
         ];
+        page.extend(self.catalog_section(cx));
         let filter = self.mcp_filter.clone();
         let counts = std::iter::once(("all", "All"))
             .chain(

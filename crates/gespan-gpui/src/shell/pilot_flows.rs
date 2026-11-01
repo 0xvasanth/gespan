@@ -149,6 +149,37 @@ impl Shell {
         self.flows_state.held_launches.clone().unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn flows_view_made_for_test(&self) -> bool {
+        self.flows.is_some()
+    }
+
+    /// Finishes the oldest held launch as if its session had run and replied.
+    #[cfg(test)]
+    pub(crate) fn finish_held_flow_launch_for_test(
+        &mut self,
+        session: i64,
+        cx: &mut Context<Self>,
+    ) {
+        let held = self.flows_state.held_launches.as_mut().expect("holding");
+        let request = held.remove(0);
+        let probe = crate::flows::Probe {
+            pending: false,
+            generation: 1,
+        };
+        let settled = crate::flows::Settled {
+            ok: true,
+            message: "Ready".into(),
+            text: "Done.".into(),
+            ..Default::default()
+        };
+        self.with_flow_host(cx, |host, driver| {
+            host.launched(driver, &request.run_id, &request.visit_id, session, 0);
+            host.submitted(session);
+            host.settle(driver, session, probe, settled);
+        });
+    }
+
     /// Queues an event of a Pilot-owned run for its Pilot; user runs have no
     /// owner and are not reported. Delivery is deferred, so the host finishes
     /// applying its effects (the next `Launch` first) and a call made from

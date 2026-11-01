@@ -51,6 +51,8 @@ pub(super) struct State {
     rpc_failed: bool,
     /// `initialize` advertised `promptCapabilities.image`.
     image_prompts: bool,
+    /// Whether the agent advertised HTTP MCP servers in `initialize`.
+    mcp_http: bool,
     /// Kiro lists its models in a `config_option_update` after `session/new`;
     /// the catalog probe waits until this deadline for that list.
     model_wait: Option<Instant>,
@@ -324,8 +326,13 @@ impl Protocol {
         }
         self.acp_send(Stage::Initialize, "initialize", params, stdin)
     }
+    fn acp_mcp_servers(&self) -> Value {
+        self.access
+            .as_ref()
+            .map_or_else(|| json!([]), |access| access.acp_servers(self.acp.mcp_http))
+    }
     fn acp_session(&mut self, stdin: &mut impl Write) -> Result<(), String> {
-        let mut params = json!({"cwd":self.request.cwd,"mcpServers":crate::tool_servers::acp_servers(&self.request.settings.environment)});
+        let mut params = json!({"cwd":self.request.cwd,"mcpServers":self.acp_mcp_servers()});
         if let Some(id) = &self.request.provider_id {
             params["sessionId"] = id.clone().into();
             if matches!(self.request.kind, Kind::Grok | Kind::Fx | Kind::Antigravity) {
@@ -339,7 +346,7 @@ impl Protocol {
         self.acp_new(stdin)
     }
     fn acp_new(&mut self, stdin: &mut impl Write) -> Result<(), String> {
-        let mut params = json!({"cwd":self.request.cwd,"mcpServers":crate::tool_servers::acp_servers(&self.request.settings.environment)});
+        let mut params = json!({"cwd":self.request.cwd,"mcpServers":self.acp_mcp_servers()});
         if self.request.kind == Kind::Grok {
             if self.request.settings.access == AccessMode::FullAccess {
                 params["_meta"] = json!({"yoloMode":true});
@@ -670,7 +677,7 @@ impl Protocol {
                 return self.acp_session(stdin);
             }
             Stage::Resume if !(kind == Kind::Antigravity && timed_out) => {
-                return self.acp_send(Stage::Load, "session/load", json!({"sessionId":self.request.provider_id,"cwd":self.request.cwd,"mcpServers":crate::tool_servers::acp_servers(&self.request.settings.environment)}), stdin);
+                return self.acp_send(Stage::Load, "session/load", json!({"sessionId":self.request.provider_id,"cwd":self.request.cwd,"mcpServers":self.acp_mcp_servers()}), stdin);
             }
             Stage::Load => {
                 let lower = detail.to_lowercase();
@@ -918,6 +925,7 @@ impl Protocol {
             Stage::Initialize => {
                 self.acp.image_prompts =
                     result["agentCapabilities"]["promptCapabilities"]["image"] == true;
+                self.acp.mcp_http = result["agentCapabilities"]["mcpCapabilities"]["http"] == true;
                 if self.probe && self.request.kind == Kind::Cursor {
                     self.acp_send(
                         Stage::ListModels,
@@ -1627,6 +1635,42 @@ mod tests {
     fn last(out: &mut Vec<u8>) -> Value {
         let text = String::from_utf8(std::mem::take(out)).unwrap();
         serde_json::from_str(text.lines().last().unwrap()).unwrap()
+    }
+    /// How a new session offers the endpoint, given what `initialize` said.
+    fn servers_offered(session: i64, capabilities: Value) -> Value {
+        use crate::tool_servers::{Access, Mount, VISUAL};
+        let mut p = protocol(Kind::Kiro);
+        p.access = Access::open(&Mount {
+            session,
+            worktree: "/tmp".into(),
+            toolkits: [VISUAL.to_owned()].into(),
+            ..Default::default()
+        });
+        let mut out = Vec::new();
+        p.acp_start(&mut out).unwrap();
+        let mut request = last(&mut out);
+        let mut result = json!({"agentCapabilities":capabilities});
+        while request["method"] != "session/new" {
+            p.frame(json!({"id":request["id"],"result":result}), &mut out)
+                .unwrap();
+            request = last(&mut out);
+            result = json!({});
+        }
+        request["params"]["mcpServers"].clone()
+    }
+    #[test]
+    fn a_new_session_gets_http_only_from_an_agent_that_advertised_it() {
+        let http = servers_offered(5301, json!({"mcpCapabilities":{"http":true}}));
+        assert_eq!(http[0]["type"], "http");
+        assert!(http[0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1"));
+        for capabilities in [json!({}), json!({"mcpCapabilities":{"http":false}})] {
+            let relay = servers_offered(5302, capabilities);
+            assert!(relay[0].get("type").is_none());
+            assert_eq!(relay[0]["args"], json!(["mcp-relay"]));
+        }
     }
     #[test]
     fn every_acp_provider_runs_its_native_session_lifecycle() {
