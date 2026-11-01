@@ -815,13 +815,31 @@ fn add_branch_worktree(
         )?;
     }
     let copied = copy_included(main, &path);
-    let tree = worktrees(cwd)?
-        .into_iter()
-        .find(|tree| Path::new(&tree.path) == path)
-        .ok_or("Worktree created, but could not be found. Refresh the working copies.")?;
+    let found = worktrees(cwd).and_then(|trees| {
+        trees
+            .into_iter()
+            .find(|tree| Path::new(&tree.path) == path)
+            .ok_or_else(|| "The new worktree could not be found, so it was removed.".to_owned())
+    });
+    let tree = match found {
+        Ok(tree) => tree,
+        Err(error) => {
+            undo_worktree(cwd, &path, branch, existing);
+            return Err(error);
+        }
+    };
     seed(&tree)?;
     crate::worktree_scripts::set_up(turn, main, &path, tree.branch.as_deref(), copied)?;
     Ok(tree)
+}
+/// Takes back a worktree that nothing has used yet, or it would block the next
+/// try. A branch that was already there stays.
+fn undo_worktree(cwd: &Path, path: &Path, branch: &str, existing: bool) {
+    let path = path.to_string_lossy();
+    let _ = git(cwd, &["worktree", "remove", "--force", "--", &path]);
+    if !existing {
+        let _ = git(cwd, &["branch", "-D", branch]);
+    }
 }
 
 #[cfg(test)]
@@ -1602,6 +1620,21 @@ mod tests {
         tree.unwrap();
         assert!(logged.is_empty(), "{logged:?}");
         assert!(counted(counts).contains(&("worktree.create".into(), None, 1)));
+    }
+
+    #[test]
+    fn undoing_a_worktree_frees_its_name_and_keeps_a_branch_it_did_not_make() {
+        let (_temp, cwd) = repo();
+        let new = create_named_worktree(&cwd, "new").unwrap();
+        undo_worktree(&cwd, Path::new(&new.path), "new", false);
+        assert!(!Path::new(&new.path).exists());
+        assert!(git(&cwd, &["rev-parse", "--verify", "refs/heads/new"]).is_err());
+        create_named_worktree(&cwd, "new").unwrap();
+
+        let kept = create_named_worktree(&cwd, "kept").unwrap();
+        undo_worktree(&cwd, Path::new(&kept.path), "kept", true);
+        assert!(!Path::new(&kept.path).exists());
+        git(&cwd, &["rev-parse", "--verify", "refs/heads/kept"]).unwrap();
     }
 
     #[test]
