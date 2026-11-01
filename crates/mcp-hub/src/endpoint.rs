@@ -19,7 +19,11 @@ use axum::{
     Router,
 };
 use rmcp::{
-    service::{Peer, RoleServer},
+    model::{
+        CreateMessageRequest, CreateMessageRequestParams, ElicitRequest, GetExtensions,
+        ListRootsRequest, RequestId, ServerRequest,
+    },
+    service::{OriginatingRequestId, Peer, RoleServer},
     transport::streamable_http_server::{
         session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
     },
@@ -76,8 +80,9 @@ pub(crate) struct Inner {
     changes: broadcast::Sender<(Option<i64>, Listing)>,
     runtime: tokio::runtime::Handle,
     pub(crate) pool: Arc<Pool>,
-    /// The peer of each session's latest call, for messages about that call.
-    callers: Mutex<HashMap<i64, Peer<RoleServer>>>,
+    /// The peer and request of each session's latest call, for messages about
+    /// that call.
+    callers: Mutex<HashMap<i64, (Peer<RoleServer>, RequestId)>>,
     /// What each session asked to hear from server logs.
     levels: Mutex<HashMap<i64, u8>>,
 }
@@ -146,8 +151,8 @@ impl Inner {
         toolkit.call(grant, tool, arguments)
     }
 
-    pub(crate) fn calling(&self, session: i64, peer: Peer<RoleServer>) {
-        relock(&self.callers).insert(session, peer);
+    pub(crate) fn calling(&self, session: i64, peer: Peer<RoleServer>, request: RequestId) {
+        relock(&self.callers).insert(session, (peer, request));
     }
 
     pub(crate) fn set_level(&self, session: i64, level: &str) {
@@ -164,11 +169,16 @@ impl Inner {
     }
 
     fn peer_of(&self, session: i64) -> Option<Peer<RoleServer>> {
+        self.call_of(session)
+            .map(|(peer, _)| peer)
+            .or_else(|| self.peers_of(session).pop())
+    }
+
+    fn call_of(&self, session: i64) -> Option<(Peer<RoleServer>, RequestId)> {
         relock(&self.callers)
             .get(&session)
-            .filter(|peer| !peer.is_transport_closed())
+            .filter(|(peer, _)| !peer.is_transport_closed())
             .cloned()
-            .or_else(|| self.peers_of(session).pop())
     }
 
     /// A list of a server's changed: everyone who can see it reads it again.
@@ -262,11 +272,14 @@ impl Inner {
                 method,
                 params,
             } => {
-                let peer = self.peer_of(caller);
+                let call = self
+                    .call_of(caller)
+                    .map(|(peer, request)| (peer, Some(request)))
+                    .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
                 let upstream = upstream.clone();
                 self.runtime.spawn(async move {
-                    let outcome = match peer {
-                        Some(peer) => ask(&peer, &method, params).await,
+                    let outcome = match call {
+                        Some((peer, origin)) => ask(&peer, origin, &method, params).await,
                         None => Err("The agent that made this call has gone".to_owned()),
                     };
                     upstream.respond(upstream_id, outcome);
@@ -311,31 +324,44 @@ impl Inner {
     }
 }
 
-/// Passes a server's question to the agent it belongs to.
-async fn ask(peer: &Peer<RoleServer>, method: &str, params: Value) -> Result<Value, String> {
-    fn encode<T: serde::Serialize>(value: T) -> Result<Value, String> {
-        serde_json::to_value(value).map_err(|e| e.to_string())
-    }
-    match method {
+/// Passes a server's question to the agent it belongs to, on the stream of the
+/// call it came from: an agent needn't hold the standalone stream open. rmcp
+/// marks this itself only inside a handler's own task.
+async fn ask(
+    peer: &Peer<RoleServer>,
+    origin: Option<RequestId>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let mut request = match method {
         "sampling/createMessage" => {
-            let params = serde_json::from_value(params).map_err(|e| e.to_string())?;
-            encode(
-                peer.create_message(params)
-                    .await
-                    .map_err(|e| e.to_string())?,
-            )
+            let params: CreateMessageRequestParams =
+                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            if (params.tools.is_some() || params.tool_choice.is_some())
+                && !peer.supports_sampling_tools()
+            {
+                return Err("This agent can't offer tools to a sampling request".to_owned());
+            }
+            params.validate()?;
+            ServerRequest::CreateMessageRequest(CreateMessageRequest::new(params))
         }
         "elicitation/create" => {
             let params = serde_json::from_value(params).map_err(|e| e.to_string())?;
-            encode(
-                peer.create_elicitation(params)
-                    .await
-                    .map_err(|e| e.to_string())?,
-            )
+            ServerRequest::ElicitRequest(ElicitRequest::new(params))
         }
-        "roots/list" => encode(peer.list_roots().await.map_err(|e| e.to_string())?),
-        _ => Err(format!("{method} isn't available here")),
+        "roots/list" => ServerRequest::ListRootsRequest(ListRootsRequest::default()),
+        _ => return Err(format!("{method} isn't available here")),
+    };
+    if let Some(origin) = origin {
+        request
+            .extensions_mut()
+            .insert(OriginatingRequestId(origin));
     }
+    let answer = peer
+        .send_request(request)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(answer).map_err(|e| e.to_string())
 }
 
 /// Used when the host gave no spawner: nothing can be offered, so nothing runs.

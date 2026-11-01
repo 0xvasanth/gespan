@@ -897,7 +897,7 @@ fn a_tool_call_keeps_its_progress_token() {
     let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
     let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
     let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-        "name":"docs__who","arguments":{},"_meta":{"progressToken":"mine"},
+        "name":"docs__who","arguments":{"waitMs":100},"_meta":{"progressToken":"mine"},
     }});
     let (_, body) = exchange(&a, Some(&a.session), &call.to_string());
     assert!(

@@ -102,7 +102,8 @@ impl Session {
         method: &str,
         mut params: Value,
     ) -> Result<Option<Result<Value, Value>>, ErrorData> {
-        self.inner.calling(grant.session, context.peer.clone());
+        self.inner
+            .calling(grant.session, context.peer.clone(), context.id.clone());
         // rmcp lifts `_meta`, with any progress token, out of the params.
         if !context.meta.is_empty() {
             params["_meta"] = serde_json::to_value(&context.meta).map_err(internal)?;
