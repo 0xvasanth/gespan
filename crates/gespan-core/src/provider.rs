@@ -328,6 +328,9 @@ struct Protocol {
     async_answers: HashMap<String, (Value, String, Value, crate::agent::Question)>,
     /// Codex image items already reported; their completion can repeat.
     generated_images: std::collections::HashSet<String>,
+    /// This new process's tool credential. A warm process already holds one.
+    access: Option<crate::tool_servers::Access>,
+    claude_mcp: lifecycle::ClaudeMcp,
 }
 impl Protocol {
     fn new(request: Request) -> Self {
@@ -369,6 +372,8 @@ impl Protocol {
             async_question_items: Default::default(),
             async_answers: HashMap::new(),
             generated_images: Default::default(),
+            access: None,
+            claude_mcp: lifecycle::ClaudeMcp::default(),
         }
     }
     fn text(&mut self, key: &str, text: &str, snapshot: bool, events: &mut Vec<Event>) {
@@ -570,6 +575,10 @@ impl Protocol {
                         if self.request.settings.text_only {
                             params["ephemeral"] = true.into();
                             params["developerInstructions"] = "Answer the supplied text request directly. Do not call tools or inspect the workspace.".into();
+                        }
+                        // Over stdin, so the token reaches neither argv nor env.
+                        if let Some(access) = &self.access {
+                            params["config"] = access.codex_config();
                         }
                         if let Some(model) = &self.request.model {
                             params["model"] = model.clone().into();
@@ -836,6 +845,9 @@ impl Protocol {
                     }
                     "control_response" if v["response"]["request_id"] == "native-init" => {
                         self.claude_prompt(stdin)?;
+                    }
+                    "control_response" if v["response"]["request_id"] == lifecycle::CLAUDE_MCP => {
+                        self.claude_mcp_answered(&v["response"], stdin)?;
                     }
                     "stream_event" => {
                         let e = &v["event"];
@@ -1600,7 +1612,6 @@ fn launch(
     match request.kind {
         Kind::Codex => {
             command.arg("app-server");
-            crate::tool_servers::configure_codex(&mut command, &request.settings.environment);
             if let Some(pilot) = &request.settings.pilot {
                 if let Some(home) =
                     crate::pilot::codex_home(&pilot.root, &request.settings.account.id)?
@@ -1644,15 +1655,6 @@ fn launch(
                 ]);
             } else if settings.access == AccessMode::ReadOnly {
                 command.args(["--tools", "Read,Glob,Grep,Bash", "--allowedTools", "Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(pwd),Bash(ls *),Bash(rg *)"]);
-            }
-            if !settings.text_only {
-                let servers = crate::tool_servers::mcp_servers(&settings.environment);
-                if !servers.is_empty() {
-                    command.args([
-                        "--mcp-config",
-                        &json!({ "mcpServers": servers }).to_string(),
-                    ]);
-                }
             }
             if mode == "bypassPermissions" {
                 command.arg("--allow-dangerously-skip-permissions");
@@ -1750,12 +1752,22 @@ fn launch(
             // any cancelled process still draining for this provider binding.
             parked::discard_session(&request);
         }
-        (
-            // The fallback relaunch is part of the start already counted.
-            parked::Wire::spawn(&mut command, &request, eligible && !fallback)?,
-            Protocol::new(request),
-            false,
-        )
+        // The fallback relaunch is part of the start already counted.
+        let wire = parked::Wire::spawn(&mut command, &request, eligible && !fallback)?;
+        let mut protocol = Protocol::new(request);
+        protocol.access = protocol
+            .request
+            .settings
+            .mount
+            .as_ref()
+            .filter(|_| {
+                crate::tool_servers::delivery(
+                    protocol.request.kind,
+                    protocol.request.provider_id.as_deref(),
+                ) != crate::tool_servers::Delivery::Environment
+            })
+            .and_then(crate::tool_servers::Access::open);
+        (wire, protocol, false)
     };
     // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
     protocol.seed_agent_runs();
@@ -2019,7 +2031,7 @@ fn launch(
             }
             // A visual publication or ticket call may arrive while the provider
             // is waiting for its tool result and therefore emits no stream events.
-            if crate::tool_servers::configured(&protocol.request.settings.environment) {
+            if protocol.request.settings.mount.is_some() {
                 emit(Vec::new())?;
             }
             if protocol.done {

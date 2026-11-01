@@ -16,32 +16,44 @@ impl Drop for Fixture {
 /// `{"key"?, "tool"}`), else one `ticket_get` on ENG-1. With `MOCK_PAUSE`
 /// set it writes `ready` and waits for `go` before calling, and with
 /// `MOCK_EXPECT_KEY` it first waits until the bridge's scope names that key.
-const PROVIDER: &str = r#"#!/usr/bin/env python3
-import json, os, socket, sys, time
+const PROVIDER: &str = concat!(
+    include_str!("mcp_stub.py"),
+    r#"
 def send(value):
     print(json.dumps(value), flush=True)
+hub = None
+def scope():
+    for tool in hub.tools():
+        if 'dev.gespan/scope' in tool.get('_meta', {}):
+            return {'ok': True, 'result': tool['_meta']['dev.gespan/scope']}
+    return {'ok': False}
 def bridge(key, tool):
-    address, port = os.environ['GESPAN_TICKET_ENDPOINT'].rsplit(':', 1)
-    with socket.create_connection((address, int(port)), timeout=10) as connection:
-        connection.settimeout(10)
-        request = {'session': int(os.environ['GESPAN_TICKET_SESSION']), 'token': os.environ['GESPAN_TICKET_TOKEN']}
-        if key is not None:
-            request['key'] = key
-        if tool is not None:
-            request['tool'] = tool
-        connection.sendall((json.dumps(request) + '\n').encode())
-        return json.loads(connection.makefile('rb').readline())
-record = {'argv': sys.argv[1:], 'env': sorted(k for k in os.environ if k.startswith('GESPAN_TICKET_'))}
+    arguments = {} if key is None else {'key': key}
+    kind = tool['tool']
+    if kind == 'get':
+        return hub.call('ticket_get', arguments)
+    if kind == 'statuses':
+        return hub.call('ticket_status', arguments)
+    if kind == 'comment':
+        return hub.call('ticket_comment', {**arguments, 'body': tool['markdown']})
+    if kind == 'set_status':
+        return hub.call('ticket_status', {**arguments, 'target': tool['target'], 'fields': tool.get('fields', {})})
+    return hub.call(kind, {name: value for name, value in tool.items() if name != 'tool'})
+record = {'argv': sys.argv[1:], 'environ': dict(os.environ), 'mounted': False}
 for line in sys.stdin:
     value = json.loads(line)
     if value.get('id') == 1:
         send({'id': 1, 'result': {}})
     elif value.get('id') == 2:
+        server = value['params'].get('config', {}).get('mcp_servers', {}).get('gespan')
+        record['authorization'] = server and server['http_headers']['Authorization']
+        hub = server and Hub(server)
         send({'id': 2, 'result': {'thread': {'id': 'native-ticket-test'}}})
     elif value.get('id') == 3:
         record['prompt'] = value['params']['input'][0]['text']
-        if 'GESPAN_TICKET_ENDPOINT' in os.environ:
-            record['scope'] = bridge(None, None)
+        record['mounted'] = bool(hub) and any(tool['name'].startswith(('ticket_', 'card_')) for tool in hub.tools())
+        if record['mounted']:
+            record['scope'] = scope()
             if 'MOCK_PAUSE' in os.environ:
                 open('ready', 'w').close()
                 deadline = time.time() + 20
@@ -51,11 +63,11 @@ for line in sys.stdin:
                 expected = json.loads(os.environ['MOCK_EXPECT_KEY'])
                 deadline = time.time() + 20
                 while time.time() < deadline:
-                    scope = bridge(None, None)
-                    if scope.get('ok') and scope['result']['key'] == expected:
+                    current = scope()
+                    if current.get('ok') and current['result']['key'] == expected:
                         break
                     time.sleep(0.02)
-                record['scope_after'] = scope
+                record['scope_after'] = current
             calls = json.loads(os.environ.get('MOCK_TICKET_CALLS', 'null')) or [
                 {'key': 'ENG-1', 'tool': json.loads(os.environ.get('MOCK_TICKET_TOOL', '{"tool": "get"}'))}
             ]
@@ -66,7 +78,8 @@ for line in sys.stdin:
         send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'a', 'delta': 'Done.'}})
         send({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}})
         break
-"#;
+"#
+);
 
 /// What a test sets up in storage before the turn: the session, its store
 /// and the board database (the same file).
@@ -220,12 +233,16 @@ fn only_a_provider_without_tool_servers_is_pointed_at_the_cli() {
 fn a_linked_session_mounts_ticket_tools_and_answers_calls() {
     let (record, ticket_changed, status) = run(linked(), Settings::default());
     assert_eq!(status, "Ready");
-    let argv = record["argv"].to_string();
-    assert!(
-        argv.contains(r#"mcp_servers.gespan_ticket.args=[\"ticket-mcp\"]"#),
-        "{argv}"
-    );
-    assert_eq!(record["env"].as_array().unwrap().len(), 4);
+    assert_eq!(record["mounted"], true);
+    // A command the agent runs inherits its environment, so the credential
+    // must not be there, nor in the arguments anything on the machine can read.
+    let token = record["authorization"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("Bearer ")
+        .unwrap();
+    assert!(!record["environ"].to_string().contains(token));
+    assert!(!record["argv"].to_string().contains(token));
     assert!(record["prompt"].as_str().unwrap().starts_with(
         "This session is linked to Linear ticket ENG-1. Use the gespan_ticket tools to read it, comment on it, and change its status.\n\n"
     ));
@@ -276,7 +293,7 @@ fn a_session_without_a_ticket_gets_no_ticket_tools() {
     let (record, ticket_changed, status) = run(None, Settings::default());
     assert_eq!(status, "Ready");
     assert!(!record["argv"].to_string().contains("gespan_ticket"));
-    assert_eq!(record["env"], serde_json::json!([]));
+    assert_eq!(record["mounted"], false);
     assert!(!record["prompt"].as_str().unwrap().contains("ticket"));
     assert!(!ticket_changed);
 }
@@ -430,7 +447,7 @@ fn subtask_calls(subtask: &str) -> serde_json::Value {
 fn card_tools_offered_only_when_a_write_back_card_links_the_session() {
     // No ticket and no cards: no tools at all.
     let (record, _, _) = run(None, Settings::default());
-    assert_eq!(record["env"], serde_json::json!([]));
+    assert_eq!(record["mounted"], false);
     // A card on a board with write-back off: still no tools.
     let (record, _, _) = run_with(
         None,
@@ -447,7 +464,7 @@ fn card_tools_offered_only_when_a_write_back_card_links_the_session() {
         },
         |_, _| {},
     );
-    assert_eq!(record["env"], serde_json::json!([]));
+    assert_eq!(record["mounted"], false);
     // A card on a write-back board: card tools, without ticket tools.
     let (record, _, _) = run_with(
         None,
@@ -460,7 +477,7 @@ fn card_tools_offered_only_when_a_write_back_card_links_the_session() {
         },
         |_, _| {},
     );
-    assert_eq!(record["env"].as_array().unwrap().len(), 4);
+    assert_eq!(record["mounted"], true);
     assert_eq!(record["scope"]["result"]["cards"], true);
     assert_eq!(record["scope"]["result"]["key"], serde_json::Value::Null);
     assert_eq!(record["replies"][0]["ok"], true, "{record}");
@@ -576,7 +593,10 @@ fn card_tools_keep_rejecting_unknown_keys() {
     );
     assert_eq!(
         errors(&record),
-        ["Invalid ticket request", "Invalid ticket request"]
+        [
+            "unknown field `cardId`, there are no fields",
+            "unknown field `session`, expected `subtaskId` or `done`"
+        ]
     );
 }
 
@@ -685,7 +705,7 @@ fn an_orchestration_lead_turn_gets_no_ticket_or_card_tools() {
     );
     assert_eq!(status, "Ready");
     assert!(!record["argv"].to_string().contains("gespan_ticket"));
-    assert_eq!(record["env"], serde_json::json!([]));
+    assert_eq!(record["mounted"], false);
     assert!(!record["prompt"].as_str().unwrap().contains("ticket"));
 }
 
@@ -705,7 +725,7 @@ fn an_orchestration_worker_session_gets_no_ticket_or_card_tools() {
     );
     assert_eq!(status, "Ready");
     assert!(!record["argv"].to_string().contains("gespan_ticket"));
-    assert_eq!(record["env"], serde_json::json!([]));
+    assert_eq!(record["mounted"], false);
     assert!(!record["prompt"].as_str().unwrap().contains("ticket"));
 }
 
@@ -718,7 +738,7 @@ fn an_ordinary_session_with_a_ticket_and_cards_gets_both_tools() {
         |_, _| {},
     );
     assert_eq!(status, "Ready");
-    assert_eq!(record["env"].as_array().unwrap().len(), 4);
+    assert_eq!(record["mounted"], true);
     assert_eq!(record["scope"]["result"]["key"], "ENG-1");
     assert_eq!(record["scope"]["result"]["cards"], true);
     assert_eq!(record["replies"][1]["ok"], true, "{record}");

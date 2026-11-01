@@ -1,17 +1,13 @@
-//! Session-scoped local app access. Provider children inherit only their own
-//! capability; all requests are checked again against the Pilot's project list.
-use serde::{Deserialize, Serialize};
+//! Session-scoped local app access, served through the MCP hub as the `app`
+//! and `control` toolkits. All requests are checked again against the Pilot's
+//! project list. An agent that mounts no MCP servers reaches the same tools
+//! through the `app` and `control` CLIs.
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc,
-    },
-    time::{Duration, Instant},
+    io::Read,
+    sync::{mpsc, Mutex, OnceLock},
+    time::Duration,
 };
 
 pub const HELP: &str = r#"Gespan app access
@@ -44,16 +40,8 @@ card.subtasks {}; card.subtask_done {subtaskId,done}
 ticket.* and card.* act on this session's own linked ticket and cards, in any agent turn, without Operator. Orchestration leads and workers have neither. Read-only turns may read and list only.
 Artifacts, memory, soul, habits, cards and notifyOnComplete:true require a Pilot.
 The CLI returns {ok,result,requestId}. Retry uncertain mutations with the same request ID and identical input.
-Assigned projects alone may be addressed. Credentials are provided in the environment; never print them.
+Assigned projects alone may be addressed.
 "#;
-#[derive(Serialize, Deserialize)]
-struct Wire {
-    session: i64,
-    token: String,
-    request_id: String,
-    action: String,
-    input: Value,
-}
 pub struct Call {
     pub session: i64,
     pub request_id: String,
@@ -61,198 +49,191 @@ pub struct Call {
     pub input: Value,
     pub reply: mpsc::Sender<Result<Value, String>>,
 }
+/// Which sessions each app dispatcher serves, by surface. An app window, the
+/// Pilots and an orchestration run each hold their own.
+type Routes = HashMap<(Surface, i64), (u64, async_channel::Sender<Call>)>;
+
+fn routes() -> &'static Mutex<Routes> {
+    static ROUTES: OnceLock<Mutex<Routes>> = OnceLock::new();
+    ROUTES.get_or_init(Default::default)
+}
+
+/// One dispatcher of app calls. Dropping it ends what it served.
 pub struct Server {
-    endpoint: String,
-    secret: Arc<String>,
-    stop: Arc<AtomicBool>,
+    id: u64,
+    calls: async_channel::Sender<Call>,
 }
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        routes()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|_, (id, _)| *id != self.id);
     }
 }
 impl Server {
     pub fn start() -> Result<(Self, async_channel::Receiver<Call>), String> {
-        let _span = tracing::info_span!("mcp_start", server = "pilot").entered();
-        Self::open().inspect_err(|error| tracing::warn!(%error, "could not start a tool server"))
+        let (calls, rx) = async_channel::bounded(32);
+        let id = rand::random();
+        Ok((Self { id, calls }, rx))
     }
-    fn open() -> Result<(Self, async_channel::Receiver<Call>), String> {
-        let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-        let endpoint = listener
-            .local_addr()
-            .map_err(|e| e.to_string())?
-            .to_string();
-        let secret = Arc::new(format!("{:032x}", rand::random::<u128>()) + &super::new_id());
-        let stop = Arc::new(AtomicBool::new(false));
-        let connections = Arc::new(AtomicUsize::new(0));
-        let (tx, rx) = async_channel::bounded(32);
-        let owner = stop.clone();
-        let key = secret.clone();
-        std::thread::spawn(move || {
-            while !owner.load(Ordering::Relaxed) && !tx.is_closed() {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        if connections.fetch_add(1, Ordering::Relaxed) >= 16 {
-                            connections.fetch_sub(1, Ordering::Relaxed);
-                            continue;
-                        }
-                        let tx = tx.clone();
-                        let key = key.clone();
-                        let connections = connections.clone();
-                        std::thread::spawn(move || {
-                            let _ = serve(stream, &key, &tx);
-                            connections.fetch_sub(1, Ordering::Relaxed);
-                        });
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(20))
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-        Ok((
-            Self {
-                endpoint,
-                secret,
-                stop,
-            },
-            rx,
-        ))
+    fn route(&self, surface: Surface, session: i64) -> HashMap<String, String> {
+        routes()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((surface, session), (self.id, self.calls.clone()));
+        HashMap::from([(surface.marker().to_owned(), session.to_string())])
     }
+    /// Marks a session as holding app access. Carries no secret: the session's
+    /// hub credential is what proves the caller.
     pub fn environment(&self, session: i64) -> HashMap<String, String> {
-        self.environment_for(&APP, session)
+        self.route(Surface::App, session)
     }
-    fn environment_for(&self, surface: &Surface, session: i64) -> HashMap<String, String> {
-        HashMap::from([
-            (surface.endpoint.into(), self.endpoint.clone()),
-            (surface.token.into(), token(&self.secret, session)),
-            (surface.session.into(), session.to_string()),
-        ])
-    }
-    /// A lead's capability on a server of its own: workers never hold it.
+    /// A lead's capability: workers never hold it.
     pub fn control_environment(&self, session: i64) -> HashMap<String, String> {
-        self.environment_for(&CONTROL, session)
+        self.route(Surface::Control, session)
     }
 }
-fn token(secret: &str, session: i64) -> String {
-    Sha256::digest(format!("{secret}:{session}").as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+
+/// One toolkit on this route: `app`, or a lead's `control`.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+enum Surface {
+    App,
+    Control,
 }
-/// How long a caller has to send its whole request. One deadline for the
-/// request, not one per read, so a trickling caller cannot hold a connection.
-const REQUEST_DEADLINE: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 5 });
-struct Deadline<'a> {
-    stream: &'a TcpStream,
-    until: Instant,
-}
-impl Read for Deadline<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let left = self.until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(std::io::ErrorKind::TimedOut.into());
+pub const APP_MARKER: &str = "GESPAN_APP_SESSION";
+pub const CONTROL_MARKER: &str = "GESPAN_CONTROL_SESSION";
+impl Surface {
+    fn marker(self) -> &'static str {
+        match self {
+            Self::App => APP_MARKER,
+            Self::Control => CONTROL_MARKER,
         }
-        self.stream.set_read_timeout(Some(left))?;
-        let mut stream = self.stream;
-        stream.read(buf)
+    }
+    fn tool(self) -> &'static str {
+        match self {
+            Self::App => "app_call",
+            Self::Control => "control_call",
+        }
+    }
+    fn help(self) -> &'static str {
+        match self {
+            Self::App => HELP,
+            Self::Control => crate::orchestration::CONTROL_HELP,
+        }
+    }
+    fn help_tool(self) -> &'static str {
+        match self {
+            Self::App => "app_help",
+            Self::Control => "control_help",
+        }
     }
 }
-fn serve(
-    mut stream: TcpStream,
-    secret: &str,
-    tx: &async_channel::Sender<Call>,
-) -> Result<(), String> {
-    // macOS and Windows hand out accepted streams non-blocking like the
-    // listener, so a request still in flight would fail its first read.
-    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let request = Deadline {
-        stream: &stream,
-        until: Instant::now() + REQUEST_DEADLINE,
-    };
-    let mut reader = BufReader::new(request.take(1_048_577));
-    let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| e.to_string())?;
-    if line.len() > 1_048_576 || !line.ends_with('\n') {
-        return Err("Invalid app request".into());
+
+/// The app's actions as tools, for a grant that names them.
+pub(crate) struct Toolkit(Surface);
+impl Toolkit {
+    pub(crate) const APP: Self = Self(Surface::App);
+    pub(crate) const CONTROL: Self = Self(Surface::Control);
+}
+impl mcp_hub::Toolkit for Toolkit {
+    fn name(&self) -> &'static str {
+        match self.0 {
+            Surface::App => crate::tool_servers::APP,
+            Surface::Control => crate::tool_servers::CONTROL,
+        }
     }
-    let wire: Wire = serde_json::from_str(&line).map_err(|_| "Invalid app request")?;
-    let expected = token(secret, wire.session);
-    let equal = wire.token.len() == expected.len()
-        && wire
-            .token
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0, |diff, (a, b)| diff | a ^ b)
-            == 0;
-    if !equal
-        || !wire.input.is_object()
-        || wire.request_id.len() > 128
-        || wire.request_id.is_empty()
-    {
-        return Err("Invalid app capability".into());
+    fn tools(&self, _: &mcp_hub::Grant) -> Vec<Value> {
+        let (help, call) = match self.0 {
+            Surface::App => (
+                "List every Gespan app action and the JSON each takes.",
+                "Act on Gespan itself: sessions, worktrees, folders, notes and more. Read app_help first for the actions.",
+            ),
+            Surface::Control => (
+                "List every orchestration action and the JSON each takes, with the retry rule.",
+                "Supervise this orchestration run. Read control_help first for the actions.",
+            ),
+        };
+        vec![
+            json!({"name":self.0.help_tool(),"description":help,"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
+            json!({"name":self.0.tool(),"description":call,"inputSchema":{"type":"object","properties":{
+                "action":{"type":"string"},
+                "input":{"type":"object","description":"The action's JSON fields"},
+                "requestId":{"type":"string","maxLength":128,"description":"Reuse when retrying an uncertain mutation, with identical input"},
+            },"required":["action"],"additionalProperties":false},"annotations":{"openWorldHint":false}}),
+        ]
     }
+    fn call(&self, grant: &mcp_hub::Grant, tool: &str, arguments: Value) -> Result<Value, String> {
+        if tool == self.0.help_tool() {
+            return Ok(json!({"help":self.0.help()}));
+        }
+        let action = arguments["action"]
+            .as_str()
+            .ok_or("action must be a string")?;
+        let input = match &arguments["input"] {
+            Value::Null => json!({}),
+            input if input.is_object() => input.clone(),
+            _ => return Err("input must be a JSON object".into()),
+        };
+        let request_id = match &arguments["requestId"] {
+            Value::Null => super::new_id(),
+            Value::String(id) if !id.is_empty() && id.len() <= 128 => id.clone(),
+            _ => return Err("requestId must contain 1–128 bytes".into()),
+        };
+        let result = if self.0 == Surface::App && crate::ticket_bridge::is_app_action(action) {
+            crate::ticket_bridge::app_call(grant.session, action, &input, &request_id)
+        } else {
+            dispatch(self.0, grant.session, &request_id, action, input)
+        };
+        match result {
+            Ok(value) => Ok(json!({"result":value,"requestId":request_id})),
+            Err(error) => Err(format!("{error} (requestId: {request_id})")),
+        }
+    }
+}
+
+fn dispatch(
+    surface: Surface,
+    session: i64,
+    request_id: &str,
+    action: &str,
+    input: Value,
+) -> Result<Value, String> {
+    let calls = routes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&(surface, session))
+        .map(|(_, calls)| calls.clone())
+        .ok_or("App closed")?;
     let (reply, result) = mpsc::channel();
-    let request_id = wire.request_id;
-    tx.send_blocking(Call {
-        session: wire.session,
-        request_id: request_id.clone(),
-        action: wire.action,
-        input: wire.input,
-        reply,
-    })
-    .map_err(|_| "App closed")?;
-    let response = match result.recv_timeout(Duration::from_secs(60)) {
-        Ok(Ok(value)) => json!({"ok":true,"result":value,"requestId":request_id}),
-        Ok(Err(error)) => json!({"ok":false,"error":error,"requestId":request_id}),
-        Err(_) => {
-            json!({"ok":false,"error":"App request timed out; retry using the same request ID","requestId":request_id})
-        }
-    };
-    writeln!(stream, "{response}").map_err(|e| e.to_string())
+    calls
+        .send_blocking(Call {
+            session,
+            request_id: request_id.to_owned(),
+            action: action.to_owned(),
+            input,
+            reply,
+        })
+        .map_err(|_| "App closed")?;
+    result
+        .recv_timeout(Duration::from_secs(60))
+        .map_err(|_| "App request timed out; retry using the same request ID")?
 }
-/// One CLI on this wire: `app`, or a lead's `control`.
-struct Surface {
-    endpoint: &'static str,
-    token: &'static str,
-    session: &'static str,
-    help: &'static str,
-    unavailable: &'static str,
-}
-const APP: Surface = Surface {
-    endpoint: "GESPAN_APP_ENDPOINT",
-    token: "GESPAN_APP_TOKEN",
-    session: "GESPAN_APP_SESSION",
-    help: HELP,
-    unavailable: "App access is unavailable outside a Pilot's provider process",
-};
-pub const CONTROL_ENDPOINT: &str = "GESPAN_CONTROL_ENDPOINT";
-const CONTROL: Surface = Surface {
-    endpoint: CONTROL_ENDPOINT,
-    token: "GESPAN_CONTROL_TOKEN",
-    session: "GESPAN_CONTROL_SESSION",
-    help: crate::orchestration::CONTROL_HELP,
-    unavailable: "No Gespan connection. Confirm the Orchestrator proposal in Gespan first.",
-};
+
 /// Runs before any GUI initialization, so a provider tool never opens a window.
 pub fn client(args: &[String]) -> Result<Value, String> {
-    client_for(&APP, args)
+    client_for(Surface::App, args)
 }
 /// The lead's `control` CLI, on the same terms.
 pub fn control_client(args: &[String]) -> Result<Value, String> {
-    client_for(&CONTROL, args)
+    client_for(Surface::Control, args)
 }
-fn client_for(surface: &Surface, args: &[String]) -> Result<Value, String> {
+fn client_for(surface: Surface, args: &[String]) -> Result<Value, String> {
     if args
         .first()
         .is_none_or(|s| matches!(s.as_str(), "help" | "--help" | "-h"))
     {
-        return Ok(json!({"help":surface.help}));
+        return Ok(json!({"help":surface.help()}));
     }
     let action = args[0].clone();
     let mut input = json!({});
@@ -288,64 +269,40 @@ fn client_for(surface: &Surface, args: &[String]) -> Result<Value, String> {
             _ => return Err(format!("Unknown app argument: {arg}")),
         }
     }
-    if surface.endpoint == APP.endpoint && crate::ticket_bridge::is_app_action(&action) {
-        return Ok(
-            match crate::ticket_bridge::app_action(&action, &input, &request_id) {
-                Ok(value) => json!({"ok":true,"result":value,"requestId":request_id}),
-                Err(error) => json!({"ok":false,"error":error,"requestId":request_id}),
-            },
-        );
+    if surface == Surface::App && crate::ticket_bridge::is_app_action(&action) {
+        if let Err(error) = crate::ticket_bridge::app_tool(&action) {
+            return Ok(json!({"ok":false,"error":error,"requestId":request_id}));
+        }
     }
-    let endpoint: SocketAddr = std::env::var(surface.endpoint)
-        .map_err(|_| surface.unavailable)?
-        .parse()
-        .map_err(|_| "Invalid app endpoint")?;
-    if !endpoint.ip().is_loopback() {
-        return Err("App access requires a local endpoint".into());
+    Ok(cli_reply(surface, &action, input, &request_id))
+}
+fn cli_reply(surface: Surface, action: &str, input: Value, request_id: &str) -> Value {
+    let arguments = json!({"action":action,"input":input,"requestId":request_id});
+    match crate::tool_servers::call_tool(surface.tool(), arguments) {
+        Ok(reply) => json!({"ok":true,"result":reply["result"],"requestId":request_id}),
+        Err(error) => json!({
+            "ok":false,
+            "error":error.strip_suffix(&format!(" (requestId: {request_id})")).unwrap_or(&error),
+            "requestId":request_id,
+        }),
     }
-    let token = std::env::var(surface.token).map_err(|_| "App capability missing")?;
-    let session = std::env::var(surface.session)
-        .map_err(|_| "App session missing")?
-        .parse()
-        .map_err(|_| "Invalid app session")?;
-    let wire = Wire {
-        session,
-        token,
-        request_id,
-        action,
-        input,
-    };
-    let mut stream =
-        TcpStream::connect_timeout(&endpoint, Duration::from_secs(3)).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(65)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&wire).map_err(|e| e.to_string())?
-    )
-    .map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    BufReader::new(stream.take(4_194_305))
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    if line.len() > 4_194_304 || line.is_empty() {
-        return Err("App response unavailable".into());
-    }
-    serde_json::from_str(&line).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod capability_tests {
     use super::*;
+    use mcp_hub::Toolkit as _;
+
+    fn grant(session: i64) -> mcp_hub::Grant {
+        mcp_hub::Grant {
+            session,
+            workspace: "/work".into(),
+            toolkits: [crate::tool_servers::APP.to_owned()].into(),
+        }
+    }
+
     #[test]
-    fn ticket_and_card_actions_never_need_the_app_capability() {
-        // Answered by the ticket bridge, so no GESPAN_APP_* variable is read:
-        // an unknown name fails there, with the caller's request ID.
+    fn unknown_ticket_and_card_actions_fail_with_the_callers_request_id() {
         for action in ["ticket.delete", "card.move"] {
             let args = [action.to_owned(), "--request-id".into(), "r-1".into()];
             let value = client(&args).unwrap();
@@ -363,9 +320,18 @@ mod capability_tests {
         let (server, _calls) = Server::start().unwrap();
         let app = server.environment(7);
         let control = server.control_environment(7);
-        assert_eq!(control[CONTROL_ENDPOINT], app["GESPAN_APP_ENDPOINT"]);
-        assert!(control.keys().all(|key| key.starts_with("GESPAN_CONTROL_")));
-        assert!(app.keys().all(|key| key.starts_with("GESPAN_APP_")));
+        assert_eq!(app.keys().collect::<Vec<_>>(), [APP_MARKER]);
+        assert_eq!(control.keys().collect::<Vec<_>>(), [CONTROL_MARKER]);
+        assert!(app
+            .values()
+            .chain(control.values())
+            .all(|value| value == "7"));
+        // A session routed for `app` alone has no route for `control`.
+        let _ = server.environment(9);
+        let refused = Toolkit::CONTROL
+            .call(&grant(9), "control_call", json!({"action":"list"}))
+            .unwrap_err();
+        assert!(refused.starts_with("App closed"), "{refused}");
     }
     #[test]
     fn the_control_help_explains_every_action() {
@@ -379,122 +345,74 @@ mod capability_tests {
         }
         assert!(help.contains("--request-id"));
     }
-    fn send(
-        server: &Server,
-        session: i64,
-        credential: String,
-    ) -> std::thread::JoinHandle<Option<Value>> {
-        let endpoint = server.endpoint.clone();
-        std::thread::spawn(move || {
-            let mut stream = TcpStream::connect(endpoint).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let wire = Wire {
-                session,
-                token: credential,
-                request_id: "read-1".into(),
-                action: "models.list".into(),
-                input: json!({}),
-            };
-            writeln!(stream, "{}", serde_json::to_string(&wire).unwrap()).unwrap();
-            let mut result = String::new();
-            let _ = BufReader::new(stream).read_line(&mut result);
-            serde_json::from_str(&result).ok()
-        })
-    }
     #[test]
-    fn capability_is_bound_to_its_session_and_only_authenticated_calls_reach_the_app() {
+    fn a_call_reaches_the_app_as_its_session_and_returns_its_request_id() {
         let (server, rx) = Server::start().unwrap();
-        let credential = server.environment(7)["GESPAN_APP_TOKEN"].clone();
-        assert_ne!(credential, server.environment(8)["GESPAN_APP_TOKEN"]);
-        assert!(send(&server, 8, credential.clone())
-            .join()
-            .unwrap()
-            .is_none());
-        assert!(rx.try_recv().is_err());
-        let request = send(&server, 7, credential);
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let call = loop {
-            if let Ok(call) = rx.try_recv() {
-                break call;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "authenticated request was not dispatched"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        };
-        assert_eq!(call.session, 7);
-        call.reply.send(Ok(json!({"models":[]}))).unwrap();
-        assert_eq!(request.join().unwrap().unwrap()["ok"], true);
-    }
-    #[test]
-    fn a_request_that_arrives_after_the_connection_is_still_served() {
-        let (server, rx) = Server::start().unwrap();
-        let credential = server.environment(7)["GESPAN_APP_TOKEN"].clone();
-        let endpoint = server.endpoint.clone();
-        let request = std::thread::spawn(move || {
-            let mut stream = TcpStream::connect(endpoint).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            // Let the server accept and start reading before anything is sent.
-            std::thread::sleep(Duration::from_millis(300));
-            let wire = Wire {
-                session: 7,
-                token: credential,
-                request_id: "late-1".into(),
-                action: "models.list".into(),
-                input: json!({}),
-            };
-            let line = serde_json::to_string(&wire).unwrap();
-            stream.write_all(line.as_bytes()).unwrap();
-            std::thread::sleep(Duration::from_millis(100));
-            stream.write_all(b"\n").unwrap();
-            let mut result = String::new();
-            let _ = BufReader::new(stream).read_line(&mut result);
-            serde_json::from_str::<Value>(&result).ok()
+        let _ = server.environment(70);
+        let worker = std::thread::spawn(|| {
+            Toolkit::APP.call(
+                &grant(70),
+                "app_call",
+                json!({"action":"models.list","requestId":"r-7","session":71}),
+            )
         });
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let call = loop {
-            if let Ok(call) = rx.try_recv() {
-                break call;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "a late request was dropped instead of dispatched"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        };
-        assert_eq!(call.request_id, "late-1");
+        let call = rx.recv_blocking().unwrap();
+        assert_eq!(call.session, 70);
+        assert_eq!(call.action, "models.list");
+        assert_eq!(call.request_id, "r-7");
         call.reply.send(Ok(json!({"models":[]}))).unwrap();
-        assert_eq!(request.join().unwrap().unwrap()["ok"], true);
+        assert_eq!(
+            worker.join().unwrap().unwrap(),
+            json!({"result":{"models":[]},"requestId":"r-7"})
+        );
     }
     #[test]
-    fn a_trickling_request_is_cut_off_at_the_deadline() {
+    fn a_failed_call_names_its_request_id_for_the_retry() {
         let (server, rx) = Server::start().unwrap();
-        let mut stream = TcpStream::connect(&server.endpoint).unwrap();
-        stream.set_read_timeout(Some(REQUEST_DEADLINE * 3)).unwrap();
-        let started = Instant::now();
-        // One byte at a time, each well inside a per-read timeout.
-        let mut closed = false;
-        while started.elapsed() < REQUEST_DEADLINE * 3 {
-            if stream.write_all(b"{").is_err() {
-                closed = true;
-                break;
-            }
-            std::thread::sleep(REQUEST_DEADLINE / 10);
-        }
-        if !closed {
-            let mut rest = Vec::new();
-            closed = stream.read_to_end(&mut rest).is_ok();
-        }
-        assert!(closed, "the server kept a trickling connection open");
-        assert!(
-            started.elapsed() < REQUEST_DEADLINE * 3,
-            "the connection outlived its deadline"
+        let _ = server.environment(72);
+        let worker = std::thread::spawn(|| {
+            Toolkit::APP.call(
+                &grant(72),
+                "app_call",
+                json!({"action":"sessions.send","requestId":"r-2"}),
+            )
+        });
+        let call = rx.recv_blocking().unwrap();
+        call.reply.send(Err("Not allowed".into())).unwrap();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err(),
+            "Not allowed (requestId: r-2)"
         );
+    }
+    #[test]
+    fn a_closed_dispatcher_fails_at_once() {
+        let (server, rx) = Server::start().unwrap();
+        let _ = server.environment(73);
+        drop(rx);
+        let error = Toolkit::APP
+            .call(&grant(73), "app_call", json!({"action":"models.list"}))
+            .unwrap_err();
+        assert!(error.starts_with("App closed"), "{error}");
+        drop(server);
+        let error = Toolkit::APP
+            .call(&grant(73), "app_call", json!({"action":"models.list"}))
+            .unwrap_err();
+        assert!(error.starts_with("App closed"), "{error}");
+    }
+    #[test]
+    fn the_arguments_are_checked_before_the_app_sees_them() {
+        let (server, rx) = Server::start().unwrap();
+        let _ = server.environment(74);
+        for arguments in [
+            json!({}),
+            json!({"action":7}),
+            json!({"action":"models.list","input":"x"}),
+            json!({"action":"models.list","requestId":""}),
+        ] {
+            assert!(Toolkit::APP
+                .call(&grant(74), "app_call", arguments)
+                .is_err());
+        }
         assert!(rx.try_recv().is_err());
     }
 }

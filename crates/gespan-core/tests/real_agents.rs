@@ -1,0 +1,237 @@
+//! The tool endpoint against the agent CLIs installed on this machine. Each
+//! turn is a real, billed model call, so these run only when asked:
+//!
+//! `cargo test --test real_agents -- --ignored --nocapture --test-threads=1`
+use gespan_core::{
+    agent::{AccessMode, Settings},
+    provider::{self, Event, Kind, Request},
+    tool_servers::{Mount, APP, VISUAL},
+    visual_bridge,
+};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::{atomic::AtomicBool, Arc},
+};
+
+fn installed(binary: &str) -> PathBuf {
+    let path = std::env::var_os("PATH").expect("PATH");
+    std::env::split_paths(&path)
+        .map(|folder| folder.join(binary))
+        .find(|candidate| candidate.exists())
+        .unwrap_or_else(|| panic!("{binary} is not installed"))
+}
+
+fn mount(session: i64, cwd: &Path, toolkits: &[&str]) -> Mount {
+    Mount {
+        session,
+        worktree: cwd.to_owned(),
+        toolkits: toolkits
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>(),
+    }
+}
+
+#[derive(Default)]
+struct Turn {
+    text: String,
+    tools: Vec<String>,
+    outputs: Vec<String>,
+    provider_id: Option<String>,
+    process: Option<u32>,
+}
+
+fn turn(
+    kind: Kind,
+    binary: &Path,
+    cwd: &Path,
+    model: Option<&str>,
+    provider_id: Option<String>,
+    mount: Mount,
+    prompt: &str,
+) -> Turn {
+    let _visual = visual_bridge::Server::start(mount.session).unwrap();
+    gespan_core::tool_servers::refresh(&mount);
+    let settings = Settings {
+        access: AccessMode::FullAccess,
+        mount: Some(mount.clone()),
+        ..Default::default()
+    };
+    let request = Request {
+        kind,
+        binary: binary.to_owned(),
+        cwd: cwd.to_owned(),
+        prompt: prompt.to_owned(),
+        provider_id,
+        model: model.map(str::to_owned),
+        settings,
+    };
+    let mut seen = Turn::default();
+    let (_controls, receiver) = std::sync::mpsc::channel();
+    gespan_core::process::owned_by(mount.session, || {
+        provider::run_with_controls(
+            request,
+            Arc::new(AtomicBool::new(false)),
+            Some(receiver),
+            |events| {
+                seen.process = gespan_core::process::agents()
+                    .iter()
+                    .find(|agent| agent.session == mount.session)
+                    .map(|agent| agent.pid)
+                    .or(seen.process);
+                for event in events {
+                    match event {
+                        Event::Text(text) => seen.text.push_str(&text),
+                        Event::Tool(tool) => {
+                            seen.tools.push(tool.name.clone());
+                            seen.outputs.push(tool.output.clone());
+                        }
+                        Event::SessionId(id) => seen.provider_id = Some(id),
+                        _ => {}
+                    }
+                }
+                Ok(())
+            },
+        )
+    })
+    .unwrap_or_else(|error| panic!("{kind:?} turn failed: {error}"));
+    eprintln!(
+        "{kind:?}: tools {:?}\n{kind:?}: said {}",
+        seen.tools, seen.text
+    );
+    seen
+}
+
+const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP. Then reply with only the word DONE and the number that command printed.";
+
+fn check_reach(seen: &Turn) {
+    assert!(
+        seen.tools.iter().any(|name| name.contains("visual_docs")),
+        "{:?}",
+        seen.tools
+    );
+    assert!(seen.text.contains("DONE"), "{}", seen.text);
+    assert!(
+        seen.text.contains('0'),
+        "the agent's own shell found the credential: {}",
+        seen.text
+    );
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn claude_reaches_the_tools_and_its_shell_cannot_find_the_token() {
+    let folder = tempfile::tempdir().unwrap();
+    let seen = turn(
+        Kind::Claude,
+        &installed("claude"),
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        mount(900_001, folder.path(), &[VISUAL]),
+        REACH,
+    );
+    check_reach(&seen);
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn a_tool_added_to_a_kept_alive_claude_arrives_without_a_restart() {
+    let folder = tempfile::tempdir().unwrap();
+    let binary = installed("claude");
+    let session = 900_002;
+    provider::configure_idle_agents(1);
+    let first = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        mount(session, folder.path(), &[VISUAL]),
+        "Reply with only the word READY, and the number of tools whose name contains app_help.",
+    );
+    let (_dispatcher, _calls) = gespan_core::pilot::bridge::Server::start().unwrap();
+    let second = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        first.provider_id.clone(),
+        mount(session, folder.path(), &[VISUAL, APP]),
+        "A tool named app_help should be available to you now. Call it, then reply with only the word DONE.",
+    );
+    assert!(first.process.is_some());
+    assert_eq!(first.process, second.process, "the process was restarted");
+    assert!(
+        second.tools.iter().any(|name| name.contains("app_help")),
+        "{:?}: {}",
+        second.tools,
+        second.text
+    );
+}
+
+#[test]
+#[ignore = "a real, billed Codex turn"]
+fn codex_reaches_the_tools_and_its_shell_cannot_find_the_token() {
+    let folder = tempfile::tempdir().unwrap();
+    let seen = turn(
+        Kind::Codex,
+        &installed("codex"),
+        folder.path(),
+        None,
+        None,
+        mount(900_003, folder.path(), &[VISUAL]),
+        REACH,
+    );
+    check_reach(&seen);
+}
+
+#[test]
+#[ignore = "a real, billed Codex turn"]
+fn a_resumed_codex_thread_keeps_the_tools() {
+    let folder = tempfile::tempdir().unwrap();
+    let binary = installed("codex");
+    let session = 900_004;
+    let first = turn(
+        Kind::Codex,
+        &binary,
+        folder.path(),
+        None,
+        None,
+        mount(session, folder.path(), &[VISUAL]),
+        "Reply with only the word READY.",
+    );
+    gespan_core::process::shutdown_all();
+    let second = turn(
+        Kind::Codex,
+        &binary,
+        folder.path(),
+        None,
+        first.provider_id,
+        mount(session, folder.path(), &[VISUAL]),
+        "Call the visual_docs tool, then reply with only the word DONE.",
+    );
+    assert!(
+        second.tools.iter().any(|name| name.contains("visual_docs")),
+        "{:?}: {}",
+        second.tools,
+        second.text
+    );
+}
+
+#[test]
+#[ignore = "a real, billed Kiro turn"]
+fn kiro_reaches_the_tools_over_http_and_its_shell_cannot_find_the_token() {
+    let folder = tempfile::tempdir().unwrap();
+    let seen = turn(
+        Kind::Kiro,
+        &installed("kiro-cli"),
+        folder.path(),
+        None,
+        None,
+        mount(900_005, folder.path(), &[VISUAL]),
+        REACH,
+    );
+    check_reach(&seen);
+}

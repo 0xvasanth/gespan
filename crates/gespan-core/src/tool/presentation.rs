@@ -319,11 +319,14 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     shown.target = shown.target.lines().next().unwrap_or("").into();
     shown
 }
-/// The app's own ticket and card tools, as Claude (`mcp__server__tool`) and
-/// Codex (`server:tool`) name them.
+/// The app's own ticket and card tools, as Claude (`mcp__server__tool`), Codex
+/// (`server:tool`) and Kiro (`@server/tool`) name them.
 fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
     let tool = name
-        .strip_prefix("mcp__gespan_ticket__")
+        .strip_prefix("mcp__gespan__")
+        .or_else(|| name.strip_prefix("gespan:"))
+        .or_else(|| name.strip_prefix("@gespan/"))
+        .or_else(|| name.strip_prefix("mcp__gespan_ticket__"))
         .or_else(|| name.strip_prefix("gespan_ticket:"))?;
     let target = string(input, &["target"]);
     let (action, target) = match tool {
@@ -354,15 +357,17 @@ pub enum VisualStep {
 }
 
 /// Recognizes Gespan's visual tools however a provider names an MCP tool:
-/// `visual_show`, `gespan_visual:visual_show`,
-/// `mcp__gespan_visual__visual_show` or `gespan_visual.visual_show`.
+/// `visual_show`, `gespan:visual_show`, `mcp__gespan__visual_show`,
+/// `@gespan/visual_show` or, from earlier sessions,
+/// `gespan_visual:visual_show` and `mcp__gespan_visual__visual_show`.
 pub fn visual_tool(name: &str) -> Option<VisualStep> {
     let (server, tool) = name
         .rsplit_once("__")
         .or_else(|| name.rsplit_once(':'))
         .or_else(|| name.rsplit_once('.'))
+        .or_else(|| name.rsplit_once('/'))
         .unwrap_or(("", name));
-    if !server.is_empty() && !server.contains("gespan_visual") {
+    if !server.is_empty() && !server.contains("gespan") {
         return None;
     }
     match tool {
@@ -871,7 +876,13 @@ mod tests {
             let shown = call(name, input).presentation();
             (shown.action, shown.target)
         };
-        for prefix in ["mcp__gespan_ticket__", "gespan_ticket:"] {
+        for prefix in [
+            "mcp__gespan__",
+            "gespan:",
+            "@gespan/",
+            "mcp__gespan_ticket__",
+            "gespan_ticket:",
+        ] {
             let name = |tool: &str| format!("{prefix}{tool}");
             assert_eq!(
                 shown(&name("ticket_comment"), json!({"body":"Fixed in abc"})),
@@ -902,7 +913,13 @@ mod tests {
             let shown = call(name, input).presentation();
             (shown.action, shown.target)
         };
-        for prefix in ["mcp__gespan_ticket__", "gespan_ticket:"] {
+        for prefix in [
+            "mcp__gespan__",
+            "gespan:",
+            "@gespan/",
+            "mcp__gespan_ticket__",
+            "gespan_ticket:",
+        ] {
             let name = |tool: &str| format!("{prefix}{tool}");
             assert_eq!(
                 shown(&name("card_subtasks"), json!({})),
@@ -1061,6 +1078,9 @@ mod visual_tests {
             "gespan_visual:visual_show",
             "mcp__gespan_visual__visual_show",
             "gespan_visual.visual_show",
+            "gespan:visual_show",
+            "mcp__gespan__visual_show",
+            "@gespan/visual_show",
         ] {
             assert_eq!(visual_tool(name), Some(VisualStep::Show), "{name}");
         }

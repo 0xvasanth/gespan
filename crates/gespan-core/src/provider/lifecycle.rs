@@ -2,6 +2,18 @@
 use super::*;
 static CONTROL_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// The control request that mounts the tool endpoint.
+pub(super) const CLAUDE_MCP: &str = "native-mcp";
+const CLAUDE_MCP_WAIT: Duration = Duration::from_secs(15);
+
+/// Where a new Claude process stands with the tool endpoint.
+#[derive(Default)]
+pub(super) enum ClaudeMcp {
+    #[default]
+    Settled,
+    Waiting(Instant),
+}
+
 impl Protocol {
     pub(super) fn codex_elicitation(
         &mut self,
@@ -37,8 +49,18 @@ impl Protocol {
         Ok(())
     }
 
+    /// Mounts the tool endpoint first, so the prompt's turn can use it. Over
+    /// the control channel, the token reaches neither argv nor env.
     pub(super) fn claude_prompt(&mut self, stdin: &mut impl Write) -> Result<(), String> {
         if self.claude_prompt_sent {
+            return Ok(());
+        }
+        if let Some(access) = self.access.take() {
+            write_json(stdin, access.claude_control(CLAUDE_MCP))?;
+            self.claude_mcp = ClaudeMcp::Waiting(Instant::now());
+            return Ok(());
+        }
+        if matches!(self.claude_mcp, ClaudeMcp::Waiting(_)) {
             return Ok(());
         }
         let prompt = if self.request.settings.effort.as_deref() == Some("ultrathink") {
@@ -60,11 +82,37 @@ impl Protocol {
         Ok(())
     }
 
+    pub(super) fn claude_mcp_answered(
+        &mut self,
+        response: &Value,
+        stdin: &mut impl Write,
+    ) -> Result<(), String> {
+        if response["subtype"] != "success" {
+            let error = response["error"].as_str().unwrap_or("no detail");
+            tracing::warn!(error, "Claude refused the tool endpoint");
+        }
+        self.claude_mcp = ClaudeMcp::Settled;
+        self.claude_prompt(stdin)
+    }
+
+    /// A CLI that never answers still gets its prompt, with no tools.
+    fn claude_mcp_tick(&mut self, stdin: &mut impl Write) -> Result<(), String> {
+        if let ClaudeMcp::Waiting(since) = self.claude_mcp {
+            if since.elapsed() >= CLAUDE_MCP_WAIT {
+                tracing::warn!("Claude did not answer the tool endpoint request");
+                self.claude_mcp = ClaudeMcp::Settled;
+                self.claude_prompt(stdin)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn lifecycle_tick(
         &mut self,
         started: Instant,
         stdin: &mut impl Write,
     ) -> Result<Vec<Event>, String> {
+        self.claude_mcp_tick(stdin)?;
         let mut events = self.expire_questions(stdin)?;
         if self.request.kind.is_acp() {
             events.extend(self.acp_tick(stdin)?);

@@ -120,6 +120,9 @@ fn action(block: &Value) -> Option<String> {
         return None;
     }
     let meta = &block["tool"];
+    if let Some(action) = tool_action(meta) {
+        return Some(action);
+    }
     let command = if meta["preview"]["kind"] == "shell" {
         meta["preview"]["title"].as_str()
     } else {
@@ -129,6 +132,19 @@ fn action(block: &Value) -> Option<String> {
     .or(block["text"].as_str())?;
     command_action(command)
 }
+/// The action of an `app_call` tool, for agents on the tool endpoint.
+fn tool_action(tool: &Value) -> Option<String> {
+    let name = tool["name"].as_str()?;
+    if name != "app_call" && !name.ends_with("__app_call") && !name.ends_with(":app_call") {
+        return None;
+    }
+    let input = match &tool["input"] {
+        Value::String(text) => serde_json::from_str(text).ok()?,
+        input => input.clone(),
+    };
+    input["action"].as_str().map(str::to_owned)
+}
+
 /// Recognize the app CLI itself, including the desktop shell wrapper.
 pub fn command_action(command: &str) -> Option<String> {
     let mut parts = words(command.trim())?;
