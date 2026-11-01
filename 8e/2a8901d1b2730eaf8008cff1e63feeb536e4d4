@@ -1,0 +1,60 @@
+docs/native/mcp-hub.md
+  s_92be0b300595dd::t_dc9cfeefbe5840 52,54,56
+crates/gespan-gpui/src/settings/widgets.rs
+  s_92be0b300595dd::t_d10725c5441df1 414
+crates/gespan-core/src/mcp_catalog.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 60-62,244-248,282,288,292,301-306,310-314,758-811
+  s_92be0b300595dd::t_162f19eac0465e 812
+crates/mcp-hub/src/oauth.rs
+  s_92be0b300595dd::t_142f8518bc848f 228
+crates/gespan-core/src/mcp.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 444-450,848-866
+  s_92be0b300595dd::t_835efe4098100d 867
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_92be0b300595dd::t_4232bb850367b1 339-340,342
+  s_92be0b300595dd::t_69e1ff783cc621 296,319-336,357-371,375-497
+  s_92be0b300595dd::t_d10725c5441df1 297-300,372-374
+  s_92be0b300595dd::t_72ad102a991603 318,498
+crates/mcp-hub/src/relay.rs
+  s_92be0b300595dd::t_958dc05649dd92 282
+crates/gespan-core/tests/live_catalogue.rs
+  s_92be0b300595dd::t_d5221bcb9ee0f4 53,55
+  s_92be0b300595dd::t_dc9cfeefbe5840 1-52,54,56-124
+crates/gespan-core/tests/real_agents.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 203-213,406-407,457-458
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  s_92be0b300595dd::t_142f8518bc848f 238-243
+  s_92be0b300595dd::t_69e1ff783cc621 71-72,79,244-248,250,252,262-269,359-392,467,471,475-477,486,492,494-499,533-538,610,718,746
+  s_92be0b300595dd::t_d10725c5441df1 824
+crates/gespan-core/src/mcp_registry.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 6,10-11,62-93,95-96,102-103,106-109,112-124,128,162-166,191-195,206,293,299-435
+  s_92be0b300595dd::t_bd41a6e5f0e237 436
+crates/gespan-core/src/resources.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 238-240,442-447
+crates/gespan-core/src/tool_servers.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 80-83,89,101,103,232,559-575
+  s_92be0b300595dd::t_0d7185eb869aad 576-577
+crates/gespan-gpui/src/input.rs
+  s_92be0b300595dd::t_69e1ff783cc621 263-267
+crates/gespan-gpui/src/settings/mod.rs
+  s_92be0b300595dd::t_69e1ff783cc621 257-258,415
+crates/mcp-hub/src/pool.rs
+  s_92be0b300595dd::t_dc9cfeefbe5840 26-28,204-207,664-675,745-769
+  s_92be0b300595dd::t_9e0facf06ed6c7 770
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e2a8901d1b2730eaf8008cff1e63feeb536e4d4",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
