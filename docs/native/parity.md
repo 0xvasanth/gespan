@@ -8,10 +8,12 @@ establish runtime or platform parity with the production React/Tauri app. See
 
 Tauri is removed once every item below is ticked (epic #217). The list comes
 from a feature-by-feature audit of `src/` and `src-tauri/` against
-`crates/gespan-gpui` and `crates/gespan-core` on October 29, at `0fb4a5eb`.
-Each item names the Tauri code to port from. Items marked *(also below)* are
-also in the verification tables further down. Take them one PR at a time, and
-tick the box in the same PR.
+`crates/gespan-gpui` and `crates/gespan-core` on October 29, at `0fb4a5eb`, and
+was re-checked against the code on November 1, at `f9d51552`. A ticked item is in
+the code; it may not have been tried by hand on every platform. Each item names
+the Tauri code to port from. Items marked *(also below)* are also in the
+verification tables further down. Take them one PR at a time, and tick the box
+in the same PR.
 
 ### Windows, menus and app lifecycle
 
@@ -42,25 +44,40 @@ tick the box in the same PR.
 
 - [x] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`. Done in #261.
 - [x] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`. Done in #264.
-- [ ] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Native runs a fixed plan and reports to the lead at the end. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`.
-- [ ] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). *(also below)*
-- [ ] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). *(also below)*
+- [x] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`. Done in #277.
+- [x] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). Done in #277.
+- [x] **Resume a run after restart.** Tauri: `orchestration.ts` (`control_save`, `hydrate`). Done in #277.
 - [x] **`app` CLI `ticket.*` and `card.*` actions.** Native offers these as MCP tools only. Tauri: `src-tauri/src/control_cli.rs`. Done in #259.
 
 ### Inbox and notes
 
 - [x] **Ask panel next to an inbox item.** *(done in #266)* A resizable side chat with Restart and Close. Tauri: `src/features/inbox/ui/InboxDiscussionPanel.tsx`.
-- [x] **CI repair.** *(done in #266; remote projects need #263 for job details and rerun)* Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`. *(also below)*
+- [x] **CI repair.** *(done in #266; remote projects need #263 for job details and rerun)* Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`.
 - [x] **Hunks / Full switch on the PR diff.** The core already supports it. Tauri: `src/features/inbox/ui/InboxView.tsx`. Done in #245.
 - [x] **Inbox right-click menu in the sidebar and rail.** Mark all as read, mute every project for a set time, and a notification settings link. Tauri: `src/features/inbox/ui/InboxNotificationMenu.tsx`. Done in #245.
-- [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`. *(also below)*
+- [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`.
 - [x] **Hide updates caused by your own actions.** No unread mark or notification for an update you made yourself. Tauri: `src/features/inbox/model/inboxSelfActivity.ts`. Done in #245.
-- [x] **Inbox item card and note card** in the composer and transcript. *(done in #250)* Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`. *(also below)*
+- [x] **Inbox item card and note card** in the composer and transcript. *(done in #250)* Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`.
 
 ### Pilots and board
 
-- [ ] **"Meet Pilots" card on the rail** when you have no Pilots, with a Show pilots switch. Tauri: `src/features/pilots/ui/PilotIntro.tsx`.
-- [ ] **Board items where Native lags.** These come from the Known differences table in [Board details](#board-details): Alt+↑/↓ to reorder subtasks, keyboard focus on list and table rows, a template picker on the empty board, and Pick a date on the card face.
+- [x] **"Meet Pilots" card on the rail** when you have no Pilots, with a Show pilots switch. Tauri: `src/features/pilots/ui/PilotIntro.tsx`. Done in #277.
+- [x] **Board items where Native lags.** These come from the Known differences table in [Board details](#board-details): Alt+↑/↓ to reorder subtasks, keyboard focus on list and table rows, a template picker on the empty board, and Pick a date on the card face. Done in #277.
+
+### Still missing
+
+Found by the November 1 re-check. Native has none of these yet.
+
+- [ ] **HTML panels on Windows and Linux.** Native renders them on macOS and shows a text fallback elsewhere. Tauri: `src/features/artifacts/ui/HtmlArtifactFrame.tsx`. Native: `crates/gespan-gpui/src/pilots/html.rs`. *(also below)*
+- [ ] **Checkpoints for Pilot sessions.** Undo and Keep need them, and Native records none for Pilots. Tauri: `src/features/sessions/model/checkpoint.ts`.
+- [ ] **Separate Pilot commit and push.** Native does both in one step. Tauri: `src/features/pilots/ui/PilotProjectCommit.tsx`.
+- [ ] **Stash and switch on remote projects.** Native stashes for local projects only. Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
+- [ ] **Generate a commit message when switching branches.** Native's commit and switch has no generate button. Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
+- [ ] **Follow a moved project folder while running.** Native checks at launch and when a folder opens. Tauri also checks on send. Tauri: `src/features/projects/model/projectLocation.ts`.
+- [ ] **Cursor subagent details in older sessions.** Sessions saved before #250 are not backfilled when reopened. Tauri: `src-tauri/src/cursor_store.rs`.
+
+Different on purpose: inline video plays in place in Tauri and opens the file
+viewer from a play card in Native, because GPUI can't play video in place.
 
 ### Files, source control and skills
 
@@ -69,20 +86,20 @@ tick the box in the same PR.
 - [x] **Explorer → Open in Terminal.** Tauri: `src/features/files/ui/FileTree.tsx`. Done in #245.
 - [x] **Stash and switch, or commit and switch,** when a branch change would overwrite local changes. *(done in #250; Tauri's generate-commit-message button and stashing on remote projects are not ported yet)* Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`, `BranchPicker.tsx`.
 - [x] **Resizable history graph.** Drag to resize, double-click to reset. Tauri: `src/features/source-control/ui/GitHistoryGraph.tsx`. Not needed: Native shows history as a full-height tab, not a graph under Changes.
-- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250; Native still records no checkpoints for Pilot sessions, and its Pilot commit-and-push is one step)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`. *(also below)*
+- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250; Native still records no checkpoints for Pilot sessions, and its Pilot commit-and-push is one step)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [x] **New skill from the composer's / picker.** *(done in #250)* Tauri: `src/features/skills/ui/SkillPicker.tsx`.
 
 ### Settings
 
 - [x] **Appearance → Transparent window and Blur radius.** Native stores the transparency setting but shows no row for it, and its blur is fixed. Tauri: `src/features/settings/ui/SettingsView.tsx`. Done in #268.
-- [ ] **Appearance → collapsed project rail set to Hidden.** Native retired this on purpose. Decide whether to keep that, and remove the row from settings search (`crates/gespan-gpui/src/settings/model.rs`) if so.
+- [x] **Appearance → collapsed project rail set to Hidden.** Native retired this on purpose. Decide whether to keep that, and remove the row from settings search (`crates/gespan-gpui/src/settings/model.rs`) if so. Kept retired: the row is gone from settings search, and a test holds it there.
 - [x] **Keybindings list.** Add App: Hold Everything and the Board rows. Tauri: `src/features/settings/model/settings.ts`. Done in #245.
 - [x] **Inbox connection forms in Settings** for GitLab, Azure DevOps, Linear (including team picking), Jira and Plane. Native sends you to the Inbox flow. Tauri: `SettingsView.tsx`. Done in #275.
 
 ### Distribution and updates
 
-- [ ] **Move existing Tauri installs to Native.** Tauri (`dev.gespan.desktop`) and Native (`dev.gespan.native`) use separate app IDs and update feeds, and Native's updater refuses the other one.
-- [ ] **Stable channel and fixed download links.** Native publishes only prereleases: the `native-latest` feed on GitHub and `native-preview` on R2. #231 removed the Tauri release workflow, so nothing publishes a stable channel or copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root any more. Port from `.github/workflows/release.yml` as it was before #231 (`ee815fab^`) and `scripts/release-channel.cjs`.
+- [x] **Move existing Tauri installs to Native.** Tauri (`dev.gespan.desktop`) and Native (`dev.gespan.native`) use separate app IDs and update feeds, and Native's updater refuses the other one. No update can do this, so the move is manual and Native opens the data Tauri left. See [Moving from Tauri Gespan](README.md#moving-from-tauri-gespan). Done in #277.
+- [x] **Stable channel and fixed download links.** A `vX.Y.Z` tag publishes the stable feed and copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root. Port from `.github/workflows/release.yml` as it was before #231 (`ee815fab^`) and `scripts/release-channel.cjs`. Done in #277.
 - [x] **CI builds and checks the GUI on Windows and Linux.** *(also below)* Done in #219.
 
 ### Tauri fixes not yet in Native
@@ -94,16 +111,16 @@ Bug fixes that landed in the Tauri app after Native was copied in on
 - [x] **`CLAUDE_CODE_OAUTH_TOKEN` for the default Claude account.** Tauri prefers a set token for the signed-in identity and for usage polling. Native never reads it. Tauri: `2f4d01b9`, `809fc012`. Native: `crates/gespan-core/src/accounts/identity.rs`, `crates/gespan-core/src/usage/claude.rs`. Done in #245.
 - [x] **Claude Code 2.1 task tools in the todo panel.** Claude Code replaced TodoWrite with TaskCreate and TaskUpdate. Tauri builds the task list from them and keeps it across resume. Native shows no todo panel for Claude sessions. Tauri: `2cfc1788`. Native: `crates/gespan-core/src/tool/tasks.rs`, `crates/gespan-core/src/provider/tasks.rs`. Done in #245.
 - [x] **Codex plugin skills.** Tauri lists enabled plugin skills through Codex's `skills/list`. Native only scans skill folders. Tauri: `221007a3`. Native: `crates/gespan-core/src/skills.rs`. Done in #245.
-- [ ] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Native only removes worktrees from Settings → Worktrees. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`.
-- [ ] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Native only runs `gh repo view` in a local folder. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`.
-- [ ] **Check, then port if needed:** an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`). The inline subagent fix (`6b313ab9`) is done in #255, Claude shell commands restored in saved transcripts (`f028d9e6`) in #269, and Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`) with the plan card in #245.
+- [x] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`. Done in #277.
+- [x] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`. Done in #277.
+- [x] **Check, then port if needed:** an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`). The inline subagent fix (`6b313ab9`) is done in #255, Claude shell commands restored in saved transcripts (`f028d9e6`) in #269, and Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`) with the plan card in #245. The earlier-answer fix (`8b3e38e1`) is done in #277.
 
 ### Before deleting `src/` and `src-tauri/`
 
 These are not features. They are dependencies that break if the folders are
 deleted as they are now.
 
-- [ ] **The remote host is built from `src/`.** `host/*.ts` imports 49 modules from `../src/` (connection protocol, harness, providers, sessions). Native's SSH setup installs that host.
+- [x] **The remote host is built from `src/`.** `host/*.ts` imports 49 modules from `../src/` (connection protocol, harness, providers, sessions). Native's SSH setup installs that host. Done in #277.
 - [x] **Only the Tauri release publishes host packages.** Done in #231: `native-release.yml` has the `host` job, and `release.yml` is gone.
 - [x] **Native packaging uses files in `src-tauri/`.** `scripts/bundle-native-macos.sh` (icon.icns, Entitlements.plist), `scripts/package-native.mjs` and `crates/gespan-gpui/build.rs` (icon.ico). Done in #254.
 - [x] **Native tests read Tauri and `src/` sources.** `include_str!` in `crates/gespan-core/src/store/shared/tests.rs`, `crates/gespan-core/src/provider/kind.rs` and `crates/gespan-gpui/src/editor_analysis.rs`. Done in #258.
@@ -143,13 +160,13 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | --- | --- |
 | Chat | Live attachment/steering/rewind checks, complete keyboard selection and screen-reader navigation, richer nested task artifacts and provider-specific task controls |
 | History and workspace | Transcript/database paging, cache runtime checks, remaining desktop layout consumers, explicit import/export |
-| Files and Git | Platform visual/IME checks, Linux/Windows media hosting, non-Git checkpoints, per-file checkpoint Undo/Keep and orchestration checkpoint integration |
+| Files and Git | Platform visual/IME checks and Linux/Windows media hosting |
 | Accounts and settings | Live OAuth/MCP authentication checks and remaining platform-specific settings behavior |
-| Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
-| Notes | Runtime/visual checks and composer note-card presentation |
+| Inbox | Runtime/visual checks and linked-update notices |
+| Notes | Runtime/visual checks |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
 | Board | Runtime/visual checks in `bun run native:dev` and the Tauri app. Both apps read and write the same board tables, so boards, cards and everything on them show in both. Details and known differences are listed under the table in [Board details](#board-details) |
-| Pilots | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
+| Pilots | Existing-data checks, HTML accessibility and floating-document interactions |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |
 | Shared data | Concurrent Tauri/native use with active scheduled tasks or phone connections remains unverified and deferred |
@@ -205,10 +222,8 @@ Known differences:
 | Area | Native | Tauri |
 |---|---|---|
 | "Open cards in" setting | Board header menu (setting `board-card-open`) | Settings → General (flag `gespan.boardCardOpen`) |
-| Subtask reorder | Menu only (Move up, Move down) | Menu, plus Alt+↑ and Alt+↓ |
 | Keyboard dragging | Space lifts, arrows move, Space or Enter drops, Escape cancels | Same keys, through dnd-kit |
 | Collapsed column strip | Stacks the letters one per line (first 18 characters) | Rotates the text (vertical writing mode) |
-| "Pick a date…" on a card face | Opens the drawer's date picker | Shows a date field in the menu |
 | Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
 | "Running" filter and chip | Counts sessions waiting for input; the chip says waiting | Same |
 | Cost | No data source; stays empty | Same |
@@ -217,13 +232,11 @@ Known differences:
 | Ticket chips on remote sessions | Don't show the ticket's title and status | Same |
 | Quick edits on the card face | Not undoable (moves, sorts, archives and deletes are) | Same |
 | PR state | Known only for the current branch's PR, otherwise "unknown"; remote workspaces show "unknown" | Same |
-| List and table rows | Rows have no keyboard focus | Rows are focusable |
 | Swimlane card in two lanes | Focus follows the card by id (its first appearance); arrows skip the other copy | Focus follows the copy that has focus |
 | A reload moves the focused card to another lane | Focus stays on the card | Focus passes to a neighbour in the old cell |
 | Header "Move cards to…" before Delete column | Moves the cards, then deletes the column as two separate writes; not atomic and no Undo | Moves, then deletes, in two steps; no Undo |
 | Keyboard drag in swimlanes | Steps one lane at a time | Hops between lane headers' drop targets |
 | "New session from ticket…" | Asks for the ticket, then opens a new session linked to it and drafts its key | Same, but the session is saved with its first message |
-| Creating a board from a template | In the switcher; no empty-state creation | Also from the empty state |
 
 ## Platform and distribution
 
@@ -237,14 +250,12 @@ This covered launch and basic UI interaction, not live provider requests or
 installation/upgrades of the downloadable Linux x64 packages. Windows GUI
 execution remains unverified.
 
-On Linux and Windows, HTML panels currently use a text fallback, native
-notification delivery is unavailable, and media hosting still needs platform support.
-Windows close-to-tray behavior also needs implementation/verification.
+On Linux and Windows, HTML panels currently use a text fallback, and media hosting
+still needs platform support. Windows close-to-tray behavior needs verification.
 Desktop webview preferences (theme, projects, model defaults, and related
 settings) are read from the installed app on Linux as well as macOS. The Windows
 WebView2 reader has synthetic fixture coverage on Linux; real Windows profile
 compatibility and Windows execution remain unverified. The reader opens only a
 temporary copy; copying an actively written profile is best-effort.
 
-The preview workflow checks core on macOS, Linux and Windows, but checks/builds
-the GUI only on macOS.
+CI checks core and the GUI on macOS, Linux and Windows.
