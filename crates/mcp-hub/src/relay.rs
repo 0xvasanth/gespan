@@ -161,6 +161,23 @@ impl Link {
         Ok(request)
     }
 
+    /// Sends, and if the server turns down a held token that may have gone
+    /// stale, asks for a fresh one and sends once more.
+    #[allow(clippy::result_large_err)] // ureq's error is the one it returns.
+    fn with_fresh_token(
+        &self,
+        send: impl Fn() -> Result<Result<ureq::Response, ureq::Error>, String>,
+    ) -> Result<Result<ureq::Response, ureq::Error>, String> {
+        let sent = send()?;
+        if let (Err(ureq::Error::Status(401, _)), Credential::Source(source)) =
+            (&sent, &self.credential)
+        {
+            source.forget();
+            return send();
+        }
+        Ok(sent)
+    }
+
     /// One message out, and everything the hub answers it with, until the
     /// reply to its own id. Notifications have no reply to wait for; a request
     /// whose reply never came is an error, or its caller would wait forever.
@@ -172,15 +189,7 @@ impl Link {
                 .map(|request| request.set("Content-Type", "application/json"))
                 .map(|request| request.send_string(&body))
         };
-        let mut sent = send()?;
-        // A held token may have gone stale; ask for a fresh one once.
-        if let (Err(ureq::Error::Status(401, _)), Credential::Source(source)) =
-            (&sent, &self.credential)
-        {
-            source.forget();
-            sent = send()?;
-        }
-        let response = match sent {
+        let response = match self.with_fresh_token(send)? {
             Ok(response) => response,
             Err(ureq::Error::Status(401, _)) => {
                 return Err("This server needs a sign-in".to_owned());
@@ -272,10 +281,11 @@ fn write_line(output: &Mutex<impl Write>, message: &Value) -> Result<(), String>
 /// Reads the server-to-client stream, so a changed tool list reaches the agent.
 fn listen(link: Link, output: Arc<Mutex<impl Write + Send + 'static>>) {
     thread::spawn(move || {
-        let Ok(response) = link
-            .request_on(&link.listener, "GET")
-            .and_then(|request| request.call().map_err(|error| error.to_string()))
-        else {
+        let opened = link.with_fresh_token(|| {
+            link.request_on(&link.listener, "GET")
+                .map(|request| request.call())
+        });
+        let Ok(Ok(response)) = opened else {
             return;
         };
         let _ = read_events(response.into_reader(), |event| {

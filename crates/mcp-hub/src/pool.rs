@@ -234,6 +234,24 @@ impl Pool {
         }
     }
 
+    /// Stops a server's processes and forgets its lists, so the next call
+    /// starts over. For what changed outside its spec, such as a sign-in.
+    pub(crate) fn restart(&self, server: &str) {
+        relock(&self.lists).retain(|(id, _), _| id != server);
+        let stopped: Vec<_> = {
+            let mut running = relock(&self.running);
+            let keys: Vec<_> = running
+                .keys()
+                .filter(|key| key.server == server)
+                .cloned()
+                .collect();
+            keys.iter().filter_map(|key| running.remove(key)).collect()
+        };
+        for upstream in stopped {
+            upstream.shut();
+        }
+    }
+
     fn current(&self, key: &Key) -> bool {
         relock(&self.specs)
             .get(&key.server)
@@ -678,7 +696,7 @@ impl Events for PoolEvents {
         let mut running = relock(&pool.running);
         if running
             .get(&self.key)
-            .is_some_and(|current| current.pid == upstream.pid)
+            .is_some_and(|current| Arc::ptr_eq(current, upstream))
         {
             running.remove(&self.key);
             drop(running);

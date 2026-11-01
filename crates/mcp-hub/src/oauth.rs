@@ -2,8 +2,8 @@
 //! with PKCE, discovery and refresh left to the SDK. Tokens stay with the host
 //! and the hub. No agent ever receives one, since agents only talk to the hub.
 use rmcp::transport::auth::{
-    AuthError, AuthorizationManager, AuthorizationRequest, AuthorizationSession, CredentialStore,
-    StoredCredentials,
+    AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
+    AuthorizationSession, CredentialStore, StoredCredentials,
 };
 use std::{
     io::{BufRead, BufReader, Write},
@@ -61,6 +61,31 @@ async fn manager(url: &str, store: Arc<dyn TokenStore>) -> Result<AuthorizationM
     Ok(manager)
 }
 
+/// A token sent to this address can't be read on the way.
+pub fn safe_for_tokens(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| match url.scheme() {
+        "https" => true,
+        "http" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
+        _ => false,
+    })
+}
+
+/// A server names where sign-in goes, so that has to be as safe as the server.
+fn safe_endpoints(metadata: &AuthorizationMetadata) -> bool {
+    [
+        Some(&metadata.authorization_endpoint),
+        Some(&metadata.token_endpoint),
+        metadata.registration_endpoint.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|endpoint| safe_for_tokens(endpoint))
+}
+
+const TIMED_OUT: &str = "The sign-in timed out";
+/// How long one stray connection to the redirect port can hold it up.
+const REQUEST_WAIT: Duration = Duration::from_secs(5);
+
 const SIGNED_IN: &str = "<!doctype html><title>Signed in</title><p>Signed in. You can close this tab and go back to the app.</p>";
 
 /// Waits for the browser to come back to the loopback redirect, and returns
@@ -72,16 +97,20 @@ fn await_redirect(listener: TcpListener, deadline: Instant) -> Result<String, St
             Ok(accepted) => accepted,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
-                    return Err("The sign-in timed out".into());
+                    return Err(TIMED_OUT.into());
                 }
                 std::thread::sleep(Duration::from_millis(25));
                 continue;
             }
             Err(error) => return Err(error.to_string()),
         };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(TIMED_OUT.into());
+        }
         stream.set_nonblocking(false).map_err(|e| e.to_string())?;
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(left.min(REQUEST_WAIT)))
             .map_err(|e| e.to_string())?;
         let mut line = String::new();
         if BufReader::new(&stream).read_line(&mut line).is_err() {
@@ -109,8 +138,8 @@ fn await_redirect(listener: TcpListener, deadline: Instant) -> Result<String, St
     }
 }
 
-/// One sign-in, with the browser opened by `open`. Blocks until the browser
-/// returns or `timeout` passes, and saves the result to `store`.
+/// One sign-in, with the browser opened by `open`. Blocks until it's done or
+/// `timeout` passes, and saves the result to `store`.
 pub fn sign_in(
     url: &str,
     client_name: &str,
@@ -118,28 +147,41 @@ pub fn sign_in(
     open: impl FnOnce(&str),
     timeout: Duration,
 ) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let redirect = format!(
         "http://{}/callback",
         listener.local_addr().map_err(|e| e.to_string())?
     );
     let runtime = runtime()?;
-    let session = runtime.block_on(async {
-        let mut manager = manager(url, store).await?;
-        let found = manager
-            .resolve_metadata_from_challenge(None)
+    let session = runtime
+        .block_on(async {
+            tokio::time::timeout(timeout, async {
+                let mut manager = manager(url, store).await?;
+                let found = manager
+                    .resolve_metadata_from_challenge(None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !safe_endpoints(&found.metadata) {
+                    return Err("This server signs in over an unsafe address".to_owned());
+                }
+                manager.set_metadata(found.metadata);
+                let request = AuthorizationRequest::new(redirect).with_client_name(client_name);
+                AuthorizationSession::new(manager, request)
+                    .await
+                    .map_err(|(_, error)| error.to_string())
+            })
             .await
-            .map_err(|e| e.to_string())?;
-        manager.set_metadata(found.metadata);
-        let request = AuthorizationRequest::new(redirect).with_client_name(client_name);
-        AuthorizationSession::new(manager, request)
-            .await
-            .map_err(|(_, error)| error.to_string())
-    })?;
+        })
+        .map_err(|_| TIMED_OUT.to_owned())??;
     open(session.get_authorization_url());
-    let returned = await_redirect(listener, Instant::now() + timeout)?;
+    let returned = await_redirect(listener, deadline)?;
+    let left = deadline.saturating_duration_since(Instant::now());
     runtime
-        .block_on(session.handle_callback_url(&returned))
+        .block_on(async {
+            tokio::time::timeout(left, session.handle_callback_url(&returned)).await
+        })
+        .map_err(|_| TIMED_OUT.to_owned())?
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -162,4 +204,41 @@ pub(crate) fn access_token(url: &str, store: Arc<dyn TokenStore>) -> Result<Stri
             .await
             .map_err(|_| NEEDS_SIGN_IN.to_owned())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpStream;
+
+    #[test]
+    fn tokens_only_travel_over_https_or_stay_on_this_machine() {
+        for url in [
+            "https://mcp.example/mcp",
+            "HTTPS://mcp.example/mcp",
+            "http://127.0.0.1:9/mcp",
+            "http://localhost:9/mcp",
+            "http://[::1]:9/mcp",
+        ] {
+            assert!(safe_for_tokens(url), "{url}");
+        }
+        for url in [
+            "http://mcp.example/mcp",
+            "http://127.0.0.1.mcp.example/mcp",
+            "ws://127.0.0.1:9/mcp",
+            "not a url",
+        ] {
+            assert!(!safe_for_tokens(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_client_that_connects_and_says_nothing_cant_outlast_the_sign_in() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _silent = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(150);
+        assert_eq!(await_redirect(listener, deadline).unwrap_err(), TIMED_OUT);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 }
