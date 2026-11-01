@@ -1,0 +1,65 @@
+crates/gespan-gpui/src/pilots/panels.rs
+  s_929eeb6c6959fd::t_094fcc7fdce60e 862-865
+  s_929eeb6c6959fd::t_5618f68a420c6f 878
+  s_929eeb6c6959fd::t_eaa495963b4d1e 750-752
+crates/gespan-gpui/src/pilots/tests.rs
+  s_929eeb6c6959fd::t_e054ec8002404e 4163-4166,4185,4201
+  s_929eeb6c6959fd::t_93cb767f447de8 2630-2654,2661,2664,2667-2668
+  s_929eeb6c6959fd::t_85b9d83d3f1558 2612,2666
+  s_929eeb6c6959fd::t_730bdea5afeab6 2607-2611,2613-2629,2655-2660,2662-2663,2665,2669-2670,4169-4184,4186-4200,4202-4205
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_929eeb6c6959fd::t_5362639865dcb0 714
+  s_929eeb6c6959fd::t_00a433e29071d8 617
+crates/gespan-gpui/src/shell/flow_view_tests.rs
+  s_929eeb6c6959fd::t_e054ec8002404e 12-15
+crates/gespan-gpui/src/shell/flow_runs.rs
+  s_929eeb6c6959fd::t_e054ec8002404e 881
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_929eeb6c6959fd::t_9f56a6588a2b96 867
+  s_929eeb6c6959fd::t_ca401b71651a14 556
+  s_929eeb6c6959fd::t_e48362e32920fd 623
+  s_666089fd138caa::t_4d749d0d3d4abb 890
+crates/gespan-gpui/src/flows/mod.rs
+  s_929eeb6c6959fd::t_ca3301ea1322f5 23-32,38-40
+  s_929eeb6c6959fd::t_364f7898df1aa2 16-22,33-37,41-47
+  s_929eeb6c6959fd::t_1d9fd2e3bd9191 3-4
+crates/gespan-gpui/src/shell.rs
+  s_929eeb6c6959fd::t_e054ec8002404e 14-15
+crates/gespan-gpui/src/shell/pilot_flows.rs
+  s_929eeb6c6959fd::t_85b9d83d3f1558 152-156,158,181
+  s_929eeb6c6959fd::t_55836b4711a066 178
+  s_929eeb6c6959fd::t_7b82198ce5a875 157,159-177,179-180,182
+crates/gespan-gpui/src/shell/classic_surface_tests.rs
+  s_929eeb6c6959fd::t_e054ec8002404e 82-85
+crates/gespan-gpui/src/shell/hidden_flows_tests.rs
+  s_929eeb6c6959fd::t_55836b4711a066 39
+  s_929eeb6c6959fd::t_437f5a47e65af6 1-38,40-100
+CHANGELOG.md
+  s_929eeb6c6959fd::t_ba756efe66e431 10-15
+crates/gespan-gpui/src/shell/app_views.rs
+  s_929eeb6c6959fd::t_0881fecc480050 612-614
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f25bf524c14ffddcc56abfe736b64697fe6547c1",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_929eeb6c6959fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a5df9e3-dfd2-45af-b5c2-46931b9cf753",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
