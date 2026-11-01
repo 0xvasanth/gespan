@@ -249,7 +249,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |
 | [Privacy](docs/privacy.md) | What is recorded locally and what never leaves your machine |
-| [Native guide](docs/desktop/README.md) | The Rust + GPUI app: building, checks and current limitations |
+| [Desktop guide](docs/desktop/README.md) | The Rust + GPUI app: building, checks and current limitations |
 
 ## Build from source
 

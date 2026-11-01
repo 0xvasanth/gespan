@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""End-to-end check of the Kiro provider in Gespan Native (macOS), with no AI.
+"""End-to-end check of the Kiro provider in Gespan (macOS), with no AI.
 
-Launches the built Gespan Native Dev app on a throwaway data dir and project,
+Launches the built Gespan Dev app on a throwaway data dir and project,
 points its Kiro provider at a deterministic ACP stub (fake-kiro-cli), then:
 
   1. presses Cmd+N for a new session (Kiro is preselected as the provider),
@@ -34,7 +34,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DEFAULT_APP = REPO / "crates/gespan-gpui/target/native-dev/Gespan Native Dev.app"
+DEFAULT_APP = REPO / "crates/gespan-gpui/target/native-dev/Gespan Dev.app"
 STUB = HERE / "fake-kiro-cli"
 STUB_REPLY = "GESPAN KIRO STUB REPLY"
 OTHER_PROVIDERS = ["codex", "claude", "cursor", "grok", "opencode", "antigravity",
@@ -261,7 +261,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--app", default=str(DEFAULT_APP), help="path to Gespan Native Dev.app")
+    parser.add_argument("--app", default=str(DEFAULT_APP), help="path to Gespan Dev.app")
     parser.add_argument("--kiro-binary", default=str(STUB),
                         help="binary Gespan launches as kiro-cli (default: the deterministic stub)")
     parser.add_argument("--timeout", type=float, default=45, help="seconds to wait for the reply")
