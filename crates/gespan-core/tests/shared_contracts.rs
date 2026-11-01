@@ -47,27 +47,6 @@ fn tauri(path: &str) -> String {
     fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
 }
 
-/// Tests must not need the Tauri app's folders, which are being removed.
-#[test]
-fn native_sources_embed_nothing_from_the_tauri_app() {
-    for (path, text) in native_sources() {
-        for line in text.lines() {
-            let embeds = line.contains("include_str!(") || line.contains("include_bytes!(");
-            assert!(
-                !(embeds && (line.contains("src-tauri") || line.contains("../src/"))),
-                "{} embeds {line}",
-                path.display()
-            );
-        }
-    }
-    for fixture in [
-        "src-tauri/src/remote_ssh.rs",
-        "src/features/sessions/model/session.ts",
-    ] {
-        assert!(!tauri(fixture).is_empty());
-    }
-}
-
 #[test]
 fn shared_db_path_is_gespan() {
     let path = gespan_core::store::gespan_database();

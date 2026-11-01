@@ -16,19 +16,14 @@ const rules = [
   [/^(CODE_OF_CONDUCT|CONTRIBUTING|README|SECURITY)\.md$/, []],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
-  // bump-version rewrites these three, and Core's Node tests run it.
-  [/^src-tauri\/(Cargo\.toml|Cargo\.lock|tauri\.conf\.json)$/, ["core"]],
-  [/^src-tauri\//, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.
   [/^crates\/gespan-gpui\/src\//, ["core", "desktop"]],
   [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch)\//, ["desktop"]],
   [/^crates\/(board-store|gespan-mcp-config|gespan-models|gespan-redact|gespan-speech|keep-awake|mcp-hub|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
   [/^vendor\//, ["core", "desktop"]],
   // Core's shared_contracts test reads these.
-  [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host", "mobile"]],
-  // mobile imports src/, and src/ re-exports host/core.
-  [/^host\//, ["host", "mobile"]],
-  [/^src\//, ["host", "mobile"]],
+  [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host"]],
+  [/^host\//, ["host"]],
   [/^(mobile|tests\/mobile)\//, ["mobile"]],
 ];
 

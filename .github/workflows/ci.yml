@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
-      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/build-rpm.test.mjs scripts/native-release.test.mjs scripts/package-native.test.mjs
+      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/native-release.test.mjs scripts/package-native.test.mjs
 
   mobile:
     name: Mobile checks

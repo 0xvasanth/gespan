@@ -25,17 +25,7 @@ test("the DMG staging image is sized from its contents with headroom", () => {
   assert.ok(dmgMegabytes(102 * MiB + 1) >= Math.ceil((102 * MiB + 1) / MiB) + 64);
 });
 
-test("Native packages from its own resources, not the Tauri app's", async () => {
-  for (const file of [
-    "scripts/bundle-native-macos.sh",
-    "scripts/package-native.mjs",
-    "scripts/native-installer.nsi",
-    "crates/gespan-gpui/build.rs",
-    "crates/gespan-gpui/src/pilots/status.rs",
-  ]) {
-    const source = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
-    assert.ok(!source.includes("src-tauri"), `${file} reads from src-tauri`);
-  }
+test("Native packages from its own resources", async () => {
   const resource = (name) =>
     readFile(new URL(`../crates/gespan-gpui/${name}`, import.meta.url));
   assert.equal(
@@ -73,7 +63,7 @@ test("Linux desktop identity resolves the bundled application icon on Wayland", 
   const icon = /^Icon=(.+)$/m.exec(desktop)?.[1];
   assert.ok(icon);
   const bundled = await readFile(join(tree, "usr/share/icons/hicolor/256x256/apps", `${icon}.png`));
-  assert.deepEqual(bundled, await readFile(new URL("../public/gespan.png", import.meta.url)));
+  assert.deepEqual(bundled, await readFile(new URL("../crates/gespan-gpui/assets/gespan.png", import.meta.url)));
   await access(join(tree, "usr/bin/gespan"));
 });
 
@@ -174,7 +164,7 @@ test("AppImage desktop registration is opt-in and launches the permanent image",
   assert.ok(entry.includes("StartupWMClass=dev.gespan.native\n"));
   assert.ok(!entry.includes(appDir));
   assert.deepEqual(await readFile(join(data, "icons/hicolor/256x256/apps/gespan.png")),
-    await readFile(new URL("../public/gespan.png", import.meta.url)));
+    await readFile(new URL("../crates/gespan-gpui/assets/gespan.png", import.meta.url)));
   const repeated = launch(["--install-desktop"]);
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.equal(await readFile(desktop, "utf8"), entry);

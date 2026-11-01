@@ -145,7 +145,7 @@ export async function linuxTree(directory, binary, kind) {
   const icons = join(directory, "usr/share/icons/hicolor/256x256/apps");
   await mkdir(icons, { recursive: true });
   await cp(
-    join(root, "public/gespan.png"),
+    join(root, "crates/gespan-gpui/assets/gespan.png"),
     join(icons, "gespan.png"),
   );
   return { app, desktop };
@@ -304,7 +304,7 @@ export async function packageNative({
       desktop.replace("Exec=gespan %F", "Exec=gespan-gpui %F"),
     );
     await cp(
-      join(root, "public/gespan.png"),
+      join(root, "crates/gespan-gpui/assets/gespan.png"),
       join(appDir, "gespan.png"),
     );
     await cp(join(root, "scripts/native-appimage-apprun.sh"), join(appDir, "AppRun"));
