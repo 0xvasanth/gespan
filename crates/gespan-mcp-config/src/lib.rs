@@ -192,13 +192,17 @@ fn with_claude_lock<T>(
     let lock = PathBuf::from(lock);
     let deadline = Instant::now() + wait;
     loop {
-        match std::fs::create_dir(&lock) {
+        let denied = match std::fs::create_dir(&lock) {
             Ok(()) => break,
-            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => {
-                return Err(error.to_string());
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+            // Windows also answers Access denied while the holder's lock is
+            // still being deleted, which looks the same as a real denial.
+            // Only a denial that outlasts the wait is real.
+            Err(error) if cfg!(windows) && error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Some(error)
             }
-            Err(_) => {}
-        }
+            Err(error) => return Err(error.to_string()),
+        };
         let stale = std::fs::metadata(&lock)
             .and_then(|lock| lock.modified())
             .ok()
@@ -208,7 +212,10 @@ fn with_claude_lock<T>(
             let _ = std::fs::remove_dir(&lock);
         }
         if Instant::now() >= deadline {
-            return Err("Claude Code is updating its config. Try again.".into());
+            return Err(denied.map_or_else(
+                || "Claude Code is updating its config. Try again.".into(),
+                |error| error.to_string(),
+            ));
         }
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -725,6 +732,85 @@ mod tests {
         release.join().unwrap();
         assert!(held);
         assert!(!lock.exists());
+    }
+
+    /// Leave `lock` the way a holder's delete leaves it for a moment on
+    /// Windows: pending until the returned handle closes.
+    #[cfg(windows)]
+    fn delete_pending(lock: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+        const FILE_SHARE_ALL: u32 = 0x0007;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+        let open = |access, flags| {
+            std::fs::OpenOptions::new()
+                .access_mode(access)
+                .share_mode(FILE_SHARE_ALL)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | flags)
+                .open(lock)
+                .unwrap()
+        };
+        let pending = open(FILE_READ_ATTRIBUTES, 0);
+        drop(open(
+            DELETE | FILE_READ_ATTRIBUTES,
+            FILE_FLAG_DELETE_ON_CLOSE,
+        ));
+        pending
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_waits_for_a_lock_that_is_still_being_deleted() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join(".claude.json");
+        let lock = root.path().join(".claude.json.lock");
+        std::fs::create_dir(&lock).unwrap();
+        let pending = delete_pending(&lock);
+        let denied = std::fs::create_dir(&lock).unwrap_err();
+        assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
+
+        // A denial that outlasts the wait is reported as itself, not as busy.
+        let stuck = with_claude_lock(&config, Duration::from_millis(50), || Ok(()));
+        assert_eq!(stuck, Err(denied.to_string()));
+
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(pending);
+        });
+        let mut held = false;
+        with_claude_lock(&config, Duration::from_secs(5), || {
+            held = lock.is_dir();
+            Ok(())
+        })
+        .unwrap();
+        release.join().unwrap();
+        assert!(held);
+        assert!(!lock.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_does_not_wait_when_it_may_not_create_the_lock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join(".claude.json");
+        let mode = |mode| std::fs::Permissions::from_mode(mode);
+
+        std::fs::set_permissions(root.path(), mode(0o555)).unwrap();
+        let started = Instant::now();
+        let denied = with_claude_lock(&config, Duration::from_secs(30), || Ok(()));
+        let waited = started.elapsed();
+        std::fs::set_permissions(root.path(), mode(0o755)).unwrap();
+
+        assert_eq!(
+            denied,
+            Err(std::io::Error::from_raw_os_error(13).to_string())
+        );
+        assert!(waited < Duration::from_secs(5), "waited {waited:?}");
     }
 
     #[cfg(unix)]
