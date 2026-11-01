@@ -49,11 +49,11 @@ With "Agents load only these servers" on, Claude Code runs with `--strict-mcp-co
 
 Each server runs in its own process group with the same marker as agents. A record of their pids, one file per running Gespan, lets the next launch's sweep find a server that looks like any `node` process, and it still acts only on a dead parent in the marker. On Windows the kill-on-close job does this.
 
-Remote servers are proxied the same way. Gespan is the OAuth client: one sign-in in Settings, tokens in the keychain, refreshed by Gespan, and sent only to that server. Agents talk to the hub and never receive them. A remote server is always `shared`, since one sign-in means one set of credentials.
+Remote servers are proxied the same way. Gespan is the OAuth client: one sign-in in Settings, tokens in the keychain, refreshed by Gespan, and sent only to that server. Agents talk to the hub and never receive them. A remote server starts as `shared`, since one sign-in means one set of credentials, and moves to `per-session` like any other if it asks for something only one agent can answer.
 
-Settings → MCP also searches the official MCP Registry. A listing becomes an entry that's off and unapproved, pinned to the listed version, and a server with required settings can't be approved until they're given. It runs through `npx`, `uvx` or `docker`; a listing that would need a downloaded binary, or a templated address, isn't offered.
+Settings → MCP also searches the official MCP Registry. A listing becomes an entry that's off and unapproved, and a server with required settings can't be approved until they're given. A package runs through `npx`, `uvx` or `docker`, pinned to one exact version or image; a streamable-HTTP listing stays remote, over `https`, and can't name a local or private address. A container gets only the settings set in Gespan. Anyone can publish a listing, so these aren't offered: one with no exact version, one that would need a downloaded binary, a templated address, a required argument Gespan can't fill in, flags for the runner itself (they could fetch another package or loosen a container), or text `cmd.exe` would read as syntax. An image needs a digest or a release tag such as `v1.2`, and a tag can still be moved by its publisher; only a digest can't.
 
-The same page shows each running process with who uses it, its memory including what it started, and how long it's been idle, with recent errors below.
+The same page shows each running process with how many sessions use it, its memory including what it started where the platform reports it, and how long it's been idle, with recent errors below. Values from a server's environment are taken out of those errors.
 
 Turning a server on or off reaches running agents through `tools/list_changed`. Codex reads its list when a thread starts, so it sees the change in its next session.
 

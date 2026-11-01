@@ -554,6 +554,13 @@ impl Hub {
         self.inner.notify(None, &Listing::ALL);
     }
 
+    /// Stops a server so its next call starts over, and tells every agent.
+    /// For what changed outside its spec, such as a sign-in.
+    pub fn restart(&self, server: &str) {
+        self.inner.pool.restart(server);
+        self.inner.notify(None, &Listing::ALL);
+    }
+
     /// The server processes running now.
     pub fn running(&self) -> Vec<Running> {
         self.inner.pool.snapshot()

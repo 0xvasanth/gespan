@@ -9,11 +9,13 @@ use axum::{
     Json, Router,
 };
 use mcp_hub::{
-    connect, sign_in, Config, Grant, Hub, ServerSpec, Sharing, Spawned, Spawner, TokenStore,
+    call_tool, connect, sign_in, Config, Connection, Grant, Hub, ServerSpec, Sharing, Spawned,
+    Spawner, TokenStore,
 };
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    io::{Read, Write},
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -25,6 +27,10 @@ struct Seen {
     token_requests: usize,
     lifetime: Option<u64>,
     refreshed: bool,
+    plain_token_endpoint: bool,
+    stale_on_listen: bool,
+    hold_listen: bool,
+    listens: Vec<String>,
 }
 
 type Shared = Arc<Mutex<Seen>>;
@@ -36,12 +42,17 @@ async fn resource_metadata(headers: HeaderMap) -> Json<Value> {
     )
 }
 
-async fn server_metadata(headers: HeaderMap) -> Json<Value> {
+async fn server_metadata(State(seen): State<Shared>, headers: HeaderMap) -> Json<Value> {
     let host = headers["host"].to_str().unwrap();
+    let token = if seen.lock().unwrap().plain_token_endpoint {
+        "http://auth.example/token".to_owned()
+    } else {
+        format!("http://{host}/token")
+    };
     Json(json!({
         "issuer":format!("http://{host}"),
         "authorization_endpoint":format!("http://{host}/authorize"),
-        "token_endpoint":format!("http://{host}/token"),
+        "token_endpoint":token,
         "registration_endpoint":format!("http://{host}/register"),
         "response_types_supported":["code"],
         "code_challenge_methods_supported":["S256"],
@@ -107,6 +118,38 @@ async fn mcp(State(seen): State<Shared>, headers: HeaderMap, body: Bytes) -> Res
     Json(json!({"jsonrpc":"2.0","id":message["id"],"result":result})).into_response()
 }
 
+/// The server-to-client stream, which says nothing.
+async fn events(State(seen): State<Shared>, headers: HeaderMap) -> Response {
+    let authorization = headers
+        .get("authorization")
+        .map_or("", |value| value.to_str().unwrap())
+        .to_owned();
+    let (stale, hold) = {
+        let mut seen = seen.lock().unwrap();
+        // Discovery looks here too, with no token, and isn't a listener.
+        if !authorization.is_empty() || !seen.stale_on_listen {
+            seen.listens.push(authorization);
+        }
+        (
+            seen.stale_on_listen && seen.listens.len() == 1,
+            seen.hold_listen,
+        )
+    };
+    if stale {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if hold {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+    }
+    ([("content-type", "text/event-stream")], "").into_response()
+}
+
+/// Slow enough that a stopped connection ends after its replacement started.
+async fn end_session() -> StatusCode {
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    StatusCode::OK
+}
+
 /// Starts the remote and returns its URL.
 fn remote(seen: Shared) -> String {
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -134,7 +177,7 @@ fn remote(seen: Shared) -> String {
                     .route("/register", post(register))
                     .route("/authorize", get(authorize))
                     .route("/token", post(token))
-                    .route("/mcp", post(mcp))
+                    .route("/mcp", post(mcp).get(events).delete(end_session))
                     .with_state(seen);
                 axum::serve(listener, app).await.unwrap();
             });
@@ -297,6 +340,184 @@ fn a_call_before_any_sign_in_says_so() {
         error.contains("isn't available") || error.contains("sign-in"),
         "{error}"
     );
+}
+
+/// Speaks to a connection the way the hub does.
+fn say(spawned: &mut Spawned, message: Value) {
+    writeln!(spawned.stdin, "{message}").unwrap();
+    spawned.stdin.flush().unwrap();
+}
+
+fn ended_in_time(mut stdout: Box<dyn Read + Send>) -> bool {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut rest = Vec::new();
+        let _ = stdout.read_to_end(&mut rest);
+        let _ = done.send(());
+    });
+    finished.recv_timeout(Duration::from_secs(5)).is_ok()
+}
+
+fn wait_for_listens(seen: &Shared, count: usize) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while seen.lock().unwrap().listens.len() < count && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(seen.lock().unwrap().listens.len(), count);
+}
+
+#[test]
+fn stopping_a_connection_ends_it_even_with_its_event_stream_open() {
+    let seen = Shared::default();
+    seen.lock().unwrap().hold_listen = true;
+    let url = remote(seen.clone());
+    let mut spawned = connect(&url, BTreeMap::new(), None).unwrap();
+    say(
+        &mut spawned,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    wait_for_listens(&seen, 1);
+    let Spawned { stop, stdout, .. } = spawned;
+    stop();
+    assert!(ended_in_time(stdout), "the connection's threads are stuck");
+}
+
+#[test]
+fn an_event_stream_the_server_ended_is_opened_again() {
+    let seen = Shared::default();
+    let url = remote(seen.clone());
+    let mut spawned = connect(&url, BTreeMap::new(), None).unwrap();
+    say(
+        &mut spawned,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    wait_for_listens(&seen, 2);
+}
+
+#[test]
+fn an_event_stream_turned_away_asks_for_the_token_again_and_retries() {
+    let seen = Shared::default();
+    let url = remote(seen.clone());
+    let store = Arc::new(Memory::default());
+    sign_in(&url, "t", store.clone(), browser, Duration::from_secs(5)).unwrap();
+    // Discovery looks at the same address.
+    seen.lock().unwrap().listens.clear();
+    seen.lock().unwrap().stale_on_listen = true;
+    let mut spawned = connect(&url, BTreeMap::new(), Some(store)).unwrap();
+    say(
+        &mut spawned,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    wait_for_listens(&seen, 2);
+    assert_eq!(
+        seen.lock().unwrap().listens[1],
+        "Bearer remote-access-token"
+    );
+}
+
+#[test]
+fn a_new_connection_survives_the_end_of_the_one_it_replaced() {
+    let seen = Shared::default();
+    let url = remote(seen);
+    let store = Arc::new(Memory::default());
+    sign_in(&url, "t", store.clone(), browser, Duration::from_secs(5)).unwrap();
+    let hub = hub_for(&url, store);
+    let connection = Connection {
+        url: hub.url().to_owned(),
+        token: hub.mint(grant(1)).secret().to_owned(),
+    };
+    for _ in 0..3 {
+        call_tool(connection.clone(), "remote__ping", json!({})).unwrap();
+        hub.restart("remote");
+    }
+    call_tool(connection, "remote__ping", json!({})).unwrap();
+    // A stopped connection ending must not take the live one with it.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(hub.running().len(), 1);
+    assert!(hub.errors().is_empty(), "{:?}", hub.errors());
+}
+
+#[test]
+fn a_restart_starts_the_server_again_with_what_a_sign_in_saved() {
+    let seen = Shared::default();
+    let url = remote(seen);
+    let store = Arc::new(Memory::default());
+    let hub = hub_for(&url, store.clone());
+    let connection = Connection {
+        url: hub.url().to_owned(),
+        token: hub.mint(grant(1)).secret().to_owned(),
+    };
+    assert!(call_tool(connection.clone(), "remote__ping", json!({})).is_err());
+    sign_in(&url, "t", store, browser, Duration::from_secs(5)).unwrap();
+    hub.restart("remote");
+    call_tool(connection, "remote__ping", json!({})).unwrap();
+}
+
+#[test]
+fn credentials_never_leave_for_an_address_that_would_show_them() {
+    let headers = BTreeMap::from([("Authorization".to_owned(), "Bearer key".to_owned())]);
+    let plain = "http://mcp.example/mcp";
+    assert!(connect(plain, headers.clone(), None).is_err());
+    let oauth = Arc::new(Memory::default());
+    assert!(connect(plain, BTreeMap::new(), Some(oauth)).is_err());
+    assert!(
+        connect(plain, BTreeMap::new(), None).is_ok(),
+        "nothing to read"
+    );
+    assert!(connect("http://127.0.0.1:9/mcp", headers.clone(), None).is_ok());
+    assert!(connect("https://mcp.example/mcp", headers, None).is_ok());
+}
+
+#[test]
+fn a_server_that_signs_in_over_plain_http_is_refused_before_the_browser_opens() {
+    let seen = Shared::default();
+    seen.lock().unwrap().plain_token_endpoint = true;
+    let url = remote(seen);
+    let store = Arc::new(Memory::default());
+    let opened = std::sync::atomic::AtomicBool::new(false);
+    let error = sign_in(
+        &url,
+        "t",
+        store.clone(),
+        |_| opened.store(true, std::sync::atomic::Ordering::SeqCst),
+        Duration::from_secs(5),
+    )
+    .unwrap_err();
+    assert!(error.contains("unsafe"), "{error}");
+    assert!(!opened.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(store.load().unwrap().is_none());
+}
+
+#[test]
+fn a_refresh_token_never_follows_a_server_onto_plain_http() {
+    let seen = Shared::default();
+    seen.lock().unwrap().lifetime = Some(1);
+    let url = remote(seen.clone());
+    let store = Arc::new(Memory::default());
+    sign_in(&url, "t", store.clone(), browser, Duration::from_secs(5)).unwrap();
+    seen.lock().unwrap().plain_token_endpoint = true;
+    let hub = hub_for(&url, store);
+    let connection = Connection {
+        url: hub.url().to_owned(),
+        token: hub.mint(grant(1)).secret().to_owned(),
+    };
+    let error = call_tool(connection, "remote__ping", json!({})).unwrap_err();
+    assert!(error.contains("unsafe"), "{error}");
+}
+
+#[test]
+fn a_server_that_never_answers_discovery_cant_outlast_the_sign_in() {
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", silent.local_addr().unwrap());
+    let error = sign_in(
+        &url,
+        "t",
+        Arc::new(Memory::default()),
+        |_| {},
+        Duration::from_millis(200),
+    )
+    .unwrap_err();
+    assert_eq!(error, "The sign-in timed out");
 }
 
 #[test]

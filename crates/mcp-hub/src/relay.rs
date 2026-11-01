@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, Read, Write},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -17,6 +20,11 @@ const READ_WAIT: Duration = Duration::from_secs(60);
 /// A remote server owes us no such comments, so only a stalled connection is
 /// cut off; a slow tool is the pool's to time out.
 const REMOTE_READ_WAIT: Duration = Duration::from_secs(5 * 60);
+/// A remote server's event stream may stay quiet for hours, so it's reopened
+/// this often. That's also how soon its thread notices the connection stopped.
+const REMOTE_LISTEN_WAIT: Duration = Duration::from_secs(60);
+/// A pause before reopening an event stream, for a server that ends each at once.
+const REOPEN_WAIT: Duration = Duration::from_secs(1);
 const GONE: &str = "The tool endpoint isn't reachable, so this tool can't run";
 const SESSION_HEADER: &str = "Mcp-Session-Id";
 const VERSION_HEADER: &str = "MCP-Protocol-Version";
@@ -95,6 +103,8 @@ pub(crate) struct Link {
     headers: BTreeMap<String, String>,
     session: Arc<Mutex<Option<String>>>,
     version: Arc<Mutex<Option<String>>>,
+    /// Set when the connection is over, for the listener to see.
+    ended: Arc<AtomicBool>,
 }
 
 fn held(slot: &Mutex<Option<String>>) -> Option<String> {
@@ -105,7 +115,13 @@ fn held(slot: &Mutex<Option<String>>) -> Option<String> {
 
 impl Link {
     fn to_hub(Connection { url, token }: Connection) -> Self {
-        Self::waiting(url, Credential::Bearer(token), BTreeMap::new(), READ_WAIT)
+        Self::waiting(
+            url,
+            Credential::Bearer(token),
+            BTreeMap::new(),
+            READ_WAIT,
+            None,
+        )
     }
 
     pub(crate) fn new(
@@ -113,7 +129,13 @@ impl Link {
         credential: Credential,
         headers: BTreeMap<String, String>,
     ) -> Self {
-        Self::waiting(url, credential, headers, REMOTE_READ_WAIT)
+        Self::waiting(
+            url,
+            credential,
+            headers,
+            REMOTE_READ_WAIT,
+            Some(REMOTE_LISTEN_WAIT),
+        )
     }
 
     fn waiting(
@@ -121,15 +143,17 @@ impl Link {
         credential: Credential,
         headers: BTreeMap<String, String>,
         read_wait: Duration,
+        listen_wait: Option<Duration>,
     ) -> Self {
         Self {
             agent: agent(Some(read_wait)),
-            listener: agent(None),
+            listener: agent(listen_wait),
             url,
             credential,
             headers,
             session: Arc::default(),
             version: Arc::default(),
+            ended: Arc::default(),
         }
     }
 
@@ -161,6 +185,22 @@ impl Link {
         Ok(request)
     }
 
+    /// Sends, and if the server turns down a held token that may have gone
+    /// stale, asks for a fresh one and sends once more.
+    fn with_fresh_token(
+        &self,
+        send: impl Fn() -> Result<Result<ureq::Response, ureq::Error>, String>,
+    ) -> Result<Result<ureq::Response, ureq::Error>, String> {
+        let sent = send()?;
+        if let (Err(ureq::Error::Status(401, _)), Credential::Source(source)) =
+            (&sent, &self.credential)
+        {
+            source.forget();
+            return send();
+        }
+        Ok(sent)
+    }
+
     /// One message out, and everything the hub answers it with, until the
     /// reply to its own id. Notifications have no reply to wait for; a request
     /// whose reply never came is an error, or its caller would wait forever.
@@ -172,15 +212,7 @@ impl Link {
                 .map(|request| request.set("Content-Type", "application/json"))
                 .map(|request| request.send_string(&body))
         };
-        let mut sent = send()?;
-        // A held token may have gone stale; ask for a fresh one once.
-        if let (Err(ureq::Error::Status(401, _)), Credential::Source(source)) =
-            (&sent, &self.credential)
-        {
-            source.forget();
-            sent = send()?;
-        }
-        let response = match sent {
+        let response = match self.with_fresh_token(send)? {
             Ok(response) => response,
             Err(ureq::Error::Status(401, _)) => {
                 return Err("This server needs a sign-in".to_owned());
@@ -270,17 +302,29 @@ fn write_line(output: &Mutex<impl Write>, message: &Value) -> Result<(), String>
 }
 
 /// Reads the server-to-client stream, so a changed tool list reaches the agent.
+#[allow(clippy::result_large_err)] // ureq's error is the one it returns.
 fn listen(link: Link, output: Arc<Mutex<impl Write + Send + 'static>>) {
     thread::spawn(move || {
-        let Ok(response) = link
-            .request_on(&link.listener, "GET")
-            .and_then(|request| request.call().map_err(|error| error.to_string()))
-        else {
-            return;
-        };
-        let _ = read_events(response.into_reader(), |event| {
-            write_line(&output, &event).is_ok()
-        });
+        while !link.ended.load(Ordering::SeqCst) {
+            let opened = link.with_fresh_token(|| {
+                link.request_on(&link.listener, "GET")
+                    .map(|request| request.call())
+            });
+            let Ok(Ok(response)) = opened else {
+                return;
+            };
+            let mut delivered = true;
+            let _ = read_events(response.into_reader(), |event| {
+                delivered = write_line(&output, &event).is_ok();
+                delivered
+            });
+            // A server may end this stream at any time; only the agent going
+            // away ends the listening.
+            if !delivered {
+                return;
+            }
+            thread::sleep(REOPEN_WAIT);
+        }
     });
 }
 
@@ -368,6 +412,7 @@ pub(crate) fn pump(
     for worker in workers {
         let _ = worker.join();
     }
+    link.ended.store(true, Ordering::SeqCst);
     if let Ok(request) = link.request("DELETE") {
         let _ = request.call();
     }
@@ -431,6 +476,46 @@ mod tests {
         io::Cursor,
         net::{TcpListener, TcpStream},
     };
+
+    /// An event stream that opens and then says nothing, for as many
+    /// connections as ask.
+    fn quiet_stream() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request);
+                let _ =
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+                held.push(stream);
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_listener_on_a_quiet_stream_lets_go_once_the_connection_ends() {
+        let link = Link::waiting(
+            quiet_stream(),
+            Credential::None,
+            BTreeMap::new(),
+            READ_WAIT,
+            Some(Duration::from_millis(50)),
+        );
+        let output = Arc::new(Mutex::new(Vec::new()));
+        listen(link.clone(), output.clone());
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(Arc::strong_count(&output), 2, "it stays while wanted");
+        link.ended.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Arc::strong_count(&output) > 1 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(Arc::strong_count(&output), 1, "the listener is stuck");
+    }
 
     struct Echo;
     impl Toolkit for Echo {
@@ -607,6 +692,7 @@ mod tests {
             Credential::Bearer("token".to_owned()),
             BTreeMap::new(),
             Duration::from_millis(100),
+            None,
         );
         let started = std::time::Instant::now();
         let replies = run(link.clone(), lines(&[call(4)]));

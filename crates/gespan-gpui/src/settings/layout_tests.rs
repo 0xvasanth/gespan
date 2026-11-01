@@ -294,6 +294,11 @@ fn the_mcp_page_shows_what_each_server_would_run_and_whether_it_needs_approval(
     assert!(visual.debug_bounds("settings-catalog-detail-0").is_some());
     assert!(visual.debug_bounds("settings-catalog-approve-0").is_some());
     assert!(
+        visual
+            .debug_bounds("settings-segmented-catalog-class")
+            .is_some()
+    );
+    assert!(
         visual.debug_bounds("settings-catalog-off-0").is_none(),
         "not on yet"
     );
@@ -311,16 +316,30 @@ fn catalog_window(
     dir: &tempfile::TempDir,
     cx: &mut TestAppContext,
 ) -> (WindowHandle<SettingsView>, VisualTestContext) {
+    catalog_window_of(
+        dir,
+        vec![gespan_core::mcp_catalog::Entry {
+            id: "docs".into(),
+            name: "Docs search".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "docs-mcp".into()],
+            source: Some("claude (user)".into()),
+            ..Default::default()
+        }],
+        cx,
+    )
+}
+
+fn catalog_window_of(
+    dir: &tempfile::TempDir,
+    entries: Vec<gespan_core::mcp_catalog::Entry>,
+    cx: &mut TestAppContext,
+) -> (WindowHandle<SettingsView>, VisualTestContext) {
     gespan_tracker_secrets::testing::use_memory_keychain();
-    let mut catalog = gespan_core::mcp_catalog::Catalog::default();
-    catalog.entries.push(gespan_core::mcp_catalog::Entry {
-        id: "docs".into(),
-        name: "Docs search".into(),
-        command: "npx".into(),
-        args: vec!["-y".into(), "docs-mcp".into()],
-        source: Some("claude (user)".into()),
+    let catalog = gespan_core::mcp_catalog::Catalog {
+        entries,
         ..Default::default()
-    });
+    };
     catalog.save(dir.path()).unwrap();
     let window = window(Section::Mcp, cx);
     let path = dir.path().to_owned();
@@ -333,6 +352,159 @@ fn catalog_window(
     let mut visual = VisualTestContext::from_window(window.into(), cx);
     settle(&mut visual);
     (window, visual)
+}
+
+fn remote_entry(url: &str) -> gespan_core::mcp_catalog::Entry {
+    gespan_core::mcp_catalog::Entry {
+        id: "linear".into(),
+        name: "Linear".into(),
+        url: Some(url.into()),
+        ..Default::default()
+    }
+}
+
+#[gpui::test]
+fn a_failed_sign_in_stays_on_screen_and_the_button_comes_back(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let entries = vec![remote_entry("http://mcp.example/mcp")];
+    let (window, visual) = &mut catalog_window_of(&dir, entries, cx);
+    assert!(
+        visual
+            .debug_bounds("settings-segmented-catalog-class")
+            .is_none(),
+        "a remote connection has no process choice"
+    );
+    click(visual, "settings-catalog-sign-in-0");
+    assert!(
+        visual.debug_bounds("settings-catalog-error").is_some(),
+        "the reason is gone"
+    );
+    window
+        .update(visual, |view, _, _| {
+            assert!(view.mcp_signing_in.is_empty());
+            assert!(
+                view.mcp_catalog_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("https"))
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_second_sign_in_waits_for_the_first(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let entries = vec![remote_entry("http://mcp.example/mcp")];
+    let (window, visual) = &mut catalog_window_of(&dir, entries, cx);
+    window
+        .update(visual, |view, _, cx| {
+            view.mcp_signing_in.insert("linear".into());
+            view.catalog_sign_in("linear".into(), "http://mcp.example/mcp".into(), cx);
+        })
+        .unwrap();
+    settle(visual);
+    window
+        .update(visual, |view, _, _| {
+            assert!(view.mcp_signing_in.contains("linear"), "it's still waiting");
+            assert!(view.mcp_catalog_error.is_none(), "no second flow ran");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn adding_from_the_registry_lands_off_and_settings_unlock_approval(cx: &mut TestAppContext) {
+    use gespan_core::mcp_registry::{Input, Install, Listing};
+    let dir = tempfile::tempdir().unwrap();
+    let (window, visual) = &mut catalog_window_of(&dir, Vec::new(), cx);
+    visual.simulate_resize(size(px(1000.), px(1400.)));
+    window
+        .update(visual, |view, _, cx| {
+            view.mcp_listings = vec![Listing {
+                name: "com.acme/search".into(),
+                description: String::new(),
+                version: "1.2.0".into(),
+                install: Install::Command {
+                    command: "npx".into(),
+                    args: vec!["-y".into(), "acme@1.2.0".into()],
+                },
+                inputs: vec![Input {
+                    name: "API_KEY".into(),
+                    description: String::new(),
+                    required: true,
+                }],
+            }];
+            cx.notify();
+        })
+        .unwrap();
+    settle(visual);
+    click(visual, "settings-catalog-add-0");
+    let entry = saved(&dir).entries.remove(0);
+    assert!(!entry.enabled && entry.approved.is_none());
+    assert_eq!(entry.needed, ["API_KEY"]);
+
+    click(visual, "settings-catalog-settings-0");
+    window
+        .update(visual, |view, _, cx| {
+            let (_, input) = view.mcp_secrets.clone().unwrap();
+            input.update(cx, |input, _| {
+                assert!(input.is_secret(), "a key stays off the screen");
+                input.content = "API_KEY=k\nLOG=info".into();
+            });
+        })
+        .unwrap();
+    click(visual, "settings-catalog-settings-save");
+    let entry = saved(&dir).entries.remove(0);
+    assert!(entry.needed.is_empty());
+    assert_eq!(entry.env, ["API_KEY", "LOG"]);
+
+    click(visual, APPROVE);
+    answer(visual, "Approve and turn on");
+    let entry = saved(&dir).entries.remove(0);
+    assert!(entry.enabled && entry.approved.is_some());
+}
+
+#[gpui::test]
+fn a_mistyped_setting_is_reported_without_repeating_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (window, visual) = &mut catalog_window(&dir, cx);
+    click(visual, "settings-catalog-settings-0");
+    window
+        .update(visual, |view, _, cx| {
+            let (_, input) = view.mcp_secrets.clone().unwrap();
+            input.update(cx, |input, _| input.content = "s3cret-no-name".into());
+        })
+        .unwrap();
+    click(visual, "settings-catalog-settings-save");
+    window
+        .update(visual, |view, _, _| {
+            let error = view.mcp_catalog_error.clone().unwrap();
+            assert!(!error.contains("s3cret"), "{error}");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_failure_stays_on_the_page_after_its_server_is_removed(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (window, visual) = &mut catalog_window(&dir, cx);
+    window
+        .update(visual, |view, _, cx| {
+            view.mcp_server_errors = vec![gespan_core::tool_servers::ServerFailure {
+                server: "docs".into(),
+                message: "The server exited".into(),
+                at: std::time::SystemTime::now(),
+            }];
+            cx.notify();
+        })
+        .unwrap();
+    settle(visual);
+    assert!(visual.debug_bounds("settings-catalog-failure-0").is_some());
+    click(visual, "settings-catalog-remove-0");
+    assert!(saved(&dir).entries.is_empty());
+    assert!(
+        visual.debug_bounds("settings-catalog-failure-0").is_some(),
+        "the empty page hid it"
+    );
 }
 
 fn settle(visual: &mut VisualTestContext) {

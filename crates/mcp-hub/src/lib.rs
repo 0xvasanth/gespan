@@ -21,7 +21,7 @@ mod upstream;
 
 pub use endpoint::{Config, Hub};
 pub use grants::{Grant, Refusal, Token};
-pub use oauth::{sign_in, TokenStore};
+pub use oauth::{safe_for_tokens, sign_in, TokenStore};
 pub use pool::{NoObserver, Observer, Running, ServerError, ServerSpec, Sharing};
 pub use relay::{call_tool, relay, Connection};
 pub use remote::connect;

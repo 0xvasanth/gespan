@@ -254,6 +254,8 @@ pub(crate) struct SettingsView {
     mcp_listings: Vec<gespan_core::mcp_registry::Listing>,
     mcp_searching: bool,
     mcp_secrets: Option<(String, Entity<crate::input::Input>)>,
+    /// Servers whose browser sign-in hasn't come back yet.
+    mcp_signing_in: std::collections::BTreeSet<String>,
     mcp_catalog_loaded: bool,
     /// Servers turned on whose approval no longer matches.
     mcp_catalog_stale: std::collections::BTreeSet<String>,
@@ -410,6 +412,7 @@ impl SettingsView {
             mcp_listings: Vec::new(),
             mcp_searching: false,
             mcp_secrets: None,
+            mcp_signing_in: Default::default(),
             mcp_catalog_loaded: false,
             mcp_catalog_stale: Default::default(),
             mcp_catalog_revision: 0,

@@ -987,6 +987,33 @@ fn a_new_sharing_class_stops_the_process_of_the_old_one() {
 }
 
 #[test]
+fn a_restart_leaves_no_process_that_was_starting_before_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let processes = Arc::new(Processes::default());
+    let mut config = Config::new("test-hub", "1");
+    config.spawner = Some(Arc::new(Spawn(
+        processes.clone(),
+        Duration::from_millis(300),
+    )));
+    let hub = Hub::start(config).unwrap();
+    hub.set_servers(vec![server("docs", Sharing::Shared)]);
+    let a = Agent::connect(&hub, &hub.mint(grant(1, folder.path(), &["docs"])));
+    std::thread::scope(|scope| {
+        let call = scope.spawn(|| a.call("docs__who", json!({})));
+        std::thread::sleep(Duration::from_millis(100));
+        hub.restart("docs");
+        assert!(call.join().unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed"));
+    });
+    assert!(hub.running().is_empty());
+    wait_until("the late process to stop", || {
+        processes.started.load(Ordering::SeqCst) == 1 && processes.alive() == 0
+    });
+}
+
+#[test]
 fn a_server_removed_while_starting_leaves_no_process() {
     let folder = tempfile::tempdir().unwrap();
     let processes = Arc::new(Processes::default());

@@ -77,19 +77,16 @@ pub fn sync_servers() {
     }
 }
 
-/// A token sent to this address can't be read on the way.
-fn safe_for_tokens(url: &str) -> bool {
-    url::Url::parse(url).is_ok_and(|url| match url.scheme() {
-        "https" => true,
-        "http" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
-        _ => false,
-    })
+/// Whether a server's command is really a remote address.
+pub(crate) fn is_remote(command: &str) -> bool {
+    url::Url::parse(command)
+        .is_ok_and(|url| matches!(url.scheme(), "https" | "http") && url.has_host())
 }
 
 /// One browser sign-in to a remote server, and every agent can use it. Blocks
 /// until the browser comes back.
 pub fn sign_in(id: &str, url: &str, open: impl FnOnce(&str)) -> Result<(), String> {
-    if !safe_for_tokens(url) {
+    if !mcp_hub::safe_for_tokens(url) {
         return Err("Sign-in needs an https address".into());
     }
     let data_dir = DATA_DIR.get().ok_or("Gespan's data folder isn't set")?;
@@ -101,8 +98,9 @@ pub fn sign_in(id: &str, url: &str, open: impl FnOnce(&str)) -> Result<(), Strin
         open,
         std::time::Duration::from_secs(300),
     )?;
+    // A connection already open started without this sign-in.
     if let Ok(hub) = hub() {
-        hub.tools_changed(None);
+        hub.restart(id);
     }
     Ok(())
 }
@@ -231,14 +229,11 @@ struct Processes;
 
 impl Spawner for Processes {
     fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> std::io::Result<Spawned> {
-        if spec.command.starts_with("https://") || spec.command.starts_with("http://") {
+        if is_remote(&spec.command) {
             let oauth = DATA_DIR
                 .get()
                 .map(|data_dir| SignIn::new(data_dir, &spec.id, &spec.command))
                 .filter(SignIn::exists);
-            if !safe_for_tokens(&spec.command) && (oauth.is_some() || !spec.env.is_empty()) {
-                return Err(std::io::Error::other("Credentials need an https address"));
-            }
             return mcp_hub::connect(
                 &spec.command,
                 spec.env.clone(),
@@ -562,6 +557,25 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_address_is_told_from_a_command_by_what_it_parses_as() {
+        for command in [
+            "https://a.example/mcp",
+            "HTTPS://A.example/mcp",
+            "http://[::1]:9",
+        ] {
+            assert!(is_remote(command), "{command}");
+        }
+        for command in [
+            "npx",
+            "C:\\tools\\server.exe",
+            "ws://a.example/mcp",
+            "http://",
+        ] {
+            assert!(!is_remote(command), "{command}");
+        }
+    }
+
+    #[test]
     fn claude_gets_the_endpoint_over_its_control_channel() {
         let access = Access::open(&mount(5001)).unwrap();
         let request = access.claude_control("native-mcp");
@@ -620,17 +634,6 @@ mod tests {
         assert_eq!(delivery(Kind::Pi, None), Delivery::Environment);
         assert_eq!(delivery(Kind::Omp, None), Delivery::Environment);
         assert_eq!(delivery(Kind::OpenCode, Some("s")), Delivery::OpenCodeApi);
-    }
-
-    #[test]
-    fn tokens_only_travel_where_they_cant_be_read() {
-        assert!(safe_for_tokens("https://mcp.example/mcp"));
-        assert!(safe_for_tokens("http://127.0.0.1:8000/mcp"));
-        assert!(safe_for_tokens("http://localhost/mcp"));
-        assert!(!safe_for_tokens("http://mcp.example/mcp"));
-        assert!(!safe_for_tokens("http://localhost.evil.example/mcp"));
-        assert!(!safe_for_tokens("ftp://mcp.example"));
-        assert!(!safe_for_tokens("not a url"));
     }
 
     #[test]

@@ -14,6 +14,8 @@ use std::{
 };
 
 const FILE: &str = "mcp-catalog.json";
+/// How a registry container starts. `-e` flags for its settings go after this.
+pub(crate) const CONTAINER_RUN: [&str; 3] = ["run", "-i", "--rm"];
 /// Prefix of a server's keychain name.
 const SECRETS: &str = "mcp-server";
 /// Keychain name of the key that seals approvals of servers with secrets.
@@ -38,6 +40,12 @@ impl From<Class> for Sharing {
     }
 }
 
+/// A name a process environment can hold, and nothing a shell would read.
+pub(crate) fn env_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// One server the user has in Gespan. Secrets are not here, only their names.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -57,7 +65,13 @@ pub struct Entry {
     /// Fingerprint of the exact command and environment the user approved,
     /// sealed when that environment holds secrets.
     pub approved: Option<String>,
-    /// Settings it can't run without and doesn't have yet.
+    /// A container, which sees only the settings it's handed by name. Those
+    /// are the ones set here: a name alone would hand it the same variable from
+    /// Gespan's own environment.
+    pub container: bool,
+    /// Settings it can't run without.
+    pub required: Vec<String>,
+    /// Those of them with no value yet.
     pub needed: Vec<String>,
     /// Where it was imported from, for showing the user.
     pub source: Option<String>,
@@ -65,13 +79,28 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Its arguments as they'd run.
+    fn run_args(&self) -> Vec<String> {
+        let mut args = self.args.clone();
+        if self.container {
+            let flags = self
+                .env
+                .iter()
+                .flat_map(|name| ["-e".to_owned(), name.clone()]);
+            // An entry edited by hand may be shorter, and fails its approval.
+            let at = CONTAINER_RUN.len().min(args.len());
+            args.splice(at..at, flags);
+        }
+        args
+    }
+
     fn spec(&self, env: BTreeMap<String, String>) -> ServerSpec {
         ServerSpec {
             id: self.id.clone(),
             // A remote server's process is a connection, so its address and
             // headers take the place of a command and its environment.
             command: self.url.clone().unwrap_or_else(|| self.command.clone()),
-            args: self.args.clone(),
+            args: self.run_args(),
             env,
             // One sign-in means one set of credentials, so nothing is gained
             // by keeping connections apart.
@@ -90,8 +119,9 @@ impl Entry {
         if let Some(url) = &self.url {
             return url.clone();
         }
+        let args = self.run_args();
         std::iter::once(self.command.as_str())
-            .chain(self.args.iter().map(String::as_str))
+            .chain(args.iter().map(String::as_str))
             .map(|word| match shlex::try_quote(word) {
                 Ok(quoted) => quoted.into_owned(),
                 Err(_) => format!("{word:?}"),
@@ -239,7 +269,11 @@ impl Catalog {
             let id = id_for(&server.name, &self.ids());
             write_secrets(data_dir, &id, &server.env)?;
             self.entries.push(Entry {
-                class: class_for(&server.name, &server.command, &server.args),
+                class: if server.url.is_some() {
+                    Class::Shared
+                } else {
+                    class_for(&server.name, &server.command, &server.args)
+                },
                 id,
                 name: server.name,
                 command: server.command,
@@ -273,16 +307,18 @@ impl Catalog {
             .get_mut(before)
             .ok_or("That server is already here")?;
         entry.source = Some(format!("MCP Registry {}", listing.version));
-        entry.needed = listing
+        entry.container = entry.command == "docker";
+        entry.required = listing
             .inputs
             .iter()
             .filter(|input| input.required)
             .map(|input| input.name.clone())
             .collect();
+        entry.needed = entry.required.clone();
         Ok(entry.id.clone())
     }
 
-    /// Sets a server's env values in the keychain.
+    /// Replaces a server's env values in the keychain.
     pub fn set_secrets(
         &mut self,
         data_dir: &Path,
@@ -290,12 +326,29 @@ impl Catalog {
         values: BTreeMap<String, String>,
     ) -> Result<(), String> {
         let entry = self.entry_mut(id).ok_or("Unknown server")?;
+        // These reach a command line; any other server takes them as they are.
+        if entry.container && !values.keys().all(|name| env_name(name)) {
+            return Err("Setting names are letters, digits and underscores".into());
+        }
+        // Entries saved before `required` existed name theirs only here.
+        if entry.required.is_empty() {
+            entry.required = entry.needed.clone();
+        }
         entry.env = values.keys().cloned().collect();
-        entry.needed.retain(|name| !values.contains_key(name));
+        entry.needed = entry
+            .required
+            .iter()
+            .filter(|name| values.get(*name).is_none_or(String::is_empty))
+            .cloned()
+            .collect();
         // The env changed, so what was approved no longer describes it.
         entry.approved = None;
         entry.enabled = false;
-        write_secrets(data_dir, id, &values)
+        if values.is_empty() {
+            gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)
+        } else {
+            write_secrets(data_dir, id, &values)
+        }
     }
 
     /// What the user is approving: the entry with its secrets resolved.
@@ -328,7 +381,7 @@ impl Catalog {
             .iter()
             .find(|entry| entry.id == shown.id)
             .ok_or("Unknown server")?;
-        if (&now.command, &now.args, &now.env) != (&shown.command, &shown.args, &shown.env) {
+        if (now.command_line(), &now.env) != (shown.command_line(), &shown.env) {
             return Err("This server changed. Review it again.".to_owned());
         }
         self.approve(data_dir, &shown.id)
@@ -740,6 +793,130 @@ mod tests {
     }
 
     #[test]
+    fn a_required_setting_left_out_of_a_later_save_blocks_approval_again() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let id = catalog.install(dir.path(), &listing()).unwrap();
+        let set = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        catalog
+            .set_secrets(dir.path(), &id, set(&[("API_KEY", "k")]))
+            .unwrap();
+        for values in [set(&[]), set(&[("OTHER", "x")]), set(&[("API_KEY", "")])] {
+            catalog.set_secrets(dir.path(), &id, values).unwrap();
+            assert_eq!(
+                catalog.approve(dir.path(), &id).unwrap_err(),
+                "Set API_KEY first"
+            );
+        }
+        let saved = Catalog::load(dir.path()).unwrap_or_default();
+        assert!(saved.entries.is_empty(), "nothing saved it yet");
+        catalog.save(dir.path()).unwrap();
+        let reloaded = Catalog::load(dir.path()).unwrap();
+        assert_eq!(reloaded.entries[0].required, ["API_KEY"]);
+    }
+
+    #[test]
+    fn a_container_is_handed_only_the_settings_set_here() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let mut container = listing();
+        container.install = crate::mcp_registry::Install::Command {
+            command: "docker".into(),
+            args: ["run", "-i", "--rm", "ghcr.io/a/b:2"]
+                .map(str::to_owned)
+                .to_vec(),
+        };
+        // Declared, optional and never set: it must not come from Gespan's own
+        // environment.
+        container.inputs.push(crate::mcp_registry::Input {
+            name: "GITHUB_TOKEN".into(),
+            description: String::new(),
+            required: false,
+        });
+        let id = catalog.install(dir.path(), &container).unwrap();
+        let values = BTreeMap::from([("API_KEY".to_owned(), "k".to_owned())]);
+        catalog.set_secrets(dir.path(), &id, values).unwrap();
+        catalog.approve(dir.path(), &id).unwrap();
+        let spec = catalog.specs(dir.path()).remove(0);
+        assert_eq!(
+            spec.args,
+            ["run", "-i", "--rm", "-e", "API_KEY", "ghcr.io/a/b:2"]
+        );
+        assert_eq!(
+            catalog.entries[0].command_line(),
+            "docker run -i --rm -e API_KEY ghcr.io/a/b:2",
+            "the approval shows what runs"
+        );
+    }
+
+    #[test]
+    fn an_entry_saved_before_required_existed_keeps_its_guard() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog.entries.push(Entry {
+            id: "old".into(),
+            command: "npx".into(),
+            needed: vec!["API_KEY".into()],
+            ..Entry::default()
+        });
+        catalog
+            .set_secrets(dir.path(), "old", BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            catalog.approve(dir.path(), "old").unwrap_err(),
+            "Set API_KEY first"
+        );
+    }
+
+    #[test]
+    fn a_container_refuses_a_setting_name_that_could_be_read_as_syntax() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "docker", &[("K", "1")])])
+            .unwrap();
+        let odd = || BTreeMap::from([("A&calc".to_owned(), "x".to_owned())]);
+        let hyphen = BTreeMap::from([("my-key".to_owned(), "x".to_owned())]);
+        catalog.set_secrets(dir.path(), "docs", hyphen).unwrap();
+        catalog.entries[0].container = true;
+        catalog.entries[0].env = vec!["K".into()];
+        assert!(catalog.set_secrets(dir.path(), "docs", odd()).is_err());
+        assert_eq!(catalog.entries[0].env, ["K"]);
+    }
+
+    #[test]
+    fn clearing_a_servers_settings_clears_the_keychain_too() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("K", "1")])])
+            .unwrap();
+        catalog
+            .set_secrets(dir.path(), "docs", BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            gespan_tracker_secrets::read_named("mcp-server:docs", dir.path()).unwrap(),
+            None
+        );
+        assert!(catalog.entries[0].env.is_empty());
+    }
+
+    #[test]
+    fn a_remote_server_is_listed_as_shared_from_the_start() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let mut server = found("Playwright", "", &[]);
+        server.url = Some("https://mcp.example/mcp".into());
+        catalog.import(dir.path(), vec![server]).unwrap();
+        assert_eq!(catalog.entries[0].class, Class::Shared);
+    }
+
+    #[test]
     fn changing_a_servers_settings_takes_it_back_to_approval() {
         let dir = setup();
         let mut catalog = Catalog::default();
@@ -832,6 +1009,40 @@ mod tests {
         catalog.entry_mut("docs").unwrap().class = Class::Shared;
         catalog.approve_shown(dir.path(), &shown).unwrap();
         assert_eq!(catalog.specs(dir.path()).len(), 1, "sharing isn't run");
+    }
+
+    #[test]
+    fn an_approval_covers_what_would_really_run() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "docker", &[])])
+            .unwrap();
+        let shown = catalog.entries[0].clone();
+        catalog.entries[0].container = true;
+        catalog.entries[0].env = vec!["TOKEN".into()];
+        assert!(catalog.approve_shown(dir.path(), &shown).is_err());
+
+        let mut remote = Entry {
+            id: "remote".into(),
+            url: Some("https://mcp.example/mcp".into()),
+            ..Entry::default()
+        };
+        catalog.entries.push(remote.clone());
+        remote.url = Some("https://shown.example/mcp".into());
+        assert!(catalog.approve_shown(dir.path(), &remote).is_err());
+    }
+
+    #[test]
+    fn a_short_hand_edited_container_entry_is_read_without_a_panic() {
+        let entry = Entry {
+            command: "docker".into(),
+            args: vec!["run".into()],
+            env: vec!["TOKEN".into()],
+            container: true,
+            ..Entry::default()
+        };
+        assert_eq!(entry.command_line(), "docker run -e TOKEN");
     }
 
     #[test]

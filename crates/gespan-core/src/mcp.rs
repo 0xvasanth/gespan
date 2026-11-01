@@ -423,7 +423,7 @@ fn importable_with(
 ) -> Option<Importable> {
     let config = &connection.config;
     // A remote entry's secrets are its headers.
-    let env = config
+    let env: BTreeMap<String, String> = config
         .get("env")
         .or_else(|| config.get("environment"))
         .or_else(|| config.get("headers"))
@@ -441,6 +441,14 @@ fn importable_with(
         })
         .collect::<Option<_>>()?;
     let url = config.get("url").and_then(Value::as_str).map(str::to_owned);
+    // The hub reaches remote servers over HTTP alone, and won't send headers
+    // anywhere they could be read on the way.
+    if url.as_deref().is_some_and(|url| {
+        !crate::tool_servers::is_remote(url) || (!env.is_empty() && !mcp_hub::safe_for_tokens(url))
+    }) {
+        tracing::warn!(server = %connection.name, "an MCP server's address can't be used safely");
+        return None;
+    }
     let (command, args) = match config.get("command") {
         Some(Value::String(command)) => (command.clone(), strings(&config["args"])?),
         Some(list @ Value::Array(_)) => {
@@ -836,6 +844,30 @@ mod tests {
         let remote = import(serde_json::json!({"url":"https://docs.example/mcp"})).unwrap();
         assert_eq!(remote.command, "");
         assert_eq!(remote.url.as_deref(), Some("https://docs.example/mcp"));
+    }
+
+    #[test]
+    fn a_remote_entrys_headers_are_its_secrets_under_either_agents_name() {
+        for field in ["headers", "http_headers"] {
+            let server = import(serde_json::json!({
+                "url":"https://docs.example/mcp",
+                field:{"Authorization":"Bearer {env:SET}","X-Team":"core"},
+            }))
+            .unwrap();
+            assert_eq!(server.env["Authorization"], "Bearer the-value", "{field}");
+            assert_eq!(server.env["X-Team"], "core", "{field}");
+        }
+    }
+
+    #[test]
+    fn a_remote_address_the_hub_cant_reach_is_left_out() {
+        for url in ["wss://docs.example/mcp", "ws://docs.example/mcp", "docs"] {
+            assert_eq!(import(serde_json::json!({"url":url})), None, "{url}");
+        }
+        let headers = |url: &str| serde_json::json!({"url":url,"headers":{"X-Key":"k"}});
+        assert_eq!(import(headers("http://docs.example/mcp")), None);
+        assert!(import(headers("http://127.0.0.1:9/mcp")).is_some());
+        assert!(import(serde_json::json!({"url":"http://docs.example/mcp"})).is_some());
     }
 
     #[test]

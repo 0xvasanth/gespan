@@ -235,8 +235,9 @@ fn sum_trees(processes: &HashMap<u32, Process>, roots: &[u32]) -> HashMap<u32, u
     let mut totals: HashMap<u32, u64> = HashMap::new();
     for process in processes.values() {
         let mut current = process.pid;
-        let mut steps = 0;
-        while steps < 64 {
+        let mut seen = HashSet::new();
+        // Pid 0 is where every tree ends, not a process anyone could mean.
+        while current != 0 && seen.insert(current) {
             if roots.contains(&current) {
                 *totals.entry(current).or_default() += process.memory;
                 break;
@@ -245,7 +246,6 @@ fn sum_trees(processes: &HashMap<u32, Process>, roots: &[u32]) -> HashMap<u32, u
                 break;
             };
             current = parent.parent;
-            steps += 1;
         }
     }
     totals
@@ -439,6 +439,12 @@ mod tests {
         ]);
         assert_eq!(sum_trees(&all, &[10]), HashMap::from([(10, 125)]));
         assert!(sum_trees(&all, &[77]).is_empty());
+        // A remote server's row has no process, and pid 0 isn't one.
+        assert!(sum_trees(&all, &[0]).is_empty());
+        let deep: HashMap<_, _> = (1..200).map(|pid| process(pid, pid - 1, 1)).collect();
+        assert_eq!(sum_trees(&deep, &[1]), HashMap::from([(1, 199)]));
+        let cycle = HashMap::from([process(30, 31, 1), process(31, 30, 1)]);
+        assert!(sum_trees(&cycle, &[77]).is_empty());
     }
 
     fn high() -> Sample {

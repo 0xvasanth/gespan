@@ -411,6 +411,7 @@ impl SettingsView {
     ) -> AnyElement {
         div()
             .id(SharedString::from(format!("segmented-{id}")))
+            .debug_selector(move || format!("settings-segmented-{id}"))
             .role(Role::RadioGroup)
             .aria_label(label)
             .grid()

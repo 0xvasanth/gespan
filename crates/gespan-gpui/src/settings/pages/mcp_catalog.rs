@@ -68,14 +68,16 @@ fn running_line(process: &RunningServer, memory: Option<u64>) -> String {
     facts.join(" · ")
 }
 
-/// `NAME=value` lines. A line without `=` is a mistake worth reporting.
+/// `NAME=value` lines. A line without `=` is a mistake worth reporting, though
+/// not by repeating it: it may well be the secret.
 fn parse_settings(text: &str) -> Result<BTreeMap<String, String>, String> {
     text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(ix, line)| {
             let (name, value) = line
                 .split_once('=')
-                .ok_or_else(|| format!("Expected NAME=value: {}", line.trim()))?;
+                .ok_or_else(|| format!("Line {} needs the form NAME=value", ix + 1))?;
             Ok((name.trim().to_owned(), value.trim().to_owned()))
         })
         .collect()
@@ -234,10 +236,21 @@ impl SettingsView {
     }
 
     /// One sign-in here serves every agent, which never sees the token.
-    fn catalog_sign_in(&mut self, id: String, url: String, cx: &mut Context<Self>) {
+    pub(in crate::settings) fn catalog_sign_in(
+        &mut self,
+        id: String,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        // A second flow would race this one for the same keychain record.
+        if !self.mcp_signing_in.insert(id.clone()) {
+            return;
+        }
+        cx.notify();
         let (opener, opening) = async_channel::bounded::<String>(1);
+        let server = id.clone();
         let work = cx.background_executor().spawn(async move {
-            gespan_core::tool_servers::sign_in(&id, &url, |address| {
+            gespan_core::tool_servers::sign_in(&server, &url, |address| {
                 let _ = opener.send_blocking(address.to_owned());
             })
         });
@@ -247,8 +260,14 @@ impl SettingsView {
             }
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                this.mcp_catalog_error = result.err();
-                this.load_catalog(cx);
+                this.mcp_signing_in.remove(&id);
+                match result {
+                    Ok(()) => this.load_catalog(cx),
+                    Err(error) => {
+                        this.mcp_catalog_error = Some(error);
+                        cx.notify();
+                    }
+                }
             });
         })
         .detach();
@@ -293,7 +312,12 @@ impl SettingsView {
         let stale = self.mcp_catalog_stale.contains(&entry.id);
         let mut facts = vec![
             status(&entry, stale).to_owned(),
-            class_label(entry.class).to_owned(),
+            // Older remote entries kept a class that never applied to them.
+            class_label(match (&entry.url, entry.class) {
+                (Some(_), Class::PerWorktree) => Class::Shared,
+                (_, class) => class,
+            })
+            .to_owned(),
         ];
         if !entry.needed.is_empty() {
             facts.push(format!("needs {}", entry.needed.join(", ")));
@@ -338,37 +362,40 @@ impl SettingsView {
                             .child(detail),
                     ),
             );
-        let id = entry.id.clone();
-        let current = class_label(entry.class);
-        let classes = [
-            ("shared", "Shared"),
-            ("per-worktree", "Worktree"),
-            ("per-session", "Session"),
-        ];
-        row = row.child(self.segmented(
-            "catalog-class",
-            "How many processes this server gets",
-            current,
-            &classes,
-            cx,
-            move |this, value, cx| {
-                let id = id.clone();
-                let class = match value {
-                    "shared" => Class::Shared,
-                    "per-session" => Class::PerSession,
-                    _ => Class::PerWorktree,
-                };
-                this.catalog_edit(
-                    Box::new(move |catalog, _| {
-                        if let Some(entry) = catalog.entry_mut(&id) {
-                            entry.class = class;
-                        }
-                        Ok(())
-                    }),
-                    cx,
-                );
-            },
-        ));
+        // A remote server's connection is shared whatever this would say.
+        if entry.url.is_none() {
+            let id = entry.id.clone();
+            let current = class_label(entry.class);
+            let classes = [
+                ("shared", "Shared"),
+                ("per-worktree", "Worktree"),
+                ("per-session", "Session"),
+            ];
+            row = row.child(self.segmented(
+                "catalog-class",
+                "How many processes this server gets",
+                current,
+                &classes,
+                cx,
+                move |this, value, cx| {
+                    let id = id.clone();
+                    let class = match value {
+                        "shared" => Class::Shared,
+                        "per-session" => Class::PerSession,
+                        _ => Class::PerWorktree,
+                    };
+                    this.catalog_edit(
+                        Box::new(move |catalog, _| {
+                            if let Some(entry) = catalog.entry_mut(&id) {
+                                entry.class = class;
+                            }
+                            Ok(())
+                        }),
+                        cx,
+                    );
+                },
+            ));
+        }
         if entry.enabled {
             let id = entry.id.clone();
             row = row.child(
@@ -443,14 +470,17 @@ impl SettingsView {
                     false,
                     false,
                 )
+                .debug_selector(move || format!("settings-catalog-settings-{ix}"))
                 .child("Settings")
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let input: Entity<crate::input::Input> = cx.new(|cx| {
-                        crate::input::Input::multiline_field(
+                        let mut input = crate::input::Input::multiline_field(
                             "Environment",
                             "NAME=value, one per line",
                             cx,
-                        )
+                        );
+                        input.set_secret(true);
+                        input
                     });
                     this.mcp_secrets = Some((id.clone(), input));
                     cx.notify();
@@ -459,14 +489,20 @@ impl SettingsView {
         }
         if let Some(url) = entry.url.clone() {
             let id = entry.id.clone();
+            let waiting = self.mcp_signing_in.contains(&id);
             row = row.child(
                 secondary_button(
                     SharedString::from(format!("catalog-sign-in-{ix}")),
                     "Sign in",
                     false,
-                    false,
+                    waiting,
                 )
-                .child("Sign in")
+                .debug_selector(move || format!("settings-catalog-sign-in-{ix}"))
+                .child(if waiting {
+                    "Waiting for the browser"
+                } else {
+                    "Sign in"
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.catalog_sign_in(id.clone(), url.clone(), cx);
                 })),
@@ -500,12 +536,18 @@ impl SettingsView {
         }
         let failures: Vec<&ServerFailure> = self.mcp_server_errors.iter().rev().take(5).collect();
         if !failures.is_empty() {
-            section.push(subheading("Recent errors"));
-            section.extend(
-                failures
-                    .into_iter()
-                    .map(|failure| fact_row(failure.server.clone(), failure.message.clone())),
+            section.push(
+                div()
+                    .debug_selector(|| "settings-catalog-errors".into())
+                    .child(subheading("Recent errors"))
+                    .into_any_element(),
             );
+            section.extend(failures.into_iter().enumerate().map(|(ix, failure)| {
+                div()
+                    .debug_selector(move || format!("settings-catalog-failure-{ix}"))
+                    .child(fact_row(failure.server.clone(), failure.message.clone()))
+                    .into_any_element()
+            }));
         }
         section
     }
@@ -572,6 +614,7 @@ impl SettingsView {
                         false,
                         false,
                     )
+                    .debug_selector(move || format!("settings-catalog-add-{ix}"))
                     .child("Add")
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let adding = adding.clone();
@@ -679,6 +722,7 @@ impl SettingsView {
             section.push(note(
                 "None yet. Import copies your agents' servers here, without changing their files.",
             ));
+            section.extend(self.running_section());
             section.extend(self.registry_section(cx));
             return section;
         }
@@ -706,6 +750,7 @@ impl SettingsView {
                     .mt_2()
                     .child(
                         secondary_button("catalog-settings-save", "Save", false, false)
+                            .debug_selector(|| "settings-catalog-settings-save".into())
                             .child("Save")
                             .on_click(cx.listener(|this, _, _, cx| this.catalog_save_settings(cx))),
                     )
@@ -783,7 +828,7 @@ mod tests {
         assert_eq!(parsed["OTHER"], "two");
         assert_eq!(
             parse_settings("oops").unwrap_err(),
-            "Expected NAME=value: oops"
+            "Line 1 needs the form NAME=value"
         );
     }
 }

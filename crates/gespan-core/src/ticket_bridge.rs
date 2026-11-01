@@ -553,10 +553,14 @@ impl mcp_hub::Toolkit for Toolkit {
 
     /// The `app` CLI sends its own request ID, for retries.
     fn call(&self, grant: &mcp_hub::Grant, tool: &str, mut input: Value) -> Result<Value, String> {
-        let request_id = input
+        let request_id = match input
             .as_object_mut()
             .and_then(|fields| fields.remove("requestId"))
-            .and_then(|id| id.as_str().map(str::to_owned));
+        {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if !id.is_empty() && id.len() <= 128 => Some(id),
+            Some(_) => return Err("requestId must contain 1–128 bytes".into()),
+        };
         let client = Client {
             session: grant.session,
             request_id,
@@ -1553,6 +1557,54 @@ mod tests {
         assert_eq!(posted.load(Ordering::SeqCst), 2);
         let error = app(&server, "ticket.comment", json!({"body":"Other"}), "r1").unwrap_err();
         assert!(error.contains("different input"), "{error}");
+    }
+
+    #[test]
+    fn a_tool_call_retried_with_its_request_id_never_posts_twice() {
+        use mcp_hub::Toolkit as _;
+        let server = Server::start(447, scope("ENG-1", true, false)).unwrap();
+        let grant = mcp_hub::Grant {
+            session: server.session,
+            workspace: "/work".into(),
+            toolkits: Default::default(),
+            servers: Default::default(),
+        };
+        let comment = || json!({"body":"Fixed","requestId":"r1"});
+        let posted = AtomicUsize::new(0);
+        let (first_grant, first_input) = (grant.clone(), comment());
+        let worker =
+            std::thread::spawn(move || Toolkit.call(&first_grant, "ticket_comment", first_input));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < deadline {
+            for call in server.drain() {
+                let count = posted.fetch_add(1, Ordering::SeqCst);
+                let _ = call.reply.send(Ok(json!({"comment":count})));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // It's stripped before the arguments are checked, or this would fail.
+        let first = worker.join().unwrap().unwrap();
+        let again = Toolkit.call(&grant, "ticket_comment", comment()).unwrap();
+        assert_eq!(first, again);
+        assert_eq!(posted.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_tool_call_with_a_bad_request_id_is_refused_before_it_can_write() {
+        use mcp_hub::Toolkit as _;
+        let server = Server::start(446, scope("ENG-1", true, false)).unwrap();
+        let grant = mcp_hub::Grant {
+            session: server.session,
+            workspace: "/work".into(),
+            toolkits: Default::default(),
+            servers: Default::default(),
+        };
+        for id in [json!(7), json!(""), json!("x".repeat(129)), json!({})] {
+            let input = json!({"body":"Fixed","requestId":id});
+            let error = Toolkit.call(&grant, "ticket_comment", input).unwrap_err();
+            assert!(error.contains("requestId"), "{id}: {error}");
+        }
+        assert!(server.drain().is_empty());
     }
 
     #[test]
