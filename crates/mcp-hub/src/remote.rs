@@ -15,24 +15,41 @@ use std::{
     },
 };
 
-/// Writes waiting on a connection. Far more than any agent has in flight, so
+/// Messages waiting on a connection. Far more than any agent has in flight, so
 /// reaching it means the connection has stalled.
-const MAX_QUEUED_WRITES: usize = 4096;
+const MAX_QUEUED_MESSAGES: usize = 4096;
 
-/// What the hub writes to a connection. It queues rather than blocks, so a
-/// stalled connection can't hold up the stop that would end it.
-struct Queue(mpsc::SyncSender<Vec<u8>>);
+/// What the hub writes to a connection. A message is written in pieces and goes
+/// on the queue whole at `flush`, so a full queue drops it whole rather than
+/// leaving half a line for the next one to run into. It queues rather than
+/// blocks, so a stalled connection can't hold up the stop that would end it.
+struct Queue {
+    sender: mpsc::SyncSender<Vec<u8>>,
+    message: Vec<u8>,
+}
+
+impl Queue {
+    fn new(sender: mpsc::SyncSender<Vec<u8>>) -> Self {
+        Self {
+            sender,
+            message: Vec::new(),
+        }
+    }
+}
 
 impl Write for Queue {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .try_send(bytes.to_vec())
-            .map_err(|_| std::io::ErrorKind::BrokenPipe)?;
+        self.message.extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        if self.message.is_empty() {
+            return Ok(());
+        }
+        self.sender
+            .try_send(std::mem::take(&mut self.message))
+            .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
     }
 }
 
@@ -112,7 +129,7 @@ pub fn connect(
             "Credentials need an https address",
         ));
     }
-    let (to_remote, frames) = mpsc::sync_channel(MAX_QUEUED_WRITES);
+    let (to_remote, frames) = mpsc::sync_channel(MAX_QUEUED_MESSAGES);
     let stopped = Arc::new(AtomicBool::new(false));
     let to_read = Queued {
         frames,
@@ -120,7 +137,7 @@ pub fn connect(
         stopped: stopped.clone(),
     };
     let (from_remote, to_host) = std::io::pipe()?;
-    let input = Closable::new(Queue(to_remote));
+    let input = Closable::new(Queue::new(to_remote));
     let stop_input = input.clone();
     let to_host = Closable::new(to_host);
     let credential = match oauth {
@@ -167,21 +184,49 @@ mod tests {
             current: std::io::Cursor::default(),
             stopped: stopped.clone(),
         };
-        (Queue(sender), queued, stopped)
+        (Queue::new(sender), queued, stopped)
+    }
+
+    fn send(queue: &mut Queue, message: &str) -> std::io::Result<()> {
+        // In pieces, the way `writeln!` writes a frame.
+        for piece in message.as_bytes().chunks(2) {
+            queue.write_all(piece)?;
+        }
+        queue.write_all(b"\n")?;
+        queue.flush()
     }
 
     #[test]
-    fn a_full_queue_refuses_a_write_instead_of_blocking_or_growing() {
-        let (mut queue, _queued, _) = queue();
-        queue.write_all(b"one").unwrap();
-        queue.write_all(b"two").unwrap();
-        assert!(queue.write_all(b"three").is_err());
+    fn a_full_queue_drops_a_message_whole_and_counts_messages_not_pieces() {
+        let (mut queue, queued, _) = queue();
+        send(&mut queue, "first message").unwrap();
+        send(&mut queue, "second").unwrap();
+        assert!(send(&mut queue, "dropped").is_err());
+        drop(queue);
+        let mut lines = String::new();
+        BufReader::new(queued).read_to_string(&mut lines).unwrap();
+        assert_eq!(lines, "first message\nsecond\n");
+    }
+
+    #[test]
+    fn a_message_after_a_dropped_one_starts_on_its_own_line() {
+        let (mut queue, mut queued, _) = queue();
+        send(&mut queue, "one").unwrap();
+        send(&mut queue, "two").unwrap();
+        assert!(send(&mut queue, "dropped").is_err());
+        let mut first = [0; 4];
+        queued.read_exact(&mut first).unwrap();
+        send(&mut queue, "three").unwrap();
+        drop(queue);
+        let mut rest = String::new();
+        queued.read_to_string(&mut rest).unwrap();
+        assert_eq!(rest, "two\nthree\n");
     }
 
     #[test]
     fn a_stop_drops_what_was_still_waiting() {
         let (mut queue, mut queued, stopped) = queue();
-        queue.write_all(b"one").unwrap();
+        send(&mut queue, "one").unwrap();
         stopped.store(true, Ordering::SeqCst);
         let mut read = Vec::new();
         queued.read_to_end(&mut read).unwrap();
