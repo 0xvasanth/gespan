@@ -1,0 +1,39 @@
+crates/gespan-core/src/orchestration/worktree.rs
+  s_765ddcec531e1c::t_4d247b5df5c66c 216,222,228-229,231-232
+  s_765ddcec531e1c::t_7a97118ede3509 351-361
+crates/gespan-core/src/worktree_scripts.rs
+  s_765ddcec531e1c::t_1bbf30d441c951 217-223
+  s_765ddcec531e1c::t_571d8c8ec6f4af 530-539
+  s_765ddcec531e1c::t_bf45c237f7de2e 489-493
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_765ddcec531e1c::t_f77fbb7ff61b4d 425,431-432,437,441-451
+  s_765ddcec531e1c::t_cdcd4bb7ed0102 433-436
+  s_765ddcec531e1c::t_ca4b02cf95f05b 452-453
+host/worktree-jobs.test.ts
+  s_765ddcec531e1c::t_afede0bcd2dc08 187-188,191-194
+crates/gespan-core/src/worktree_management.rs
+  s_765ddcec531e1c::t_0bc35640995c51 190-194,196
+crates/gespan-core/src/orchestration/worktree/tests.rs
+  s_765ddcec531e1c::t_385be54f719805 75-76,83-135
+  s_765ddcec531e1c::t_f803ae27f92404 136
+host/worktree-jobs.ts
+  s_765ddcec531e1c::t_5987b72fbe07c6 233
+crates/gespan-gpui/src/settings/data.rs
+  s_765ddcec531e1c::t_1f787b033b31eb 103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05ef896c41ede7916bdbadf5ad29253a1ef7e1dc",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
