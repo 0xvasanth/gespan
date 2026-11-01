@@ -72,11 +72,66 @@ fn a_task_can_try_again_after_its_setup_fails() {
         teardown: String::new(),
     };
     crate::worktree_scripts::save_scripts(&repo.root, &scripts("exit 2")).unwrap();
-    assert!(prepare(&repo.root, "again").is_err());
+    let error = prepare(&repo.root, "again").unwrap_err();
+    assert!(error.contains("Setup script failed"), "{error}");
     assert_eq!(crate::git::worktrees(&repo.root).unwrap().len(), 1);
     crate::worktree_scripts::save_scripts(&repo.root, &scripts("echo ok")).unwrap();
     let workspace = prepare(&repo.root, "again").unwrap().unwrap();
     remove(&repo.root, &workspace, "again").unwrap();
+}
+
+#[test]
+fn a_retry_with_no_setup_does_not_inherit_the_failed_record() {
+    let repo = repo();
+    let scripts = crate::worktree_scripts::Scripts {
+        setup: "exit 2".into(),
+        teardown: String::new(),
+    };
+    crate::worktree_scripts::save_scripts(&repo.root, &scripts).unwrap();
+    prepare(&repo.root, "record").unwrap_err();
+    crate::worktree_scripts::save_scripts(&repo.root, &Default::default()).unwrap();
+    let workspace = prepare(&repo.root, "record").unwrap().unwrap();
+    let record = crate::worktree_scripts::record(Path::new(&workspace.path));
+    assert_eq!(record, None);
+    remove(&repo.root, &workspace, "record").unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn a_task_can_try_again_after_seeding_fails() {
+    let repo = repo();
+    let link = repo.root.join("link");
+    std::os::unix::fs::symlink("docs.txt", &link).unwrap();
+    let error = prepare(&repo.root, "seed").unwrap_err();
+    assert!(error.contains("not a regular file"), "{error}");
+    assert_eq!(crate::git::worktrees(&repo.root).unwrap().len(), 1);
+    std::fs::remove_file(&link).unwrap();
+    let workspace = prepare(&repo.root, "seed").unwrap().unwrap();
+    remove(&repo.root, &workspace, "seed").unwrap();
+}
+
+#[test]
+fn a_call_that_loses_the_race_leaves_the_winners_checkout() {
+    let repo = repo();
+    // Held so both calls get past their scan before either can make anything.
+    let held = crate::worktree_scripts::turn(&repo.root);
+    let calls: Vec<_> = (0..2)
+        .map(|_| {
+            let root = repo.root.clone();
+            std::thread::spawn(move || prepare(&root, "race"))
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    drop(held);
+    let (won, lost): (Vec<_>, Vec<_>) = calls
+        .into_iter()
+        .map(|call| call.join().unwrap())
+        .partition(Result::is_ok);
+    assert_eq!((won.len(), lost.len()), (1, 1), "{lost:?}");
+    let workspace = won[0].clone().unwrap().unwrap();
+    assert!(Path::new(&workspace.path).is_dir());
+    assert_eq!(crate::git::worktrees(&repo.root).unwrap().len(), 2);
+    remove(&repo.root, &workspace, "race").unwrap();
 }
 
 #[test]

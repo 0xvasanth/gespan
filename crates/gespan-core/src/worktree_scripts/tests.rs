@@ -422,15 +422,33 @@ fn a_removal_holds_the_repositorys_turn_until_it_is_finished() {
 }
 
 #[test]
-fn teardown_that_changes_files_does_not_keep_the_worktree() {
+fn a_change_made_during_teardown_keeps_the_worktree() {
     let dir = repo();
     Script::install(dir.path(), &[]);
     let tree = create_named_worktree(dir.path(), "changed").unwrap();
     let path = PathBuf::from(&tree.path);
     set_scripts(dir.path(), "", "echo changed> file");
-    worktree_management::remove_unused(dir.path(), &path).unwrap();
-    assert!(!path.exists());
+    let error = worktree_management::remove_unused(dir.path(), &path).unwrap_err();
+    assert!(error.contains("during Teardown"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(path.join("file")).unwrap().trim(),
+        "changed"
+    );
+    worktree_management::remove(dir.path(), &path).unwrap();
     let _ = std::fs::remove_dir(leftovers(dir.path()));
+}
+
+#[test]
+fn teardown_is_not_skipped_when_the_scripts_cannot_be_read() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join(FILE);
+    std::fs::write(&path, "not json").unwrap();
+    let mut store = Store {
+        path: Some(path),
+        data: Data::default(),
+    };
+    let error = stored(&mut store, Path::new("/project")).unwrap_err();
+    assert!(error.contains("Could not read the scripts"), "{error}");
 }
 
 #[test]

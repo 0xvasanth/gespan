@@ -213,27 +213,23 @@ pub fn prepare(lead: &Path, task: &str) -> Result<Option<Workspace>, String> {
     .is_ok();
     // The lead's changes go in before the Setup script, which has to see them.
     // The baseline comes after it, so what it writes isn't the worker's delta.
+    let mut made = None;
     let created = crate::git::create_seeded_worktree(lead, &branch, Some("HEAD"), known, |tree| {
         let workspace = Workspace {
             path: tree.path.clone(),
             branch: branch.clone(),
         };
+        made = Some(workspace.clone());
         seed(lead, &workspace, task)
     });
     let tree = match created {
         Ok(tree) => tree,
         // Nothing has worked here yet, and a checkout with no baseline could
-        // never be picked up again, so the task's next try starts clean.
+        // never be picked up again, so the task's next try starts clean. If
+        // this call made nothing, the checkout there is another call's.
         Err(error) => {
-            let left = crate::git::worktrees(lead)?
-                .into_iter()
-                .find(|tree| tree.branch.as_deref() == Some(branch.as_str()));
-            if let Some(tree) = left {
-                let workspace = Workspace {
-                    path: tree.path,
-                    branch: branch.clone(),
-                };
-                let _ = remove_checkout(lead, &workspace, task);
+            if let Some(workspace) = made {
+                let _ = abandon(lead, &workspace, task);
             }
             return Err(error);
         }
@@ -352,6 +348,17 @@ pub fn remove(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), Stri
     Ok(())
 }
 /// [`remove`] for a checkout that never started, so has nothing to tear down.
+fn abandon(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
+    let main = crate::git::worktrees(lead)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?;
+    let removal =
+        crate::worktree_scripts::abandon(Path::new(&main.path), Path::new(&workspace.path));
+    remove_checkout(lead, workspace, task)?;
+    removal.done();
+    Ok(())
+}
 fn remove_checkout(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
     if Path::new(&workspace.path).exists() {
         run_git(

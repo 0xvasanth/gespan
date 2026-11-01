@@ -214,6 +214,13 @@ pub fn scripts(main: &Path) -> Scripts {
         .unwrap_or_default()
 }
 
+/// [`scripts`], for a step that mustn't go ahead without knowing them.
+fn stored(store: &mut Store, main: &Path) -> Result<Scripts, String> {
+    store.load()?;
+    let scripts = store.data.projects.get(&key(main));
+    Ok(scripts.cloned().unwrap_or_default())
+}
+
 pub fn save_scripts(main: &Path, scripts: &Scripts) -> Result<(), String> {
     let mut store = STORE.lock().map_err(|_| "The scripts are unavailable")?;
     store.load()?;
@@ -479,7 +486,11 @@ pub(crate) fn tear_down(
     branch: Option<&str>,
 ) -> Result<Removal, String> {
     let key = key(worktree);
-    let script = scripts(main).teardown;
+    let mut store = STORE.lock().map_err(|_| "The scripts are unavailable")?;
+    let script = stored(&mut store, main)
+        .map_err(|error| format!("{error}. The worktree was kept."))?
+        .teardown;
+    drop(store);
     let script = script.trim();
     let remote = crate::files::remote::is_remote(worktree);
     if script.is_empty() || (!remote && !worktree.is_dir()) {
@@ -513,6 +524,16 @@ pub(crate) fn tear_down(
             "The Teardown script failed, so the worktree was kept. {reason}"
         )),
         Outcome::Cancelled => Err("Teardown was cancelled, so the worktree was kept.".into()),
+    }
+}
+
+/// Clears a worktree that never started for removal: there's nothing to tear
+/// down, but it can have a record, and it still takes the repository's turn.
+pub(crate) fn abandon(main: &Path, worktree: &Path) -> Removal {
+    Removal {
+        key: key(worktree),
+        ran: false,
+        _turn: turn(main),
     }
 }
 

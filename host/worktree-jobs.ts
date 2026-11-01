@@ -230,7 +230,7 @@ export class WorktreeJobs {
     follow(child.stdout);
     follow(child.stderr);
     const clean = () => {
-      if (folder) void rm(folder, { recursive: true, force: true });
+      if (folder) rm(folder, { recursive: true, force: true }).catch(() => {});
     };
     child.on("error", (error) => {
       job.error = `Could not start the script: ${error.message}`;

@@ -100,8 +100,7 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                 let paths: Vec<_> = trees.iter().map(|tree| Path::new(&tree.path)).collect();
                 let setups = gespan_core::worktree_scripts::records(&paths);
                 data.worktrees.trees = trees
-                    .iter()
-                    .cloned()
+                    .into_iter()
                     .zip(setups)
                     .map(|(tree, setup)| {
                         let status =

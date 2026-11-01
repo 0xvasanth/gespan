@@ -187,13 +187,13 @@ fn remove_clean(cwd: &Path, path: &Path) -> Result<(), String> {
         return Err("Files in this worktree have uncommitted changes.".into());
     }
     let removal = tear_down(cwd, &tree)?;
+    // A failed Teardown can wait a long time for its answer, so a change since
+    // the check above could be anyone's. Only the person can discard it.
+    if removal.ran && status(cwd, &tree).1 != Some(false) {
+        return Err("Files in this worktree changed during Teardown, so it was kept.".into());
+    }
     crate::provider::discard_worktree(Path::new(&tree.path));
-    // It was clean above, so anything changed since is Teardown's.
-    let remove = || {
-        let force = ["worktree", "remove", "--force", "--", &tree.path];
-        let plain = ["worktree", "remove", "--", &tree.path];
-        crate::git::git(cwd, if removal.ran { &force } else { &plain }).map(|_| ())
-    };
+    let remove = || crate::git::git(cwd, &["worktree", "remove", "--", &tree.path]).map(|_| ());
     // A discarded agent exits on its own thread. Windows refuses to delete a
     // folder while a process still runs in it.
     for _ in 0..REMOVE_RETRIES {

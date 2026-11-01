@@ -184,11 +184,14 @@ it("keeps the last lines of a script that writes a lot", async () => {
   const jobs = new WorktreeJobs();
   const script =
     process.platform === "win32"
-      ? "@for /L %%i in (1,1,300) do @echo line %%i"
-      : "i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo line $i; done";
+      ? "@for /L %%i in (1,1,2050) do @echo line %%i"
+      : "i=0; while [ $i -lt 2050 ]; do i=$((i+1)); echo line $i; done";
   const id = await jobs.startScript({ script, root: main, worktree, branch: "" });
   const result = await finished(jobs, id);
-  expect(result.lines.at(-1)).toBe("line 300");
+  expect(result.lines).toHaveLength(2_000);
+  expect(result.lines[0]).toBe("line 51");
+  expect(result.lines.at(-1)).toBe("line 2050");
+  expect(result.next).toBe(2_050);
 });
 
 it("refuses to answer for a job it doesn't know", () => {
