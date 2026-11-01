@@ -20,7 +20,10 @@ import {
 } from "./worktree-jobs";
 
 function repository(): { main: string; worktree: string } {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "gespan-host-jobs-")));
+  // The native call, for the long name of a temp folder Windows shortens.
+  const root = realpathSync.native(
+    mkdtempSync(join(tmpdir(), "gespan-host-jobs-")),
+  );
   const main = join(root, "main");
   const worktree = join(root, "tree");
   mkdirSync(main);
