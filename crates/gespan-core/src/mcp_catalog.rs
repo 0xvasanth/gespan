@@ -3,7 +3,7 @@
 //! back to it. Env values live in the OS keychain, and nothing runs until the
 //! user has approved the exact command and environment.
 use crate::mcp::Importable;
-use mcp_hub::{ServerSpec, Sharing};
+use mcp_hub::{ServerSpec, Sharing, TokenStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -66,10 +66,18 @@ impl Entry {
     fn spec(&self, env: BTreeMap<String, String>) -> ServerSpec {
         ServerSpec {
             id: self.id.clone(),
-            command: self.command.clone(),
+            // A remote server's process is a connection, so its address and
+            // headers take the place of a command and its environment.
+            command: self.url.clone().unwrap_or_else(|| self.command.clone()),
             args: self.args.clone(),
             env,
-            sharing: self.class.into(),
+            // One sign-in means one set of credentials, so nothing is gained
+            // by keeping connections apart.
+            sharing: if self.url.is_some() {
+                Sharing::Shared
+            } else {
+                self.class.into()
+            },
             tools: self.tools.clone(),
         }
     }
@@ -77,6 +85,9 @@ impl Entry {
     /// The command line as the approval card shows it, quoted so each argument
     /// reads as the one word it will be.
     pub fn command_line(&self) -> String {
+        if let Some(url) = &self.url {
+            return url.clone();
+        }
         std::iter::once(self.command.as_str())
             .chain(self.args.iter().map(String::as_str))
             .map(|word| match shlex::try_quote(word) {
@@ -289,7 +300,7 @@ impl Catalog {
     pub fn specs(&self, data_dir: &Path) -> Vec<ServerSpec> {
         self.entries
             .iter()
-            .filter(|entry| entry.enabled && entry.url.is_none())
+            .filter(|entry| entry.enabled)
             .filter_map(|entry| self.runnable(data_dir, entry))
             .collect()
     }
@@ -298,7 +309,7 @@ impl Catalog {
     pub fn stale(&self, data_dir: &Path) -> BTreeSet<String> {
         self.entries
             .iter()
-            .filter(|entry| entry.enabled && entry.url.is_none())
+            .filter(|entry| entry.enabled)
             .filter(|entry| self.runnable(data_dir, entry).is_none())
             .map(|entry| entry.id.clone())
             .collect()
@@ -363,15 +374,50 @@ fn read_secrets(data_dir: &Path, entry: &Entry) -> Result<BTreeMap<String, Strin
     serde_json::from_str(&value).map_err(|e| e.to_string())
 }
 
-/// Removes a server, then its secrets: a failed save must leave a server that
-/// still has them, and a leftover secret harms nothing.
+/// Removes a server, then its secrets and any sign-in: a failed save must leave
+/// a server that still has them, and a leftover secret harms nothing.
 pub fn remove(data_dir: &Path, id: &str) -> Result<Edited, String> {
     let edited = update(data_dir, |catalog| {
         catalog.entries.retain(|entry| entry.id != id);
         Ok(())
     })?;
+    SignIn::new(data_dir, id).clear()?;
     gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)?;
     Ok(edited)
+}
+
+/// A remote server's OAuth credentials, in the keychain. They go to that
+/// server's address alone, and no agent ever receives them.
+pub struct SignIn {
+    name: String,
+    data_dir: PathBuf,
+}
+
+impl SignIn {
+    pub fn new(data_dir: &Path, id: &str) -> Self {
+        Self {
+            name: format!("mcp-sign-in:{id}"),
+            data_dir: data_dir.to_owned(),
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        self.load().is_ok_and(|value| value.is_some())
+    }
+}
+
+impl mcp_hub::TokenStore for SignIn {
+    fn load(&self) -> Result<Option<String>, String> {
+        gespan_tracker_secrets::read_named(&self.name, &self.data_dir)
+    }
+
+    fn save(&self, value: &str) -> Result<(), String> {
+        gespan_tracker_secrets::write_named(&self.name, &self.data_dir, value)
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        gespan_tracker_secrets::delete_named(&self.name, &self.data_dir)
+    }
 }
 
 #[cfg(test)]
@@ -522,6 +568,31 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_server_is_shared_approved_by_its_address_and_keeps_headers_secret() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let mut server = found("Linear", "", &[("Authorization", "Bearer s3cret")]);
+        server.url = Some("https://mcp.example/mcp".into());
+        server.args.clear();
+        catalog.import(dir.path(), vec![server]).unwrap();
+        catalog.entries[0].class = Class::PerSession;
+        catalog.approve(dir.path(), "linear").unwrap();
+        catalog.save(dir.path()).unwrap();
+        let saved = std::fs::read_to_string(path(dir.path())).unwrap();
+        assert!(!saved.contains("s3cret"), "{saved}");
+        let specs = catalog.specs(dir.path());
+        assert_eq!(specs[0].command, "https://mcp.example/mcp");
+        assert_eq!(specs[0].sharing, Sharing::Shared);
+        assert_eq!(specs[0].env["Authorization"], "Bearer s3cret");
+        assert_eq!(catalog.entries[0].command_line(), "https://mcp.example/mcp");
+        catalog.entry_mut("linear").unwrap().url = Some("https://evil.example/mcp".into());
+        assert!(
+            catalog.specs(dir.path()).is_empty(),
+            "a new address needs approval"
+        );
+    }
+
+    #[test]
     fn a_server_keeps_its_secrets_if_its_removal_cant_be_saved() {
         let dir = setup();
         let mut catalog = Catalog::default();
@@ -537,6 +608,26 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn a_sign_in_lives_in_the_keychain_and_goes_with_the_server() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let sign_in = SignIn::new(dir.path(), "docs");
+        assert!(!sign_in.exists());
+        sign_in.save("{\"token\":1}").unwrap();
+        assert!(sign_in.exists());
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|file| {
+            std::fs::read_to_string(file.unwrap().path()).is_ok_and(|text| text.contains("token"))
+        }));
+        catalog.entries.push(Entry {
+            id: "docs".into(),
+            ..Entry::default()
+        });
+        catalog.save(dir.path()).unwrap();
+        remove(dir.path(), "docs").unwrap();
+        assert!(!sign_in.exists());
     }
 
     #[test]

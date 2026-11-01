@@ -96,6 +96,27 @@ impl SettingsView {
         );
     }
 
+    /// One sign-in here serves every agent, which never sees the token.
+    fn catalog_sign_in(&mut self, id: String, url: String, cx: &mut Context<Self>) {
+        let (opener, opening) = async_channel::bounded::<String>(1);
+        let work = cx.background_executor().spawn(async move {
+            gespan_core::tool_servers::sign_in(&id, &url, |address| {
+                let _ = opener.send_blocking(address.to_owned());
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(address) = opening.recv().await {
+                cx.update(|cx| cx.open_url(&address));
+            }
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.mcp_catalog_error = result.err();
+                this.load_catalog(cx);
+            });
+        })
+        .detach();
+    }
+
     /// Asks with the exact command and environment names on screen, since
     /// that is what's being approved.
     fn catalog_approve(&mut self, entry: Entry, window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -257,7 +278,7 @@ impl SettingsView {
                 })),
             );
         }
-        if entry.url.is_none() && (!entry.enabled || stale) {
+        if !entry.enabled || stale {
             let approving = entry.clone();
             row = row.child(
                 secondary_button(
@@ -270,6 +291,21 @@ impl SettingsView {
                 .child("Review and turn on")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.catalog_approve(approving.clone(), window, cx);
+                })),
+            );
+        }
+        if let Some(url) = entry.url.clone() {
+            let id = entry.id.clone();
+            row = row.child(
+                secondary_button(
+                    SharedString::from(format!("catalog-sign-in-{ix}")),
+                    "Sign in",
+                    false,
+                    false,
+                )
+                .child("Sign in")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.catalog_sign_in(id.clone(), url.clone(), cx);
                 })),
             );
         }

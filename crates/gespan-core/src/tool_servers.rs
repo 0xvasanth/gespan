@@ -3,7 +3,7 @@
 //!
 //! Adding a capability means registering a toolkit in `hub` and naming it in
 //! the turn's [`Mount`]; no provider needs to change.
-use crate::mcp_catalog::Catalog;
+use crate::mcp_catalog::{Catalog, SignIn};
 use crate::provider::Kind;
 use mcp_hub::{Config, Connection, Grant, Hub, Observer, ServerSpec, Spawned, Spawner, Token};
 use serde_json::{json, Value};
@@ -60,6 +60,36 @@ pub fn sync_servers() {
         hub.set_servers(specs.clone());
         *offered = specs;
     }
+}
+
+/// A token sent to this address can't be read on the way.
+fn safe_for_tokens(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| match url.scheme() {
+        "https" => true,
+        "http" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
+        _ => false,
+    })
+}
+
+/// One browser sign-in to a remote server, and every agent can use it. Blocks
+/// until the browser comes back.
+pub fn sign_in(id: &str, url: &str, open: impl FnOnce(&str)) -> Result<(), String> {
+    if !safe_for_tokens(url) {
+        return Err("Sign-in needs an https address".into());
+    }
+    let data_dir = DATA_DIR.get().ok_or("Gespan's data folder isn't set")?;
+    let store = Arc::new(SignIn::new(data_dir, id));
+    mcp_hub::sign_in(
+        url,
+        "Gespan",
+        store,
+        open,
+        std::time::Duration::from_secs(300),
+    )?;
+    if let Ok(hub) = hub() {
+        hub.tools_changed(None);
+    }
+    Ok(())
 }
 
 /// The processes the catalogue's servers are running as, for Settings.
@@ -182,6 +212,17 @@ struct Processes;
 
 impl Spawner for Processes {
     fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> std::io::Result<Spawned> {
+        if spec.command.starts_with("https://") || spec.command.starts_with("http://") {
+            let oauth = DATA_DIR
+                .get()
+                .map(|data_dir| SignIn::new(data_dir, &spec.id));
+            let oauth = oauth.filter(SignIn::exists);
+            return mcp_hub::connect(
+                &spec.command,
+                spec.env.clone(),
+                oauth.map(|store| Arc::new(store) as Arc<dyn mcp_hub::TokenStore>),
+            );
+        }
         let record = DATA_DIR
             .get()
             .map(|dir| running_record(dir).join(std::process::id().to_string()));
@@ -549,6 +590,17 @@ mod tests {
         assert_eq!(delivery(Kind::Pi, None), Delivery::Environment);
         assert_eq!(delivery(Kind::Omp, None), Delivery::Environment);
         assert_eq!(delivery(Kind::OpenCode, Some("s")), Delivery::OpenCodeApi);
+    }
+
+    #[test]
+    fn tokens_only_travel_where_they_cant_be_read() {
+        assert!(safe_for_tokens("https://mcp.example/mcp"));
+        assert!(safe_for_tokens("http://127.0.0.1:8000/mcp"));
+        assert!(safe_for_tokens("http://localhost/mcp"));
+        assert!(!safe_for_tokens("http://mcp.example/mcp"));
+        assert!(!safe_for_tokens("http://localhost.evil.example/mcp"));
+        assert!(!safe_for_tokens("ftp://mcp.example"));
+        assert!(!safe_for_tokens("not a url"));
     }
 
     #[test]

@@ -3,16 +3,20 @@
 //! endpoint and whatever comes back goes to stdout.
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Read, Write},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 /// The hub sends a stream comment every 15 seconds while a tool runs, so this
 /// much silence means it has stopped answering, not that a tool is slow.
 const READ_WAIT: Duration = Duration::from_secs(60);
+/// A remote server owes us no such comments, so only a stalled connection is
+/// cut off; a slow tool is the pool's to time out.
+const REMOTE_READ_WAIT: Duration = Duration::from_secs(5 * 60);
 const GONE: &str = "The tool endpoint isn't reachable, so this tool can't run";
 const SESSION_HEADER: &str = "Mcp-Session-Id";
 const VERSION_HEADER: &str = "MCP-Protocol-Version";
@@ -35,14 +39,60 @@ fn agent(read_wait: Option<Duration>) -> ureq::Agent {
     .build()
 }
 
+/// What proves who is calling.
 #[derive(Clone)]
-struct Link {
+pub(crate) enum Credential {
+    None,
+    Bearer(String),
+    /// Fetched when needed, and held briefly: finding a token can take several
+    /// round trips to an authorization server.
+    Source(Arc<TokenSource>),
+}
+
+/// How long a fetched token is used before asking again.
+const TOKEN_LIFE: Duration = Duration::from_secs(60);
+
+type Fetch = dyn Fn() -> Result<String, String> + Send + Sync;
+
+pub(crate) struct TokenSource {
+    fetch: Box<Fetch>,
+    held: Mutex<Option<(String, Instant)>>,
+}
+
+impl TokenSource {
+    pub(crate) fn new(fetch: Box<Fetch>) -> Self {
+        Self {
+            fetch,
+            held: Mutex::new(None),
+        }
+    }
+
+    fn token(&self) -> Result<String, String> {
+        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((token, at)) = held.as_ref() {
+            if at.elapsed() < TOKEN_LIFE {
+                return Ok(token.clone());
+            }
+        }
+        let token = (self.fetch)()?;
+        *held = Some((token.clone(), Instant::now()));
+        Ok(token)
+    }
+
+    fn forget(&self) {
+        *self.held.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Link {
     agent: ureq::Agent,
     /// For the server-to-client stream, which may stay quiet for as long as
     /// the agent runs.
     listener: ureq::Agent,
     url: String,
-    bearer: String,
+    credential: Credential,
+    headers: BTreeMap<String, String>,
     session: Arc<Mutex<Option<String>>>,
     version: Arc<Mutex<Option<String>>>,
 }
@@ -54,46 +104,87 @@ fn held(slot: &Mutex<Option<String>>) -> Option<String> {
 }
 
 impl Link {
-    fn new(connection: Connection) -> Self {
-        Self::waiting(connection, READ_WAIT)
+    fn to_hub(Connection { url, token }: Connection) -> Self {
+        Self::waiting(url, Credential::Bearer(token), BTreeMap::new(), READ_WAIT)
     }
 
-    fn waiting(Connection { url, token }: Connection, read_wait: Duration) -> Self {
+    pub(crate) fn new(
+        url: String,
+        credential: Credential,
+        headers: BTreeMap<String, String>,
+    ) -> Self {
+        Self::waiting(url, credential, headers, REMOTE_READ_WAIT)
+    }
+
+    fn waiting(
+        url: String,
+        credential: Credential,
+        headers: BTreeMap<String, String>,
+        read_wait: Duration,
+    ) -> Self {
         Self {
             agent: agent(Some(read_wait)),
             listener: agent(None),
             url,
-            bearer: format!("Bearer {token}"),
+            credential,
+            headers,
             session: Arc::default(),
             version: Arc::default(),
         }
     }
 
-    fn request(&self, method: &str) -> ureq::Request {
+    fn request(&self, method: &str) -> Result<ureq::Request, String> {
         self.request_on(&self.agent, method)
     }
 
-    fn request_on(&self, agent: &ureq::Agent, method: &str) -> ureq::Request {
+    fn request_on(&self, agent: &ureq::Agent, method: &str) -> Result<ureq::Request, String> {
         let mut request = agent
             .request(method, &self.url)
-            .set("Authorization", &self.bearer)
             .set("Accept", "application/json, text/event-stream");
+        for (name, value) in &self.headers {
+            request = request.set(name, value);
+        }
+        let token = match &self.credential {
+            Credential::None => None,
+            Credential::Bearer(token) => Some(token.clone()),
+            Credential::Source(source) => Some(source.token()?),
+        };
+        if let Some(token) = token {
+            request = request.set("Authorization", &format!("Bearer {token}"));
+        }
         if let Some(session) = held(&self.session) {
             request = request.set(SESSION_HEADER, &session);
         }
         if let Some(version) = held(&self.version) {
             request = request.set(VERSION_HEADER, &version);
         }
-        request
+        Ok(request)
     }
 
     /// One message out, and everything the hub answers it with, until the
     /// reply to its own id. Notifications have no reply to wait for; a request
     /// whose reply never came is an error, or its caller would wait forever.
+    #[allow(clippy::result_large_err)] // ureq's error is the one it returns.
     fn exchange(&self, message: &Value, deliver: &mut dyn FnMut(Value)) -> Result<(), String> {
-        let request = self.request("POST").set("Content-Type", "application/json");
-        let response = match request.send_string(&message.to_string()) {
+        let body = message.to_string();
+        let send = || {
+            self.request("POST")
+                .map(|request| request.set("Content-Type", "application/json"))
+                .map(|request| request.send_string(&body))
+        };
+        let mut sent = send()?;
+        // A held token may have gone stale; ask for a fresh one once.
+        if let (Err(ureq::Error::Status(401, _)), Credential::Source(source)) =
+            (&sent, &self.credential)
+        {
+            source.forget();
+            sent = send()?;
+        }
+        let response = match sent {
             Ok(response) => response,
+            Err(ureq::Error::Status(401, _)) => {
+                return Err("This server needs a sign-in".to_owned());
+            }
             Err(ureq::Error::Status(_, response)) => {
                 return Err(refusal_text(response).unwrap_or_else(|| GONE.to_owned()));
             }
@@ -181,7 +272,10 @@ fn write_line(output: &Mutex<impl Write>, message: &Value) -> Result<(), String>
 /// Reads the server-to-client stream, so a changed tool list reaches the agent.
 fn listen(link: Link, output: Arc<Mutex<impl Write + Send + 'static>>) {
     thread::spawn(move || {
-        let Ok(response) = link.request_on(&link.listener, "GET").call() else {
+        let Ok(response) = link
+            .request_on(&link.listener, "GET")
+            .and_then(|request| request.call().map_err(|error| error.to_string()))
+        else {
             return;
         };
         let _ = read_events(response.into_reader(), |event| {
@@ -238,7 +332,7 @@ fn read_frame(input: &mut impl BufRead) -> std::io::Result<Option<Frame>> {
     }
 }
 
-fn pump(
+pub(crate) fn pump(
     link: Link,
     mut input: impl BufRead,
     output: Arc<Mutex<impl Write + Send + 'static>>,
@@ -274,7 +368,9 @@ fn pump(
     for worker in workers {
         let _ = worker.join();
     }
-    let _ = link.request("DELETE").call();
+    if let Ok(request) = link.request("DELETE") {
+        let _ = request.call();
+    }
     Ok(())
 }
 
@@ -282,7 +378,7 @@ fn pump(
 /// carries MCP frames only.
 pub fn relay(connection: Connection) -> Result<(), String> {
     pump(
-        Link::new(connection),
+        Link::to_hub(connection),
         std::io::stdin().lock(),
         Arc::new(Mutex::new(std::io::stdout())),
     )
@@ -290,7 +386,7 @@ pub fn relay(connection: Connection) -> Result<(), String> {
 
 /// One tool call over a short-lived connection.
 pub fn call_tool(connection: Connection, tool: &str, arguments: Value) -> Result<Value, String> {
-    let link = Link::new(connection);
+    let link = Link::to_hub(connection);
     link.exchange(
         &json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
             "protocolVersion":"2025-11-25",
@@ -312,7 +408,9 @@ pub fn call_tool(connection: Connection, tool: &str, arguments: Value) -> Result
             }
         },
     );
-    let _ = link.request("DELETE").call();
+    if let Ok(request) = link.request("DELETE") {
+        let _ = request.call();
+    }
     result?;
     let reply = reply.ok_or(GONE)?;
     if let Some(error) = reply["error"]["message"].as_str() {
@@ -439,7 +537,7 @@ mod tests {
     fn a_tool_call_goes_through_to_the_hub_and_its_reply_comes_back() {
         let (_hub, connection) = hub();
         let replies = run(
-            Link::new(connection),
+            Link::to_hub(connection),
             lines(&[
                 initialize(),
                 json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
@@ -458,7 +556,7 @@ mod tests {
     fn a_refused_token_reaches_the_agent_as_the_hubs_own_error() {
         let (_hub, mut connection) = hub();
         connection.token = "forged".to_owned();
-        let replies = run(Link::new(connection), lines(&[call(7)]));
+        let replies = run(Link::to_hub(connection), lines(&[call(7)]));
         assert_eq!(
             reply_to(&replies, 7)["error"]["message"],
             "This tool credential is not valid"
@@ -477,14 +575,14 @@ mod tests {
             // A stream that ends cleanly first.
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n\r\n",
         ] {
-            let replies = run(Link::new(scripted(response)), lines(&[call(3)]));
+            let replies = run(Link::to_hub(scripted(response)), lines(&[call(3)]));
             assert_eq!(reply_to(&replies, 3)["error"]["message"], GONE, "{response}");
         }
     }
 
     #[test]
     fn a_notification_expects_no_reply() {
-        let link = Link::new(scripted(
+        let link = Link::to_hub(scripted(
             "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n",
         ));
         let replies = run(
@@ -505,10 +603,9 @@ mod tests {
             drop(held);
         });
         let link = Link::waiting(
-            Connection {
-                url,
-                token: "token".to_owned(),
-            },
+            url,
+            Credential::Bearer("token".to_owned()),
+            BTreeMap::new(),
             Duration::from_millis(100),
         );
         let started = std::time::Instant::now();
@@ -523,7 +620,7 @@ mod tests {
         let mut input = vec![b'x'; MAX_LINE_BYTES + 1];
         input.push(b'\n');
         input.extend(lines(&[initialize(), call(5)]));
-        let replies = run(Link::new(connection), input);
+        let replies = run(Link::to_hub(connection), input);
         assert_eq!(replies[0]["error"]["message"], "Oversized MCP frame");
         assert!(reply_to(&replies, 5)["result"].is_object());
     }

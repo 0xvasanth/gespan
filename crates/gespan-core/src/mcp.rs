@@ -422,9 +422,12 @@ fn importable_with(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Option<Importable> {
     let config = &connection.config;
+    // A remote entry's secrets are its headers.
     let env = config
         .get("env")
         .or_else(|| config.get("environment"))
+        .or_else(|| config.get("headers"))
+        .or_else(|| config.get("http_headers"))
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
