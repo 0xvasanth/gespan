@@ -15,6 +15,8 @@ mod handoff;
 #[cfg(all(test, unix))]
 mod handoff_tests;
 mod persistence;
+#[cfg(all(test, unix))]
+mod pilot_checkpoint_tests;
 pub(crate) mod remote;
 mod ticket_context;
 pub(crate) mod ticket_scope;
@@ -545,8 +547,7 @@ fn run_turn_using(
             prompt
         };
         let cwd = settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd);
-        if settings.pilot.is_none()
-            && cwd != "~"
+        if cwd != "~"
             && let Some(store) = gespan_core::checkpoint::store()
         {
             let id = gespan_core::checkpoint::new_turn_id();
