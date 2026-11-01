@@ -1,0 +1,193 @@
+crates/gespan-gpui/src/conversation.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 2013-2015
+crates/gespan-core/src/pilot/work.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 137-142,145,183-197,211,350-402
+crates/gespan-core/src/visual_bridge.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 557-558,571-584,679-682
+crates/gespan-core/src/store.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1419-1424
+crates/gespan-core/src/worktree_scripts.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-792
+crates/gespan-gpui/src/worktree_setups.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-358
+crates/tracker-secrets/tests/store.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 339-355
+crates/gespan-gpui/src/runtime/ticket_tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 42,49-51,56-57,235-261,269-270
+crates/gespan-gpui/src/runtime/mcp_stub.py
+  s_92be0b300595dd::t_5fdc7684eed4ba 32,34-39
+crates/gespan-gpui/src/runtime.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 494-499,743-746,748-764,1893-1916
+  s_92be0b300595dd::t_d29791ad3e860b 1917-1918
+crates/gespan-gpui/src/board/settings/automation.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 63-65,70,122-132
+docs/native/mcp-hub.md
+  s_92be0b300595dd::t_5fdc7684eed4ba 13,30,36,38,46,50
+crates/gespan-core/src/pilot/tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 243-283
+crates/gespan-core/src/tool/presentation.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 370-374,1092-1098
+crates/gespan-core/src/orchestration/worktree.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 214-236,241,262,337-362
+crates/gespan-core/src/worktree_copy.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 15,20,26,34-35,54-66,73-74,120-122,128,153-155,159,165-167,184,188-194,304-339
+crates/gespan-core/src/provider/lifecycle.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 17-143
+crates/mcp-hub/tests/servers.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 42,60-65,72-100,114-121,183,187,260,745-1014
+  s_92be0b300595dd::t_f0f470c796104e 1015
+crates/gespan-core/src/remote.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 472-475,964-967
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 9,11,24-25,37-44,46-57,61-62,65-66,72-77,140,156,158,194,265,280,290,320,324,407
+  s_92be0b300595dd::t_bcb312292bbf3a 281
+docs/native/parity.md
+  s_92be0b300595dd::t_5fdc7684eed4ba 231
+crates/mcp-hub/Cargo.toml
+  s_92be0b300595dd::t_5fdc7684eed4ba 23
+crates/gespan-core/src/orchestration.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 436,490-500
+crates/gespan-gpui/src/settings/pages/mod.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 26
+crates/gespan-gpui/src/main.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 107,340,388-390,567
+crates/gespan-gpui/src/settings/mod.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 251-256,265-266,400-403,412,452
+crates/mcp-hub/src/upstream.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 4,9,22-23,54-55,97,106,191-197,199,201-203,205,207-219,221,228-229,241-243,245,255-265,286,321-323,325-336,367-373,391-415,428-640
+crates/gespan-gpui/src/shell/session_worktree.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 124-126,296-299
+crates/gespan-core/src/tool_servers.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 36-38,111-129,131,135,138,141-149,151-208,226-229,236-242,246-261,265-267,271-273,372-376,442-447,453-462,469-471,473,622-751
+  s_92be0b300595dd::t_0f427ccfcc4ba8 752
+crates/gespan-gpui/src/conversation/notifications.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 23
+crates/mcp-hub/src/router.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 73-77,90-91,96,102,144,177-181,206-211,255,457
+crates/gespan-core/src/orchestration/worktree/tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 47-136
+crates/gespan-core/src/git.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 7-9,575-579,581-582,584,618-619,625,627-638,642,647-688,700-710,715,719-730,736,739-743,747-765,775,817-842,873-936,1625-1638
+  s_92be0b300595dd::t_bc00629d8b049a 1639
+crates/mcp-hub/src/endpoint.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 22-26,80,83-85,90-109,154-155,172-177,180,186,189,191,196-215,246-251,254,275-278,281-282,299,303-306,320-322,327-336,338-346,350,352-358,360-364,428,434,496,520-524,533-545,547,554,569
+crates/board-store/tests/v5.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 232
+crates/gespan-gpui/src/board/tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 8244,8261,8566
+crates/gespan-gpui/src/shell/app_views.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 347-350,355-363,365-369,447
+crates/mcp-hub/src/grants.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 193,198,203-227,229-244,296-330
+  s_92be0b300595dd::t_3db160dfaf565a 331
+crates/gespan-core/src/pilot/bridge.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 125-141,185,206,224,234,289-298,300-316,318-321,323-325,339-428,468,500
+crates/gespan-gpui/src/board/tests/link_run.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 407,469,541,580-850,1176
+crates/gespan-gpui/src/shell.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1040-1046,9186
+crates/mcp-hub/src/pool.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 24-25,92-104,154-155,181,197-198,200-201,220-222,227,237-242,270-290,296-299,321-326,328,336-338,373-383,394,403-411,416,420-425,509,561,563,565-568,601,612,615-616,632-634,639-641
+  s_92be0b300595dd::t_820fe23986b2b3 642
+host/worktree-jobs.test.ts
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-215
+crates/gespan-core/src/ticket_bridge.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 554-564,886
+crates/tracker-secrets/src/lib.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 125-126
+host/server.ts
+  s_92be0b300595dd::t_5fdc7684eed4ba 31,149,286-287,512-558
+host/server.test.ts
+  s_92be0b300595dd::t_5fdc7684eed4ba 283-323
+crates/board-store/src/schema.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 4,216-222
+  s_92be0b300595dd::t_c6692932aa9bb9 223
+crates/gespan-core/src/mcp_catalog.rs
+  s_92be0b300595dd::t_bcb312292bbf3a 312,377-378,595,628-629,633
+  s_92be0b300595dd::t_5fdc7684eed4ba 9,13,19-20,57-58,85-86,93-96,160-191,220-222,228-232,267,269,274-297,304-311,313-314,332-359,379-383,385-386,561-563,596-611,634-781
+  s_92be0b300595dd::t_aa6bee9aaea26a 612,782
+crates/board-store/tests/v3.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 508-509,513-516
+crates/gespan-core/src/provider/acp.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1639-1674
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-539
+crates/board-store/src/templates.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 457-458,478-479
+crates/gespan-core/src/provider/opencode.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 12-13,37-38,234-266,381,444,451-452,830-961
+crates/gespan-gpui/src/settings/data.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 40-41,99-102,104-105,118
+crates/gespan-core/src/process/orphans.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 35-37,40-43,60-61,63-79,510-511,516,518-519,522,538-554
+  s_92be0b300595dd::t_bfc996951e2512 555
+crates/mcp-hub/src/relay.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 14-16,31-41,90-92,117-118,126-127,137-139,141,165-166,204,207,210-211,218-219,224,299-334,337,341-346,425-539,541-558,560-577,579-584,586-605,609-622,624-645
+  s_92be0b300595dd::t_bcb312292bbf3a 17-19,108,115-116,119-123,140,276,540,559,578,585,606-608,623
+crates/mcp-hub/src/session.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 5,60-64,85-94,96-118,178-180,237-238,262-263,265-266,321-323,327-331
+  s_92be0b300595dd::t_89984cd0c90a1f 332-333
+crates/mcp-hub/src/toolkit.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 13-15
+crates/gespan-gpui/src/worktree_setups_tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-283
+host/worktree-jobs.ts
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-297
+crates/board-store/tests/v8.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 1-87
+crates/board-store/src/settings.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 23-24,29-31,42-48,53-54,72-73,89-90,260-261,277-278,362-367,369-373
+crates/gespan-core/src/mcp.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 375-410,415,417-423,434-442,445,447,453-455,808-890
+CHANGELOG.md
+  s_92be0b300595dd::t_5fdc7684eed4ba 10-26
+crates/board-store/src/migrate.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 17-18,25,32,39,108-109
+  s_92be0b300595dd::t_4c4816e49172da 110-111
+crates/gespan-core/src/git/remote.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 4-5,8-23,71-226,321-478
+crates/gespan-core/src/worktree_management.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 75,77-98,189-194,201,206
+crates/gespan-core/tests/real_agents.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 43,92,124,128-133,135-136,145,148,152,159-165,172,174-175,181,197,206-216
+crates/gespan-gpui/src/board/run_with.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 16-21,31-35,56,58-59,68-72,76,78,123-127,149,161-201,211-221,227-228,325,407-411,420,422,426-438,546-568,669-679,682-701
+crates/gespan-gpui/src/settings/management.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 116-117,255-258,260-267
+crates/gespan-gpui/src/settings/preferences.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 87-91,179-181,199-213,351-358,561-603
+  s_92be0b300595dd::t_4bf1e0853795fa 604
+crates/gespan-gpui/src/notifications/approvals.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 17-20,40-42,49-50,55-58,60,119-150,384-389,528-534,536,551,553-562,870-922,935,952-960,962,965-969,987-991,1004-1037,1064,1081,1110,1115-1142,1144
+  s_92be0b300595dd::t_c196ce611aa6a5 1143,1145
+crates/gespan-gpui/src/worktree_switcher.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 270-272
+crates/gespan-core/src/lib.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 67
+crates/gespan-gpui/src/settings/pages/worktrees.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 2,10-45,47-280,430-447,498-499,508-535
+crates/gespan-gpui/src/shell/settings.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 558
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_92be0b300595dd::t_5fdc7684eed4ba 292-324,326,329-528,532-548
+Cargo.lock
+  s_92be0b300595dd::t_cef83b32578244 1876
+crates/gespan-gpui/Cargo.lock
+  s_92be0b300595dd::t_abe08ac78aa2e7 1695,1937,4275,4409,4438,4691,5886,6487,7162,7447,7450,7895,8108,8817,9212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b55a4fa88cdc08c9c6777939888e0eae532ec2d2",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
