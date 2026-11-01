@@ -268,7 +268,10 @@ impl SettingsView {
         .into_any_element()
     }
 
-    pub(in crate::settings) fn catalog_section(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(in crate::settings) fn catalog_section(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let managed = self.mcp_catalog.managed;
         let mut section = vec![
             div()
