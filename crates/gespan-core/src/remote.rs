@@ -469,6 +469,10 @@ fn supported_remote_method(method: &str) -> bool {
             | "git.createBranch"
             | "git.worktrees"
             | "git.worktreeCreate"
+            | "git.worktreeRemove"
+            | "worktree.jobStart"
+            | "worktree.jobPoll"
+            | "worktree.jobCancel"
             | "files.read"
             | "files.list"
             | "files.index"
@@ -957,6 +961,10 @@ mod tests {
             "git.createBranch",
             "git.worktrees",
             "git.worktreeCreate",
+            "git.worktreeRemove",
+            "worktree.jobStart",
+            "worktree.jobPoll",
+            "worktree.jobCancel",
             "attachments.upload",
             "attachments.read",
         ] {

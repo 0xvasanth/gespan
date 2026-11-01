@@ -28,6 +28,7 @@ import {
   hostWorktrees,
   resolveHostWorktreeAsync,
 } from "./git-worktrees";
+import { removeHostWorktree, WorktreeJobs } from "./worktree-jobs";
 import {
   createHostPath,
   hostFileDiff,
@@ -145,6 +146,7 @@ export function createHostServer(
     { binaries: string; probed: number; catalog: Promise<HostModelCatalog> }
   >();
   const transfers = new SyncTransfers();
+  const worktreeJobs = new WorktreeJobs();
   const workspace = new WorkspaceCommands(
     engine.store,
     (projectId, action) => engine.withIdleProject(projectId, action),
@@ -281,6 +283,8 @@ export function createHostServer(
                 "git.createBranch",
                 "git.worktrees",
                 "git.worktreeCreate",
+                "git.worktreeRemove",
+                "worktree.jobs",
                 "files.read",
                 "files.list",
                 "files.index",
@@ -505,6 +509,53 @@ export function createHostServer(
             workspace.invalidateRoots();
             break;
           }
+          case "git.worktreeRemove": {
+            const project = engine.store.project(
+              String(params.projectId ?? ""),
+            );
+            const path = await resolveHostWorktreeAsync(project.cwd, params.path);
+            const { worktrees } = await hostWorktrees(project.cwd);
+            if (path === worktrees[0]?.path)
+              throw new Error("The main working copy cannot be deleted");
+            await removeHostWorktree(project.cwd, path, params.force === true);
+            workspace.invalidateRoots();
+            result = {};
+            break;
+          }
+          case "worktree.jobStart": {
+            const project = engine.store.project(
+              String(params.projectId ?? ""),
+            );
+            const worktree = await resolveHostWorktreeAsync(
+              project.cwd,
+              params.cwd,
+            );
+            const { worktrees } = await hostWorktrees(project.cwd);
+            const root = worktrees[0]?.path ?? project.cwd;
+            if (params.kind === "copy") {
+              result = { jobId: worktreeJobs.startCopy(root, worktree) };
+            } else if (typeof params.script === "string" && params.script) {
+              result = {
+                jobId: await worktreeJobs.startScript({
+                  script: params.script,
+                  root,
+                  worktree,
+                  branch: String(params.branch ?? ""),
+                }),
+              };
+            } else throw new Error("Invalid worktree job");
+            break;
+          }
+          case "worktree.jobPoll":
+            result = worktreeJobs.poll(
+              String(params.jobId ?? ""),
+              Number(params.after ?? 0),
+            );
+            break;
+          case "worktree.jobCancel":
+            worktreeJobs.cancel(String(params.jobId ?? ""));
+            result = {};
+            break;
           case "files.read": {
             const project = engine.store.project(
               String(params.projectId ?? ""),

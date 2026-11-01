@@ -267,9 +267,9 @@ impl WorktreeSwitcher {
         let cwd = self.focused.as_ref().map_or(&self.cwd, |f| &f.path).clone();
         self.creating = true;
         self.error = None;
-        let work = cx
-            .background_executor()
-            .spawn(async move { git::create_named_worktree(Path::new(&cwd), &branch) });
+        let work = crate::runtime::on_own_thread(move || {
+            git::create_named_worktree(Path::new(&cwd), &branch)
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {

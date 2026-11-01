@@ -2010,9 +2010,9 @@ impl Conversation {
             .or(self.branch.clone())
             .unwrap_or_else(|| "HEAD".into());
         let id = self.summary.id;
-        let work = cx
-            .background_executor()
-            .spawn(async move { gespan_core::git::create_worktree(Path::new(&cwd), &base, id) });
+        let work = crate::runtime::on_own_thread(move || {
+            gespan_core::git::create_worktree(Path::new(&cwd), &base, id)
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {

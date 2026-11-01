@@ -211,12 +211,34 @@ pub fn prepare(lead: &Path, task: &str) -> Result<Option<Workspace>, String> {
         &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
     )
     .is_ok();
-    let tree = crate::git::create_project_worktree(lead, &branch, Some("HEAD"), known)?;
+    // The lead's changes go in before the Setup script, which has to see them.
+    // The baseline comes after it, so what it writes isn't the worker's delta.
+    let mut made = None;
+    let created = crate::git::create_seeded_worktree(lead, &branch, Some("HEAD"), known, |tree| {
+        let workspace = Workspace {
+            path: tree.path.clone(),
+            branch: branch.clone(),
+        };
+        made = Some(workspace.clone());
+        seed(lead, &workspace, task)
+    });
+    let tree = match created {
+        Ok(tree) => tree,
+        // Nothing has worked here yet, and a checkout with no baseline could
+        // never be picked up again, so the task's next try starts clean. If
+        // this call made nothing, the checkout there is another call's.
+        Err(error) => {
+            if let Some(workspace) = made {
+                let _ = abandon(lead, &workspace, task);
+            }
+            return Err(error);
+        }
+    };
     let workspace = Workspace {
         path: tree.path,
         branch,
     };
-    if let Err(error) = seed(lead, &workspace, task) {
+    if let Err(error) = capture_workspace(Path::new(&workspace.path), &reference(task, "base")) {
         let _ = remove(lead, &workspace, task);
         return Err(error);
     }
@@ -237,7 +259,7 @@ fn seed(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
         }
         write_entry(worker, &entry)?;
     }
-    capture_workspace(worker, &reference(task, "base")).map(|_| ())
+    Ok(())
 }
 
 /// True only when the checkout still holds exactly what it started with.
@@ -312,6 +334,32 @@ pub fn integrate(
 
 /// Removes the checkout, its temporary branch and its snapshots.
 pub fn remove(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
+    let main = crate::git::worktrees(lead)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?;
+    let removal = crate::worktree_scripts::tear_down(
+        Path::new(&main.path),
+        Path::new(&workspace.path),
+        Some(&workspace.branch),
+    )?;
+    remove_checkout(lead, workspace, task)?;
+    removal.done();
+    Ok(())
+}
+/// [`remove`] for a checkout that never started, so has nothing to tear down.
+fn abandon(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
+    let main = crate::git::worktrees(lead)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?;
+    let removal =
+        crate::worktree_scripts::abandon(Path::new(&main.path), Path::new(&workspace.path));
+    remove_checkout(lead, workspace, task)?;
+    removal.done();
+    Ok(())
+}
+fn remove_checkout(lead: &Path, workspace: &Workspace, task: &str) -> Result<(), String> {
     if Path::new(&workspace.path).exists() {
         run_git(
             lead,

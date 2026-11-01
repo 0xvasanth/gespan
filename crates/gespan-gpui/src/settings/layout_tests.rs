@@ -422,3 +422,130 @@ fn managed_mode_and_removal_reach_the_saved_catalogue(cx: &mut TestAppContext) {
     assert!(saved(&dir).entries.is_empty());
     assert!(visual.debug_bounds(APPROVE).is_none());
 }
+
+fn a_tree() -> data::Tree {
+    data::Tree {
+        tree: gespan_core::git::Worktree {
+            path: "/work/app-worktrees/feature".into(),
+            branch: Some("feature".into()),
+            ..Default::default()
+        },
+        locked: false,
+        dirty: Some(false),
+        unpushed: 0,
+        merged: None,
+        setup: None,
+    }
+}
+
+#[gpui::test]
+fn the_delete_dialog_starts_from_the_project_then_the_app(cx: &mut TestAppContext) {
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let opened = |visual: &mut VisualTestContext, project: &str| {
+        window
+            .update(visual, |view, window, cx| {
+                view.selected_project = project.into();
+                view.management = None;
+                view.open_management(management::Target::DeleteTree(a_tree()), window, cx);
+                let editor = view.management.as_ref().unwrap();
+                (editor.delete_branch, editor.delete_sessions)
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        opened(visual, "/a"),
+        (false, false),
+        "keeps things at first"
+    );
+    window
+        .update(visual, |view, _, _| {
+            view.prefs.worktree_delete_branch = true;
+            view.prefs.project_worktrees.insert(
+                "/a".into(),
+                preferences::WorktreeDefaults {
+                    delete_branch: Some(false),
+                    delete_sessions: Some(true),
+                },
+            );
+        })
+        .unwrap();
+    assert_eq!(opened(visual, "/a"), (false, true));
+    assert_eq!(opened(visual, "/b"), (true, false));
+}
+
+#[gpui::test]
+fn scripts_save_and_unsaved_text_survives_picking_another_project(cx: &mut TestAppContext) {
+    let one = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let main = one.path().to_string_lossy().into_owned();
+    let second = other.path().to_string_lossy().into_owned();
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (first, in_second) = (main.clone(), second.clone());
+    window
+        .update(visual, move |view, _, cx| {
+            view.scripts_for(&first, cx);
+            let setup = view.worktree_scripts[&first].setup.clone();
+            setup.update(cx, |input, cx| input.set_text("bun install".into(), cx));
+            view.save_worktree_scripts(&first, cx);
+            setup.update(cx, |input, cx| input.set_text("not saved".into(), cx));
+            view.scripts_for(&in_second, cx);
+            view.scripts_for(&first, cx);
+            let kept = view.worktree_scripts[&first]
+                .setup
+                .read(cx)
+                .content
+                .to_string();
+            assert_eq!(kept, "not saved");
+        })
+        .unwrap();
+    let saved = gespan_core::worktree_scripts::scripts(std::path::Path::new(&main));
+    assert_eq!(saved.setup, "bun install");
+}
+
+#[gpui::test]
+fn the_delete_default_controls_set_the_app_and_the_project(cx: &mut TestAppContext) {
+    let repo = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(repo.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    git(&["init", "-b", "main"]);
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    // Tall enough to click the rows below the fold.
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    let project = repo.path().to_string_lossy().into_owned();
+    let main = project.clone();
+    window
+        .update(visual, move |view, _, cx| {
+            view.selected_project = main.clone();
+            view.discovery.worktrees.main = main;
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for target in [
+        "settings-worktree-delete-branch-on",
+        "settings-worktree-delete-sessions-project-on",
+    ] {
+        let control = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"));
+        visual.simulate_click(control.center(), Default::default());
+        visual.run_until_parked();
+    }
+    window
+        .read_with(visual, |view, _| {
+            assert!(view.prefs.deletes_merged_branch("/other"));
+            assert!(view.prefs.deletes_worktree_sessions(&project));
+            assert!(!view.prefs.deletes_worktree_sessions("/other"));
+        })
+        .unwrap();
+}

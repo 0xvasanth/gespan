@@ -555,7 +555,7 @@ impl Shell {
             }) {Ok(Ok(v))=>v,Ok(Err(e))=>{let _=this.update(cx,|this,cx|this.finish_worktree_action(Err(e),cx));return;},Err(_)=>return};
             if let Some(task)=pending.0 {task.await;}
             let worker_cwd=cwd.clone();let worker_path=path.clone();let store=pending.1;
-            let work=cx.background_executor().spawn(async move{
+            let work=crate::runtime::on_own_thread(move||{
                 if delete_sessions {let store=locked(&store)?;let paths=store.session_worktrees()?;if store.sessions()?.iter().any(|s|is_equal_or_inside(paths.get(&s.id).and_then(|p|p.as_deref()).unwrap_or(&s.cwd),&worker_path)){return Err("Some sessions could not be deleted, so the worktree was kept.".into());}}
                 let snapshot=gespan_core::git::snapshot(Path::new(&worker_cwd))?;
                 let main=snapshot.worktrees.first().ok_or("No main working copy found")?;

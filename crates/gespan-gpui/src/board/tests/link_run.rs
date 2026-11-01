@@ -404,6 +404,7 @@ fn run_options(f: &Fixture, cx: &mut TestAppContext, project: &str) {
                     ("codex".into(), "Codex".into()),
                     ("claude".into(), "Claude Code".into()),
                 ],
+                not_installed: Vec::new(),
                 default_provider: Some("claude".into()),
                 default_models: [("claude".to_string(), "opus".to_string())].into(),
                 models: [(
@@ -465,7 +466,7 @@ fn run_with_on_blocked_card_asks_first_and_cancel_starts_nothing(cx: &mut TestAp
     click(visual, "board-run-start");
     assert_eq!(
         *seen.borrow(),
-        [format!("run:{target}:claude:opus:/work/app:false")]
+        [format!("run:{target}:claude:opus:/work/app:true")]
     );
 }
 
@@ -537,7 +538,7 @@ fn run_with_starts_linked_session_with_card_prompt_and_inherits_ticket(cx: &mut 
     click(visual, "board-run-start");
     assert_eq!(
         *seen.borrow(),
-        [format!("run:{card}:claude:opus:/work/app:false")]
+        [format!("run:{card}:claude:opus:/work/app:true")]
     );
     assert!(!shown(visual, "board-run-picker"));
     // The shell's half: the session it makes.
@@ -574,6 +575,277 @@ fn run_with_starts_linked_session_with_card_prompt_and_inherits_ticket(cx: &mut 
             .any(|link| link.kind == "session" && link.reference == key),
         "{links:?}"
     );
+}
+
+fn git_project(f: &Fixture) -> std::path::PathBuf {
+    let project = f._dir.0.join("project");
+    std::fs::create_dir(&project).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    git(&["init", "-b", "main"]);
+    git(&["config", "user.email", "fixture@example.invalid"]);
+    git(&["config", "user.name", "Fixture"]);
+    std::fs::write(project.join("file"), "x").unwrap();
+    git(&["add", "file"]);
+    git(&["commit", "-m", "Initial"]);
+    project
+}
+fn in_new_worktree() -> Settings {
+    Settings {
+        new_worktree: true,
+        worktree_base: Some("HEAD".into()),
+        ..run_settings()
+    }
+}
+
+#[gpui::test]
+fn a_card_run_gets_a_worktree_named_after_it_and_linked_to_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login bug"]);
+    let card = card_id(&f, cx, "Fix login bug");
+    let project = git_project(&f);
+    let run = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &project),
+        in_new_worktree(),
+    )
+    .unwrap();
+    let path = run.settings.worktree_cwd.clone().unwrap();
+    assert!(!run.settings.new_worktree, "it exists before the session");
+    assert!(path.ends_with("gespan-card-1-fix-login-bug"), "{path}");
+    assert_eq!(
+        gespan_core::git::worktree_branch(&project, Path::new(&path)).as_deref(),
+        Some("gespan/card-1-fix-login-bug")
+    );
+    let saved = f.store.lock().unwrap().agent_settings(run.summary.id);
+    assert_eq!(
+        saved.unwrap().unwrap().worktree_cwd.as_deref(),
+        Some(&*path)
+    );
+    let links = Service::open(&f.db).unwrap().card_links(&card).unwrap();
+    assert!(
+        links
+            .iter()
+            .any(|link| link.kind == "worktree" && link.reference == path),
+        "{links:?}"
+    );
+    // The drawer lists it where a person looks for it.
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    let text = f
+        .window
+        .read_with(visual, |view, _| {
+            links
+                .iter()
+                .find(|link| link.kind == "worktree")
+                .map(|link| view.link_row_text(link))
+        })
+        .unwrap();
+    assert_eq!(text.as_deref(), Some(&*path));
+}
+
+#[gpui::test]
+fn a_failed_setup_starts_no_session_and_keeps_the_worktree(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    let project = git_project(&f);
+    let scripts = gespan_core::worktree_scripts::Scripts {
+        setup: "exit 3".into(),
+        teardown: String::new(),
+    };
+    gespan_core::worktree_scripts::save_scripts(&project, &scripts).unwrap();
+    let before = f.store.lock().unwrap().sessions().unwrap().len();
+    let result = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &project),
+        in_new_worktree(),
+    );
+    assert!(result.err().unwrap().contains("code 3"));
+    assert_eq!(f.store.lock().unwrap().sessions().unwrap().len(), before);
+    let trees = gespan_core::git::worktrees(&project).unwrap();
+    assert_eq!(trees.len(), 2, "left in place to look at");
+}
+
+#[gpui::test]
+fn a_run_that_cannot_be_linked_takes_its_new_worktree_with_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    let project = git_project(&f);
+    let result = prepare_run_with(
+        &f.store,
+        &f.db,
+        &request(&card, &project),
+        in_new_worktree(),
+        |_, _, _| Err("database is locked".into()),
+    );
+    assert_eq!(result.err().as_deref(), Some("database is locked"));
+    assert_eq!(gespan_core::git::worktrees(&project).unwrap().len(), 1);
+}
+
+#[gpui::test]
+fn a_folder_without_git_says_how_to_run_in_place(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    let result = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &f._dir.0),
+        in_new_worktree(),
+    );
+    assert!(result.err().unwrap().contains("Untick New worktree"));
+}
+
+fn picker_ticked(f: &Fixture, visual: &mut VisualTestContext) -> bool {
+    f.window
+        .read_with(visual, |view, _| {
+            view.run_picker.as_ref().unwrap().new_worktree
+        })
+        .unwrap()
+}
+fn set_options(f: &Fixture, cx: &mut TestAppContext, installed: &[&str], missing: &[&str]) {
+    let listed = |ids: &[&str]| -> Vec<(String, String)> {
+        ids.iter()
+            .map(|id| ((*id).into(), id.to_uppercase()))
+            .collect()
+    };
+    let options = RunOptions {
+        providers: listed(installed),
+        not_installed: listed(missing),
+        default_provider: Some("claude".into()),
+        ..Default::default()
+    };
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_run_options(options);
+            view.set_projects(vec![("/work/app".into(), "App".into())], cx);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn the_picker_starts_on_the_boards_default_and_remembers_the_last_choice(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    run_options(&f, cx, "/work/app");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-run-with");
+    assert!(picker_ticked(&f, visual), "on for a new board");
+    click(visual, "board-run-worktree");
+    click(visual, "board-run-start");
+    assert!(seen.borrow()[0].ends_with(":false"), "{:?}", seen.borrow());
+    click(visual, "board-drawer-run-with");
+    assert!(!picker_ticked(&f, visual), "the last choice");
+    click(visual, "board-run-cancel");
+    // Turning the board's switch replaces what was remembered.
+    let board = detail(&f, visual).board.id.clone();
+    let patch = gespan_core::board::extras::SettingsPatch {
+        run_in_worktree: Some(true),
+        run_worktree_choice: Some(None),
+        ..Default::default()
+    };
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(&board, &patch)
+        .unwrap();
+    reload(&f, visual);
+    click(visual, "board-drawer-run-with");
+    assert!(picker_ticked(&f, visual));
+}
+
+#[gpui::test]
+fn the_board_switch_changes_the_default_and_clears_the_remembered_choice(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let board = detail(&f, cx).board.id.clone();
+    let remembered = gespan_core::board::extras::SettingsPatch {
+        run_worktree_choice: Some(Some(true)),
+        ..Default::default()
+    };
+    let mut service = Service::open(&f.db).unwrap();
+    service.update_settings(&board, &remembered).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "automation");
+    click(visual, "settings-toggle-run-in-worktree");
+    let settings = service.settings(&board).unwrap();
+    assert!(!settings.run_in_worktree);
+    assert_eq!(settings.run_worktree_choice, None);
+    assert!(!settings.starts_in_worktree());
+}
+
+#[gpui::test]
+fn an_existing_board_stays_in_place_until_switched_on(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    run_options(&f, cx, "/work/app");
+    let board = detail(&f, cx).board.id.clone();
+    let patch = gespan_core::board::extras::SettingsPatch {
+        run_in_worktree: Some(false),
+        ..Default::default()
+    };
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(&board, &patch)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-run-with");
+    assert!(!picker_ticked(&f, visual));
+}
+
+#[gpui::test]
+fn the_picker_groups_agents_by_whether_they_are_installed(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    // All installed: no second group.
+    set_options(&f, visual, &["codex", "claude"], &[]);
+    click(visual, "board-drawer-run-with");
+    assert!(shown(visual, "board-run-provider-1"));
+    assert!(!shown(visual, "board-run-not-installed"));
+    assert!(!shown(visual, "board-run-no-agent"));
+    click(visual, "board-run-cancel");
+    // Some: the usual agent isn't installed, so the first one that is takes over.
+    set_options(&f, visual, &["codex"], &["claude"]);
+    click(visual, "board-drawer-run-with");
+    assert!(shown(visual, "board-run-not-installed"));
+    assert!(shown(visual, "board-run-missing-0"));
+    let provider = f
+        .window
+        .read_with(visual, |view, _| {
+            view.run_picker.as_ref().unwrap().provider.clone()
+        })
+        .unwrap();
+    assert_eq!(provider, "codex");
+    click(visual, "board-run-cancel");
+}
+
+#[gpui::test]
+fn nothing_starts_when_no_agent_is_installed(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    click(visual, "board-card-1");
+    set_options(&f, visual, &[], &["codex", "claude"]);
+    click(visual, "board-drawer-run-with");
+    assert!(shown(visual, "board-run-no-agent"));
+    assert!(shown(visual, "board-run-missing-1"));
+    click(visual, "board-run-start");
+    assert!(seen.borrow().is_empty());
+    assert!(shown(visual, "board-run-picker"), "still open, saying why");
+    assert!(shown(visual, "board-run-error"));
+    // A click on a missing agent chooses nothing.
+    click(visual, "board-run-missing-0");
+    click(visual, "board-run-start");
+    assert!(seen.borrow().is_empty());
 }
 
 #[gpui::test]
@@ -901,7 +1173,7 @@ fn run_with_picker_defaults_to_a_shown_project_and_offers_known_models(cx: &mut 
     click(visual, "board-run-start");
     assert_eq!(
         *seen.borrow(),
-        [format!("run:{card}:claude:sonnet:/work/app:false")]
+        [format!("run:{card}:claude:sonnet:/work/app:true")]
     );
     // A provider with no known models offers only the typed field.
     click(visual, "board-drawer-run-with");

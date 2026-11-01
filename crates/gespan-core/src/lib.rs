@@ -64,3 +64,4 @@ pub mod mcp_catalog;
 
 pub mod worktree_copy;
 pub mod worktree_management;
+pub mod worktree_scripts;
