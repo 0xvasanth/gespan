@@ -11,6 +11,8 @@ mod file_panes;
 mod flow_runs;
 #[cfg(test)]
 mod flow_view_tests;
+#[cfg(test)]
+mod hidden_flows_tests;
 mod hold;
 mod idle_agents;
 #[cfg(test)]

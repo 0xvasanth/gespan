@@ -609,6 +609,9 @@ impl Shell {
     }
 
     pub(super) fn open_flows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !flows::visible(cx) {
+            return;
+        }
         self.prepare_app_view(window, cx);
         if self.flows.is_none() {
             let store = self.flows_state.store.clone();

@@ -878,6 +878,7 @@ mod tests {
 
     #[gpui::test]
     fn a_flow_session_waiting_for_approval_shows_in_the_flows_view(cx: &mut TestAppContext) {
+        cx.update(crate::flows::show_for_test);
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let window = shell(store, "/work/gespan", cx);
         let (flow_id, id) = window

@@ -2604,6 +2604,70 @@ fn flows_actions_round_trip_for_the_owning_pilot(cx: &mut TestAppContext) {
         "Run not found"
     );
 }
+/// Hiding Flows takes away the UI only: a Pilot still saves a Flow and takes
+/// a run of it through every step to the end, and hears about it.
+#[gpui::test]
+fn a_pilot_runs_a_flow_to_the_end_with_the_flows_ui_hidden(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    assert!(!cx.update(|cx| crate::flows::visible(cx)));
+    hold_flow_launches(&s, cx);
+    hold_outbox(&s, cx);
+    let saved = flows_ok(
+        &s,
+        "save",
+        "flows.save",
+        json!({"flow":flow_blueprint("", &s.project)}),
+        cx,
+    );
+    let flow_id = saved["flow"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(saved["flow"]["owner"], json!(s.id));
+    let start =
+        json!({"flowId":flow_id,"goal":"g1","task":"Fix login","inputs":{"task":"fix login"}});
+    let run_id = flows_ok(&s, "start", "flows.start", start, cx)["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A repeated request ID replays its first answer.
+    let status = |request: &str, cx: &mut TestAppContext| {
+        let runs = flows_ok(&s, request, "flows.runs", json!({"goal":"g1"}), cx);
+        (
+            runs["runs"][0]["status"].clone(),
+            runs["runs"][0]["currentState"].clone(),
+        )
+    };
+    assert_eq!(status("planning", cx), (json!("running"), json!("plan")));
+
+    // Each step's reply moves the run on with nobody watching it.
+    s.window
+        .update(cx, |shell, _, cx| {
+            shell.finish_held_flow_launch_for_test(9001, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(status("building", cx), (json!("running"), json!("build")));
+    s.window
+        .update(cx, |shell, _, cx| {
+            shell.finish_held_flow_launch_for_test(9002, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(status("done", cx).0, json!("succeeded"));
+    assert_eq!(held_flow_prompts(&s, cx), Vec::<String>::new());
+    let finished = cx.update(|cx| {
+        s.manager.read(cx).flow_events.iter().any(|(pilot, event)| {
+            pilot == &s.id
+                && matches!(event, PilotFlowEvent::Finished { run_id: id, status }
+                    if *id == run_id && *status == RunStatus::Succeeded)
+        })
+    });
+    assert!(finished, "the Pilot hears its run finished");
+    s.window
+        .read_with(cx, |shell, _| {
+            assert!(!shell.flows_view_made_for_test());
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 fn flows_actions_never_reveal_other_pilots_or_user_flows(cx: &mut TestAppContext) {
     let s = setup(cx);
@@ -4096,9 +4160,49 @@ mod roadmap {
         cx.update(|_, cx| s.manager.read(cx).roadmaps[&s.id].0.clone())
     }
     fn roadmap_visual(s: &Setup, cx: &mut TestAppContext) -> gpui::VisualTestContext {
-        cx.update(|cx| cx.set_reduce_motion(true));
+        cx.update(|cx| {
+            cx.set_reduce_motion(true);
+            crate::flows::show_for_test(cx);
+        });
         gpui::VisualTestContext::from_window(s.window.into(), cx)
     }
+    #[gpui::test]
+    fn the_roadmap_tab_is_gone_while_flows_are_hidden(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        hold_flow_launches(&s, cx);
+        flows_ok(
+            &s,
+            "save",
+            "flows.save",
+            json!({"flow":flow_blueprint("", &s.project)}),
+            cx,
+        );
+        let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+        s.manager.update(visual, |m, cx| {
+            m.settings = None;
+            cx.notify();
+        });
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-overview-Sessions").is_some());
+        assert!(
+            visual.debug_bounds("pilot-overview-roadmap").is_none(),
+            "a Pilot with Flows still offers no Roadmap tab"
+        );
+
+        s.manager
+            .update(visual, |m, cx| m.select_overview(OverviewTab::Roadmap, cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        s.manager.read_with(visual, |m, _| {
+            assert!(m.overview_tab == OverviewTab::Sessions);
+            assert!(m.roadmaps.is_empty(), "no Roadmap was drawn");
+        });
+        assert!(visual.debug_bounds("pilot-roadmap").is_none());
+        assert!(visual.debug_bounds("pilot-session-list").is_some());
+    }
+
     fn reload_roadmap(roadmap: &Entity<Roadmap>, cx: &mut gpui::VisualTestContext) {
         roadmap.update(cx, |r, cx| r.reload(cx));
         cx.run_until_parked();

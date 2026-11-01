@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Flows are hidden from the app for now: the Flows page and a Pilot's SOP
+  Roadmap tab no longer appear. Saved Flows and their runs are kept, and
+  Pilots still create and run Flows behind the scenes.
+
 ### Fixed
 
 - Installing or updating the Windows host no longer leaves a broken runtime
