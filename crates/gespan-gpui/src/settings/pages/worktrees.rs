@@ -1,4 +1,5 @@
 use crate::{
+    input::{Changed, Input},
     settings::{
         SettingsView,
         management::Target,
@@ -6,8 +7,157 @@ use crate::{
     },
     theme::*,
 };
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gespan_core::worktree_scripts::{self, Outcome, Record, Scripts};
+use gpui::{AnyElement, Context, Entity, SharedString, div, prelude::*, px};
+
+const SCRIPTS_NOTE: &str = if cfg!(windows) {
+    "Setup runs in each new worktree before anything starts there, and Teardown before a worktree is removed. They run with cmd, and are kept in Gespan, never in the repository. %GESPAN_PROJECT_ROOT%, %GESPAN_WORKTREE_PATH% and %GESPAN_BRANCH% are set."
+} else {
+    "Setup runs in each new worktree before anything starts there, and Teardown before a worktree is removed. They run with sh and stop at the first failing line, and are kept in Gespan, never in the repository. $GESPAN_PROJECT_ROOT, $GESPAN_WORKTREE_PATH and $GESPAN_BRANCH are set."
+};
+
+/// The Setup and Teardown fields of one project.
+pub(in crate::settings) struct WorktreeScripts {
+    main: String,
+    setup: Entity<Input>,
+    teardown: Entity<Input>,
+    saved: Scripts,
+    error: Option<String>,
+}
+
+/// A worktree row's line about its last Setup.
+fn setup_line(record: &Record) -> Option<String> {
+    let copied = (record.copied > 0).then(|| match record.copied {
+        1 => "Copied 1 file".to_owned(),
+        count => format!("Copied {count} files"),
+    });
+    let outcome = record.outcome.as_ref().map(|outcome| {
+        match outcome {
+            Outcome::Passed => "Setup passed",
+            Outcome::Failed(_) => "Setup failed",
+            Outcome::Overridden(_) => "Setup failed, started anyway",
+            Outcome::Cancelled => "Setup cancelled",
+        }
+        .to_owned()
+    });
+    let parts: Vec<String> = copied.into_iter().chain(outcome).collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 impl SettingsView {
+    /// The fields for `main`, read again when the project changes.
+    fn scripts_for(&mut self, main: &str, cx: &mut Context<Self>) {
+        if self.worktree_scripts.as_ref().is_some_and(|s| s.main == main) {
+            return;
+        }
+        let saved = worktree_scripts::scripts(std::path::Path::new(main));
+        let field = |label: &str, placeholder: &str, text: &str, cx: &mut Context<Self>| {
+            let text = text.to_owned();
+            let input = cx.new(|cx| {
+                let mut input = Input::multiline_field(label, placeholder, cx);
+                input.set_text(text, cx);
+                input
+            });
+            cx.subscribe(&input, |_, _, _: &Changed, cx| cx.notify()).detach();
+            input
+        };
+        let setup = field("Setup script", "bun install", &saved.setup, cx);
+        let teardown = field("Teardown script", "docker compose down", &saved.teardown, cx);
+        self.worktree_scripts = Some(WorktreeScripts {
+            main: main.to_owned(),
+            setup,
+            teardown,
+            saved,
+            error: None,
+        });
+    }
+
+    fn save_worktree_scripts(&mut self, cx: &mut Context<Self>) {
+        let Some(fields) = &mut self.worktree_scripts else {
+            return;
+        };
+        let scripts = Scripts {
+            setup: fields.setup.read(cx).content.to_string(),
+            teardown: fields.teardown.read(cx).content.to_string(),
+        };
+        match worktree_scripts::save_scripts(std::path::Path::new(&fields.main), &scripts) {
+            Ok(()) => {
+                fields.saved = scripts;
+                fields.error = None;
+            }
+            Err(error) => fields.error = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn scripts_group(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let main = self.discovery.worktrees.main.clone();
+        if main.is_empty() {
+            return None;
+        }
+        self.scripts_for(&main, cx);
+        let fields = self.worktree_scripts.as_ref()?;
+        let changed = fields.setup.read(cx).content.as_str() != fields.saved.setup
+            || fields.teardown.read(cx).content.as_str() != fields.saved.teardown;
+        let field = |label: &'static str, input: &Entity<Input>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_size(px(12.))
+                .text_color(content(0.55))
+                .child(label)
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(content(0.12))
+                        .text_color(content(0.9))
+                        .child(input.clone()),
+                )
+        };
+        Some(
+            div()
+                .id("settings-worktree-scripts")
+                .debug_selector(|| "settings-worktree-scripts".into())
+                .mt_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .text_color(content(0.5))
+                        .child(SCRIPTS_NOTE),
+                )
+                .child(field("Setup script", &fields.setup))
+                .child(field("Teardown script", &fields.teardown))
+                .children(fields.error.clone().map(|error| {
+                    div()
+                        .id("settings-worktree-scripts-error")
+                        .role(gpui::Role::Alert)
+                        .text_size(px(12.))
+                        .text_color(gpui::rgb(0xf87171))
+                        .child(error)
+                }))
+                .child(
+                    div().flex().justify_end().child(
+                        secondary_button("save-worktree-scripts", "Save scripts", false, !changed)
+                            .child("Save scripts")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if changed {
+                                    this.save_worktree_scripts(cx);
+                                }
+                            })),
+                    ),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn worktrees_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let project = self.project_picker(cx);
         let ready = !self.discovery_loading
@@ -157,6 +307,24 @@ impl SettingsView {
                                                 if tree.locked { " · Locked" } else { "" }
                                             )),
                                     )
+                                    .when_some(
+                                        tree.setup.as_ref().and_then(setup_line),
+                                        |row, line| {
+                                            row.child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "tree-setup-{ix}"
+                                                    )))
+                                                    .debug_selector(move || {
+                                                        format!("tree-setup-{ix}")
+                                                    })
+                                                    .mt_2()
+                                                    .text_size(px(11.))
+                                                    .text_color(content(0.55))
+                                                    .child(line),
+                                            )
+                                        },
+                                    )
                                     .when_some(tree.merged.as_ref(), |row, merged| {
                                         row.child(
                                             div()
@@ -207,11 +375,37 @@ impl SettingsView {
             );
         }
         if ready {
+            page.extend(self.scripts_group(cx));
             page.push(note(format!(
                 "New worktrees are created in {}.",
                 self.discovery.worktrees.default_root.display()
             )));
         }
         page
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_worktree_row_says_what_its_setup_did() {
+        let line = |copied, outcome| setup_line(&Record { copied, outcome });
+        assert_eq!(line(0, None), None);
+        assert_eq!(line(1, None).unwrap(), "Copied 1 file");
+        assert_eq!(
+            line(3, Some(Outcome::Passed)).unwrap(),
+            "Copied 3 files · Setup passed"
+        );
+        assert_eq!(
+            line(0, Some(Outcome::Failed("x".into()))).unwrap(),
+            "Setup failed"
+        );
+        assert_eq!(
+            line(0, Some(Outcome::Overridden("x".into()))).unwrap(),
+            "Setup failed, started anyway"
+        );
+        assert_eq!(line(0, Some(Outcome::Cancelled)).unwrap(), "Setup cancelled");
     }
 }

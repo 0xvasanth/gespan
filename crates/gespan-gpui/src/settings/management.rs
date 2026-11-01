@@ -252,7 +252,7 @@ impl SettingsView {
             return;
         }
         let generation = self.management_generation;
-        let work = cx.background_executor().spawn(async move {
+        let work = crate::runtime::on_own_thread(move || {
             match target {
                 Target::Mcp => gespan_core::mcp::mcp_add(cwd, provider, scope, name, body),
                 Target::Skill => {

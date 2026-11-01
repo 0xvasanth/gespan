@@ -643,6 +643,35 @@ fn copy_included(main: &Path, worktree: &Path) -> crate::worktree_copy::Copied {
     }
 }
 
+/// A board card's branch, like `gespan/card-142-fix-login-bug`. A title with
+/// nothing usable in it leaves `gespan/card-142`.
+pub fn card_branch(number: i64, title: &str) -> String {
+    let fragment = crate::scm::text::sanitize_branch_fragment(&format!(
+        "card-{number}-{}",
+        title.replace('/', "-")
+    ));
+    format!("{APP_BRANCH_PREFIX}{fragment}")
+}
+
+/// A worktree named after a board card, from `cwd`'s HEAD. A card that ran
+/// before gets `-2`, `-3`…, so an earlier run's work is left where it is.
+pub fn create_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Worktree, String> {
+    let wanted = card_branch(number, title);
+    let trees = worktrees(cwd)?;
+    let main = trees.first().ok_or("No working copies found")?;
+    let parent = crate::worktree_management::default_root(Path::new(&main.path));
+    let taken = |name: &str| {
+        let reference = format!("refs/heads/{name}");
+        git(cwd, &["show-ref", "--verify", "--quiet", &reference]).is_ok()
+            || parent.join(worktree_folder(name)).exists()
+    };
+    let name = std::iter::once(wanted.clone())
+        .chain((2..=99).map(|n| format!("{wanted}-{n}")))
+        .find(|name| !taken(name))
+        .ok_or_else(|| format!("{wanted} and its numbered variants are taken"))?;
+    create_project_worktree(cwd, &name, None, false)
+}
+
 /// SidebarWorktreeSwitcher: create a named copy from the selected checkout's
 /// HEAD, alongside the main project's other worktrees. Existing files and
 /// branches are never replaced.
@@ -673,6 +702,18 @@ pub(crate) fn create_seeded_worktree(
     )
     .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
 }
+fn worktree_folder(branch: &str) -> String {
+    branch
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
 fn create_branch_worktree(
     cwd: &Path,
     branch: &str,
@@ -702,17 +743,7 @@ fn create_branch_worktree(
         "{}-worktrees",
         main.file_name().unwrap_or_default().to_string_lossy()
     ));
-    let slug: String = branch
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let path = parent.join(slug);
+    let path = parent.join(worktree_folder(branch));
     if path.exists() {
         return Err(format!(
             "{} already exists. Choose another branch name.",
@@ -790,6 +821,47 @@ mod tests {
         let (result, counts) = capture(|| git(dir.path(), &["--version"]));
         assert!(result.is_ok());
         assert!(counts.is_empty(), "successful git commands are not counted");
+    }
+
+    #[test]
+    fn a_card_branch_comes_from_its_number_and_title() {
+        assert_eq!(
+            card_branch(142, "Fix login bug"),
+            "gespan/card-142-fix-login-bug"
+        );
+        assert_eq!(card_branch(7, "Déjà vu: a/b test!"), "gespan/card-7-d-j-vu-a-b-test");
+        assert_eq!(card_branch(7, "登录失败"), "gespan/card-7");
+        assert_eq!(card_branch(7, "   "), "gespan/card-7");
+        let long = card_branch(9, &"word ".repeat(40));
+        assert!(long.len() <= "gespan/".len() + 64, "{long}");
+        assert!(!long.ends_with('-'), "{long}");
+        assert!(long.starts_with("gespan/card-9-word-word"), "{long}");
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main"]).unwrap();
+        for name in [card_branch(1, "a.lock"), long, card_branch(7, "登录失败")] {
+            git(dir.path(), &["check-ref-format", "--branch", &name]).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_card_that_ran_before_gets_the_next_free_name() {
+        let (_dir, cwd) = repo();
+        let first = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(first.branch.as_deref(), Some("gespan/card-3-fix-bug"));
+        assert!(first.path.ends_with("gespan-card-3-fix-bug"));
+        let second = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(second.branch.as_deref(), Some("gespan/card-3-fix-bug-2"));
+        // A branch left behind by a removed worktree still counts.
+        crate::worktree_management::remove(&cwd, Path::new(&first.path)).unwrap();
+        let third = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(third.branch.as_deref(), Some("gespan/card-3-fix-bug-3"));
+        // So does a folder nothing registered.
+        std::fs::create_dir_all(
+            crate::worktree_management::default_root(&cwd).join("gespan-card-4"),
+        )
+        .unwrap();
+        let fourth = create_card_worktree(&cwd, 4, "").unwrap();
+        assert_eq!(fourth.branch.as_deref(), Some("gespan/card-4-2"));
     }
 
     #[test]

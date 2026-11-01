@@ -1811,3 +1811,25 @@ mod edited_paths_tests {
         assert!(edit_tool_paths(&tool("Read", json!({"file_path":"/folder/a.md"}))).is_empty());
     }
 }
+
+/// Runs work that can last as long as a Setup script, waiting on a person
+/// included, on a thread of its own. On the background pool it could occupy
+/// every thread, and Linux's pool doesn't grow. Inline in tests, which rely on
+/// the test scheduler seeing the work.
+pub(crate) fn on_own_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> impl std::future::Future<Output = Result<T, String>> {
+    let (sender, result) = async_channel::bounded(1);
+    #[cfg(test)]
+    let _ = sender.try_send(work());
+    #[cfg(not(test))]
+    std::thread::spawn(move || {
+        let _ = sender.send_blocking(work());
+    });
+    async move {
+        result
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err("The work stopped before it finished.".into()))
+    }
+}

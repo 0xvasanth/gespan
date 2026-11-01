@@ -454,8 +454,8 @@ fn create_from_spec(
     tx.execute(
         "INSERT INTO board_settings
            (board_id, run_with, write_back, ticket_status_changes, auto_move_json,
-            icon, color, default_view_id, display_json, priority_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            icon, color, default_view_id, display_json, priority_json, run_in_worktree)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             board.id,
             i64::from(settings.run_with),
@@ -475,7 +475,8 @@ fn create_from_spec(
                 .display_json
                 .as_deref()
                 .and_then(|raw| remap.display(raw)),
-            settings.priority_json
+            settings.priority_json,
+            i64::from(settings.run_in_worktree)
         ],
     )
     .map_err(db)?;

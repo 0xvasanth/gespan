@@ -503,6 +503,29 @@ fn shell(script: &str) -> Result<(Command, Option<tempfile::TempPath>), String> 
     Ok((command, Some(path)))
 }
 
+/// cmd pastes `%GESPAN_BRANCH%` into the line before parsing it, and Git allows
+/// `&`, `|` and `%` in a branch name, so a name from a fetched repository could
+/// otherwise become a command. `sh` expands variables after parsing.
+fn cmd_safe(branch: &str) -> String {
+    branch
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '/' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+fn script_branch(branch: &str) -> String {
+    if cfg!(windows) {
+        cmd_safe(branch)
+    } else {
+        branch.to_owned()
+    }
+}
+
 fn run_local(
     script: &str,
     main: &Path,
@@ -516,7 +539,7 @@ fn run_local(
         .current_dir(worktree)
         .env("GESPAN_PROJECT_ROOT", main)
         .env("GESPAN_WORKTREE_PATH", worktree)
-        .env("GESPAN_BRANCH", branch.unwrap_or_default())
+        .env("GESPAN_BRANCH", script_branch(branch.unwrap_or_default()))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -547,13 +570,29 @@ fn run_local(
             .try_wait()
             .map_err(|e| format!("Could not follow the script: {e}"))?
         {
-            let deadline = Instant::now() + DRAIN;
-            while let Ok(text) =
-                lines.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            {
-                line(text);
-            }
+            drain(&lines, line, cancelled, DRAIN);
             return Ok(Exit::Code(status.code()));
+        }
+    }
+}
+
+/// Reads what's left until `limit`. The deadline is checked every line, because
+/// something the script left running may never stop writing.
+fn drain(
+    lines: &mpsc::Receiver<String>,
+    line: &mut dyn FnMut(String),
+    cancelled: &AtomicBool,
+    limit: Duration,
+) {
+    let deadline = Instant::now() + limit;
+    while !cancelled.load(Ordering::SeqCst) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        match lines.recv_timeout(left) {
+            Ok(text) => line(text),
+            Err(_) => return,
         }
     }
 }

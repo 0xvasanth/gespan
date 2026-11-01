@@ -13,7 +13,12 @@ use crate::{
     runtime::{Database, locked},
     theme::*,
 };
-use gespan_core::{board::Service, session_groups::WorkItem, store::Session};
+use gespan_core::{
+    board::{Service, extras::SettingsPatch},
+    session_groups::WorkItem,
+    store::Session,
+    worktree_management,
+};
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable, Role, SharedString, Toggled, Window, div,
     prelude::*, px,
@@ -23,6 +28,11 @@ use std::{collections::HashMap, path::Path};
 /// Remote session keys change once the session exists on its host, so a
 /// card link written at start would go stale (ruling C5-r).
 pub(crate) const REMOTE_REFUSED: &str = "Run with… works with local projects for now";
+const NOT_A_REPOSITORY: &str =
+    "This project isn’t a Git repository. Untick New worktree to run in its folder.";
+/// Under the disabled agents, and all the picker says when none is installed.
+const SET_UP_AGENTS: &str = "Set one up in Settings → Agent CLIs.";
+const NO_AGENTS: &str = "No coding agent is installed.";
 
 fn is_remote(path: &str) -> bool {
     gespan_core::files::remote::is_remote(Path::new(path))
@@ -43,8 +53,10 @@ pub(crate) struct RunRequest {
 /// shell's preferences.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RunOptions {
-    /// (id, label), in the order the app lists providers.
+    /// The installed ones as (id, label), in the order the app lists providers.
     pub providers: Vec<(String, String)>,
+    /// The rest, shown disabled.
+    pub not_installed: Vec<(String, String)>,
     pub default_provider: Option<String>,
     /// Provider id → the user's default model for it.
     pub default_models: HashMap<String, String>,
@@ -53,12 +65,17 @@ pub(crate) struct RunOptions {
 }
 
 impl RunOptions {
+    fn can_run(&self, provider: &str) -> bool {
+        self.providers.iter().any(|(known, _)| known == provider)
+    }
+    /// The usual provider if it can run, else the first that can. Empty when
+    /// none is installed.
     fn first_provider(&self) -> String {
         self.default_provider
             .clone()
-            .filter(|id| self.providers.iter().any(|(known, _)| known == id))
+            .filter(|id| self.can_run(id))
             .or_else(|| self.providers.first().map(|(id, _)| id.clone()))
-            .unwrap_or_else(|| "codex".to_string())
+            .unwrap_or_default()
     }
 }
 
@@ -103,9 +120,11 @@ pub(crate) struct PreparedRun {
 /// Make the session for `request` and link it to the card. The prompt is
 /// exactly `run_prompt(card)`; the ticket is the card's cached snapshot (no
 /// tracker call, so a disconnected tracker still starts). The session's
-/// access and intent are the ones `settings` already carries. If the link
-/// can't be written, the session is deleted again: no empty session is left
-/// behind. Blocking; call it off the UI thread.
+/// access and intent are the ones `settings` already carries. A new worktree
+/// is made here, named after the card and linked to it, so its Setup script
+/// finishes before there's a session to start. If the link can't be written,
+/// the session and an unused worktree go again: no empty session is left
+/// behind. Blocking, for as long as Setup runs; call it off the UI thread.
 pub(crate) fn prepare_run(
     store: &Database,
     db_path: &Path,
@@ -127,7 +146,7 @@ pub(crate) fn prepare_run_with(
     store: &Database,
     db_path: &Path,
     request: &RunRequest,
-    settings: gespan_core::agent::Settings,
+    mut settings: gespan_core::agent::Settings,
     link: impl FnOnce(&mut Service, &str, &str) -> Result<(), String>,
 ) -> Result<PreparedRun, String> {
     let mut service = Service::open(db_path)?;
@@ -139,8 +158,36 @@ pub(crate) fn prepare_run_with(
     if !Path::new(&request.project).is_dir() {
         return Err("Choose a project folder before running this card".into());
     }
+    let project = Path::new(&request.project);
+    let worktree = if settings.new_worktree && settings.worktree_cwd.is_none() {
+        let card = service.card(&request.card_id)?;
+        if gespan_core::git::worktrees(project).is_err() {
+            return Err(NOT_A_REPOSITORY.into());
+        }
+        let tree = gespan_core::git::create_card_worktree(project, card.number, &card.title)?;
+        settings.worktree_cwd = Some(tree.path.clone());
+        settings.new_worktree = false;
+        settings.worktree_base = None;
+        Some(tree.path)
+    } else {
+        None
+    };
+    let undo_worktree = || {
+        if let Some(path) = &worktree
+            && let Err(undo) = worktree_management::remove_unused(project, Path::new(path))
+        {
+            tracing::warn!(%undo, "removing the unlinked run worktree failed");
+        }
+    };
     let mut store = locked(store)?;
-    let mut summary = store.create(&request.provider, &request.project)?;
+    let mut summary = match store.create(&request.provider, &request.project) {
+        Ok(summary) => summary,
+        Err(error) => {
+            drop(store);
+            undo_worktree();
+            return Err(error);
+        }
+    };
     let id = summary.id;
     let made = (|| {
         if let Some(ticket) = ticket {
@@ -150,12 +197,18 @@ pub(crate) fn prepare_run_with(
         }
         store.save_agent_settings(id, &settings)?;
         let key = store.persisted_session_id(id)?;
-        link(&mut service, &request.card_id, &key)
+        link(&mut service, &request.card_id, &key)?;
+        match &worktree {
+            Some(path) => service.add_link(&request.card_id, "worktree", path, None),
+            None => Ok(()),
+        }
     })();
     if let Err(error) = made {
         if let Err(undo) = store.delete(id) {
             tracing::warn!(%undo, "removing the unlinked run session failed");
         }
+        drop(store);
+        undo_worktree();
         return Err(error);
     }
     Ok(PreparedRun {
@@ -252,7 +305,7 @@ impl BoardView {
             provider,
             model,
             project,
-            new_worktree: false,
+            new_worktree: self.board_settings.starts_in_worktree(),
             error: None,
             start_focus,
         });
@@ -334,6 +387,11 @@ impl BoardView {
             cx.notify();
             return;
         }
+        if !self.run_options.can_run(&picker.provider) {
+            picker.error = Some(format!("{NO_AGENTS} {SET_UP_AGENTS}"));
+            cx.notify();
+            return;
+        }
         let model = picker.model.read(cx).content.trim().to_string();
         let request = RunRequest {
             card_id: picker.card_id.clone(),
@@ -342,8 +400,23 @@ impl BoardView {
             project,
             new_worktree: picker.new_worktree,
         };
+        let ticked = request.new_worktree;
         self.close_run_picker(Some(window), cx);
+        self.remember_run_worktree(ticked, cx);
         cx.emit(Event::RunWith(request));
+    }
+
+    /// The picker opens on what was ticked last time on this board.
+    fn remember_run_worktree(&mut self, ticked: bool, cx: &mut Context<Self>) {
+        if self.board_settings.run_worktree_choice != Some(ticked) {
+            self.patch_settings(
+                SettingsPatch {
+                    run_worktree_choice: Some(Some(ticked)),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
     }
 
     pub(super) fn render_run_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -453,6 +526,29 @@ impl BoardView {
                 }))
             })
             .collect::<Vec<_>>();
+        let no_agents = self.run_options.providers.is_empty();
+        let missing = self
+            .run_options
+            .not_installed
+            .iter()
+            .enumerate()
+            .map(|(index, (_, label))| {
+                let selector = format!("board-run-missing-{index}");
+                div()
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
+                    .role(Role::Label)
+                    .aria_label(format!("{label}, not installed"))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(content(0.06))
+                    .text_size(px(12.))
+                    .text_color(content(0.35))
+                    .child(label.clone())
+            })
+            .collect::<Vec<_>>();
         let run_projects = self.run_projects();
         let projects = run_projects
             .iter()
@@ -553,9 +649,39 @@ impl BoardView {
                         .flex()
                         .flex_wrap()
                         .gap(px(6.))
-                        .children(providers),
+                        .children(providers)
+                        .when(no_agents, |d| {
+                            d.child(
+                                div()
+                                    .id("board-run-no-agent")
+                                    .debug_selector(|| "board-run-no-agent".into())
+                                    .text_size(px(12.))
+                                    .text_color(content(0.45))
+                                    .child(NO_AGENTS),
+                            )
+                        }),
                 ),
             )
+            .when(!missing.is_empty(), |body| {
+                body.child(
+                    group("Not installed")
+                        .child(
+                            div()
+                                .id("board-run-not-installed")
+                                .debug_selector(|| "board-run-not-installed".into())
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(6.))
+                                .children(missing),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(content(0.45))
+                                .child(SET_UP_AGENTS),
+                        ),
+                )
+            })
             .child(
                 group("Model")
                     .when(!models.is_empty(), |d| {

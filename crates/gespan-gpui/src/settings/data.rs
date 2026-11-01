@@ -37,6 +37,8 @@ pub(super) struct Tree {
     pub unpushed: usize,
     /// How its branch reached the default branch, when it has.
     pub merged: Option<gespan_core::branch_merged::Merged>,
+    /// What its last Setup did, when it did anything.
+    pub setup: Option<gespan_core::worktree_scripts::Record>,
 }
 #[derive(Default)]
 pub(super) struct ResultTrees {
@@ -103,6 +105,7 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                             gespan_core::worktree_management::status(Path::new(cwd), &tree);
                         let merged =
                             gespan_core::worktree_management::merged(Path::new(cwd), &tree);
+                        let tree_path = tree.path.clone();
                         Tree {
                             tree,
                             locked: status.0,
@@ -111,6 +114,7 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                             // while their work is published.
                             unpushed: if merged.is_some() { 0 } else { status.2 },
                             merged,
+                            setup: gespan_core::worktree_scripts::record(Path::new(&tree_path)),
                         }
                     })
                     .collect();

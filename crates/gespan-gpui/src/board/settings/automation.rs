@@ -60,13 +60,14 @@ impl BoardView {
         });
     }
 
-    /// The three switches as shown (run with, write-back, ticket status
-    /// changes), or None while the settings are unknown.
-    pub(crate) fn agent_switches(&self) -> Option<[bool; 3]> {
+    /// The switches as shown (run with, write-back, ticket status changes,
+    /// new worktree by default), or None while the settings are unknown.
+    pub(crate) fn agent_switches(&self) -> Option<[bool; 4]> {
         self.settings_loaded.then_some([
             self.board_settings.run_with,
             self.board_settings.write_back,
             self.board_settings.ticket_status_changes,
+            self.board_settings.run_in_worktree,
         ])
     }
 
@@ -118,6 +119,17 @@ impl BoardView {
                     ..Default::default()
                 }
             }),
+            // Changing it clears the remembered choice, or it would have no effect.
+            toggle(
+                "settings-toggle-run-in-worktree",
+                "Run in a new worktree by default",
+                3,
+                |v| SettingsPatch {
+                    run_in_worktree: Some(v),
+                    run_worktree_choice: Some(None),
+                    ..Default::default()
+                },
+            ),
             toggle(
                 "settings-toggle-ticket-status",
                 "Agent may change ticket status",

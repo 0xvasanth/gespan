@@ -368,6 +368,51 @@ fn scripts_survive_in_gespans_data_and_a_bad_file_reads_as_empty() {
 }
 
 #[test]
+fn draining_stops_at_its_deadline_however_much_keeps_arriving() {
+    let (sender, lines) = mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        while sender.send("more".to_owned()).is_ok() {
+            std::thread::sleep(Duration::from_micros(50));
+        }
+    });
+    let mut count = 0;
+    let began = Instant::now();
+    drain(
+        &lines,
+        &mut |_| count += 1,
+        &AtomicBool::new(false),
+        Duration::from_millis(100),
+    );
+    assert!(began.elapsed() < Duration::from_secs(5));
+    assert!(count > 0);
+    drop(lines);
+    writer.join().unwrap();
+}
+
+#[test]
+fn draining_stops_when_the_step_is_cancelled() {
+    let (sender, lines) = mpsc::channel();
+    sender.send("line".to_owned()).unwrap();
+    let mut count = 0;
+    let began = Instant::now();
+    drain(
+        &lines,
+        &mut |_| count += 1,
+        &AtomicBool::new(true),
+        Duration::from_secs(30),
+    );
+    assert_eq!(count, 0);
+    assert!(began.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn a_branch_name_cannot_become_a_command_in_cmd() {
+    assert_eq!(cmd_safe("feature/a-b_c.1"), "feature/a-b_c.1");
+    assert_eq!(cmd_safe("a&calc|x%PATH%\"\u{5e}"), "a_calc_x_PATH____");
+    assert_eq!(cmd_safe("登录"), "登录");
+}
+
+#[test]
 fn output_splits_on_line_ends_and_progress_frames() {
     let mut lines = Vec::new();
     let input: &[u8] = b"one\r\ntwo\n10%\r20%\r\n\nlast";

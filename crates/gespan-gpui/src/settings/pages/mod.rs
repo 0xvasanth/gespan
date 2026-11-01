@@ -22,6 +22,7 @@ pub(super) use diagnostics::DiagnosticsState;
 pub(super) use dictation::DictationState;
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
+pub(super) use worktrees::WorktreeScripts;
 
 use super::{Section, SettingsView};
 use gpui::{AnyElement, Context, Window};
