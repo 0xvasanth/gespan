@@ -20,6 +20,7 @@ impl Conversation {
                     detail: String::new(),
                     omitted: String::new(),
                     alerts: Vec::new(),
+                    needs_review: false,
                 }
             }))
             .collect()

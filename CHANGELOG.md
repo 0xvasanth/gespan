@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each project can have a Setup and a Teardown script, in Settings → Worktrees.
+  Setup runs in every new worktree before anything starts there, from sessions,
+  "Run with…", the worktree switcher, Flow runs, orchestration workers and
+  Pilots. Its output shows as it runs, and a failure offers Retry, Start anyway
+  and Cancel and leaves the worktree in place. Teardown runs before a worktree
+  is removed. Scripts are kept in Gespan's data, so opening a repository can't
+  run its code. Worktree creation in one repository now runs one at a time.
+- Remote projects get the same steps, run on their host, and their worktrees
+  can now be deleted from Settings. This needs an updated host.
+- "Run with…" starts in a new worktree on new boards, remembers the last choice
+  per board, and lists agents that aren't installed separately, where they can't
+  be started. The worktree is named after the card and linked to it. A board's
+  default is in its Automation settings; boards that already exist stay as they
+  were until it's turned on.
+
 ### Changed
 
 - Flows are hidden from the app for now: the Flows page and a Pilot's SOP

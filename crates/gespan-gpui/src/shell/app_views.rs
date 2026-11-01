@@ -344,17 +344,29 @@ impl Shell {
         });
     }
 
-    /// What the Board's "Run with…" picker offers: every provider, starting
-    /// on the user's usual provider and its model for the current project.
+    /// What the Board's "Run with…" picker offers: the installed providers,
+    /// starting on the user's usual one and its model for the current project,
+    /// and the others shown as not installed. Hidden ones aren't listed, as in
+    /// the composer's picker.
     fn board_run_options(&self, cx: &App) -> board::run_with::RunOptions {
         let preferences = &self.workspace.preferences;
         let accounts = crate::accounts::get(cx);
         let project = preferences.project_providers.get(&self.workspace.project);
-        board::run_with::RunOptions {
-            providers: Kind::ALL
-                .iter()
+        let installed = crate::installed_providers::snapshot(cx);
+        let hidden = preferences.hidden_for(&self.workspace.project);
+        let (providers, not_installed) = Kind::ALL
+            .iter()
+            .filter(|kind| !hidden.iter().any(|id| id == kind.id()))
+            .partition::<Vec<_>, _>(|kind| installed.installed(**kind));
+        let listed = |kinds: Vec<&Kind>| -> Vec<_> {
+            kinds
+                .into_iter()
                 .map(|kind| (kind.id().to_string(), kind.label().to_string()))
-                .collect(),
+                .collect()
+        };
+        board::run_with::RunOptions {
+            providers: listed(providers),
+            not_installed: listed(not_installed),
             default_provider: Some(self.default_kind(cx).id().to_string()),
             default_models: Kind::ALL
                 .iter()
@@ -432,7 +444,7 @@ impl Shell {
         let store = self.store.clone();
         self.navigation_revision += 1;
         let revision = self.navigation_revision;
-        let work = cx.background_executor().spawn(async move {
+        let work = crate::runtime::on_own_thread(move || {
             board::run_with::prepare_run(&store, &db_path, &request, settings)
         });
         cx.spawn(async move |this, cx| {

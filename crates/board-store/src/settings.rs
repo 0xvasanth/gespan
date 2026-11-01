@@ -20,11 +20,15 @@ const SWIMLANES: [&str; 4] = ["none", "priority", "label", "project"];
 const AGENT_FIELDS: [&str; 4] = ["provider", "model", "cost", "runTime"];
 
 /// Per-board settings. A board without a row (made before v3), or a NULL
-/// column, reads as the defaults: switches on, nothing else set.
+/// column, reads as the defaults: switches on, nothing else set. The exception
+/// is `run_in_worktree`: only a board made since v8 has it on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BoardSettings {
     pub run_with: bool,
+    pub run_in_worktree: bool,
+    /// What "Run with…" last had ticked on this board, if it was ever used.
+    pub run_worktree_choice: Option<bool>,
     pub write_back: bool,
     pub ticket_status_changes: bool,
     pub auto_move_json: Option<String>,
@@ -35,10 +39,19 @@ pub struct BoardSettings {
     pub priority_json: Option<String>,
 }
 
+impl BoardSettings {
+    /// Whether "Run with…" opens with a new worktree ticked.
+    pub fn starts_in_worktree(&self) -> bool {
+        self.run_worktree_choice.unwrap_or(self.run_in_worktree)
+    }
+}
+
 impl Default for BoardSettings {
     fn default() -> Self {
         Self {
             run_with: true,
+            run_in_worktree: true,
+            run_worktree_choice: None,
             write_back: true,
             ticket_status_changes: true,
             auto_move_json: None,
@@ -56,6 +69,8 @@ impl Default for BoardSettings {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettingsPatch {
     pub run_with: Option<bool>,
+    pub run_in_worktree: Option<bool>,
+    pub run_worktree_choice: Option<Option<bool>>,
     pub write_back: Option<bool>,
     pub ticket_status_changes: Option<bool>,
     pub auto_move_json: Option<Option<String>>,
@@ -71,6 +86,8 @@ impl SettingsPatch {
     fn full(settings: &BoardSettings) -> Self {
         Self {
             run_with: Some(settings.run_with),
+            run_in_worktree: Some(settings.run_in_worktree),
+            run_worktree_choice: Some(settings.run_worktree_choice),
             write_back: Some(settings.write_back),
             ticket_status_changes: Some(settings.ticket_status_changes),
             auto_move_json: Some(settings.auto_move_json.clone()),
@@ -240,7 +257,8 @@ pub fn board_settings(conn: &Connection, board_id: &str) -> Result<BoardSettings
     let row = conn
         .query_row(
             "SELECT s.run_with, s.write_back, s.ticket_status_changes, s.auto_move_json,
-                    s.icon, s.color, s.default_view_id, s.display_json, s.priority_json
+                    s.icon, s.color, s.default_view_id, s.display_json, s.priority_json,
+                    s.run_in_worktree, s.run_worktree_choice
              FROM boards b LEFT JOIN board_settings s ON s.board_id = b.id
              WHERE b.id = ?1",
             [board_id],
@@ -256,6 +274,8 @@ pub fn board_settings(conn: &Connection, board_id: &str) -> Result<BoardSettings
                     default_view_id: r.get(6)?,
                     display_json: r.get(7)?,
                     priority_json: r.get(8)?,
+                    run_in_worktree: r.get::<_, Option<i64>>(9)?.is_some_and(|v| v != 0),
+                    run_worktree_choice: r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
                 })
             },
         )
@@ -339,8 +359,18 @@ pub fn update_board_settings(
     .map_err(db)?;
     let flag = |value: Option<bool>| value.map(i64::from);
     let set = |value: &Option<Option<String>>| value.clone();
-    let assignments: [(&str, Option<rusqlite::types::Value>); 9] = [
+    let choice = patch.run_worktree_choice.map(|choice| {
+        choice.map_or(rusqlite::types::Value::Null, |value| {
+            i64::from(value).into()
+        })
+    });
+    let assignments: [(&str, Option<rusqlite::types::Value>); 11] = [
         ("run_with", flag(patch.run_with).map(Into::into)),
+        (
+            "run_in_worktree",
+            flag(patch.run_in_worktree).map(Into::into),
+        ),
+        ("run_worktree_choice", choice),
         ("write_back", flag(patch.write_back).map(Into::into)),
         (
             "ticket_status_changes",

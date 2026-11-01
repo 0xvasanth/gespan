@@ -505,11 +505,15 @@ fn new_board_settings_default_run_with_and_write_back_on() {
     assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
     assert_eq!(settings.auto_move_json, None);
 
-    // A board from before v3 has no settings row and reads as the defaults.
+    // A board from before v3 has no settings row and reads as the defaults,
+    // except that only a new board runs in a worktree by default.
     conn.execute("DELETE FROM board_settings", []).unwrap();
     assert_eq!(
         board_settings(&conn, &board.id).unwrap(),
-        BoardSettings::default()
+        BoardSettings {
+            run_in_worktree: false,
+            ..BoardSettings::default()
+        }
     );
 
     let off = BoardSettings {

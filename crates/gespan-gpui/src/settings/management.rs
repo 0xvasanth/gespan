@@ -113,8 +113,8 @@ impl SettingsView {
             scope,
             base: "HEAD".into(),
             existing: false,
-            delete_sessions: false,
-            delete_branch: false,
+            delete_sessions: self.prefs.deletes_worktree_sessions(&self.selected_project),
+            delete_branch: self.prefs.deletes_merged_branch(&self.selected_project),
             busy: false,
             error: None,
             editing: false,
@@ -252,21 +252,19 @@ impl SettingsView {
             return;
         }
         let generation = self.management_generation;
-        let work = cx.background_executor().spawn(async move {
-            match target {
-                Target::Mcp => gespan_core::mcp::mcp_add(cwd, provider, scope, name, body),
-                Target::Skill => {
-                    gespan_core::skills::create_blank(&cwd, &name, scope == "user").map(|_| ())
-                }
-                Target::Worktree => gespan_core::git::create_project_worktree(
-                    std::path::Path::new(&cwd),
-                    &name,
-                    Some(&base),
-                    existing,
-                )
-                .map(|_| ()),
-                _ => Ok(()),
+        let work = crate::runtime::on_own_thread(move || match target {
+            Target::Mcp => gespan_core::mcp::mcp_add(cwd, provider, scope, name, body),
+            Target::Skill => {
+                gespan_core::skills::create_blank(&cwd, &name, scope == "user").map(|_| ())
             }
+            Target::Worktree => gespan_core::git::create_project_worktree(
+                std::path::Path::new(&cwd),
+                &name,
+                Some(&base),
+                existing,
+            )
+            .map(|_| ()),
+            _ => Ok(()),
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;

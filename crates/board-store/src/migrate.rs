@@ -14,26 +14,29 @@
 //! - v7: `board_cards.body_from_ticket`, set when a card's description came
 //!   from a tracker. No earlier build copied one, so existing cards stay
 //!   unmarked.
+//! - v8: `board_settings.run_in_worktree` and `run_worktree_choice`. A board
+//!   from before v8 keeps running in place until the switch is turned on.
 //!
 //! A step runs only when the stored version is below it, so a v3 database
 //! moving to v4 does not copy the native extras again (which would bring back
 //! labels or values removed since).
 use crate::schema::{
     V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, V6_COLUMNS, V7_COLUMNS,
-    VERSION,
+    V8_COLUMNS, VERSION,
 };
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
 /// Each step with the version it brings the database to, oldest first.
-const STEPS: [(i64, Step); 6] = [
+const STEPS: [(i64, Step); 7] = [
     (2, to_v2),
     (3, to_v3),
     (4, to_v4),
     (5, to_v5),
     (6, to_v6),
     (7, to_v7),
+    (8, to_v8),
 ];
 
 /// The stored board schema version; 0 when none was ever written.
@@ -100,6 +103,10 @@ fn to_v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 fn to_v7(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     add_columns(tx, &V7_COLUMNS)
+}
+
+fn to_v8(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    add_columns(tx, &V8_COLUMNS)
 }
 
 /// Marks the cards made from a ticket before v6 as best it can tell: a card
