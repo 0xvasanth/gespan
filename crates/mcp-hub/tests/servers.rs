@@ -80,6 +80,8 @@ fn fixture_server() {
                     send(
                         json!({"method":"notifications/progress","params":{"progressToken":token,"progress":1}}),
                     );
+                    // The result mustn't overtake it.
+                    std::thread::sleep(Duration::from_millis(100));
                 }
                 json!({"contents":[{"uri":message["params"]["uri"],"text":name}]})
             }
