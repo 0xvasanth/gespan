@@ -25,7 +25,14 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { UnifiedLine } from "../../source-control/model/unifiedDiff";
+
+type UnifiedLine = {
+  kind: "context" | "add" | "del" | "hunk";
+  text: string;
+  oldNumber: number | null;
+  newNumber: number | null;
+  pos?: number;
+};
 import { EDITOR_LINE_HEIGHT_PX } from "./editorMetrics";
 
 const DIFF_CONFIG = { scanLimit: 5_000, timeout: 100 };

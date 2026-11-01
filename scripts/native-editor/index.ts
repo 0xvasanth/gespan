@@ -6,11 +6,11 @@ import { CompletionContext, completeFromList } from "@codemirror/autocomplete";
 import { SearchQuery } from "@codemirror/search";
 import { highlightTree } from "@lezer/highlight";
 import { syntaxTree } from "@codemirror/language";
-import { languageForPath, syntaxTagHighlighter } from "../../src/features/files/editor/editorLanguage";
+import { languageForPath, syntaxTagHighlighter } from "./src/editorLanguage";
 import { Chunk } from "@codemirror/merge";
-import { isLintable, syntaxDiagnostics } from "../../src/features/files/editor/editorLint";
-import { stageChunkText, revertChunkText } from "../../src/features/files/editor/editorGit";
-import { editorTyping, tryExpandEmmet } from "../../src/features/files/editor/editorEditing";
+import { isLintable, syntaxDiagnostics } from "./src/editorLint";
+import { stageChunkText, revertChunkText } from "./src/editorGit";
+import { editorTyping, tryExpandEmmet } from "./src/editorEditing";
 
 async function stateFor(path: string, source: string, pos = 0, fullParse = false) {
   const language = await languageForPath(path) ?? [];

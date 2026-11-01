@@ -11,7 +11,7 @@ import {
   type Highlighter,
   type Tag,
 } from "@lezer/highlight";
-import { basename } from "../../../platform/tauri/fs";
+import { basename } from "./basename";
 
 const HIGHLIGHT_TAGS = {
   keyword: [

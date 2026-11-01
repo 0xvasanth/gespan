@@ -2,7 +2,7 @@ import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { diagnosticCount, linter, type Diagnostic } from "@codemirror/lint";
 import type { EditorState, Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { basename } from "../../../platform/tauri/fs";
+import { basename } from "./basename";
 
 /**
  * Syntax diagnostics straight off the Lezer parse tree.

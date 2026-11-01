@@ -7,8 +7,8 @@
  * mascots actually walk on — `sprites` hands their positions back in fractional
  * cells so the caller can draw them mid-step.
  */
-import { PROJECT_MASCOTS } from "../../projects/model/projectMascots";
-import { HARNESSES, type HarnessId } from "../../sessions/model/session";
+import { PROJECT_MASCOTS } from "../../../host/core/features/projects/model/projectMascots";
+import { HARNESSES, type HarnessId } from "./harnesses";
 import type {
   ArcadeMode,
   ArcadeSprite,
