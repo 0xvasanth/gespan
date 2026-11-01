@@ -320,6 +320,53 @@ fn claude_uses_a_catalogue_server_and_loads_none_of_its_own() {
 }
 
 #[test]
+#[ignore = "a real, billed Claude turn"]
+fn claude_uses_a_public_remote_server_through_the_hub() {
+    let folder = tempfile::tempdir().unwrap();
+    let data = folder.path().join("data");
+    let mut catalog = Catalog::default();
+    catalog
+        .import(
+            &data,
+            vec![Importable {
+                provider: "test".into(),
+                scope: "user".into(),
+                name: "deepwiki".into(),
+                command: String::new(),
+                args: Vec::new(),
+                env: Default::default(),
+                url: Some("https://mcp.deepwiki.com/mcp".into()),
+            }],
+        )
+        .unwrap();
+    catalog.approve(&data, "deepwiki").unwrap();
+    catalog.save(&data).unwrap();
+    gespan_core::tool_servers::configure(&data);
+    gespan_core::tool_servers::sync_servers();
+    let mut mount = mount(900_009, folder.path(), &[VISUAL]);
+    mount.servers = ["deepwiki".to_owned()].into();
+    mount.exclusive = true;
+    let seen = turn(
+        Kind::Claude,
+        &installed("claude"),
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        mount,
+        "Use the deepwiki read_wiki_structure tool on the repository modelcontextprotocol/rust-sdk, then reply with only the word DONE.",
+    );
+    assert!(
+        seen.tools
+            .iter()
+            .any(|name| name.contains("deepwiki__read_wiki_structure")),
+        "{:?}: {}",
+        seen.tools,
+        seen.text
+    );
+    assert!(seen.text.contains("DONE"), "{}", seen.text);
+}
+
+#[test]
 #[ignore = "a real, billed Codex turn"]
 fn codex_uses_a_catalogue_server() {
     let folder = tempfile::tempdir().unwrap();

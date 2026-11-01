@@ -10,8 +10,10 @@
 
 mod endpoint;
 mod grants;
+mod oauth;
 mod pool;
 mod relay;
+mod remote;
 mod router;
 mod session;
 mod toolkit;
@@ -19,7 +21,9 @@ mod upstream;
 
 pub use endpoint::{Config, Hub};
 pub use grants::{Grant, Refusal, Token};
+pub use oauth::{sign_in, TokenStore};
 pub use pool::{NoObserver, Observer, Running, ServerError, ServerSpec, Sharing};
 pub use relay::{call_tool, relay, Connection};
+pub use remote::connect;
 pub use toolkit::{text_result, Toolkit};
 pub use upstream::{Spawned, Spawner};

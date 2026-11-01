@@ -49,6 +49,8 @@ With "Agents load only these servers" on, Claude Code runs with `--strict-mcp-co
 
 Each server runs in its own process group with the same marker as agents. A record of their pids lets the next launch's sweep find a server that looks like any `node` process, and it still acts only on a dead parent in the marker. On Windows the kill-on-close job does this.
 
+Remote servers are proxied the same way. Gespan is the OAuth client: one sign-in in Settings, tokens in the keychain, refreshed by Gespan, and sent only to that server. Agents talk to the hub and never receive them. A remote server is always `shared`, since one sign-in means one set of credentials.
+
 ## Security
 
 - The endpoint listens on `127.0.0.1` only. A request with another `Host` or `Origin` gets 403 before its token is read, which is what stops DNS rebinding.
