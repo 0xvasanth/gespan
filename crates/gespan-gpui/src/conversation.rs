@@ -5333,13 +5333,22 @@ pub(super) mod menu_tests {
     #[gpui::test]
     fn model_menu_picks_by_keyboard_and_returns_focus(cx: &mut TestAppContext) {
         let window = conversation(cx);
+        cx.update(|cx| {
+            cx.set_global(crate::settings::Preferences {
+                recent_models: vec![crate::settings::ModelChoice {
+                    provider: "claude".into(),
+                    model: Some("sonnet".into()),
+                }],
+                ..Default::default()
+            })
+        });
         open(window, ComposerMenu::Model, cx);
         assert!(
             !input_focused(window, cx),
             "the menu takes focus while open"
         );
         // Open the Model row's flyout, which focuses its search field with
-        // Default highlighted, then take the first catalog model.
+        // Default highlighted, then take the model after it.
         cx.simulate_keystrokes(window.into(), "right down enter");
         cx.run_until_parked();
         window
