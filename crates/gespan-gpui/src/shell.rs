@@ -1685,9 +1685,6 @@ impl Shell {
                                 }
                             });
                         }
-                        if archived {
-                            gespan_core::tool_servers::revoke(id);
-                        }
                         this.refresh_session_mark(id, cx);
                         if archived && this.workspace.tab_of(id).is_some() {
                             this.close_pane(id, window, cx);

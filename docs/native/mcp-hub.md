@@ -22,10 +22,12 @@ Checked against real releases: Claude Code 2.1.316, Codex 0.166.0, Kiro CLI 2.36
 | Codex | `config` on `thread/start` and `thread/resume` | stdin |
 | ACP agents advertising `mcpCapabilities.http` (Kiro) | `mcpServers` entry of type `http` | stdin |
 | Other ACP agents | `gespan-gpui mcp-relay` as a stdio server | the relay's own `env`, sent over stdin |
-| OpenCode | `POST /mcp` on its local server | loopback HTTP |
+| OpenCode v1 | `POST /mcp` on the `serve` process that conversation owns | loopback HTTP |
 | Pi, omp, and Grok or fx resuming a session | `gespan-gpui app` and `visual` CLIs | the agent's environment |
 
 Pi ships without MCP, and Grok and fx don't refresh `mcpServers` on resume. On that last row every command the agent runs inherits the token, so it's a fallback, never a default.
+
+OpenCode v2 connects to one managed service shared by every session, so a server added there would give each session's token to the others. Its turns run without Gespan's tools until it can scope a server to one session.
 
 Codex reads its tool list when a thread starts, so a tool added mid-session reaches it on its next session.
 

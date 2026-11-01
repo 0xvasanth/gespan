@@ -25,8 +25,9 @@ const SERVER_NAME: &str = "gespan";
 const ENV_URL: &str = "GESPAN_MCP_URL";
 const ENV_TOKEN: &str = "GESPAN_MCP_TOKEN";
 
+static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
+
 fn hub() -> Result<&'static Hub, String> {
-    static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
     HUB.get_or_init(|| {
         let hub = Hub::start(Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))?;
         hub.register(Arc::new(crate::visual_bridge::Toolkit));
@@ -225,9 +226,11 @@ pub fn call_tool(tool: &str, arguments: Value) -> Result<Value, String> {
     mcp_hub::call_tool(connection()?, tool, arguments)
 }
 
-/// Ends a session's tool access, for one archived, deleted or moved.
+/// Ends a session's tool access. The store calls this for every archive and
+/// delete, whatever asked for it. With no endpoint yet there's nothing to end,
+/// and none is started.
 pub fn revoke(session: i64) {
-    if let Ok(hub) = hub() {
+    if let Some(Ok(hub)) = HUB.get() {
         hub.revoke(session);
     }
 }

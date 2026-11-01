@@ -886,7 +886,6 @@ impl Shell {
                 this.deleting.remove(&id);
                 match result {
                     Ok(()) => {
-                        gespan_core::tool_servers::revoke(id);
                         this.forget_session(id, cx);
                         this.session_removed(id, true, cx);
                     }
