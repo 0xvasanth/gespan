@@ -126,7 +126,10 @@ async fn events(State(seen): State<Shared>, headers: HeaderMap) -> Response {
         .to_owned();
     let (stale, hold) = {
         let mut seen = seen.lock().unwrap();
-        seen.listens.push(authorization);
+        // Discovery looks here too, with no token, and isn't a listener.
+        if !authorization.is_empty() || !seen.stale_on_listen {
+            seen.listens.push(authorization);
+        }
         (
             seen.stale_on_listen && seen.listens.len() == 1,
             seen.hold_listen,
@@ -380,7 +383,7 @@ fn stopping_a_connection_ends_it_even_with_its_event_stream_open() {
 }
 
 #[test]
-fn a_stale_token_on_the_event_stream_is_refreshed_and_retried() {
+fn an_event_stream_turned_away_asks_for_the_token_again_and_retries() {
     let seen = Shared::default();
     let url = remote(seen.clone());
     let store = Arc::new(Memory::default());
@@ -471,6 +474,23 @@ fn a_server_that_signs_in_over_plain_http_is_refused_before_the_browser_opens() 
     assert!(error.contains("unsafe"), "{error}");
     assert!(!opened.load(std::sync::atomic::Ordering::SeqCst));
     assert!(store.load().unwrap().is_none());
+}
+
+#[test]
+fn a_refresh_token_never_follows_a_server_onto_plain_http() {
+    let seen = Shared::default();
+    seen.lock().unwrap().lifetime = Some(1);
+    let url = remote(seen.clone());
+    let store = Arc::new(Memory::default());
+    sign_in(&url, "t", store.clone(), browser, Duration::from_secs(5)).unwrap();
+    seen.lock().unwrap().plain_token_endpoint = true;
+    let hub = hub_for(&url, store);
+    let connection = Connection {
+        url: hub.url().to_owned(),
+        token: hub.mint(grant(1)).secret().to_owned(),
+    };
+    let error = call_tool(connection, "remote__ping", json!({})).unwrap_err();
+    assert!(error.contains("unsafe"), "{error}");
 }
 
 #[test]

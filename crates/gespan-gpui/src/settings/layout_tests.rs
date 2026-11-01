@@ -456,6 +456,11 @@ fn adding_from_the_registry_lands_off_and_settings_unlock_approval(cx: &mut Test
     let entry = saved(&dir).entries.remove(0);
     assert!(entry.needed.is_empty());
     assert_eq!(entry.env, ["API_KEY", "LOG"]);
+
+    click(visual, APPROVE);
+    answer(visual, "Approve and turn on");
+    let entry = saved(&dir).entries.remove(0);
+    assert!(entry.enabled && entry.approved.is_some());
 }
 
 #[gpui::test]
@@ -479,9 +484,9 @@ fn a_mistyped_setting_is_reported_without_repeating_it(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-fn recent_errors_show_with_no_servers_left_in_the_catalogue(cx: &mut TestAppContext) {
+fn a_failure_stays_on_the_page_after_its_server_is_removed(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let (window, visual) = &mut catalog_window_of(&dir, Vec::new(), cx);
+    let (window, visual) = &mut catalog_window(&dir, cx);
     window
         .update(visual, |view, _, cx| {
             view.mcp_server_errors = vec![gespan_core::tool_servers::ServerFailure {
@@ -493,7 +498,13 @@ fn recent_errors_show_with_no_servers_left_in_the_catalogue(cx: &mut TestAppCont
         })
         .unwrap();
     settle(visual);
-    assert!(visual.debug_bounds("settings-catalog-errors").is_some());
+    assert!(visual.debug_bounds("settings-catalog-failure-0").is_some());
+    click(visual, "settings-catalog-remove-0");
+    assert!(saved(&dir).entries.is_empty());
+    assert!(
+        visual.debug_bounds("settings-catalog-failure-0").is_some(),
+        "the empty page hid it"
+    );
 }
 
 fn settle(visual: &mut VisualTestContext) {

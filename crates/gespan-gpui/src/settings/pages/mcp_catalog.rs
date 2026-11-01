@@ -72,11 +72,12 @@ fn running_line(process: &RunningServer, memory: Option<u64>) -> String {
 /// not by repeating it: it may well be the secret.
 fn parse_settings(text: &str) -> Result<BTreeMap<String, String>, String> {
     text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(ix, line)| {
             let (name, value) = line
                 .split_once('=')
-                .ok_or_else(|| "Each line needs the form NAME=value".to_owned())?;
+                .ok_or_else(|| format!("Line {} needs the form NAME=value", ix + 1))?;
             Ok((name.trim().to_owned(), value.trim().to_owned()))
         })
         .collect()
@@ -311,7 +312,12 @@ impl SettingsView {
         let stale = self.mcp_catalog_stale.contains(&entry.id);
         let mut facts = vec![
             status(&entry, stale).to_owned(),
-            class_label(entry.class).to_owned(),
+            // Older remote entries kept a class that never applied to them.
+            class_label(match (&entry.url, entry.class) {
+                (Some(_), Class::PerWorktree) => Class::Shared,
+                (_, class) => class,
+            })
+            .to_owned(),
         ];
         if !entry.needed.is_empty() {
             facts.push(format!("needs {}", entry.needed.join(", ")));
@@ -536,11 +542,12 @@ impl SettingsView {
                     .child(subheading("Recent errors"))
                     .into_any_element(),
             );
-            section.extend(
-                failures
-                    .into_iter()
-                    .map(|failure| fact_row(failure.server.clone(), failure.message.clone())),
-            );
+            section.extend(failures.into_iter().enumerate().map(|(ix, failure)| {
+                div()
+                    .debug_selector(move || format!("settings-catalog-failure-{ix}"))
+                    .child(fact_row(failure.server.clone(), failure.message.clone()))
+                    .into_any_element()
+            }));
         }
         section
     }
@@ -821,7 +828,7 @@ mod tests {
         assert_eq!(parsed["OTHER"], "two");
         assert_eq!(
             parse_settings("oops").unwrap_err(),
-            "Each line needs the form NAME=value"
+            "Line 1 needs the form NAME=value"
         );
     }
 }

@@ -8,12 +8,50 @@ use crate::{
 };
 use std::{
     collections::BTreeMap,
-    io::{BufReader, Write},
-    sync::{Arc, Mutex},
+    io::{BufReader, Read, Write},
+    sync::{mpsc, Arc, Mutex},
 };
 
-/// A pipe end anyone holding it can close. Closing is how a connection stops:
-/// the thread on the other end sees the pipe end and winds up.
+/// What the hub writes to a connection. It queues rather than blocks, so a
+/// stalled connection can't hold up the stop that would end it.
+struct Queue(mpsc::Sender<Vec<u8>>);
+
+impl Write for Queue {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .send(bytes.to_vec())
+            .map_err(|_| std::io::ErrorKind::BrokenPipe)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The other end of a [`Queue`], which ends when that's closed.
+struct Queued {
+    frames: mpsc::Receiver<Vec<u8>>,
+    current: std::io::Cursor<Vec<u8>>,
+}
+
+impl Read for Queued {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.current.read(buffer)?;
+            if read > 0 || buffer.is_empty() {
+                return Ok(read);
+            }
+            match self.frames.recv() {
+                Ok(frame) => self.current = std::io::Cursor::new(frame),
+                Err(_) => return Ok(0),
+            }
+        }
+    }
+}
+
+/// A writer anyone holding it can close. Closing is how a connection stops: the
+/// thread on the other end sees the end and winds up.
 struct Closable<W>(Arc<Mutex<Option<W>>>);
 
 impl<W> Clone for Closable<W> {
@@ -62,12 +100,14 @@ pub fn connect(
             "Credentials need an https address",
         ));
     }
-    let (to_read, to_remote) = std::io::pipe()?;
-    let (from_remote, to_host) = std::io::pipe()?;
-    let (input, stop_input) = {
-        let input = Closable::new(to_remote);
-        (input.clone(), input)
+    let (to_remote, frames) = mpsc::channel();
+    let to_read = Queued {
+        frames,
+        current: std::io::Cursor::default(),
     };
+    let (from_remote, to_host) = std::io::pipe()?;
+    let input = Closable::new(Queue(to_remote));
+    let stop_input = input.clone();
     let to_host = Closable::new(to_host);
     let credential = match oauth {
         Some(store) => {
@@ -86,8 +126,8 @@ pub fn connect(
             if let Err(error) = pump(link, BufReader::new(to_read), output) {
                 tracing::warn!(%error, "a remote MCP connection ended");
             }
-            // The listening thread holds this too, for as long as its stream
-            // stays open, so the reader can't wait for that.
+            // The listening thread holds this too, until its next read times
+            // out, and the reader can't wait for that.
             to_host.close();
         })?;
     Ok(Spawned {

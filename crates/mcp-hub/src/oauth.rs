@@ -6,8 +6,8 @@ use rmcp::transport::auth::{
     AuthorizationSession, CredentialStore, StoredCredentials,
 };
 use std::{
-    io::{BufRead, BufReader, Write},
-    net::TcpListener,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -85,8 +85,30 @@ fn safe_endpoints(metadata: &AuthorizationMetadata) -> bool {
 const TIMED_OUT: &str = "The sign-in timed out";
 /// How long one stray connection to the redirect port can hold it up.
 const REQUEST_WAIT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_LINE: usize = 8 * 1024;
+const UNSAFE: &str = "This server signs in over an unsafe address";
 
 const SIGNED_IN: &str = "<!doctype html><title>Signed in</title><p>Signed in. You can close this tab and go back to the app.</p>";
+
+/// The first line of a request, or nothing by `deadline`. Each read waits only
+/// for what's left, so a client sending a byte at a time can't stretch it.
+fn request_line(stream: &mut TcpStream, deadline: Instant) -> Option<String> {
+    let mut line = Vec::new();
+    let mut byte = [0];
+    while line.len() < MAX_REQUEST_LINE {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        stream.set_read_timeout(Some(left)).ok()?;
+        match stream.read(&mut byte) {
+            Ok(1) if byte[0] == b'\n' => return String::from_utf8(line).ok(),
+            Ok(1) => line.push(byte[0]),
+            _ => return None,
+        }
+    }
+    None
+}
 
 /// Waits for the browser to come back to the loopback redirect, and returns
 /// the whole URL it came back to.
@@ -109,13 +131,9 @@ fn await_redirect(listener: TcpListener, deadline: Instant) -> Result<String, St
             return Err(TIMED_OUT.into());
         }
         stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-        stream
-            .set_read_timeout(Some(left.min(REQUEST_WAIT)))
-            .map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        if BufReader::new(&stream).read_line(&mut line).is_err() {
+        let Some(line) = request_line(&mut stream, Instant::now() + left.min(REQUEST_WAIT)) else {
             continue;
-        }
+        };
         // Anything else that finds this port, a favicon say, is ignored.
         let Some(target) = line
             .strip_prefix("GET ")
@@ -163,7 +181,7 @@ pub fn sign_in(
                     .await
                     .map_err(|e| e.to_string())?;
                 if !safe_endpoints(&found.metadata) {
-                    return Err("This server signs in over an unsafe address".to_owned());
+                    return Err(UNSAFE.to_owned());
                 }
                 manager.set_metadata(found.metadata);
                 let request = AuthorizationRequest::new(redirect).with_client_name(client_name);
@@ -191,6 +209,16 @@ pub(crate) fn access_token(url: &str, store: Arc<dyn TokenStore>) -> Result<Stri
     const NEEDS_SIGN_IN: &str = "This server needs a sign-in";
     let runtime = runtime()?;
     runtime.block_on(async {
+        // A refresh sends the refresh token wherever the server says today,
+        // and the SDK keeps that to itself, so look first.
+        let found = manager(url, store.clone())
+            .await?
+            .resolve_metadata_from_challenge(None)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !safe_endpoints(&found.metadata) {
+            return Err(UNSAFE.to_owned());
+        }
         let mut manager = manager(url, store).await?;
         if !manager
             .initialize_from_store()
@@ -231,6 +259,22 @@ mod tests {
         ] {
             assert!(!safe_for_tokens(url), "{url}");
         }
+    }
+
+    #[test]
+    fn a_client_sending_a_byte_at_a_time_cant_outlast_the_sign_in() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            while stream.write_all(b"G").is_ok() {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(200);
+        assert_eq!(await_redirect(listener, deadline).unwrap_err(), TIMED_OUT);
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

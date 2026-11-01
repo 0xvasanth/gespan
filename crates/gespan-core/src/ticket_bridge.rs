@@ -1562,7 +1562,7 @@ mod tests {
     #[test]
     fn a_tool_call_retried_with_its_request_id_never_posts_twice() {
         use mcp_hub::Toolkit as _;
-        let server = Server::start(445, scope("ENG-1", true, false)).unwrap();
+        let server = Server::start(447, scope("ENG-1", true, false)).unwrap();
         let grant = mcp_hub::Grant {
             session: server.session,
             workspace: "/work".into(),

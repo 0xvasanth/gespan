@@ -121,4 +121,13 @@ fn a_catalogue_change_reaches_a_running_session_until_it_is_revoked() {
     tool_servers::revoke(session);
     tool_servers::sync_servers();
     assert!(!access.is_live(session), "a revoked session stays revoked");
+    let refused = ureq::post(&agent.url)
+        .set("Authorization", &agent.bearer)
+        .set("Accept", "application/json, text/event-stream")
+        .set("Content-Type", "application/json")
+        .send_string(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}).to_string());
+    assert!(
+        matches!(refused, Err(ureq::Error::Status(401 | 403, _))),
+        "the old token still works"
+    );
 }

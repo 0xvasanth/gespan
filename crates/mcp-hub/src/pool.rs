@@ -24,8 +24,18 @@ const REMEMBERED_ERRORS: usize = 32;
 /// A server chooses what its errors say, so they're kept short.
 const MAX_ERROR_CHARS: usize = 500;
 /// Anything shorter in a server's environment is a setting, and hiding it would
-/// blank out ordinary words.
+/// blank out ordinary words, unless its name says otherwise.
 const MIN_SECRET_CHARS: usize = 8;
+const SECRET_NAMES: [&str; 8] = [
+    "TOKEN",
+    "KEY",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "AUTH",
+    "CREDENTIAL",
+    "COOKIE",
+];
 
 /// How many processes a server gets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -158,6 +168,8 @@ pub(crate) struct Pool {
     retired: Mutex<Vec<Arc<Upstream>>>,
     starting: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<()>>>>,
     lists: Mutex<Lists>,
+    /// How many times each server restarted, so work begun before one can tell.
+    restarts: Mutex<HashMap<String, u64>>,
     errors: Mutex<VecDeque<ServerError>>,
     hub: Mutex<Weak<Inner>>,
 }
@@ -184,6 +196,7 @@ impl Pool {
             retired: Mutex::default(),
             starting: Mutex::default(),
             lists: Mutex::default(),
+            restarts: Mutex::default(),
             errors: Mutex::default(),
             hub: Mutex::new(Weak::new()),
         }
@@ -197,14 +210,11 @@ impl Pool {
         relock(&self.hub).upgrade()
     }
 
-    /// Keeps a failure for the host to show its user. The log gets only which
-    /// server: its message is the server's own text and may quote anything.
+    /// Keeps a failure for the host to show its user, with secrets already
+    /// out of it. The log gets only which server: its message is the server's
+    /// own text and may quote anything.
     fn record(&self, server: &str, message: String) {
         tracing::warn!(server, "an MCP server failed");
-        let message = match self.spec(server) {
-            Some(spec) => without_secrets(message, &spec.env),
-            None => message,
-        };
         let message = message.chars().take(MAX_ERROR_CHARS).collect();
         let mut errors = relock(&self.errors);
         if errors.len() >= REMEMBERED_ERRORS {
@@ -244,7 +254,12 @@ impl Pool {
     /// Stops a server's processes and forgets its lists, so the next call
     /// starts over. For what changed outside its spec, such as a sign-in.
     pub(crate) fn restart(&self, server: &str) {
+        // First, so nothing begun before this can land after the cleanup.
+        *relock(&self.restarts).entry(server.to_owned()).or_default() += 1;
         relock(&self.lists).retain(|(id, _), _| id != server);
+        if let Some(spec) = relock(&self.specs).get_mut(server) {
+            spec.tools = None;
+        }
         let stopped: Vec<_> = {
             let mut running = relock(&self.running);
             let keys: Vec<_> = running
@@ -257,6 +272,10 @@ impl Pool {
         for upstream in stopped {
             upstream.shut();
         }
+    }
+
+    fn restarts_of(&self, server: &str) -> u64 {
+        relock(&self.restarts).get(server).copied().unwrap_or(0)
     }
 
     fn current(&self, key: &Key) -> bool {
@@ -323,6 +342,7 @@ impl Pool {
             return Err(changed(&spec.id));
         }
         self.make_room();
+        let restarts = self.restarts_of(&spec.id);
         let (workspace, reach) = match spec.sharing {
             Sharing::Shared => (None, Reach::Shared),
             Sharing::PerWorkspace => (Some(grant.workspace.clone()), Reach::Workspace),
@@ -342,9 +362,11 @@ impl Pool {
                 });
                 Upstream::start(&spec, spawned, workspace.as_deref(), reach, events)
             });
-            let upstream = started.inspect_err(|error| pool.record(&spec.id, error.clone()))?;
+            let upstream = started
+                .map_err(|error| without_secrets(error, &spec.env))
+                .inspect_err(|error| pool.record(&spec.id, error.clone()))?;
             let mut running = relock(&pool.running);
-            if !pool.current(&key) {
+            if !pool.current(&key) || pool.restarts_of(&spec.id) != restarts {
                 drop(running);
                 upstream.shut();
                 return Err(changed(&spec.id));
@@ -465,14 +487,27 @@ impl Pool {
         stored.or_else(|| (list == TOOLS).then(|| spec.tools.clone()).flatten())
     }
 
-    fn store(&self, spec: &ServerSpec, list: (&'static str, &'static str), items: Vec<Value>) {
+    /// Keeps a list, unless the server restarted since it was asked for.
+    fn store(
+        &self,
+        spec: &ServerSpec,
+        list: (&'static str, &'static str),
+        items: Vec<Value>,
+        restarts: u64,
+    ) {
+        {
+            let mut lists = relock(&self.lists);
+            if self.restarts_of(&spec.id) != restarts {
+                return;
+            }
+            lists
+                .entry((spec.id.clone(), spec.fingerprint()))
+                .or_default()
+                .insert(list.1, items.clone());
+        }
         if list == TOOLS {
             self.observer.listed(&spec.id, &items);
         }
-        relock(&self.lists)
-            .entry((spec.id.clone(), spec.fingerprint()))
-            .or_default()
-            .insert(list.1, items);
     }
 
     /// A server's list, from the cache when it has one.
@@ -485,6 +520,7 @@ impl Pool {
         if let Some(items) = self.cached(spec, list) {
             return items;
         }
+        let restarts = self.restarts_of(&spec.id);
         let upstream = match self.upstream(spec, grant).await {
             Ok(upstream) => upstream,
             Err(_) => return Vec::new(),
@@ -492,16 +528,17 @@ impl Pool {
         let fetched = tokio::task::spawn_blocking(move || upstream.list(list.0, list.1)).await;
         match fetched {
             Ok(Ok(items)) => {
-                self.store(spec, list, items.clone());
+                self.store(spec, list, items.clone(), restarts);
                 items
             }
             // A server without this list says so; it isn't a failure.
             Ok(Err(error)) if error["code"] == -32601 => {
-                self.store(spec, list, Vec::new());
+                self.store(spec, list, Vec::new(), restarts);
                 Vec::new()
             }
             Ok(Err(error)) => {
-                self.record(&spec.id, format!("{}: {error}", list.0));
+                let message = format!("{}: {error}", list.0);
+                self.record(&spec.id, without_secrets(message, &spec.env));
                 Vec::new()
             }
             Err(_) => Vec::new(),
@@ -565,13 +602,13 @@ impl Pool {
             Err(error) => return Some(Err(json!({"code":-32603,"message":error}))),
         };
         let answer = upstream.request(grant.session, method, params).await;
-        if let Err(error) = &answer {
-            self.record(
-                server,
-                error["message"].as_str().unwrap_or("failed").to_owned(),
-            );
-        }
-        Some(answer)
+        Some(answer.map_err(|mut error| {
+            let message = error["message"].as_str().unwrap_or("failed").to_owned();
+            let message = without_secrets(message, &spec.env);
+            self.record(server, message.clone());
+            error["message"] = message.into();
+            error
+        }))
     }
 
     pub(crate) async fn subscribe(
@@ -626,6 +663,7 @@ impl Pool {
         let Some(spec) = self.spec(&key.server).filter(|spec| key.serves(spec)) else {
             return;
         };
+        let restarts = self.restarts_of(&key.server);
         let list = match method {
             "notifications/tools/list_changed" => TOOLS,
             "notifications/prompts/list_changed" => PROMPTS,
@@ -639,8 +677,11 @@ impl Pool {
             match upstream.list(list.0, list.1) {
                 // Replaced while it was listing: this list is no one's.
                 Ok(_) if !pool.current(&key) => return,
-                Ok(items) => pool.store(&spec, list, items),
-                Err(error) => pool.record(&spec.id, format!("{}: {error}", list.0)),
+                Ok(items) => pool.store(&spec, list, items, restarts),
+                Err(error) => {
+                    let message = format!("{}: {error}", list.0);
+                    pool.record(&spec.id, without_secrets(message, &spec.env));
+                }
             }
             if let Some(hub) = pool.hub() {
                 hub.server_list_changed(&spec.id, &method);
@@ -661,12 +702,27 @@ impl Pool {
     }
 }
 
-/// A server's error can quote what it was started with.
+/// Whether an environment name says its value is a credential.
+fn names_a_secret(name: &str) -> bool {
+    let name = name.to_uppercase();
+    SECRET_NAMES.iter().any(|word| name.contains(word))
+}
+
+/// A server's error can quote what it was started with. Each whole value goes,
+/// and each word of it, longest first so a part never leaves the rest behind.
 fn without_secrets(mut message: String, env: &BTreeMap<String, String>) -> String {
-    let secrets = env
-        .values()
-        .flat_map(|value| value.split_whitespace())
-        .filter(|word| word.chars().count() >= MIN_SECRET_CHARS);
+    let mut secrets: Vec<&str> = env
+        .iter()
+        .flat_map(|(name, value)| {
+            let any_length = names_a_secret(name);
+            std::iter::once(value.as_str())
+                .chain(value.split_whitespace())
+                .filter(move |word| {
+                    !word.is_empty() && (any_length || word.chars().count() >= MIN_SECRET_CHARS)
+                })
+        })
+        .collect();
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
     for secret in secrets {
         message = message.replace(secret, "[hidden]");
     }
@@ -742,30 +798,87 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_failure_never_keeps_the_secrets_a_server_quoted() {
-        struct Nothing;
-        impl Spawner for Nothing {
-            fn spawn(
-                &self,
-                _: &ServerSpec,
-                _: Option<&std::path::Path>,
-            ) -> std::io::Result<crate::Spawned> {
-                Err(std::io::ErrorKind::Unsupported.into())
-            }
+    struct Nothing;
+    impl Spawner for Nothing {
+        fn spawn(
+            &self,
+            _: &ServerSpec,
+            _: Option<&std::path::Path>,
+        ) -> std::io::Result<crate::Spawned> {
+            Err(std::io::ErrorKind::Unsupported.into())
         }
-        let pool = Pool::new(
+    }
+
+    fn pool() -> Pool {
+        Pool::new(
             Arc::new(Nothing),
             Arc::new(NoObserver),
             Duration::from_secs(1),
             1,
+        )
+    }
+
+    #[test]
+    fn a_failure_never_keeps_the_secrets_a_server_quoted() {
+        let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let quoted = "rejected s3cret-value at info";
+        assert_eq!(
+            without_secrets(
+                quoted.into(),
+                &env(&[("Authorization", "Bearer s3cret-value"), ("LEVEL", "info")])
+            ),
+            "rejected [hidden] at info"
         );
-        pool.set(vec![spec(
-            "a",
-            &[("Authorization", "Bearer s3cret-value"), ("LEVEL", "info")],
-        )]);
-        pool.record("a", "rejected s3cret-value at info".to_owned());
-        assert_eq!(pool.errors()[0].message, "rejected [hidden] at info");
+        assert_eq!(
+            without_secrets("key ab1 ok".into(), &env(&[("API_KEY", "ab1")])),
+            "key [hidden] ok",
+            "the name says it's a secret, however short"
+        );
+        assert_eq!(
+            without_secrets(
+                "sent two short words".into(),
+                &env(&[("PHRASE", "two short words")])
+            ),
+            "sent [hidden]",
+            "a value of short words goes whole"
+        );
+        assert_eq!(
+            without_secrets(
+                "s3cret-value-longer".into(),
+                &env(&[
+                    ("A_TOKEN", "s3cret-value"),
+                    ("B_TOKEN", "s3cret-value-longer")
+                ])
+            ),
+            "[hidden]"
+        );
+    }
+
+    #[test]
+    fn a_restart_drops_every_list_and_refuses_one_asked_for_before_it() {
+        let pool = pool();
+        let mut server = spec("a", &[]);
+        server.tools = Some(vec![json!({"name":"old"})]);
+        pool.set(vec![server.clone()]);
+        let before = pool.restarts_of("a");
+        pool.store(&server, TOOLS, vec![json!({"name":"kept"})], before);
+        pool.restart("a");
+        let current = pool.spec("a").unwrap();
+        assert_eq!(pool.cached(&current, TOOLS), None, "nothing old survives");
+        pool.store(&current, TOOLS, vec![json!({"name":"late"})], before);
+        assert_eq!(
+            pool.cached(&current, TOOLS),
+            None,
+            "that list is out of date"
+        );
+        let after = pool.restarts_of("a");
+        pool.store(&current, TOOLS, vec![json!({"name":"new"})], after);
+        assert_eq!(pool.cached(&current, TOOLS).unwrap()[0]["name"], "new");
     }
 
     #[test]

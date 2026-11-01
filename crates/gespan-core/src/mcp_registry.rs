@@ -1,7 +1,7 @@
 //! The official MCP Registry. A listing only ever becomes a catalogue entry
 //! that's off and unapproved: anyone can publish there, so what runs is what
 //! the user read and approved, pinned to the listed version.
-use crate::mcp::Importable;
+use crate::{mcp::Importable, mcp_catalog::env_name};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Read};
 
@@ -65,17 +65,38 @@ fn plain(word: &str) -> bool {
     !word.contains(['&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\n', '\r'])
 }
 
-/// A package or image name, which can't pass for a flag.
-fn valid_identifier(identifier: &str) -> bool {
-    !identifier.is_empty()
-        && !identifier.starts_with('-')
-        && identifier
+fn name_part(part: &str) -> bool {
+    part.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && part
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "@/._-:".contains(c))
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
-/// One exact version: `latest`, ranges and wildcards can change after approval.
-fn exact_version(version: &str) -> bool {
+/// An npm name, scoped or not.
+fn npm_name(identifier: &str) -> bool {
+    match identifier.strip_prefix('@') {
+        Some(scoped) => scoped
+            .split_once('/')
+            .is_some_and(|(scope, name)| name_part(scope) && name_part(name)),
+        None => name_part(identifier),
+    }
+}
+
+/// `1` is a range to npm, so it takes all three numbers.
+fn npm_version(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let numbers: Vec<_> = core.split('.').collect();
+    numbers.len() == 3
+        && numbers
+            .iter()
+            .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".+-".contains(c))
+}
+
+/// `==` makes any version exact here, as long as it's a version at all.
+fn pypi_version(version: &str) -> bool {
     version.starts_with(|c: char| c.is_ascii_digit())
         && version
             .chars()
@@ -83,6 +104,31 @@ fn exact_version(version: &str) -> bool {
         && !version
             .split('.')
             .any(|part| part.eq_ignore_ascii_case("x"))
+}
+
+/// An image reference with no tag or digest on it.
+fn image_name(name: &str) -> bool {
+    !name.starts_with('-')
+        && !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-:".contains(c))
+}
+
+/// A tag that names a release rather than whatever's newest, like `main`.
+fn release_tag(tag: &str) -> bool {
+    tag.strip_prefix('v')
+        .unwrap_or(tag)
+        .starts_with(|c: char| c.is_ascii_digit())
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+fn digest(value: &str) -> bool {
+    value
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// A listing's arguments as words. One it requires with no fixed value needs
@@ -108,16 +154,22 @@ fn arguments(list: &Value) -> Option<Vec<String>> {
     words.iter().all(|word| plain(word)).then_some(words)
 }
 
-/// An image name that says which image, by digest, a tag other than `latest`,
-/// or the listed version.
+/// An image reference that says which image, by digest, a release tag or the
+/// listed version.
 fn pinned_image(identifier: &str, version: Option<&str>) -> Option<String> {
-    let last = identifier.rsplit('/').next().unwrap_or(identifier);
-    if last.contains('@') {
-        return Some(identifier.to_owned());
+    if let Some((name, value)) = identifier.split_once('@') {
+        return (image_name(name) && digest(value)).then(|| identifier.to_owned());
     }
+    if !image_name(identifier) {
+        return None;
+    }
+    let last = identifier.rsplit('/').next().unwrap_or(identifier);
     match last.split_once(':') {
-        Some((_, tag)) => (!tag.is_empty() && tag != "latest").then(|| identifier.to_owned()),
-        None => Some(format!("{identifier}:{}", version?)),
+        Some((_, tag)) => release_tag(tag).then(|| identifier.to_owned()),
+        None => {
+            let version = version.filter(|version| release_tag(version))?;
+            Some(format!("{identifier}:{version}"))
+        }
     }
 }
 
@@ -130,19 +182,28 @@ fn package_install(package: &Value) -> Option<Install> {
     if package["transport"]["type"].as_str().unwrap_or("stdio") != "stdio" {
         return None;
     }
-    let identifier = package["identifier"]
-        .as_str()
-        .filter(|id| valid_identifier(id))?;
-    let version = package["version"].as_str().filter(|v| exact_version(v));
+    let identifier = package["identifier"].as_str()?;
+    let version = package["version"].as_str();
     if !arguments(&package["runtimeArguments"])?.is_empty() {
         return None;
     }
+    if !inputs(package).iter().all(|input| env_name(&input.name)) {
+        return None;
+    }
     let (command, mut args) = match package["registryType"].as_str()? {
-        "npm" => (
-            "npx",
-            vec!["-y".to_owned(), format!("{identifier}@{}", version?)],
-        ),
-        "pypi" => ("uvx", vec![format!("{identifier}=={}", version?)]),
+        "npm" => {
+            let version = version.filter(|version| npm_version(version))?;
+            npm_name(identifier).then_some(())?;
+            (
+                "npx",
+                vec!["-y".to_owned(), format!("{identifier}@{version}")],
+            )
+        }
+        "pypi" => {
+            let version = version.filter(|version| pypi_version(version))?;
+            name_part(identifier).then_some(())?;
+            ("uvx", vec![format!("{identifier}=={version}")])
+        }
         "oci" => {
             let mut args = crate::mcp_catalog::CONTAINER_RUN
                 .map(str::to_owned)
@@ -174,6 +235,34 @@ fn inputs(package: &Value) -> Vec<Input> {
         .collect()
 }
 
+/// Whether an address is https and doesn't name a local or private host. A name
+/// can still resolve to one; the user sees and approves the address itself.
+fn public_https(url: &str) -> bool {
+    let Ok(url) = url::Url::parse(url) else {
+        return false;
+    };
+    let private_v4 = |ip: std::net::Ipv4Addr| {
+        ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+    };
+    url.scheme() == "https"
+        && match url.host() {
+            Some(url::Host::Domain(name)) => {
+                let name = name.trim_end_matches('.').to_lowercase();
+                !(name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local"))
+            }
+            Some(url::Host::Ipv4(ip)) => !private_v4(ip),
+            Some(url::Host::Ipv6(ip)) => {
+                let first = ip.segments()[0];
+                !(ip.is_loopback()
+                    || ip.is_unspecified()
+                    || first & 0xfe00 == 0xfc00
+                    || first & 0xffc0 == 0xfe80
+                    || ip.to_ipv4_mapped().is_some_and(private_v4))
+            }
+            None => false,
+        }
+}
+
 fn listing(server: &Value) -> Option<Listing> {
     let packaged = server["packages"]
         .as_array()
@@ -187,9 +276,9 @@ fn listing(server: &Value) -> Option<Listing> {
             .find(|remote| remote["type"] == "streamable-http")?["url"]
             .as_str()?;
         // A templated address needs values this can't supply, and anyone can
-        // publish here, so a listing doesn't get to send traffic in the clear.
-        let usable =
-            !url.contains('{') && url::Url::parse(url).is_ok_and(|u| u.scheme() == "https");
+        // publish here, so a listing doesn't get to send traffic in the clear
+        // or point at this machine or its network.
+        let usable = !url.contains('{') && public_https(url);
         usable.then(|| Install::Remote {
             url: url.to_owned(),
         })
@@ -216,8 +305,16 @@ pub fn parse(body: &Value) -> Vec<Listing> {
 }
 
 fn read_answer(reader: impl Read) -> Result<Value, String> {
-    serde_json::from_reader(reader.take(MAX_ANSWER_BYTES))
-        .map_err(|_| "The MCP Registry sent an unreadable answer".to_owned())
+    let unreadable = || "The MCP Registry sent an unreadable answer".to_owned();
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_ANSWER_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > MAX_ANSWER_BYTES {
+        return Err(unreadable());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| unreadable())
 }
 
 /// Searches the registry. Blocking.
@@ -324,7 +421,7 @@ mod tests {
     }
 
     fn package(fields: Value) -> Vec<Listing> {
-        let mut package = json!({"registryType":"npm","identifier":"x","version":"1"});
+        let mut package = json!({"registryType":"npm","identifier":"x","version":"1.0.0"});
         package
             .as_object_mut()
             .unwrap()
@@ -362,16 +459,15 @@ mod tests {
             "ghcr.io/a/b:2"
         );
         assert_eq!(
-            command_of(&image("ghcr.io/a/b:3", Value::Null))
+            command_of(&image("ghcr.io/a/b:v3.1", Value::Null))
                 .last()
                 .unwrap(),
-            "ghcr.io/a/b:3"
+            "ghcr.io/a/b:v3.1"
         );
+        let digest = format!("host:5000/a/b@sha256:{}", "ab".repeat(32));
         assert_eq!(
-            command_of(&image("host:5000/a/b@sha256:ab", Value::Null))
-                .last()
-                .unwrap(),
-            "host:5000/a/b@sha256:ab"
+            command_of(&image(&digest, Value::Null)).last().unwrap(),
+            &digest
         );
     }
 
@@ -387,13 +483,13 @@ mod tests {
         });
         assert_eq!(
             command_of(&package(arguments.clone())),
-            ["npx", "-y", "x@1", "serve", "--mode", "stdio", "--level", "info"]
+            ["npx", "-y", "x@1.0.0", "serve", "--mode", "stdio", "--level", "info"]
         );
         let mut arguments = arguments;
         arguments["registryType"] = json!("pypi");
         assert_eq!(
             command_of(&package(arguments)),
-            ["uvx", "x==1", "serve", "--mode", "stdio", "--level", "info"]
+            ["uvx", "x==1.0.0", "serve", "--mode", "stdio", "--level", "info"]
         );
     }
 
@@ -417,14 +513,46 @@ mod tests {
     }
 
     #[test]
-    fn a_name_that_could_pass_for_a_flag_is_left_out() {
-        for identifier in ["--from=evil", "-x", "", "a b", "a;b", "a&calc"] {
+    fn each_registry_has_its_own_names() {
+        for identifier in [
+            "--from=evil",
+            "-x",
+            "",
+            "a b",
+            "a;b",
+            "a&calc",
+            "git+https://x",
+            "foo@npm:evil",
+            "file:../x",
+            "a/b",
+        ] {
             assert!(
                 package(json!({"identifier":identifier})).is_empty(),
-                "{identifier}"
+                "npm {identifier}"
             );
         }
         assert_eq!(package(json!({"identifier":"@scope/pkg.name_1"})).len(), 1);
+        for identifier in ["--with=evil", "a/b", "a@b", "a:b", "@a/b", "https://x"] {
+            assert!(
+                package(json!({"registryType":"pypi","identifier":identifier})).is_empty(),
+                "pypi {identifier}"
+            );
+        }
+        for identifier in ["--net=host", "a b:1", "a;b:1"] {
+            assert!(
+                package(json!({"registryType":"oci","identifier":identifier})).is_empty(),
+                "oci {identifier}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_setting_name_a_shell_could_read_leaves_the_listing_out() {
+        let listing = |name: &str| package(json!({"environmentVariables":[{"name":name}]}));
+        assert_eq!(listing("API_KEY").len(), 1);
+        for name in ["A&calc", "A B", "1A", ""] {
+            assert!(listing(name).is_empty(), "{name}");
+        }
     }
 
     #[test]
@@ -442,18 +570,39 @@ mod tests {
     #[test]
     fn only_an_exact_version_counts_as_pinned() {
         for version in [
-            "latest", "^1.2", "~1", ">=1", "1.x", "*", "1.*", "", "1 || 2",
+            "latest", "^1.2", "~1", ">=1", "1", "1.2", "1.x", "1.2.x", "*", "", "1 || 2",
         ] {
-            assert!(package(json!({"version":version})).is_empty(), "{version}");
+            assert!(
+                package(json!({"version":version})).is_empty(),
+                "npm {version}"
+            );
         }
-        for version in ["1", "1.2.3", "1.2.3-beta.1", "1.0.0+build", "2024.1"] {
-            assert_eq!(package(json!({"version":version})).len(), 1, "{version}");
+        for version in ["1.2.3", "1.2.3-beta.1", "1.0.0+build"] {
+            assert_eq!(
+                package(json!({"version":version})).len(),
+                1,
+                "npm {version}"
+            );
+        }
+        let pypi = |version: &str| package(json!({"registryType":"pypi","version":version}));
+        for version in ["latest", "1.*", "1.x", "", ">=1"] {
+            assert!(pypi(version).is_empty(), "pypi {version}");
+        }
+        for version in ["1", "2024.1", "1.2.3rc1"] {
+            assert_eq!(pypi(version).len(), 1, "pypi {version}");
         }
         let image = |identifier: &str| {
             package(json!({"registryType":"oci","identifier":identifier,"version":null}))
         };
-        assert!(image("ghcr.io/a/b:latest").is_empty());
-        assert!(image("ghcr.io/a/b:").is_empty());
+        for identifier in [
+            "ghcr.io/a/b:latest",
+            "ghcr.io/a/b:",
+            "ghcr.io/a/b:main",
+            "ghcr.io/a/b@sha256:ab",
+            "ghcr.io/a/b@md5:ab",
+        ] {
+            assert!(image(identifier).is_empty(), "{identifier}");
+        }
     }
 
     #[test]
@@ -478,10 +627,20 @@ mod tests {
             ]})))
         };
         assert!(listing("http://mcp.example/mcp").is_empty());
-        assert!(
-            listing("http://127.0.0.1:9/mcp").is_empty(),
-            "a listing is never local"
-        );
+        for local in [
+            "http://127.0.0.1:9/mcp",
+            "https://localhost/mcp",
+            "https://app.localhost/mcp",
+            "https://127.0.0.1/mcp",
+            "https://10.0.0.5/mcp",
+            "https://192.168.1.1/mcp",
+            "https://169.254.169.254/latest",
+            "https://[::1]/mcp",
+            "https://[fd00::1]/mcp",
+            "https://[::ffff:10.0.0.5]/mcp",
+        ] {
+            assert!(listing(local).is_empty(), "{local}");
+        }
         assert_eq!(listing("https://mcp.example/mcp").len(), 1);
     }
 
@@ -491,6 +650,12 @@ mod tests {
         let big = json!({"servers":[],"padding":padding}).to_string();
         assert!(read_answer(big.as_bytes()).is_err());
         assert!(read_answer(&br#"{"servers":[]}"#[..]).is_ok());
+        let mut trailing = br#"{"servers":[]}"#.to_vec();
+        trailing.resize(MAX_ANSWER_BYTES as usize + 1, b' ');
+        assert!(
+            read_answer(&trailing[..]).is_err(),
+            "it ends just past the limit"
+        );
     }
 
     #[test]

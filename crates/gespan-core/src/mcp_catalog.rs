@@ -40,6 +40,12 @@ impl From<Class> for Sharing {
     }
 }
 
+/// A name a process environment can hold, and nothing a shell would read.
+pub(crate) fn env_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// One server the user has in Gespan. Secrets are not here, only their names.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -81,7 +87,9 @@ impl Entry {
                 .env
                 .iter()
                 .flat_map(|name| ["-e".to_owned(), name.clone()]);
-            args.splice(CONTAINER_RUN.len()..CONTAINER_RUN.len(), flags);
+            // An entry edited by hand may be shorter, and fails its approval.
+            let at = CONTAINER_RUN.len().min(args.len());
+            args.splice(at..at, flags);
         }
         args
     }
@@ -317,7 +325,14 @@ impl Catalog {
         id: &str,
         values: BTreeMap<String, String>,
     ) -> Result<(), String> {
+        if !values.keys().all(|name| env_name(name)) {
+            return Err("Setting names are letters, digits and underscores".into());
+        }
         let entry = self.entry_mut(id).ok_or("Unknown server")?;
+        // Entries saved before `required` existed name theirs only here.
+        if entry.required.is_empty() {
+            entry.required = entry.needed.clone();
+        }
         entry.env = values.keys().cloned().collect();
         entry.needed = entry
             .required
@@ -365,7 +380,7 @@ impl Catalog {
             .iter()
             .find(|entry| entry.id == shown.id)
             .ok_or("Unknown server")?;
-        if (&now.command, &now.args, &now.env) != (&shown.command, &shown.args, &shown.env) {
+        if (now.command_line(), &now.env) != (shown.command_line(), &shown.env) {
             return Err("This server changed. Review it again.".to_owned());
         }
         self.approve(data_dir, &shown.id)
@@ -839,6 +854,37 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_saved_before_required_existed_keeps_its_guard() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog.entries.push(Entry {
+            id: "old".into(),
+            command: "npx".into(),
+            needed: vec!["API_KEY".into()],
+            ..Entry::default()
+        });
+        catalog
+            .set_secrets(dir.path(), "old", BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            catalog.approve(dir.path(), "old").unwrap_err(),
+            "Set API_KEY first"
+        );
+    }
+
+    #[test]
+    fn a_setting_name_that_isnt_one_is_refused() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("K", "1")])])
+            .unwrap();
+        let values = BTreeMap::from([("A&calc".to_owned(), "x".to_owned())]);
+        assert!(catalog.set_secrets(dir.path(), "docs", values).is_err());
+        assert_eq!(catalog.entries[0].env, ["K"]);
+    }
+
+    #[test]
     fn clearing_a_servers_settings_clears_the_keychain_too() {
         let dir = setup();
         let mut catalog = Catalog::default();
@@ -958,6 +1004,40 @@ mod tests {
         catalog.entry_mut("docs").unwrap().class = Class::Shared;
         catalog.approve_shown(dir.path(), &shown).unwrap();
         assert_eq!(catalog.specs(dir.path()).len(), 1, "sharing isn't run");
+    }
+
+    #[test]
+    fn an_approval_covers_what_would_really_run() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "docker", &[])])
+            .unwrap();
+        let shown = catalog.entries[0].clone();
+        catalog.entries[0].container = true;
+        catalog.entries[0].env = vec!["TOKEN".into()];
+        assert!(catalog.approve_shown(dir.path(), &shown).is_err());
+
+        let mut remote = Entry {
+            id: "remote".into(),
+            url: Some("https://mcp.example/mcp".into()),
+            ..Entry::default()
+        };
+        catalog.entries.push(remote.clone());
+        remote.url = Some("https://shown.example/mcp".into());
+        assert!(catalog.approve_shown(dir.path(), &remote).is_err());
+    }
+
+    #[test]
+    fn a_short_hand_edited_container_entry_is_read_without_a_panic() {
+        let entry = Entry {
+            command: "docker".into(),
+            args: vec!["run".into()],
+            env: vec!["TOKEN".into()],
+            container: true,
+            ..Entry::default()
+        };
+        assert_eq!(entry.command_line(), "docker run -e TOKEN");
     }
 
     #[test]

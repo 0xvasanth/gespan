@@ -423,7 +423,7 @@ fn importable_with(
 ) -> Option<Importable> {
     let config = &connection.config;
     // A remote entry's secrets are its headers.
-    let env = config
+    let env: BTreeMap<String, String> = config
         .get("env")
         .or_else(|| config.get("environment"))
         .or_else(|| config.get("headers"))
@@ -441,11 +441,11 @@ fn importable_with(
         })
         .collect::<Option<_>>()?;
     let url = config.get("url").and_then(Value::as_str).map(str::to_owned);
-    // The hub reaches remote servers over HTTP alone.
-    if url
-        .as_deref()
-        .is_some_and(|url| !crate::tool_servers::is_remote(url))
-    {
+    // The hub reaches remote servers over HTTP alone, and won't send headers
+    // anywhere they could be read on the way.
+    if url.as_deref().is_some_and(|url| {
+        !crate::tool_servers::is_remote(url) || (!env.is_empty() && !mcp_hub::safe_for_tokens(url))
+    }) {
         return None;
     }
     let (command, args) = match config.get("command") {
@@ -863,6 +863,10 @@ mod tests {
         for url in ["wss://docs.example/mcp", "ws://docs.example/mcp", "docs"] {
             assert_eq!(import(serde_json::json!({"url":url})), None, "{url}");
         }
+        let headers = |url: &str| serde_json::json!({"url":url,"headers":{"X-Key":"k"}});
+        assert_eq!(import(headers("http://docs.example/mcp")), None);
+        assert!(import(headers("http://127.0.0.1:9/mcp")).is_some());
+        assert!(import(serde_json::json!({"url":"http://docs.example/mcp"})).is_some());
     }
 
     #[test]
