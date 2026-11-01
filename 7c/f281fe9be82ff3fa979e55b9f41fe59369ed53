@@ -1,0 +1,22 @@
+docs/native/parity.md
+  s_666089fd138caa::t_da32a9aee3a4bf 74
+crates/gespan-core/src/git.rs
+  s_666089fd138caa::t_da32a9aee3a4bf 369-370,376,405,410-423,1139-1177
+  s_666089fd138caa::t_65665b8276d136 1178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cf281fe9be82ff3fa979e55b9f41fe59369ed53",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
