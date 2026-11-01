@@ -51,6 +51,12 @@ Each server runs in its own process group with the same marker as agents. A reco
 
 Remote servers are proxied the same way. Gespan is the OAuth client: one sign-in in Settings, tokens in the keychain, refreshed by Gespan, and sent only to that server. Agents talk to the hub and never receive them. A remote server is always `shared`, since one sign-in means one set of credentials.
 
+Settings → MCP also searches the official MCP Registry. A listing becomes an entry that's off and unapproved, pinned to the listed version, and a server with required settings can't be approved until they're given. It runs through `npx`, `uvx` or `docker`; a listing that would need a downloaded binary, or a templated address, isn't offered.
+
+The same page shows each running process with who uses it, its memory including what it started, and how long it's been idle, with recent errors below.
+
+Turning a server on or off reaches running agents through `tools/list_changed`. Codex reads its list when a thread starts, so it sees the change in its next session.
+
 ## Security
 
 - The endpoint listens on `127.0.0.1` only. A request with another `Host` or `Origin` gets 403 before its token is read, which is what stops DNS rebinding.

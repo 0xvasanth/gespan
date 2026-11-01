@@ -321,6 +321,60 @@ fn claude_uses_a_catalogue_server_and_loads_none_of_its_own() {
 
 #[test]
 #[ignore = "a real, billed Claude turn"]
+fn a_server_turned_on_in_the_catalogue_reaches_a_running_claude() {
+    let folder = tempfile::tempdir().unwrap();
+    let binary = installed("claude");
+    let session = 900_010;
+    provider::configure_idle_agents(1);
+    with_catalogue(folder.path());
+    let data = folder.path().join("data");
+    let mut catalog = Catalog::load(&data).unwrap();
+    catalog.entry_mut("probe").unwrap().enabled = false;
+    catalog.save(&data).unwrap();
+    gespan_core::tool_servers::sync_servers();
+    let project = folder.path().to_string_lossy().into_owned();
+    let mut first_mount = mount(session, folder.path(), &[VISUAL]);
+    first_mount.project = project;
+    first_mount.exclusive = true;
+    let first = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        first_mount.clone(),
+        "Reply with only the word READY.",
+    );
+    // The user turns it on while the agent sits idle, process alive.
+    let mut catalog = Catalog::load(&data).unwrap();
+    catalog.entry_mut("probe").unwrap().enabled = true;
+    catalog.save(&data).unwrap();
+    gespan_core::tool_servers::sync_servers();
+    let mut second_mount = first_mount;
+    second_mount.servers = ["probe".to_owned()].into();
+    let second = turn(
+        Kind::Claude,
+        &binary,
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        first.provider_id.clone(),
+        second_mount,
+        PROXIED,
+    );
+    assert_eq!(first.process, second.process, "the process was restarted");
+    assert!(
+        second
+            .tools
+            .iter()
+            .any(|name| name.contains("gespan__probe__secret_word")),
+        "{:?}",
+        second.tools
+    );
+    assert!(second.text.contains("PINEAPPLE"), "{}", second.text);
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
 fn claude_uses_a_public_remote_server_through_the_hub() {
     let folder = tempfile::tempdir().unwrap();
     let data = folder.path().join("data");

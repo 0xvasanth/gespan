@@ -11,7 +11,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 
 pub const VISUAL: &str = "visual";
@@ -29,6 +29,8 @@ const ENV_TOKEN: &str = "GESPAN_MCP_TOKEN";
 
 static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// The latest mount of each session, so a catalogue change can reach it.
+static LIVE: LazyLock<Mutex<HashMap<i64, Mount>>> = LazyLock::new(Default::default);
 
 /// Where the catalogue and the record of running servers live. Set once at
 /// startup; without it the hub offers Gespan's own toolkits alone.
@@ -58,6 +60,19 @@ pub fn sync_servers() {
         hub.set_servers(specs.clone());
         *offered = specs;
     }
+    drop(offered);
+    // A server turned on now reaches sessions already running.
+    let Ok(catalog) = Catalog::load(data_dir) else {
+        return;
+    };
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    for mount in live.values() {
+        hub.update(
+            mount.session,
+            mount.toolkits.clone(),
+            catalog.for_project(&mount.project),
+        );
+    }
 }
 
 /// A token sent to this address can't be read on the way.
@@ -76,7 +91,7 @@ pub fn sign_in(id: &str, url: &str, open: impl FnOnce(&str)) -> Result<(), Strin
         return Err("Sign-in needs an https address".into());
     }
     let data_dir = DATA_DIR.get().ok_or("Gespan's data folder isn't set")?;
-    let store = Arc::new(SignIn::new(data_dir, id));
+    let store = Arc::new(SignIn::new(data_dir, id, url));
     mcp_hub::sign_in(
         url,
         "Gespan",
@@ -90,8 +105,12 @@ pub fn sign_in(id: &str, url: &str, open: impl FnOnce(&str)) -> Result<(), Strin
     Ok(())
 }
 
+pub use mcp_hub::{
+    Running as RunningServer, ServerError as ServerFailure, Sharing as ServerSharing,
+};
+
 /// The processes the catalogue's servers are running as, for Settings.
-pub fn running_servers() -> Vec<mcp_hub::Running> {
+pub fn running_servers() -> Vec<RunningServer> {
     match HUB.get() {
         Some(Ok(hub)) => hub.running(),
         _ => Vec::new(),
@@ -99,7 +118,7 @@ pub fn running_servers() -> Vec<mcp_hub::Running> {
 }
 
 /// Recent failures of the catalogue's servers, for Settings.
-pub fn server_errors() -> Vec<mcp_hub::ServerError> {
+pub fn server_errors() -> Vec<ServerFailure> {
     match HUB.get() {
         Some(Ok(hub)) => hub.errors(),
         _ => Vec::new(),
@@ -133,8 +152,11 @@ impl Spawner for Processes {
         if spec.command.starts_with("https://") || spec.command.starts_with("http://") {
             let oauth = DATA_DIR
                 .get()
-                .map(|data_dir| SignIn::new(data_dir, &spec.id));
-            let oauth = oauth.filter(SignIn::exists);
+                .map(|data_dir| SignIn::new(data_dir, &spec.id, &spec.command))
+                .filter(SignIn::exists);
+            if !safe_for_tokens(&spec.command) && (oauth.is_some() || !spec.env.is_empty()) {
+                return Err(std::io::Error::other("Credentials need an https address"));
+            }
             return mcp_hub::connect(
                 &spec.command,
                 spec.env.clone(),
@@ -241,6 +263,8 @@ pub struct Mount {
     pub session: i64,
     pub worktree: PathBuf,
     pub toolkits: BTreeSet<String>,
+    /// The project's path, for what's turned on where.
+    pub project: String,
     /// Catalogue servers this session may reach.
     pub servers: BTreeSet<String>,
     /// Gespan owns the user's servers, so the agent loads none of its own.
@@ -400,6 +424,9 @@ pub fn environment(mount: &Mount) -> HashMap<String, String> {
 /// Applies this turn's reach to a session already holding a credential. An
 /// agent still running sees its tool list change.
 pub fn refresh(mount: &Mount) {
+    LIVE.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(mount.session, mount.clone());
     if let Ok(hub) = hub() {
         hub.update(mount.session, mount.toolkits.clone(), mount.servers.clone());
     }
@@ -439,6 +466,9 @@ pub fn call_tool(tool: &str, arguments: Value) -> Result<Value, String> {
 /// delete, whatever asked for it. With no endpoint yet there's nothing to end,
 /// and none is started.
 pub fn revoke(session: i64) {
+    LIVE.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&session);
     if let Some(Ok(hub)) = HUB.get() {
         hub.revoke(session);
     }

@@ -748,6 +748,7 @@ fn run_turn_using(
             let exclusive = catalog.managed;
             let mount = gespan_core::tool_servers::Mount {
                 servers: catalog.for_project(&summary.cwd),
+                project: summary.cwd.clone(),
                 exclusive,
                 codex_own: if exclusive && kind == Kind::Codex {
                     gespan_core::mcp::codex_server_names(&summary.cwd)
