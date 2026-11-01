@@ -57,7 +57,7 @@ rayon = "1"
 gespan-redact = { path = "../gespan-redact" }
 gespan-mcp-config = { path = "../gespan-mcp-config" }
 mcp-hub = { path = "../mcp-hub" }
-zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
