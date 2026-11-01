@@ -1,0 +1,64 @@
+crates/gespan-gpui/src/worktree_setups_tests.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 68-71,188-190
+crates/gespan-gpui/src/settings/management.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 255-258,260-267
+crates/board-store/tests/v8.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 78-80
+crates/gespan-core/src/worktree_scripts.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 81-87,89-96,198-203,286-287
+  s_765ddcec531e1c::t_b80770292ce353 290-292,411,455-456
+  s_765ddcec531e1c::t_ebe9591f16ac92 496,509-510
+crates/gespan-core/src/remote.rs
+  s_765ddcec531e1c::t_b80770292ce353 472-475,964-967
+crates/gespan-gpui/src/board/tests/link_run.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 612-618,627-630,665-670,697-702,715-717,755-758,773-776
+host/worktree-jobs.test.ts
+  s_765ddcec531e1c::t_23c7f34a7c2bfd 1-34,37-174
+  s_765ddcec531e1c::t_4142f2b858232c 35-36
+CHANGELOG.md
+  s_765ddcec531e1c::t_74bd1012c5edbe 10-26
+crates/gespan-gpui/src/settings/pages/worktrees.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 50-54,65-66,70-75,419-422
+host/server.ts
+  s_765ddcec531e1c::t_23c7f34a7c2bfd 31,286-287,512-558
+  s_765ddcec531e1c::t_b80770292ce353 149
+crates/gespan-core/src/git/remote.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 151-157,227,404
+  s_765ddcec531e1c::t_b80770292ce353 4-5,8-23,71-150,158-226,228-229,324-403,405-448
+crates/gespan-core/src/worktree_management.rs
+  s_765ddcec531e1c::t_b80770292ce353 77-81
+host/server.test.ts
+  s_765ddcec531e1c::t_391ed3611f0eba 283-322
+crates/gespan-core/src/worktree_copy.rs
+  s_765ddcec531e1c::t_feaa2b7aef1a75 296-318
+  s_765ddcec531e1c::t_b80770292ce353 26
+host/worktree-jobs.ts
+  s_765ddcec531e1c::t_23c7f34a7c2bfd 1-174,176-183,185-276
+  s_765ddcec531e1c::t_ebe9591f16ac92 175,184
+crates/gespan-gpui/src/worktree_setups.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 11,96-98,208-210
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_765ddcec531e1c::t_3b1d45dab4cc7e 422
+  s_765ddcec531e1c::t_a2a591673ec1a5 41-43,90-91
+  s_765ddcec531e1c::t_ebe9591f16ac92 197-206
+crates/gespan-core/src/git.rs
+  s_765ddcec531e1c::t_a2a591673ec1a5 7-9,837-839
+  s_765ddcec531e1c::t_b80770292ce353 575-579,726-730
+  s_765ddcec531e1c::t_c1abf93eac8950 840
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0df1b4b89920fe9c5057b9fedfb34a025f2d09f4",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
