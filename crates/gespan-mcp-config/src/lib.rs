@@ -772,6 +772,7 @@ mod tests {
         let denied = std::fs::create_dir(&lock).unwrap_err();
         assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
 
+        // A denial that outlasts the wait is reported as itself, not as busy.
         let stuck = with_claude_lock(&config, Duration::from_millis(50), || Ok(()));
         assert_eq!(stuck, Err(denied.to_string()));
 
@@ -788,32 +789,6 @@ mod tests {
         release.join().unwrap();
         assert!(held);
         assert!(!lock.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn claude_reports_real_access_denied_once_the_wait_ends() {
-        let root = tempfile::tempdir().unwrap();
-        let config = root.path().join(".claude.json");
-        let icacls = |change: &[&str]| {
-            let status = std::process::Command::new("icacls")
-                .arg(root.path())
-                .args(change)
-                .stdout(std::process::Stdio::null())
-                .status()
-                .unwrap();
-            assert!(status.success());
-        };
-
-        // Everyone may not add a subfolder here.
-        icacls(&["/deny", "*S-1-1-0:(AD)"]);
-        let denied = with_claude_lock(&config, Duration::from_millis(50), || Ok(()));
-        icacls(&["/remove:d", "*S-1-1-0"]);
-
-        assert_eq!(
-            denied,
-            Err(std::io::Error::from_raw_os_error(5).to_string())
-        );
     }
 
     #[cfg(unix)]
