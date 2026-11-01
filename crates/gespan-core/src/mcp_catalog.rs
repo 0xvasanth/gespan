@@ -325,10 +325,11 @@ impl Catalog {
         id: &str,
         values: BTreeMap<String, String>,
     ) -> Result<(), String> {
-        if !values.keys().all(|name| env_name(name)) {
+        let entry = self.entry_mut(id).ok_or("Unknown server")?;
+        // These reach a command line; any other server takes them as they are.
+        if entry.container && !values.keys().all(|name| env_name(name)) {
             return Err("Setting names are letters, digits and underscores".into());
         }
-        let entry = self.entry_mut(id).ok_or("Unknown server")?;
         // Entries saved before `required` existed name theirs only here.
         if entry.required.is_empty() {
             entry.required = entry.needed.clone();
@@ -873,14 +874,18 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_name_that_isnt_one_is_refused() {
+    fn a_container_refuses_a_setting_name_that_could_be_read_as_syntax() {
         let dir = setup();
         let mut catalog = Catalog::default();
         catalog
-            .import(dir.path(), vec![found("docs", "npx", &[("K", "1")])])
+            .import(dir.path(), vec![found("docs", "docker", &[("K", "1")])])
             .unwrap();
-        let values = BTreeMap::from([("A&calc".to_owned(), "x".to_owned())]);
-        assert!(catalog.set_secrets(dir.path(), "docs", values).is_err());
+        let odd = || BTreeMap::from([("A&calc".to_owned(), "x".to_owned())]);
+        let hyphen = BTreeMap::from([("my-key".to_owned(), "x".to_owned())]);
+        catalog.set_secrets(dir.path(), "docs", hyphen).unwrap();
+        catalog.entries[0].container = true;
+        catalog.entries[0].env = vec!["K".into()];
+        assert!(catalog.set_secrets(dir.path(), "docs", odd()).is_err());
         assert_eq!(catalog.entries[0].env, ["K"]);
     }
 

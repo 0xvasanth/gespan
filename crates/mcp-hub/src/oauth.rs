@@ -104,6 +104,7 @@ fn request_line(stream: &mut TcpStream, deadline: Instant) -> Option<String> {
         match stream.read(&mut byte) {
             Ok(1) if byte[0] == b'\n' => return String::from_utf8(line).ok(),
             Ok(1) => line.push(byte[0]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             _ => return None,
         }
     }
@@ -131,7 +132,8 @@ fn await_redirect(listener: TcpListener, deadline: Instant) -> Result<String, St
             return Err(TIMED_OUT.into());
         }
         stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-        let Some(line) = request_line(&mut stream, Instant::now() + left.min(REQUEST_WAIT)) else {
+        let cutoff = Instant::now() + left.min(REQUEST_WAIT);
+        let Some(line) = request_line(&mut stream, cutoff) else {
             continue;
         };
         // Anything else that finds this port, a favicon say, is ignored.
@@ -146,6 +148,9 @@ fn await_redirect(listener: TcpListener, deadline: Instant) -> Result<String, St
             );
             continue;
         };
+        // Closing with the headers unread can reset the connection, and the
+        // browser would lose the page.
+        while request_line(&mut stream, cutoff).is_some_and(|line| !line.trim().is_empty()) {}
         let _ = write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{SIGNED_IN}",

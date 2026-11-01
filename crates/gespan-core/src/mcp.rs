@@ -446,6 +446,7 @@ fn importable_with(
     if url.as_deref().is_some_and(|url| {
         !crate::tool_servers::is_remote(url) || (!env.is_empty() && !mcp_hub::safe_for_tokens(url))
     }) {
+        tracing::warn!(server = %connection.name, "an MCP server's address can't be used safely");
         return None;
     }
     let (command, args) = match config.get("command") {

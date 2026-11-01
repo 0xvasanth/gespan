@@ -23,6 +23,8 @@ const REMOTE_READ_WAIT: Duration = Duration::from_secs(5 * 60);
 /// A remote server's event stream may stay quiet for hours, so it's reopened
 /// this often. That's also how soon its thread notices the connection stopped.
 const REMOTE_LISTEN_WAIT: Duration = Duration::from_secs(60);
+/// A pause before reopening an event stream, for a server that ends each at once.
+const REOPEN_WAIT: Duration = Duration::from_secs(1);
 const GONE: &str = "The tool endpoint isn't reachable, so this tool can't run";
 const SESSION_HEADER: &str = "Mcp-Session-Id";
 const VERSION_HEADER: &str = "MCP-Protocol-Version";
@@ -311,13 +313,17 @@ fn listen(link: Link, output: Arc<Mutex<impl Write + Send + 'static>>) {
             let Ok(Ok(response)) = opened else {
                 return;
             };
-            let read = read_events(response.into_reader(), |event| {
-                write_line(&output, &event).is_ok()
+            let mut delivered = true;
+            let _ = read_events(response.into_reader(), |event| {
+                delivered = write_line(&output, &event).is_ok();
+                delivered
             });
-            // Only a quiet or broken stream is worth opening again.
-            if read.is_ok() {
+            // A server may end this stream at any time; only the agent going
+            // away ends the listening.
+            if !delivered {
                 return;
             }
+            thread::sleep(REOPEN_WAIT);
         }
     });
 }

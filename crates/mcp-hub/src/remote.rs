@@ -9,17 +9,24 @@ use crate::{
 use std::{
     collections::BTreeMap,
     io::{BufReader, Read, Write},
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
 };
+
+/// Writes waiting on a connection. Far more than any agent has in flight, so
+/// reaching it means the connection has stalled.
+const MAX_QUEUED_WRITES: usize = 4096;
 
 /// What the hub writes to a connection. It queues rather than blocks, so a
 /// stalled connection can't hold up the stop that would end it.
-struct Queue(mpsc::Sender<Vec<u8>>);
+struct Queue(mpsc::SyncSender<Vec<u8>>);
 
 impl Write for Queue {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0
-            .send(bytes.to_vec())
+            .try_send(bytes.to_vec())
             .map_err(|_| std::io::ErrorKind::BrokenPipe)?;
         Ok(bytes.len())
     }
@@ -33,11 +40,16 @@ impl Write for Queue {
 struct Queued {
     frames: mpsc::Receiver<Vec<u8>>,
     current: std::io::Cursor<Vec<u8>>,
+    /// Set by a stop: what's still waiting is for nobody now.
+    stopped: Arc<AtomicBool>,
 }
 
 impl Read for Queued {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         loop {
+            if self.stopped.load(Ordering::SeqCst) {
+                return Ok(0);
+            }
             let read = self.current.read(buffer)?;
             if read > 0 || buffer.is_empty() {
                 return Ok(read);
@@ -100,10 +112,12 @@ pub fn connect(
             "Credentials need an https address",
         ));
     }
-    let (to_remote, frames) = mpsc::channel();
+    let (to_remote, frames) = mpsc::sync_channel(MAX_QUEUED_WRITES);
+    let stopped = Arc::new(AtomicBool::new(false));
     let to_read = Queued {
         frames,
         current: std::io::Cursor::default(),
+        stopped: stopped.clone(),
     };
     let (from_remote, to_host) = std::io::pipe()?;
     let input = Closable::new(Queue(to_remote));
@@ -134,6 +148,43 @@ pub fn connect(
         pid: 0,
         stdin: Box::new(input),
         stdout: Box::new(from_remote),
-        stop: Box::new(move || stop_input.close()),
+        stop: Box::new(move || {
+            stopped.store(true, Ordering::SeqCst);
+            stop_input.close();
+        }),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queue() -> (Queue, Queued, Arc<AtomicBool>) {
+        let (sender, frames) = mpsc::sync_channel(2);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let queued = Queued {
+            frames,
+            current: std::io::Cursor::default(),
+            stopped: stopped.clone(),
+        };
+        (Queue(sender), queued, stopped)
+    }
+
+    #[test]
+    fn a_full_queue_refuses_a_write_instead_of_blocking_or_growing() {
+        let (mut queue, _queued, _) = queue();
+        queue.write_all(b"one").unwrap();
+        queue.write_all(b"two").unwrap();
+        assert!(queue.write_all(b"three").is_err());
+    }
+
+    #[test]
+    fn a_stop_drops_what_was_still_waiting() {
+        let (mut queue, mut queued, stopped) = queue();
+        queue.write_all(b"one").unwrap();
+        stopped.store(true, Ordering::SeqCst);
+        let mut read = Vec::new();
+        queued.read_to_end(&mut read).unwrap();
+        assert!(read.is_empty());
+    }
 }

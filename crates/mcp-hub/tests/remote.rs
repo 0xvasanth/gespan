@@ -383,6 +383,18 @@ fn stopping_a_connection_ends_it_even_with_its_event_stream_open() {
 }
 
 #[test]
+fn an_event_stream_the_server_ended_is_opened_again() {
+    let seen = Shared::default();
+    let url = remote(seen.clone());
+    let mut spawned = connect(&url, BTreeMap::new(), None).unwrap();
+    say(
+        &mut spawned,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    wait_for_listens(&seen, 2);
+}
+
+#[test]
 fn an_event_stream_turned_away_asks_for_the_token_again_and_retries() {
     let seen = Shared::default();
     let url = remote(seen.clone());

@@ -606,7 +606,7 @@ impl Pool {
             let message = error["message"].as_str().unwrap_or("failed").to_owned();
             let message = without_secrets(message, &spec.env);
             self.record(server, message.clone());
-            error["message"] = message.into();
+            set_message(&mut error, message);
             error
         }))
     }
@@ -727,6 +727,13 @@ fn without_secrets(mut message: String, env: &BTreeMap<String, String>) -> Strin
         message = message.replace(secret, "[hidden]");
     }
     message
+}
+
+/// A server's answer is untrusted: its error may not be an object.
+fn set_message(error: &mut Value, message: String) {
+    if let Some(fields) = error.as_object_mut() {
+        fields.insert("message".to_owned(), message.into());
+    }
 }
 
 fn changed(server: &str) -> String {
@@ -857,6 +864,18 @@ mod tests {
             ),
             "[hidden]"
         );
+    }
+
+    #[test]
+    fn an_error_that_isnt_an_object_is_left_alone_rather_than_a_panic() {
+        for mut error in [json!("failed"), json!(7), json!([1])] {
+            let before = error.clone();
+            set_message(&mut error, "hidden".to_owned());
+            assert_eq!(error, before);
+        }
+        let mut error = json!({"code":1,"message":"s3cret"});
+        set_message(&mut error, "hidden".to_owned());
+        assert_eq!(error, json!({"code":1,"message":"hidden"}));
     }
 
     #[test]
