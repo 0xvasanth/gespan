@@ -7,8 +7,8 @@ const VERSION: u8 = 1;
 /// These providers never mount the app's MCP servers: some have no MCP
 /// client, and Grok and fx drop servers when resuming a session.
 pub(super) fn lacks_tool_servers(kind: Kind, provider_id: Option<&str>) -> bool {
-    matches!(kind, Kind::Pi | Kind::Omp | Kind::OpenCode)
-        || (provider_id.is_some() && matches!(kind, Kind::Grok | Kind::Fx))
+    use gespan_core::tool_servers::{Delivery, delivery};
+    delivery(kind, provider_id) == Delivery::Environment
 }
 
 pub(super) struct Discovery {
@@ -97,7 +97,7 @@ mod tests {
     fn existing_fallback_contexts_get_discovery_and_only_success_suppresses_retries() {
         let (_fixture, store) = fixture();
         let executable = Path::new("/Applications/Pilot Code.app/Contents/MacOS/gespan-gpui");
-        for kind in [Kind::Pi, Kind::Omp, Kind::OpenCode, Kind::Grok, Kind::Fx] {
+        for kind in [Kind::Pi, Kind::Omp, Kind::Grok, Kind::Fx] {
             let discovery =
                 Discovery::prepare(&store, 7, kind, "default", Some("existing"), executable)
                     .unwrap()
@@ -123,7 +123,7 @@ mod tests {
     fn new_contexts_accounts_executables_and_versions_receive_discovery() {
         let (_fixture, store) = fixture();
         let executable = Path::new("/old/gespan-gpui");
-        for kind in [Kind::Pi, Kind::Omp, Kind::OpenCode] {
+        for kind in [Kind::Pi, Kind::Omp] {
             let discovery =
                 Discovery::prepare(&store, 8, kind, "default", Some("old-context"), executable)
                     .unwrap()
@@ -190,6 +190,7 @@ mod tests {
             Kind::Codex,
             Kind::Claude,
             Kind::Cursor,
+            Kind::OpenCode,
             Kind::Antigravity,
             Kind::Hermes,
             Kind::Devin,

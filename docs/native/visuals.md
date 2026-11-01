@@ -16,7 +16,7 @@ Active sessions offer `visual_docs`, `visual_check`, and `visual_show` through t
 4. Call `visual_show` with `{ "title": "Short descriptive title", "source": "..." }` during the current turn. An optional `id` identifies a publication.
 5. Add supporting prose without repeating what the visual already explains.
 
-Pi, omp, and OpenCode use the executable fallback. Grok and fx also receive fallback discovery when resuming through a protocol that cannot refresh MCP tools. These paths get a compact, optional CLI reference once per provider conversation, including existing conversations on their first successful turn after the update. A saved receipt prevents repeating it; a new provider conversation, account, or executable receives a new reference. The SDK is loaded only through `visual docs` or `visual --help`. There is no general instruction to produce visuals on ordinary replies.
+Pi and omp use the executable fallback. Grok and fx also receive fallback discovery when resuming through a protocol that cannot refresh MCP tools. These paths get a compact, optional CLI reference once per provider conversation, including existing conversations on their first successful turn after the update. A saved receipt prevents repeating it; a new provider conversation, account, or executable receives a new reference. The SDK is loaded only through `visual docs` or `visual --help`. There is no general instruction to produce visuals on ordinary replies.
 
 The check executes the program and validates its native component tree and representative controls. It does not produce a screenshot. Publishing validates again before saving the visual and acknowledging the request.
 
@@ -28,7 +28,7 @@ gespan-gpui visual check --input /path/to/explanation.js
 gespan-gpui visual show --input /path/to/explanation.js --title "Explanation"
 ```
 
-Reading the reference and checking also work outside a running app. Showing requires the capability inherited by the agent of a live session. CLI discovery supplies the executable path; it is also available to the agent through `GESPAN_VISUAL_EXECUTABLE`.
+Reading the reference and checking also work outside a running app. Showing requires a live session; the fallback's capability is inherited by the agent. CLI discovery supplies the executable path; it is also available to the agent through `GESPAN_VISUAL_EXECUTABLE`.
 
 ## Programs and native controls
 

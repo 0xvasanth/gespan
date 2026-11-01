@@ -76,8 +76,16 @@ mod tests {
         window
             .update(cx, |shell, window, cx| shell.open(first, window, cx))
             .unwrap();
+        let mount = gespan_core::tool_servers::Mount {
+            session: first,
+            ..Default::default()
+        };
+        let access = gespan_core::tool_servers::Access::open(&mount);
+        assert!(access.is_some() && gespan_core::tool_servers::is_open(first));
         cx.simulate_keystrokes(window.into(), &shortcut());
         cx.run_until_parked();
+        // Archiving ends the session's tool access.
+        assert!(!gespan_core::tool_servers::is_open(first));
         let next = window
             .update(cx, |shell, _, cx| {
                 assert!(shell.sessions[&first].read(cx).summary.archived);

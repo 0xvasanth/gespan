@@ -1,27 +1,17 @@
 //! Ephemeral, session-scoped publication of native visuals. No user MCP settings
 //! are changed. Stable provider capabilities can publish only during a live turn.
 use crate::visual::{self, VisualDocument};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        mpsc, Arc, Mutex, OnceLock,
-    },
+    io::Read,
+    sync::{mpsc, Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 const MAX_WIRE_BYTES: usize = 1_048_576;
 const MAX_SOURCE_BYTES: usize = visual::MAX_SOURCE_BYTES;
-const ENV_ENDPOINT: &str = "GESPAN_VISUAL_ENDPOINT";
-const ENV_TOKEN: &str = "GESPAN_VISUAL_TOKEN";
-const ENV_SESSION: &str = "GESPAN_VISUAL_SESSION";
-const ENV_EXECUTABLE: &str = "GESPAN_VISUAL_EXECUTABLE";
-pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 
 /// Loaded through visual_docs or the CLI only when authoring a visual. Keep the
 /// SDK out of ordinary prompts, server instructions and tool descriptions.
@@ -90,13 +80,11 @@ The sandbox has no DOM, network, files, timers, imports, or external libraries.
 No HTML, SVG markup, or shader code. Source is limited to 64 KiB; keep
 scripts compact. Check validates execution, the initial component tree, and representative controls;
 it does not capture a screenshot. Fix errors before publishing. Set a concise
-title for the published visual. Never expose capability environment variables.
+title for the published visual.
 "#;
 
-#[derive(Serialize, Deserialize)]
 struct Wire {
     session: i64,
-    token: String,
     request_id: String,
     document: VisualDocument,
 }
@@ -114,63 +102,29 @@ struct ActiveTurn {
 }
 
 struct SessionCapability {
-    token: String,
     generation: u64,
     active: Option<ActiveTurn>,
     receipts: HashMap<String, (String, Option<Value>)>,
 }
 
 struct Hub {
-    endpoint: String,
     sessions: Mutex<HashMap<i64, SessionCapability>>,
 }
 
-/// One process-owned listener serves stable session capabilities. Only the
-/// currently attached turn receiver can accept a publication.
-fn hub() -> Result<Arc<Hub>, String> {
-    static HUB: OnceLock<Mutex<Option<Arc<Hub>>>> = OnceLock::new();
-    let mut slot = HUB
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "Visual bridge unavailable")?;
-    if let Some(hub) = &*slot {
-        return Ok(hub.clone());
-    }
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let endpoint = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .to_string();
-    let hub = Arc::new(Hub {
-        endpoint,
-        sessions: Mutex::new(HashMap::new()),
-    });
-    let owner = hub.clone();
-    let connections = Arc::new(AtomicUsize::new(0));
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else {
-                break;
-            };
-            if connections.fetch_add(1, Ordering::Relaxed) >= 16 {
-                connections.fetch_sub(1, Ordering::Relaxed);
-                continue;
-            }
-            let owner = owner.clone();
-            let connections = connections.clone();
-            std::thread::spawn(move || {
-                let _ = serve(stream, &owner);
-                connections.fetch_sub(1, Ordering::Relaxed);
-            });
-        }
-    });
-    *slot = Some(hub.clone());
-    Ok(hub)
+/// Every session's turns, for the toolkit to reach. Only the currently
+/// attached turn receiver can accept a publication.
+fn hub() -> Arc<Hub> {
+    static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
+    HUB.get_or_init(|| {
+        Arc::new(Hub {
+            sessions: Mutex::new(HashMap::new()),
+        })
+    })
+    .clone()
 }
 
 pub struct Server {
     hub: Arc<Hub>,
-    token: String,
     session: i64,
     generation: u64,
     publications: mpsc::Receiver<Publication>,
@@ -197,9 +151,9 @@ impl Server {
     }
 
     fn open(session: i64) -> Result<Self, String> {
-        let hub = hub()?;
+        let hub = hub();
         let (send, publications) = mpsc::sync_channel(16);
-        let (token, generation) = {
+        let generation = {
             let mut sessions = hub
                 .sessions
                 .lock()
@@ -207,11 +161,6 @@ impl Server {
             let capability = sessions
                 .entry(session)
                 .or_insert_with(|| SessionCapability {
-                    token: format!(
-                        "{:032x}{:032x}",
-                        rand::random::<u128>(),
-                        rand::random::<u128>()
-                    ),
                     generation: 0,
                     active: None,
                     receipts: HashMap::new(),
@@ -225,27 +174,14 @@ impl Server {
                 send,
                 publications: 0,
             });
-            (capability.token.clone(), capability.generation)
+            capability.generation
         };
         Ok(Self {
             hub,
-            token,
             session,
             generation,
             publications,
         })
-    }
-
-    pub fn environment(&self, executable: &std::path::Path) -> HashMap<String, String> {
-        HashMap::from([
-            (ENV_ENDPOINT.into(), self.hub.endpoint.clone()),
-            (ENV_TOKEN.into(), self.token.clone()),
-            (ENV_SESSION.into(), self.session.to_string()),
-            (
-                ENV_EXECUTABLE.into(),
-                executable.to_string_lossy().into_owned(),
-            ),
-        ])
     }
 
     pub fn drain(&self) -> Vec<Publication> {
@@ -300,44 +236,11 @@ fn active_generation(hub: &Hub, session: i64) -> Option<u64> {
         .map(|active| active.generation)
 }
 
-fn serve(mut stream: TcpStream, hub: &Hub) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    BufReader::new((&stream).take((MAX_WIRE_BYTES + 1) as u64))
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    if line.len() > MAX_WIRE_BYTES || !line.ends_with('\n') {
-        return Err("Invalid visual request".into());
-    }
-    let wire: Wire = serde_json::from_str(&line).map_err(|_| "Invalid visual request")?;
-    // Authenticate and capture the active generation before executing source.
-    let generation = {
-        let sessions = hub
-            .sessions
-            .lock()
-            .map_err(|_| "Visual session unavailable")?;
-        let capability = sessions
-            .get(&wire.session)
-            .ok_or("Invalid visual capability")?;
-        let secret = &capability.token;
-        let equal = wire.token.len() == secret.len()
-            && wire
-                .token
-                .bytes()
-                .zip(secret.bytes())
-                .fold(0u8, |diff, (a, b)| diff | a ^ b)
-                == 0;
-        if !equal {
-            return Err("Invalid visual capability".into());
-        }
-        capability.active.as_ref().map(|active| active.generation)
-    };
-    let response = (|| -> Result<Value, String> {
+/// The grant has already named the session, so the agent can only reach its
+/// own turn. Capture the active generation before executing source.
+fn deliver(wire: Wire, hub: &Hub) -> Value {
+    let generation = active_generation(hub, wire.session);
+    (|| -> Result<Value, String> {
         if wire.request_id.is_empty() || wire.request_id.len() > 128 {
             return Err("Invalid request id".into());
         }
@@ -353,7 +256,7 @@ fn serve(mut stream: TcpStream, hub: &Hub) -> Result<(), String> {
                 .map_err(|_| "Visual session unavailable")?;
             let capability = sessions
                 .get(&wire.session)
-                .ok_or("Invalid visual capability")?;
+                .ok_or("Visual publication requires an active session turn")?;
             if let Some((previous, result)) = capability.receipts.get(&wire.request_id) {
                 if previous != &signature {
                     return Err("Request id already used for another visual".into());
@@ -373,7 +276,7 @@ fn serve(mut stream: TcpStream, hub: &Hub) -> Result<(), String> {
                 .map_err(|_| "Visual session unavailable")?;
             let capability = sessions
                 .get_mut(&wire.session)
-                .ok_or("Invalid visual capability")?;
+                .ok_or("Visual publication requires an active session turn")?;
             let active = capability
                 .active
                 .as_mut()
@@ -446,8 +349,7 @@ fn serve(mut stream: TcpStream, hub: &Hub) -> Result<(), String> {
         }
         Ok(value)
     })()
-    .unwrap_or_else(|error| json!({"ok":false,"error":error,"requestId":wire.request_id}));
-    writeln!(stream, "{response}").map_err(|e| e.to_string())
+    .unwrap_or_else(|error| json!({"ok":false,"error":error,"requestId":wire.request_id}))
 }
 
 /// Local validation never requires an active session capability.
@@ -459,10 +361,7 @@ pub fn check(source: &str) -> Result<Value, String> {
     Ok(json!({"ok":true,"tree":tree}))
 }
 
-fn publish_with_environment(
-    input: Value,
-    environment: &HashMap<String, String>,
-) -> Result<Value, String> {
+fn publish(input: Value, session: i64) -> Result<Value, String> {
     if !input.is_object() {
         return Err("Visual input must be an object".into());
     }
@@ -495,45 +394,14 @@ fn publish_with_environment(
         source: source.to_owned(),
     };
     valid_document(&document)?;
-    let get = |key| {
-        environment
-            .get(key)
-            .ok_or("Visual publication requires a running Gespan session")
-    };
-    let endpoint: SocketAddr = get(ENV_ENDPOINT)?
-        .parse()
-        .map_err(|_| "Invalid visual endpoint")?;
-    if !endpoint.ip().is_loopback() {
-        return Err("Visual endpoint must be loopback".into());
-    }
-    let wire = Wire {
-        session: get(ENV_SESSION)?
-            .parse()
-            .map_err(|_| "Invalid visual session")?,
-        token: get(ENV_TOKEN)?.clone(),
-        request_id,
-        document,
-    };
-    let mut stream =
-        TcpStream::connect_timeout(&endpoint, Duration::from_secs(3)).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(35)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&wire).map_err(|e| e.to_string())?
-    )
-    .map_err(|e| e.to_string())?;
-    let mut response = String::new();
-    BufReader::new(stream.take(MAX_WIRE_BYTES as u64))
-        .read_line(&mut response)
-        .map_err(|e| e.to_string())?;
-    let response: Value =
-        serde_json::from_str(&response).map_err(|_| "Visual session closed without a response")?;
+    let response = deliver(
+        Wire {
+            session,
+            request_id,
+            document: document.clone(),
+        },
+        &hub(),
+    );
     if response["ok"] != true {
         return Err(response["error"]
             .as_str()
@@ -541,7 +409,7 @@ fn publish_with_environment(
             .into());
     }
     let mut response = response;
-    response["embed"] = json!(embed(&wire.document));
+    response["embed"] = json!(embed(&document));
     response["placement"] = json!(
         "Put the embed line on its own line in your final reply, where this visual belongs. Do not describe or restate the visual around it."
     );
@@ -562,13 +430,6 @@ fn embed(document: &VisualDocument) -> String {
         })
         .collect();
     format!("![{}](visual:{})", caption.trim(), document.id)
-}
-
-fn current_environment() -> HashMap<String, String> {
-    ENV_KEYS
-        .into_iter()
-        .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
-        .collect()
 }
 
 pub fn client(args: &[String]) -> Result<Value, String> {
@@ -652,7 +513,7 @@ pub fn client(args: &[String]) -> Result<Value, String> {
                 .ok_or("source must be a JavaScript string")?,
         )
     } else {
-        publish_with_environment(input, &current_environment())
+        crate::tool_servers::call_tool("visual_show", input)
     }
 }
 
@@ -679,67 +540,27 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn mcp_response(request: Value, environment: &HashMap<String, String>) -> Option<Value> {
-    let id = request.get("id")?.clone();
-    let result = match request["method"].as_str().unwrap_or("") {
-        "initialize" => Ok(
-            json!({"protocolVersion":request["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"gespan_visual","version":env!("CARGO_PKG_VERSION")}}),
-        ),
-        "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools":tool_definitions()})),
-        "tools/call" => {
-            let input = request["params"]["arguments"].clone();
-            let result = match request["params"]["name"].as_str().unwrap_or("") {
-                "visual_docs" => Ok(documentation()),
-                "visual_check" => input["source"]
-                    .as_str()
-                    .ok_or("source must be a JavaScript string".into())
-                    .and_then(check),
-                "visual_show" => publish_with_environment(input, environment),
-                _ => Err("Unknown native visual tool".into()),
-            };
-            Ok(match result {
-                Ok(value) => {
-                    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
-                }
-                Err(error) => json!({"content":[{"type":"text","text":error}],"isError":true}),
-            })
-        }
-        _ => Err(json!({"code":-32601,"message":"Method not found"})),
-    };
-    Some(match result {
-        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-        Err(error) => json!({"jsonrpc":"2.0","id":id,"error":error}),
-    })
-}
+/// The visual tools, for sessions whose grant names them.
+pub(crate) struct Toolkit;
 
-/// Runs before GUI initialization. stdout contains MCP JSON-RPC frames only.
-pub fn mcp_stdio() -> Result<(), String> {
-    let environment = current_environment();
-    let mut input = std::io::stdin().lock();
-    let mut output = std::io::stdout().lock();
-    loop {
-        let mut line = String::new();
-        (&mut input)
-            .take((MAX_WIRE_BYTES + 1) as u64)
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
-        if line.is_empty() {
-            return Ok(());
-        }
-        if line.len() > MAX_WIRE_BYTES || !line.ends_with('\n') {
-            return Err("Oversized or incomplete MCP frame".into());
-        }
-        let response = match serde_json::from_str(&line) {
-            Ok(request) => mcp_response(request, &environment),
-            Err(_) => Some(
-                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}),
-            ),
-        };
-        if let Some(response) = response {
-            writeln!(output, "{response}")
-                .and_then(|_| output.flush())
-                .map_err(|e| e.to_string())?;
+impl mcp_hub::Toolkit for Toolkit {
+    fn name(&self) -> &'static str {
+        crate::tool_servers::VISUAL
+    }
+
+    fn tools(&self, _: &mcp_hub::Grant) -> Vec<Value> {
+        tool_definitions()
+    }
+
+    fn call(&self, grant: &mcp_hub::Grant, tool: &str, input: Value) -> Result<Value, String> {
+        match tool {
+            "visual_docs" => Ok(documentation()),
+            "visual_check" => input["source"]
+                .as_str()
+                .ok_or("source must be a JavaScript string".into())
+                .and_then(check),
+            "visual_show" => publish(input, grant.session),
+            _ => Err("Unknown native visual tool".into()),
         }
     }
 }
@@ -755,10 +576,7 @@ mod tests {
     #[test]
     fn scoped_publication_acknowledges_after_save_and_deduplicates() {
         let server = Server::start(42).unwrap();
-        let environment = server.environment(std::path::Path::new("/test/gespan-gpui"));
-        let child_environment = environment.clone();
-        let worker =
-            std::thread::spawn(move || publish_with_environment(input(), &child_environment));
+        let worker = std::thread::spawn(move || publish(input(), 42));
         let publication = server
             .publications
             .recv_timeout(Duration::from_secs(3))
@@ -767,33 +585,27 @@ mod tests {
         assert!(!worker.is_finished());
         publication.reply.send(Ok(json!({"id":"hello"}))).unwrap();
         assert_eq!(worker.join().unwrap().unwrap()["result"]["id"], "hello");
-        assert!(publish_with_environment(input(), &environment).is_ok());
+        assert!(publish(input(), 42).is_ok());
         assert!(server.drain().is_empty());
         let mut changed = input();
         changed["source"] = "return () => visual.text('Changed');".into();
-        assert!(publish_with_environment(changed, &environment)
-            .unwrap_err()
-            .contains("already used"));
+        assert!(publish(changed, 42).unwrap_err().contains("already used"));
     }
 
     #[test]
-    fn wrong_session_and_expired_capabilities_cannot_publish() {
+    fn another_session_and_an_ended_turn_cannot_publish() {
         let server = Server::start(7).unwrap();
-        let mut environment = server.environment(std::path::Path::new("/test/app"));
-        environment.insert(ENV_SESSION.into(), "8".into());
-        assert!(publish_with_environment(input(), &environment).is_err());
+        assert!(publish(input(), 8).is_err());
         assert!(server.drain().is_empty());
-        environment.insert(ENV_SESSION.into(), "7".into());
         drop(server);
         std::thread::sleep(Duration::from_millis(30));
-        assert!(publish_with_environment(input(), &environment).is_err());
+        assert!(publish(input(), 7).is_err());
     }
 
     #[test]
     fn publication_reports_persistence_failure() {
         let server = Server::start(3).unwrap();
-        let environment = server.environment(std::path::Path::new("/test/app"));
-        let worker = std::thread::spawn(move || publish_with_environment(input(), &environment));
+        let worker = std::thread::spawn(move || publish(input(), 3));
         let publication = server
             .publications
             .recv_timeout(Duration::from_secs(3))
@@ -806,32 +618,32 @@ mod tests {
             .contains("Saving failed"));
     }
 
+    fn grant() -> mcp_hub::Grant {
+        mcp_hub::Grant {
+            session: 999_001,
+            workspace: "/work".into(),
+            toolkits: [crate::tool_servers::VISUAL.to_owned()].into(),
+        }
+    }
+
     #[test]
-    fn local_validation_and_mcp_notifications_need_no_capability() {
+    fn local_validation_needs_no_turn() {
+        use mcp_hub::Toolkit as _;
         assert!(check("return () => visual.text('Local');").is_ok());
         assert!(check("while (true) {}").is_err());
         assert!(check(&" ".repeat(MAX_SOURCE_BYTES + 1)).is_err());
-        let environment = HashMap::new();
-        assert!(
-            mcp_response(json!({"method":"notifications/initialized"}), &environment).is_none()
+        let refused = Toolkit.call(&grant(), "visual_show", input()).unwrap_err();
+        assert_eq!(
+            refused,
+            "Visual publication requires an active session turn"
         );
-        let response = mcp_response(json!({"id":2,"method":"tools/call","params":{"name":"visual_show","arguments":input()}}), &environment).unwrap();
-        assert_eq!(response["result"]["isError"], true);
         assert_eq!(tool_definitions().len(), 3);
-        assert_eq!(crate::tool_servers::acp_servers(&environment), json!([]));
     }
 
     #[test]
     fn visual_reference_is_loaded_on_demand_without_global_instructions() {
-        let environment = HashMap::new();
-        let initialization = mcp_response(
-            json!({"id":1,"method":"initialize","params":{}}),
-            &environment,
-        )
-        .unwrap();
-        assert!(initialization["result"].get("instructions").is_none());
-        let catalog = mcp_response(json!({"id":2,"method":"tools/list"}), &environment).unwrap();
-        let metadata = catalog["result"].to_string();
+        use mcp_hub::Toolkit as _;
+        let metadata = serde_json::to_string(&Toolkit.tools(&grant())).unwrap();
         assert!(
             metadata.len() < 2_500,
             "Discovery must stay small: {} bytes",
@@ -839,15 +651,7 @@ mod tests {
         );
         assert!(!metadata.contains("visual.column"));
         assert!(!metadata.contains("hardcode font"));
-        let response = mcp_response(
-            json!({"id":3,"method":"tools/call","params":{"name":"visual_docs","arguments":{}}}),
-            &environment,
-        )
-        .unwrap();
-        assert_eq!(response["result"]["isError"], false);
-        let reference: Value =
-            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
-                .unwrap();
+        let reference = Toolkit.call(&grant(), "visual_docs", json!({})).unwrap();
         assert!(reference["documentation"]
             .as_str()
             .unwrap()
@@ -863,46 +667,16 @@ mod tests {
     #[test]
     fn stable_session_configuration_rejects_old_in_flight_requests() {
         let server = Server::start(83).unwrap();
-        let environment = server.environment(std::path::Path::new("/test/app"));
-        let child_environment = environment.clone();
-        let worker =
-            std::thread::spawn(move || publish_with_environment(input(), &child_environment));
+        let worker = std::thread::spawn(move || publish(input(), 83));
         let old = server
             .publications
             .recv_timeout(Duration::from_secs(3))
             .unwrap();
         drop(server);
         let next = Server::start(83).unwrap();
-        assert_eq!(
-            environment,
-            next.environment(std::path::Path::new("/test/app"))
-        );
         let _ = old.reply.send(Ok(json!({"id":"old"})));
         assert!(worker.join().unwrap().unwrap_err().contains("ended"));
         assert!(next.drain().is_empty());
-    }
-
-    #[test]
-    fn provider_configuration_forwards_capability_without_token_in_arguments() {
-        let server = Server::start(84).unwrap();
-        let environment = server.environment(std::path::Path::new("/test/app"));
-        let mut command = std::process::Command::new("provider");
-        crate::tool_servers::configure_codex(&mut command, &environment);
-        let arguments = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(arguments.contains("visual-mcp"));
-        assert!(arguments.contains(ENV_TOKEN));
-        assert!(!arguments.contains(&environment[ENV_TOKEN]));
-        let acp = crate::tool_servers::acp_servers(&environment);
-        assert_eq!(acp[0]["name"], "gespan_visual");
-        assert_eq!(acp[0]["env"].as_array().unwrap().len(), 4);
-        assert_eq!(
-            crate::tool_servers::mcp_servers(&environment)["gespan_visual"],
-            json!({"type":"stdio","command":"/test/app","args":["visual-mcp"]})
-        );
     }
 
     #[test]

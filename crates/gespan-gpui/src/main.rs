@@ -264,14 +264,8 @@ fn main() {
         return;
     }
     // stdout carries MCP frames only, and tracing is not set up yet.
-    let tool_server: Option<fn() -> Result<(), String>> = match cli_args.first().map(String::as_str)
-    {
-        Some("visual-mcp") => Some(gespan_core::visual_bridge::mcp_stdio),
-        Some("ticket-mcp") => Some(gespan_core::ticket_bridge::mcp_stdio),
-        _ => None,
-    };
-    if let Some(serve) = tool_server {
-        if let Err(error) = serve() {
+    if cli_args.first().is_some_and(|arg| arg == "mcp-relay") {
+        if let Err(error) = gespan_core::tool_servers::relay() {
             eprintln!("{error}");
             exit(1);
         }

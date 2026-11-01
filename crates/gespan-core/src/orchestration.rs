@@ -401,17 +401,22 @@ instead would queue a second worker.
 Tasks run inside the Gespan app, not in this process. Exiting this CLI, or a
 failure here, never cancels a task that was already accepted.
 
-Gespan sets GESPAN_CONTROL_ENDPOINT and GESPAN_CONTROL_TOKEN for the lead
-agent's process only. They are already in your environment; never print them.
+Only the lead agent holds this access.
 "#;
 
 /// Added to every lead turn while its run is active.
-pub fn lead_prompt(cli: &str) -> String {
+pub fn lead_prompt(access: &crate::pilot::AppAccess) -> String {
+    let introduction = match access {
+        crate::pilot::AppAccess::Tools => "Coordinate the user's task using the control_call tool, passing {action,input,requestId?}. Call control_help before your first call; it documents every action, its exact JSON fields and the retry rule.\nEach call returns JSON; on failure, read the error text, it says what to do next. Unknown JSON fields are rejected rather than ignored, so fix the field name instead of guessing. If a call fails before reaching Gespan, retry it with the requestId it reports so the work is never queued twice.".to_owned(),
+        crate::pilot::AppAccess::Cli(executable) => {
+            let cli = crate::pilot::AppAccess::cli(executable, "control");
+            format!("Coordinate the user's task using {cli}. Run `{cli} --help` before your first command; it documents every action, its exact JSON fields and the retry rule. Credentials are already in your environment; never print them.\nEach call prints one JSON line and exits non-zero unless \"ok\" is true; read the \"error\" text, it says what to do next. Unknown JSON fields are rejected rather than ignored, so fix the field name instead of guessing. If a call fails before reaching Gespan, retry it with the \"requestId\" from that response so the work is never queued twice.")
+        }
+    };
     format!(
         r#"<gespan_orchestration>
-You are the lead of a local Gespan run. Coordinate the user's task using {cli}. Run `{cli} --help` before your first command; it documents every action, its exact JSON fields and the retry rule. Credentials are already in your environment; never print them.
-Each call prints one JSON line and exits non-zero unless "ok" is true; read the "error" text, it says what to do next. Unknown JSON fields are rejected rather than ignored, so fix the field name instead of guessing. If a call fails before reaching Gespan, retry it with the "requestId" from that response so the work is never queued twice.
-Use list to discover allowed harness/model IDs. Delegate bounded tasks with project-relative files (directories reserve their descendants), self-contained prompts and dependsOn task IDs. You may read and plan; leave project file edits to workers. Never start workers outside this CLI. Workers with overlapping files are queued. For project-wide validation, generators or broad formatting, assign a separate task with files ["."] and wait for other workers to finish. Workers must never commit, push, switch branches or write outside the selected checkout. If the user requested those final operations, review and integrate every worker, call finish, then perform the explicitly authorized finalization yourself.
+You are the lead of a local Gespan run. {introduction}
+Use list to discover allowed harness/model IDs. Delegate bounded tasks with project-relative files (directories reserve their descendants), self-contained prompts and dependsOn task IDs. You may read and plan; leave project file edits to workers. Never start workers any other way. Workers with overlapping files are queued. For project-wide validation, generators or broad formatting, assign a separate task with files ["."] and wait for other workers to finish. Workers must never commit, push, switch branches or write outside the selected checkout. If the user requested those final operations, review and integrate every worker, call finish, then perform the explicitly authorized finalization yourself.
 Agents never prompt the user. When one needs an approval or answers a question, list, get and wait report it as needsInput on that task, and you decide with respond or answer; it stays stopped until you do. Judge the request against the task you assigned, and put it to the user in this conversation only when the call is genuinely theirs.
 Steer a running agent with steer to correct its course without losing its work; use message only once it has stopped. Read results with get or wait; completed means a turn finished, not that the work passed review. Review the actual changes, message a worker for fixes, and use review to accept each completed task. Call finish only when required work and combined validation are complete. You receive worker results automatically when idle; use bounded wait calls while supervising. If the run is paused, list/get/wait remain readable and explain the reason. Stop polling, report that reason, and ask the user to click Resume. Do not expose credentials, create worktrees, switch branches or silently escalate worker permissions.
 </gespan_orchestration>"#

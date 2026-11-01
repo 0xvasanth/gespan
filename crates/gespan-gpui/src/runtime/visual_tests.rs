@@ -17,8 +17,7 @@ fn silent_provider_visual_is_saved_and_acknowledged_before_streaming_resumes() {
     )));
     std::fs::create_dir_all(&fixture.0).unwrap();
     let binary = fixture.0.join("mock-provider");
-    std::fs::write(&binary, r#"#!/usr/bin/env python3
-import json, os, socket, sys, time
+    std::fs::write(&binary, concat!(include_str!("mcp_stub.py"), r#"
 def send(value):
     print(json.dumps(value), flush=True)
 for line in sys.stdin:
@@ -27,32 +26,24 @@ for line in sys.stdin:
         send({'id': 1, 'result': {}})
     elif value.get('id') == 2:
         assert value['method'] == 'thread/start'
+        hub = Hub(value['params']['config']['mcp_servers']['gespan'])
         send({'id': 2, 'result': {'thread': {'id': 'native-visual-test'}}})
     elif value.get('id') == 3:
         assert value['method'] == 'turn/start'
         assert value['params']['input'] == [{'type': 'text', 'text': 'Show a native visual'}], 'Visual discovery must not alter the user prompt'
         send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'before', 'delta': 'Before the visual.'}})
         time.sleep(0.05)
-        address, port = os.environ['GESPAN_VISUAL_ENDPOINT'].rsplit(':', 1)
-        with socket.create_connection((address, int(port)), timeout=4) as connection:
-            connection.settimeout(4)
-            request = {
-                'session': int(os.environ['GESPAN_VISUAL_SESSION']),
-                'token': os.environ['GESPAN_VISUAL_TOKEN'],
-                'request_id': 'runtime-integration-request',
-                'document': {
-                    'id': 'runtime-native', 'title': 'Native result',
-                    'source': 'return () => visual.text(' + json.dumps('a' * 3000) + ');'
-                }
-            }
-            connection.sendall((json.dumps(request) + '\n').encode())
-            # No stdout events are emitted while awaiting publication. Without
-            # the provider heartbeat, neither the save nor this reply can occur.
-            response = json.loads(connection.makefile('rb').readline())
-            assert response['ok'] is True, response
-            assert response['result']['saved'] is True, response
-            with open('acknowledged.json', 'w') as output:
-                json.dump(response, output)
+        # No stdout events are emitted while awaiting publication. Without
+        # the provider heartbeat, neither the save nor this reply can occur.
+        response = hub.call('visual_show', {
+            'id': 'runtime-native', 'title': 'Native result', 'requestId': 'runtime-integration-request',
+            'source': 'return () => visual.text(' + json.dumps('a' * 3000) + ');'
+        })
+        assert response['ok'] is True, response
+        response = response['result']
+        assert response['result']['saved'] is True, response
+        with open('acknowledged.json', 'w') as output:
+            json.dump(response, output)
         deadline = time.monotonic() + 4
         while not os.path.exists('saved-observed'):
             assert time.monotonic() < deadline, 'Live visual update never arrived'
@@ -60,7 +51,7 @@ for line in sys.stdin:
         send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'after', 'delta': 'After the visual.'}})
         send({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}})
         break
-"#).unwrap();
+"#)).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     let store = Store::open_gespan(&fixture.0.join("sessions.db")).unwrap();
     let summary = store.create("codex", fixture.0.to_str().unwrap()).unwrap();

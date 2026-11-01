@@ -406,6 +406,18 @@ pub(super) fn run(
     let (client, mut server) = connect(&request, &cancel, v2)
         .inspect(|_| metrics::success(START))
         .inspect_err(start_failed)?;
+    if let Some(access) = request
+        .settings
+        .mount
+        .as_ref()
+        .and_then(crate::tool_servers::Access::open)
+    {
+        // The turn goes on without tools if this server can't take them.
+        let added = client.request("POST", &client.path("/mcp"), Some(access.opencode_server()));
+        if let Err(error) = added {
+            tracing::warn!(%error, "OpenCode refused the tool endpoint");
+        }
+    }
     let session = client.session(&request)?;
     if request.provider_id.is_some() {
         let _ = client.repair_unsupported_file_turn(&session);
@@ -543,7 +555,7 @@ pub(super) fn run(
                 Some(super::hold::Action::Settle(point)) => emit(vec![Event::HoldSettled(point)])?,
                 None => {}
             }
-            if crate::tool_servers::configured(&request.settings.environment) {
+            if request.settings.mount.is_some() {
                 emit(Vec::new())?;
             }
             if !connected && started.elapsed() >= Duration::from_secs(30) {
