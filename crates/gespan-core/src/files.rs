@@ -596,6 +596,23 @@ fn dir_contains(dir: &Path, dest_parent: &Path) -> bool {
     dest_parent.starts_with(&dir)
 }
 
+/// Saves a generated page for the user's browser and returns its file URL. The
+/// name is unguessable and the file private, since the temp folder may be shared.
+pub fn save_browser_page(html: &str) -> Result<String, String> {
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("gespan-panel-")
+        .suffix(".html")
+        .tempfile()
+        .map_err(|error| error.to_string())?;
+    file.write_all(html.as_bytes())
+        .map_err(|error| error.to_string())?;
+    let (_, path) = file.keep().map_err(|error| error.to_string())?;
+    url::Url::from_file_path(&path)
+        .map(String::from)
+        .map_err(|()| format!("Cannot open {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +633,26 @@ mod tests {
         ignored_names(&list_dir(dir).unwrap())
             .iter()
             .any(|n| n == name)
+    }
+
+    #[test]
+    fn a_browser_page_is_private_and_opens_by_its_file_url() {
+        let first = save_browser_page("<p>One</p>").unwrap();
+        let second = save_browser_page("<p>Two</p>").unwrap();
+        assert_ne!(first, second, "each page gets its own file");
+        let file = url::Url::parse(&first).unwrap().to_file_path().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "<p>One</p>");
+        assert_eq!(file.extension().unwrap(), "html");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        for page in [first, second] {
+            let file = url::Url::parse(&page).unwrap().to_file_path().unwrap();
+            std::fs::remove_file(file).unwrap();
+        }
     }
 
     #[test]
