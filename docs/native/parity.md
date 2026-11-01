@@ -73,7 +73,7 @@ Found by the November 1 re-check. Native has none of these yet.
 - [ ] **Separate Pilot commit and push.** Native does both in one step. Tauri: `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [ ] **Stash and switch on remote projects.** Native stashes for local projects only. Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
 - [ ] **Generate a commit message when switching branches.** Native's commit and switch has no generate button. Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
-- [x] **Follow a moved project folder while running.** Tauri: `src/features/projects/model/projectLocation.ts`.
+- [ ] **Follow a moved project folder while running.** Native checks at launch and when a folder opens. Tauri also checks on send. Tauri: `src/features/projects/model/projectLocation.ts`.
 - [ ] **Cursor subagent details in older sessions.** Sessions saved before #250 are not backfilled when reopened. Tauri: `src-tauri/src/cursor_store.rs`.
 
 Different on purpose: inline video plays in place in Tauri and opens the file
