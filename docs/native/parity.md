@@ -69,12 +69,12 @@ in the same PR.
 Found by the November 1 re-check. Native has none of these yet.
 
 - [ ] **HTML panels on Windows and Linux.** Native renders them on macOS and shows a text fallback elsewhere. Tauri: `src/features/artifacts/ui/HtmlArtifactFrame.tsx`. Native: `crates/gespan-gpui/src/pilots/html.rs`. *(also below)*
-- [ ] **Checkpoints for Pilot sessions.** Undo and Keep need them, and Native records none for Pilots. Tauri: `src/features/sessions/model/checkpoint.ts`.
+- [x] **Checkpoints for Pilot sessions.** Edits outside a Pilot's chat folder are not recorded, the same as Tauri. Tauri: `src/features/sessions/model/checkpoint.ts`.
 - [x] **Separate Pilot commit and push.** This was never missing: Native's Pilot panel uses the same Changes view as chats, with Commit, Commit & Push and its own sync button. Tauri: `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [x] **Stash and switch on remote projects.** Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
 - [x] **Generate a commit message when switching branches.** Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
 - [x] **Follow a moved project folder while running.** Tauri: `src/features/projects/model/projectLocation.ts`.
-- [ ] **Cursor subagent details in older sessions.** Sessions saved before #250 are not backfilled when reopened. Tauri: `src-tauri/src/cursor_store.rs`.
+- [x] **Cursor subagent details in older sessions.** Tauri: `src-tauri/src/cursor_store.rs`.
 
 Different on purpose: inline video plays in place in Tauri and opens the file
 viewer from a play card in Native, because GPUI can't play video in place.
@@ -86,7 +86,7 @@ viewer from a play card in Native, because GPUI can't play video in place.
 - [x] **Explorer → Open in Terminal.** Tauri: `src/features/files/ui/FileTree.tsx`. Done in #245.
 - [x] **Stash and switch, or commit and switch,** when a branch change would overwrite local changes. *(done in #250; Tauri's generate-commit-message button and stashing on remote projects are not ported yet)* Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`, `BranchPicker.tsx`.
 - [x] **Resizable history graph.** Drag to resize, double-click to reset. Tauri: `src/features/source-control/ui/GitHistoryGraph.tsx`. Not needed: Native shows history as a full-height tab, not a graph under Changes.
-- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250; Native still records no checkpoints for Pilot sessions)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`.
+- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [x] **New skill from the composer's / picker.** *(done in #250)* Tauri: `src/features/skills/ui/SkillPicker.tsx`.
 
 ### Settings
