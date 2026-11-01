@@ -23,7 +23,7 @@ const MAX_NAMES: usize = 20;
 static COPY_POOL: LazyLock<Result<rayon::ThreadPool, rayon::ThreadPoolBuildError>> =
     LazyLock::new(|| rayon::ThreadPoolBuilder::new().num_threads(4).build());
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 pub struct Copied {
     pub files: usize,
     pub bytes: u64,
@@ -292,6 +292,29 @@ mod tests {
         write(&main, ".env", "secret");
         assert_eq!(copy_included(&main, &tree).unwrap(), Copied::default());
         assert!(!tree.join(".env").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn an_include_list_from_outside_the_checkout_is_not_read() {
+        let (dir, main, tree) = repo(".env\n");
+        write(&main, ".env", "secret");
+        let outside = dir.path().join("outside-list");
+        std::fs::write(&outside, ".env\n").unwrap();
+        std::os::unix::fs::symlink(&outside, main.join(".worktreeinclude")).unwrap();
+        assert_eq!(copy_included(&main, &tree).unwrap(), Copied::default());
+        assert!(!tree.join(".env").exists());
+    }
+    #[test]
+    fn copied_files_are_named_in_order_up_to_a_limit() {
+        let (_dir, main, tree) = repo("*.env\n");
+        write(&main, ".worktreeinclude", "*.env\n");
+        for n in 0..MAX_NAMES + 3 {
+            write(&main, &format!("{n:03}.env"), "x");
+        }
+        let copied = copy_included(&main, &tree).unwrap();
+        assert_eq!(copied.files, MAX_NAMES + 3);
+        assert_eq!(copied.names.len(), MAX_NAMES);
+        assert_eq!(copied.names[0], "000.env");
     }
     #[test]
     fn a_file_must_be_listed_and_ignored() {

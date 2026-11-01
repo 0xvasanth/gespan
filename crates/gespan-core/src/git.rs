@@ -4,6 +4,9 @@
 mod remote;
 use crate::diagnostics::metrics;
 pub mod report;
+pub(crate) use remote::{
+    remove_worktree as remove_remote_worktree, script_runner as remote_script_runner,
+};
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -569,13 +572,11 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        return remote::create_worktree(
-            cwd,
-            &native_session_branch(session, stamp),
-            Some(base),
-            false,
-        )
-        .map(|tree| PathBuf::from(tree.path));
+        let main = PathBuf::from(remote::main_checkout(cwd)?);
+        let turn = crate::worktree_scripts::turn(&main);
+        let branch = native_session_branch(session, stamp);
+        let tree = remote::create_worktree(cwd, &branch, Some(base), false)?;
+        return remote::set_up(turn, cwd, &main, tree).map(|tree| PathBuf::from(tree.path));
     }
     let trees = worktrees(cwd)?;
     let main = trees.first().ok_or("No working copies found")?;
@@ -722,7 +723,11 @@ fn create_branch_worktree(
     seed: impl FnOnce(&Worktree) -> Result<(), String>,
 ) -> Result<Worktree, String> {
     if crate::files::remote::is_remote(cwd) {
-        return remote::create_worktree(cwd, branch.trim(), base, existing);
+        let main = PathBuf::from(remote::main_checkout(cwd)?);
+        let turn = crate::worktree_scripts::turn(&main);
+        let tree = remote::create_worktree(cwd, branch.trim(), base, existing)?;
+        seed(&tree)?;
+        return remote::set_up(turn, cwd, &main, tree);
     }
     let branch = branch.trim();
     valid_branch(cwd, branch)?;
@@ -829,7 +834,10 @@ mod tests {
             card_branch(142, "Fix login bug"),
             "gespan/card-142-fix-login-bug"
         );
-        assert_eq!(card_branch(7, "Déjà vu: a/b test!"), "gespan/card-7-d-j-vu-a-b-test");
+        assert_eq!(
+            card_branch(7, "Déjà vu: a/b test!"),
+            "gespan/card-7-d-j-vu-a-b-test"
+        );
         assert_eq!(card_branch(7, "登录失败"), "gespan/card-7");
         assert_eq!(card_branch(7, "   "), "gespan/card-7");
         let long = card_branch(9, &"word ".repeat(40));

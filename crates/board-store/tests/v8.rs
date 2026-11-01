@@ -75,7 +75,9 @@ fn the_choice_is_per_board_and_stays_out_of_templates() {
         ..Default::default()
     };
     update_board_settings(&conn, &one.id, &patch).unwrap();
-    assert!(board_settings(&conn, &other.id).unwrap().starts_in_worktree());
+    assert!(board_settings(&conn, &other.id)
+        .unwrap()
+        .starts_in_worktree());
     let template = save_board_as_template(&conn, &one.id, "Saved").unwrap();
     let copy = create_board_from_template(&conn, &template.id, "Copy").unwrap();
     assert_eq!(

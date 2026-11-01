@@ -280,6 +280,46 @@ describe("remote host API", () => {
       ]),
     );
 
+    const job = await s.call("worktree.jobStart", {
+      projectId: s.project.id,
+      cwd: tree.path,
+      kind: "script",
+      script: "echo set up",
+      branch: "feature",
+    });
+    expect(job.status).toBe(200);
+    await vi.waitFor(async () => {
+      const polled = await s.call("worktree.jobPoll", {
+        jobId: job.value.result.jobId,
+        after: 0,
+      });
+      expect(polled.value.result).toMatchObject({
+        done: true,
+        code: 0,
+        lines: ["set up"],
+      });
+    });
+    expect(
+      (await s.call("worktree.jobStart", {
+        projectId: s.project.id,
+        cwd: s.project.cwd,
+        kind: "script",
+      })).value.error,
+    ).toBeTruthy();
+    expect(
+      (await s.call("worktree.jobStart", {
+        projectId: s.project.id,
+        cwd: tmpdir(),
+        kind: "copy",
+      })).value.error,
+    ).toBeTruthy();
+    expect(
+      (await s.call("git.worktreeRemove", {
+        projectId: s.project.id,
+        path: s.project.cwd,
+      })).value.error,
+    ).toBeTruthy();
+
     const opened = await s.call("commands.dispatch", {
       type: "create",
       commandId: "in-worktree",

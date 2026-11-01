@@ -47,7 +47,11 @@ fn setup_line(record: &Record) -> Option<String> {
 impl SettingsView {
     /// The fields for `main`, read again when the project changes.
     fn scripts_for(&mut self, main: &str, cx: &mut Context<Self>) {
-        if self.worktree_scripts.as_ref().is_some_and(|s| s.main == main) {
+        if self
+            .worktree_scripts
+            .as_ref()
+            .is_some_and(|s| s.main == main)
+        {
             return;
         }
         let saved = worktree_scripts::scripts(std::path::Path::new(main));
@@ -58,11 +62,17 @@ impl SettingsView {
                 input.set_text(text, cx);
                 input
             });
-            cx.subscribe(&input, |_, _, _: &Changed, cx| cx.notify()).detach();
+            cx.subscribe(&input, |_, _, _: &Changed, cx| cx.notify())
+                .detach();
             input
         };
         let setup = field("Setup script", "bun install", &saved.setup, cx);
-        let teardown = field("Teardown script", "docker compose down", &saved.teardown, cx);
+        let teardown = field(
+            "Teardown script",
+            "docker compose down",
+            &saved.teardown,
+            cx,
+        );
         self.worktree_scripts = Some(WorktreeScripts {
             main: main.to_owned(),
             setup,
@@ -406,6 +416,9 @@ mod tests {
             line(0, Some(Outcome::Overridden("x".into()))).unwrap(),
             "Setup failed, started anyway"
         );
-        assert_eq!(line(0, Some(Outcome::Cancelled)).unwrap(), "Setup cancelled");
+        assert_eq!(
+            line(0, Some(Outcome::Cancelled)).unwrap(),
+            "Setup cancelled"
+        );
     }
 }

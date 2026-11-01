@@ -8,8 +8,7 @@ use gespan_core::{
     worktree_scripts::{self, Decision, Event, Host, Outcome, Run, Stage, Tail},
 };
 use gpui::{
-    AnyElement, App, Context, Entity, Global, Role, ScrollHandle, SharedString, div, prelude::*,
-    px,
+    AnyElement, App, Context, Entity, Global, Role, ScrollHandle, SharedString, div, prelude::*, px,
 };
 use std::{
     collections::HashMap,
@@ -94,7 +93,9 @@ fn copied_summary(copied: &Copied) -> Option<String> {
     if copied.files > 0 {
         let shown = copied.names.iter().take(NAMES_SHOWN);
         let names = shown.map(String::as_str).collect::<Vec<_>>().join(", ");
-        let more = copied.files.saturating_sub(NAMES_SHOWN.min(copied.names.len()));
+        let more = copied
+            .files
+            .saturating_sub(NAMES_SHOWN.min(copied.names.len()));
         summary = match (names.is_empty(), more) {
             (true, _) => format!("Copied {} files", copied.files),
             (false, 0) => format!("Copied {names}"),
@@ -204,7 +205,9 @@ impl WorktreeSetups {
         let failed = matches!(step.state, State::Failed(_));
         let summary = copied_summary(&step.run.copied);
         let reason = match &step.state {
-            State::Failed(reason) | State::Done(Outcome::Overridden(reason)) => Some(reason.clone()),
+            State::Failed(reason) | State::Done(Outcome::Overridden(reason)) => {
+                Some(reason.clone())
+            }
             _ => None,
         };
         let go_on = match step.run.stage {

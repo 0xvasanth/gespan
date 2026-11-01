@@ -65,7 +65,10 @@ fn the_copy_summary_names_a_few_files() {
         copied_summary(&copied(1, &[".env"], 2)).unwrap(),
         "Copied .env · Skipped 2 files"
     );
-    assert_eq!(copied_summary(&copied(0, &[], 1)).unwrap(), "Skipped 1 file");
+    assert_eq!(
+        copied_summary(&copied(0, &[], 1)).unwrap(),
+        "Skipped 1 file"
+    );
 }
 
 #[test]
@@ -182,7 +185,9 @@ fn a_finished_step_leaves_on_its_own(cx: &mut TestAppContext) {
         );
     });
     assert!(shown(&mut visual, "worktree-setup-step-4"));
-    visual.executor().advance_clock(LINGER + Duration::from_secs(1));
+    visual
+        .executor()
+        .advance_clock(LINGER + Duration::from_secs(1));
     assert!(!shown(&mut visual, "worktree-setup-step-4"));
     view.read_with(&visual, |view, _| assert!(view.is_empty()));
 }

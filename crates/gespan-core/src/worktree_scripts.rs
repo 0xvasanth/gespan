@@ -78,11 +78,22 @@ pub struct Run {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Started(Run),
-    Output { id: u64, line: String },
-    Retrying { id: u64 },
+    Output {
+        id: u64,
+        line: String,
+    },
+    Retrying {
+        id: u64,
+    },
     /// `Decision`s are asked for after this, with `Host::decide`.
-    Failed { id: u64, reason: String },
-    Finished { id: u64, outcome: Outcome },
+    Failed {
+        id: u64,
+        reason: String,
+    },
+    Finished {
+        id: u64,
+        outcome: Outcome,
+    },
 }
 
 /// The answer to a failure.
@@ -184,7 +195,12 @@ pub fn scripts(main: &Path) -> Scripts {
         return Scripts::default();
     };
     store.load();
-    store.data.projects.get(&key(main)).cloned().unwrap_or_default()
+    store
+        .data
+        .projects
+        .get(&key(main))
+        .cloned()
+        .unwrap_or_default()
 }
 
 pub fn save_scripts(main: &Path, scripts: &Scripts) -> Result<(), String> {
@@ -267,9 +283,13 @@ pub(crate) enum Exit {
 }
 
 /// Where a step's script runs: on this machine, or a remote project's host.
-pub(crate) type Runner<'a> = dyn Fn(&str, &mut dyn FnMut(String), &AtomicBool) -> Result<Exit, String> + 'a;
+pub(crate) type Runner<'a> =
+    dyn Fn(&str, &mut dyn FnMut(String), &AtomicBool) -> Result<Exit, String> + 'a;
 
 fn runner<'a>(main: &'a Path, worktree: &'a Path, branch: Option<&'a str>) -> Box<Runner<'a>> {
+    if crate::files::remote::is_remote(worktree) {
+        return crate::git::remote_script_runner(worktree, branch);
+    }
     Box::new(move |script, line, cancelled| {
         run_local(script, main, worktree, branch, line, cancelled)
     })
@@ -388,17 +408,7 @@ pub(crate) fn set_up(
     copied: Copied,
 ) -> Result<(), String> {
     let run = runner(main, worktree, branch);
-    set_up_with(turn, main, worktree, branch, copied, &run)
-}
-
-pub(crate) fn set_up_with(
-    turn: Turn,
-    main: &Path,
-    worktree: &Path,
-    branch: Option<&str>,
-    copied: Copied,
-    run: &Runner<'_>,
-) -> Result<(), String> {
+    let run = &*run;
     let script = scripts(main).setup;
     let script = script.trim();
     let files = copied.files;
@@ -442,7 +452,8 @@ pub(crate) fn tear_down(
     let removal = Removal { key: key(worktree) };
     let script = scripts(main).teardown;
     let script = script.trim();
-    if script.is_empty() || !worktree.is_dir() {
+    let remote = crate::files::remote::is_remote(worktree);
+    if script.is_empty() || (!remote && !worktree.is_dir()) {
         return Ok(removal);
     }
     let run = runner(main, worktree, branch);
@@ -482,7 +493,7 @@ impl Removal {
 fn shell(script: &str) -> Result<(Command, Option<tempfile::TempPath>), String> {
     let mut command = Command::new("/bin/sh");
     // Stops at the first failing line, so a later step can't hide it.
-    command.args(["-e", "-c", script]);
+    command.args(["-e", "-c", &script.replace("\r\n", "\n")]);
     Ok((command, None))
 }
 /// cmd has no way to run several lines from an argument, so they go in a file.
@@ -495,7 +506,8 @@ fn shell(script: &str) -> Result<(Command, Option<tempfile::TempPath>), String> 
         .tempfile()
         .map_err(|e| format!("Could not start the script: {e}"))?;
     // UTF-8, so a path or message outside the system code page survives.
-    write!(file, "@chcp 65001 >nul\r\n{}\r\n", script.replace('\n', "\r\n"))
+    let lines = script.replace("\r\n", "\n").replace('\n', "\r\n");
+    write!(file, "@echo off\r\nchcp 65001 >nul\r\n{lines}\r\n")
         .map_err(|e| format!("Could not start the script: {e}"))?;
     let path = file.into_temp_path();
     let mut command = Command::new("cmd");

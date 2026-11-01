@@ -609,7 +609,13 @@ fn a_card_run_gets_a_worktree_named_after_it_and_linked_to_it(cx: &mut TestAppCo
     let f = seeded(cx, &["Fix login bug"]);
     let card = card_id(&f, cx, "Fix login bug");
     let project = git_project(&f);
-    let run = prepare_run(&f.store, &f.db, &request(&card, &project), in_new_worktree()).unwrap();
+    let run = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &project),
+        in_new_worktree(),
+    )
+    .unwrap();
     let path = run.settings.worktree_cwd.clone().unwrap();
     assert!(!run.settings.new_worktree, "it exists before the session");
     assert!(path.ends_with("gespan-card-1-fix-login-bug"), "{path}");
@@ -618,7 +624,10 @@ fn a_card_run_gets_a_worktree_named_after_it_and_linked_to_it(cx: &mut TestAppCo
         Some("gespan/card-1-fix-login-bug")
     );
     let saved = f.store.lock().unwrap().agent_settings(run.summary.id);
-    assert_eq!(saved.unwrap().unwrap().worktree_cwd.as_deref(), Some(&*path));
+    assert_eq!(
+        saved.unwrap().unwrap().worktree_cwd.as_deref(),
+        Some(&*path)
+    );
     let links = Service::open(&f.db).unwrap().card_links(&card).unwrap();
     assert!(
         links
@@ -653,7 +662,12 @@ fn a_failed_setup_starts_no_session_and_keeps_the_worktree(cx: &mut TestAppConte
     };
     gespan_core::worktree_scripts::save_scripts(&project, &scripts).unwrap();
     let before = f.store.lock().unwrap().sessions().unwrap().len();
-    let result = prepare_run(&f.store, &f.db, &request(&card, &project), in_new_worktree());
+    let result = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &project),
+        in_new_worktree(),
+    );
     assert!(result.err().unwrap().contains("code 3"));
     assert_eq!(f.store.lock().unwrap().sessions().unwrap().len(), before);
     let trees = gespan_core::git::worktrees(&project).unwrap();
@@ -680,7 +694,12 @@ fn a_run_that_cannot_be_linked_takes_its_new_worktree_with_it(cx: &mut TestAppCo
 fn a_folder_without_git_says_how_to_run_in_place(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Card"]);
     let card = card_id(&f, cx, "Card");
-    let result = prepare_run(&f.store, &f.db, &request(&card, &f._dir.0), in_new_worktree());
+    let result = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, &f._dir.0),
+        in_new_worktree(),
+    );
     assert!(result.err().unwrap().contains("Untick New worktree"));
 }
 
@@ -693,7 +712,9 @@ fn picker_ticked(f: &Fixture, visual: &mut VisualTestContext) -> bool {
 }
 fn set_options(f: &Fixture, cx: &mut TestAppContext, installed: &[&str], missing: &[&str]) {
     let listed = |ids: &[&str]| -> Vec<(String, String)> {
-        ids.iter().map(|id| ((*id).into(), id.to_uppercase())).collect()
+        ids.iter()
+            .map(|id| ((*id).into(), id.to_uppercase()))
+            .collect()
     };
     let options = RunOptions {
         providers: listed(installed),
@@ -731,7 +752,10 @@ fn the_picker_starts_on_the_boards_default_and_remembers_the_last_choice(cx: &mu
         run_worktree_choice: Some(None),
         ..Default::default()
     };
-    Service::open(&f.db).unwrap().update_settings(&board, &patch).unwrap();
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(&board, &patch)
+        .unwrap();
     reload(&f, visual);
     click(visual, "board-drawer-run-with");
     assert!(picker_ticked(&f, visual));
@@ -746,7 +770,10 @@ fn an_existing_board_stays_in_place_until_switched_on(cx: &mut TestAppContext) {
         run_in_worktree: Some(false),
         ..Default::default()
     };
-    Service::open(&f.db).unwrap().update_settings(&board, &patch).unwrap();
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(&board, &patch)
+        .unwrap();
     reload(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");

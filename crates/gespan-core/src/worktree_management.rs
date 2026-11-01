@@ -74,7 +74,11 @@ fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     let tree = check(cwd, path)?;
     let removal = tear_down(cwd, &tree)?;
     crate::provider::discard_worktree(Path::new(&tree.path));
-    crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path])?;
+    if crate::files::remote::is_remote(cwd) {
+        crate::git::remove_remote_worktree(cwd, &tree.path)?;
+    } else {
+        crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path])?;
+    }
     removal.done();
     Ok(())
 }

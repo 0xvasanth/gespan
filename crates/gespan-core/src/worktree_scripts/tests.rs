@@ -37,10 +37,10 @@ fn leftovers(main: &Path) -> PathBuf {
 }
 /// Fails until a marker exists, leaving the marker: passes on the second run.
 #[cfg(unix)]
-const FAILS_ONCE: &str = "if [ -f marker ]; then echo second; else echo first; echo > marker; exit 4; fi";
-#[cfg(windows)]
 const FAILS_ONCE: &str =
-    "@if exist marker (echo second) else (echo first& echo x> marker& exit 4)";
+    "if [ -f marker ]; then echo second; else echo first; echo > marker; exit 4; fi";
+#[cfg(windows)]
+const FAILS_ONCE: &str = "@if exist marker (echo second) else (echo first& echo x> marker& exit 4)";
 #[cfg(unix)]
 const LONG: &str = "sleep 30";
 #[cfg(windows)]
@@ -87,7 +87,8 @@ fn the_script_is_told_where_it_is() {
     #[cfg(unix)]
     let script = "echo \"$GESPAN_BRANCH\"\ncd \"$GESPAN_PROJECT_ROOT\" && pwd -P\ncd \"$GESPAN_WORKTREE_PATH\" && pwd -P";
     #[cfg(windows)]
-    let script = "@echo %GESPAN_BRANCH%\r\n@echo %GESPAN_PROJECT_ROOT%\r\n@echo %GESPAN_WORKTREE_PATH%";
+    let script =
+        "@echo %GESPAN_BRANCH%\r\n@echo %GESPAN_PROJECT_ROOT%\r\n@echo %GESPAN_WORKTREE_PATH%";
     set_scripts(dir.path(), script, "");
     let tree = create_named_worktree(dir.path(), "told").unwrap();
     let output = host.output();
@@ -190,6 +191,16 @@ fn a_failing_line_stops_the_script() {
         outcomes(&host),
         [Outcome::Overridden("It exited with code 1.".into())]
     );
+    let _ = std::fs::remove_dir_all(leftovers(dir.path()));
+}
+
+#[test]
+fn lines_pasted_with_windows_line_ends_still_run_as_lines() {
+    let dir = repo();
+    let host = Script::install(dir.path(), &[]);
+    set_scripts(dir.path(), "echo one\r\necho two\r\n", "");
+    create_named_worktree(dir.path(), "pasted").unwrap();
+    assert_eq!(host.output(), ["one", "two"]);
     let _ = std::fs::remove_dir_all(leftovers(dir.path()));
 }
 
@@ -408,7 +419,7 @@ fn draining_stops_when_the_step_is_cancelled() {
 #[test]
 fn a_branch_name_cannot_become_a_command_in_cmd() {
     assert_eq!(cmd_safe("feature/a-b_c.1"), "feature/a-b_c.1");
-    assert_eq!(cmd_safe("a&calc|x%PATH%\"\u{5e}"), "a_calc_x_PATH____");
+    assert_eq!(cmd_safe("a&calc|x%PATH%\"\u{5e}"), "a_calc_x_PATH___");
     assert_eq!(cmd_safe("登录"), "登录");
 }
 
