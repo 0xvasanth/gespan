@@ -71,6 +71,7 @@ pub fn forget_session(kind: Kind, provider_id: &str, account_id: &str, cwd: &Pat
 mod questions;
 mod rewind;
 mod tasks;
+pub use cursor_live::recover_cursor_subagents;
 pub use rewind::{rewind_last_turn, supports_rewind, RewindError};
 #[cfg(all(test, unix))]
 mod text_tests;

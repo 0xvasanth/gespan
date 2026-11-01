@@ -2,12 +2,13 @@
 //! arguments its ACP events leave out, and mirror each subagent's own work
 //! into its Agent card (cursorSubagents.ts). A last read runs as the turn ends.
 use super::cursor_store::{self, CursorSubagentRun, CursorToolCall};
-use super::{Event, Protocol};
+use super::{Event, Kind, Protocol};
 use crate::tool::tasks::{AgentStep, Panel};
 use crate::tool::{ToolCall, ToolState};
+use crate::transcript::Row;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Arguments land in the store just before the call's result; ask soon.
@@ -225,60 +226,100 @@ impl Protocol {
 
     fn cursor_apply_run(&mut self, run: CursorSubagentRun) -> Option<Event> {
         let call = self.tools.get_mut(&run.tool_call_id)?;
-        let title = call
-            .display
-            .as_ref()
-            .and_then(|display| display["title"].as_str())
-            .unwrap_or(&call.name)
-            .to_owned();
-        let type_label = run.agent_type.as_deref().map_or_else(
-            || "Subagent".to_owned(),
-            |kind| format!("{} subagent", format_agent_type(kind)),
-        );
-        let name = agent_label(&title)
-            .filter(|label| *label != type_label)
-            .or_else(|| run.prompt.as_deref().and_then(prompt_label))
-            .unwrap_or(type_label);
-        let agent = call.agent_mut()?;
-        agent.name = Some(name);
-        if run.model.is_some() {
-            agent.model = run.model.clone();
-        }
-        if run.agent_type.is_some() {
-            agent.agent_type = run.agent_type.clone();
-        }
-        if agent.brief.is_empty() {
-            agent.brief = run.prompt.clone().unwrap_or_default();
-        }
-        for step in run.steps {
-            agent.upsert(if step.kind == "tool" {
-                let tool_name = step.tool_name.as_deref().unwrap_or("Tool");
-                let mut child = ToolCall::new(&step.id, tool_name);
-                child.input = step
-                    .args
-                    .as_ref()
-                    .filter(|args| args.is_object())
-                    .map_or_else(|| "{}".into(), Value::to_string);
-                child.output = step.output.unwrap_or_default();
-                child.state = match step.status {
-                    Some("completed") => ToolState::Completed,
-                    Some("failed") => ToolState::Failed,
-                    _ => ToolState::Running,
-                };
-                if let Some(kind) = kind_from_tool_name(tool_name) {
-                    child.display = Some(json!({ "kind": kind }));
-                }
-                AgentStep::from_tool_call(&child)
-            } else {
-                AgentStep {
-                    id: step.id,
-                    kind: step.kind.into(),
-                    text: step.text,
-                    ..AgentStep::default()
-                }
-            });
-        }
+        apply_run(call, run)?;
         Some(Event::Tool(call.clone()))
+    }
+}
+
+/// Mirrors a child's stored work into the Agent card that spawned it.
+fn apply_run(call: &mut ToolCall, run: CursorSubagentRun) -> Option<()> {
+    let title = call
+        .display
+        .as_ref()
+        .and_then(|display| display["title"].as_str())
+        .unwrap_or(&call.name)
+        .to_owned();
+    let type_label = run.agent_type.as_deref().map_or_else(
+        || "Subagent".to_owned(),
+        |kind| format!("{} subagent", format_agent_type(kind)),
+    );
+    let name = agent_label(&title)
+        .filter(|label| *label != type_label)
+        .or_else(|| run.prompt.as_deref().and_then(prompt_label))
+        .unwrap_or(type_label);
+    let agent = call.agent_mut()?;
+    agent.name = Some(name);
+    if run.model.is_some() {
+        agent.model = run.model.clone();
+    }
+    if run.agent_type.is_some() {
+        agent.agent_type = run.agent_type.clone();
+    }
+    if agent.brief.is_empty() {
+        agent.brief = run.prompt.clone().unwrap_or_default();
+    }
+    for step in run.steps {
+        agent.upsert(if step.kind == "tool" {
+            let tool_name = step.tool_name.as_deref().unwrap_or("Tool");
+            let mut child = ToolCall::new(&step.id, tool_name);
+            child.input = step
+                .args
+                .as_ref()
+                .filter(|args| args.is_object())
+                .map_or_else(|| "{}".into(), Value::to_string);
+            child.output = step.output.unwrap_or_default();
+            child.state = match step.status {
+                Some("completed") => ToolState::Completed,
+                Some("failed") => ToolState::Failed,
+                _ => ToolState::Running,
+            };
+            if let Some(kind) = kind_from_tool_name(tool_name) {
+                child.display = Some(json!({ "kind": kind }));
+            }
+            AgentStep::from_tool_call(&child)
+        } else {
+            AgentStep {
+                id: step.id,
+                kind: step.kind.into(),
+                text: step.text,
+                ..AgentStep::default()
+            }
+        });
+    }
+    Some(())
+}
+
+/// Reopens saved Cursor Agent rows with the work in their child stores
+/// (recoverCursorSubagents). Sessions saved before these reads existed have
+/// only a placeholder. Nothing is written back, so a later reopen reads again.
+pub fn recover_cursor_subagents(provider: &str, session: Option<&str>, rows: &mut [Row]) {
+    if let (Kind::Cursor, Some(session), Some(dir)) =
+        (Kind::from_id(provider), session, cursor_store::cursor_dir())
+    {
+        recover_from(&dir, session, rows);
+    }
+}
+
+fn recover_from(dir: &Path, session: &str, rows: &mut [Row]) {
+    let mut calls: HashMap<String, (usize, ToolCall)> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.role == "tool")
+        .filter_map(|(ix, row)| {
+            let call: ToolCall = serde_json::from_str(&row.text).ok()?;
+            is_agent(&call).then(|| (call.id.clone(), (ix, call)))
+        })
+        .collect();
+    let ids: Vec<String> = calls.keys().cloned().collect();
+    for run in cursor_store::subagent_runs(dir, session, &ids, &HashMap::new()) {
+        let Some((ix, call)) = calls.get_mut(&run.tool_call_id) else {
+            continue;
+        };
+        if apply_run(call, run).is_some() {
+            if let Ok(text) = serde_json::to_string(call) {
+                rows[*ix].text = text;
+            }
+        }
     }
 }
 

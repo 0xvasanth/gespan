@@ -880,6 +880,8 @@ impl Conversation {
         let id = self.summary.id;
         let cwd = self.summary.cwd.clone();
         let pilot = self.settings.pilot.is_some();
+        let provider = self.summary.provider.clone();
+        let provider_id = self.summary.provider_id.clone();
         let work = cx.background_executor().spawn(async move {
             let settings = locked(&store).and_then(|s| s.agent_settings(id));
             let execution_cwd = settings
@@ -900,7 +902,12 @@ impl Conversation {
                         };
                         Ok((history, edits))
                     })
-                    .map(|(history, edits)| {
+                    .map(|(mut history, edits)| {
+                        gespan_core::provider::recover_cursor_subagents(
+                            &provider,
+                            provider_id.as_deref(),
+                            &mut history.rows,
+                        );
                         (
                             crate::transcript::PreparedHistory::new(history.rows, pilot),
                             edits,
