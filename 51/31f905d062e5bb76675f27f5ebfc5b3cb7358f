@@ -1,0 +1,20 @@
+crates/gespan-mcp-config/src/lib.rs
+  s_0700328c6412ff::t_27b071182a4d30 195,197-202,204-205
+  s_0700328c6412ff::t_070fa03baf2c85 215-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5131f905d062e5bb76675f27f5ebfc5b3cb7358f",
+  "prompts": {},
+  "sessions": {
+    "s_0700328c6412ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "938c53c6-4bc4-4dd7-8c3d-e83cd5659202",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
