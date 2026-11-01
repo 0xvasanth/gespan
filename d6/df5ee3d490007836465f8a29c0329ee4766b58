@@ -1,0 +1,33 @@
+crates/mcp-hub/tests/remote.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 18,30-31,33,45,47-51,55,122-126,136,140-149,177,342-355,364-368,370-375,377-387,391-394,417,439-447,452-489
+  s_92be0b300595dd::t_56911af3781bcc 12-13,32,121,127-135,137-139,356-363,369,376,388-390,395-416,418-438,448-451
+  s_92be0b300595dd::t_01520344e43cef 490
+crates/mcp-hub/src/relay.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 164-180,192,284-288
+crates/mcp-hub/src/oauth.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 5-6,64-88,100,107-110,113,141-142,150,157-173,175-176,178-179,181-184,208-244
+crates/mcp-hub/src/endpoint.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 557-563
+crates/mcp-hub/src/lib.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 24
+crates/mcp-hub/src/pool.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 237-254,699
+crates/mcp-hub/src/remote.rs
+  s_92be0b300595dd::t_de05b1ac6cd62d 5,11,15-50,52-53,59-64,67-71,82,89-91,95,97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6df5ee3d490007836465f8a29c0329ee4766b58",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
