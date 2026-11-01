@@ -253,7 +253,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 
 ## Build from source
 
-You'll need **Node.js 20+**, **[Bun](https://bun.sh)** and a stable
+You'll need **Node.js 22+**, **[Bun](https://bun.sh)** and a stable
 **Rust** toolchain. See [build setup](docs/building.md) for platform
 dependencies and packaging.
 

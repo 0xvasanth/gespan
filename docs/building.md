@@ -1,6 +1,6 @@
 # Build from source
 
-Gespan supports macOS, Linux, and Windows. You need Node.js 22+, a current stable Rust toolchain, and, on macOS, Xcode with macOS components. Install and sign in to at least one agent CLI using [provider setup](providers.md).
+Gespan supports macOS, Linux, and Windows. You need Node.js 22+, [Bun](https://bun.sh), a current stable Rust toolchain, and, on macOS, Xcode with macOS components. Install and sign in to at least one agent CLI using [provider setup](providers.md).
 
 ## Platform prerequisites
 
@@ -25,14 +25,15 @@ Native commands do not need JavaScript dependencies installed.
 Type `r` then Enter in the development terminal to rebuild and restart. There is
 no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
 
-`bun run native:dev` runs as **Gespan Native Dev** (`dev.gespan.native.dev`) with
-its database in `~/Library/Application Support/Gespan Development/`, so it never
-touches an installed Gespan you are using at the same time.
+`bun run native:dev` runs as **Gespan Dev** (`dev.gespan.native.dev`) with its own
+database, so it never touches an installed Gespan you are using at the same time.
+On macOS that is `~/Library/Application Support/Gespan Development/`; the
+[native guide](native/README.md#data-and-configuration) has the other platforms.
 
 The build command does not launch the app. On macOS, open the result with:
 
 ```sh
-open "crates/gespan-gpui/target/release/Gespan Native.app"
+open "crates/gespan-gpui/target/release/Gespan.app"
 ```
 
 The release app reads and writes your installed Gespan data.

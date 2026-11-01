@@ -5,7 +5,7 @@
  * idle slider can host them. Each game lives in its own module and plugs into
  * `GRID_GAMES`.
  */
-import type { HarnessId } from "../../sessions/model/session";
+import type { HarnessId } from "./harnesses";
 
 export const ARCADE_MODES = ["low", "mid", "hard"] as const;
 export type ArcadeMode = (typeof ARCADE_MODES)[number];

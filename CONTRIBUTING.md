@@ -6,7 +6,7 @@ Please don’t open PRs that add a new provider right now. The existing harnesse
 
 ## Get it running
 
-You need Node.js 22+, a current stable Rust toolchain, and at least one provider CLI installed and logged in. See [provider setup](docs/providers.md) for installation and login instructions.
+You need Node.js 22+, [Bun](https://bun.sh), a current stable Rust toolchain, and at least one provider CLI installed and logged in. See [provider setup](docs/providers.md) for installation and login instructions.
 
 macOS, Linux, and Windows are supported targets. See [building from source](docs/building.md) for platform prerequisites and packaging commands.
 
