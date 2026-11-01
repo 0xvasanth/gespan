@@ -1,0 +1,39 @@
+.github/workflows/ci.yml
+  s_2083bf29c8591a::t_abeb8c7f6aa62b 55
+Cargo.toml
+  s_2083bf29c8591a::t_053e7b8b1a08f9 4
+host/core/features/settings/model/settings.ts
+  s_2083bf29c8591a::t_70d9c77d886bf3 1264-1266
+host/tsconfig.json
+  s_2083bf29c8591a::t_ac8820639026ba 10
+package.json
+  s_2083bf29c8591a::t_7fc0effecc2e4b 24-25,36
+scripts/cargo-workspaces.test.mjs
+  s_2083bf29c8591a::t_e682f2864dd756 3,5,28,39
+scripts/ci-impact.mjs
+  s_2083bf29c8591a::t_9683c9e16cccf8 25-26
+scripts/ci-impact.test.mjs
+  s_2083bf29c8591a::t_45aea98ea50ad4 12,38,66-67
+scripts/package-native.mjs
+  s_2083bf29c8591a::t_f179c2ba30301d 148,307
+scripts/package-native.test.mjs
+  s_2083bf29c8591a::t_561c4fc86a349a 28,66,167
+tsconfig.json
+  s_2083bf29c8591a::t_5e2900d679a3f0 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4de22fbdbaba5e40a9552c8c86ffdf01c6f0ef1b",
+  "prompts": {},
+  "sessions": {
+    "s_2083bf29c8591a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72867040-b522-4931-ac63-1c31bf08d3b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
