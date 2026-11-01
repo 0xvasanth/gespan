@@ -8,6 +8,7 @@ crates/gespan-redact/fixtures/README.md
   s_2083bf29c8591a::t_8ee0d8aa67cfa4 114
 scripts/desktop-release.test.mjs
   s_2083bf29c8591a::t_8ee0d8aa67cfa4 1,3-4,6-152
+  s_2083bf29c8591a::t_39579855b69360 5,160
 README.md
   s_2083bf29c8591a::t_8ee0d8aa67cfa4 252,263,302-303,308
 host/core/integrations/harness/providers/claude/claudeHeartbeat.ts
