@@ -1,0 +1,30 @@
+crates/gespan-core/Cargo.toml
+  s_e4c62fdc821ce3::t_7caa14c06706ab 60
+crates/gespan-gpui/src/report.rs
+  s_e4c62fdc821ce3::t_e423185be4d6bd 898
+crates/gespan-core/src/diagnostics/bundle.rs
+  s_e4c62fdc821ce3::t_eab4f066d1ae28 343
+  s_e4c62fdc821ce3::t_397df0515d4b11 646-671
+crates/gespan-gpui/Cargo.toml
+  s_e4c62fdc821ce3::t_7caa14c06706ab 76
+crates/gespan-gpui/Cargo.lock
+  s_e4c62fdc821ce3::t_083a7029ec4d69 2655,2736,7525
+src-tauri/Cargo.lock
+  s_e4c62fdc821ce3::t_e3247e40afe0a4 110,1212,1436,2872,3169,3806,4311,4612,4670,5129,5205,5746,5748,5750,5775,5913,6266,6312,6783,6804,7203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e15a9d25c734d297030f71cba1a3b1e5eb8e74ca",
+  "prompts": {},
+  "sessions": {
+    "s_e4c62fdc821ce3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31a299a3-67cb-4c08-befd-f12e6f1a0b6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
