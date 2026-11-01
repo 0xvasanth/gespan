@@ -1,0 +1,30 @@
+crates/gespan-core/src/tool_servers.rs
+  s_92be0b300595dd::t_957904e90afddd 28-29,229-231,233
+docs/native/mcp-hub.md
+  s_92be0b300595dd::t_957904e90afddd 25,30
+  s_92be0b300595dd::t_4e020e2b65c3b3 31
+crates/gespan-core/src/store.rs
+  s_92be0b300595dd::t_ba88a329bfeb36 864-865,867-873,1104,1106-1110,1415-1418,1420-1436
+  s_92be0b300595dd::t_4e05119dd8c39e 1419
+  s_92be0b300595dd::t_171309639384f1 1437
+crates/gespan-core/src/provider/opencode.rs
+  s_92be0b300595dd::t_957904e90afddd 409-411,416,419-420,422-423
+crates/gespan-core/src/provider/lifecycle.rs
+  s_92be0b300595dd::t_957904e90afddd 90,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "95adc165b142f481f975d387cd2313056bb001ec",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
