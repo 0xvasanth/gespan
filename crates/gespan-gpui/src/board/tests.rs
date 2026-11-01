@@ -8241,7 +8241,7 @@ fn agent_toggles_default_on_for_new_boards(cx: &mut TestAppContext) {
     assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
     open_settings(visual, "automation");
     assert!(!shown(visual, "settings-unreadable"));
-    assert_eq!(switches(visual), Some([true, true, true]));
+    assert_eq!(switches(visual), Some([true, true, true, true]));
     for id in [
         "settings-toggle-run-with",
         "settings-toggle-write-back",
@@ -8258,7 +8258,7 @@ fn agent_toggles_default_on_for_new_boards(cx: &mut TestAppContext) {
     assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
     open_settings(visual, "automation");
     assert!(!shown(visual, "settings-unreadable"));
-    assert_eq!(switches(visual), Some([true, true, true]));
+    assert_eq!(switches(visual), Some([true, true, true, true]));
     click(visual, "settings-toggle-ticket-status");
     let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
     assert!(!settings.ticket_status_changes);
@@ -8563,7 +8563,7 @@ fn an_unreadable_settings_row_writes_nothing_and_retry_recovers(cx: &mut TestApp
     assert!(!shown(visual, "settings-unreadable"));
     drawer(&f, visual, |view, _| {
         assert!(view.settings_loaded);
-        assert_eq!(view.agent_switches(), Some([true, false, true]));
+        assert_eq!(view.agent_switches(), Some([true, false, true, true]));
         assert_eq!(view.displayed_rule("completed"), RuleTarget::Stay);
         assert_eq!(view.priority_name(4), "Blocker");
         assert_eq!(view.board_settings.icon.as_deref(), Some("rocket"));

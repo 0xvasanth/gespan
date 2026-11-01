@@ -104,6 +104,7 @@ mod window_blur;
 mod window_state;
 mod windows;
 mod workspace;
+mod worktree_setups;
 mod worktree_switcher;
 
 use gespan_core::{store::Store, transcript::Transcript};
@@ -390,6 +391,9 @@ fn main() {
             "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR.",
         );
     }
+    if let Some(folder) = database.parent() {
+        gespan_core::worktree_scripts::init(folder);
+    }
     // Windows: one instance per database. Close to tray leaves it running with
     // no taskbar entry, so a second launch shows that window and exits.
     #[cfg(windows)]
@@ -564,6 +568,7 @@ fn main() {
         conversation::find::bind(cx);
         popover::bind(cx);
         board::bind(cx);
+        worktree_setups::install(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

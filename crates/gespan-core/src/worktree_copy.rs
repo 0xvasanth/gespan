@@ -12,17 +12,18 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        LazyLock,
+        LazyLock, Mutex,
     },
 };
 
 const INCLUDE_FILE: &str = ".worktreeinclude";
+const MAX_NAMES: usize = 20;
 
 /// Four threads: this runs beside the app, and it mostly waits on the disk.
 static COPY_POOL: LazyLock<Result<rayon::ThreadPool, rayon::ThreadPoolBuildError>> =
     LazyLock::new(|| rayon::ThreadPoolBuilder::new().num_threads(4).build());
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 pub struct Copied {
     pub files: usize,
     pub bytes: u64,
@@ -30,6 +31,8 @@ pub struct Copied {
     pub shared: usize,
     /// Symlinks that lead out of the checkout, and files that vanished.
     pub skipped: usize,
+    /// The first files copied, up to `MAX_NAMES`, sorted.
+    pub names: Vec<String>,
 }
 
 /// Git lists entries with `/`, which a canonical Windows path (`\\?\...`) takes
@@ -48,13 +51,27 @@ struct Tally {
     bytes: AtomicU64,
     shared: AtomicUsize,
     skipped: AtomicUsize,
+    names: Mutex<Vec<String>>,
+}
+
+impl Tally {
+    /// Keeps enough names for the sorted first `MAX_NAMES` to look sensible
+    /// without holding every path of a large copy.
+    fn note(&self, entry: &Path) {
+        if let Ok(mut names) = self.names.lock() {
+            if names.len() < MAX_NAMES * 4 {
+                names.push(entry.to_string_lossy().into_owned());
+            }
+        }
+    }
 }
 
 /// Copies `main`'s listed ignored files into the fresh `worktree`. Does nothing
 /// for a project without `.worktreeinclude`.
 pub fn copy_included(main: &Path, worktree: &Path) -> Result<Copied, String> {
     let include = main.join(INCLUDE_FILE);
-    if !include.is_file() {
+    // The list itself must not come from outside the repository.
+    if !fs::symlink_metadata(&include).is_ok_and(|meta| meta.is_file()) {
         return Ok(Copied::default());
     }
     let mut builder = GitignoreBuilder::new(main);
@@ -100,11 +117,15 @@ pub fn copy_included(main: &Path, worktree: &Path) -> Result<Copied, String> {
         Ok(pool) => pool.install(copy)?,
         Err(_) => copy()?,
     }
+    let mut names = tally.names.into_inner().unwrap_or_default();
+    names.sort();
+    names.truncate(MAX_NAMES);
     Ok(Copied {
         files: tally.files.into_inner(),
         bytes: tally.bytes.into_inner(),
         shared: tally.shared.into_inner(),
         skipped: tally.skipped.into_inner(),
+        names,
     })
 }
 
@@ -129,17 +150,21 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
         return Ok(());
     }
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-        // A tracked symlink in the worktree must not carry the copy elsewhere.
-        if !parent.canonicalize()?.starts_with(&roots.real_worktree) {
+        // A tracked symlink in the worktree must not carry the copy elsewhere,
+        // or even the folders for it.
+        if !lands_inside(parent, &roots.real_worktree) {
             tally.skipped.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
+        fs::create_dir_all(parent)?;
     }
     if metadata.is_symlink() {
         let copied = copy_symlink(&roots.real_main, &source, &dest)?;
         let counter = if copied { &tally.files } else { &tally.skipped };
         counter.fetch_add(1, Ordering::Relaxed);
+        if copied {
+            tally.note(entry);
+        }
         return Ok(());
     }
     let wrote = match reflink_copy::reflink_or_copy(&source, &dest) {
@@ -156,7 +181,15 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
     }
     tally.files.fetch_add(1, Ordering::Relaxed);
     tally.bytes.fetch_add(metadata.len(), Ordering::Relaxed);
+    tally.note(entry);
     Ok(())
+}
+
+/// Whether the nearest part of `path` that exists is under `root`.
+fn lands_inside(path: &Path, root: &Path) -> bool {
+    path.ancestors()
+        .find(|part| fs::symlink_metadata(part).is_ok())
+        .is_some_and(|part| part.canonicalize().is_ok_and(|real| real.starts_with(root)))
 }
 
 /// Clones and byte copies can both write the time of the copy, and files copied
@@ -267,6 +300,42 @@ mod tests {
         write(&main, ".env", "secret");
         assert_eq!(copy_included(&main, &tree).unwrap(), Copied::default());
         assert!(!tree.join(".env").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_worktree_cannot_grow_folders_outside_it() {
+        let (dir, main, tree) = repo("build/\n");
+        write(&main, ".worktreeinclude", "build/\n");
+        write(&main, "build/deep/out", "x");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("build")).unwrap();
+        let copied = copy_included(&main, &tree).unwrap();
+        assert_eq!(copied.skipped, 1);
+        assert!(!outside.join("deep").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn an_include_list_from_outside_the_checkout_is_not_read() {
+        let (dir, main, tree) = repo(".env\n");
+        write(&main, ".env", "secret");
+        let outside = dir.path().join("outside-list");
+        std::fs::write(&outside, ".env\n").unwrap();
+        std::os::unix::fs::symlink(&outside, main.join(".worktreeinclude")).unwrap();
+        assert_eq!(copy_included(&main, &tree).unwrap(), Copied::default());
+        assert!(!tree.join(".env").exists());
+    }
+    #[test]
+    fn copied_files_are_named_in_order_up_to_a_limit() {
+        let (_dir, main, tree) = repo("*.env\n");
+        write(&main, ".worktreeinclude", "*.env\n");
+        for n in 0..MAX_NAMES + 3 {
+            write(&main, &format!("{n:03}.env"), "x");
+        }
+        let copied = copy_included(&main, &tree).unwrap();
+        assert_eq!(copied.files, MAX_NAMES + 3);
+        assert_eq!(copied.names.len(), MAX_NAMES);
+        assert_eq!(copied.names[0], "000.env");
     }
     #[test]
     fn a_file_must_be_listed_and_ignored() {

@@ -253,6 +253,8 @@ pub(crate) struct SettingsView {
     provider_scope: String,
     mcp_filter: String,
     fields: HashMap<&'static str, Entity<Input>>,
+    /// By main checkout, so unsaved text survives picking another project.
+    worktree_scripts: HashMap<String, pages::WorktreeScripts>,
     connections: pages::ConnectionsState,
     skill_preview: Option<std::path::PathBuf>,
     skill_preview_text: Option<Result<std::sync::Arc<skill_document::DocumentData>, String>>,
@@ -391,6 +393,7 @@ impl SettingsView {
             provider_scope: "global".into(),
             mcp_filter: "all".into(),
             fields: HashMap::new(),
+            worktree_scripts: HashMap::new(),
             connections: pages::ConnectionsState::default(),
             skill_preview: None,
             skill_preview_text: None,
