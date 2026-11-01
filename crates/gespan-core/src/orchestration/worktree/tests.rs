@@ -65,6 +65,21 @@ fn setup_sees_the_seeded_files_and_what_it_writes_is_not_the_workers_delta() {
 }
 
 #[test]
+fn a_task_can_try_again_after_its_setup_fails() {
+    let repo = repo();
+    let scripts = |setup: &str| crate::worktree_scripts::Scripts {
+        setup: setup.into(),
+        teardown: String::new(),
+    };
+    crate::worktree_scripts::save_scripts(&repo.root, &scripts("exit 2")).unwrap();
+    assert!(prepare(&repo.root, "again").is_err());
+    assert_eq!(crate::git::worktrees(&repo.root).unwrap().len(), 1);
+    crate::worktree_scripts::save_scripts(&repo.root, &scripts("echo ok")).unwrap();
+    let workspace = prepare(&repo.root, "again").unwrap().unwrap();
+    remove(&repo.root, &workspace, "again").unwrap();
+}
+
+#[test]
 fn integrate_applies_edits_additions_and_deletions_to_the_lead() {
     let repo = repo();
     let workspace = prepare(&repo.root, "t1").unwrap().unwrap();

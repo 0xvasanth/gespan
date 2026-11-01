@@ -125,15 +125,26 @@ struct Store {
     data: Data,
 }
 impl Store {
-    fn load(&mut self) {
-        let Some(path) = &self.path else { return };
-        self.data = match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not read a project's worktree scripts");
-                Data::default()
-            }),
-            Err(_) => Data::default(),
+    /// Reads the file. A file that can't be read leaves the store empty and
+    /// reports it, so nothing saves over what might still be in it.
+    fn load(&mut self) -> Result<(), String> {
+        let Some(path) = &self.path else {
+            return Ok(());
         };
+        self.data = Data::default();
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Could not read the scripts: {error}")),
+        };
+        self.data = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Could not read the scripts: {error}"))?;
+        Ok(())
+    }
+    fn read(&mut self) {
+        if let Err(error) = self.load() {
+            tracing::warn!(%error, "could not read a project's worktree scripts");
+        }
     }
     fn save(&self) -> Result<(), String> {
         let Some(path) = &self.path else {
@@ -194,7 +205,7 @@ pub fn scripts(main: &Path) -> Scripts {
     let Ok(mut store) = STORE.lock() else {
         return Scripts::default();
     };
-    store.load();
+    store.read();
     store
         .data
         .projects
@@ -205,7 +216,7 @@ pub fn scripts(main: &Path) -> Scripts {
 
 pub fn save_scripts(main: &Path, scripts: &Scripts) -> Result<(), String> {
     let mut store = STORE.lock().map_err(|_| "The scripts are unavailable")?;
-    store.load();
+    store.load()?;
     let key = key(main);
     if scripts.setup.trim().is_empty() && scripts.teardown.trim().is_empty() {
         store.data.projects.remove(&key);
@@ -218,15 +229,29 @@ pub fn save_scripts(main: &Path, scripts: &Scripts) -> Result<(), String> {
 /// What the last Setup did for the worktree at `path`, if it did anything.
 pub fn record(path: &Path) -> Option<Record> {
     let mut store = STORE.lock().ok()?;
-    store.load();
+    store.read();
     store.data.worktrees.get(&key(path)).cloned()
+}
+
+/// [`record`] for each of `paths`, reading the file once.
+pub fn records(paths: &[&Path]) -> Vec<Option<Record>> {
+    let Ok(mut store) = STORE.lock() else {
+        return vec![None; paths.len()];
+    };
+    store.read();
+    paths
+        .iter()
+        .map(|path| store.data.worktrees.get(&key(path)).cloned())
+        .collect()
 }
 
 fn remember(path: &Path, record: Record) {
     let Ok(mut store) = STORE.lock() else { return };
-    store.load();
-    store.data.worktrees.insert(key(path), record);
-    if let Err(error) = store.save() {
+    let saved = store.load().and_then(|()| {
+        store.data.worktrees.insert(key(path), record);
+        store.save()
+    });
+    if let Err(error) = saved {
         tracing::warn!(%error, "could not record a worktree's setup");
     }
 }
@@ -235,11 +260,15 @@ fn remember(path: &Path, record: Record) {
 /// before the folder goes, in [`tear_down`], so a link in it still resolves.
 fn forget(key: &str) {
     let Ok(mut store) = STORE.lock() else { return };
-    store.load();
-    if store.data.worktrees.remove(key).is_some() {
-        if let Err(error) = store.save() {
-            tracing::warn!(%error, "could not clear a worktree's setup record");
+    let cleared = store.load().and_then(|()| {
+        if store.data.worktrees.remove(key).is_some() {
+            store.save()
+        } else {
+            Ok(())
         }
+    });
+    if let Err(error) = cleared {
+        tracing::warn!(%error, "could not clear a worktree's setup record");
     }
 }
 
@@ -443,18 +472,22 @@ pub(crate) fn set_up(
 }
 
 /// Runs the project's Teardown in a worktree about to go. On `Err` it stays.
-/// Call [`removed`] with the result once it's gone.
+/// Keep the [`Removal`] until it's gone.
 pub(crate) fn tear_down(
     main: &Path,
     worktree: &Path,
     branch: Option<&str>,
 ) -> Result<Removal, String> {
-    let removal = Removal { key: key(worktree) };
+    let key = key(worktree);
     let script = scripts(main).teardown;
     let script = script.trim();
     let remote = crate::files::remote::is_remote(worktree);
     if script.is_empty() || (!remote && !worktree.is_dir()) {
-        return Ok(removal);
+        return Ok(Removal {
+            key,
+            ran: false,
+            _turn: turn(main),
+        });
     }
     let run = runner(main, worktree, branch);
     let step = step(
@@ -471,7 +504,11 @@ pub(crate) fn tear_down(
     let outcome = step.run(held, main);
     finish(&step, outcome.clone());
     match outcome {
-        Outcome::Passed | Outcome::Overridden(_) => Ok(removal),
+        Outcome::Passed | Outcome::Overridden(_) => Ok(Removal {
+            key,
+            ran: true,
+            _turn: turn(main),
+        }),
         Outcome::Failed(reason) => Err(format!(
             "The Teardown script failed, so the worktree was kept. {reason}"
         )),
@@ -479,9 +516,13 @@ pub(crate) fn tear_down(
     }
 }
 
-/// A worktree cleared for removal; [`Removal::done`] drops its record.
+/// A worktree cleared for removal, holding the repository's turn until it's
+/// gone. [`Removal::done`] drops its record.
 pub(crate) struct Removal {
     key: String,
+    /// A Teardown script ran, so it may have changed files that were clean.
+    pub(crate) ran: bool,
+    _turn: Turn,
 }
 impl Removal {
     pub(crate) fn done(self) {

@@ -299,10 +299,11 @@ describe("remote host API", () => {
         lines: ["set up"],
       });
     });
+    // No script to run.
     expect(
       (await s.call("worktree.jobStart", {
         projectId: s.project.id,
-        cwd: s.project.cwd,
+        cwd: tree.path,
         kind: "script",
       })).value.error,
     ).toBeTruthy();

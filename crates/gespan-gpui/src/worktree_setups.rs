@@ -54,7 +54,7 @@ impl Host for Bridge {
         if let Ok(mut answers) = self.answers.lock() {
             answers.insert(id, answer);
         }
-        // Nobody left to answer means the app is going away.
+        // An answer that was dropped can't be waited for.
         answered.recv().unwrap_or(Decision::Cancel)
     }
 }

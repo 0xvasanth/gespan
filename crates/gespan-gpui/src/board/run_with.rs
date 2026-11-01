@@ -161,8 +161,13 @@ pub(crate) fn prepare_run_with(
     let project = Path::new(&request.project);
     let worktree = if settings.new_worktree && settings.worktree_cwd.is_none() {
         let card = service.card(&request.card_id)?;
-        if gespan_core::git::worktrees(project).is_err() {
-            return Err(NOT_A_REPOSITORY.into());
+        if let Err(error) = gespan_core::git::worktrees(project) {
+            let missing = error.to_lowercase().contains("not a git repository");
+            return Err(if missing {
+                NOT_A_REPOSITORY.into()
+            } else {
+                error
+            });
         }
         let tree = gespan_core::git::create_card_worktree(project, card.number, &card.title)?;
         settings.worktree_cwd = Some(tree.path.clone());
@@ -179,7 +184,13 @@ pub(crate) fn prepare_run_with(
             tracing::warn!(%undo, "removing the unlinked run worktree failed");
         }
     };
-    let mut store = locked(store)?;
+    let mut store = match locked(store) {
+        Ok(store) => store,
+        Err(error) => {
+            undo_worktree();
+            return Err(error);
+        }
+    };
     let mut summary = match store.create(&request.provider, &request.project) {
         Ok(summary) => summary,
         Err(error) => {
@@ -198,10 +209,16 @@ pub(crate) fn prepare_run_with(
         store.save_agent_settings(id, &settings)?;
         let key = store.persisted_session_id(id)?;
         link(&mut service, &request.card_id, &key)?;
-        match &worktree {
-            Some(path) => service.add_link(&request.card_id, "worktree", path, None),
-            None => Ok(()),
-        }
+        let Some(path) = &worktree else {
+            return Ok(());
+        };
+        service
+            .add_link(&request.card_id, "worktree", path, None)
+            .inspect_err(|_| {
+                if let Err(undo) = service.remove_link(&request.card_id, "session", &key) {
+                    tracing::warn!(%undo, "removing the run's session link failed");
+                }
+            })
     })();
     if let Err(error) = made {
         if let Err(undo) = store.delete(id) {

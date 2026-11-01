@@ -762,6 +762,26 @@ fn the_picker_starts_on_the_boards_default_and_remembers_the_last_choice(cx: &mu
 }
 
 #[gpui::test]
+fn the_board_switch_changes_the_default_and_clears_the_remembered_choice(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let board = detail(&f, cx).board.id.clone();
+    let remembered = gespan_core::board::extras::SettingsPatch {
+        run_worktree_choice: Some(Some(true)),
+        ..Default::default()
+    };
+    let mut service = Service::open(&f.db).unwrap();
+    service.update_settings(&board, &remembered).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "automation");
+    click(visual, "settings-toggle-run-in-worktree");
+    let settings = service.settings(&board).unwrap();
+    assert!(!settings.run_in_worktree);
+    assert_eq!(settings.run_worktree_choice, None);
+    assert!(!settings.starts_in_worktree());
+}
+
+#[gpui::test]
 fn an_existing_board_stays_in_place_until_switched_on(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Card"]);
     run_options(&f, cx, "/work/app");

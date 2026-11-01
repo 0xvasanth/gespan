@@ -371,12 +371,75 @@ fn scripts_survive_in_gespans_data_and_a_bad_file_reads_as_empty() {
         path: Some(path.clone()),
         data: Data::default(),
     };
-    read.load();
+    read.load().unwrap();
     assert_eq!(read.data.projects["project"].setup, "bun install");
     assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 1);
     std::fs::write(&path, "not json").unwrap();
-    read.load();
+    assert!(read.load().is_err());
     assert!(read.data.projects.is_empty());
+}
+
+#[test]
+fn a_file_that_cannot_be_read_is_not_saved_over() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join(FILE);
+    std::fs::write(&path, "{\"projects\": truncated").unwrap();
+    let mut store = Store {
+        path: Some(path.clone()),
+        data: Data::default(),
+    };
+    let saved = store.load().and_then(|()| store.save());
+    assert!(saved.is_err());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{\"projects\": truncated"
+    );
+}
+
+#[test]
+fn a_removal_holds_the_repositorys_turn_until_it_is_finished() {
+    let dir = repo();
+    let tree = create_named_worktree(dir.path(), "turned").unwrap();
+    for teardown in ["", "echo bye"] {
+        set_scripts(dir.path(), "", teardown);
+        let removal = tear_down(dir.path(), Path::new(&tree.path), None).unwrap();
+        assert_eq!(removal.ran, !teardown.is_empty());
+        let main = dir.path().to_path_buf();
+        let (sender, waiting) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            drop(turn(&main));
+            sender.send(()).unwrap();
+        });
+        assert!(waiting.recv_timeout(Duration::from_millis(150)).is_err());
+        drop(removal);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        waiter.join().unwrap();
+    }
+    let _ = std::fs::remove_dir_all(leftovers(dir.path()));
+}
+
+#[test]
+fn teardown_that_changes_files_does_not_keep_the_worktree() {
+    let dir = repo();
+    Script::install(dir.path(), &[]);
+    let tree = create_named_worktree(dir.path(), "changed").unwrap();
+    let path = PathBuf::from(&tree.path);
+    set_scripts(dir.path(), "", "echo changed> file");
+    worktree_management::remove_unused(dir.path(), &path).unwrap();
+    assert!(!path.exists());
+    let _ = std::fs::remove_dir(leftovers(dir.path()));
+}
+
+#[test]
+fn records_are_read_together_in_order() {
+    let dir = repo();
+    set_scripts(dir.path(), "echo up", "");
+    let one = create_named_worktree(dir.path(), "one").unwrap();
+    let missing = dir.path().join("missing");
+    let read = records(&[Path::new(&one.path), &missing]);
+    assert!(read[0].is_some());
+    assert!(read[1].is_none());
+    let _ = std::fs::remove_dir_all(leftovers(dir.path()));
 }
 
 #[test]

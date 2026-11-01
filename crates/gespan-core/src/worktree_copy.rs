@@ -150,12 +150,13 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
         return Ok(());
     }
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-        // A tracked symlink in the worktree must not carry the copy elsewhere.
-        if !parent.canonicalize()?.starts_with(&roots.real_worktree) {
+        // A tracked symlink in the worktree must not carry the copy elsewhere,
+        // or even the folders for it.
+        if !lands_inside(parent, &roots.real_worktree) {
             tally.skipped.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
+        fs::create_dir_all(parent)?;
     }
     if metadata.is_symlink() {
         let copied = copy_symlink(&roots.real_main, &source, &dest)?;
@@ -182,6 +183,13 @@ fn copy_entry(roots: &Roots, entry: &Path, tally: &Tally) -> io::Result<()> {
     tally.bytes.fetch_add(metadata.len(), Ordering::Relaxed);
     tally.note(entry);
     Ok(())
+}
+
+/// Whether the nearest part of `path` that exists is under `root`.
+fn lands_inside(path: &Path, root: &Path) -> bool {
+    path.ancestors()
+        .find(|part| fs::symlink_metadata(part).is_ok())
+        .is_some_and(|part| part.canonicalize().is_ok_and(|real| real.starts_with(root)))
 }
 
 /// Clones and byte copies can both write the time of the copy, and files copied
@@ -292,6 +300,19 @@ mod tests {
         write(&main, ".env", "secret");
         assert_eq!(copy_included(&main, &tree).unwrap(), Copied::default());
         assert!(!tree.join(".env").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_worktree_cannot_grow_folders_outside_it() {
+        let (dir, main, tree) = repo("build/\n");
+        write(&main, ".worktreeinclude", "build/\n");
+        write(&main, "build/deep/out", "x");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("build")).unwrap();
+        let copied = copy_included(&main, &tree).unwrap();
+        assert_eq!(copied.skipped, 1);
+        assert!(!outside.join("deep").exists());
     }
     #[cfg(unix)]
     #[test]

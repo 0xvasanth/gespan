@@ -11,15 +11,14 @@ use gespan_core::worktree_scripts::{self, Outcome, Record, Scripts};
 use gpui::{AnyElement, Context, Entity, SharedString, div, prelude::*, px};
 
 const SCRIPTS_NOTE: &str = if cfg!(windows) {
-    "Setup runs in each new worktree before anything starts there, and Teardown before a worktree is removed. They run with cmd, and are kept in Gespan, never in the repository. %GESPAN_PROJECT_ROOT%, %GESPAN_WORKTREE_PATH% and %GESPAN_BRANCH% are set."
+    "Setup runs in each new worktree before anything starts there, and Teardown before a worktree is removed. They run with cmd, and are kept in Gespan, never in the repository. %GESPAN_PROJECT_ROOT%, %GESPAN_WORKTREE_PATH% and %GESPAN_BRANCH% are set; put the paths in quotes."
 } else {
     "Setup runs in each new worktree before anything starts there, and Teardown before a worktree is removed. They run with sh and stop at the first failing line, and are kept in Gespan, never in the repository. $GESPAN_PROJECT_ROOT, $GESPAN_WORKTREE_PATH and $GESPAN_BRANCH are set."
 };
 
 /// The Setup and Teardown fields of one project.
 pub(in crate::settings) struct WorktreeScripts {
-    main: String,
-    setup: Entity<Input>,
+    pub(in crate::settings) setup: Entity<Input>,
     teardown: Entity<Input>,
     saved: Scripts,
     error: Option<String>,
@@ -46,12 +45,8 @@ fn setup_line(record: &Record) -> Option<String> {
 
 impl SettingsView {
     /// The fields for `main`, read again when the project changes.
-    fn scripts_for(&mut self, main: &str, cx: &mut Context<Self>) {
-        if self
-            .worktree_scripts
-            .as_ref()
-            .is_some_and(|s| s.main == main)
-        {
+    pub(in crate::settings) fn scripts_for(&mut self, main: &str, cx: &mut Context<Self>) {
+        if self.worktree_scripts.contains_key(main) {
             return;
         }
         let saved = worktree_scripts::scripts(std::path::Path::new(main));
@@ -73,24 +68,30 @@ impl SettingsView {
             &saved.teardown,
             cx,
         );
-        self.worktree_scripts = Some(WorktreeScripts {
-            main: main.to_owned(),
-            setup,
-            teardown,
-            saved,
-            error: None,
-        });
+        self.worktree_scripts.insert(
+            main.to_owned(),
+            WorktreeScripts {
+                setup,
+                teardown,
+                saved,
+                error: None,
+            },
+        );
     }
 
-    fn save_worktree_scripts(&mut self, cx: &mut Context<Self>) {
-        let Some(fields) = &mut self.worktree_scripts else {
+    pub(in crate::settings) fn save_worktree_scripts(
+        &mut self,
+        main: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(fields) = self.worktree_scripts.get_mut(main) else {
             return;
         };
         let scripts = Scripts {
             setup: fields.setup.read(cx).content.to_string(),
             teardown: fields.teardown.read(cx).content.to_string(),
         };
-        match worktree_scripts::save_scripts(std::path::Path::new(&fields.main), &scripts) {
+        match worktree_scripts::save_scripts(std::path::Path::new(main), &scripts) {
             Ok(()) => {
                 fields.saved = scripts;
                 fields.error = None;
@@ -215,7 +216,7 @@ impl SettingsView {
             return None;
         }
         self.scripts_for(&main, cx);
-        let fields = self.worktree_scripts.as_ref()?;
+        let fields = self.worktree_scripts.get(&main)?;
         let changed = fields.setup.read(cx).content.as_str() != fields.saved.setup
             || fields.teardown.read(cx).content.as_str() != fields.saved.teardown;
         let field = |label: &'static str, input: &Entity<Input>| {
@@ -268,7 +269,7 @@ impl SettingsView {
                             .child("Save scripts")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if changed {
-                                    this.save_worktree_scripts(cx);
+                                    this.save_worktree_scripts(&main, cx);
                                 }
                             })),
                     ),

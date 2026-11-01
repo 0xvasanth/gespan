@@ -576,7 +576,7 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
         let turn = crate::worktree_scripts::turn(&main);
         let branch = native_session_branch(session, stamp);
         let tree = remote::create_worktree(cwd, &branch, Some(base), false)?;
-        return remote::set_up(turn, cwd, &main, tree).map(|tree| PathBuf::from(tree.path));
+        return remote::set_up(turn, &main, tree).map(|tree| PathBuf::from(tree.path));
     }
     let trees = worktrees(cwd)?;
     let main = trees.first().ok_or("No working copies found")?;
@@ -657,10 +657,22 @@ pub fn card_branch(number: i64, title: &str) -> String {
 /// A worktree named after a board card, from `cwd`'s HEAD. A card that ran
 /// before gets `-2`, `-3`…, so an earlier run's work is left where it is.
 pub fn create_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Worktree, String> {
+    let _span = tracing::info_span!("worktree_create", existing = false).entered();
+    metrics::track("worktree.create", add_card_worktree(cwd, number, title))
+        .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+}
+/// The name is chosen inside the repository's turn, so two runs of one card
+/// can't pick the same one.
+fn add_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Worktree, String> {
     let wanted = card_branch(number, title);
-    let trees = worktrees(cwd)?;
-    let main = trees.first().ok_or("No working copies found")?;
-    let parent = crate::worktree_management::default_root(Path::new(&main.path));
+    let main = worktrees(cwd)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?
+        .path;
+    let main = Path::new(&main);
+    let turn = crate::worktree_scripts::turn(main);
+    let parent = crate::worktree_management::default_root(main);
     let taken = |name: &str| {
         let reference = format!("refs/heads/{name}");
         git(cwd, &["show-ref", "--verify", "--quiet", &reference]).is_ok()
@@ -670,7 +682,8 @@ pub fn create_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Work
         .chain((2..=99).map(|n| format!("{wanted}-{n}")))
         .find(|name| !taken(name))
         .ok_or_else(|| format!("{wanted} and its numbered variants are taken"))?;
-    create_project_worktree(cwd, &name, None, false)
+    valid_branch(cwd, &name)?;
+    add_branch_worktree(turn, cwd, main, &name, None, false, |_| Ok(()))
 }
 
 /// SidebarWorktreeSwitcher: create a named copy from the selected checkout's
@@ -727,7 +740,7 @@ fn create_branch_worktree(
         let turn = crate::worktree_scripts::turn(&main);
         let tree = remote::create_worktree(cwd, branch.trim(), base, existing)?;
         seed(&tree)?;
-        return remote::set_up(turn, cwd, &main, tree);
+        return remote::set_up(turn, &main, tree);
     }
     let branch = branch.trim();
     valid_branch(cwd, branch)?;
@@ -738,6 +751,17 @@ fn create_branch_worktree(
         .path;
     let main = Path::new(&main);
     let turn = crate::worktree_scripts::turn(main);
+    add_branch_worktree(turn, cwd, main, branch, base, existing, seed)
+}
+fn add_branch_worktree(
+    turn: crate::worktree_scripts::Turn,
+    cwd: &Path,
+    main: &Path,
+    branch: &str,
+    base: Option<&str>,
+    existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
+) -> Result<Worktree, String> {
     if worktrees(cwd)?
         .iter()
         .any(|tree| tree.branch.as_deref() == Some(branch))
@@ -870,6 +894,26 @@ mod tests {
         .unwrap();
         let fourth = create_card_worktree(&cwd, 4, "").unwrap();
         assert_eq!(fourth.branch.as_deref(), Some("gespan/card-4-2"));
+    }
+
+    #[test]
+    fn two_runs_of_one_card_at_once_both_get_a_worktree() {
+        let (_dir, cwd) = repo();
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let cwd = cwd.clone();
+                std::thread::spawn(move || create_card_worktree(&cwd, 8, "Same card"))
+            })
+            .collect();
+        let mut branches: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap().unwrap().branch.unwrap())
+            .collect();
+        branches.sort();
+        assert_eq!(
+            branches,
+            ["gespan/card-8-same-card", "gespan/card-8-same-card-2"]
+        );
     }
 
     #[test]

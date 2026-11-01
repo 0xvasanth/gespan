@@ -69,16 +69,39 @@ it("copies only files that are listed and ignored", async () => {
   expect(() => lstatSync(join(worktree, "untracked.txt"))).toThrow();
 });
 
-it("does nothing without an include file, or with a linked one", async () => {
+it("does nothing without an include file", async () => {
   const { main, worktree } = repository();
   writeFileSync(join(main, "x.env"), "x");
   expect((await copyIncluded(main, worktree)).files).toBe(0);
-  const outside = join(worktree, "..", "list");
-  writeFileSync(outside, "*.env\n");
-  if (process.platform === "win32") return;
-  symlinkSync(outside, join(main, ".worktreeinclude"));
-  expect((await copyIncluded(main, worktree)).files).toBe(0);
 });
+
+it.skipIf(process.platform === "win32")(
+  "does not read an include file linked from elsewhere",
+  async () => {
+    const { main, worktree } = repository();
+    writeFileSync(join(main, "x.env"), "x");
+    const outside = join(worktree, "..", "list");
+    writeFileSync(outside, "*.env\n");
+    symlinkSync(outside, join(main, ".worktreeinclude"));
+    expect((await copyIncluded(main, worktree)).files).toBe(0);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "doesn't grow folders through a link in the worktree",
+  async () => {
+    const { main, worktree } = repository();
+    writeFileSync(join(main, ".worktreeinclude"), "build/\n");
+    mkdirSync(join(main, "build", "deep"), { recursive: true });
+    writeFileSync(join(main, "build", "deep", "out"), "x");
+    const outside = join(worktree, "..", "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(worktree, "build"));
+    const copied = await copyIncluded(main, worktree);
+    expect(copied.skipped).toBe(1);
+    expect(() => lstatSync(join(outside, "deep"))).toThrow();
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "never follows a link out of the checkout",
@@ -155,6 +178,18 @@ it.skipIf(process.platform === "win32")(
     expect(result.lines).toEqual(["started"]);
   },
 );
+
+it("keeps the last lines of a script that writes a lot", async () => {
+  const { main, worktree } = repository();
+  const jobs = new WorktreeJobs();
+  const script =
+    process.platform === "win32"
+      ? "@for /L %%i in (1,1,300) do @echo line %%i"
+      : "i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo line $i; done";
+  const id = await jobs.startScript({ script, root: main, worktree, branch: "" });
+  const result = await finished(jobs, id);
+  expect(result.lines.at(-1)).toBe("line 300");
+});
 
 it("refuses to answer for a job it doesn't know", () => {
   expect(() => new WorktreeJobs().poll("missing", 0)).toThrow("no longer");

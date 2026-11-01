@@ -211,10 +211,10 @@ Shared by both apps:
 - Templates: Blank, Agent pipeline, Bug triage and Release checklist, plus "Save as template". Built-ins can't be deleted.
 - Auto-move rules per event (started, needs input, completed, failed, PR opened, PR merged). Each is default, stay or a chosen column.
 - Link status chips on cards (session, Pilot, PR, worktree). They refresh when the board opens and when a linked turn settles, never on a timer.
-- Blocked cards show a lock, and "Run with…" asks first. "Run with…" starts a session with the store-built prompt, links it to the card and inherits the card's ticket. It lists installed agents, with the rest shown as not installed, and on new boards runs in a new worktree named after the card and linked to it.
+- Blocked cards show a lock, and "Run with…" asks first. "Run with…" starts a session with the store-built prompt, links it to the card and inherits the card's ticket.
 - Agent fields (provider, model, cost, run time) on cards and in the table; cost stays empty.
 - Agent write-back posts a comment marked Agent when a linked turn finishes (a plan turn posts its plan), and agent card tools manage subtasks.
-- Automation toggles in settings: "Run with…", run in a new worktree by default, write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
+- Automation toggles in settings: "Run with…", write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
 - If settings can't be read, the board still loads, the sections show "Couldn't load settings" with Retry, and nothing is saved.
 
 Known differences:
@@ -228,6 +228,7 @@ Known differences:
 | "Running" filter and chip | Counts sessions waiting for input; the chip says waiting | Same |
 | Cost | No data source; stays empty | Same |
 | "Run with…" | Refuses remote projects ("Run with… works with local projects for now") | Local projects only |
+| "Run with…" agents and worktree | Lists agents that aren't installed apart. New boards default to a new worktree, named after the card and linked to it, with a board setting | Lists every agent, and the worktree starts unticked |
 | Agent write-back and turn tracking | Local sessions only; remote turns have no ticket bridge or turn tracking | Local sessions only |
 | Ticket chips on remote sessions | Don't show the ticket's title and status | Same |
 | Quick edits on the card face | Not undoable (moves, sorts, archives and deletes are) | Same |

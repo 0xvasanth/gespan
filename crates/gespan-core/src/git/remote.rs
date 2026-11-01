@@ -16,8 +16,8 @@ use std::{
 
 const JOBS: &str = "worktree.jobs";
 const POLL_EVERY: Duration = Duration::from_millis(300);
-/// Polls in a row that can fail before the host counts as gone: about a minute
-/// at the request's own 30-second timeout, seconds when it refuses outright.
+/// Polls in a row that can fail before the host counts as gone: about two
+/// minutes at the request's own 30-second timeout, seconds when it refuses.
 const MISSED_POLLS: u32 = 4;
 const OLD_HOST: &str =
     "This host can’t run worktree scripts yet. Update it in Settings → Connections.";
@@ -89,13 +89,23 @@ fn follow(
 ) -> Result<Option<Polled>, String> {
     let (mut after, mut missed, mut told) = (0, 0, false);
     loop {
+        // A cancel that doesn't arrive is tried again, or the script runs on.
         if cancelled.load(Ordering::SeqCst) && !told {
-            told = true;
-            request("worktree.jobCancel", json!({"jobId":id}))?;
+            match request("worktree.jobCancel", json!({"jobId":id})) {
+                Ok(_) => told = true,
+                Err(error) => {
+                    missed += 1;
+                    if missed >= MISSED_POLLS {
+                        return Err(format!("Lost touch with the host: {error}"));
+                    }
+                }
+            }
         }
         let polled = match request("worktree.jobPoll", json!({"jobId":id,"after":after})) {
             Ok(value) => {
-                missed = 0;
+                if told || !cancelled.load(Ordering::SeqCst) {
+                    missed = 0;
+                }
                 decode::<Polled>(value)?
             }
             Err(error) => {
@@ -132,38 +142,33 @@ impl Context {
         }
         Ok(decode::<Started>(self.request("worktree.jobStart", params)?)?.job_id)
     }
-    fn has_jobs(&self) -> bool {
+    fn has_jobs(&self) -> Result<bool, String> {
         self.connections
             .request(&self.machine, "environment.describe", json!({}))
-            .is_ok_and(|host| {
-                host["capabilities"]
-                    .as_array()
-                    .is_some_and(|names| names.iter().any(|name| name == JOBS))
-            })
+            .map(|host| offers_jobs(&host))
     }
-    /// The host's copy of a project's `.worktreeinclude` files. Like a local
-    /// copy, a problem here never fails the worktree.
-    fn copy_included(&self, host_path: &str) -> Copied {
-        let copied = self
-            .start_job(json!({"kind":"copy","cwd":host_path}))
-            .and_then(|id| {
-                let request = |method: &str, params| self.request(method, params);
-                follow(
-                    &request,
-                    &id,
-                    &mut |_| {},
-                    &AtomicBool::new(false),
-                    POLL_EVERY,
-                )
-            });
-        match copied {
-            Ok(polled) => polled.and_then(|polled| polled.copied).unwrap_or_default(),
-            Err(error) => {
-                tracing::warn!(%error, "could not copy a project's included files on its host");
-                Copied::default()
-            }
+    /// The host's copy of a project's `.worktreeinclude` files into this
+    /// context's worktree. An older host has no way to.
+    fn copy_included(&self) -> Result<Copied, String> {
+        if !self.has_jobs()? {
+            return Ok(Copied::default());
         }
+        let id = self.start_job(json!({"kind":"copy"}))?;
+        let request = |method: &str, params| self.request(method, params);
+        let polled = follow(
+            &request,
+            &id,
+            &mut |_| {},
+            &AtomicBool::new(false),
+            POLL_EVERY,
+        )?;
+        Ok(polled.and_then(|polled| polled.copied).unwrap_or_default())
     }
+}
+fn offers_jobs(host: &Value) -> bool {
+    host["capabilities"]
+        .as_array()
+        .is_some_and(|names| names.iter().any(|name| name == JOBS))
 }
 /// Where the project's scripts run for a remote worktree.
 pub(crate) fn script_runner<'a>(
@@ -172,7 +177,7 @@ pub(crate) fn script_runner<'a>(
 ) -> Box<worktree_scripts::Runner<'a>> {
     Box::new(move |script, line, cancelled| {
         let context = context(worktree)?;
-        if !context.has_jobs() {
+        if !context.has_jobs()? {
             return Err(OLD_HOST.into());
         }
         let id = context.start_job(json!({
@@ -194,29 +199,21 @@ pub(super) fn main_checkout(cwd: &Path) -> Result<String, String> {
         .map(|tree| tree.path)
         .ok_or_else(|| "No working copies found".into())
 }
-/// A worktree the host just made: its included files, then Setup.
+/// A worktree the host just made: its included files, then Setup. Like a local
+/// copy, a problem copying never fails the worktree.
 pub(super) fn set_up(
     turn: worktree_scripts::Turn,
-    cwd: &Path,
     main: &Path,
     tree: Worktree,
 ) -> Result<Worktree, String> {
-    let context = context(cwd)?;
-    let host_path = parse_remote_path(&tree.path)
-        .ok_or("Invalid remote working copy")?
-        .host_path;
-    let copied = if context.has_jobs() {
-        context.copy_included(&host_path)
-    } else {
-        Copied::default()
-    };
-    worktree_scripts::set_up(
-        turn,
-        main,
-        Path::new(&tree.path),
-        tree.branch.as_deref(),
-        copied,
-    )?;
+    let worktree = Path::new(&tree.path);
+    let copied = context(worktree)
+        .and_then(|context| context.copy_included())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "could not copy a project's included files on its host");
+            Copied::default()
+        });
+    worktree_scripts::set_up(turn, main, worktree, tree.branch.as_deref(), copied)?;
     Ok(tree)
 }
 pub(crate) fn remove_worktree(cwd: &Path, path: &str) -> Result<(), String> {
@@ -424,6 +421,41 @@ mod tests {
         .err()
         .unwrap();
         assert!(error.contains("gone"), "{error}");
+    }
+
+    #[test]
+    fn a_cancel_that_fails_is_sent_again() {
+        let answers = Mutex::new(vec![true, false]);
+        let cancels = Mutex::new(0);
+        let request = |method: &str, _: Value| -> Result<Value, String> {
+            if method == "worktree.jobCancel" {
+                *cancels.lock().unwrap() += 1;
+                return if answers.lock().unwrap().pop() == Some(false) {
+                    Err("blip".into())
+                } else {
+                    Ok(json!({}))
+                };
+            }
+            let told = *cancels.lock().unwrap() >= 2;
+            Ok(polled(&[], 0, told, None))
+        };
+        let done = follow(
+            &request,
+            "job",
+            &mut |_| {},
+            &AtomicBool::new(true),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(done.is_none());
+        assert_eq!(*cancels.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn only_a_host_that_lists_jobs_is_asked_to_run_them() {
+        assert!(offers_jobs(&json!({"capabilities":["git.worktrees",JOBS]})));
+        assert!(!offers_jobs(&json!({"capabilities":["git.worktrees"]})));
+        assert!(!offers_jobs(&json!({})));
     }
 
     #[test]

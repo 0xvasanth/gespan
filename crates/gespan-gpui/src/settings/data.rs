@@ -96,16 +96,18 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                         gespan_core::worktree_management::default_root(Path::new(&main.path));
                 }
                 data.worktrees.branches = s.branches;
-                data.worktrees.trees = s
-                    .worktrees
-                    .into_iter()
-                    .filter(|t| !t.main)
-                    .map(|tree| {
+                let trees: Vec<_> = s.worktrees.into_iter().filter(|t| !t.main).collect();
+                let paths: Vec<_> = trees.iter().map(|tree| Path::new(&tree.path)).collect();
+                let setups = gespan_core::worktree_scripts::records(&paths);
+                data.worktrees.trees = trees
+                    .iter()
+                    .cloned()
+                    .zip(setups)
+                    .map(|(tree, setup)| {
                         let status =
                             gespan_core::worktree_management::status(Path::new(cwd), &tree);
                         let merged =
                             gespan_core::worktree_management::merged(Path::new(cwd), &tree);
-                        let tree_path = tree.path.clone();
                         Tree {
                             tree,
                             locked: status.0,
@@ -114,7 +116,7 @@ pub(super) fn discover(cwd: &str) -> Discovery {
                             // while their work is published.
                             unpushed: if merged.is_some() { 0 } else { status.2 },
                             merged,
-                            setup: gespan_core::worktree_scripts::record(Path::new(&tree_path)),
+                            setup,
                         }
                     })
                     .collect();

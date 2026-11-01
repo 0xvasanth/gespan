@@ -1821,12 +1821,16 @@ pub(crate) fn on_own_thread<T: Send + 'static>(
 ) -> impl std::future::Future<Output = Result<T, String>> {
     let (sender, result) = async_channel::bounded(1);
     #[cfg(test)]
-    let _ = sender.try_send(work());
+    let spawned = sender.try_send(work()).map_err(|error| error.to_string());
     #[cfg(not(test))]
-    std::thread::spawn(move || {
-        let _ = sender.send_blocking(work());
-    });
+    let spawned = std::thread::Builder::new()
+        .spawn(move || {
+            let _ = sender.send_blocking(work());
+        })
+        .map(drop)
+        .map_err(|error| format!("Could not start the work: {error}"));
     async move {
+        spawned?;
         result
             .recv()
             .await

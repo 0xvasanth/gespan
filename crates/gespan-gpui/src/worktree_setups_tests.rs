@@ -193,7 +193,7 @@ fn a_finished_step_leaves_on_its_own(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn events_for_a_step_that_left_are_ignored(cx: &mut TestAppContext) {
+fn events_for_an_unknown_step_are_ignored(cx: &mut TestAppContext) {
     let (view, mut visual) = view(cx);
     view.update(&mut visual, |view, cx| {
         view.apply(
@@ -217,7 +217,9 @@ fn an_answer_nobody_can_give_cancels() {
         answers: answers.clone(),
     };
     let worker = std::thread::spawn(move || bridge.decide(1));
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while answers.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "nothing asked");
         std::thread::yield_now();
     }
     answers.lock().unwrap().clear();

@@ -23,6 +23,7 @@ const MAX_LINES = 2_000;
 const MAX_LINE = 2_000;
 const MAX_NAMES = 20;
 const KEEP_FINISHED_MS = 10 * 60_000;
+const DRAIN_MS = 500;
 
 export type Copied = {
   files: number;
@@ -34,6 +35,18 @@ export type Copied = {
 
 const inside = (root: string, path: string) =>
   path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+
+/** Whether the nearest part of `path` that exists is under `root`. */
+async function landsInside(path: string, root: string): Promise<boolean> {
+  let part = path;
+  while (!(await lstat(part).catch(() => null))) {
+    const parent = dirname(part);
+    if (parent === part) return false;
+    part = parent;
+  }
+  const real = await realpath(part).catch(() => null);
+  return real !== null && inside(root, real);
+}
 
 async function listed(main: string, ...args: string[]): Promise<string[]> {
   const { stdout } = await exec(
@@ -68,11 +81,12 @@ export async function copyIncluded(
       continue;
     }
     if (await lstat(dest).catch(() => null)) continue;
-    await mkdir(dirname(dest), { recursive: true });
-    if (!inside(realWorktree, await realpath(dirname(dest)))) {
+    // Checked first: mkdir would follow a link out of the worktree.
+    if (!(await landsInside(dirname(dest), realWorktree))) {
       copied.skipped += 1;
       continue;
     }
+    await mkdir(dirname(dest), { recursive: true });
     if (metadata.isSymbolicLink()) {
       const target = await readlink(source);
       const lands = await realpath(resolve(dirname(source), target)).catch(
@@ -138,6 +152,7 @@ export class WorktreeJobs {
   }
 
   private finish(id: string, job: Job) {
+    if (job.done) return;
     job.done = true;
     const timer = setTimeout(() => this.jobs.delete(id), KEEP_FINISHED_MS);
     timer.unref?.();
@@ -214,15 +229,21 @@ export class WorktreeJobs {
     };
     follow(child.stdout);
     follow(child.stderr);
+    const clean = () => {
+      if (folder) void rm(folder, { recursive: true, force: true });
+    };
     child.on("error", (error) => {
       job.error = `Could not start the script: ${error.message}`;
       this.finish(id, job);
+      clean();
     });
-    // `exit`, not `close`: something the script left running can hold the pipes.
+    // `close` comes once the pipes have ended. Something the script left
+    // running can hold them open, so `exit` sets a limit on waiting for it.
+    child.on("close", () => this.finish(id, job));
     child.on("exit", (code) => {
       job.code = code;
-      setTimeout(() => this.finish(id, job), 200);
-      if (folder) void rm(folder, { recursive: true, force: true });
+      setTimeout(() => this.finish(id, job), DRAIN_MS);
+      clean();
     });
     return id;
   }
@@ -247,7 +268,7 @@ export class WorktreeJobs {
 }
 
 function stop(child: ChildProcess) {
-  if (child.pid === undefined || child.exitCode !== null) return;
+  if (child.pid === undefined) return;
   if (process.platform === "win32") {
     execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
       windowsHide: true,

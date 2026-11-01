@@ -213,15 +213,31 @@ pub fn prepare(lead: &Path, task: &str) -> Result<Option<Workspace>, String> {
     .is_ok();
     // The lead's changes go in before the Setup script, which has to see them.
     // The baseline comes after it, so what it writes isn't the worker's delta.
-    let tree = crate::git::create_seeded_worktree(lead, &branch, Some("HEAD"), known, |tree| {
+    let created = crate::git::create_seeded_worktree(lead, &branch, Some("HEAD"), known, |tree| {
         let workspace = Workspace {
             path: tree.path.clone(),
             branch: branch.clone(),
         };
-        seed(lead, &workspace, task).inspect_err(|_| {
-            let _ = remove_checkout(lead, &workspace, task);
-        })
-    })?;
+        seed(lead, &workspace, task)
+    });
+    let tree = match created {
+        Ok(tree) => tree,
+        // Nothing has worked here yet, and a checkout with no baseline could
+        // never be picked up again, so the task's next try starts clean.
+        Err(error) => {
+            let left = crate::git::worktrees(lead)?
+                .into_iter()
+                .find(|tree| tree.branch.as_deref() == Some(branch.as_str()));
+            if let Some(tree) = left {
+                let workspace = Workspace {
+                    path: tree.path,
+                    branch: branch.clone(),
+                };
+                let _ = remove_checkout(lead, &workspace, task);
+            }
+            return Err(error);
+        }
+    };
     let workspace = Workspace {
         path: tree.path,
         branch,
