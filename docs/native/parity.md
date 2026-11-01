@@ -44,9 +44,9 @@ in the same PR.
 
 - [x] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`. Done in #261.
 - [x] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`. Done in #264.
-- [x] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Native runs a fixed plan and reports to the lead at the end. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`. Done in #277.
-- [x] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). Done in #277.
-- [x] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). Done in #277.
+- [x] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`. Done in #277.
+- [x] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). Done in #277.
+- [x] **Resume a run after restart.** Tauri: `orchestration.ts` (`control_save`, `hydrate`). Done in #277.
 - [x] **`app` CLI `ticket.*` and `card.*` actions.** Native offers these as MCP tools only. Tauri: `src-tauri/src/control_cli.rs`. Done in #259.
 
 ### Inbox and notes
@@ -99,7 +99,7 @@ viewer from a play card in Native, because GPUI can't play video in place.
 ### Distribution and updates
 
 - [x] **Move existing Tauri installs to Native.** Tauri (`dev.gespan.desktop`) and Native (`dev.gespan.native`) use separate app IDs and update feeds, and Native's updater refuses the other one. No update can do this, so the move is manual and Native opens the data Tauri left. See [Moving from Tauri Gespan](README.md#moving-from-tauri-gespan). Done in #277.
-- [x] **Stable channel and fixed download links.** Native publishes only prereleases: the `native-latest` feed on GitHub and `native-preview` on R2. #231 removed the Tauri release workflow, so nothing publishes a stable channel or copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root any more. Port from `.github/workflows/release.yml` as it was before #231 (`ee815fab^`) and `scripts/release-channel.cjs`. Done in #277.
+- [x] **Stable channel and fixed download links.** A `vX.Y.Z` tag publishes the stable feed and copies `Gespan.dmg` and `Gespan_x64.dmg` to the R2 root. Port from `.github/workflows/release.yml` as it was before #231 (`ee815fab^`) and `scripts/release-channel.cjs`. Done in #277.
 - [x] **CI builds and checks the GUI on Windows and Linux.** *(also below)* Done in #219.
 
 ### Tauri fixes not yet in Native
@@ -111,8 +111,8 @@ Bug fixes that landed in the Tauri app after Native was copied in on
 - [x] **`CLAUDE_CODE_OAUTH_TOKEN` for the default Claude account.** Tauri prefers a set token for the signed-in identity and for usage polling. Native never reads it. Tauri: `2f4d01b9`, `809fc012`. Native: `crates/gespan-core/src/accounts/identity.rs`, `crates/gespan-core/src/usage/claude.rs`. Done in #245.
 - [x] **Claude Code 2.1 task tools in the todo panel.** Claude Code replaced TodoWrite with TaskCreate and TaskUpdate. Tauri builds the task list from them and keeps it across resume. Native shows no todo panel for Claude sessions. Tauri: `2cfc1788`. Native: `crates/gespan-core/src/tool/tasks.rs`, `crates/gespan-core/src/provider/tasks.rs`. Done in #245.
 - [x] **Codex plugin skills.** Tauri lists enabled plugin skills through Codex's `skills/list`. Native only scans skill folders. Tauri: `221007a3`. Native: `crates/gespan-core/src/skills.rs`. Done in #245.
-- [x] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Native only removes worktrees from Settings → Worktrees. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`. Done in #277.
-- [x] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Native only runs `gh repo view` in a local folder. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`. Done in #277.
+- [x] **Offer to delete an unused worktree** when its last session is deleted or archived, after checking no other session took it and its agents have exited. Tauri: `afdd7003`, `4c2cbd75`, `9edc73c9`. Native: session delete and archive in `crates/gespan-gpui/src/shell.rs`, `crates/gespan-core/src/worktree_management.rs`. Done in #277.
+- [x] **GitHub inbox for remote (SSH) projects.** Tauri resolves the repository through the remote workspace and runs `gh` with `--repo`. Tauri: `3226f6df`. Native: `crates/gespan-core/src/inbox/github.rs`, `crates/gespan-core/src/scm.rs`. Done in #277.
 - [x] **Check, then port if needed:** an earlier answer stays visible when a turn continues with reasoning only (`8b3e38e1`). The inline subagent fix (`6b313ab9`) is done in #255, Claude shell commands restored in saved transcripts (`f028d9e6`) in #269, and Codex `<proposed_plan>` tags lifted into a plan (`f75bf0eb`, `bdbe1a53`) with the plan card in #245. The earlier-answer fix (`8b3e38e1`) is done in #277.
 
 ### Before deleting `src/` and `src-tauri/`
