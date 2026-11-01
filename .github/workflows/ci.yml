@@ -209,7 +209,7 @@ jobs:
         name: Install Linux GUI dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libasound2-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libdbus-1-dev
+          sudo apt-get install --no-install-recommends -y clang cmake ninja-build pkg-config libfontconfig1-dev libfreetype6-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libasound2-dev libx11-xcb-dev libegl1-mesa-dev libvulkan-dev libdbus-1-dev
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
         with:

@@ -43,7 +43,7 @@ export function rpmRelease({ label, sequence }) {
 // Installing over a beta replaces its gespan-native package, or the old Gespan
 // app's package, which own the same desktop entry or /usr/bin/gespan.
 export function rpmSpec(parsed, summary) {
-  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
+  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nRequires: gtk3\nRequires: webkit2gtk4.1\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
 }
 // hdiutil's -srcfolder estimate fell short of the app on the macOS 15
 // runner ("No space left on device" inside the image), so the staging
@@ -289,7 +289,7 @@ export async function packageNative({
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
-      `Package: gespan\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nReplaces: gespan-native\nConflicts: gespan-native\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
+      `Package: gespan\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nReplaces: gespan-native\nConflicts: gespan-native\nDepends: libasound2, libgtk-3-0, libwebkit2gtk-4.1-0, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
     );
     run("dpkg-deb", [
       "--build",

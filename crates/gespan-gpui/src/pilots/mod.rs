@@ -12,6 +12,8 @@ mod floating;
 mod flow_reviews;
 mod host;
 mod html;
+#[cfg(not(target_os = "macos"))]
+mod html_inline;
 mod intro;
 mod memory_ui;
 mod notifications;
@@ -302,7 +304,7 @@ impl Pilots {
     }
     pub(crate) fn hide_html(&self, cx: &App) {
         for view in self.html_documents.values() {
-            view.read(cx).hide();
+            view.read(cx).hide(cx);
         }
     }
     pub(crate) fn new(
