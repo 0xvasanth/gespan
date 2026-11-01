@@ -1,0 +1,80 @@
+crates/gespan-gpui/src/runtime/ticket_tests.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 42,49-51,56-57,235-261,269-270
+crates/gespan-core/src/visual_bridge.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 557-558
+  s_92be0b300595dd::t_a8ef97cbe47f87 571-583,679
+  s_92be0b300595dd::t_a236c8b8c6e6c6 677-678
+  s_92be0b300595dd::t_a43a0463d6a817 680
+crates/gespan-gpui/src/main.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 339
+crates/gespan-core/src/tool_servers.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 115-119,177-182,188-197,204-206,208,341-381
+  s_92be0b300595dd::t_a9d45dcc0ad6df 382
+crates/mcp-hub/src/endpoint.rs
+  s_92be0b300595dd::t_bd12d30236304a 264-268
+crates/mcp-hub/src/toolkit.rs
+  s_92be0b300595dd::t_bd12d30236304a 13-15
+crates/gespan-core/src/store.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 1419-1422,1424
+  s_92be0b300595dd::t_6cdbfbad18667b 1423
+crates/gespan-core/src/tool/presentation.rs
+  s_92be0b300595dd::t_a8ef97cbe47f87 1092-1098
+  s_92be0b300595dd::t_be6e1c1349cb1b 370-374
+crates/gespan-gpui/src/runtime/mcp_stub.py
+  s_92be0b300595dd::t_be6e1c1349cb1b 32,34-39
+crates/mcp-hub/src/relay.rs
+  s_92be0b300595dd::t_bd12d30236304a 13-15,27-37,41-43,57-61,63-64,73-77,91-92,113,116,119-120,127-128,133,184,205-240,243,247-252,327-547
+crates/mcp-hub/src/grants.rs
+  s_92be0b300595dd::t_bd12d30236304a 185,187-202,253-274
+  s_92be0b300595dd::t_e5c615ec420163 275
+docs/native/mcp-hub.md
+  s_92be0b300595dd::t_be6e1c1349cb1b 13,30
+crates/gespan-core/src/orchestration.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 436
+  s_92be0b300595dd::t_a8ef97cbe47f87 490-500
+crates/gespan-core/src/provider/acp.rs
+  s_92be0b300595dd::t_a8ef97cbe47f87 1639-1673
+crates/gespan-core/src/ticket_bridge.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 554-564,886
+crates/gespan-core/src/pilot/bridge.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 125-141,185,206,224,234,289-293,295-298,300-316,318-321,323-325,339-404,406-426
+  s_92be0b300595dd::t_0f6d83d701e1dd 294
+  s_92be0b300595dd::t_ed0dc8afccf105 405
+  s_92be0b300595dd::t_6a0c83f487dd5f 427
+  s_92be0b300595dd::t_d227de98aef3e5 466,498
+crates/gespan-core/src/pilot/work.rs
+  s_92be0b300595dd::t_ce02b8c00e0ed8 138-142
+  s_92be0b300595dd::t_be6e1c1349cb1b 137,145,183-197,211,350-402
+crates/gespan-core/src/provider/opencode.rs
+  s_92be0b300595dd::t_a8ef97cbe47f87 12-13,234-239,381,444,830-935,940-959
+  s_92be0b300595dd::t_be6e1c1349cb1b 37-38,240-266,451-452,960
+  s_92be0b300595dd::t_e313f58b6db922 936-939
+crates/gespan-core/src/provider/lifecycle.rs
+  s_92be0b300595dd::t_a8ef97cbe47f87 17-138
+crates/gespan-gpui/src/runtime.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 494-499,742-754
+crates/mcp-hub/src/session.rs
+  s_92be0b300595dd::t_bd12d30236304a 58-64
+crates/gespan-core/tests/real_agents.rs
+  s_92be0b300595dd::t_be6e1c1349cb1b 40,89,108,117-127
+crates/gespan-core/src/pilot/tests.rs
+  s_92be0b300595dd::t_a8ef97cbe47f87 243-264,275-283
+  s_92be0b300595dd::t_187a95d00cbf80 265-267,272-274
+  s_92be0b300595dd::t_b6e0a5aac0e620 268-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8ea4a411159fda50a626a6141e54eeab4e73f78",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
