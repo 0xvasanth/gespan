@@ -14,6 +14,133 @@ pub(super) enum ClaudeMcp {
     Waiting(Instant),
 }
 
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use crate::tool_servers::{Access, Mount, VISUAL};
+
+    fn protocol(kind: Kind, session: i64, provider_id: Option<&str>) -> Protocol {
+        let mount = Mount {
+            session,
+            worktree: "/tmp".into(),
+            toolkits: [VISUAL.to_owned()].into(),
+            ..Default::default()
+        };
+        let mut protocol = Protocol::new(Request {
+            kind,
+            binary: "unused".into(),
+            cwd: "/tmp".into(),
+            prompt: "Hello".into(),
+            provider_id: provider_id.map(str::to_owned),
+            model: None,
+            settings: crate::agent::Settings {
+                mount: Some(mount.clone()),
+                ..Default::default()
+            },
+        });
+        protocol.access = Access::open(&mount);
+        protocol
+    }
+
+    fn sent(out: &mut Vec<u8>) -> Vec<Value> {
+        let text = String::from_utf8(std::mem::take(out)).unwrap();
+        text.lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn mounted_first(session: i64) -> (Protocol, Vec<u8>) {
+        let mut protocol = protocol(Kind::Claude, session, None);
+        let mut out = Vec::new();
+        protocol.claude_prompt(&mut out).unwrap();
+        let frames = sent(&mut out);
+        assert_eq!(frames.len(), 1, "the prompt waits for the endpoint");
+        assert_eq!(frames[0]["request"]["subtype"], "mcp_set_servers");
+        protocol.claude_prompt(&mut out).unwrap();
+        assert!(out.is_empty(), "still waiting: {:?}", sent(&mut out));
+        (protocol, out)
+    }
+
+    fn prompt_followed(protocol: &Protocol, out: &mut Vec<u8>) {
+        let frames = sent(out);
+        assert_eq!(frames.len(), 1, "{frames:?}");
+        assert_eq!(frames[0]["type"], "user");
+        assert!(protocol.claude_prompt_sent);
+    }
+
+    #[test]
+    fn claude_gets_its_prompt_once_the_endpoint_is_mounted() {
+        let (mut protocol, mut out) = mounted_first(5201);
+        let answer = json!({"type":"control_response","response":{
+            "subtype":"success","request_id":CLAUDE_MCP,
+        }});
+        protocol.frame(answer, &mut out).unwrap();
+        prompt_followed(&protocol, &mut out);
+    }
+
+    #[test]
+    fn claude_runs_without_tools_when_it_refuses_the_endpoint() {
+        let (mut protocol, mut out) = mounted_first(5202);
+        let answer = json!({"type":"control_response","response":{
+            "subtype":"error","request_id":CLAUDE_MCP,"error":"no",
+        }});
+        protocol.frame(answer, &mut out).unwrap();
+        prompt_followed(&protocol, &mut out);
+    }
+
+    #[test]
+    fn a_claude_that_never_answers_still_gets_its_prompt() {
+        let (mut protocol, mut out) = mounted_first(5203);
+        protocol.claude_mcp_tick(&mut out).unwrap();
+        assert!(out.is_empty(), "too soon to give up");
+        protocol.claude_mcp = ClaudeMcp::Waiting(Instant::now() - CLAUDE_MCP_WAIT);
+        protocol.claude_mcp_tick(&mut out).unwrap();
+        prompt_followed(&protocol, &mut out);
+    }
+
+    #[test]
+    fn a_warm_claude_holds_its_credential_and_goes_straight_to_the_prompt() {
+        let mut protocol = protocol(Kind::Claude, 5204, None);
+        protocol.access = None;
+        let mut out = Vec::new();
+        protocol.claude_prompt(&mut out).unwrap();
+        prompt_followed(&protocol, &mut out);
+    }
+
+    #[test]
+    fn codex_gets_the_endpoint_on_a_new_thread_and_on_a_resumed_one() {
+        for (provider_id, method) in [(None, "thread/start"), (Some("t"), "thread/resume")] {
+            let mut protocol = protocol(Kind::Codex, 5205, provider_id);
+            let mut out = Vec::new();
+            protocol
+                .frame(json!({"id":1,"result":{}}), &mut out)
+                .unwrap();
+            let frames = sent(&mut out);
+            let request = frames.iter().find(|frame| frame["method"] == method);
+            let server = &request.unwrap()["params"]["config"]["mcp_servers"]["gespan"];
+            assert!(server["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("http://127.0.0.1"));
+        }
+    }
+
+    #[test]
+    fn codex_with_no_credential_starts_with_no_config() {
+        let mut protocol = protocol(Kind::Codex, 5206, None);
+        protocol.access = None;
+        let mut out = Vec::new();
+        protocol
+            .frame(json!({"id":1,"result":{}}), &mut out)
+            .unwrap();
+        let frames = sent(&mut out);
+        let request = frames
+            .iter()
+            .find(|frame| frame["method"] == "thread/start");
+        assert!(request.unwrap()["params"].get("config").is_none());
+    }
+}
+
 impl Protocol {
     pub(super) fn codex_elicitation(
         &mut self,

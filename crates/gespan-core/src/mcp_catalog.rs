@@ -10,11 +10,14 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 const FILE: &str = "mcp-catalog.json";
 /// Prefix of a server's keychain name.
 const SECRETS: &str = "mcp-server";
+/// Keychain name of the key that seals approvals of servers with secrets.
+const APPROVAL_KEY: &str = "mcp-approval-key";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -51,7 +54,8 @@ pub struct Entry {
     pub enabled: bool,
     /// Projects this server is turned off in.
     pub disabled_projects: BTreeSet<String>,
-    /// Fingerprint of the exact command and environment the user approved.
+    /// Fingerprint of the exact command and environment the user approved,
+    /// sealed when that environment holds secrets.
     pub approved: Option<String>,
     /// Settings it can't run without and doesn't have yet.
     pub needed: Vec<String>,
@@ -80,13 +84,18 @@ impl Entry {
         }
     }
 
-    /// The command line as the approval card shows it.
+    /// The command line as the approval card shows it, quoted so each argument
+    /// reads as the one word it will be.
     pub fn command_line(&self) -> String {
         if let Some(url) = &self.url {
             return url.clone();
         }
         std::iter::once(self.command.as_str())
             .chain(self.args.iter().map(String::as_str))
+            .map(|word| match shlex::try_quote(word) {
+                Ok(quoted) => quoted.into_owned(),
+                Err(_) => format!("{word:?}"),
+            })
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -150,6 +159,38 @@ fn id_for(name: &str, taken: &BTreeSet<String>) -> String {
     id
 }
 
+/// What a change to the catalogue left.
+pub struct Edited {
+    pub catalog: Catalog,
+    pub changed: bool,
+    /// Rises with every edit, in the order they happened, so a reader can
+    /// tell which of two results is the newer.
+    pub revision: u64,
+}
+
+/// Every read-modify-write of the file goes through here, one at a time, so no
+/// two can lose each other's change.
+pub fn update(
+    data_dir: &Path,
+    edit: impl FnOnce(&mut Catalog) -> Result<(), String>,
+) -> Result<Edited, String> {
+    static REVISION: Mutex<u64> = Mutex::new(0);
+    let mut revision = REVISION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut catalog = Catalog::load(data_dir)?;
+    let before = catalog.clone();
+    edit(&mut catalog)?;
+    let changed = catalog != before;
+    if changed {
+        catalog.save(data_dir)?;
+    }
+    *revision += 1;
+    Ok(Edited {
+        catalog,
+        changed,
+        revision: *revision,
+    })
+}
+
 impl Catalog {
     pub fn load(data_dir: &Path) -> Result<Self, String> {
         match std::fs::read(path(data_dir)) {
@@ -178,14 +219,19 @@ impl Catalog {
 
     /// Takes in what an agent's config held. Each server lands disabled and
     /// unapproved, its env in the keychain, and the agent's file is left as it
-    /// was. A server already here, or seen under another agent, is skipped.
-    /// Returns how many were added.
+    /// was. A server already here, or seen under another agent with the same
+    /// environment, is skipped; with another environment it's a server of its
+    /// own, since that may be a different account. Returns how many were added.
     pub fn import(&mut self, data_dir: &Path, found: Vec<Importable>) -> Result<usize, String> {
         let mut added = 0;
         for server in found {
             let same = |entry: &Entry| match &server.url {
                 Some(url) => entry.url.as_deref() == Some(url),
-                None => entry.command == server.command && entry.args == server.args,
+                None => {
+                    entry.command == server.command
+                        && entry.args == server.args
+                        && read_secrets(data_dir, entry).is_ok_and(|env| env == server.env)
+                }
             };
             if self.entries.iter().any(same) {
                 continue;
@@ -211,11 +257,21 @@ impl Catalog {
     /// Adds a registry listing, off and unapproved. Its required settings are
     /// named with no value, so it can't be approved until they're given.
     pub fn install(&mut self, data_dir: &Path, listing: &Listing) -> Result<String, String> {
-        let before = self.entries.len();
-        self.import(data_dir, vec![listing.importable()])?;
-        let Some(entry) = self.entries.get_mut(before) else {
+        // What it runs says if it's here: its settings differ once they're set.
+        let server = listing.importable();
+        let here = self.entries.iter().any(|entry| match &server.url {
+            Some(url) => entry.url.as_deref() == Some(url),
+            None => entry.command == server.command && entry.args == server.args,
+        });
+        if here {
             return Err("That server is already here".into());
-        };
+        }
+        let before = self.entries.len();
+        self.import(data_dir, vec![server])?;
+        let entry = self
+            .entries
+            .get_mut(before)
+            .ok_or("That server is already here")?;
         entry.source = Some(format!("MCP Registry {}", listing.version));
         entry.needed = listing
             .inputs
@@ -257,11 +313,35 @@ impl Catalog {
         if !entry.needed.is_empty() {
             return Err(format!("Set {} first", entry.needed.join(", ")));
         }
-        let fingerprint = self.resolved(data_dir, entry)?.fingerprint();
+        let approval = approval(data_dir, &self.resolved(data_dir, entry)?)?;
         let entry = self.entry_mut(id).ok_or("Unknown server")?;
-        entry.approved = Some(fingerprint);
+        entry.approved = Some(approval);
         entry.enabled = true;
         Ok(())
+    }
+
+    /// Approves what the user was shown, and only that: the entry may have
+    /// changed while the question was open.
+    pub fn approve_shown(&mut self, data_dir: &Path, shown: &Entry) -> Result<(), String> {
+        let now = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == shown.id)
+            .ok_or("Unknown server")?;
+        if (&now.command, &now.args, &now.env) != (&shown.command, &shown.args, &shown.env) {
+            return Err("This server changed. Review it again.".to_owned());
+        }
+        self.approve(data_dir, &shown.id)
+    }
+
+    /// The entry as it would run, if that's what the user approved.
+    fn runnable(&self, data_dir: &Path, entry: &Entry) -> Option<ServerSpec> {
+        let spec = self
+            .resolved(data_dir, entry)
+            .inspect_err(|error| tracing::warn!(%error, "an MCP server's secrets"))
+            .ok()?;
+        let approval = approval(data_dir, &spec).ok()?;
+        (entry.approved.as_deref() == Some(approval.as_str())).then_some(spec)
     }
 
     /// Servers the hub may run. One edited since its approval, by hand or by
@@ -270,13 +350,17 @@ impl Catalog {
         self.entries
             .iter()
             .filter(|entry| entry.enabled)
-            .filter_map(|entry| {
-                let spec = self
-                    .resolved(data_dir, entry)
-                    .inspect_err(|error| tracing::warn!(%error, "an MCP server's secrets"))
-                    .ok()?;
-                (entry.approved.as_deref() == Some(spec.fingerprint().as_str())).then_some(spec)
-            })
+            .filter_map(|entry| self.runnable(data_dir, entry))
+            .collect()
+    }
+
+    /// Ids turned on that won't run, because their approval no longer matches.
+    pub fn stale(&self, data_dir: &Path) -> BTreeSet<String> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.enabled)
+            .filter(|entry| self.runnable(data_dir, entry).is_none())
+            .map(|entry| entry.id.clone())
             .collect()
     }
 
@@ -292,6 +376,34 @@ impl Catalog {
 
 fn secret_name(id: &str) -> String {
     format!("{SECRETS}:{id}")
+}
+
+/// The value a server's approval is stored as. With secrets in it, the plain
+/// fingerprint would let someone holding the catalogue file guess them offline,
+/// so it's sealed with a key the file doesn't have. Without any, there's nothing
+/// to guess and no keychain to need.
+fn approval(data_dir: &Path, spec: &ServerSpec) -> Result<String, String> {
+    let fingerprint = spec.fingerprint();
+    if spec.env.is_empty() {
+        return Ok(fingerprint);
+    }
+    let sealed = Sha256::new()
+        .chain_update(approval_key(data_dir)?)
+        .chain_update(fingerprint)
+        .finalize();
+    Ok(sealed.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn approval_key(data_dir: &Path) -> Result<String, String> {
+    static CREATING: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = CREATING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(key) = gespan_tracker_secrets::read_named(APPROVAL_KEY, data_dir)? {
+        return Ok(key);
+    }
+    let bytes: [u8; 32] = rand::random();
+    let key: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    gespan_tracker_secrets::write_named(APPROVAL_KEY, data_dir, &key)?;
+    Ok(key)
 }
 
 fn write_secrets(data_dir: &Path, id: &str, env: &BTreeMap<String, String>) -> Result<(), String> {
@@ -311,18 +423,24 @@ fn read_secrets(data_dir: &Path, entry: &Entry) -> Result<BTreeMap<String, Strin
     serde_json::from_str(&value).map_err(|e| e.to_string())
 }
 
-/// Removes a server, its secrets and any sign-in.
-pub fn remove(catalog: &mut Catalog, data_dir: &Path, id: &str) -> Result<(), String> {
-    let url = catalog
-        .entries
-        .iter()
-        .find(|entry| entry.id == id)
-        .and_then(|entry| entry.url.clone());
-    catalog.entries.retain(|entry| entry.id != id);
+/// Removes a server, then its secrets and any sign-in: a failed save must leave
+/// a server that still has them, and a leftover secret harms nothing.
+pub fn remove(data_dir: &Path, id: &str) -> Result<Edited, String> {
+    let mut url = None;
+    let edited = update(data_dir, |catalog| {
+        url = catalog
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.url.clone());
+        catalog.entries.retain(|entry| entry.id != id);
+        Ok(())
+    })?;
     if let Some(url) = url {
         SignIn::new(data_dir, id, &url).clear()?;
     }
-    gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)
+    gespan_tracker_secrets::delete_named(&secret_name(id), data_dir)?;
+    Ok(edited)
 }
 
 /// A remote server's OAuth credentials, in the keychain. Named after the exact
@@ -503,8 +621,9 @@ mod tests {
         catalog
             .import(dir.path(), vec![found("docs", "npx", &[("TOKEN", "one")])])
             .unwrap();
-        remove(&mut catalog, dir.path(), "docs").unwrap();
-        assert!(catalog.entries.is_empty());
+        catalog.save(dir.path()).unwrap();
+        assert!(remove(dir.path(), "docs").unwrap().changed);
+        assert!(Catalog::load(dir.path()).unwrap().entries.is_empty());
         assert_eq!(
             gespan_tracker_secrets::read_named("mcp-server:docs", dir.path()).unwrap(),
             None
@@ -537,6 +656,24 @@ mod tests {
     }
 
     #[test]
+    fn a_server_keeps_its_secrets_if_its_removal_cant_be_saved() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("TOKEN", "one")])])
+            .unwrap();
+        catalog.save(dir.path()).unwrap();
+        // A corrupt file can't be loaded, so nothing can be saved either.
+        std::fs::write(path(dir.path()), "not json").unwrap();
+        assert!(remove(dir.path(), "docs").is_err());
+        assert!(
+            gespan_tracker_secrets::read_named("mcp-server:docs", dir.path())
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn a_sign_in_lives_in_the_keychain_and_goes_with_the_server() {
         let dir = setup();
         let mut catalog = Catalog::default();
@@ -557,7 +694,8 @@ mod tests {
             url: Some(url.into()),
             ..Entry::default()
         });
-        remove(&mut catalog, dir.path(), "docs").unwrap();
+        catalog.save(dir.path()).unwrap();
+        remove(dir.path(), "docs").unwrap();
         assert!(!sign_in.exists());
     }
 
@@ -613,6 +751,156 @@ mod tests {
         catalog.set_secrets(dir.path(), "docs", values).unwrap();
         assert!(!catalog.entries[0].enabled);
         assert!(catalog.specs(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn the_same_command_with_another_account_is_a_server_of_its_own() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let found_in = |token| vec![found("docs", "npx", &[("TOKEN", token)])];
+        assert_eq!(catalog.import(dir.path(), found_in("one")).unwrap(), 1);
+        assert_eq!(catalog.import(dir.path(), found_in("one")).unwrap(), 0);
+        assert_eq!(catalog.import(dir.path(), found_in("two")).unwrap(), 1);
+        let ids: Vec<_> = catalog.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["docs", "docs-2"]);
+        catalog.approve(dir.path(), "docs").unwrap();
+        catalog.approve(dir.path(), "docs-2").unwrap();
+        let tokens: Vec<_> = catalog
+            .specs(dir.path())
+            .into_iter()
+            .map(|spec| spec.env["TOKEN"].clone())
+            .collect();
+        assert_eq!(tokens, ["one", "two"]);
+    }
+
+    #[test]
+    fn concurrent_edits_all_land() {
+        let dir = setup();
+        std::thread::scope(|scope| {
+            for n in 0..16 {
+                let data_dir = dir.path();
+                scope.spawn(move || {
+                    update(data_dir, |catalog| {
+                        catalog.entries.push(Entry {
+                            id: format!("server-{n}"),
+                            ..Entry::default()
+                        });
+                        Ok(())
+                    })
+                    .unwrap();
+                });
+            }
+        });
+        assert_eq!(Catalog::load(dir.path()).unwrap().entries.len(), 16);
+    }
+
+    #[test]
+    fn revisions_rise_in_edit_order_and_only_a_change_is_saved() {
+        let dir = setup();
+        let first = update(dir.path(), |_| Ok(())).unwrap();
+        assert!(!first.changed);
+        assert!(!path(dir.path()).exists(), "nothing changed, nothing saved");
+        let second = update(dir.path(), |catalog| {
+            catalog.managed = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(second.changed && second.revision > first.revision);
+        assert!(Catalog::load(dir.path()).unwrap().managed);
+        assert!(update(dir.path(), |_| Err("no".into())).is_err());
+    }
+
+    #[test]
+    fn an_approval_covers_only_what_was_shown() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("TOKEN", "one")])])
+            .unwrap();
+        let shown = catalog.entries[0].clone();
+        catalog
+            .entry_mut("docs")
+            .unwrap()
+            .args
+            .push("--evil".into());
+        assert!(catalog
+            .approve_shown(dir.path(), &shown)
+            .unwrap_err()
+            .contains("changed"));
+        assert!(!catalog.entries[0].enabled);
+        let shown = catalog.entries[0].clone();
+        catalog.entry_mut("docs").unwrap().class = Class::Shared;
+        catalog.approve_shown(dir.path(), &shown).unwrap();
+        assert_eq!(catalog.specs(dir.path()).len(), 1, "sharing isn't run");
+    }
+
+    #[test]
+    fn a_stored_approval_gives_nothing_to_guess_a_secret_from() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("TOKEN", "weak")])])
+            .unwrap();
+        catalog.approve(dir.path(), "docs").unwrap();
+        let spec = catalog.specs(dir.path()).remove(0);
+        assert_ne!(
+            catalog.entries[0].approved.as_deref(),
+            Some(spec.fingerprint().as_str()),
+            "the plain hash could be tested against guesses"
+        );
+    }
+
+    #[test]
+    fn a_server_with_no_secrets_needs_no_keychain_to_be_approved() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[])])
+            .unwrap();
+        catalog.approve(dir.path(), "docs").unwrap();
+        let spec = catalog.specs(dir.path()).remove(0);
+        assert_eq!(
+            catalog.entries[0].approved.as_deref(),
+            Some(spec.fingerprint().as_str())
+        );
+        assert_eq!(
+            gespan_tracker_secrets::read_named(APPROVAL_KEY, dir.path()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn an_edited_server_reports_stale_until_approved_again() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("docs", "npx", &[("TOKEN", "one")])])
+            .unwrap();
+        assert!(catalog.stale(dir.path()).is_empty(), "off isn't stale");
+        catalog.approve(dir.path(), "docs").unwrap();
+        assert!(catalog.stale(dir.path()).is_empty());
+        catalog
+            .entry_mut("docs")
+            .unwrap()
+            .args
+            .push("--more".into());
+        assert_eq!(catalog.stale(dir.path()).len(), 1);
+        assert!(catalog.specs(dir.path()).is_empty());
+        catalog.approve(dir.path(), "docs").unwrap();
+        assert!(catalog.stale(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn the_command_line_shows_where_each_argument_ends() {
+        let entry = Entry {
+            command: "/opt/my tools/server".into(),
+            args: vec!["--name".into(), "a b".into(), "plain".into()],
+            ..Entry::default()
+        };
+        assert_eq!(
+            entry.command_line(),
+            r#"'/opt/my tools/server' --name 'a b' plain"#
+        );
     }
 
     #[test]

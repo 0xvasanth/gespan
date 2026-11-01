@@ -65,3 +65,4 @@ pub mod mcp_registry;
 
 pub mod worktree_copy;
 pub mod worktree_management;
+pub mod worktree_scripts;

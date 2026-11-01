@@ -289,27 +289,263 @@ fn pilot_mascot_is_beside_name_and_reset_stays_visible(cx: &mut TestAppContext) 
 fn the_mcp_page_shows_what_each_server_would_run_and_whether_it_needs_approval(
     cx: &mut TestAppContext,
 ) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, visual) = &mut catalog_window(&dir, cx);
+    assert!(visual.debug_bounds("settings-catalog-detail-0").is_some());
+    assert!(visual.debug_bounds("settings-catalog-approve-0").is_some());
+    assert!(
+        visual.debug_bounds("settings-catalog-off-0").is_none(),
+        "not on yet"
+    );
+}
+
+const APPROVE: &str = "settings-catalog-approve-0";
+
+fn saved(dir: &tempfile::TempDir) -> gespan_core::mcp_catalog::Catalog {
+    gespan_core::mcp_catalog::Catalog::load(dir.path()).unwrap()
+}
+
+/// The MCP page over a catalogue of one server, loaded from disk as the app
+/// does.
+fn catalog_window(
+    dir: &tempfile::TempDir,
+    cx: &mut TestAppContext,
+) -> (WindowHandle<SettingsView>, VisualTestContext) {
+    gespan_tracker_secrets::testing::use_memory_keychain();
+    let mut catalog = gespan_core::mcp_catalog::Catalog::default();
+    catalog.entries.push(gespan_core::mcp_catalog::Entry {
+        id: "docs".into(),
+        name: "Docs search".into(),
+        command: "npx".into(),
+        args: vec!["-y".into(), "docs-mcp".into()],
+        source: Some("claude (user)".into()),
+        ..Default::default()
+    });
+    catalog.save(dir.path()).unwrap();
     let window = window(Section::Mcp, cx);
+    let path = dir.path().to_owned();
     window
         .update(cx, |view, _, cx| {
-            view.mcp_catalog.entries = vec![gespan_core::mcp_catalog::Entry {
-                id: "docs".into(),
-                name: "Docs search".into(),
-                command: "npx".into(),
-                args: vec!["-y".into(), "docs-mcp".into()],
-                source: Some("claude (user)".into()),
-                ..Default::default()
-            }];
+            view.mcp_catalog_dir = Some(path);
+            view.load_catalog(cx);
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    settle(&mut visual);
+    (window, visual)
+}
+
+fn settle(visual: &mut VisualTestContext) {
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+}
+
+fn reload(window: WindowHandle<SettingsView>, visual: &mut VisualTestContext) {
+    window
+        .update(visual, |view, _, cx| view.load_catalog(cx))
+        .unwrap();
+    settle(visual);
+}
+
+fn answer(visual: &mut VisualTestContext, button: &str) {
+    visual.simulate_prompt_answer(button);
+    settle(visual);
+}
+
+fn click(visual: &mut VisualTestContext, selector: &'static str) {
+    let bounds = visual
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("no {selector}"));
+    visual.simulate_click(bounds.center(), Default::default());
+    settle(visual);
+}
+
+#[gpui::test]
+fn the_catalogue_page_shows_what_is_saved_and_why_it_cant_load(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (window, visual) = &mut catalog_window(&dir, cx);
+    assert!(visual.debug_bounds(APPROVE).is_some(), "the saved entry");
+    assert!(visual.debug_bounds("settings-catalog-error").is_none());
+    std::fs::write(dir.path().join("mcp-catalog.json"), "not json").unwrap();
+    reload(*window, visual);
+    assert!(visual.debug_bounds("settings-catalog-error").is_some());
+}
+
+#[gpui::test]
+fn approving_a_server_turns_it_on_and_cancelling_does_not(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, visual) = &mut catalog_window(&dir, cx);
+    click(visual, APPROVE);
+    answer(visual, "Cancel");
+    assert!(!saved(&dir).entries[0].enabled);
+    click(visual, APPROVE);
+    answer(visual, "Approve and turn on");
+    let entry = saved(&dir).entries.remove(0);
+    assert!(entry.enabled && entry.approved.is_some());
+    assert!(visual.debug_bounds("settings-catalog-off-0").is_some());
+    assert!(visual.debug_bounds(APPROVE).is_none());
+    click(visual, "settings-catalog-off-0");
+    assert!(!saved(&dir).entries[0].enabled);
+    assert!(visual.debug_bounds(APPROVE).is_some());
+}
+
+#[gpui::test]
+fn a_server_edited_after_approval_asks_again_and_can_be_approved(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (window, visual) = &mut catalog_window(&dir, cx);
+    click(visual, APPROVE);
+    answer(visual, "Approve and turn on");
+    let mut catalog = saved(&dir);
+    catalog.entries[0].args.push("--more".into());
+    catalog.save(dir.path()).unwrap();
+    reload(*window, visual);
+    assert!(
+        visual.debug_bounds(APPROVE).is_some(),
+        "on, but it won't run until reviewed"
+    );
+    click(visual, APPROVE);
+    answer(visual, "Approve and turn on");
+    assert!(visual.debug_bounds(APPROVE).is_none());
+    assert_eq!(saved(&dir).specs(dir.path()).len(), 1);
+}
+
+#[gpui::test]
+fn managed_mode_and_removal_reach_the_saved_catalogue(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, visual) = &mut catalog_window(&dir, cx);
+    click(visual, "settings-toggle-catalog-managed");
+    assert!(saved(&dir).managed);
+    click(visual, "settings-toggle-catalog-managed");
+    assert!(!saved(&dir).managed);
+    click(visual, "settings-catalog-remove-0");
+    assert!(saved(&dir).entries.is_empty());
+    assert!(visual.debug_bounds(APPROVE).is_none());
+}
+
+fn a_tree() -> data::Tree {
+    data::Tree {
+        tree: gespan_core::git::Worktree {
+            path: "/work/app-worktrees/feature".into(),
+            branch: Some("feature".into()),
+            ..Default::default()
+        },
+        locked: false,
+        dirty: Some(false),
+        unpushed: 0,
+        merged: None,
+        setup: None,
+    }
+}
+
+#[gpui::test]
+fn the_delete_dialog_starts_from_the_project_then_the_app(cx: &mut TestAppContext) {
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let opened = |visual: &mut VisualTestContext, project: &str| {
+        window
+            .update(visual, |view, window, cx| {
+                view.selected_project = project.into();
+                view.management = None;
+                view.open_management(management::Target::DeleteTree(a_tree()), window, cx);
+                let editor = view.management.as_ref().unwrap();
+                (editor.delete_branch, editor.delete_sessions)
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        opened(visual, "/a"),
+        (false, false),
+        "keeps things at first"
+    );
+    window
+        .update(visual, |view, _, _| {
+            view.prefs.worktree_delete_branch = true;
+            view.prefs.project_worktrees.insert(
+                "/a".into(),
+                preferences::WorktreeDefaults {
+                    delete_branch: Some(false),
+                    delete_sessions: Some(true),
+                },
+            );
+        })
+        .unwrap();
+    assert_eq!(opened(visual, "/a"), (false, true));
+    assert_eq!(opened(visual, "/b"), (true, false));
+}
+
+#[gpui::test]
+fn scripts_save_and_unsaved_text_survives_picking_another_project(cx: &mut TestAppContext) {
+    let one = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let main = one.path().to_string_lossy().into_owned();
+    let second = other.path().to_string_lossy().into_owned();
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (first, in_second) = (main.clone(), second.clone());
+    window
+        .update(visual, move |view, _, cx| {
+            view.scripts_for(&first, cx);
+            let setup = view.worktree_scripts[&first].setup.clone();
+            setup.update(cx, |input, cx| input.set_text("bun install".into(), cx));
+            view.save_worktree_scripts(&first, cx);
+            setup.update(cx, |input, cx| input.set_text("not saved".into(), cx));
+            view.scripts_for(&in_second, cx);
+            view.scripts_for(&first, cx);
+            let kept = view.worktree_scripts[&first]
+                .setup
+                .read(cx)
+                .content
+                .to_string();
+            assert_eq!(kept, "not saved");
+        })
+        .unwrap();
+    let saved = gespan_core::worktree_scripts::scripts(std::path::Path::new(&main));
+    assert_eq!(saved.setup, "bun install");
+}
+
+#[gpui::test]
+fn the_delete_default_controls_set_the_app_and_the_project(cx: &mut TestAppContext) {
+    let repo = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(repo.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    git(&["init", "-b", "main"]);
+    let window = window(Section::Worktrees, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    // Tall enough to click the rows below the fold.
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    let project = repo.path().to_string_lossy().into_owned();
+    let main = project.clone();
+    window
+        .update(visual, move |view, _, cx| {
+            view.selected_project = main.clone();
+            view.discovery.worktrees.main = main;
             cx.notify();
         })
         .unwrap();
-    cx.run_until_parked();
-    let elements = window
-        .update(cx, |view, _, cx| {
-            let entry = view.mcp_catalog.entries[0].clone();
-            assert_eq!(entry.command_line(), "npx -y docs-mcp");
-            view.catalog_section(cx).len()
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for target in [
+        "settings-worktree-delete-branch-on",
+        "settings-worktree-delete-sessions-project-on",
+    ] {
+        let control = visual
+            .debug_bounds(target)
+            .unwrap_or_else(|| panic!("{target} is not on screen"));
+        visual.simulate_click(control.center(), Default::default());
+        visual.run_until_parked();
+    }
+    window
+        .read_with(visual, |view, _| {
+            assert!(view.prefs.deletes_merged_branch("/other"));
+            assert!(view.prefs.deletes_worktree_sessions(&project));
+            assert!(!view.prefs.deletes_worktree_sessions("/other"));
         })
         .unwrap();
-    assert!(elements >= 3, "header, switch and the list");
 }

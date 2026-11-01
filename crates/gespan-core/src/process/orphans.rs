@@ -32,9 +32,15 @@ pub fn reap(record: Option<std::path::PathBuf>) {
         let _ = std::thread::Builder::new()
             .name("orphan-sweep".into())
             .spawn(move || {
-                let recorded = record.map_or_else(Default::default, |path| take_record(&path));
+                let (recorded, ended) = record.map_or_else(Default::default, |folder| {
+                    ended_records(&folder, our_pid, process_alive)
+                });
                 let rows = snapshot_processes(&recorded);
                 let killed = reap_snapshots(&rows, our_pid, &recorded);
+                // Only now: until the sweep has run, a record is all there is.
+                for file in ended {
+                    let _ = std::fs::remove_file(file);
+                }
                 if !killed.is_empty() {
                     tracing::info!(count = killed.len(), pids = ?killed, "stopped agents left by an earlier Gespan");
                 }
@@ -51,12 +57,26 @@ struct ProcessSnapshot {
     harness_parent: Option<u32>,
 }
 
-/// The pids an earlier run left. The file is emptied: this run starts its own.
+/// The pids runs that have ended left, and the files that held them. Each run
+/// keeps a file named for its pid, so one still running keeps its own.
 #[cfg(unix)]
-fn take_record(path: &Path) -> HashSet<u32> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let _ = std::fs::remove_file(path);
-    text.lines().filter_map(|line| line.parse().ok()).collect()
+fn ended_records(
+    folder: &Path,
+    our_pid: u32,
+    alive: impl Fn(u32) -> bool,
+) -> (HashSet<u32>, Vec<std::path::PathBuf>) {
+    let mut pids = HashSet::new();
+    let mut files = Vec::new();
+    for file in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+        let owner = file.file_name().to_str().and_then(|name| name.parse().ok());
+        if owner.is_none_or(|owner: u32| owner == our_pid || alive(owner)) {
+            continue;
+        }
+        let text = std::fs::read_to_string(file.path()).unwrap_or_default();
+        pids.extend(text.lines().filter_map(|line| line.parse::<u32>().ok()));
+        files.push(file.path());
+    }
+    (pids, files)
 }
 
 #[cfg(unix)]
@@ -487,18 +507,19 @@ mod tests {
         #[test]
         fn a_recorded_server_left_by_a_crash_goes_and_its_children_with_it() {
             let dir = tempfile::tempdir().unwrap();
-            let record = dir.path().join("mcp-servers.pids");
+            let folder = dir.path().join("mcp-servers");
+            std::fs::create_dir(&folder).unwrap();
             let pid_file = dir.path().join("grandchild");
             let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
             let mut child = spawn(&script, DEAD_PARENT);
             let pid = child.id();
-            std::fs::write(&record, format!("{pid}\n")).unwrap();
+            std::fs::write(folder.join(DEAD_PARENT.to_string()), format!("{pid}\n")).unwrap();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while !pid_file.exists() && std::time::Instant::now() < until {
+            let written = || std::fs::read_to_string(&pid_file).is_ok_and(|text| !text.is_empty());
+            while !written() && std::time::Instant::now() < until {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            let recorded = take_record(&record);
-            assert!(!record.exists(), "the next run starts a new record");
+            let (recorded, _) = ended_records(&folder, std::process::id(), |_| false);
             let rows = [row(pid, 1, "node /tmp/server.js", Some(DEAD_PARENT))];
             assert_eq!(
                 reap_snapshots(&rows, std::process::id(), &HashSet::new()),
@@ -512,6 +533,24 @@ mod tests {
                 !process_alive(grandchild.trim().parse().unwrap()),
                 "what the server started survived"
             );
+        }
+
+        #[test]
+        fn a_record_stays_with_its_owner_while_it_runs() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = |owner: u32, pid: &str| {
+                let path = dir.path().join(owner.to_string());
+                std::fs::write(&path, pid).unwrap();
+                path
+            };
+            file(100, "11\n");
+            file(200, "22\n");
+            let ended = file(300, "33\n");
+            std::fs::write(dir.path().join("notes"), "44\n").unwrap();
+            let (pids, files) = ended_records(dir.path(), 100, |owner| owner == 200);
+            assert_eq!(pids, HashSet::from([33]), "ours and a live one's stay");
+            assert_eq!(files, [ended]);
+            assert!(dir.path().join("200").exists());
         }
 
         #[test]

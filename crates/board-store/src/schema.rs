@@ -1,7 +1,7 @@
 use crate::migrate;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 7;
+pub const VERSION: i64 = 8;
 
 /// The tables as both apps created them before `board_schema` existed.
 pub(crate) const V2_TABLES: &str = "
@@ -212,6 +212,14 @@ pub(crate) const V7_COLUMNS: [(&str, &str, &str); 1] = [(
     "body_from_ticket",
     "INTEGER NOT NULL DEFAULT 0",
 )];
+
+/// Columns v8 adds to `board_settings`, both NULL on boards that already exist.
+/// `run_in_worktree` is the board's "Run in a new worktree by default";
+/// `run_worktree_choice` is what "Run with…" last had ticked on this board.
+pub(crate) const V8_COLUMNS: [(&str, &str, &str); 2] = [
+    ("board_settings", "run_in_worktree", "INTEGER"),
+    ("board_settings", "run_worktree_choice", "INTEGER"),
+];
 
 /// Brings the board tables to the current version. Both apps call this on
 /// every open, so it is cheap once the database is current.

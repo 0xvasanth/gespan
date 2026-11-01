@@ -39,7 +39,7 @@ fn fixture_server() {
         let result = match message["method"].as_str().unwrap_or("") {
             "initialize" => json!({
                 "protocolVersion":"2025-11-25",
-                "capabilities":{"tools":{"listChanged":true},"resources":{"subscribe":true}},
+                "capabilities":{"tools":{"listChanged":true},"prompts":{"listChanged":true},"resources":{"subscribe":true}},
                 "serverInfo":{"name":name,"version":"1"},
             }),
             "tools/list" => {
@@ -57,11 +57,46 @@ fn fixture_server() {
                 json!({"tools":tools})
             }
             "resources/list" => json!({"resources":[{"uri":"file:///r","name":"r"}]}),
+            "resources/subscribe" if message["params"]["uri"] == "file:///refused" => {
+                send(
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"No such resource"}}),
+                );
+                continue;
+            }
             "resources/subscribe" | "resources/unsubscribe" => {
                 send(
                     json!({"method":"notifications/message","params":{"level":"error","data":message["method"]}}),
                 );
                 json!({})
+            }
+            "resources/read" if message["params"]["uri"] == "file:///missing" => {
+                send(
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32002,"message":"Not found"}}),
+                );
+                continue;
+            }
+            "resources/read" => {
+                if let Some(token) = message["params"]["_meta"].get("progressToken") {
+                    send(
+                        json!({"method":"notifications/progress","params":{"progressToken":token,"progress":1}}),
+                    );
+                    // The result mustn't overtake it.
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                json!({"contents":[{"uri":message["params"]["uri"],"text":name}]})
+            }
+            "prompts/list" => json!({"prompts":[
+                {"name":"greet"},
+                {"name":"a".repeat(80)},
+            ]}),
+            "prompts/get" if message["params"]["name"] == "greet" => json!({
+                "messages":[{"role":"user","content":{"type":"text","text":message["params"]["arguments"]["who"]}}],
+            }),
+            "prompts/get" => {
+                send(
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"No such prompt"}}),
+                );
+                continue;
             }
             "tools/call" => {
                 let arguments = &message["params"]["arguments"];
@@ -75,6 +110,14 @@ fn fixture_server() {
                 if arguments["change"] == true {
                     version += 1;
                     send(json!({"method":"notifications/tools/list_changed"}));
+                }
+                if arguments["changePrompts"] == true {
+                    send(json!({"method":"notifications/prompts/list_changed"}));
+                }
+                if arguments["log"] == true {
+                    send(
+                        json!({"method":"notifications/message","params":{"level":arguments["level"],"data":arguments["text"]}}),
+                    );
                 }
                 if arguments["sample"] == true {
                     send(
@@ -137,10 +180,11 @@ impl Drop for Processes {
     }
 }
 
-struct Spawn(Arc<Processes>);
+struct Spawn(Arc<Processes>, Duration);
 
 impl Spawner for Spawn {
     fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> std::io::Result<Spawned> {
+        std::thread::sleep(self.1);
         let mut command = Command::new(&spec.command);
         command
             .args(&spec.args)
@@ -213,7 +257,7 @@ fn rig(servers: Vec<ServerSpec>, tune: impl FnOnce(&mut Config)) -> Rig {
     let processes = Arc::new(Processes::default());
     let notes = Arc::new(Notes::default());
     let mut config = Config::new("test-hub", "1");
-    config.spawner = Some(Arc::new(Spawn(processes.clone())));
+    config.spawner = Some(Arc::new(Spawn(processes.clone(), Duration::ZERO)));
     config.observer = Arc::new(Noting(notes.clone()));
     tune(&mut config);
     let hub = Hub::start(config).unwrap();
@@ -696,6 +740,277 @@ fn a_shared_server_that_asks_for_sampling_is_refused_and_moves_to_one_per_sessio
         a.call("docs__who", json!({}))["pid"],
         b.call("docs__who", json!({}))["pid"]
     );
+}
+
+#[test]
+fn a_server_question_goes_to_the_one_agent_it_can_belong_to() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("mine", Sharing::PerSession)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["mine"])));
+    let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"mine__who","arguments":{"sample":true,"waitMs":100},
+    }});
+    let (_, body) = exchange(&a, Some(&a.session), &call.to_string());
+    assert!(body.contains("sampling/createMessage"), "{body}");
+}
+
+#[test]
+fn a_demoted_process_stops_once_its_calls_finish() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |config| {
+        config.server_idle = Duration::from_millis(400);
+    });
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    a.call("docs__who", json!({"sample":true}));
+    wait_until("the server to be demoted", || {
+        !rig.notes.demoted.lock().unwrap().is_empty()
+    });
+    assert!(rig.hub.running().is_empty(), "it's off the books at once");
+    wait_until("the demoted process to stop", || rig.processes.alive() == 0);
+}
+
+#[test]
+fn a_session_that_loses_a_server_lets_go_of_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(
+        vec![
+            server("docs", Sharing::Shared),
+            server("mine", Sharing::PerSession),
+        ],
+        |_| {},
+    );
+    let a = Agent::connect(
+        &rig.hub,
+        &rig.hub.mint(grant(1, folder.path(), &["docs", "mine"])),
+    );
+    let b = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["docs"])));
+    a.call("docs__who", json!({}));
+    a.call("mine__who", json!({}));
+    b.call("docs__who", json!({}));
+    assert_eq!(rig.processes.alive(), 2);
+    assert!(rig.hub.update(1, BTreeSet::new(), BTreeSet::new()));
+    wait_until("its own process to stop", || rig.processes.alive() == 1);
+    let running = rig.hub.running();
+    assert_eq!(running[0].sessions, BTreeSet::from([2]), "{running:?}");
+}
+
+#[test]
+fn logs_reach_a_lone_user_at_its_level_and_nobody_on_a_shared_process() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let heard = |agent: &Agent, level: &str, text: &str, sender: &Agent| {
+        stream_has(agent, text, Duration::from_millis(800), || {
+            sender.call("docs__who", json!({"log":true,"level":level,"text":text}));
+        })
+    };
+    assert!(
+        heard(&a, "warning", "first", &a),
+        "warnings and up by default"
+    );
+    assert!(!heard(&a, "info", "second", &a), "below the default");
+    a.request("logging/setLevel", json!({"level":"debug"}));
+    assert!(heard(&a, "info", "third", &a), "it asked for more");
+    let b = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["docs"])));
+    b.call("docs__who", json!({}));
+    assert!(
+        !heard(&b, "error", "fourth", &a),
+        "this may be about someone else's work"
+    );
+}
+
+#[test]
+fn a_subscription_the_server_refuses_fails_for_the_agent() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let refused = a.request(
+        "resources/subscribe",
+        json!({"uri":"hub+docs:file:///refused"}),
+    );
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("No such resource"),
+        "{refused}"
+    );
+    assert!(
+        rig.hub.running()[0].idle.is_some(),
+        "nothing holds the process open"
+    );
+}
+
+#[test]
+fn prompts_and_resources_go_through_to_their_server() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let listed = a.request("prompts/list", json!({}));
+    let names: Vec<_> = listed["result"]["prompts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{listed}"))
+        .iter()
+        .map(|prompt| prompt["name"].as_str().unwrap().to_owned())
+        .collect();
+    let long = format!("docs__{}", "a".repeat(80));
+    assert_eq!(
+        names,
+        ["docs__greet".to_owned(), long],
+        "tool limits don't apply"
+    );
+    let got = a.request(
+        "prompts/get",
+        json!({"name":"docs__greet","arguments":{"who":"Ada"}}),
+    );
+    assert_eq!(
+        got["result"]["messages"][0]["content"]["text"], "Ada",
+        "{got}"
+    );
+    let refused = a.request("prompts/get", json!({"name":"docs__nope"}));
+    assert_eq!(refused["error"]["message"], "No such prompt", "{refused}");
+    let unknown = a.request("prompts/get", json!({"name":"plain"}));
+    assert!(!unknown["error"].is_null());
+    let read = a.request("resources/read", json!({"uri":"hub+docs:file:///r"}));
+    assert_eq!(read["result"]["contents"][0]["text"], "docs", "{read}");
+    assert_eq!(read["result"]["contents"][0]["uri"], "file:///r");
+    let missing = a.request("resources/read", json!({"uri":"hub+docs:file:///missing"}));
+    assert_eq!(missing["error"]["message"], "Not found", "{missing}");
+}
+
+#[test]
+fn reading_a_resource_keeps_its_progress_token() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let read = json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{
+        "uri":"hub+docs:file:///r","_meta":{"progressToken":"mine"},
+    }});
+    let (_, body) = exchange(&a, Some(&a.session), &read.to_string());
+    assert!(
+        body.contains("notifications/progress") && body.contains("\"mine\""),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_tool_call_keeps_its_progress_token() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"docs__who","arguments":{"waitMs":100},"_meta":{"progressToken":"mine"},
+    }});
+    let (_, body) = exchange(&a, Some(&a.session), &call.to_string());
+    assert!(
+        body.contains("notifications/progress") && body.contains("\"mine\""),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_prompt_change_is_announced_as_one() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    a.request("prompts/list", json!({}));
+    assert!(stream_has(
+        &a,
+        "prompts/list_changed",
+        Duration::from_secs(5),
+        || {
+            a.call("docs__who", json!({"changePrompts":true}));
+        }
+    ));
+}
+
+#[test]
+fn a_change_of_servers_tells_an_agent_to_read_every_list_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &[])));
+    let mut stream = TcpStream::connect(&a.authority).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /mcp HTTP/1.1\r\nHost: {}\r\nAuthorization: {}\r\nMcp-Session-Id: {}\r\nMCP-Protocol-Version: 2025-11-25\r\nAccept: text/event-stream\r\n\r\n",
+        a.authority, a.bearer, a.session
+    )
+    .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.contains(" 200 "), "{line}");
+    assert!(rig
+        .hub
+        .update(1, BTreeSet::new(), BTreeSet::from(["docs".to_owned()])));
+    let mut waiting = vec!["tools", "prompts", "resources"];
+    while !waiting.is_empty() {
+        line.clear();
+        reader
+            .read_line(&mut line)
+            .unwrap_or_else(|_| panic!("never told about {waiting:?}"));
+        waiting.retain(|list| !line.contains(&format!("{list}/list_changed")));
+    }
+}
+
+#[test]
+fn a_session_gone_quiet_gives_up_its_servers_when_its_credential_expires() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("mine", Sharing::PerSession)], |config| {
+        config.idle = Duration::from_millis(300);
+        // Far past the credential, and the sweep runs a quarter of this.
+        config.server_idle = Duration::from_secs(8);
+    });
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["mine"])));
+    let called = Instant::now();
+    a.call("mine__who", json!({}));
+    assert_eq!(rig.processes.alive(), 1);
+    wait_until("its process to stop", || rig.processes.alive() == 0);
+    assert!(called.elapsed() < Duration::from_secs(6), "not idled out");
+}
+
+#[test]
+fn a_new_sharing_class_stops_the_process_of_the_old_one() {
+    let folder = tempfile::tempdir().unwrap();
+    let docs = server("docs", Sharing::Shared);
+    let rig = rig(vec![docs.clone()], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    let before = agent.call("docs__who", json!({}))["pid"].clone();
+    rig.hub
+        .set_servers(vec![server("docs", Sharing::PerSession)]);
+    wait_until("the old process to stop", || rig.processes.alive() == 0);
+    assert_ne!(agent.call("docs__who", json!({}))["pid"], before);
+    assert_eq!(rig.processes.alive(), 1);
+}
+
+#[test]
+fn a_server_removed_while_starting_leaves_no_process() {
+    let folder = tempfile::tempdir().unwrap();
+    let processes = Arc::new(Processes::default());
+    let mut config = Config::new("test-hub", "1");
+    config.spawner = Some(Arc::new(Spawn(
+        processes.clone(),
+        Duration::from_millis(300),
+    )));
+    let hub = Hub::start(config).unwrap();
+    hub.set_servers(vec![server("docs", Sharing::Shared)]);
+    let a = Agent::connect(&hub, &hub.mint(grant(1, folder.path(), &["docs"])));
+    std::thread::scope(|scope| {
+        let call = scope.spawn(|| a.call("docs__who", json!({})));
+        std::thread::sleep(Duration::from_millis(100));
+        hub.set_servers(Vec::new());
+        assert!(call.join().unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed"));
+    });
+    assert!(hub.running().is_empty());
+    wait_until("the late process to stop", || {
+        processes.started.load(Ordering::SeqCst) == 1 && processes.alive() == 0
+    });
 }
 
 #[test]

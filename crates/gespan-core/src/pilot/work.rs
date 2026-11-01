@@ -134,11 +134,15 @@ fn action(block: &Value) -> Option<String> {
 }
 /// The action of an `app_call` tool, for agents on the tool endpoint.
 fn tool_action(tool: &Value) -> Option<String> {
-    let name = tool["name"].as_str()?;
-    if name != "app_call" && !name.ends_with("__app_call") && !name.ends_with(":app_call") {
+    let name = tool["nativeName"].as_str()?;
+    let bare = name
+        .rsplit_once("__")
+        .or_else(|| name.rsplit_once([':', '.', '/']))
+        .map_or(name, |(_, tool)| tool);
+    if bare != "app_call" {
         return None;
     }
-    let input = match &tool["input"] {
+    let input = match &tool["nativeInput"] {
         Value::String(text) => serde_json::from_str(text).ok()?,
         input => input.clone(),
     };
@@ -176,6 +180,21 @@ pub fn command_action(command: &str) -> Option<String> {
     parts.get(2).cloned()
 }
 
+/// A tool's recorded output as JSON. An agent may keep an MCP result as its
+/// content blocks rather than their text.
+fn receipt(detail: &str) -> Option<Value> {
+    let parsed: Value = serde_json::from_str(detail).ok()?;
+    let text = parsed
+        .get("content")
+        .unwrap_or(&parsed)
+        .get(0)
+        .and_then(|block| block["text"].as_str());
+    match text {
+        Some(text) => serde_json::from_str(text).ok(),
+        None => Some(parsed),
+    }
+}
+
 /// One receipt list per source block. Listings supply details for accepted sends
 /// but never create launch cards by themselves (pilotSpawnedSessions.ts).
 pub(crate) fn block_launches(blocks: &[Value]) -> Vec<Vec<Value>> {
@@ -189,9 +208,7 @@ pub(crate) fn block_launches(blocks: &[Value]) -> Vec<Vec<Value>> {
             .flatten()
             .filter_map(launch)
             .collect();
-        let receipt: Option<Value> = block["tool"]["detail"]
-            .as_str()
-            .and_then(|text| serde_json::from_str(text).ok());
+        let receipt = block["tool"]["detail"].as_str().and_then(receipt);
         if let Some(receipt) = receipt.filter(|r| r["ok"] == true) {
             let value = &receipt["result"];
             match action(block).as_deref() {
@@ -329,6 +346,59 @@ mod tests {
             .next()
             .is_none());
         assert!(block_launches(&[send])[0].is_empty());
+    }
+    fn app_call(name: &str, input: Value, reply: String) -> Value {
+        json!({"role":"tool","text":"Gespan","tool":{
+            "status":"completed","nativeName":name,"nativeInput":input,"detail":reply,
+        }})
+    }
+    #[test]
+    fn app_call_receipts_recover_launches_for_agents_on_the_tool_endpoint() {
+        let mut started = details("app-child");
+        started["id"] = json!("app-child");
+        let reply = json!({"ok":true,"result":started,"requestId":"r"}).to_string();
+        // Each agent names the tool its own way, and keeps the input as text or
+        // JSON and the output as text or MCP content.
+        let input = json!({"action":"sessions.start","input":{"prompt":"Go"}});
+        let content = json!({"content":[{"type":"text","text":reply}]}).to_string();
+        let blocks = [
+            app_call("mcp__gespan__app_call", input.clone(), reply.clone()),
+            app_call("gespan.app_call", json!(input.to_string()), reply.clone()),
+            app_call("gespan:app_call", input.clone(), content.clone()),
+            app_call(
+                "app_call",
+                input.clone(),
+                json!([{"type":"text","text":reply}]).to_string(),
+            ),
+        ];
+        for block in blocks {
+            assert_eq!(
+                block_launches(std::slice::from_ref(&block))[0][0]["sessionId"],
+                "app-child",
+                "{block}"
+            );
+        }
+    }
+    #[test]
+    fn other_tools_and_failed_app_calls_leave_no_receipt() {
+        let mut started = details("app-child");
+        started["id"] = json!("app-child");
+        let reply = json!({"ok":true,"result":started,"requestId":"r"}).to_string();
+        let input = json!({"action":"sessions.start"});
+        let mut failed = app_call("app_call", input.clone(), reply.clone());
+        failed["tool"]["status"] = json!("error");
+        let blocks = [
+            failed,
+            app_call("mcp__other__not_app_call_x", input.clone(), reply.clone()),
+            app_call("app_call", json!({"input":{}}), reply.clone()),
+            app_call("app_call", json!("{not json"), reply.clone()),
+            app_call("app_call", input, "{\"ok\":true,".to_owned()),
+        ];
+        assert!(block_launches(&blocks)
+            .into_iter()
+            .flatten()
+            .next()
+            .is_none());
     }
     #[test]
     fn reconcile_work_retains_native_documents_monitoring_and_desktop_removals() {

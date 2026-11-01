@@ -551,8 +551,17 @@ impl mcp_hub::Toolkit for Toolkit {
         Client::new(grant.session).catalog()
     }
 
-    fn call(&self, grant: &mcp_hub::Grant, tool: &str, input: Value) -> Result<Value, String> {
-        Client::new(grant.session).call(tool, &input)
+    /// The `app` CLI sends its own request ID, for retries.
+    fn call(&self, grant: &mcp_hub::Grant, tool: &str, mut input: Value) -> Result<Value, String> {
+        let request_id = input
+            .as_object_mut()
+            .and_then(|fields| fields.remove("requestId"))
+            .and_then(|id| id.as_str().map(str::to_owned));
+        let client = Client {
+            session: grant.session,
+            request_id,
+        };
+        client.call(tool, &input)
     }
 }
 
@@ -872,11 +881,9 @@ mod tests {
 
     #[test]
     fn hub_refuses_another_key_without_the_stdio_process() {
-        // The token is in the agent's environment, so the hub is the boundary.
         let server = Server::start(405, scope("ABC-1", true, false)).unwrap();
-        let environment = server.session;
         let error = request(
-            &environment,
+            &server.session,
             Some("ABC-99"),
             Some(TicketTool::Get.into()),
             None,

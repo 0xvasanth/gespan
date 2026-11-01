@@ -2,7 +2,7 @@
 //! connection, so nothing about the caller is cached here: every request names
 //! its grant, set by the gate from the token on that request.
 use crate::{
-    endpoint::Inner,
+    endpoint::{Inner, Listing},
     pool::{split_resource_uri, PROMPTS, RESOURCES, SEPARATOR, TOOLS},
     Grant,
 };
@@ -57,7 +57,11 @@ fn complete(mut result: Value) -> Value {
 fn decode_all<T: serde::de::DeserializeOwned>(items: Vec<Value>) -> Vec<T> {
     items
         .into_iter()
-        .filter_map(|item| serde_json::from_value(item).ok())
+        .filter_map(|item| {
+            serde_json::from_value(item)
+                .inspect_err(|error| tracing::warn!(%error, "a list item didn't parse"))
+                .ok()
+        })
         .collect()
 }
 
@@ -78,7 +82,40 @@ fn decode_answer<T: serde::de::DeserializeOwned>(
     }
 }
 
+async fn announce(context: &SubscriptionContext, listing: Listing) -> bool {
+    let sink = context.sink();
+    match listing {
+        Listing::Tools => sink.notify_tool_list_changed().await,
+        Listing::Prompts => sink.notify_prompt_list_changed().await,
+        Listing::Resources => sink.notify_resource_list_changed().await,
+    }
+    .is_ok()
+}
+
 impl Session {
+    /// A request to the server behind a name. The caller giving up stops it.
+    async fn forward(
+        &self,
+        grant: &Grant,
+        context: &RequestContext<RoleServer>,
+        server: &str,
+        method: &str,
+        mut params: Value,
+    ) -> Result<Option<Result<Value, Value>>, ErrorData> {
+        self.inner
+            .calling(grant.session, context.peer.clone(), context.id.clone());
+        // rmcp lifts `_meta`, with any progress token, out of the params.
+        if !context.meta.is_empty() {
+            params["_meta"] = serde_json::to_value(&context.meta).map_err(internal)?;
+        }
+        tokio::select! {
+            answer = self.inner.pool.forward(grant, server, method, params) => Ok(answer),
+            () = context.ct.cancelled() => {
+                Err(ErrorData::internal_error("The request was cancelled", None))
+            }
+        }
+    }
+
     async fn watch_resource(
         &self,
         uri: &str,
@@ -138,17 +175,9 @@ impl ServerHandler for Session {
         if let Some((server, tool)) = name.split_once(SEPARATOR) {
             let mut params = serde_json::to_value(&request).map_err(internal)?;
             params["name"] = tool.into();
-            self.inner.calling(grant.session, context.peer.clone());
-            let call = self
-                .inner
-                .pool
-                .forward(&grant, server, "tools/call", params);
-            let answer = tokio::select! {
-                answer = call => answer,
-                () = context.ct.cancelled() => {
-                    return Err(ErrorData::internal_error("The tool call was cancelled", None));
-                }
-            };
+            let answer = self
+                .forward(&grant, &context, server, "tools/call", params)
+                .await?;
             if let Some(answer) = answer {
                 let result = match answer {
                     Ok(result) => serde_json::from_value::<CallToolResult>(complete(result))
@@ -205,10 +234,8 @@ impl ServerHandler for Session {
         let mut params = serde_json::to_value(&request).map_err(internal)?;
         params["name"] = prompt.into();
         let answer = self
-            .inner
-            .pool
-            .forward(&grant, server, "prompts/get", params)
-            .await;
+            .forward(&grant, &context, server, "prompts/get", params)
+            .await?;
         decode_answer::<GetPromptResult>(answer, "Unknown prompt").map(Into::into)
     }
 
@@ -232,12 +259,11 @@ impl ServerHandler for Session {
         let grant = caller(&context)?;
         let (server, uri) = split_resource_uri(&request.uri)
             .ok_or_else(|| ErrorData::invalid_params("Unknown resource", None))?;
-        let params = serde_json::json!({"uri":uri});
+        let mut params = serde_json::to_value(&request).map_err(internal)?;
+        params["uri"] = uri.into();
         let answer = self
-            .inner
-            .pool
-            .forward(&grant, server, "resources/read", params)
-            .await;
+            .forward(&grant, &context, server, "resources/read", params)
+            .await?;
         decode_answer::<ReadResourceResult>(answer, "Unknown resource").map(Into::into)
     }
 
@@ -292,10 +318,17 @@ impl ServerHandler for Session {
             tokio::select! {
                 () = context.cancelled() => return Ok(()),
                 change = changes.recv() => match change {
-                    Ok(session) if session != Some(grant.session) && session.is_some() => {}
-                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        if context.sink().notify_tool_list_changed().await.is_err() {
+                    Ok((session, _)) if session != Some(grant.session) && session.is_some() => {}
+                    Ok((_, listing)) => {
+                        if !announce(&context, listing).await {
                             return Ok(());
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        for listing in Listing::ALL {
+                            if !announce(&context, listing).await {
+                                return Ok(());
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),

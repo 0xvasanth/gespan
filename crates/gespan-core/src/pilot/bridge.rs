@@ -122,6 +122,23 @@ impl Surface {
             Self::Control => crate::orchestration::CONTROL_HELP,
         }
     }
+    /// The surface's help as a tool caller reads it: the same actions, called
+    /// with fields instead of flags.
+    fn tool_help(self) -> String {
+        let tool = self.tool();
+        format!(
+            "Through the {tool} tool, ACTION below is its `action` field, the JSON object is `input` and a request ID is `requestId`. The command line usage and its flags don't apply. A reply is an object with `ok`, `result` and `requestId`, and a failure is a tool error whose text ends with the request ID.\n\n{}",
+            self.help()
+        )
+    }
+    fn unavailable(self) -> &'static str {
+        match self {
+            Self::App => "App closed",
+            Self::Control => {
+                "No Gespan connection. Confirm the Orchestrator proposal in Gespan first."
+            }
+        }
+    }
     fn help_tool(self) -> &'static str {
         match self {
             Self::App => "app_help",
@@ -165,7 +182,7 @@ impl mcp_hub::Toolkit for Toolkit {
     }
     fn call(&self, grant: &mcp_hub::Grant, tool: &str, arguments: Value) -> Result<Value, String> {
         if tool == self.0.help_tool() {
-            return Ok(json!({"help":self.0.help()}));
+            return Ok(json!({"help":self.0.tool_help()}));
         }
         let action = arguments["action"]
             .as_str()
@@ -186,7 +203,7 @@ impl mcp_hub::Toolkit for Toolkit {
             dispatch(self.0, grant.session, &request_id, action, input)
         };
         match result {
-            Ok(value) => Ok(json!({"result":value,"requestId":request_id})),
+            Ok(value) => Ok(json!({"ok":true,"result":value,"requestId":request_id})),
             Err(error) => Err(format!("{error} (requestId: {request_id})")),
         }
     }
@@ -204,7 +221,7 @@ fn dispatch(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&(surface, session))
         .map(|(_, calls)| calls.clone())
-        .ok_or("App closed")?;
+        .ok_or(surface.unavailable())?;
     let (reply, result) = mpsc::channel();
     calls
         .send_blocking(Call {
@@ -214,7 +231,7 @@ fn dispatch(
             input,
             reply,
         })
-        .map_err(|_| "App closed")?;
+        .map_err(|_| surface.unavailable())?;
     result
         .recv_timeout(Duration::from_secs(60))
         .map_err(|_| "App request timed out; retry using the same request ID")?
@@ -269,17 +286,43 @@ fn client_for(surface: Surface, args: &[String]) -> Result<Value, String> {
             _ => return Err(format!("Unknown app argument: {arg}")),
         }
     }
-    if surface == Surface::App && crate::ticket_bridge::is_app_action(&action) {
-        if let Err(error) = crate::ticket_bridge::app_tool(&action) {
-            return Ok(json!({"ok":false,"error":error,"requestId":request_id}));
+    let (tool, arguments) = match cli_route(surface, &action, input, &request_id) {
+        Ok(route) => route,
+        Err(error) => return Ok(json!({"ok":false,"error":error,"requestId":request_id})),
+    };
+    let wrapped = tool == surface.tool();
+    let reply = crate::tool_servers::call_tool(tool, arguments).map(|reply| {
+        if wrapped {
+            reply["result"].clone()
+        } else {
+            reply
         }
-    }
-    Ok(cli_reply(surface, &action, input, &request_id))
+    });
+    Ok(cli_reply(reply, &request_id))
 }
-fn cli_reply(surface: Surface, action: &str, input: Value, request_id: &str) -> Value {
-    let arguments = json!({"action":action,"input":input,"requestId":request_id});
-    match crate::tool_servers::call_tool(surface.tool(), arguments) {
-        Ok(reply) => json!({"ok":true,"result":reply["result"],"requestId":request_id}),
+/// The tool behind a CLI call. `ticket.*` and `card.*` go straight to the
+/// ticket toolkit: a session linked to a ticket holds that without holding
+/// `app`.
+fn cli_route(
+    surface: Surface,
+    action: &str,
+    mut input: Value,
+    request_id: &str,
+) -> Result<(&'static str, Value), String> {
+    if surface == Surface::App && crate::ticket_bridge::is_app_action(action) {
+        let tool = crate::ticket_bridge::app_tool(action)?;
+        let fields = input.as_object_mut().ok_or("Input must be a JSON object")?;
+        fields.insert("requestId".into(), request_id.into());
+        return Ok((tool, input));
+    }
+    Ok((
+        surface.tool(),
+        json!({"action":action,"input":input,"requestId":request_id}),
+    ))
+}
+fn cli_reply(reply: Result<Value, String>, request_id: &str) -> Value {
+    match reply {
+        Ok(result) => json!({"ok":true,"result":result,"requestId":request_id}),
         Err(error) => json!({
             "ok":false,
             "error":error.strip_suffix(&format!(" (requestId: {request_id})")).unwrap_or(&error),
@@ -292,6 +335,96 @@ fn cli_reply(surface: Surface, action: &str, input: Value, request_id: &str) -> 
 mod capability_tests {
     use super::*;
     use mcp_hub::Toolkit as _;
+
+    #[test]
+    fn a_tickets_cli_actions_need_only_the_ticket_toolkit() {
+        let (tool, arguments) = cli_route(
+            Surface::App,
+            "ticket.comment",
+            json!({"body":"Done"}),
+            "request-1",
+        )
+        .unwrap();
+        assert_eq!(tool, "ticket_comment");
+        assert_eq!(arguments, json!({"body":"Done","requestId":"request-1"}));
+        let (tool, _) = cli_route(Surface::App, "card.subtasks", json!({}), "r").unwrap();
+        assert_eq!(tool, "card_subtasks");
+    }
+
+    #[test]
+    fn other_cli_actions_stay_on_their_own_surface() {
+        let (tool, arguments) =
+            cli_route(Surface::App, "sessions.list", json!({"limit":1}), "r").unwrap();
+        assert_eq!(tool, "app_call");
+        assert_eq!(
+            arguments,
+            json!({"action":"sessions.list","input":{"limit":1},"requestId":"r"})
+        );
+        let (tool, _) = cli_route(Surface::Control, "ticket.get", json!({}), "r").unwrap();
+        assert_eq!(tool, "control_call", "only the app surface has tickets");
+    }
+
+    #[test]
+    fn a_cli_route_refuses_what_no_tool_could_take() {
+        for (action, input) in [("ticket.unknown", json!({})), ("ticket.get", json!("text"))] {
+            assert!(
+                cli_route(Surface::App, action, input, "r").is_err(),
+                "{action}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cli_prints_ok_or_the_error_without_repeating_the_request_id() {
+        assert_eq!(
+            cli_reply(Ok(json!({"id":1})), "r"),
+            json!({"ok":true,"result":{"id":1},"requestId":"r"})
+        );
+        assert_eq!(
+            cli_reply(Err("App closed (requestId: r)".to_owned()), "r"),
+            json!({"ok":false,"error":"App closed","requestId":"r"})
+        );
+        assert_eq!(
+            cli_reply(Err("Not reachable".to_owned()), "r"),
+            json!({"ok":false,"error":"Not reachable","requestId":"r"})
+        );
+    }
+
+    #[test]
+    fn help_through_a_tool_describes_its_fields() {
+        let grant = |toolkit: &str| mcp_hub::Grant {
+            session: 75,
+            workspace: "/work".into(),
+            toolkits: [toolkit.to_owned()].into(),
+            servers: Default::default(),
+        };
+        for (toolkit, tool, surface) in [
+            (Toolkit::APP, "app_help", crate::tool_servers::APP),
+            (
+                Toolkit::CONTROL,
+                "control_help",
+                crate::tool_servers::CONTROL,
+            ),
+        ] {
+            let help = toolkit.call(&grant(surface), tool, json!({})).unwrap();
+            let help = help["help"].as_str().unwrap();
+            assert!(
+                help.contains("`requestId`") && help.contains("`input`"),
+                "{help}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lead_with_no_route_is_told_to_confirm_the_proposal() {
+        let refused = dispatch(Surface::Control, 76, "r", "list", json!({})).unwrap_err();
+        assert!(
+            refused.contains("Confirm the Orchestrator proposal"),
+            "{refused}"
+        );
+        let refused = dispatch(Surface::App, 76, "r", "models.list", json!({})).unwrap_err();
+        assert_eq!(refused, "App closed");
+    }
 
     fn grant(session: i64) -> mcp_hub::Grant {
         mcp_hub::Grant {
@@ -332,7 +465,7 @@ mod capability_tests {
         let refused = Toolkit::CONTROL
             .call(&grant(9), "control_call", json!({"action":"list"}))
             .unwrap_err();
-        assert!(refused.starts_with("App closed"), "{refused}");
+        assert!(refused.starts_with("No Gespan connection"), "{refused}");
     }
     #[test]
     fn the_control_help_explains_every_action() {
@@ -364,7 +497,7 @@ mod capability_tests {
         call.reply.send(Ok(json!({"models":[]}))).unwrap();
         assert_eq!(
             worker.join().unwrap().unwrap(),
-            json!({"result":{"models":[]},"requestId":"r-7"})
+            json!({"ok":true,"result":{"models":[]},"requestId":"r-7"})
         );
     }
     #[test]

@@ -84,6 +84,11 @@ pub(crate) struct Preferences {
     pub last_model_settings: HashMap<String, String>,
     pub hidden_providers: Vec<String>,
     pub project_providers: HashMap<String, ProviderDefaults>,
+    // Deleting a worktree: what its dialog starts with, for every project
+    // unless `project_worktrees` says otherwise.
+    pub worktree_delete_branch: bool,
+    pub worktree_delete_sessions: bool,
+    pub project_worktrees: HashMap<String, WorktreeDefaults>,
     pub favorite_models: Vec<ModelChoice>,
     pub recent_models: Vec<ModelChoice>,
     pub model_picker_tab: Option<String>,
@@ -171,6 +176,9 @@ impl Default for Preferences {
             last_model_settings: HashMap::new(),
             hidden_providers: Vec::new(),
             project_providers: HashMap::new(),
+            worktree_delete_branch: false,
+            worktree_delete_sessions: false,
+            project_worktrees: HashMap::new(),
             favorite_models: Vec::new(),
             recent_models: Vec::new(),
             model_picker_tab: None,
@@ -188,6 +196,21 @@ impl Default for Preferences {
 }
 
 impl Preferences {
+    /// Whether deleting a worktree of `project` starts with its merged branch
+    /// ticked. The dialog can still change it, for that one deletion.
+    pub(crate) fn deletes_merged_branch(&self, project: &str) -> bool {
+        self.project_worktrees
+            .get(project)
+            .and_then(|project| project.delete_branch)
+            .unwrap_or(self.worktree_delete_branch)
+    }
+    /// As [`Self::deletes_merged_branch`], for the worktree's sessions.
+    pub(crate) fn deletes_worktree_sessions(&self, project: &str) -> bool {
+        self.project_worktrees
+            .get(project)
+            .and_then(|project| project.delete_sessions)
+            .unwrap_or(self.worktree_delete_sessions)
+    }
     pub(crate) fn apply_workspace_theme(&mut self, id: String) {
         let color: gpui::Hsla = gpui::rgb(super::palette(&id, false).surface).into();
         self.theme_hue = (color.h * 360.).round() as u32;
@@ -323,6 +346,14 @@ pub(crate) struct ProviderDefaults {
     pub provider: Option<String>,
     pub models: HashMap<String, String>,
     pub hidden: Vec<String>,
+}
+
+/// A project's own answers. `None` follows the app's setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct WorktreeDefaults {
+    pub delete_branch: Option<bool>,
+    pub delete_sessions: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,5 +556,49 @@ mod decoration_tests {
         assert!(!restored.wayland_window_decorations);
         restored.restore_appearance();
         assert!(restored.wayland_window_decorations);
+    }
+}
+
+#[cfg(test)]
+mod worktree_default_tests {
+    use super::*;
+
+    #[test]
+    fn a_project_overrides_the_app_and_otherwise_follows_it() {
+        let mut prefs = Preferences::default();
+        assert!(
+            !prefs.deletes_merged_branch("/a"),
+            "keeps things by default"
+        );
+        assert!(!prefs.deletes_worktree_sessions("/a"));
+        prefs.worktree_delete_branch = true;
+        assert!(prefs.deletes_merged_branch("/a"));
+        prefs.project_worktrees.insert(
+            "/a".into(),
+            WorktreeDefaults {
+                delete_branch: Some(false),
+                delete_sessions: Some(true),
+            },
+        );
+        assert!(!prefs.deletes_merged_branch("/a"));
+        assert!(prefs.deletes_worktree_sessions("/a"));
+        assert!(prefs.deletes_merged_branch("/b"), "only that project");
+        assert!(!prefs.deletes_worktree_sessions("/b"));
+    }
+
+    #[test]
+    fn a_project_setting_survives_saving() {
+        let mut prefs = Preferences::default();
+        prefs.project_worktrees.insert(
+            "/a".into(),
+            WorktreeDefaults {
+                delete_branch: Some(true),
+                delete_sessions: None,
+            },
+        );
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let read: Preferences = serde_json::from_str(&saved).unwrap();
+        assert!(read.deletes_merged_branch("/a"));
+        assert!(!read.deletes_worktree_sessions("/a"));
     }
 }

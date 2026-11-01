@@ -10,7 +10,9 @@ pub trait Toolkit: Send + Sync + 'static {
     fn name(&self) -> &'static str;
 
     /// MCP tool definitions for this caller. Read at each `tools/list`, so a
-    /// scope that changes mid-session changes the list.
+    /// scope that changes mid-session changes the list, and again at each
+    /// `tools/call` to gate it, so this must be cheap and agree with what was
+    /// listed.
     fn tools(&self, grant: &Grant) -> Vec<Value>;
 
     /// Runs on a blocking thread and may wait on the app. An `Err` reaches the

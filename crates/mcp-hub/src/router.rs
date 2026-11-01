@@ -70,6 +70,11 @@ fn frame(id: u64, method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
 }
 
+/// Tells a server nobody is waiting on this request any more.
+pub(crate) fn cancelled(id: u64) -> Value {
+    json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}})
+}
+
 struct Pending {
     caller: Caller,
     /// The hub's progress token, for this request's life.
@@ -82,18 +87,19 @@ pub(crate) struct Router {
     /// The hub's token to the caller and the token the caller used.
     progress: HashMap<String, (Caller, Value)>,
     subscribers: HashMap<String, BTreeSet<Caller>>,
-    workspace: Option<String>,
+    /// The `file:` URI of the folder this process serves.
+    root: Option<String>,
     reach: Reach,
 }
 
 impl Router {
-    pub(crate) fn new(reach: Reach, workspace: Option<String>) -> Self {
+    pub(crate) fn new(reach: Reach, root: Option<String>) -> Self {
         Self {
             next: 0,
             pending: HashMap::new(),
             progress: HashMap::new(),
             subscribers: HashMap::new(),
-            workspace,
+            root,
             reach,
         }
     }
@@ -135,7 +141,7 @@ impl Router {
     /// Tells the server an agent gave up on a request.
     pub(crate) fn cancel(&mut self, id: u64) -> Option<Value> {
         self.settle(id)?;
-        Some(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}}))
+        Some(cancelled(id))
     }
 
     fn settle(&mut self, id: u64) -> Option<Pending> {
@@ -168,6 +174,11 @@ impl Router {
         Some(frame(id, "resources/unsubscribe", json!({"uri":uri})))
     }
 
+    /// The server refused this subscription, so nobody holds it.
+    pub(crate) fn refused(&mut self, uri: &str) {
+        self.subscribers.remove(uri);
+    }
+
     /// Everything a session held here goes when it does.
     pub(crate) fn forget(&mut self, caller: Caller) -> Vec<Value> {
         let uris: Vec<_> = self
@@ -192,7 +203,12 @@ impl Router {
 
     /// Nothing in flight and nobody listening, so this server may stop.
     pub(crate) fn is_idle(&self) -> bool {
-        self.pending.is_empty() && self.subscribers.is_empty()
+        self.is_quiet() && self.subscribers.is_empty()
+    }
+
+    /// No agent is waiting on this server.
+    pub(crate) fn is_quiet(&self) -> bool {
+        self.pending.is_empty()
     }
 
     /// A frame from the server.
@@ -236,8 +252,7 @@ impl Router {
         }
         // The folder is ours to answer: it's why this process exists.
         if method == "roots/list" {
-            if let Some(workspace) = &self.workspace {
-                let uri = format!("file://{workspace}");
+            if let Some(uri) = &self.root {
                 let roots = json!({"jsonrpc":"2.0","id":id,"result":{"roots":[{"uri":uri}]}});
                 return vec![Action::Reply(roots)];
             }
@@ -439,7 +454,7 @@ mod tests {
 
     #[test]
     fn roots_come_from_the_workspace_this_process_serves() {
-        let mut router = Router::new(Reach::Workspace, Some("/work/a".into()));
+        let mut router = Router::new(Reach::Workspace, Some("file:///work/a".into()));
         let actions = router.inbound(json!({"id":3,"method":"roots/list"}));
         let [Action::Reply(reply)] = actions.as_slice() else {
             panic!("{actions:?}");

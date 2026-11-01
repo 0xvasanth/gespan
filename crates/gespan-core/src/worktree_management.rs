@@ -72,8 +72,30 @@ pub fn remove(cwd: &Path, path: &Path) -> Result<(), String> {
 }
 fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     let tree = check(cwd, path)?;
+    let removal = tear_down(cwd, &tree)?;
     crate::provider::discard_worktree(Path::new(&tree.path));
-    crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path]).map(|_| ())
+    if crate::files::remote::is_remote(cwd) {
+        crate::git::remove_remote_worktree(cwd, &tree.path)?;
+    } else {
+        crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path])?;
+    }
+    removal.done();
+    Ok(())
+}
+/// The project's Teardown, while the agent and the folder are still there.
+fn tear_down(
+    cwd: &Path,
+    tree: &crate::git::Worktree,
+) -> Result<crate::worktree_scripts::Removal, String> {
+    let main = crate::git::worktrees(cwd)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?;
+    crate::worktree_scripts::tear_down(
+        Path::new(&main.path),
+        Path::new(&tree.path),
+        tree.branch.as_deref(),
+    )
 }
 /// How the worktree's branch reached the default branch, if it has. A check
 /// that can't finish reads as not merged, which keeps the branch.
@@ -164,17 +186,24 @@ fn remove_clean(cwd: &Path, path: &Path) -> Result<(), String> {
     if status(cwd, &tree).1 != Some(false) {
         return Err("Files in this worktree have uncommitted changes.".into());
     }
+    let removal = tear_down(cwd, &tree)?;
+    // A failed Teardown can wait a long time for its answer, so a change since
+    // the check above could be anyone's. Only the person can discard it.
+    if removal.ran && status(cwd, &tree).1 != Some(false) {
+        return Err("Files in this worktree changed during Teardown, so it was kept.".into());
+    }
     crate::provider::discard_worktree(Path::new(&tree.path));
     let remove = || crate::git::git(cwd, &["worktree", "remove", "--", &tree.path]).map(|_| ());
     // A discarded agent exits on its own thread. Windows refuses to delete a
     // folder while a process still runs in it.
     for _ in 0..REMOVE_RETRIES {
         if remove().is_ok() {
+            removal.done();
             return Ok(());
         }
         std::thread::sleep(REMOVE_RETRY_DELAY);
     }
-    remove()
+    remove().map(|()| removal.done())
 }
 
 #[cfg(test)]
