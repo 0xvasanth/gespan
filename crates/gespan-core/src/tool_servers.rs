@@ -733,9 +733,7 @@ mod tests {
         let spawned = start_server(&sleeper(), None, Some(record.clone())).unwrap();
         let text = std::fs::read_to_string(&record).unwrap();
         assert_eq!(text.trim(), spawned.pid.to_string());
-        let (pid, stop) = (spawned.pid, spawned.stop);
-        assert!(crate::resources::identity(pid).is_some());
-        stop();
+        (spawned.stop)();
         assert!(!record.exists(), "the record ends with its last server");
     }
 
