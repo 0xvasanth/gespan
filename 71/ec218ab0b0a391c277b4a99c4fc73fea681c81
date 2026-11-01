@@ -1,0 +1,66 @@
+crates/gespan-core/src/ticket_bridge.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 1565
+crates/mcp-hub/tests/servers.rs
+  s_92be0b300595dd::t_4f55b8c3910ab2 990-1015
+  s_92be0b300595dd::t_2e4d4d24e82f1c 989
+crates/mcp-hub/src/oauth.rs
+  s_92be0b300595dd::t_342dcd057f7401 9-10,88-89,93-112,134,136,184,212-221,264-278
+  s_92be0b300595dd::t_2d16368641877a 279
+crates/gespan-core/src/mcp_catalog.rs
+  s_92be0b300595dd::t_67494d9dfa14bb 90-92,383,885,1009-1041
+  s_92be0b300595dd::t_6e1a9ee059357c 43-48,328-330,332-335,856-884
+  s_92be0b300595dd::t_05dffab363ffc0 886,1042
+crates/mcp-hub/tests/remote.rs
+  s_92be0b300595dd::t_581fa3dc303bb5 129-132
+  s_92be0b300595dd::t_342dcd057f7401 386,479-493
+  s_92be0b300595dd::t_e6236c898d995b 494-495
+crates/gespan-core/tests/live_catalogue.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 124-132
+crates/mcp-hub/src/pool.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 30-37,843-846,853-856,874-877
+  s_92be0b300595dd::t_342dcd057f7401 27,29,38,171-172,199,213-215,257-258,260-262,277-280,345,365-367,369,490-507,523,531,536,540-541,605-611,666,680-684,705-712,714-725,801-808,810-813,818-842,847-852,857-873,879-881
+crates/gespan-core/src/mcp_registry.rs
+  s_92be0b300595dd::t_47c3af5830fc8a 525-526
+  s_92be0b300595dd::t_4f55b8c3910ab2 68-70,72,75-99,109-133,157-158,160-164,166,168-172,185-186
+  s_92be0b300595dd::t_6e1a9ee059357c 4,190-192,194-206,238-265,279-281,308-317,424,462,465,467,469-470,486,492,516-524,527-528,531,535-555,573,575-578,580-592,597-605,630-643,653-658
+crates/gespan-core/src/mcp.rs
+  s_92be0b300595dd::t_581fa3dc303bb5 426
+  s_92be0b300595dd::t_6e1a9ee059357c 444-448,866-869
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 459-463,487,489,501-507
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 75-77,80,315-320,545-550,831
+crates/mcp-hub/src/remote.rs
+  s_92be0b300595dd::t_342dcd057f7401 11-12,15-54,103-106,108-110,129-130
+crates/mcp-hub/src/relay.rs
+  s_92be0b300595dd::t_6e1a9ee059357c 485-486
+  s_92be0b300595dd::t_342dcd057f7401 8-11,23-25,104-105,116-122,130-136,144,148,154,306-321,409,474-484,487-512
+  s_92be0b300595dd::t_4f55b8c3910ab2 689
+  s_92be0b300595dd::t_dbf256165b47a8 513
+docs/native/mcp-hub.md
+  s_666089fd138caa::t_dc0dfabb95f10d 54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71ec218ab0b0a391c277b4a99c4fc73fea681c81",
+  "prompts": {},
+  "sessions": {
+    "s_666089fd138caa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "189adf62-4328-4272-8130-66289c564241",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
