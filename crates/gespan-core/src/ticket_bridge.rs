@@ -1,33 +1,22 @@
-//! Session-scoped ticket and card tools for coding agents. The stdio server
-//! forwards each call over loopback to the app, which acts through `Tickets`
-//! with the keychain credentials (or the board store, for card tools); the
-//! agent only ever holds a per-session token. The tools themselves and their
-//! refusal rules live in `gespan_tracker_client::tools`, shared with Tauri.
+//! Session-scoped ticket and card tools for coding agents, served through the
+//! MCP hub. The app acts through `Tickets` with the keychain credentials (or
+//! the board store, for card tools); the agent never sees them. The tools
+//! themselves and their refusal rules live in `gespan_tracker_client::tools`,
+//! shared with Tauri.
 use crate::tickets::TicketRef;
 use gespan_board_store::CardTool;
 pub use gespan_tracker_client::tools::{answer, Answered, Effect, TicketTool};
 use gespan_tracker_client::tools::{refusal, NO_TICKET, READ_ONLY};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap},
-    io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        mpsc, Arc, Mutex, OnceLock,
-    },
+    sync::{mpsc, Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
-const MAX_WIRE_BYTES: usize = 1_048_576;
 /// Tracker calls are slow but bounded; past this the agent gets an error.
 const APP_TIMEOUT: Duration = Duration::from_secs(60);
-const ENV_ENDPOINT: &str = "GESPAN_TICKET_ENDPOINT";
-const ENV_TOKEN: &str = "GESPAN_TICKET_TOKEN";
-const ENV_SESSION: &str = "GESPAN_TICKET_SESSION";
-const ENV_EXECUTABLE: &str = "GESPAN_TICKET_EXECUTABLE";
-pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 const APP_GONE: &str = "Gespan stopped handling this session's ticket tools";
 const NO_CARDS: &str = "Card tools aren't available in this session";
 const BUSY: &str = "Too many ticket calls are waiting; retry shortly";
@@ -79,40 +68,6 @@ impl Serialize for BridgeTool {
     }
 }
 
-/// The token is in the agent's environment, so the hub reads this wire from
-/// a caller it can't trust: every tool refuses keys it doesn't define.
-impl<'de> Deserialize<'de> for BridgeTool {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = Value::deserialize(deserializer)?;
-        let name = value
-            .get("tool")
-            .and_then(Value::as_str)
-            .ok_or_else(|| serde::de::Error::custom("a tool needs a name"))?;
-        if name.starts_with("card_") {
-            return serde_json::from_value(value)
-                .map(Self::Card)
-                .map_err(serde::de::Error::custom);
-        }
-        let allowed: &[&str] = match name {
-            "get" | "statuses" => &["tool"],
-            "comment" => &["tool", "markdown"],
-            "set_status" => &["tool", "target", "fields"],
-            _ => return Err(serde::de::Error::custom("unknown ticket tool")),
-        };
-        if let Some(extra) = value
-            .as_object()
-            .into_iter()
-            .flat_map(|object| object.keys())
-            .find(|key| !allowed.contains(&key.as_str()))
-        {
-            return Err(serde::de::Error::custom(format!("unknown field `{extra}`")));
-        }
-        serde_json::from_value(value)
-            .map(Self::Ticket)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// Why a card tool may not run in this turn, before it reaches the app.
 fn card_refusal(tool: &CardTool, read_only: bool) -> Option<&'static str> {
     (read_only && matches!(tool, CardTool::SubtaskDone { .. })).then_some(READ_ONLY)
@@ -128,17 +83,11 @@ pub struct Call {
 }
 
 /// A request without a tool asks for the session's scope.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Wire {
     session: i64,
-    token: String,
-    #[serde(default)]
     key: Option<String>,
-    #[serde(default)]
     tool: Option<BridgeTool>,
     /// The `app` CLI's request ID, so a retry cannot post a comment twice.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     request: Option<String>,
 }
 
@@ -149,7 +98,6 @@ struct ActiveTurn {
 }
 
 struct SessionCapability {
-    token: String,
     generation: u64,
     active: Option<ActiveTurn>,
     /// Writes by request ID: what was asked, and its result once known.
@@ -157,56 +105,23 @@ struct SessionCapability {
 }
 
 struct Hub {
-    endpoint: String,
     sessions: Mutex<HashMap<i64, SessionCapability>>,
 }
 
-fn hub() -> Result<Arc<Hub>, String> {
-    static HUB: OnceLock<Mutex<Option<Arc<Hub>>>> = OnceLock::new();
-    let mut slot = HUB
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "Ticket tools unavailable")?;
-    if let Some(hub) = &*slot {
-        return Ok(hub.clone());
-    }
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let endpoint = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .to_string();
-    let hub = Arc::new(Hub {
-        endpoint,
-        sessions: Mutex::new(HashMap::new()),
-    });
-    let owner = hub.clone();
-    let connections = Arc::new(AtomicUsize::new(0));
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else {
-                break;
-            };
-            if connections.fetch_add(1, Ordering::Relaxed) >= 16 {
-                connections.fetch_sub(1, Ordering::Relaxed);
-                continue;
-            }
-            let owner = owner.clone();
-            let connections = connections.clone();
-            std::thread::spawn(move || {
-                let _ = serve(stream, &owner);
-                connections.fetch_sub(1, Ordering::Relaxed);
-            });
-        }
-    });
-    *slot = Some(hub.clone());
-    Ok(hub)
+fn hub() -> Arc<Hub> {
+    static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
+    HUB.get_or_init(|| {
+        Arc::new(Hub {
+            sessions: Mutex::new(HashMap::new()),
+        })
+    })
+    .clone()
 }
 
-/// One turn's ticket capability. The token outlives turns so a long-lived
-/// provider keeps working; the scope is this turn's, read at each call.
+/// One turn's ticket capability. The session's receipts outlive turns so a
+/// long-lived provider keeps working; the scope is this turn's, read at each call.
 pub struct Server {
     hub: Arc<Hub>,
-    token: String,
     session: i64,
     generation: u64,
     calls: mpsc::Receiver<Call>,
@@ -237,9 +152,9 @@ impl Server {
         if scope.ticket.is_none() && !scope.cards {
             return Err("No ticket or cards for this session's tools".into());
         }
-        let hub = hub()?;
+        let hub = hub();
         let (send, calls) = mpsc::sync_channel(16);
-        let (token, generation) = {
+        let generation = {
             let mut sessions = hub
                 .sessions
                 .lock()
@@ -247,11 +162,6 @@ impl Server {
             let capability = sessions
                 .entry(session)
                 .or_insert_with(|| SessionCapability {
-                    token: format!(
-                        "{:032x}{:032x}",
-                        rand::random::<u128>(),
-                        rand::random::<u128>()
-                    ),
                     generation: 0,
                     active: None,
                     receipts: HashMap::new(),
@@ -265,27 +175,14 @@ impl Server {
                 send,
                 scope,
             });
-            (capability.token.clone(), capability.generation)
+            capability.generation
         };
         Ok(Self {
             hub,
-            token,
             session,
             generation,
             calls,
         })
-    }
-
-    pub fn environment(&self, executable: &std::path::Path) -> HashMap<String, String> {
-        HashMap::from([
-            (ENV_ENDPOINT.into(), self.hub.endpoint.clone()),
-            (ENV_TOKEN.into(), self.token.clone()),
-            (ENV_SESSION.into(), self.session.to_string()),
-            (
-                ENV_EXECUTABLE.into(),
-                executable.to_string_lossy().into_owned(),
-            ),
-        ])
     }
 
     /// The session's ticket as of now.
@@ -350,49 +247,13 @@ fn same_key(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
-fn serve(mut stream: TcpStream, hub: &Hub) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    BufReader::new((&stream).take((MAX_WIRE_BYTES + 1) as u64))
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    let result = handle(&line, hub);
-    let response = match result {
-        Ok(value) => json!({"ok":true,"result":value}),
-        Err(error) => json!({"ok":false,"error":error}),
-    };
-    writeln!(stream, "{response}").map_err(|e| e.to_string())
-}
-
-fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
-    if line.len() > MAX_WIRE_BYTES || !line.ends_with('\n') {
-        return Err("Invalid ticket request".into());
-    }
-    let wire: Wire = serde_json::from_str(line).map_err(|_| "Invalid ticket request")?;
+fn handle(wire: Wire, hub: &Hub) -> Result<Value, String> {
     let (generation, result, receipt) = {
         let mut sessions = hub
             .sessions
             .lock()
             .map_err(|_| "Ticket session unavailable")?;
-        let capability = sessions
-            .get_mut(&wire.session)
-            .ok_or("Invalid ticket capability")?;
-        let secret = &capability.token;
-        let equal = wire.token.len() == secret.len()
-            && wire
-                .token
-                .bytes()
-                .zip(secret.bytes())
-                .fold(0u8, |diff, (a, b)| diff | a ^ b)
-                == 0;
-        if !equal {
-            return Err("Invalid ticket capability".into());
-        }
+        let capability = sessions.get_mut(&wire.session).ok_or(APP_GONE)?;
         let active = capability.active.as_ref().ok_or(APP_GONE)?;
         let scope = &active.scope;
         // Card tools come first: their scope is the session's cards, so a
@@ -405,8 +266,7 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
                 return Err(refused.into());
             }
         }
-        // The token is in the agent's environment, so scope is enforced here
-        // and not only by the stdio server.
+        // Scope is enforced here too, for the `app` CLI's direct route.
         if let Some(key) = wire
             .key
             .as_ref()
@@ -516,68 +376,6 @@ fn writes(tool: &BridgeTool) -> bool {
     )
 }
 
-/// One loopback round trip. `tool: None` asks for the session's scope.
-fn request(
-    environment: &HashMap<String, String>,
-    key: Option<&str>,
-    tool: Option<BridgeTool>,
-    request_id: Option<&str>,
-) -> Result<Value, String> {
-    let get = |name| {
-        environment
-            .get(name)
-            .ok_or("Ticket tools need a running Gespan session")
-    };
-    let endpoint: SocketAddr = get(ENV_ENDPOINT)?
-        .parse()
-        .map_err(|_| "Invalid ticket endpoint")?;
-    if !endpoint.ip().is_loopback() {
-        return Err("Ticket endpoint must be loopback".into());
-    }
-    let wire = Wire {
-        session: get(ENV_SESSION)?
-            .parse()
-            .map_err(|_| "Invalid ticket session")?,
-        token: get(ENV_TOKEN)?.clone(),
-        key: key.map(str::to_owned),
-        tool,
-        request: request_id.map(str::to_owned),
-    };
-    let mut stream =
-        TcpStream::connect_timeout(&endpoint, Duration::from_secs(3)).map_err(|_| APP_GONE)?;
-    stream
-        .set_read_timeout(Some(APP_TIMEOUT + Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&wire).map_err(|e| e.to_string())?
-    )
-    .map_err(|_| APP_GONE)?;
-    let mut response = String::new();
-    BufReader::new(stream.take(MAX_WIRE_BYTES as u64))
-        .read_line(&mut response)
-        .map_err(|_| APP_GONE)?;
-    let response: Value = serde_json::from_str(&response).map_err(|_| APP_GONE)?;
-    if response["ok"] != true {
-        return Err(response["error"]
-            .as_str()
-            .unwrap_or("Ticket call failed")
-            .into());
-    }
-    Ok(response["result"].clone())
-}
-
-fn current_environment() -> HashMap<String, String> {
-    ENV_KEYS
-        .into_iter()
-        .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
-        .collect()
-}
-
 /// The tools a session's scope offers: ticket tools with a ticket, card
 /// tools with cards.
 pub fn tool_definitions(ticket: bool, cards: bool) -> Vec<Value> {
@@ -607,23 +405,31 @@ fn ticket_definitions() -> Vec<Value> {
     ]
 }
 
-/// The stdio side. It checks scope before forwarding, so a refused call never
-/// reaches the app; the hub checks again for callers that skip this process.
+/// Decodes one call and checks scope before forwarding, so a refused call
+/// never reaches the app.
 struct Client {
-    environment: HashMap<String, String>,
+    session: i64,
     request_id: Option<String>,
 }
 
 impl Client {
-    fn new(environment: HashMap<String, String>) -> Self {
+    fn new(session: i64) -> Self {
         Self {
-            environment,
+            session,
             request_id: None,
         }
     }
 
     fn request(&self, key: Option<&str>, tool: Option<BridgeTool>) -> Result<Value, String> {
-        request(&self.environment, key, tool, self.request_id.as_deref())
+        handle(
+            Wire {
+                session: self.session,
+                key: key.map(str::to_owned),
+                tool,
+                request: self.request_id.clone(),
+            },
+            &hub(),
+        )
     }
 
     fn call(&self, name: &str, arguments: &Value) -> Result<Value, String> {
@@ -718,39 +524,44 @@ impl Client {
     /// is never offered tools that can only refuse. When the scope can't be
     /// read (no active turn yet, say), every tool is listed: each call is
     /// checked against the live scope anyway.
-    fn catalog(&self) -> Value {
-        let tools = match self.request(None, None) {
-            Ok(scope) => tool_definitions(scope["key"].is_string(), scope["cards"] == true),
+    fn catalog(&self) -> Vec<Value> {
+        match self.request(None, None) {
+            Ok(scope) => {
+                let mut tools = tool_definitions(scope["key"].is_string(), scope["cards"] == true);
+                // What the list was built from, for a client that wants it.
+                if let Some(first) = tools.first_mut() {
+                    first["_meta"] = json!({ "dev.gespan/scope": scope });
+                }
+                tools
+            }
             Err(_) => tool_definitions(true, true),
-        };
-        json!({ "tools": tools })
+        }
+    }
+}
+
+/// The ticket and card tools, for sessions whose grant names them.
+pub(crate) struct Toolkit;
+
+impl mcp_hub::Toolkit for Toolkit {
+    fn name(&self) -> &'static str {
+        crate::tool_servers::TICKET
     }
 
-    fn mcp_response(&self, request: Value) -> Option<Value> {
-        let id = request.get("id")?.clone();
-        let result = match request["method"].as_str().unwrap_or("") {
-            "initialize" => Ok(
-                json!({"protocolVersion":request["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"gespan_ticket","version":env!("CARGO_PKG_VERSION")}}),
-            ),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(self.catalog()),
-            "tools/call" => Ok(
-                match self.call(
-                    request["params"]["name"].as_str().unwrap_or(""),
-                    &request["params"]["arguments"],
-                ) {
-                    Ok(value) => {
-                        json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
-                    }
-                    Err(error) => json!({"content":[{"type":"text","text":error}],"isError":true}),
-                },
-            ),
-            _ => Err(json!({"code":-32601,"message":"Method not found"})),
+    fn tools(&self, grant: &mcp_hub::Grant) -> Vec<Value> {
+        Client::new(grant.session).catalog()
+    }
+
+    /// The `app` CLI sends its own request ID, for retries.
+    fn call(&self, grant: &mcp_hub::Grant, tool: &str, mut input: Value) -> Result<Value, String> {
+        let request_id = input
+            .as_object_mut()
+            .and_then(|fields| fields.remove("requestId"))
+            .and_then(|id| id.as_str().map(str::to_owned));
+        let client = Client {
+            session: grant.session,
+            request_id,
         };
-        Some(match result {
-            Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-            Err(error) => json!({"jsonrpc":"2.0","id":id,"error":error}),
-        })
+        client.call(tool, &input)
     }
 }
 
@@ -769,62 +580,31 @@ pub fn is_app_action(action: &str) -> bool {
     action.starts_with("ticket.") || action.starts_with("card.")
 }
 
-pub fn app_action(action: &str, input: &Value, request_id: &str) -> Result<Value, String> {
-    app_call(current_environment(), action, input, request_id)
+/// The tool behind an `app` CLI action.
+pub fn app_tool(action: &str) -> Result<&'static str, String> {
+    APP_ACTIONS
+        .iter()
+        .find(|(name, _)| *name == action)
+        .map(|(_, tool)| *tool)
+        .ok_or_else(|| format!("Unknown app action: {action}"))
 }
 
-fn app_call(
-    environment: HashMap<String, String>,
+/// An `app` action for this session, with the action's own request ID.
+pub(crate) fn app_call(
+    session: i64,
     action: &str,
     input: &Value,
     request_id: &str,
 ) -> Result<Value, String> {
-    let (_, tool) = APP_ACTIONS
-        .iter()
-        .find(|(name, _)| *name == action)
-        .ok_or_else(|| format!("Unknown app action: {action}"))?;
+    let tool = app_tool(action)?;
     if !input.is_object() {
         return Err("Input must be a JSON object".into());
     }
-    if environment.is_empty() {
-        return Err("This session has no linked ticket or cards".into());
-    }
     let client = Client {
-        environment,
+        session,
         request_id: Some(request_id.to_owned()),
     };
     client.call(tool, input)
-}
-
-/// Runs before GUI initialization. stdout carries MCP JSON-RPC frames only.
-pub fn mcp_stdio() -> Result<(), String> {
-    let client = Client::new(current_environment());
-    let mut input = std::io::stdin().lock();
-    let mut output = std::io::stdout().lock();
-    loop {
-        let mut line = String::new();
-        (&mut input)
-            .take((MAX_WIRE_BYTES + 1) as u64)
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
-        if line.is_empty() {
-            return Ok(());
-        }
-        if line.len() > MAX_WIRE_BYTES || !line.ends_with('\n') {
-            return Err("Oversized or incomplete MCP frame".into());
-        }
-        let response = match serde_json::from_str(&line) {
-            Ok(request) => client.mcp_response(request),
-            Err(_) => Some(
-                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}),
-            ),
-        };
-        if let Some(response) = response {
-            writeln!(output, "{response}")
-                .and_then(|_| output.flush())
-                .map_err(|e| e.to_string())?;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -838,7 +618,8 @@ mod tests {
     use crate::tickets::{Connection, Tickets, Tracker};
     use gespan_board_store::CardTool;
     use serde_json::json;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -900,7 +681,41 @@ mod tests {
     }
 
     fn client(server: &Server) -> Client {
-        Client::new(server.environment(Path::new("/test/gespan-gpui")))
+        Client::new(server.session)
+    }
+
+    impl Client {
+        /// One JSON-RPC request, in the shape the hub answers it.
+        fn mcp_response(&self, request: Value) -> Option<Value> {
+            let params = &request["params"];
+            let result = match request["method"].as_str()? {
+                "tools/list" => json!({ "tools": self.catalog() }),
+                "tools/call" => {
+                    mcp_hub::text_result(self.call(params["name"].as_str()?, &params["arguments"]))
+                }
+                _ => return None,
+            };
+            Some(json!({ "result": result }))
+        }
+    }
+
+    /// One call to the app's side of the bridge, skipping the argument checks
+    /// a toolkit call goes through.
+    fn request(
+        session: &i64,
+        key: Option<&str>,
+        tool: Option<BridgeTool>,
+        request_id: Option<&str>,
+    ) -> Result<Value, String> {
+        handle(
+            Wire {
+                session: *session,
+                key: key.map(str::to_owned),
+                tool,
+                request: request_id.map(str::to_owned),
+            },
+            &hub(),
+        )
     }
 
     /// Runs the call on a worker, as the stdio process would, while this
@@ -968,15 +783,6 @@ mod tests {
             .collect()
     }
 
-    /// One raw line to the hub, as a caller holding the token could send.
-    fn raw(server: &Server, wire: Value) -> Result<Value, String> {
-        let environment = server.environment(Path::new("/test/app"));
-        let mut wire = wire;
-        wire["session"] = environment[ENV_SESSION].parse::<i64>().unwrap().into();
-        wire["token"] = environment[ENV_TOKEN].clone().into();
-        handle(&format!("{wire}\n"), &hub().unwrap())
-    }
-
     fn text(result: &Value) -> &str {
         result["content"][0]["text"].as_str().unwrap()
     }
@@ -1000,13 +806,6 @@ mod tests {
         assert!(tools[2]["inputSchema"]["required"].is_null());
         assert!(tools[2]["inputSchema"]["properties"]["target"].is_object());
         assert!(tools[2]["inputSchema"]["properties"]["fields"].is_object());
-        let init = client(&server)
-            .mcp_response(json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}))
-            .unwrap();
-        assert_eq!(init["result"]["serverInfo"]["name"], "gespan_ticket");
-        assert!(client(&server)
-            .mcp_response(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
-            .is_none());
     }
 
     #[test]
@@ -1082,11 +881,9 @@ mod tests {
 
     #[test]
     fn hub_refuses_another_key_without_the_stdio_process() {
-        // The token is in the agent's environment, so the hub is the boundary.
         let server = Server::start(405, scope("ABC-1", true, false)).unwrap();
-        let environment = server.environment(Path::new("/test/app"));
         let error = request(
-            &environment,
+            &server.session,
             Some("ABC-99"),
             Some(TicketTool::Get.into()),
             None,
@@ -1122,7 +919,7 @@ mod tests {
         );
         assert!(server.drain().is_empty());
         // Nor can the agent bypass the stdio process with its token.
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         let error = request(
             &environment,
             None,
@@ -1212,28 +1009,6 @@ mod tests {
     }
 
     #[test]
-    fn bad_token_is_rejected() {
-        let server = Server::start(409, scope("ENG-1", true, false)).unwrap();
-        let mut environment = server.environment(Path::new("/test/app"));
-        let token = environment[ENV_TOKEN].clone();
-        assert!(token.len() >= 32, "at least 128 bits");
-        let mut forged = token.clone();
-        forged.replace_range(..1, if token.starts_with('0') { "1" } else { "0" });
-        environment.insert(ENV_TOKEN.into(), forged);
-        let response = Client::new(environment.clone())
-            .mcp_response(tool_call("ticket_get", json!({})))
-            .unwrap();
-        assert_eq!(response["result"]["isError"], true);
-        assert_eq!(text(&response["result"]), "Invalid ticket capability");
-        environment.insert(ENV_TOKEN.into(), token[..8].into());
-        assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
-        environment.insert(ENV_TOKEN.into(), token);
-        environment.insert(ENV_SESSION.into(), "999409".into());
-        assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
-        assert!(server.drain().is_empty());
-    }
-
-    #[test]
     fn app_gone_returns_error_not_hang() {
         let server = Server::start(410, scope("ENG-1", true, false)).unwrap();
         let client = client(&server);
@@ -1263,41 +1038,23 @@ mod tests {
         drop(held);
         // With the turn over, a new call fails at once instead of waiting.
         let started = Instant::now();
-        let environment = Server::start(411, scope("ENG-1", true, false))
-            .unwrap()
-            .environment(Path::new("/test/app"));
+        let environment = 411;
+        drop(Server::start(411, scope("ENG-1", true, false)).unwrap());
         assert!(request(&environment, None, Some(TicketTool::Get.into()), None).is_err());
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
-    fn a_restarted_turn_keeps_the_token_but_takes_the_new_ticket() {
+    fn a_restarted_turn_takes_the_new_ticket() {
         let first = Server::start(412, scope("ENG-1", true, false)).unwrap();
-        let environment = first.environment(Path::new("/test/app"));
+        let environment = first.session;
         assert!(Server::start(412, scope("ENG-1", true, false)).is_err());
         drop(first);
-        let next = Server::start(412, scope("ENG-2", false, false)).unwrap();
-        assert_eq!(environment, next.environment(Path::new("/test/app")));
+        let _next = Server::start(412, scope("ENG-2", false, false)).unwrap();
         assert_eq!(
             request(&environment, None, None, None).unwrap(),
             json!({"key":"ENG-2","mayChangeStatus":false,"readOnly":false,"cards":false})
         );
-    }
-
-    #[test]
-    fn tool_results_and_server_logs_never_carry_the_token() {
-        let server = Server::start(413, scope("ENG-1", true, false)).unwrap();
-        let environment = server.environment(Path::new("/test/app"));
-        let tickets = tickets(
-            Arc::new(FakeProvider::new().with_issue(issue("ENG-1"))),
-            None,
-        );
-        let mut result = Value::Null;
-        let logged = crate::diagnostics::test_capture(|| {
-            result = call_answered(&server, &tickets, tool_call("ticket_get", json!({})));
-        });
-        assert!(!result.to_string().contains(&environment[ENV_TOKEN]));
-        assert!(!format!("{logged:?}").contains(&environment[ENV_TOKEN]));
     }
 
     #[test]
@@ -1315,7 +1072,7 @@ mod tests {
         }
         assert!(server.drain().is_empty(), "Refused before reaching the app");
         // The hub refuses the same writes from a caller that skips the stdio server.
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         for tool in [
             TicketTool::Comment {
                 markdown: "Done".into(),
@@ -1362,7 +1119,7 @@ mod tests {
             text(&response["result"]),
             "Card tools aren't available in this session"
         );
-        let environment = tickets_only.environment(Path::new("/test/app"));
+        let environment = tickets_only.session;
         assert_eq!(
             request(&environment, None, Some(CardTool::Subtasks.into()), None).unwrap_err(),
             "Card tools aren't available in this session"
@@ -1445,7 +1202,7 @@ mod tests {
             );
         }
         // The hub refuses too, even when the agent names a key itself.
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         for key in [None, Some("ENG-1")] {
             assert_eq!(
                 request(&environment, key, Some(TicketTool::Get.into()), None).unwrap_err(),
@@ -1483,7 +1240,7 @@ mod tests {
         assert_eq!(text(&response["result"]), "This session is read-only");
         assert!(server.drain().is_empty(), "Refused before reaching the app");
         // A caller that skips the stdio process meets the same refusal.
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         let untick = CardTool::SubtaskDone {
             subtask_id: "t-1".into(),
             done: false,
@@ -1528,30 +1285,6 @@ mod tests {
             .unwrap();
         assert_eq!(text(&response["result"]), "Unknown argument: cardId");
         assert!(server.drain().is_empty(), "No call may reach the app");
-        // The hub rejects unknown keys on its own wire too.
-        for wire in [
-            json!({"tool":{"tool":"get","key":"ENG-9"}}),
-            json!({"tool":{"tool":"statuses","session":1}}),
-            json!({"tool":{"tool":"comment","markdown":"hi","ticket":"ENG-9"}}),
-            json!({"tool":{"tool":"set_status","target":"Done","fields":{},"key":"ENG-9"}}),
-            json!({"tool":{"tool":"card_subtasks","cardId":"c-9"}}),
-            json!({"tool":{"tool":"card_subtask_done","subtaskId":"t","done":true,"sessionKey":"s"}}),
-            json!({"tool":{"tool":"card_delete"}}),
-            json!({"sessionKey":"s-2"}),
-            json!({"tool":{"tool":"get"},"ticket":"ENG-9"}),
-        ] {
-            assert_eq!(
-                raw(&server, wire.clone()).unwrap_err(),
-                "Invalid ticket request",
-                "{wire}"
-            );
-        }
-        assert!(server.drain().is_empty());
-        // The same wire without the extra keys is accepted.
-        assert_eq!(
-            raw(&server, json!({})).unwrap(),
-            json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":false,"cards":true})
-        );
     }
 
     #[test]
@@ -1616,7 +1349,7 @@ mod tests {
         // A finished turn's server no longer changes the session's scope.
         drop(server);
         let next = Server::start(427, scope("ENG-3", true, false)).unwrap();
-        let environment = next.environment(Path::new("/test/app"));
+        let environment = next.session;
         assert_eq!(
             request(&environment, None, None, None).unwrap()["key"],
             "ENG-3"
@@ -1626,7 +1359,7 @@ mod tests {
     #[test]
     fn tools_list_falls_back_to_every_tool_without_a_scope() {
         let server = Server::start(428, scope("ENG-1", true, false)).unwrap();
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         let every = [
             "ticket_get",
             "ticket_comment",
@@ -1634,8 +1367,8 @@ mod tests {
             "card_subtasks",
             "card_subtask_done",
         ];
-        let listed_by = |environment: HashMap<String, String>| {
-            let catalog = Client::new(environment)
+        let listed_by = |session: i64| {
+            let catalog = Client::new(session)
                 .mcp_response(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
                 .unwrap();
             assert!(catalog["error"].is_null(), "{catalog}");
@@ -1643,13 +1376,9 @@ mod tests {
         };
         // With no active turn the scope can't be read: list every tool.
         drop(server);
-        assert_eq!(listed_by(environment.clone()), every);
-        // A forged token reads no scope either.
-        let mut forged = environment.clone();
-        forged.insert(ENV_TOKEN.into(), "0".repeat(64));
-        assert_eq!(listed_by(forged), every);
+        assert_eq!(listed_by(environment), every);
         // The calls themselves are still refused.
-        let response = Client::new(environment.clone())
+        let response = Client::new(environment)
             .mcp_response(tool_call("ticket_get", json!({})))
             .unwrap();
         assert_eq!(response["result"]["isError"], true);
@@ -1664,7 +1393,7 @@ mod tests {
         // A card-only session: a key on a card call is not a ticket refusal.
         let cards_only = Server::start(429, with_cards(None, false)).unwrap();
         let worker = {
-            let environment = cards_only.environment(Path::new("/test/app"));
+            let environment = cards_only.session;
             std::thread::spawn(move || {
                 request(
                     &environment,
@@ -1686,7 +1415,7 @@ mod tests {
         // A ticket-only session refuses the card tool as a card tool,
         // whatever key comes with it.
         let tickets_only = Server::start(430, scope("ENG-1", true, false)).unwrap();
-        let environment = tickets_only.environment(Path::new("/test/app"));
+        let environment = tickets_only.session;
         assert_eq!(
             request(
                 &environment,
@@ -1712,12 +1441,7 @@ mod tests {
     }
 
     fn app(server: &Server, action: &str, input: Value, request: &str) -> Result<Value, String> {
-        app_call(
-            server.environment(Path::new("/test/app")),
-            action,
-            &input,
-            request,
-        )
+        app_call(server.session, action, &input, request)
     }
 
     /// `app` on a worker, as the CLI process would, answered by `answer`.
@@ -1728,7 +1452,7 @@ mod tests {
         request: &str,
         answer: impl Fn(&Call) -> Result<Value, String>,
     ) -> Result<Value, String> {
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         let request = request.to_owned();
         let worker = std::thread::spawn(move || app_call(environment, action, &input, &request));
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -1815,12 +1539,6 @@ mod tests {
     }
 
     #[test]
-    fn an_app_action_without_a_capability_says_the_session_has_nothing_linked() {
-        let error = app_call(HashMap::new(), "ticket.get", &json!({}), "r1").unwrap_err();
-        assert_eq!(error, "This session has no linked ticket or cards");
-    }
-
-    #[test]
     fn a_retried_write_returns_its_first_result_and_never_posts_twice() {
         let server = Server::start(443, scope("ENG-1", true, false)).unwrap();
         let posted = AtomicUsize::new(0);
@@ -1840,7 +1558,7 @@ mod tests {
     #[test]
     fn a_write_with_no_answer_is_not_repeated_by_its_retry() {
         let server = Server::start(444, scope("ENG-1", true, false)).unwrap();
-        let environment = server.environment(Path::new("/test/app"));
+        let environment = server.session;
         let worker = std::thread::spawn(move || {
             app_call(environment, "ticket.comment", &json!({"body":"Hi"}), "r1")
         });

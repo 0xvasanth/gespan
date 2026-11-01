@@ -264,14 +264,8 @@ fn main() {
         return;
     }
     // stdout carries MCP frames only, and tracing is not set up yet.
-    let tool_server: Option<fn() -> Result<(), String>> = match cli_args.first().map(String::as_str)
-    {
-        Some("visual-mcp") => Some(gespan_core::visual_bridge::mcp_stdio),
-        Some("ticket-mcp") => Some(gespan_core::ticket_bridge::mcp_stdio),
-        _ => None,
-    };
-    if let Some(serve) = tool_server {
-        if let Err(error) = serve() {
+    if cli_args.first().is_some_and(|arg| arg == "mcp-relay") {
+        if let Err(error) = gespan_core::tool_servers::relay() {
             eprintln!("{error}");
             exit(1);
         }
@@ -343,7 +337,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "gespan-gpui [--cwd PATH] [--dev-data | --gespan-data | --gespan-db PATH]\nDevelopment builds use a separate database; release builds use the installed Gespan database.\n--dev-data opens an isolated development database using Gespan's existing schema.\n--gespan-data opens the existing desktop gespan.db directly.\n--gespan-db PATH opens a specific desktop database.\n--fixture, --chat-fixture and --visual-fixture add local samples to isolated development data only.\nvisual docs prints the native visual SDK reference.\nvisual check/show --input FILE validates or publishes native session visuals.\nvisual-mcp runs the session visual tool server over standard input/output.\n--check-data validates and lists the selected store read-only, then exits."
+                    "gespan-gpui [--cwd PATH] [--dev-data | --gespan-data | --gespan-db PATH]\nDevelopment builds use a separate database; release builds use the installed Gespan database.\n--dev-data opens an isolated development database using Gespan's existing schema.\n--gespan-data opens the existing desktop gespan.db directly.\n--gespan-db PATH opens a specific desktop database.\n--fixture, --chat-fixture and --visual-fixture add local samples to isolated development data only.\nvisual docs prints the native visual SDK reference.\nvisual check/show --input FILE validates or publishes native session visuals.\nmcp-relay serves a session's tools over standard input/output, for agents that can't reach them over HTTP.\n--check-data validates and lists the selected store read-only, then exits."
                 );
                 return;
             }

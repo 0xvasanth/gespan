@@ -861,8 +861,16 @@ impl Store {
         }
         tx.commit().map_err(|e| e.to_string())
     }
-    /// Archiving preserves the transcript, provider context and configuration.
+    /// Archiving preserves the transcript, provider context and configuration,
+    /// and ends the session's tool access.
     pub fn set_archived(&self, id: i64, archived: bool) -> Result<(), String> {
+        self.write_archived(id, archived)?;
+        if archived {
+            crate::tool_servers::revoke(id);
+        }
+        Ok(())
+    }
+    fn write_archived(&self, id: i64, archived: bool) -> Result<(), String> {
         if self.remote_session(id)?.is_some() {
             return self.patch_remote_session(id, serde_json::json!({"archived": archived}));
         }
@@ -1093,7 +1101,13 @@ impl Store {
         Ok(due)
     }
     /// Deletes the conversation, its settings and reminder for good.
+    /// Removes the session and ends its tool access.
     pub fn delete(&mut self, id: i64) -> Result<(), String> {
+        self.remove_session(id)?;
+        crate::tool_servers::revoke(id);
+        Ok(())
+    }
+    fn remove_session(&mut self, id: i64) -> Result<(), String> {
         if self.remote_session(id)?.is_some() {
             return self.delete_remote_session(id);
         }
@@ -1396,6 +1410,35 @@ mod tests {
         assert_eq!(store.load(session.id).unwrap().rows, rows);
         store.set_archived(session.id, false).unwrap();
         assert!(!store.sessions().unwrap()[0].archived);
+    }
+    #[test]
+    fn archiving_and_deleting_end_a_sessions_tool_access() {
+        use crate::tool_servers::{is_open, Access, Mount};
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&directory.path().join("sessions.db")).unwrap();
+        // The hub is process-wide, and other tests archive their sessions 1, 2…
+        let first = store.create("claude", "/work").unwrap().id;
+        store
+            .conn
+            .execute("UPDATE native_sessions SET id=70000 WHERE id=?1", [first])
+            .unwrap();
+        let open = |id: i64| {
+            let mount = Mount {
+                session: id,
+                ..Default::default()
+            };
+            assert!(Access::open(&mount).is_some() && is_open(id));
+        };
+        let archived = store.create("claude", "/work").unwrap().id;
+        open(archived);
+        store.set_archived(archived, false).unwrap();
+        assert!(is_open(archived), "unarchiving changes nothing");
+        store.set_archived(archived, true).unwrap();
+        assert!(!is_open(archived));
+        let deleted = store.create("claude", "/work").unwrap().id;
+        open(deleted);
+        store.delete(deleted).unwrap();
+        assert!(!is_open(deleted));
     }
     #[test]
     fn a_saved_run_survives_restart_and_goes_with_its_lead() {

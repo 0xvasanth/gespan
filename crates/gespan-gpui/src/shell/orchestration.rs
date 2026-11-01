@@ -1433,8 +1433,8 @@ mod tests {
                 start_one(shell, lead, cx);
                 shell.sessions[&lead].update(cx, |v, _| {
                     v.set_control_environment(HashMap::from([(
-                        "GESPAN_CONTROL_TOKEN".to_owned(),
-                        "secret".to_owned(),
+                        gespan_core::pilot::bridge::CONTROL_MARKER.to_owned(),
+                        "7".to_owned(),
                     )]))
                 });
                 let (call, parked) = control(lead, "r1", "wait", json!({"timeoutSeconds":20}));

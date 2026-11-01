@@ -9,6 +9,8 @@ mod events;
 use client::Client;
 
 const START: &str = "agent.start.opencode";
+/// The turn's prompt may name these, and only here is v2 told apart from v1.
+const NO_TOOLS: &str = "Gespan's own tools and CLIs (visual, ticket, card, app and control) aren't available in this OpenCode session, whatever follows says. Don't look for them; tell the user if the task needs one.";
 
 enum Wire {
     Connected,
@@ -32,6 +34,8 @@ impl Drop for StreamStop {
 struct Server {
     child: std::process::Child,
     url: String,
+    /// The tool credential this server was given, while it may still work.
+    access: Option<crate::tool_servers::Access>,
     _registration: process::Registration,
     _account: crate::accounts::Tracked,
 }
@@ -227,6 +231,39 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
         }
     })
 }
+fn announce_missing_tools(request: &mut Request, v2: bool) {
+    if v2 && request.settings.mount.is_some() {
+        request.prompt = format!("{NO_TOOLS}\n\n{}", request.prompt);
+    }
+}
+
+/// A kept server whose credential still works already has the tools; a new
+/// one would only make it reconnect. The turn goes on without them if this
+/// server can't take them.
+fn mount_tools(
+    client: &Client,
+    held: &mut Option<crate::tool_servers::Access>,
+    mount: Option<&crate::tool_servers::Mount>,
+) {
+    let Some(mount) = mount else {
+        return;
+    };
+    if held
+        .as_ref()
+        .is_some_and(|access| access.is_live(mount.session))
+    {
+        return;
+    }
+    let Some(access) = crate::tool_servers::Access::open(mount) else {
+        return;
+    };
+    match client.request("POST", &client.path("/mcp"), Some(access.opencode_server())) {
+        Ok(_) => *held = Some(access),
+        // The error stays out of the log: it may quote the token back.
+        Err(_) => tracing::warn!("OpenCode refused the tool endpoint"),
+    }
+}
+
 fn generation(request: &Request, cancel: &AtomicBool) -> Result<bool, String> {
     let output = exec(request, &["--version"], cancel)?;
     // No word boundaries: `v1.14.20` and ANSI-colored output must still match,
@@ -341,6 +378,7 @@ fn connect(
     }
     drop(send);
     let mut server = Server {
+        access: None,
         child,
         url: String::new(),
         _registration: registration,
@@ -403,9 +441,16 @@ pub(super) fn run(
         &request.cwd.to_string_lossy(),
         &request.settings.attachments,
     )?;
+    announce_missing_tools(&mut request, v2);
     let (client, mut server) = connect(&request, &cancel, v2)
         .inspect(|_| metrics::success(START))
         .inspect_err(start_failed)?;
+    // v1's `serve` child belongs to this conversation. v2's managed service is
+    // shared, and a server added there would hand this session's token to
+    // every other session on it, so v2 turns run without the tools.
+    if let Some(server) = server.as_mut() {
+        mount_tools(&client, &mut server.access, request.settings.mount.as_ref());
+    }
     let session = client.session(&request)?;
     if request.provider_id.is_some() {
         let _ = client.repair_unsupported_file_turn(&session);
@@ -543,7 +588,7 @@ pub(super) fn run(
                 Some(super::hold::Action::Settle(point)) => emit(vec![Event::HoldSettled(point)])?,
                 None => {}
             }
-            if crate::tool_servers::configured(&request.settings.environment) {
+            if request.settings.mount.is_some() {
                 emit(Vec::new())?;
             }
             if !connected && started.elapsed() >= Duration::from_secs(30) {
@@ -781,4 +826,135 @@ pub(super) fn rewind(
     // A reverted history must never be resumed by the old warm generation.
     drop(server);
     Ok(session.into())
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use crate::tool_servers::{Access, Mount, VISUAL};
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    /// A `serve` stand-in: answers `POST /mcp` with this status, and counts them.
+    fn opencode(status: u16) -> (Client, mpsc::Receiver<serde_json::Value>) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (posted, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 && !line.trim().is_empty() {
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                    line.clear();
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                posted.send(serde_json::from_slice(&body).unwrap()).unwrap();
+                let mut stream = stream;
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            }
+        });
+        (Client::new(url, "/work".into(), false, None), received)
+    }
+
+    fn mount(session: i64) -> Mount {
+        Mount {
+            session,
+            worktree: "/work".into(),
+            toolkits: [VISUAL.to_owned()].into(),
+        }
+    }
+
+    #[test]
+    fn a_server_gets_the_endpoint_once_and_keeps_its_token_when_reused() {
+        let (client, posted) = opencode(200);
+        let mount = mount(5101);
+        let mut held = None;
+        mount_tools(&client, &mut held, Some(&mount));
+        let server = posted.try_recv().unwrap();
+        assert_eq!(server["name"], "gespan");
+        let authorization = server["config"]["headers"]["Authorization"].clone();
+        assert!(held.as_ref().unwrap().is_live(5101));
+        // The next turn on this kept server.
+        mount_tools(&client, &mut held, Some(&mount));
+        assert!(
+            posted.try_recv().is_err(),
+            "a reused server isn't remounted"
+        );
+        assert!(
+            held.as_ref().unwrap().is_live(5101),
+            "nor is its token revoked"
+        );
+        assert_eq!(authorization, server["config"]["headers"]["Authorization"]);
+    }
+
+    #[test]
+    fn a_server_whose_token_was_replaced_gets_the_new_one() {
+        let (client, posted) = opencode(200);
+        let mount = mount(5102);
+        let mut held = None;
+        mount_tools(&client, &mut held, Some(&mount));
+        let first = posted.try_recv().unwrap();
+        // Another process of this session took over, then this server came back.
+        let _other = Access::open(&mount).unwrap();
+        mount_tools(&client, &mut held, Some(&mount));
+        let second = posted.try_recv().unwrap();
+        assert_ne!(first["config"]["headers"], second["config"]["headers"]);
+        assert!(held.as_ref().unwrap().is_live(5102));
+    }
+
+    #[test]
+    fn a_refused_mount_leaves_nothing_held_and_is_tried_again() {
+        let (client, posted) = opencode(500);
+        let mount = mount(5103);
+        let mut held = None;
+        mount_tools(&client, &mut held, Some(&mount));
+        assert!(posted.try_recv().is_ok());
+        assert!(held.is_none(), "the turn goes on without tools");
+        mount_tools(&client, &mut held, Some(&mount));
+        assert!(posted.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_turn_with_no_tools_mounts_nothing() {
+        let (client, posted) = opencode(200);
+        let mut held = None;
+        mount_tools(&client, &mut held, None);
+        assert!(posted.try_recv().is_err());
+    }
+
+    #[test]
+    fn only_a_v2_turn_that_expected_tools_is_told_they_are_missing() {
+        let request = |mounted: bool| {
+            let settings = crate::agent::Settings {
+                mount: mounted.then(|| mount(5104)),
+                ..Default::default()
+            };
+            Request {
+                kind: Kind::OpenCode,
+                binary: "unused".into(),
+                cwd: "/tmp".into(),
+                prompt: "Hello".into(),
+                provider_id: None,
+                model: None,
+                settings,
+            }
+        };
+        let told = |mounted, v2| {
+            let mut request = request(mounted);
+            announce_missing_tools(&mut request, v2);
+            request.prompt
+        };
+        assert!(told(true, true).starts_with(NO_TOOLS));
+        assert!(told(true, true).ends_with("Hello"));
+        assert_eq!(told(true, false), "Hello");
+        assert_eq!(told(false, true), "Hello");
+    }
 }

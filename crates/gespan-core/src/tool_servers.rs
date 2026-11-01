@@ -1,89 +1,251 @@
-//! The app's own stdio MCP servers, in the shape each provider expects. A
-//! server is mounted only when the turn's environment carries its capability.
-use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+//! The app's own tools: one MCP hub, its toolkits, and how each provider is
+//! told about it. A toolkit is offered only when the turn's grant names it.
+//!
+//! Adding a capability means registering a toolkit in `hub` and naming it in
+//! the turn's [`Mount`]; no provider needs to change.
+use crate::provider::Kind;
+use mcp_hub::{Config, Connection, Grant, Hub, Token};
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock},
+};
 
-struct ToolServer {
-    name: &'static str,
-    subcommand: &'static str,
-    /// Endpoint, token, session, executable.
-    keys: [&'static str; 4],
+pub const VISUAL: &str = "visual";
+pub const TICKET: &str = "ticket";
+pub const APP: &str = "app";
+pub const CONTROL: &str = "control";
+
+/// The name agents know the hub by. Tools appear to Claude as
+/// `mcp__gespan__<tool>`.
+const SERVER_NAME: &str = "gespan";
+/// Set on the relay process alone, by the agent that starts it, or for the
+/// CLIs of agents that mount no MCP servers.
+const ENV_URL: &str = "GESPAN_MCP_URL";
+const ENV_TOKEN: &str = "GESPAN_MCP_TOKEN";
+
+static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
+
+fn hub() -> Result<&'static Hub, String> {
+    HUB.get_or_init(|| {
+        let hub = Hub::start(Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))?;
+        hub.register(Arc::new(crate::visual_bridge::Toolkit));
+        hub.register(Arc::new(crate::ticket_bridge::Toolkit));
+        hub.register(Arc::new(crate::pilot::bridge::Toolkit::APP));
+        hub.register(Arc::new(crate::pilot::bridge::Toolkit::CONTROL));
+        Ok(hub)
+    })
+    .as_ref()
+    .map_err(Clone::clone)
 }
 
-const SERVERS: [ToolServer; 2] = [
-    ToolServer {
-        name: "gespan_visual",
-        subcommand: "visual-mcp",
-        keys: crate::visual_bridge::ENV_KEYS,
-    },
-    ToolServer {
-        name: "gespan_ticket",
-        subcommand: "ticket-mcp",
-        keys: crate::ticket_bridge::ENV_KEYS,
-    },
-];
-
-fn mounted(
-    environment: &HashMap<String, String>,
-) -> impl Iterator<Item = &'static ToolServer> + '_ {
-    SERVERS
-        .iter()
-        .filter(|server| server.keys.iter().all(|key| environment.contains_key(*key)))
+/// What one turn's agent may reach through the hub. Transport-only: it lives
+/// on the turn's settings and is never saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mount {
+    pub session: i64,
+    pub worktree: PathBuf,
+    pub toolkits: BTreeSet<String>,
 }
 
-fn executable<'a>(server: &ToolServer, environment: &'a HashMap<String, String>) -> &'a str {
-    &environment[server.keys[3]]
-}
-
-/// Providers keep emitting while this holds so the runtime can answer tool
-/// calls the provider is blocked on.
-pub fn configured(environment: &HashMap<String, String>) -> bool {
-    mounted(environment).next().is_some()
-}
-
-/// Claude takes every server in one `--mcp-config` document.
-pub fn mcp_servers(environment: &HashMap<String, String>) -> Map<String, Value> {
-    mounted(environment)
-        .map(|server| {
-            (
-                server.name.to_owned(),
-                json!({"type":"stdio","command":executable(server, environment),"args":[server.subcommand]}),
-            )
-        })
-        .collect()
-}
-
-pub fn acp_servers(environment: &HashMap<String, String>) -> Value {
-    mounted(environment)
-        .map(|server| {
-            // ACP's stdio server shape omits the transport discriminator.
-            json!({
-                "name": server.name,
-                "command": executable(server, environment),
-                "args": [server.subcommand],
-                "env": server
-                    .keys
-                    .iter()
-                    .map(|key| json!({"name":key,"value":environment[*key]}))
-                    .collect::<Vec<_>>(),
-            })
-        })
-        .collect::<Vec<_>>()
-        .into()
-}
-
-/// Codex reads the capability from its own environment by name, so the token
-/// never appears in its arguments.
-pub fn configure_codex(command: &mut std::process::Command, environment: &HashMap<String, String>) {
-    for server in mounted(environment) {
-        for (key, value) in [
-            ("command", json!(executable(server, environment))),
-            ("args", json!([server.subcommand])),
-            ("env_vars", json!(server.keys)),
-        ] {
-            // JSON's strings and arrays are valid TOML literals for these values.
-            command.args(["-c", &format!("mcp_servers.{}.{key}={value}", server.name)]);
+impl Mount {
+    fn grant(&self) -> Grant {
+        Grant {
+            session: self.session,
+            workspace: self.worktree.clone(),
+            toolkits: self.toolkits.clone(),
         }
+    }
+}
+
+/// How a provider receives the endpoint and its credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// `mcp_set_servers` on the stream-json control channel.
+    ClaudeControl,
+    /// `config` on `thread/start` and `thread/resume`, over stdin.
+    CodexThread,
+    /// `mcpServers` on `session/new` and `session/load`, over stdin.
+    AcpSession,
+    /// `POST /mcp` on the local server Gespan already holds open.
+    OpenCodeApi,
+    /// No way in but the environment: the agent reaches the tools through the
+    /// `app` and `visual` CLIs, and every command it runs inherits the token.
+    Environment,
+}
+
+pub fn delivery(kind: Kind, provider_id: Option<&str>) -> Delivery {
+    match kind {
+        Kind::Claude => Delivery::ClaudeControl,
+        Kind::Codex => Delivery::CodexThread,
+        Kind::OpenCode => Delivery::OpenCodeApi,
+        Kind::Pi | Kind::Omp => Delivery::Environment,
+        // Their resume requests don't refresh mcpServers.
+        Kind::Grok | Kind::Fx if provider_id.is_some() => Delivery::Environment,
+        _ => Delivery::AcpSession,
+    }
+}
+
+/// A live credential on its way to a new provider process.
+pub struct Access {
+    url: String,
+    token: Token,
+}
+
+impl std::fmt::Debug for Access {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Access(..)")
+    }
+}
+
+impl Access {
+    /// A new provider process gets a new token, and the one it replaces loses
+    /// its own. `None` leaves the turn running with no tools.
+    pub fn open(mount: &Mount) -> Option<Self> {
+        let hub = hub()
+            .inspect_err(|error| tracing::warn!(%error, "the tool endpoint isn't running"))
+            .ok()?;
+        Some(Self {
+            url: hub.url().to_owned(),
+            token: hub.mint(mount.grant()),
+        })
+    }
+
+    /// Whether this credential is still the one its session can use.
+    pub fn is_live(&self, session: i64) -> bool {
+        hub().is_ok_and(|hub| hub.holds(session, &self.token))
+    }
+
+    pub fn claude_control(&self, request_id: &str) -> Value {
+        json!({"type":"control_request","request_id":request_id,"request":{
+            "subtype":"mcp_set_servers",
+            "servers":{SERVER_NAME:{
+                "type":"http",
+                "url":self.url,
+                "headers":{"Authorization":self.token.bearer()},
+            }},
+        }})
+    }
+
+    pub fn codex_config(&self) -> Value {
+        json!({"mcp_servers":{SERVER_NAME:{
+            "url":self.url,
+            "http_headers":{"Authorization":self.token.bearer()},
+        }}})
+    }
+
+    pub fn opencode_server(&self) -> Value {
+        json!({"name":SERVER_NAME,"config":{
+            "type":"remote",
+            "url":self.url,
+            "headers":{"Authorization":self.token.bearer()},
+            "oauth":false,
+        }})
+    }
+
+    /// ACP only promises stdio MCP. An agent that advertises HTTP gets the
+    /// endpoint; any other runs the relay, which alone holds the token.
+    pub fn acp_servers(&self, http: bool) -> Value {
+        if http {
+            return json!([{
+                "type":"http",
+                "name":SERVER_NAME,
+                "url":self.url,
+                "headers":[{"name":"Authorization","value":self.token.bearer()}],
+            }]);
+        }
+        let Ok(executable) = std::env::current_exe() else {
+            return json!([]);
+        };
+        json!([{
+            "name":SERVER_NAME,
+            "command":executable,
+            "args":["mcp-relay"],
+            "env":[
+                {"name":ENV_URL,"value":self.url},
+                {"name":ENV_TOKEN,"value":self.token.secret()},
+            ],
+        }])
+    }
+}
+
+/// The fallback credential of [`Delivery::Environment`], stable across a
+/// session's turns so a parked provider stays reusable.
+pub fn environment(mount: &Mount) -> HashMap<String, String> {
+    static ISSUED: OnceLock<Mutex<HashMap<i64, Token>>> = OnceLock::new();
+    let hub = match hub() {
+        Ok(hub) => hub,
+        Err(error) => {
+            tracing::warn!(%error, "the tool endpoint isn't running");
+            return HashMap::new();
+        }
+    };
+    let mut issued = ISSUED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // A session can change route between turns, and `Access::open` then
+    // replaces the token held here.
+    let token = match issued.get(&mount.session) {
+        Some(token) if hub.holds(mount.session, token) => token.clone(),
+        _ => {
+            let token = hub.mint(mount.grant());
+            issued.insert(mount.session, token.clone());
+            token
+        }
+    };
+    HashMap::from([
+        (ENV_URL.to_owned(), hub.url().to_owned()),
+        (ENV_TOKEN.to_owned(), token.secret().to_owned()),
+    ])
+}
+
+/// Applies this turn's reach to a session already holding a credential, which
+/// a turn with no toolkits empties. An agent still running sees its tool list
+/// change. With no endpoint yet there's no credential, and none is started.
+pub fn refresh(mount: &Mount) {
+    if let Some(Ok(hub)) = HUB.get() {
+        hub.update(mount.session, mount.toolkits.clone());
+    }
+}
+
+/// Whether a session can reach the endpoint right now.
+pub fn is_open(session: i64) -> bool {
+    hub().is_ok_and(|hub| hub.has_grant(session))
+}
+
+/// A running turn holds its credential open between tool calls.
+pub fn touch(session: i64) {
+    if let Ok(hub) = hub() {
+        hub.touch(session);
+    }
+}
+
+/// The `mcp-relay` subcommand: a stdio front for an agent that can't speak HTTP.
+pub fn relay() -> Result<(), String> {
+    mcp_hub::relay(connection()?)
+}
+
+fn connection() -> Result<Connection, String> {
+    let get = |key| std::env::var(key).map_err(|_| "This needs a running Gespan session");
+    Ok(Connection {
+        url: get(ENV_URL)?,
+        token: get(ENV_TOKEN)?,
+    })
+}
+
+/// One tool call from a CLI, as this session.
+pub fn call_tool(tool: &str, arguments: Value) -> Result<Value, String> {
+    mcp_hub::call_tool(connection()?, tool, arguments)
+}
+
+/// Ends a session's tool access. The store calls this for every archive and
+/// delete, whatever asked for it. With no endpoint yet there's nothing to end,
+/// and none is started.
+pub fn revoke(session: i64) {
+    if let Some(Ok(hub)) = HUB.get() {
+        hub.revoke(session);
     }
 }
 
@@ -91,83 +253,169 @@ pub fn configure_codex(command: &mut std::process::Command, environment: &HashMa
 mod tests {
     use super::*;
 
-    fn capability(keys: [&str; 4], executable: &str) -> HashMap<String, String> {
-        keys.iter()
-            .zip(["127.0.0.1:9", "secret-token", "7", executable])
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect()
+    fn mount(session: i64) -> Mount {
+        Mount {
+            session,
+            worktree: "/work".into(),
+            toolkits: BTreeSet::from([VISUAL.to_owned(), TICKET.to_owned()]),
+        }
     }
 
-    fn both() -> HashMap<String, String> {
-        let mut environment = capability(crate::visual_bridge::ENV_KEYS, "/test/app");
-        let mut ticket = capability(crate::ticket_bridge::ENV_KEYS, "/test/app");
-        ticket.insert(
-            crate::ticket_bridge::ENV_KEYS[1].into(),
-            "ticket-token".into(),
-        );
-        environment.extend(ticket);
-        environment
+    fn secret_of(access: &Access) -> String {
+        access.token.secret().to_owned()
     }
 
     #[test]
-    fn claude_config_lists_both_servers_when_configured() {
-        let servers = mcp_servers(&both());
+    fn claude_gets_the_endpoint_over_its_control_channel() {
+        let access = Access::open(&mount(5001)).unwrap();
+        let request = access.claude_control("native-mcp");
+        assert_eq!(request["request_id"], "native-mcp");
+        assert_eq!(request["request"]["subtype"], "mcp_set_servers");
+        let server = &request["request"]["servers"]["gespan"];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], access.url);
         assert_eq!(
-            Value::Object(servers),
-            json!({
-                "gespan_visual": {"type":"stdio","command":"/test/app","args":["visual-mcp"]},
-                "gespan_ticket": {"type":"stdio","command":"/test/app","args":["ticket-mcp"]},
-            })
+            server["headers"]["Authorization"],
+            format!("Bearer {}", secret_of(&access))
         );
-        let visual_only = capability(crate::visual_bridge::ENV_KEYS, "/test/app");
+    }
+
+    #[test]
+    fn codex_gets_the_endpoint_in_its_thread_config() {
+        let access = Access::open(&mount(5002)).unwrap();
+        let config = access.codex_config();
+        let server = &config["mcp_servers"]["gespan"];
+        assert_eq!(server["url"], access.url);
         assert_eq!(
-            mcp_servers(&visual_only).keys().collect::<Vec<_>>(),
-            ["gespan_visual"]
+            server["http_headers"]["Authorization"],
+            format!("Bearer {}", secret_of(&access))
         );
-        assert!(configured(&visual_only));
-        assert!(mcp_servers(&HashMap::new()).is_empty());
-        assert!(!configured(&HashMap::new()));
-        // A partial capability mounts nothing rather than a broken server.
-        let mut partial = capability(crate::ticket_bridge::ENV_KEYS, "/test/app");
-        partial.remove(crate::ticket_bridge::ENV_KEYS[1]);
-        assert!(!configured(&partial));
     }
 
     #[test]
-    fn codex_args_name_both_servers() {
-        let environment = both();
-        let mut command = std::process::Command::new("codex");
-        configure_codex(&mut command, &environment);
-        let arguments = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(arguments.contains(&r#"mcp_servers.gespan_visual.args=["visual-mcp"]"#.into()));
-        assert!(arguments.contains(&r#"mcp_servers.gespan_ticket.args=["ticket-mcp"]"#.into()));
-        assert!(arguments.contains(&r#"mcp_servers.gespan_ticket.command="/test/app""#.into()));
-        assert!(arguments.contains(
-            &r#"mcp_servers.gespan_ticket.env_vars=["GESPAN_TICKET_ENDPOINT","GESPAN_TICKET_TOKEN","GESPAN_TICKET_SESSION","GESPAN_TICKET_EXECUTABLE"]"#.into()
-        ));
-        let joined = arguments.join(" ");
-        assert!(!joined.contains("secret-token"));
-        assert!(!joined.contains("ticket-token"));
-        let mut bare = std::process::Command::new("codex");
-        configure_codex(&mut bare, &HashMap::new());
-        assert_eq!(bare.get_args().count(), 0);
+    fn acp_uses_http_only_when_the_agent_offers_it() {
+        let access = Access::open(&mount(5003)).unwrap();
+        let http = access.acp_servers(true);
+        assert_eq!(http[0]["type"], "http");
+        assert_eq!(http[0]["url"], access.url);
+        assert_eq!(http[0]["headers"][0]["name"], "Authorization");
+        let relay = access.acp_servers(false);
+        assert!(relay[0].get("type").is_none(), "stdio has no discriminator");
+        assert_eq!(relay[0]["args"], json!(["mcp-relay"]));
+        assert_eq!(relay[0]["env"][1]["name"], ENV_TOKEN);
+        assert_eq!(relay[0]["env"][1]["value"], secret_of(&access));
+        // The relay's arguments never carry it.
+        assert!(!relay[0]["args"].to_string().contains(&secret_of(&access)));
     }
 
     #[test]
-    fn acp_lists_both() {
-        let servers = acp_servers(&both());
-        let servers = servers.as_array().unwrap();
-        assert_eq!(servers.len(), 2);
-        assert_eq!(servers[0]["name"], "gespan_visual");
-        assert_eq!(servers[1]["name"], "gespan_ticket");
-        assert_eq!(servers[1]["args"], json!(["ticket-mcp"]));
-        assert!(servers[1].get("type").is_none());
-        let env = servers[1]["env"].as_array().unwrap();
-        assert_eq!(env.len(), 4);
-        assert!(env.contains(&json!({"name":"GESPAN_TICKET_TOKEN","value":"ticket-token"})));
-        assert_eq!(acp_servers(&HashMap::new()), json!([]));
+    fn only_agents_with_no_way_in_take_the_environment_route() {
+        assert_eq!(delivery(Kind::Claude, None), Delivery::ClaudeControl);
+        assert_eq!(delivery(Kind::Codex, Some("t")), Delivery::CodexThread);
+        for kind in [Kind::Cursor, Kind::Kiro, Kind::Hermes, Kind::Devin] {
+            assert_eq!(delivery(kind, Some("s")), Delivery::AcpSession, "{kind:?}");
+        }
+        assert_eq!(delivery(Kind::Grok, None), Delivery::AcpSession);
+        assert_eq!(delivery(Kind::Grok, Some("s")), Delivery::Environment);
+        assert_eq!(delivery(Kind::Pi, None), Delivery::Environment);
+        assert_eq!(delivery(Kind::Omp, None), Delivery::Environment);
+        assert_eq!(delivery(Kind::OpenCode, Some("s")), Delivery::OpenCodeApi);
+    }
+
+    #[test]
+    fn a_debug_print_never_shows_the_token() {
+        let access = Access::open(&mount(5004)).unwrap();
+        assert_eq!(format!("{access:?}"), "Access(..)");
+    }
+
+    #[test]
+    fn the_environment_route_keeps_one_token_until_the_grant_ends() {
+        let mount = mount(5005);
+        let first = environment(&mount);
+        assert_eq!(first, environment(&mount));
+        assert!(first[ENV_URL].starts_with("http://127.0.0.1:"));
+        revoke(5005);
+        assert_ne!(first[ENV_TOKEN], environment(&mount)[ENV_TOKEN]);
+    }
+
+    #[test]
+    fn the_environment_route_replaces_a_token_a_new_process_took_over() {
+        let mount = mount(5007);
+        let stale = environment(&mount);
+        let access = Access::open(&mount).unwrap();
+        let fresh = environment(&mount);
+        assert_ne!(stale[ENV_TOKEN], fresh[ENV_TOKEN]);
+        let connection = Connection {
+            url: fresh[ENV_URL].clone(),
+            token: fresh[ENV_TOKEN].clone(),
+        };
+        let reply = mcp_hub::call_tool(connection, "no_such_tool", json!({}));
+        assert!(
+            reply.unwrap_err().contains("isn't available"),
+            "the credential itself was accepted"
+        );
+        assert!(!access.is_live(5007), "and it took over in turn");
+    }
+
+    #[test]
+    fn a_turn_with_no_toolkits_takes_them_from_a_process_still_running() {
+        let mut mount = mount(5008);
+        let access = Access::open(&mount).unwrap();
+        let connection = || Connection {
+            url: access.url.clone(),
+            token: access.token.secret().to_owned(),
+        };
+        let reachable = || {
+            mcp_hub::call_tool(connection(), "visual_docs", json!({}))
+                .map_err(|error| assert!(error.contains("isn't available"), "{error}"))
+                .is_ok()
+        };
+        assert!(reachable());
+        mount.toolkits.clear();
+        refresh(&mount);
+        assert!(
+            access.is_live(5008),
+            "the credential stays; its reach doesn't"
+        );
+        assert!(!reachable());
+    }
+
+    /// The fake toolkit the original ticket asked for: registered once, it
+    /// reaches every provider's shape, because they all name the same endpoint.
+    #[test]
+    fn a_new_toolkit_reaches_every_delivery_without_provider_changes() {
+        struct Fake;
+        impl mcp_hub::Toolkit for Fake {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn tools(&self, _: &Grant) -> Vec<Value> {
+                vec![json!({"name":"fake_ping","inputSchema":{"type":"object"}})]
+            }
+            fn call(&self, _: &Grant, _: &str, _: Value) -> Result<Value, String> {
+                Ok(json!("pong"))
+            }
+        }
+        hub().unwrap().register(Arc::new(Fake));
+        let mut mount = mount(5006);
+        mount.toolkits = BTreeSet::from(["fake".to_owned()]);
+        let access = Access::open(&mount).unwrap();
+        for delivered in [
+            access.claude_control("x")["request"]["servers"]["gespan"]["url"].clone(),
+            access.codex_config()["mcp_servers"]["gespan"]["url"].clone(),
+            access.acp_servers(true)[0]["url"].clone(),
+            access.opencode_server()["config"]["url"].clone(),
+        ] {
+            assert_eq!(delivered, access.url);
+        }
+        let reply = mcp_hub::call_tool(
+            Connection {
+                url: access.url.clone(),
+                token: access.token.secret().to_owned(),
+            },
+            "fake_ping",
+            json!({}),
+        );
+        assert_eq!(reply.unwrap(), json!("pong"));
     }
 }
