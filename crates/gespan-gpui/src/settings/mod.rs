@@ -126,6 +126,8 @@ pub(crate) enum SettingsEvent {
         cwd: String,
         path: String,
         delete_sessions: bool,
+        /// A merged branch to delete too, at the commit that was checked.
+        delete_branch: Option<(String, String)>,
     },
     ResetPilot(String),
     /// Read mobile access again: the router and pairing change on their own.

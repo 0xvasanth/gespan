@@ -228,10 +228,12 @@ impl Shell {
                     cwd,
                     path,
                     delete_sessions,
+                    delete_branch,
                 } => this.remove_settings_worktree(
                     cwd.clone(),
                     path.clone(),
                     *delete_sessions,
+                    delete_branch.clone(),
                     window,
                     cx,
                 ),
@@ -504,6 +506,7 @@ impl Shell {
         cwd: String,
         path: String,
         delete_sessions: bool,
+        delete_branch: Option<(String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -557,9 +560,14 @@ impl Shell {
                 let snapshot=gespan_core::git::snapshot(Path::new(&worker_cwd))?;
                 let main=snapshot.worktrees.first().ok_or("No main working copy found")?;
                 gespan_core::worktree_management::remove(Path::new(&main.path),Path::new(&worker_path))?;
-                locked(&store)?.detach_worktree(&worker_path,&main.path)
+                let detached=locked(&store)?.detach_worktree(&worker_path,&main.path)?;
+                let branch=delete_branch.and_then(|(branch,checked)|gespan_core::worktree_management::delete_merged_branch(Path::new(&main.path),&branch,&checked).err());
+                Ok::<_,String>((detached,branch))
             });let result=work.await;
-            let _=this.update(cx,|this,cx|{let result=result.map(|detached|this.worktree_detached(detached,&path,cx));this.finish_worktree_action(result,cx);});
+            let _=this.update(cx,|this,cx|{
+                let result=result.and_then(|(detached,branch)|{this.worktree_detached(detached,&path,cx);branch.map_or(Ok(()),|error|Err(format!("The worktree was deleted. {error}")))});
+                this.finish_worktree_action(result,cx);
+            });
         }).detach();
         let _ = window;
     }

@@ -13,6 +13,14 @@ Source: https://github.com/zed-industries/zed/blob/93d745668805029476e6d7fbb1965
 License: https://www.apache.org/licenses/LICENSE-2.0
 License text: docs/native/LICENSE-GPUI-APACHE
 
+Worktree copying and merged-branch detection in
+crates/gespan-core/src/worktree_copy.rs and
+crates/gespan-core/src/branch_merged.rs are ported from worktrunk 0.81.0,
+copyright (c) 2025 Maximilian Roos, licensed under MIT OR Apache-2.0. Gespan
+uses it under the MIT License.
+Source: https://github.com/max-sixty/worktrunk
+License text: docs/native/LICENSE-WORKTRUNK-MIT
+
 Native Mermaid previews use mermaid-rs-renderer 0.3.1, licensed under MIT.
 Copyright (c) 2026 mermaid-rs-renderer contributors.
 Source: https://github.com/1jehuang/mermaid-rs-renderer

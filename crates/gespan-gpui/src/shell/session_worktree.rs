@@ -4,6 +4,7 @@
 use super::*;
 use gespan_core::{
     agent::Settings,
+    branch_merged::{How, Merged},
     files::{is_equal_or_inside, path_key},
     worktree_management,
 };
@@ -36,6 +37,13 @@ pub(super) struct Ask {
 pub(super) struct UnusedWorktree {
     project: String,
     path: String,
+    /// The branch, when it is confirmed merged.
+    merged: Option<MergedBranch>,
+    delete_branch: bool,
+}
+pub(super) struct MergedBranch {
+    name: String,
+    merged: Merged,
 }
 pub(super) struct WorktreeCleanup {
     worktree: UnusedWorktree,
@@ -56,6 +64,8 @@ impl Shell {
         .then(|| UnusedWorktree {
             project: project.clone(),
             path: path.to_owned(),
+            merged: None,
+            delete_branch: false,
         })
     }
     fn worktree_users(&self, cx: &App) -> Vec<(i64, String)> {
@@ -64,7 +74,7 @@ impl Shell {
             .map(|id| (*id, self.session_working_copy(*id, cx).to_owned()))
             .collect()
     }
-    fn worktree_in_use(&self, path: &str, id: i64, cx: &App) -> Option<&'static str> {
+    fn worktree_in_use(&self, path: &str, ids: &[i64], cx: &App) -> Option<&'static str> {
         if self
             .terminals
             .values()
@@ -73,8 +83,62 @@ impl Shell {
         {
             return Some("A terminal is still open in this worktree.");
         }
-        (!worktree_management::only_used_by(path, id, &self.worktree_users(cx)))
+        (!worktree_management::only_used_by_any(path, ids, &self.worktree_users(cx)))
             .then_some(ANOTHER_SESSION)
+    }
+    /// The same check, across every window.
+    fn worktree_in_use_anywhere(
+        &self,
+        path: &str,
+        ids: &[i64],
+        cx: &Context<Self>,
+    ) -> Option<&'static str> {
+        self.worktree_in_use(path, ids, cx).or_else(|| {
+            crate::windows::handles_elsewhere(cx.entity_id(), cx)
+                .iter()
+                .find_map(|window| window.read(cx).ok()?.worktree_in_use(path, ids, cx))
+        })
+    }
+    /// A succeeded Flow run has nothing left to resume, so its worktree goes
+    /// unless someone is using it. A failed or cancelled run keeps it for
+    /// Resume. The branch and its commits stay, and uncommitted work keeps the
+    /// worktree too.
+    pub(super) fn remove_finished_run_worktree(
+        &mut self,
+        project: String,
+        path: String,
+        ids: Vec<i64>,
+        cx: &mut Context<Self>,
+    ) {
+        if project.starts_with("remote://") || path.starts_with("remote://") {
+            return;
+        }
+        let open = ids
+            .iter()
+            .any(|id| self.workspace.tab_of(*id).is_some() || self.flows_state.awaits(*id));
+        if open || self.worktree_in_use_anywhere(&path, &ids, cx).is_some() {
+            return;
+        }
+        let store = self.store.clone();
+        let target = path.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { remove_unused(&store, &ids, &project, &target, None) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((detached, _)) => {
+                    this.worktree_detached(detached, &path, cx);
+                    crate::windows::sessions_changed(cx.entity_id(), cx);
+                    this.sync_git(cx);
+                    this.sync_settings(cx);
+                    this.invalidate_chrome(cx);
+                    cx.notify();
+                }
+                Err(error) => tracing::info!(%error, "kept a finished Flow run's worktree"),
+            });
+        })
+        .detach();
     }
 
     /// Archives a chat, offering to delete its worktree if nothing else uses it.
@@ -112,14 +176,14 @@ impl Shell {
         let users = self.worktree_users(cx);
         let title = self.session_metadata(id, cx).display_title();
         let unused = cx.background_executor().spawn(async move {
-            let worktree = worktree?;
-            worktree_management::unused_after(
-                Path::new(&worktree.project),
-                Path::new(&worktree.path),
-                id,
-                &users,
-            )
-            .map(|_| worktree)
+            let mut worktree = worktree?;
+            let project = Path::new(&worktree.project);
+            let tree =
+                worktree_management::unused_after(project, Path::new(&worktree.path), id, &users)?;
+            worktree.merged = worktree_management::merged(project, &tree)
+                .zip(tree.branch)
+                .map(|(merged, name)| MergedBranch { name, merged });
+            Some(worktree)
         });
         cx.spawn_in(window, async move |this, cx| {
             let unused = unused.await;
@@ -136,6 +200,10 @@ impl Shell {
                 let worktree = match (answer, unused) {
                     (Some(0), _) => None,
                     (Some(1), Some(unused)) => Some(unused),
+                    (Some(2), Some(unused)) if unused.merged.is_some() => Some(UnusedWorktree {
+                        delete_branch: true,
+                        ..unused
+                    }),
                     _ => return,
                 };
                 this.apply_removal(id, removal, worktree, window, cx);
@@ -211,33 +279,34 @@ impl Shell {
                 if reopened {
                     return Err("The session was opened again.".to_owned());
                 }
-                let elsewhere = crate::windows::handles_elsewhere(cx.entity_id(), cx);
-                let in_use = this.worktree_in_use(&worktree.path, id, cx).or_else(|| {
-                    elsewhere.iter().find_map(|window| {
-                        let shell = window.read(cx).ok()?;
-                        shell.worktree_in_use(&worktree.path, id, cx)
-                    })
-                });
+                let in_use = this.worktree_in_use_anywhere(&worktree.path, &[id], cx);
                 in_use.map_or(Ok(this.store.clone()), |error| Err(error.to_owned()))
             });
             let Ok(checked) = checked else {
                 return;
             };
             let path = worktree.path.clone();
+            let branch = worktree
+                .merged
+                .filter(|_| worktree.delete_branch)
+                .map(|branch| (branch.name, branch.merged.branch_sha));
             let result = match checked {
                 Ok(store) => {
                     let project = worktree.project;
                     cx.background_executor()
-                        .spawn(async move { remove_unused(&store, id, &project, &path) })
+                        .spawn(async move { remove_unused(&store, &[id], &project, &path, branch) })
                         .await
                 }
                 Err(error) => Err(error),
             };
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(detached) => {
+                    Ok((detached, branch_error)) => {
                         this.worktree_detached(detached, &worktree.path, cx);
                         crate::windows::sessions_changed(cx.entity_id(), cx);
+                        if let Some(error) = branch_error {
+                            this.error = Some(format!("The worktree was deleted. {error}"));
+                        }
                     }
                     Err(error) => {
                         this.error = Some(format!(
@@ -255,6 +324,9 @@ impl Shell {
         .detach();
     }
 }
+
+/// The sessions detached from a removed worktree, and why its branch stayed.
+type Removed = (Vec<(Session, Settings)>, Option<String>);
 
 /// `None` when there is nothing to ask.
 fn removal_prompt(
@@ -284,8 +356,24 @@ fn removal_prompt(
             "No other session uses the worktree at {}. Its branch is kept. If files have uncommitted changes, the worktree stays.",
             unused.path
         ));
+        if let Some(branch) = &unused.merged {
+            detail.push_str(&format!(
+                "\n\nThe {} branch is merged: {}.",
+                branch.name,
+                branch.merged.reason()
+            ));
+            if branch.merged.how == How::SameChange {
+                detail.push_str(" A later commit may have undone that change.");
+            }
+        }
     }
     let buttons: &[&str] = match unused {
+        Some(unused) if unused.merged.is_some() => &[
+            verb,
+            "Also Delete Worktree",
+            "Also Delete Worktree and Branch",
+            "Cancel",
+        ],
         Some(_) => &[verb, "Also Delete Worktree", "Cancel"],
         None => &[verb, "Cancel"],
     };
@@ -297,10 +385,11 @@ fn removal_prompt(
 /// any record of it detached.
 fn remove_unused(
     store: &Database,
-    id: i64,
+    ids: &[i64],
     project: &str,
     path: &str,
-) -> Result<Vec<(Session, Settings)>, String> {
+    branch: Option<(String, String)>,
+) -> Result<Removed, String> {
     let users = {
         let store = locked(store)?;
         let paths = store.session_worktrees()?;
@@ -313,7 +402,7 @@ fn remove_unused(
             })
             .collect::<Vec<_>>()
     };
-    if !worktree_management::only_used_by(path, id, &users) {
+    if !worktree_management::only_used_by_any(path, ids, &users) {
         return Err(ANOTHER_SESSION.into());
     }
     let snapshot = gespan_core::git::snapshot(Path::new(project))?;
@@ -322,7 +411,11 @@ fn remove_unused(
         .first()
         .ok_or("No main working copy found")?;
     worktree_management::remove_unused(Path::new(&main.path), Path::new(path))?;
-    locked(store)?.detach_worktree(path, &main.path)
+    let detached = locked(store)?.detach_worktree(path, &main.path)?;
+    let branch_error = branch.and_then(|(branch, checked)| {
+        worktree_management::delete_merged_branch(Path::new(&main.path), &branch, &checked).err()
+    });
+    Ok((detached, branch_error))
 }
 
 #[cfg(test)]
@@ -503,6 +596,41 @@ mod tests {
             })
             .unwrap();
         assert_eq!(f.error(cx), None);
+    }
+
+    #[gpui::test]
+    fn a_merged_branch_can_go_with_the_worktree(cx: &mut TestAppContext) {
+        let f = fixture(cx);
+        f.run(Removal::Archive, cx);
+        f.answer("Also Delete Worktree and Branch", cx);
+        assert!(!f.exists());
+        assert!(!f.branch_kept());
+        assert!(f.archived(cx));
+        assert_eq!(f.error(cx), None);
+    }
+
+    #[gpui::test]
+    fn a_branch_that_moves_after_the_offer_is_kept(cx: &mut TestAppContext) {
+        let f = fixture(cx);
+        f.run(Removal::Archive, cx);
+        let tree = Path::new(&f.path);
+        std::fs::write(tree.join("late"), "work").unwrap();
+        assert!(git(tree, &["add", "late"]));
+        assert!(git(tree, &["commit", "-m", "Late work"]));
+        f.answer("Also Delete Worktree and Branch", cx);
+        assert!(f.branch_kept());
+        let error = f.error(cx).unwrap();
+        assert!(error.starts_with("The worktree was deleted."), "{error}");
+    }
+
+    #[gpui::test]
+    fn a_failed_or_cancelled_choice_never_reaches_the_branch(cx: &mut TestAppContext) {
+        let f = fixture(cx);
+        std::fs::write(Path::new(&f.path).join("file"), "edited").unwrap();
+        f.run(Removal::Archive, cx);
+        f.answer("Also Delete Worktree and Branch", cx);
+        assert!(f.exists(), "uncommitted changes keep the worktree");
+        assert!(f.branch_kept(), "and the branch with it");
     }
 
     #[gpui::test]
