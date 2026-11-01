@@ -931,7 +931,7 @@ fn a_change_of_servers_tells_an_agent_to_read_every_list_again() {
     let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &[])));
     let mut stream = TcpStream::connect(&a.authority).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(Duration::from_millis(200)))
         .unwrap();
     write!(
         stream,
@@ -943,16 +943,23 @@ fn a_change_of_servers_tells_an_agent_to_read_every_list_again() {
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
     assert!(line.contains(" 200 "), "{line}");
-    assert!(rig
-        .hub
-        .update(1, BTreeSet::new(), BTreeSet::from(["docs".to_owned()])));
+    // The session starts hearing changes on its own task after `initialized`,
+    // so a single change can come too early. Keep changing until it's heard.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut servers = BTreeSet::from(["docs".to_owned()]);
     let mut waiting = vec!["tools", "prompts", "resources"];
     while !waiting.is_empty() {
+        assert!(Instant::now() < deadline, "never told about {waiting:?}");
+        assert!(rig.hub.update(1, BTreeSet::new(), servers.clone()));
+        servers = if servers.is_empty() {
+            BTreeSet::from(["docs".to_owned()])
+        } else {
+            BTreeSet::new()
+        };
         line.clear();
-        reader
-            .read_line(&mut line)
-            .unwrap_or_else(|_| panic!("never told about {waiting:?}"));
-        waiting.retain(|list| !line.contains(&format!("{list}/list_changed")));
+        if reader.read_line(&mut line).is_ok() {
+            waiting.retain(|list| !line.contains(&format!("{list}/list_changed")));
+        }
     }
 }
 

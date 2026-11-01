@@ -296,7 +296,9 @@ fn report_json(
 }
 
 /// Deflated entries in order, all stamped with the bundle's time, so the
-/// same entries always give the same bytes.
+/// same entries always give the same bytes, on every platform: the zip crate
+/// marks entries as DOS on Windows unless told otherwise, and then drops their
+/// Unix permissions.
 fn write_zip(entries: &[Entry], at: DateTime<Utc>) -> Result<Vec<u8>, String> {
     let time = zip::DateTime::from_date_and_time(
         at.year().clamp(1980, 2107) as u16,
@@ -310,6 +312,7 @@ fn write_zip(entries: &[Entry], at: DateTime<Utc>) -> Result<Vec<u8>, String> {
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(time)
+        .system(zip::System::Unix)
         .unix_permissions(0o644);
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for entry in entries {
