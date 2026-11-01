@@ -1,0 +1,21 @@
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_765ddcec531e1c::t_aaef7934940727 111-112
+host/worktree-jobs.test.ts
+  s_765ddcec531e1c::t_407df8faaf979c 23-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "757b549c795297d11c1869ac4e976b310588e92f",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
