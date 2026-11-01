@@ -10,7 +10,7 @@ export type PiFlavor = {
   id: HarnessId;
   /** Name used in error messages and debug logs. */
   label: string;
-  /** Resolve the CLI binary. Swappable so tests can avoid Tauri. */
+  /** Resolve the CLI binary. Swappable so tests can stub it. */
   resolveBinary: () => Promise<{ path: string }>;
   /** Flag that resumes a stored session by id. */
   resumeFlag: string;

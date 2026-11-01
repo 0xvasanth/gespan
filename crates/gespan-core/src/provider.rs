@@ -131,7 +131,7 @@ pub enum Event {
         custom_type: String,
         severity: Option<String>,
     },
-    /// A plan the provider hands over for review, as the Tauri app's `plan` event.
+    /// A plan the provider hands over for review.
     Plan(String),
     /// A finished image as base64 PNG data, which the runtime saves.
     GeneratedImage {

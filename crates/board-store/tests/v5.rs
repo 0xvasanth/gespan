@@ -157,7 +157,7 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
 #[test]
 fn settings_patch_changes_only_named_fields() {
     let path = tempfile::NamedTempFile::new().unwrap();
-    // Two apps on one database: native toggles write-back, Tauri sets the icon.
+    // Two connections on one database: one toggles write-back, one sets the icon.
     let native = open(path.path());
     let tauri = open(path.path());
     let board = create_board(&native, "Work").unwrap();

@@ -1,4 +1,4 @@
-//! PanelStack.tsx's 280ms slide over a covered, fading overview.
+//! A 280ms slide over a covered, fading overview.
 use super::panels::Route;
 use std::time::Instant;
 

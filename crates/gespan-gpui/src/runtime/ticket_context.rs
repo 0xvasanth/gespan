@@ -80,7 +80,7 @@ fn introduction(ticket: &TicketRef, may_change_status: bool, read_only: bool) ->
 }
 
 /// For a provider that mounts no tool servers: the same calls through `app`,
-/// whose path is `cli`, as in the Tauri app.
+/// whose path is `cli`.
 fn cli_introduction(
     ticket: &TicketRef,
     may_change_status: bool,

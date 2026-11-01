@@ -879,7 +879,7 @@ impl BoardView {
     }
 
     /// "lane …, column …, position i of n", counted over the whole cell (a
-    /// card not in it would land at its end), in Tauri's words.
+    /// card not in it would land at its end).
     fn lane_place(&self, card_id: &str, lane: &str, column_id: &str) -> String {
         let lanes = self.lanes();
         let cells = self.lane_cell_id_map(&lanes);
@@ -920,7 +920,7 @@ impl BoardView {
     }
 
     /// What the last swimlane keyboard drag step said: picked up, over,
-    /// dropped or cancelled, in Tauri's words, with full counts.
+    /// dropped or cancelled, with full counts.
     pub(crate) fn lane_announcement(&self) -> Option<String> {
         self.lane_mode()?;
         self.drag_announcement.clone()

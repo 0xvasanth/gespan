@@ -12,7 +12,7 @@ const DEFAULT_WIDTH: f32 = 440.;
 const MIN_WIDTH: f32 = 360.;
 /// Kept free for the list and the detail view.
 const RESERVED_WIDTH: f32 = 650.;
-/// Below this the panel takes over the view, as the Tauri app's does.
+/// Below this the panel takes over the view.
 const OVERLAY_BELOW: f32 = 1100.;
 
 struct Hosted {

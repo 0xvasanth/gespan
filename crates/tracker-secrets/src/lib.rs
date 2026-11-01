@@ -1,6 +1,5 @@
 //! Tracker secrets (Linear, Jira, GitLab, Azure DevOps, Plane) in the OS
-//! keychain, shared by the Tauri app and Gespan Native so both read the same
-//! entries.
+//! keychain. Gespan Native reads the same entries older Tauri builds wrote.
 //!
 //! One entry per tracker and data directory: service [`SERVICE`], account
 //! `<tracker>:<data dir>`. The value is exactly what the old `0600` file held,
@@ -57,8 +56,8 @@ impl Tracker {
     }
 }
 
-/// The apps build the data directory in different ways (Tauri's path API,
-/// Native's environment lookups or a `--gespan-db` argument), so the account
+/// Builds spell the data directory in different ways (the old Tauri app's path
+/// API, Native's environment lookups or a `--gespan-db` argument), so the account
 /// uses the resolved directory: two spellings of one directory share an entry.
 pub fn account(tracker: Tracker, data_dir: &Path) -> String {
     let resolved = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());

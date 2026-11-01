@@ -1,6 +1,5 @@
-//! Port of src/features/settings/ui/SettingsView.tsx and
-//! src/app/shell/SettingsRail.tsx: the Settings pages, their rail and the
-//! breadcrumb, search and actions the inset layout puts in its title bar.
+//! The Settings pages, their rail and the breadcrumb, search and actions the
+//! inset layout puts in its title bar.
 mod data;
 mod keymap;
 #[cfg(test)]

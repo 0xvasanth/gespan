@@ -23,7 +23,7 @@ pub struct Connections {
 }
 
 impl Connections {
-    /// Uses the same connection store as the Tauri desktop.
+    /// Uses the connection store format older Tauri builds saved.
     pub fn new(data_dir: impl AsRef<Path>) -> Self {
         Self {
             data_dir: data_dir.as_ref().to_owned(),

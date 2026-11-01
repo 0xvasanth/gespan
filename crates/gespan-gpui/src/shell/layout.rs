@@ -852,7 +852,7 @@ impl Shell {
                 .into_any_element(),
         )
     }
-    /// Modal.tsx at size `sm` with `fitViewport`: 420px, centred.
+    /// A small modal, fit to the viewport: 420px, centred.
     pub(super) fn resource_modal(
         &self,
         window: &Window,

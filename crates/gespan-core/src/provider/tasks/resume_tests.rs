@@ -720,7 +720,7 @@ fn claudes_own_wake_after_a_restart_is_still_marked_when_it_starts() {
 #[test]
 fn tauri_written_agent_rows_seed_the_registry() {
     let frames = frames();
-    // The Tauri app's block: agentRun with nativeIds and no agentId.
+    // The old Tauri app's block: agentRun with nativeIds and no agentId.
     let block = json!({
         "id":"tauri-block","role":"tool","text":"Run echo and sleep sequence",
         "tool":{"callId":AGENT,"kind":"agent","title":"Run echo and sleep sequence","status":"completed"},

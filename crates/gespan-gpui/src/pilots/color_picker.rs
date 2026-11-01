@@ -1,4 +1,4 @@
-//! ColorPickerPopover.tsx's saturation/value surface, hue track and hex field.
+//! The colour picker's saturation/value surface, hue track and hex field.
 use super::*;
 use gpui::{DispatchPhase, canvas, linear_color_stop, linear_gradient};
 

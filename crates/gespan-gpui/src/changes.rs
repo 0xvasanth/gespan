@@ -1,4 +1,4 @@
-//! GitChangesPanel.tsx in the inset layout: the Changes header with branch
+//! The Changes panel in the inset layout: the Changes header with branch
 //! actions, the commit box, sync and pull-request actions, and the staged
 //! and unstaged files as a list or a tree. Every Git call runs off-thread,
 //! one mutation at a time per checkout.
@@ -446,7 +446,7 @@ impl Changes {
     fn fail(error: String, window: &mut Window, cx: &mut App) {
         drop(window.prompt(PromptLevel::Critical, &error, None, &["OK"], cx));
     }
-    /// confirmNative: Tauri's `ask` with the OK label it was given.
+    /// A native confirm dialog with the OK label it was given.
     fn confirm(
         message: String,
         ok: &'static str,

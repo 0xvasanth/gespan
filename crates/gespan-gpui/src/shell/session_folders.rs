@@ -1,4 +1,4 @@
-//! SessionFolderPicker.tsx and the composer's local /add-to-folder command.
+//! The session folder picker and the composer's local /add-to-folder command.
 use super::*;
 use gespan_core::session_groups::Folder;
 actions!(session_folders, [Dismiss]);

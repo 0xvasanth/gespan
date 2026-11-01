@@ -1,6 +1,5 @@
-//! One Gespan per database on Windows, as the Tauri app's
-//! single-instance plugin: Close to tray leaves the process running with no
-//! taskbar entry, so a second launch brings that window back and exits
+//! One Gespan per database on Windows: Close to tray leaves the process running
+//! with no taskbar entry, so a second launch brings that window back and exits
 //! instead of starting another process on the same database.
 //!
 //! The lock is an exclusive lock on `<database>.native.lock`, which the OS

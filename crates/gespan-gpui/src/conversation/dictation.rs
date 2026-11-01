@@ -1,5 +1,4 @@
-//! Port of useDictation.ts, insertDictation.ts and DictationBar.tsx: the
-//! composer's mic, its shortcut and the caption row above the field.
+//! The composer's mic, its shortcut and the caption row above the field.
 //!
 //! The speech helper is app-wide. [`Speech`] owns its one client, the shared
 //! model store and the downloads; every composer has its own [`Dictation`],

@@ -1,5 +1,4 @@
-// The pickers that open as flyouts beside a menu row: ModelPicker.tsx's
-// ModelFlyout and SearchableProjectPicker.tsx's ProjectPickerPopover. Each
+// The pickers that open as flyouts beside a menu row: models and projects. Each
 // owns a search field; arrows and Enter in it move and pick in the list.
 use crate::{input, theme::*, workspace::project_name};
 use gespan_core::catalog::{self, Model};
@@ -409,7 +408,7 @@ pub(crate) struct ModelList {
     missing: Vec<Kind>,
     switch_allowed: bool,
     hidden: Vec<String>,
-    /// QuickModelSelector.tsx: providers as tabs above the search and list.
+    /// Providers as tabs above the search and list.
     quick: bool,
     tab: ModelTab,
     highlighted: usize,
@@ -602,8 +601,8 @@ impl ModelList {
             })
             .collect()
     }
-    /// Like the Tauri picker, hide providers whose CLI isn't installed once the
-    /// probe settles. The session's own provider always stays.
+    /// Hide providers whose CLI isn't installed once the probe settles. The
+    /// session's own provider always stays.
     fn probe_installed(&mut self, cx: &mut Context<Self>) {
         if cfg!(test) || self.remote_project.is_some() {
             return;

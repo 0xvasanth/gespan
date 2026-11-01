@@ -1,4 +1,4 @@
-//! SkillPicker.tsx's "New skill" row and CreateSkillForm: a starter SKILL.md
+//! The skill picker's "New skill" row and form: a starter SKILL.md
 //! named from the typed command, in the project or in your personal skills.
 //! Creating it clears the command, refreshes the list and opens the file.
 use super::*;

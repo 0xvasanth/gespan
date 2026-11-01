@@ -1,4 +1,4 @@
-//! GitHistoryGraph.tsx's standalone History tab: its toolbar, search and
+//! The standalone History tab: its toolbar, search and
 //! 44px rows with the swimlane graph painted per row.
 use crate::{
     git_graph::{self, GraphCommit, NodeKind, Row, RowGraph, SWIMLANE_WIDTH},

@@ -1,4 +1,4 @@
-//! Child policy extracted from src-tauri/src/background_work.rs.
+//! Child process policy.
 use std::process::Command;
 
 pub mod orphans;

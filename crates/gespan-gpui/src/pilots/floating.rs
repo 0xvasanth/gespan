@@ -1,4 +1,4 @@
-//! FloatingPilotChat.tsx: the menu bar's chat panel. It floats over other
+//! The menu bar's chat panel. It floats over other
 //! apps without activating Gespan, and its rail moves between Pilots without
 //! touching the workspace window's selection.
 use super::*;
@@ -30,7 +30,7 @@ fn hide(window: &mut Window, cx: &App) {
         window.remove_window();
     }
 }
-/// Blank chrome moves the panel, as `data-tauri-drag-region` does.
+/// Blank chrome moves the panel.
 fn drag(window: &mut Window) {
     #[cfg(target_os = "macos")]
     window.start_window_move();
@@ -212,8 +212,8 @@ impl Floating {
                             .group_hover("floating-new-pilot", |s| s.text_color(content(1.))),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
-                        // Shown here in place of the chat that asked, as in
-                        // Tauri; the workspace keeps its own selection.
+                        // Shown here in place of the chat that asked; the
+                        // workspace keeps its own selection.
                         let id = this.owner.update(cx, |owner, cx| {
                             let projects = owner
                                 .roster
@@ -296,8 +296,8 @@ impl Floating {
                         let id = this.selected.clone();
                         let owner = this.owner.clone();
                         let parent = owner.read(cx).parent_window;
-                        // As Tauri's reveal: the workspace takes the chat over,
-                        // so this panel steps aside.
+                        // The workspace takes the chat over, so this panel
+                        // steps aside.
                         this.close(window, cx);
                         let app: &mut App = cx;
                         app.defer(move |cx| {
@@ -503,8 +503,8 @@ impl Pilots {
         }
         cx.notify();
     }
-    /// Tauri's floating `create`: add a Pilot without opening it in the
-    /// workspace, so the panel that asked can show it.
+    /// Add a Pilot without opening it in the workspace, so the panel that asked
+    /// can show it.
     pub(super) fn create_floating(
         &mut self,
         projects: Vec<String>,
@@ -567,7 +567,7 @@ impl Pilots {
             Some(display) => {
                 let area = display.visible_bounds();
                 let height = px(HEIGHT).min(area.size.height - px(2. * MARGIN));
-                // Each further panel steps down and left, as Tauri's do.
+                // Each further panel steps down and left.
                 let offset = px((shown % 8) as f32 * 28.);
                 Bounds {
                     origin: point(

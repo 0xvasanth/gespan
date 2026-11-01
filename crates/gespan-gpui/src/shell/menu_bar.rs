@@ -1,4 +1,4 @@
-//! The in-window menu bar on Windows and Linux (MenuBar.tsx): a strip at the
+//! The in-window menu bar on Windows and Linux: a strip at the
 //! top of the workspace column with the menus macOS shows in its menu bar
 //! (`app_menu::menus`). Items dispatch the same actions to the view that had
 //! focus, so shortcuts and enabled states follow the live keymap.
@@ -153,7 +153,7 @@ impl Shell {
         }
     }
 
-    /// MenuBar.tsx: `h-7` titles with a hover wash; with a menu open, hovering
+    /// `h-7` titles with a hover wash; with a menu open, hovering
     /// another title moves to it.
     pub(super) fn menu_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.menu_bar.shown {

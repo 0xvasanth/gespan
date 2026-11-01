@@ -1,6 +1,6 @@
 //! The change an Edit or Write tool proposes, read from its own arguments
-//! rather than from git, as src/integrations/harness/core/preview.ts builds
-//! it: a few lines from the first change, with the whole edit's counts.
+//! rather than from git: a few lines from the first change, with the whole
+//! edit's counts.
 use super::{presentation, ToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

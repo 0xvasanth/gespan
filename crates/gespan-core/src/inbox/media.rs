@@ -275,7 +275,7 @@ pub fn remember_video(url: &str, path: PathBuf) {
     }
 }
 
-/// inboxMedia.ts's sniffVideoType: MP4 and QuickTime by their `ftyp` box
+/// Sniffs the video type: MP4 and QuickTime by their `ftyp` box
 /// (AVIF images share it), and WebM by its EBML header. The file extension.
 pub fn video_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {

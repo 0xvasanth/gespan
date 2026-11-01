@@ -515,7 +515,7 @@ impl Input {
         input.secondary_submit = false;
         input
     }
-    /// MessageQueue.tsx keeps its one-row textarea height while Shift+Enter
+    /// A queued message keeps its one-row height while Shift+Enter
     /// inserts newlines; the field scrolls to the caret within that row.
     pub(crate) fn queued_message(cx: &mut Context<Self>) -> Self {
         let mut input = Self::memory_fact("Edit queued message", cx);

@@ -309,7 +309,7 @@ impl BoardView {
         let mut groups: Vec<Group> = heads
             .drain(..)
             .map(|(key, label)| Group {
-                // Keys carry the mode (what the Tauri app stores too), so a
+                // Keys carry the mode (older Tauri builds saved the same), so a
                 // collapsed "No label" never matches "No project".
                 key: format!("{by}:{key}"),
                 label,

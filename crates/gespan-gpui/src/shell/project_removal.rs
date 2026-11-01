@@ -1,5 +1,5 @@
 //! Archiving and deleting projects from their menu, and opening them in an
-//! external editor (useProjectMenu.tsx and App.tsx's onRemoveProject).
+//! external editor.
 use super::*;
 use gespan_core::external_editor::{self, ExternalEditor};
 

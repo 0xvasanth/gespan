@@ -633,7 +633,7 @@ fn deleting_a_card_takes_every_v3_row_with_it() {
     add_relation(&conn, &cards[1].id, card, "blocks").unwrap();
     let field = create_field(&conn, board, "Points", "number", None).unwrap();
     set_field_value(&conn, card, &field.id, Some("3")).unwrap();
-    // The Tauri app and older builds delete with a plain DELETE.
+    // Older builds delete with a plain DELETE.
     conn.execute("DELETE FROM board_cards WHERE id = ?1", [card])
         .unwrap();
     for table in [
@@ -1278,7 +1278,7 @@ fn move_to_board_of_an_archived_card_is_refused_and_changes_nothing() {
 // ── C6-3: ordering, link role and migration fixes ───────────────────────────
 
 /// `V2_DDL` without the `board_native_*` tables: the four tables (and their
-/// indexes) the Tauri app created before v3.
+/// indexes) the old Tauri app created before v3.
 fn tauri_only_ddl() -> String {
     V2_DDL
         .lines()

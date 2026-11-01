@@ -1,5 +1,4 @@
-//! Projects follow a renamed folder, ported from src-tauri/src/fs.rs
-//! (`resolve_project_location`) and projectLocation.ts.
+//! Projects follow a renamed folder.
 //!
 //! A rename keeps the folder's filesystem identity, so each project's identity
 //! is remembered while its folder exists. When the saved folder is gone, only

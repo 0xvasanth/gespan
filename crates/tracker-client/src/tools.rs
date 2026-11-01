@@ -1,5 +1,5 @@
-//! The ticket tools coding agents call, shared by the native MCP bridge and
-//! the Tauri app: what each tool is, when a session may not run it, and how
+//! The ticket tools coding agents call through the native MCP bridge: what each
+//! tool is, when a session may not run it, and how
 //! the app answers it through `Tickets`. Transport and scope (which ticket,
 //! which session) belong to the caller; nothing here trusts agent input for
 //! either.

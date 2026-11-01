@@ -1,4 +1,4 @@
-//! Flow definition types (JSON-compatible with the Tauri app) and validation.
+//! Flow definition types (JSON-compatible with older Tauri builds) and validation.
 use super::template::list_bindings;
 use crate::provider::Kind;
 use serde::{Deserialize, Serialize};

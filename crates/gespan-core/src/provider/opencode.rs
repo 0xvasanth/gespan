@@ -1,4 +1,4 @@
-//! Native OpenCode HTTP/SSE transport, ported from the Tauri adapter.
+//! Native OpenCode HTTP/SSE transport.
 //! v1 owns a local `serve` child; v2 connects to OpenCode's managed service.
 use super::*;
 use crate::diagnostics::metrics;
@@ -187,7 +187,7 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
     for stream in [Box::new(stdout) as Box<dyn Read + Send>, Box::new(stderr)] {
         let output = output.clone();
         readers.push(thread::spawn(move || {
-            // Lossy, as in Tauri: one invalid byte must not discard the whole
+            // Lossy: one invalid byte must not discard the whole
             // stream (and with it the version line).
             let mut bytes = Vec::new();
             let _ = stream.take(8 * 1024 * 1024).read_to_end(&mut bytes);
@@ -266,8 +266,7 @@ fn mount_tools(
 
 fn generation(request: &Request, cancel: &AtomicBool) -> Result<bool, String> {
     let output = exec(request, &["--version"], cancel)?;
-    // No word boundaries: `v1.14.20` and ANSI-colored output must still match,
-    // as with the Tauri parser.
+    // No word boundaries: `v1.14.20` and ANSI-colored output must still match.
     let re = regex::Regex::new(r"(\d+)\.(\d+)\.(\d+)").unwrap();
     let version = re.captures(&output).ok_or_else(|| {
         format!(

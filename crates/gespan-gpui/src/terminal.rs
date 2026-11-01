@@ -1,4 +1,4 @@
-//! Port of TerminalView.tsx: a login shell on a PTY, emulated by
+//! A login shell on a PTY, emulated by
 //! alacritty_terminal and painted as a grid of cell-snapped text runs.
 use crate::theme::*;
 use alacritty_terminal::{
@@ -1225,7 +1225,7 @@ fn color(value: AnsiColor, colors: &Colors, foreground: bool) -> Hsla {
 }
 
 /// Bytes a keystroke sends, or None to leave it to the app's bindings.
-/// Includes terminalKeys.ts's macOS editing shortcuts.
+/// Includes the macOS editing shortcuts.
 pub(crate) fn key_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
     let m = &keystroke.modifiers;
     let key = keystroke.key.as_str();
@@ -1381,7 +1381,7 @@ fn working_dir(cwd: &str) -> std::path::PathBuf {
     }
 }
 fn default_shell() -> (String, Vec<String>) {
-    // Windows has no SHELL; use the command processor, as the Tauri app does.
+    // Windows has no SHELL; use the command processor.
     #[cfg(windows)]
     {
         match std::env::var("COMSPEC").ok().filter(|s| !s.is_empty()) {
@@ -1632,7 +1632,7 @@ mod tests {
         assert_eq!(bytes("pagedown"), Some(b"\x1b[6~".to_vec()));
         assert_eq!(bytes("f5"), Some(b"\x1b[15~".to_vec()));
         assert_eq!(bytes("shift-tab"), Some(b"\x1b[Z".to_vec()));
-        // terminalKeys.ts
+        // The macOS editing shortcuts.
         assert_eq!(bytes("alt-left"), Some(b"\x1bb".to_vec()));
         assert_eq!(bytes("alt-right"), Some(b"\x1bf".to_vec()));
         assert_eq!(bytes("cmd-left"), Some(b"\x01".to_vec()));

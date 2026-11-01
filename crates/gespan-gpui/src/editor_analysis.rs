@@ -1,5 +1,5 @@
-//! The Tauri editor's CodeMirror/Lezer analysis, without a web view. The bundled
-//! parsers and editorLint.ts run in a bounded interpreter on a background worker.
+//! CodeMirror/Lezer analysis without a web view. The bundled parsers and
+//! editorLint.ts run in a bounded interpreter on a background worker.
 //! Languages with a Tree-sitter grammar are analysed natively by editor_syntax.
 use gpui::SharedString;
 use rquickjs::{Context, Function, Promise, Runtime};

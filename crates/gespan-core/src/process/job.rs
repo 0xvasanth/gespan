@@ -1,6 +1,5 @@
 //! Windows: agent processes start inside a kill-on-close job that Gespan holds
 //! the only handle to, so the OS kills them with Gespan even when it crashes.
-//! Ported from src-tauri/src/windows.rs.
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::process::{Child, Command};

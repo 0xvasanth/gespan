@@ -1,4 +1,4 @@
-//! App.tsx / handoffTurn.ts's bounded recap from the outgoing bound provider.
+//! The bounded recap from the outgoing bound provider.
 use super::*;
 use gespan_core::agent::{AccessMode, Decision, Handoff, ProviderSwitch};
 use std::{path::Path, sync::mpsc, time::Instant};

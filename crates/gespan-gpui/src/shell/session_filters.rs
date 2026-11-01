@@ -1,4 +1,4 @@
-//! SessionFiltersMenu.tsx: persisted status, time and provider checkboxes.
+//! Persisted status, time and provider checkboxes.
 use super::*;
 use gespan_core::session_filters::{Status, TimeFilter};
 

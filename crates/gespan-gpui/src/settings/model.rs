@@ -1,5 +1,5 @@
-//! Port of src/features/settings/model/settings.ts: the pages, their rail
-//! groups and the index Settings search jumps through.
+//! The Settings pages, their rail groups and the index Settings search jumps
+//! through.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -167,7 +167,6 @@ impl Section {
             Section::Worktrees => "git branch worktree working copy project create delete",
         }
     }
-    /// SettingsRail.tsx's SECTION_ICONS.
     pub(crate) fn icon(self) -> &'static str {
         match self {
             Section::General => "sliders",

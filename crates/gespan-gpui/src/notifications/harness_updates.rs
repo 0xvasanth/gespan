@@ -1,4 +1,4 @@
-//! Native counterpart of HarnessUpdateNotice.tsx. The parent positions this
+//! The harness update notice. The parent positions this
 //! entity in the shared top-right notification stack.
 use crate::theme::*;
 use gespan_core::{

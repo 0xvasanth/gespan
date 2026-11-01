@@ -1,4 +1,4 @@
-//! ToolDiffPreview.tsx and FilePreview.tsx: hovering an Edit or Write file
+//! Hovering an Edit or Write file
 //! chip shows the change the tool itself proposed, independent of git.
 use super::*;
 use crate::popover::Align;

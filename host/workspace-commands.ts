@@ -34,7 +34,7 @@ import {
 const exec = promisify(execFile);
 
 /** Local file commands the host answers for a remote project, with the same
- * names, arguments and results as this app's Tauri commands, so the same UI
+ * names, arguments and results as the app's own commands, so the same UI
  * works on either machine. Paths are absolute host paths and must lie inside
  * a registered project or one of its worktrees. */
 export const WORKSPACE_COMMANDS = [

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 const INSTRUCTIONS: &str = include_str!("ask_instructions.md");
 
 /// Saved with the session, and sent to the agent as reference data. The field
-/// order is what `JSON.stringify` writes for the Tauri app's InboxAskContext.
+/// order is what `JSON.stringify` wrote for the old Tauri app's InboxAskContext.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Context {

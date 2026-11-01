@@ -27,8 +27,9 @@ pub(crate) const MIN_COLUMN: i64 = 60;
 
 /// The built-in columns as (id, label, default width). The agent fields
 /// (provider, model, run time) are computed from the card's linked sessions;
-/// their ids are the Tauri app's (ruling C5-q). `agent:cost` has no source
-/// yet, so it isn't offered or drawn, but a layout naming it keeps it.
+/// their ids are the ones the old Tauri app saved (ruling C5-q). `agent:cost`
+/// has no source yet, so it isn't offered or drawn, but a layout naming it
+/// keeps it.
 const COLUMNS: [(&str, &str, i64); 13] = [
     ("title", "Title", 320),
     ("status", "Status", 130),

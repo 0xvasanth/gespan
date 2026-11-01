@@ -1,6 +1,5 @@
-//! Scrub diagnostics before anyone sees or sends them. Shared by the Tauri app
-//! and the native app, so both follow the same rules and the same fixtures
-//! (`fixtures/redaction.json`).
+//! Scrub diagnostics before anyone sees or sends them, following the cases in
+//! `fixtures/redaction.json`.
 //!
 //! The rules: the home directory becomes `~`; each project root becomes
 //! `<project-N>`, keeping the path inside it; emails become `<email>`; tokens

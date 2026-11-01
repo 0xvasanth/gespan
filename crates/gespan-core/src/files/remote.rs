@@ -1,4 +1,4 @@
-//! The native equivalent of `connections/model/remoteCommands.ts`.
+//! Remote workspace commands.
 //! Keep host paths behind `remote://` paths at every workspace API boundary.
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -23,7 +23,7 @@ pub fn is_remote(path: &Path) -> bool {
         .is_some_and(|path| path.starts_with("remote://"))
 }
 
-/// Run one of the same bounded workspace commands supported by the Tauri app.
+/// Run one of the bounded workspace commands on the remote host.
 /// This is synchronous, like the filesystem APIs; call from a background task.
 pub fn run_remote_command(command: &str, args: Value) -> Result<Value, String> {
     run_with(command, args, |environment, params| {

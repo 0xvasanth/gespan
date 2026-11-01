@@ -1,4 +1,4 @@
-//! DictationSettings.tsx: the speech model, custom words and the shortcut.
+//! The speech model, custom words and the shortcut.
 use crate::{
     conversation::dictation::{DICTATE_COMMAND, model_spec, speech},
     input::{self, Input},

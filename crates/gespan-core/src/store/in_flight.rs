@@ -1,6 +1,6 @@
 //! Chats with a turn in flight, kept current while they run so a quit or a
 //! crash can continue them on the next launch. The desktop table is the one
-//! the Tauri app writes (src-tauri/src/session_store.rs).
+//! older Tauri builds wrote.
 use super::{shared::has_table, Store};
 use crate::interrupted;
 use rusqlite::params;
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn the_desktop_table_holds_the_desktop_id_and_cwd() {
-        // The Tauri app reads these rows on its next launch.
+        // Older Tauri builds read these rows on their next launch.
         let store = Store::open_gespan(Path::new(":memory:")).unwrap();
         let id = store.create("codex", "/work/app").unwrap().id;
         store.set_in_flight(&[id]).unwrap();
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn the_marker_is_a_desktop_interrupt_notice() {
-        // The Tauri app auto-continues a chat whose last block is this notice.
+        // Older Tauri builds auto-continue a chat whose last block is this notice.
         let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
         let id = store.create("codex", "/a").unwrap().id;
         store.write_rows(id, 0, &[row("user", "Go")]).unwrap();

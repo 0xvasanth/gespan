@@ -521,8 +521,7 @@ fn estimate_grammar_matches_the_shared_rule() {
         "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h"
     );
     assert!(parse_estimate("0m").is_err());
-    // A lone 0 parses but is refused with the shared (Tauri `cardProps.ts`)
-    // minimum message.
+    // A lone 0 parses but is refused with the shared minimum message.
     assert_eq!(
         parse_estimate("0"),
         Err("An estimate must be at least 1 minute".to_string())

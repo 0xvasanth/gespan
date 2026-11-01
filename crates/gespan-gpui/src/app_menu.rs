@@ -1,6 +1,5 @@
-//! The native menu bar, after the Tauri app's `menu.rs`. Items dispatch GPUI
-//! actions, so their shortcuts follow the live keymap and items the focused
-//! view cannot handle are disabled.
+//! The native menu bar. Items dispatch GPUI actions, so their shortcuts follow
+//! the live keymap and items the focused view cannot handle are disabled.
 use crate::{
     Quit,
     file_editor::{Find, Format, ReloadFile, Replace, Save, ToggleAutosave, ToggleWordWrap},
@@ -38,7 +37,7 @@ pub(crate) fn bind(cx: &mut App) {
 
 pub(crate) fn install(prefs: &crate::settings::Preferences, cx: &mut App) {
     cx.set_menus(menus(prefs, cfg!(target_os = "macos")));
-    // Windows would turn this into a jump list, which the Tauri app has not.
+    // Windows would turn this into a jump list, which Gespan does not have.
     if cfg!(target_os = "macos") {
         cx.set_dock_menu(dock_menu());
     }

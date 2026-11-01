@@ -1,4 +1,4 @@
-//! UI-independent services shared by the native migration and Tauri.
+//! UI-independent services for Gespan Native.
 pub mod accounts;
 pub mod agent;
 pub mod app_access;

@@ -1,4 +1,4 @@
-//! The title bar corner's Open in editor button (OpenInEditorButton.tsx):
+//! The title bar corner's Open in editor button:
 //! the focused session's worktree or folder, opened in an installed editor.
 use super::*;
 use gespan_core::external_editor::{self, ExternalEditor};
@@ -72,7 +72,7 @@ pub(super) fn open_in_editor_menu(
 
 /// Only a folder on this computer can open in one of its editors. Shares the
 /// notification settings' project test, so home and app bundles are excluded
-/// here too, as `isLocalProject` does in the Tauri app.
+/// here too.
 pub(super) fn local_folder(path: &str) -> bool {
     !path.starts_with("remote://") && crate::settings::looks_like_project(path)
 }

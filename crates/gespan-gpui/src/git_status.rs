@@ -62,8 +62,7 @@ fn parent(path: &str) -> &str {
 }
 
 pub(crate) struct ProjectGit {
-    /// The active session's working folder (its worktree, if it has one):
-    /// Sidebar.tsx's `gitRoot`.
+    /// The active session's working folder (its worktree, if it has one).
     project: String,
     pub root: String,
     pub index: Option<DiffIndex>,

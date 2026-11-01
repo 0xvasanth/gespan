@@ -5,7 +5,7 @@ use gpui::{
 
 pub(super) const CONTROLS_WIDTH: f32 = 106.;
 
-// Windows uses the Tauri app's `WindowControls` glyphs.
+// The window control glyphs on Windows.
 #[cfg(target_os = "windows")]
 const MINIMIZE_ICON: &str = "minus-sign";
 #[cfg(target_os = "windows")]

@@ -87,8 +87,8 @@ fn quoted_angle_brackets_do_not_end_a_tag() {
     let html = r#"<meta name="description" content="a > b" property="og:title">"#;
     let tags = opening_tags(html, "meta");
     assert_eq!(tags, vec![html]);
-    // The attribute after the quoted `>` is still read. Like Tauri, the
-    // title's cleanup drops a stray bracket.
+    // The attribute after the quoted `>` is still read. The title's cleanup
+    // drops a stray bracket.
     assert_eq!(document_title(html).as_deref(), Some("a b"));
 }
 

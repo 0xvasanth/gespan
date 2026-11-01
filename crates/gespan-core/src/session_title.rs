@@ -9,7 +9,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
-/// Tauri's sessionDisplayTitle; persistence retains its canonical provider prefix.
+/// A session's display title; persistence retains its canonical provider prefix.
 pub fn display_title<'a>(title: &'a str, provider: &str) -> &'a str {
     let prefix = format!("{provider} · ");
     if let Some(title) = title.strip_prefix(&prefix) {
@@ -151,9 +151,8 @@ pub fn generate_for(
     parse(&output, message)
 }
 
-/// A worktree branch name for the work `message` asks for, as Tauri's
-/// generateBranchName does: a fragment to put after `gespan/`. Same worker,
-/// provider support and small models as titles.
+/// A worktree branch name for the work `message` asks for: a fragment to put
+/// after `gespan/`. Same worker, provider support and small models as titles.
 pub fn generate_branch_name(
     kind: Kind,
     cwd: &Path,

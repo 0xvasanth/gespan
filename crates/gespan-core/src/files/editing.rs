@@ -1,7 +1,6 @@
-//! Text editing commands for the code editor, ported from the Tauri editor's
-//! CodeMirror setup: closeBrackets, bracketMatching, the tag matcher in
-//! editorEditing.ts, indentOnInput, insertNewlineAndIndent, toggleComment,
-//! moveLine, copyLine, deleteLine and selectMatchingBracket.
+//! Text editing commands for the code editor, after CodeMirror's: closeBrackets,
+//! bracketMatching, tag matching, indentOnInput, insertNewlineAndIndent,
+//! toggleComment, moveLine, copyLine, deleteLine and selectMatchingBracket.
 //!
 //! Everything works on UTF-8 byte offsets into the buffer. Every command
 //! returns at most one [`Edit`], so the editor applies it as one undo step.
@@ -48,8 +47,7 @@ pub enum Indenter {
     Markup,
 }
 
-/// The editing rules for one file type, from the CodeMirror language data
-/// the Tauri editor loads for that path.
+/// The editing rules for one file type, after CodeMirror's language data.
 #[derive(Clone, Copy, Debug)]
 pub struct Language {
     pub brackets: &'static [&'static str],
@@ -95,8 +93,7 @@ impl Language {
     }
 }
 
-/// The editing rules for `path`, matched on its name the way the Tauri
-/// editor picks a language (editorLanguage.ts).
+/// The editing rules for `path`, matched on its name.
 pub fn language(path: &str) -> Language {
     let name = path
         .rsplit(['/', '\\'])

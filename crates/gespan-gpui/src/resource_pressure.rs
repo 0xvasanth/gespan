@@ -1,4 +1,4 @@
-// ResourcePressureNotice.tsx: a footer chip while the machine is under
+// A footer chip while the machine is under
 // pressure, opening the running work Gespan owns so it can be stopped.
 use crate::{popover::AnchorSlot, right_panel::spinner, theme::*};
 use gespan_core::resources::{self, OwnedProcess, Pressure, Sample};
@@ -290,7 +290,7 @@ impl ResourceMonitor {
                     cx.stop_propagation();
                 }
             }))
-            // Modal.tsx's header.
+            // The modal's header.
             .child(
                 div()
                     .flex_shrink_0()

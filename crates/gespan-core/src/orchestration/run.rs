@@ -1,6 +1,5 @@
-//! One orchestration run under its lead: orchestration.ts's state machine. The
-//! app applies the returned effects to live sessions, so everything here runs
-//! without one.
+//! One orchestration run under its lead, as a state machine. The app applies
+//! the returned effects to live sessions, so everything here runs without one.
 use super::{overlaps, worktree::Workspace, Choice, Plan, Summary, SummaryTask};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -418,7 +417,7 @@ impl Run {
     pub fn answered(&self, request: &str) -> bool {
         self.requests.contains_key(request)
     }
-    /// orchestrationSummary.ts: what the sidebar shows, without any prompt.
+    /// What the sidebar shows, without any prompt.
     pub fn summary(&self) -> Summary {
         Summary {
             live: self.live(),

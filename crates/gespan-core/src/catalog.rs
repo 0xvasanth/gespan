@@ -372,8 +372,8 @@ pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<
 /// The entry names the model Kiro reports as current, so the choice is legible.
 fn with_configured_model(kind: Kind, models: &mut Vec<Model>) {
     if kind == Kind::Kiro {
-        // Gespan sends Kiro only the model (as the Tauri app did), so its other
-        // session switches are not offered as controls that would do nothing.
+        // Gespan sends Kiro only the model, so its other session switches are
+        // not offered as controls that would do nothing.
         for model in models.iter_mut() {
             model.controls.clear();
         }

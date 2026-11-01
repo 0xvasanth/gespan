@@ -1034,7 +1034,7 @@ fn agent_columns_use_tauri_ids_and_toggling_keeps_ids_native_does_not_draw(
     let card = card_id(&f, cx, "Agent card");
     let (_, key) = new_session(&f);
     add_link(&f, &card, "session", &key);
-    // A layout the Tauri app saved, with a column from a newer build.
+    // A layout the old Tauri app saved, with a column from a newer build.
     let spec = serde_json::to_string(&ViewSpec::default()).unwrap();
     let saved = Service::open(&f.db)
         .unwrap()
@@ -1091,7 +1091,7 @@ fn agent_columns_use_tauri_ids_and_toggling_keeps_ids_native_does_not_draw(
             "priority"
         ])
     );
-    // The column menu offers the agent columns under the Tauri ids, not cost.
+    // The column menu offers the agent columns under the old Tauri ids, not cost.
     let offered: Vec<String> = drawer(&f, visual, |view, _| {
         view.column_menu_items(&view.layout_spec())
             .into_iter()

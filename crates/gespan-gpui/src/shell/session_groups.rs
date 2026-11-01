@@ -1,4 +1,4 @@
-//! Sidebar.tsx's session actions: pins, renames, GitHub links, reminders,
+//! The sidebar's session actions: pins, renames, GitHub links, reminders,
 //! folders and deletion, and the grouped list they shape.
 use super::*;
 #[cfg(test)]
@@ -56,7 +56,7 @@ fn folder_color(ix: usize) -> Option<gpui::Hsla> {
         .get(ix)
         .map(|&(h, s, l)| gpui::hsla(h / 360., s, l, 1.))
 }
-/// Sidebar.tsx's REMINDERS_COLOR, amber-500.
+/// Amber-500.
 const REMINDERS_COLOR: u32 = 0xf59e0b;
 
 fn local_ms(at: NaiveDateTime) -> Option<u64> {

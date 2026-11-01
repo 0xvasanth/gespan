@@ -272,7 +272,7 @@ impl Pilots {
                         }
                     } else if id == "composer" {
                         // The composer is its own panel: the workspace window
-                        // stays where it is, as in the Tauri menu.
+                        // stays where it is.
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
                             let app: &mut App = cx;
@@ -539,7 +539,7 @@ impl Pilots {
             cx.emit(ShowDetails(id));
         }
     }
-    /// TitleBar.tsx's PilotTitle, used by the original full-width Pilot view.
+    /// The title bar's Pilot title, used by the original full-width Pilot view.
     pub(crate) fn original_title(&self, inset: f32, cx: &App) -> AnyElement {
         let Some(pilot) = self.current() else {
             return div().flex_1().min_w_0().into_any_element();

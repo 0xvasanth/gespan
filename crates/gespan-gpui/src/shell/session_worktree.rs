@@ -1,5 +1,4 @@
-//! Offers to delete a worktree with its last session, as App.tsx's
-//! onRemoveHistorySession does. A chat lives in one window, so its window asks
+//! Offers to delete a worktree with its last session. A chat lives in one window, so its window asks
 //! and removes; the last check looks at every window.
 use super::*;
 use gespan_core::{

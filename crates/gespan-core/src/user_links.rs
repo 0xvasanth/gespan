@@ -1,4 +1,4 @@
-//! The first web link in a user message, following sessions/model/linkPreview.ts.
+//! The first web link in a user message.
 use std::{ops::Range, sync::LazyLock};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

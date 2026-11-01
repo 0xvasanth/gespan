@@ -1,4 +1,4 @@
-//! LiveAgentsPreview.tsx: the sidebar's card of working and unseen finished
+//! The sidebar's card of working and unseen finished
 //! sessions, across every project.
 use super::*;
 
@@ -20,7 +20,6 @@ struct LiveAgent {
     done: bool,
 }
 
-/// liveAgents.ts's formatLiveElapsed.
 fn live_elapsed(ms: u64) -> String {
     let seconds = ((ms + 500) / 1000).max(1);
     if seconds < 60 {

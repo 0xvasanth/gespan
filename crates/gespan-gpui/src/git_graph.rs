@@ -1,6 +1,5 @@
-//! Port of src/features/source-control/model/gitGraph.ts, itself derived from
-//! Visual Studio Code's `scmHistory.ts` (MIT, Copyright (c) Microsoft
-//! Corporation). Previous row `output` lanes become the next row's `input`;
+//! Derived from Visual Studio Code's `scmHistory.ts` (MIT, Copyright (c)
+//! Microsoft Corporation). Previous row `output` lanes become the next row's `input`;
 //! curves are SVG arcs, not cubics.
 use gpui::{Hsla, PathBuilder, Pixels, Point, Window, point, px};
 use std::collections::HashMap;

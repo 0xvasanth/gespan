@@ -1,7 +1,6 @@
-//! The board, over the same `board*` tables the Tauri app keeps in `gespan.db`.
-//! The storage itself (tables, reads, writes, validation) is the shared
-//! `gespan-board-store` crate both apps call; this module adds the native
-//! app's `Service` handle.
+//! The board, over the `board*` tables in `gespan.db`. The storage itself
+//! (tables, reads, writes, validation) is the `gespan-board-store` crate; this
+//! module adds the native app's `Service` handle.
 use gespan_board_store::validate_id;
 use gespan_board_store::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
@@ -41,7 +40,7 @@ impl Service {
         let conn = Connection::open(path).map_err(|e| e.to_string())?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|e| e.to_string())?;
-        // WAL, as the native store and the Tauri app open this file, so two
+        // WAL, as the native store opens this file, so two
         // writers wait on the busy timeout rather than on rollback-journal
         // file locks, which on Windows can outlast it.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")

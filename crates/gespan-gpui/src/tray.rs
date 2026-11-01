@@ -1,7 +1,6 @@
 //! Close to tray on Windows: closing the window hides it so running agents
-//! keep going, and the tray icon is the way back (src-tauri/src/tray.rs and
-//! the close handler in src/app/App.tsx). macOS has no tray but hides the
-//! window over running chats too; the Dock icon brings it back.
+//! keep going, and the tray icon is the way back. macOS has no tray but hides
+//! the window over running chats too; the Dock icon brings it back.
 
 /// What closing the main window does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +122,7 @@ mod tests {
 
     #[test]
     fn close_to_tray_always_hides_even_with_nothing_running() {
-        // As in the Tauri app: with the setting on, close never quits.
+        // With the setting on, close never quits.
         for running in [false, true] {
             for unsaved in [false, true] {
                 assert_eq!(on_close(true, false, running, unsaved), Close::Hide);
@@ -145,8 +144,8 @@ mod tests {
 
     #[test]
     fn on_macos_running_chats_hide_the_window_instead_of_asking() {
-        // As Tauri's close handler on macOS: the chats keep going, unsaved
-        // files included, and the Dock icon brings the window back.
+        // On macOS the chats keep going, unsaved files included, and the Dock
+        // icon brings the window back.
         assert_eq!(on_close(false, true, true, false), Close::Hide);
         assert_eq!(on_close(false, true, true, true), Close::Hide);
         // With nothing running, unsaved files still ask and an idle window

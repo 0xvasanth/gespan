@@ -1,6 +1,6 @@
 //! Failure counters: how often each operation failed per day, by a fixed
-//! error kind, in Native's own `gespan-native.db`. Never `gespan.db`, which
-//! the Tauri app opens too. Counts stay on this machine; nothing here sends.
+//! error kind, in Native's own `gespan-native.db`, never `gespan.db`. Counts
+//! stay on this machine; nothing here sends.
 //!
 //! Before [`open`] runs (unit tests, `--check-data`) every call is a no-op.
 use chrono::{NaiveDate, Utc};

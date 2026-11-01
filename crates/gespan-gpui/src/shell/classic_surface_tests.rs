@@ -1526,7 +1526,7 @@ mod real_keys {
         escape(visual);
         assert!(visual.debug_bounds("board-sort-manual").is_none());
         assert_eq!(view(window, visual), Some(app_views::AppView::Board));
-        // With nothing left to close the Board still stays open, as in Tauri.
+        // With nothing left to close the Board still stays open.
         escape(visual);
         assert_eq!(view(window, visual), Some(app_views::AppView::Board));
     }

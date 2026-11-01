@@ -1,5 +1,5 @@
-//! Git-backed recordings of workspace changes during a turn, ported from
-//! src-tauri/src/checkpoint/turn.rs. These snapshots record what changed.
+//! Git-backed recordings of workspace changes during a turn. These snapshots
+//! record what changed.
 //! Shared reviews require successful edit evidence for each displayed file,
 //! without inferring which process owns individual lines. Folders without Git
 //! record each structured edit instead (`folder`). Synchronous: callers run
@@ -46,7 +46,7 @@ enum FileState {
 }
 
 /// Per-session recordings under the app's data directory. Every operation
-/// runs under one lock, as the Tauri `CheckpointStore` did.
+/// runs under one lock.
 #[derive(Clone)]
 pub struct Store {
     root: PathBuf,

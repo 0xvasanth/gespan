@@ -1,4 +1,4 @@
-//! Hosts the same notification stack as App.tsx, and routes native clicks.
+//! Hosts the notification stack, and routes native clicks.
 use super::*;
 use crate::notifications::{
     app_update::{self, AppUpdateEvent, InstalledUpdateNotice, WhatsNew, WhatsNewEvent},

@@ -327,7 +327,7 @@ fn capped(text: &str, max: usize) -> Value {
     let text = text.trim();
     json!({"text":text.chars().take(max).collect::<String>(),"truncated":text.chars().count()>max})
 }
-/// Tauri's prose-only exchanges, with canonical source block IDs as cursors.
+/// Prose-only exchanges, with canonical source block IDs as cursors.
 pub fn conversation_page(blocks: &[Value], input: &Value) -> Result<Value, String> {
     let limit = bounded(input, "limit", 3, 1, 3)?;
     let max = bounded(input, "maxChars", 1200, 200, 6000)?;

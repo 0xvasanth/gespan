@@ -1,6 +1,5 @@
 import { IS_MAC } from "../../../platform/tauri/platform";
 
-/** The same spelling is accepted by tauri-plugin-global-shortcut. */
 export const QUICK_COMPOSER_DEFAULT_SHORTCUT = "Command+Shift+Space";
 
 type Modifiers = Pick<

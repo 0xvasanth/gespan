@@ -1,8 +1,8 @@
 use super::*;
 
-/// The tables the Tauri app created for an indexed Pilot transcript.
+/// The tables the old Tauri app created for an indexed Pilot transcript.
 const PILOT_TABLES: &str = include_str!("../../../tests/fixtures/desktop/pilot-tables.sql");
-/// The first schema the Tauri app shipped, which saved databases still have.
+/// The first schema the old Tauri app shipped, which saved databases still have.
 const DESKTOP_SCHEMA_V1: &str = include_str!("../../../tests/fixtures/desktop/schema-v1.sql");
 
 #[test]
@@ -603,8 +603,8 @@ fn concurrent_desktop_changes_are_never_overwritten() {
 
 #[test]
 fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_string() {
-    // Tauri Gespan can save sessions for harnesses the native app has not
-    // ported (for example Kiro). They must list, load and keep their harness.
+    // Older Tauri builds could save sessions for harnesses the native app does
+    // not know. They must list, load and keep their harness.
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
     store

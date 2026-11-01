@@ -1,8 +1,6 @@
 //! A paired phone's project pages: worktrees, files, search, file reading with
-//! syntax colours, changes and the commit sheet's Git actions. Ports of the
-//! project handlers in mobileWorkspace.ts, mobileHighlight.ts and the Tauri
-//! `mobile_list_dir` / `mobile_read_text_file` commands, replying with the same
-//! JSON the phone (mobile/src/features/workspace/types.ts) reads.
+//! syntax colours, changes and the commit sheet's Git actions, replying with
+//! the JSON the phone (mobile/src/features/workspace/types.ts) reads.
 //!
 //! Everything here blocks: callers run it on a background executor. Deduping
 //! and timing out Git actions is the caller's job, as is telling the Changes
@@ -443,7 +441,7 @@ fn create_pr_url(root: &Path, harness: Option<(Kind, PathBuf)>) -> Result<String
 }
 
 // ---------------------------------------------------------------------------
-// Highlighting (mobileHighlight.ts)
+// Highlighting
 
 /// Past this, highlighting at once would hold up the reply for too long;
 /// larger files are highlighted in the background instead.

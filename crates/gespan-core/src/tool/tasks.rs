@@ -671,7 +671,7 @@ fn string(value: &Value) -> Option<String> {
 }
 
 /// Codex reports task names as paths in both collaboration item formats.
-/// Match the retained Tauri adapter's leaf formatting and "subagent" suffix.
+/// The path's leaf, title-cased, with a "subagent" suffix.
 fn agent_path_name(input: &Value) -> Option<String> {
     let path = string(&input["agentPath"]).or_else(|| string(&input["agent_path"]))?;
     let leaf = path.split(['/', '\\']).rfind(|part| !part.is_empty())?;

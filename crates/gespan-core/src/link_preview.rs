@@ -1,6 +1,4 @@
-//! A web link's title and favicon for the chip that replaces it in a prompt,
-//! ported from src-tauri/src/link_preview.rs and the metadata cache in
-//! src/features/sessions/model/linkPreview.ts.
+//! A web link's title and favicon for the chip that replaces it in a prompt.
 //!
 //! Every hop is checked before a request is made: only plain http(s) URLs
 //! without credentials, never a local name, and never a private, loopback,
@@ -45,7 +43,7 @@ enum Network {
 }
 
 /// The app's preview cache: successes are kept, failures are not, so a link
-/// that failed is tried again the next time it is shown (linkPreview.ts).
+/// that failed is tried again the next time it is shown.
 pub fn cache() -> &'static Cache {
     static CACHE: LazyLock<Cache> = LazyLock::new(|| Cache::new(CACHE_CAPACITY));
     &CACHE

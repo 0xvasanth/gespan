@@ -1,16 +1,16 @@
 //! Images a provider generates during a turn, such as Codex's image tool.
-//! They are saved as PNG files in the data folder, as the Tauri app does, and
-//! an `image` row names the file.
+//! They are saved as PNG files in the data folder, and an `image` row names
+//! the file.
 use serde::{Deserialize, Serialize};
 use std::{io::Write, path::Path};
 
 pub const ROLE: &str = "image";
-/// The folder under the data folder, shared with the Tauri app.
+/// The folder under the data folder, the same one older Tauri builds used.
 pub const DIR: &str = "generated-images";
 const MAX_BYTES: usize = 25 * 1024 * 1024;
 const MAX_DATA_BYTES: usize = MAX_BYTES * 4 / 3 + 4;
 
-/// An `image` row's text, in the Tauri app's `image` block shape.
+/// An `image` row's text, in the old Tauri app's `image` block shape.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {

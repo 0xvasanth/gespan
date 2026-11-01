@@ -1,4 +1,4 @@
-//! Composer.tsx / MessageQueue.tsx's durable follow-ups and saved user draft.
+//! The composer's durable follow-ups and saved user draft.
 use super::*;
 use gespan_core::follow_up::{Message, State};
 
@@ -444,8 +444,7 @@ impl Conversation {
         if self.busy || !self.follow_ups.state.paused || self.follow_ups.state.messages.is_empty() {
             return;
         }
-        // Resume the interrupted provider turn before releasing its outbox,
-        // matching App.tsx's queueStatus = "resuming" continuation.
+        // Resume the interrupted provider turn before releasing its outbox.
         self.follow_ups.resuming = true;
         self.launch_prompt("Continue from where you left off.".into(), cx);
         if !self.busy {

@@ -1021,7 +1021,7 @@ impl Pilots {
                 .when(pilot.launches.is_empty(),|d|d.child(empty_state("message-multiple",&format!("Ask {} to start a session on one of your projects, like a bug fix or a review, and it shows up here.",pilot.label()))))
                 .when(no_matches,|d|d.child(empty_state("search-01",if query.trim().is_empty(){"No sessions match these filters."}else{"No sessions match this search."})))
                 .children(launches.into_iter().map(|launch|{
-                    // Sidebar.tsx's SessionCard with `modelInFooter`.
+                    // A session card with its model in the footer.
                     let id=launch.session_id;let state=views.iter().find(|v|v.id==id);
                     let title=state.map(|s|s.title.clone()).unwrap_or(launch.title.clone());
                     let cwd=state.map(|s|&s.cwd).unwrap_or(&launch.cwd);

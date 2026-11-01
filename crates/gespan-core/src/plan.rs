@@ -1,10 +1,9 @@
-//! Plans a local plan-mode turn leaves for review, as the Tauri app's
-//! PlanPreview had them: the turn's final reply becomes a `plan` row the user
-//! opens and builds.
+//! Plans a local plan-mode turn leaves for review: the turn's final reply
+//! becomes a `plan` row the user opens and builds.
 use crate::transcript::Row;
 
 pub const ROLE: &str = "plan";
-/// The message a Build shows in the transcript, as in the Tauri app.
+/// The message a Build shows in the transcript.
 pub const BUILD_LABEL: &str = "Build approved plan";
 const BUILD_PREAMBLE: &str = "The user reviewed and explicitly approved the following implementation plan. Implement it now, using this exact edited version as the source of truth.";
 
@@ -24,7 +23,7 @@ pub fn approved_plan(prompt: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// A user message that builds a plan: ours, or the Tauri app's label.
+/// A user message that builds a plan: ours, or the old Tauri app's label.
 pub fn is_build(prompt: &str) -> bool {
     approved_plan(prompt).is_some() || prompt.trim() == BUILD_LABEL
 }

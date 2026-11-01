@@ -1,5 +1,5 @@
-//! The same session cards and model IDs as mobileWorkspace.ts, independent of
-//! whether a conversation has been materialized on the native desktop.
+//! The phone's session cards and model IDs, independent of whether a
+//! conversation has been materialized on the native desktop.
 use crate::pickers;
 use gespan_core::{
     provider::Kind,
@@ -56,7 +56,7 @@ pub(crate) struct LiveSession {
     pub waiting: Option<&'static str>,
 }
 
-/// The phone keeps model choices across desktop versions. Keep Tauri's
+/// The phone keeps model choices across desktop versions. Keep the old Tauri app's
 /// provider-qualified keys on the wire and native CLI IDs inside the desktop.
 pub(crate) fn model_id(kind: Kind, model: Option<&str>) -> String {
     let native = model.and_then(|id| gespan_core::store::native_model(id, kind.id()));
@@ -72,8 +72,8 @@ pub(crate) fn model_id(kind: Kind, model: Option<&str>) -> String {
     format!("{}:{id}", kind.id())
 }
 
-/// An implicit provider default selects its actual row in the phone's sheet,
-/// just as Tauri's resolveModel does. Explicit IDs and moving aliases survive.
+/// An implicit provider default selects its actual row in the phone's sheet.
+/// Explicit IDs and moving aliases survive.
 pub(crate) fn current_model_id(
     kind: Kind,
     model: Option<&str>,

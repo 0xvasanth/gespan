@@ -1,4 +1,4 @@
-//! editorSearch.ts's two-row Find/Replace panel, using the same query engine.
+//! The editor's two-row Find/Replace panel.
 use super::*;
 impl FileEditor {
     pub(super) fn search_panel(&self, cx: &mut Context<Self>) -> AnyElement {

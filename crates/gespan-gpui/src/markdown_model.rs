@@ -64,7 +64,7 @@ pub(crate) enum Block {
         id: String,
         caption: String,
     },
-    /// LocalMedia.tsx: a paragraph that starts with a local image, or a link
+    /// A paragraph that starts with a local image, or a link
     /// to a local image or video, shows the file. `href` is as written;
     /// the transcript resolves it against the session folder.
     LocalMedia {
@@ -266,7 +266,7 @@ impl DisplayCache {
     }
 }
 
-// streamingMarkdown.ts / remend: repair prose blocks while leaving literal
+// Repair prose blocks while leaving literal
 // fences untouched. Repairs affect only the display tree, never stored text.
 fn mend_stream(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 32);

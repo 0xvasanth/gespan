@@ -356,7 +356,7 @@ pub(crate) fn titlebar_drag_area() -> gpui::Div {
         })
 }
 
-/// tabKeys.ts's `adjacentItemId`: the next or previous item, wrapping; from
+/// The next or previous item, wrapping; from
 /// outside the list, the first or last.
 fn adjacent<T: PartialEq + Clone>(items: &[T], current: Option<&T>, step: isize) -> Option<T> {
     if items.is_empty() {
@@ -428,7 +428,7 @@ const STRIP_NEW_TAB: f32 = TAB_PLATE_HEIGHT + 2.;
 const CORNER_TABS_LEAD: f32 = 7.;
 const CORNER_CONTROL_GAP: f32 = 4.;
 const CORNER_BUTTONS_WIDTH: f32 = 48. + 2. * CORNER_CONTROL_GAP;
-// TitleBar.tsx's labels, with their shortcuts.
+// The title bar's labels, with their shortcuts.
 const TOGGLE_SIDEBAR_LABEL: &str = if cfg!(target_os = "macos") {
     "Toggle Sidebar (⌘B)"
 } else {
@@ -501,7 +501,7 @@ impl DragSource {
         }
     }
 }
-/// PaneTree.tsx's pane drag and the external drops from TitleBar/Sidebar.
+/// A pane drag, and the external drops from the title bar and sidebar.
 struct PaneDrag {
     source: DragSource,
     start: Point<Pixels>,
@@ -1800,7 +1800,7 @@ impl Shell {
             self.tab_scroll.scroll_to_item(ix);
         }
     }
-    /// Sidebar.tsx's `gitRoot`: the active session's worktree or folder.
+    /// The git root is the active session's worktree or folder.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
         self.classic_sidebar_tab = self
             .workspace
@@ -1833,7 +1833,7 @@ impl Shell {
         }
         self.sync_right_panel(cx);
     }
-    /// App.tsx's `insetRightPanelShown`: open (or sliding shut), over a
+    /// Shown when open (or sliding shut), over a
     /// project, and not covered by an app view.
     fn right_panel_shown(&self, cx: &App) -> bool {
         (self.workspace.right_panel_open || self.right_slide.is_some())
@@ -2484,7 +2484,7 @@ impl Shell {
             });
         }
     }
-    /// The session pane's split header (SessionPane.tsx): grip, focus dot,
+    /// The session pane's split header: grip, focus dot,
     /// title and a close button. The header moves the chat independently of
     /// its review; closing a lone chat leaves the review in the tab.
     /// `shown` is the review split's progress: the header grows and fades
@@ -2632,7 +2632,7 @@ impl Shell {
             .children(hint)
             .into_any_element()
     }
-    /// PaneTree.tsx: absolutely placed panes, sashes on shared edges and a
+    /// Absolutely placed panes, sashes on shared edges and a
     /// drop hint on the pane under a drag.
     fn pane_tree(
         &mut self,
@@ -3496,7 +3496,7 @@ impl Shell {
         let target = ResizeTarget::Dock(self.workspace.project.clone());
         self.drag_resize(target, size + signed, cx);
     }
-    /// App.tsx's dock grid: the project's terminal dock on its side of the
+    /// The project's terminal dock on its side of the
     /// workspace. Opening or closing slides the track while the terminal
     /// keeps its full size and rides the moving edge, so it fits once.
     fn with_dock(
@@ -4676,7 +4676,7 @@ impl Shell {
         .detach();
     }
     /// A chat found its project under a new name while running, so everything
-    /// open on the old folder moves too (App.tsx's applyProjectLocationChange).
+    /// open on the old folder moves too.
     fn project_moved(
         &mut self,
         moved: &gespan_core::project_location::Moved,
@@ -5143,7 +5143,7 @@ impl Shell {
         self.titlebar_controls_space(bar, window)
     }
     fn titlebar_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
+        // The inset layout's hierarchy: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
         // Windows' controls sit in the settings header's padding, so its
         // bottom rule still runs beneath them. Session bars leave them to the
@@ -5230,7 +5230,7 @@ impl Shell {
             .into_any()
     }
 
-    /// TitleBar.tsx's right panel toggle, `pl-1.5 pr-3` clear of the edge.
+    /// The right panel toggle, `pl-1.5 pr-3` clear of the edge.
     fn panel_toggle(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let pilot = self.pilot_active(cx);
         if self.workspace.classic_layout && !pilot {
@@ -6627,7 +6627,7 @@ impl Shell {
             } else {
                 60.
             }))
-            // Sidebar.tsx's `px-2` inside its 1px card border.
+            // `px-2` inside the 1px card border.
             .px(px(if nested { 7. } else { 9. }))
             .rounded_md()
             // The border is dashed for a saved draft. It overlays the row, so
@@ -6669,7 +6669,7 @@ impl Shell {
                     this.select_sidebar_session(id, event.modifiers(), window, cx)
                 }),
             )
-            // Sidebar.tsx: a session card dragged onto a pane edge opens there.
+            // A session card dragged onto a pane edge opens there.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, _| {
@@ -7183,7 +7183,7 @@ impl Shell {
     }
 
     fn project_spaces(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        // Sidebar.tsx's ProjectSpacesBar: five equal spaces, paged by chevrons.
+        // The project spaces bar: five equal spaces, paged by chevrons.
         let shown = self.workspace.projects.len().min(5);
         let last = self.workspace.projects.len().saturating_sub(shown);
         self.spaces_start = self.spaces_start.min(last);
@@ -7377,7 +7377,7 @@ impl Shell {
         self.invalidate_chrome(cx);
     }
 
-    /// App.tsx's toTitleTab with TitleBar's tabCopy: a split tab, or a chat
+    /// A split tab, or a chat
     /// with a file beside it, heads with the focused pane and names the rest
     /// on a second line.
     fn tab_copy(&self, tab: i64, cx: &App) -> TabCopy {
@@ -7911,8 +7911,8 @@ impl Shell {
         }
         px(0.)
     }
-    /// The tab strip's width: between the navigation and TitleBar.tsx's right
-    /// panel toggle, `pl-1.5 pr-3` clear of the edge.
+    /// The tab strip's width: between the navigation and the right panel
+    /// toggle, `pl-1.5 pr-3` clear of the edge.
     fn tabs_width(&self, window: &Window, cx: &App) -> f32 {
         let trailing = if self.workspace.boxy_layout() {
             self.right_drawn + self.strip_trail(cx) + self.classic_editor_room(cx)
@@ -7948,7 +7948,7 @@ impl Shell {
         );
         // Every tab fits: they share the strip, however many there are. A tab
         // easing in or out holds its share of a slot, so the others give way
-        // to it gradually, as flex-shrink does in TitleBar.tsx.
+        // to it gradually.
         let share: f32 = slots
             .iter()
             .map(|s| match s {
@@ -10214,7 +10214,7 @@ mod tests {
         let remove = visual
             .debug_bounds("project-settings-Remove background image")
             .unwrap();
-        // Modal.tsx + ProjectBackgroundDialog.tsx: match the React box metrics.
+        // The project background dialog's box metrics.
         assert_eq!(dialog.size.width, px(418.));
         assert_eq!(preview.size, gpui::size(px(386.), px(162.)));
         assert_eq!(preview.left() - dialog.left(), px(16.));

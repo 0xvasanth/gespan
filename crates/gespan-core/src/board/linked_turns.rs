@@ -1,8 +1,7 @@
 //! Session turns as board events: one "started" when a turn begins and at
 //! most one terminal event when it settles, for the session and, when a Pilot
-//! is behind the turn, for that Pilot. Mirrors
-//! `src/features/board/model/linkedTurns.ts`; it does no I/O, callers dispatch
-//! the returned calls with `auto_move::on_linked_work`.
+//! is behind the turn, for that Pilot. It does no I/O, callers dispatch the
+//! returned calls with `auto_move::on_linked_work`.
 use super::auto_move::LinkedWorkEvent;
 use std::collections::HashMap;
 

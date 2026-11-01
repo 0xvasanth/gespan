@@ -1,4 +1,4 @@
-//! GPUI port of AgentMarkdown.tsx and its .agent-markdown CSS.
+//! Agent markdown, drawn with GPUI.
 mod cache;
 pub(crate) mod mermaid;
 mod search;

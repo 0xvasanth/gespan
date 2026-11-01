@@ -123,7 +123,7 @@ impl TranscriptView {
     }
 }
 
-/// A local plan card's status, as the Tauri app's plan block kept it.
+/// A local plan card's status, as the old Tauri app's plan block kept it.
 pub(super) fn plan_status(rows: &[Row], at: usize, running: bool) -> &'static str {
     match gespan_core::plan::build_state(rows, at, running) {
         Some(gespan_core::plan::BuildState::Building) => "building",

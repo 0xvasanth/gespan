@@ -138,7 +138,7 @@ fn attachment(
     })
 }
 
-/// InboxMedia.tsx's video, as a fixed 16:9 frame: GPUI cannot play video in
+/// A video, as a fixed 16:9 frame: GPUI cannot play video in
 /// place, so the saved file opens in the file viewer, which does.
 fn video(ix: usize, path: &std::path::Path, alt: &str) -> AnyElement {
     let label = if alt.trim().is_empty() {
