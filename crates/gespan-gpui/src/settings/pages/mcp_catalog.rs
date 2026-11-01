@@ -272,6 +272,10 @@ impl SettingsView {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        if !self.mcp_catalog_loaded {
+            self.mcp_catalog_loaded = true;
+            self.load_catalog(cx);
+        }
         let managed = self.mcp_catalog.managed;
         let mut section = vec![
             div()
@@ -303,6 +307,7 @@ impl SettingsView {
                     secondary_button("catalog-import", "Import from agents", false, false)
                         .debug_selector(|| "settings-catalog-import".into())
                         .child(icon("plus", 14.))
+                        .child("Import from agents")
                         .on_click(cx.listener(|this, _, _, cx| this.catalog_import(cx))),
                 )
                 .into_any_element(),
