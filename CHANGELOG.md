@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before it starts, and keeps its secrets in the keychain. Remote servers sign
   in once in Gespan. You can install servers from the MCP Registry, see how they
   are doing, and change the catalogue while sessions are running.
+- A Pilot's HTML panels now show inside the app on Windows and Linux instead of
+  as raw source. On Wayland, or if a web view can't start, the panel offers Open
+  in browser. Linux packages now depend on GTK and WebKitGTK.
 - The Uncommitted changes dialog can write a commit message from your changes
   when a branch switch is blocked. It can be cancelled, and a failure keeps what
   you typed.
