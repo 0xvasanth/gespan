@@ -1572,6 +1572,12 @@ impl Shell {
             }));
         self.observations.push(cx.subscribe(
             &view,
+            |this, _, moved: &gespan_core::project_location::Moved, cx| {
+                this.project_moved(moved, cx)
+            },
+        ));
+        self.observations.push(cx.subscribe(
+            &view,
             move |this, _, event: &crate::conversation::OpenSessionChanges, cx| {
                 let tab = event.0.clone();
                 // The card's pane takes focus, so its review opens beside it.
@@ -4666,6 +4672,32 @@ impl Shell {
             }
         })
         .detach();
+    }
+    /// A chat found its project under a new name while running, so everything
+    /// open on the old folder moves too (App.tsx's applyProjectLocationChange).
+    fn project_moved(
+        &mut self,
+        moved: &gespan_core::project_location::Moved,
+        cx: &mut Context<Self>,
+    ) {
+        use gespan_core::files::path_key;
+        tracing::info!(from = %moved.from, to = %moved.to, "project folder was renamed");
+        if let Err(error) = self.workspace.rebase_project(&moved.from, &moved.to) {
+            tracing::warn!(%error, "cannot move the workspace to a renamed project folder");
+        }
+        if let Some(focus) = self.worktree_focus.remove(&moved.from) {
+            self.worktree_focus.insert(moved.to.clone(), focus);
+        }
+        for summary in self.session_summaries.values_mut() {
+            if path_key(&summary.cwd) == path_key(&moved.from) {
+                summary.cwd = moved.to.clone();
+            }
+        }
+        for view in self.sessions.values() {
+            view.update(cx, |view, cx| view.project_moved(moved, cx));
+        }
+        self.persist(cx);
+        cx.notify();
     }
     /// Records an opened folder's identity so a later rename can be followed.
     fn remember_project_location(&self, path: &str, cx: &mut Context<Self>) {
@@ -11860,6 +11892,52 @@ mod tests {
             .unwrap();
         let copied = cx.update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
         assert_eq!(copied, Some(a.to_string()));
+    }
+    #[gpui::test]
+    fn a_folder_renamed_while_running_moves_every_chat_in_the_project(cx: &mut TestAppContext) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let first = store.create("claude", "/work/gespan").unwrap().id;
+        let second = store.create("claude", "/work/gespan").unwrap().id;
+        let other = store.create("claude", "/work/other").unwrap().id;
+        let summaries = store.sessions().unwrap();
+        let mut state = Workspace::default();
+        state.add_project("/work/gespan");
+        state.add_project("/work/other");
+        state.project = "/work/gespan".into();
+        state.open(second);
+        state.open(other);
+        state.open(first);
+        let saved = serde_json::to_string(&state).unwrap();
+        let database = Arc::new(Mutex::new(store));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Shell::new(database, summaries, "/work/gespan".into(), Some(saved), cx))
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&first].update(cx, |_, cx| {
+                    cx.emit(gespan_core::project_location::Moved {
+                        from: "/work/gespan".into(),
+                        to: "/work/renamed".into(),
+                    })
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(shell.workspace.project, "/work/renamed");
+                assert_eq!(shell.workspace.projects, ["/work/renamed", "/work/other"]);
+                assert_eq!(shell.sessions[&first].read(cx).summary.cwd, "/work/renamed");
+                // Chats that are not open yet read their folder from here.
+                assert_eq!(shell.session_summaries[&first].cwd, "/work/renamed");
+                assert_eq!(shell.session_summaries[&second].cwd, "/work/renamed");
+                assert_eq!(shell.session_summaries[&other].cwd, "/work/other");
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn a_renamed_project_folder_opens_with_its_sessions(cx: &mut TestAppContext) {
