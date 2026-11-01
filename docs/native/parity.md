@@ -45,19 +45,19 @@ in the same PR.
 - [x] **A harness, model and effort for each task.** Native workers all use the lead's model. Tauri: `src/features/orchestration/ui/OrchestrationPreview.tsx`, `model/orchestrationPlan.ts`. Done in #261.
 - [x] **Edit the plan before starting.** Task titles and instructions, and how many workers run in parallel (Native always uses 4). Tauri: `OrchestrationPreview.tsx`. Done in #264.
 - [x] **The lead controls its workers.** The lead can list, delegate, message, steer, retry, cancel, review and finish workers, and answers their approvals and questions, through the `control` CLI and endpoint. Native runs a fixed plan and reports to the lead at the end. Tauri: `src/features/orchestration/model/orchestration.ts`, `src-tauri/src/control.rs`, `src-tauri/src/control_cli.rs`. Done in #277.
-- [x] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). *(also below)* Done in #277.
-- [x] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). *(also below)* Done in #277.
+- [x] **Separate worktree for each worker, merged back by checkpoint.** A worktree with changes nobody has reviewed is kept. Native workers share the lead's checkout. Tauri: `src-tauri/src/worktrees.rs` (`git_orchestration_*`), `src/app/App.tsx` (`createOrchestrationWorktree`, `applySessionCheckpoint`). Done in #277.
+- [x] **Resume a run after restart.** Native keeps the run in memory. Tauri: `orchestration.ts` (`control_save`, `hydrate`). Done in #277.
 - [x] **`app` CLI `ticket.*` and `card.*` actions.** Native offers these as MCP tools only. Tauri: `src-tauri/src/control_cli.rs`. Done in #259.
 
 ### Inbox and notes
 
 - [x] **Ask panel next to an inbox item.** *(done in #266)* A resizable side chat with Restart and Close. Tauri: `src/features/inbox/ui/InboxDiscussionPanel.tsx`.
-- [x] **CI repair.** *(done in #266; remote projects need #263 for job details and rerun)* Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`. *(also below)*
+- [x] **CI repair.** *(done in #266; remote projects need #263 for job details and rerun)* Pick which checks to fix, see each check's job log, follow repair progress, and filter, refresh and retry checks, with polling for open PRs. Native has one "Fix with agent" button. Tauri: `src/features/inbox/ui/CheckRepairForm.tsx`, `CheckRepairProgress.tsx`, `CheckEvidence.tsx`, `InboxPrChecks.tsx`, `model/githubPrChecks.ts`.
 - [x] **Hunks / Full switch on the PR diff.** The core already supports it. Tauri: `src/features/inbox/ui/InboxView.tsx`. Done in #245.
 - [x] **Inbox right-click menu in the sidebar and rail.** Mark all as read, mute every project for a set time, and a notification settings link. Tauri: `src/features/inbox/ui/InboxNotificationMenu.tsx`. Done in #245.
-- [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`. *(also below)*
+- [x] **Inline video in item descriptions.** *(done in #250, as a play card that opens the file viewer, since GPUI cannot play video in place)* Tauri: `src/features/inbox/ui/InboxMedia.tsx`.
 - [x] **Hide updates caused by your own actions.** No unread mark or notification for an update you made yourself. Tauri: `src/features/inbox/model/inboxSelfActivity.ts`. Done in #245.
-- [x] **Inbox item card and note card** in the composer and transcript. *(done in #250)* Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`. *(also below)*
+- [x] **Inbox item card and note card** in the composer and transcript. *(done in #250)* Tauri: `src/features/sessions/ui/Composer.tsx`, `AgentTranscript.tsx`.
 
 ### Pilots and board
 
@@ -86,7 +86,7 @@ viewer from a play card in Native, because GPUI can't play video in place.
 - [x] **Explorer → Open in Terminal.** Tauri: `src/features/files/ui/FileTree.tsx`. Done in #245.
 - [x] **Stash and switch, or commit and switch,** when a branch change would overwrite local changes. *(done in #250; Tauri's generate-commit-message button and stashing on remote projects are not ported yet)* Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`, `BranchPicker.tsx`.
 - [x] **Resizable history graph.** Drag to resize, double-click to reset. Tauri: `src/features/source-control/ui/GitHistoryGraph.tsx`. Not needed: Native shows history as a full-height tab, not a graph under Changes.
-- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250; Native still records no checkpoints for Pilot sessions, and its Pilot commit-and-push is one step)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`. *(also below)*
+- [x] **Undo or keep changes file by file, and checkpoints outside Git.** *(done in #250; Native still records no checkpoints for Pilot sessions, and its Pilot commit-and-push is one step)* Tauri: `src/features/sessions/model/checkpoint.ts`, `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [x] **New skill from the composer's / picker.** *(done in #250)* Tauri: `src/features/skills/ui/SkillPicker.tsx`.
 
 ### Settings
