@@ -87,9 +87,9 @@ impl Protocol {
         response: &Value,
         stdin: &mut impl Write,
     ) -> Result<(), String> {
+        // The error stays out of the log: it may quote the token back.
         if response["subtype"] != "success" {
-            let error = response["error"].as_str().unwrap_or("no detail");
-            tracing::warn!(error, "Claude refused the tool endpoint");
+            tracing::warn!("Claude refused the tool endpoint");
         }
         self.claude_mcp = ClaudeMcp::Settled;
         self.claude_prompt(stdin)

@@ -406,16 +406,21 @@ pub(super) fn run(
     let (client, mut server) = connect(&request, &cancel, v2)
         .inspect(|_| metrics::success(START))
         .inspect_err(start_failed)?;
+    // v1's `serve` child belongs to this conversation. v2's managed service is
+    // shared, and a server added there would hand this session's token to
+    // every other session on it, so v2 turns run without the tools.
     if let Some(access) = request
         .settings
         .mount
         .as_ref()
+        .filter(|_| !v2)
         .and_then(crate::tool_servers::Access::open)
     {
-        // The turn goes on without tools if this server can't take them.
+        // The turn goes on without tools if this server can't take them. The
+        // error stays out of the log: it may quote the token back.
         let added = client.request("POST", &client.path("/mcp"), Some(access.opencode_server()));
-        if let Err(error) = added {
-            tracing::warn!(%error, "OpenCode refused the tool endpoint");
+        if added.is_err() {
+            tracing::warn!("OpenCode refused the tool endpoint");
         }
     }
     let session = client.session(&request)?;
