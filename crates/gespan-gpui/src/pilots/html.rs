@@ -1,9 +1,6 @@
 //! Generated HTML lives in an opaque sandbox with no app bridge or network.
-#[cfg(target_os = "macos")]
-use gpui::canvas;
-#[cfg(not(target_os = "macos"))]
-use gpui::div;
-use gpui::{Context, Window, prelude::*};
+use crate::{right_panel::RED_400, settings::widgets::secondary_button, theme::*};
+use gpui::{AnyElement, Context, Window, canvas, div, prelude::*, px};
 #[cfg(target_os = "macos")]
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
@@ -22,8 +19,9 @@ use objc2_web_kit::{
 };
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::sync::Arc;
 #[cfg(target_os = "macos")]
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 #[cfg(target_os = "macos")]
 define_class!(
     #[unsafe(super(NSView))]
@@ -90,7 +88,6 @@ struct Hosted {
     _guard: Retained<NavigationGuard>,
     markup: Arc<str>,
 }
-#[cfg(target_os = "macos")]
 struct Markup {
     ink: gpui::Hsla,
     accent: gpui::Hsla,
@@ -99,20 +96,30 @@ struct Markup {
 pub(super) struct Html {
     body: String,
     interactive: bool,
-    #[cfg(target_os = "macos")]
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    open_error: Option<String>,
     markup: Option<Markup>,
     #[cfg(target_os = "macos")]
     view: Rc<RefCell<Option<Hosted>>>,
+    #[cfg(not(target_os = "macos"))]
+    inline: super::html_inline::Inline,
 }
-// The page is hosted in a WKWebView, so only macOS renders it.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// Only the page itself may load in the outer web view. Links and scripted
+/// redirects go nowhere, and the opaque iframe keeps the page from the app.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(super) fn allows_navigation(url: &str) -> bool {
+    url.starts_with("about:blank")
+        || url.starts_with("about:srcdoc")
+        || url.starts_with("data:text/html")
+}
+/// The page every system web view hosts. Where none can be embedded it opens
+/// in the browser, and the same opaque iframe and policy apply there.
 fn sandbox(body: &str) -> String {
     let color = |value: gpui::Hsla| {
         let value: gpui::Rgba = value.into();
@@ -145,13 +152,14 @@ impl Html {
         Self {
             body,
             interactive: true,
-            #[cfg(target_os = "macos")]
+            open_error: None,
             markup: None,
             #[cfg(target_os = "macos")]
             view: Rc::new(RefCell::new(None)),
+            #[cfg(not(target_os = "macos"))]
+            inline: Default::default(),
         }
     }
-    #[cfg(target_os = "macos")]
     fn markup(&mut self) -> Arc<str> {
         let ink = crate::theme::content(1.);
         let accent = crate::theme::accent_color();
@@ -168,20 +176,95 @@ impl Html {
         }
         self.markup.as_ref().unwrap().html.clone()
     }
+    /// Saves the sandboxed page and hands it to the user's browser.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn open_in_browser(&mut self, cx: &mut Context<Self>) {
+        self.open_error = None;
+        let page = sandbox(&self.body);
+        let saved = cx
+            .background_executor()
+            .spawn(async move { gespan_core::files::save_browser_page(&page) });
+        cx.spawn(async move |this, cx| {
+            let saved = saved.await;
+            let _ = this.update(cx, |this, cx| {
+                match saved {
+                    Ok(url) => cx.open_url(&url),
+                    Err(error) => this.open_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    /// Without a hosted web view the panel opens in the browser, and its
+    /// source stays readable here.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn browser_fallback(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        secondary_button("html-open-browser", "Open in browser", false, false)
+                            .debug_selector(|| "html-open-browser".into())
+                            .child("Open in browser")
+                            .on_click(cx.listener(|this, _, _, cx| this.open_in_browser(cx))),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(content(0.45))
+                            .child("Panels can't be shown inside the app on this system."),
+                    ),
+            )
+            .when_some(self.open_error.clone(), |d, error| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(gpui::rgb(RED_400))
+                        .child(format!("Could not open this panel: {error}")),
+                )
+            })
+            .child(
+                div()
+                    .id("html-source")
+                    .min_h_0()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .text_size(px(12.))
+                    .text_color(content(0.6))
+                    .child(self.body.clone()),
+            )
+            .into_any_element()
+    }
     pub(super) fn set_interactive(&mut self, interactive: bool) {
         if self.interactive != interactive {
             self.interactive = interactive;
         }
     }
-    pub(super) fn hide(&self) {
+    pub(super) fn hide(&self, cx: &gpui::App) {
         #[cfg(target_os = "macos")]
-        if let Some(view) = self.view.borrow().as_ref() {
-            view.clip.setHidden(true);
+        {
+            let _ = cx;
+            if let Some(view) = self.view.borrow().as_ref() {
+                view.clip.setHidden(true);
+            }
         }
+        #[cfg(not(target_os = "macos"))]
+        self.inline.hide(cx);
     }
 }
 impl gpui::Render for Html {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    #[cfg_attr(target_os = "macos", allow(unused_variables))]
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(target_os = "macos")]
         {
             let view = self.view.clone();
@@ -300,8 +383,32 @@ impl gpui::Render for Html {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = cx;
-            div().p_4().child(self.body.clone()).into_any_element()
+            if self.inline.failed() || !super::html_inline::can_host(window) {
+                return self.browser_fallback(cx);
+            }
+            super::html_inline::start_events(cx);
+            let inline = self.inline.clone();
+            let html = self.markup();
+            let panel = cx.weak_entity();
+            let interactive = self.interactive;
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    // Web view frames are in window points; GPUI's are divided
+                    // by the interface zoom.
+                    let zoom = window.content_zoom();
+                    let clipped = bounds
+                        .intersect(&window.content_mask().bounds)
+                        .map(|v| v * zoom);
+                    if interactive {
+                        inline.show(clipped, html.clone(), window, panel.clone(), cx);
+                    } else {
+                        inline.hide(cx);
+                    }
+                },
+            )
+            .size_full()
+            .into_any_element()
         }
     }
 }
@@ -324,5 +431,56 @@ mod tests {
         assert!(!html.contains("allow-same-origin"));
         assert!(html.contains("connect-src 'none'"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn only_the_page_itself_loads_in_the_outer_web_view() {
+        for url in [
+            "about:blank",
+            "about:srcdoc",
+            "data:text/html;charset=utf-8;base64,PGh0bWw+",
+        ] {
+            assert!(allows_navigation(url), "{url}");
+        }
+        for url in [
+            "https://example.com/",
+            "http://localhost:3000/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:image/svg+xml,<svg/>",
+            "",
+        ] {
+            assert!(!allows_navigation(url), "{url}");
+        }
+    }
+
+    struct Fallback(gpui::Entity<Html>);
+    impl gpui::Render for Fallback {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.update(cx, |html, cx| html.browser_fallback(cx))
+        }
+    }
+
+    #[gpui::test]
+    fn opening_in_the_browser_keeps_the_page_in_its_sandbox(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_window(|_, cx| {
+            let html = cx.new(|_| Html::new("<script>top.location='x'</script>".into()));
+            Fallback(html)
+        });
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let open = visual.debug_bounds("html-open-browser").unwrap().center();
+        visual.simulate_click(open, Default::default());
+        visual.run_until_parked();
+
+        let opened = cx.opened_url().expect("the browser was asked to open it");
+        let file = url::Url::parse(&opened).unwrap().to_file_path().unwrap();
+        let page = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        assert!(page.contains("sandbox=\"allow-scripts\""));
+        assert!(!page.contains("allow-same-origin"));
+        assert!(page.contains("connect-src 'none'"));
+        assert!(page.contains("&lt;script&gt;"));
+        assert!(!page.contains("<script>"));
     }
 }
