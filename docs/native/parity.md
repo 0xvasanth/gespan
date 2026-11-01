@@ -68,7 +68,7 @@ in the same PR.
 
 Found by the November 1 re-check. Native has none of these yet.
 
-- [ ] **HTML panels on Windows and Linux.** Native renders them on macOS and shows a text fallback elsewhere. Tauri: `src/features/artifacts/ui/HtmlArtifactFrame.tsx`. Native: `crates/gespan-gpui/src/pilots/html.rs`. *(also below)*
+- [x] **HTML panels on Windows and Linux.** Rendered inside the app on macOS, Windows and X11. Wayland offers Open in browser, because a web view cannot be embedded in a GPUI window there. Tauri: `src/features/artifacts/ui/HtmlArtifactFrame.tsx`. Native: `crates/gespan-gpui/src/pilots/html.rs`, `html_inline.rs`. *(also below)*
 - [x] **Checkpoints for Pilot sessions.** Edits outside a Pilot's chat folder are not recorded, the same as Tauri. Tauri: `src/features/sessions/model/checkpoint.ts`.
 - [x] **Separate Pilot commit and push.** This was never missing: Native's Pilot panel uses the same Changes view as chats, with Commit, Commit & Push and its own sync button. Tauri: `src/features/pilots/ui/PilotProjectCommit.tsx`.
 - [x] **Stash and switch on remote projects.** Tauri: `src/features/source-control/ui/SwitchBranchDialog.tsx`.
@@ -251,8 +251,8 @@ This covered launch and basic UI interaction, not live provider requests or
 installation/upgrades of the downloadable Linux x64 packages. Windows GUI
 execution remains unverified.
 
-On Linux and Windows, HTML panels currently use a text fallback, and media hosting
-still needs platform support. Windows close-to-tray behavior needs verification.
+On Linux under Wayland, HTML panels open in the browser instead of inside the app,
+and media hosting still needs platform support. Windows close-to-tray behavior needs verification.
 Desktop webview preferences (theme, projects, model defaults, and related
 settings) are read from the installed app on Linux as well as macOS. The Windows
 WebView2 reader has synthetic fixture coverage on Linux; real Windows profile
