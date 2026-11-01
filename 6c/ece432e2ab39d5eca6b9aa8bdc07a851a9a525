@@ -1,0 +1,46 @@
+README.md
+  s_2083bf29c8591a::t_91d564475332bd 256
+package.json
+  s_2083bf29c8591a::t_91d564475332bd 24,30-33
+CLAUDE.md
+  s_2083bf29c8591a::t_91d564475332bd 5-6,15-17
+host/tsconfig.json
+  s_2083bf29c8591a::t_91d564475332bd 4,6-7,9-22
+CONTRIBUTING.md
+  s_2083bf29c8591a::t_91d564475332bd 9
+docs/remote-access.md
+  s_2083bf29c8591a::t_91d564475332bd 117
+mobile/bun.lock
+  s_142fc49e010749::t_3c4c9f2eddbedc 1153,1731-1732
+  s_2083bf29c8591a::t_fd280421edb51e 53,455-456
+docs/building.md
+  s_2083bf29c8591a::t_91d564475332bd 3,28-31,36
+mobile/package.json
+  s_2083bf29c8591a::t_91d564475332bd 51
+scripts/native-settings/src/gridArcade.ts
+  s_2083bf29c8591a::t_91d564475332bd 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6cece432e2ab39d5eca6b9aa8bdc07a851a9a525",
+  "prompts": {},
+  "sessions": {
+    "s_142fc49e010749": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64288a0b-d712-42fe-8181-a2df6ee5b96b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_2083bf29c8591a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72867040-b522-4931-ac63-1c31bf08d3b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

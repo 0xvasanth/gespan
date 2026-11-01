@@ -1,0 +1,41 @@
+scripts/native-editor/src/editorGit.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-1390
+scripts/native-editor/src/editorLint.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-238
+scripts/native-settings/src/pacmanArcade.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-1150
+scripts/native-editor/build.mjs
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 23,46
+scripts/native-settings/src/composerRunner.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-395
+scripts/native-editor/src/basename.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-2
+scripts/native-settings/build-arcade.mjs
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1,7-9,40
+scripts/native-settings/src/snakeArcade.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-521
+scripts/native-editor/index.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 9,11-13
+scripts/native-settings/src/harnesses.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-3
+scripts/native-editor/src/editorEditing.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-363
+scripts/native-editor/src/editorLanguage.ts
+  s_2083bf29c8591a::t_3cc4251a5ffb7c 1-296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fc504e59462bd94c2645507b40332d27782dde2",
+  "prompts": {},
+  "sessions": {
+    "s_2083bf29c8591a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72867040-b522-4931-ac63-1c31bf08d3b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

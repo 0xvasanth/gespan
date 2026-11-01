@@ -1,0 +1,113 @@
+scripts/package.test.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-490
+host/core/integrations/harness/core/types.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 41
+crates/gespan-redact/fixtures/README.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 3
+.github/workflows/release.yml
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 114
+scripts/desktop-release.test.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1,3-4,6-152
+README.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 252,263,302-303,308
+host/core/integrations/harness/providers/claude/claudeHeartbeat.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 5
+scripts/dev.test.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-202
+crates/gespan-gpui/dependency_guard.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1
+NOTICE
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 14,22,27,61
+docs/desktop/verification.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-53
+host/core/features/sessions/model/subagentHandback.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 82
+crates/gespan-core/src/lib.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1
+docs/desktop/migration.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-50
+docs/board.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 3,10
+host/core/features/sessions/model/session.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 245
+scripts/release-channel.test.cjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 225,387,506,518,575
+host/claude-heartbeat.test.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 4
+CLAUDE.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 9
+crates/gespan-gpui/src/flows/mod.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1
+.github/workflows/update-feed-guard.yml
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 18
+host/core/integrations/harness/providers/claude/claudeAgentRegistry.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 7
+docs/desktop/parity.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-142
+docs/privacy.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 3,73
+tests/kiro-e2e/README.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-73
+scripts/arcade-bundle/build-arcade.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-40
+scripts/bundle-macos.test.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-78
+docs/building.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 18-20,28,31,41,46,54
+crates/gespan-gpui/src/board/tests/scale.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 4
+host/core/integrations/harness/core/apply.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1228
+host/core/integrations/harness/providers/claude/claude.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1786,1799,2077
+scripts/build.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-41
+scripts/ci-impact.test.mjs
+  s_2083bf29c8591a::t_79f12e38d3428e 44
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 38,42
+docs/desktop/README.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-242
+scripts/package.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-403
+crates/tracker-secrets/src/lib.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 2
+scripts/bundle-macos.sh
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-90
+.github/workflows/mobile-release.yml
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 5
+crates/gespan-gpui/src/fixtures.rs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 14,80,85
+scripts/ci-impact.mjs
+  s_2083bf29c8591a::t_79f12e38d3428e 15
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 13
+scripts/desktop-release.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-140
+CONTRIBUTING.md
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 14,27,35
+host/core/integrations/harness/core/toolElapsed.ts
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 41
+package.json
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 24,27-33
+.github/workflows/ci.yml
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 55,163
+scripts/dev.mjs
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-210
+.github/workflows/desktop-release.yml
+  s_2083bf29c8591a::t_8ee0d8aa67cfa4 1-227,229-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd5247bc0b2fe5c44d265de71fa4d41f0fd8d85e",
+  "prompts": {},
+  "sessions": {
+    "s_2083bf29c8591a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72867040-b522-4931-ac63-1c31bf08d3b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
