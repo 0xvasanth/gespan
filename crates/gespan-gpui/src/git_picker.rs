@@ -1,11 +1,17 @@
 //! The composer's searchable BranchPicker and existing-worktree list.
-use crate::{input, popover, theme::*};
+use crate::{input, popover, right_panel::spinner, theme::*};
 use gespan_core::git::{self, Snapshot};
 use gpui::{
     AnyElement, Context, Entity, EventEmitter, FocusHandle, Focusable, Role, Subscription, Window,
     div, prelude::*, px,
 };
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
@@ -188,6 +194,165 @@ mod tests {
         );
     }
 
+    /// Opens the Uncommitted changes dialog with a stand-in for the provider.
+    fn blocked_dialog(
+        repo: &std::path::Path,
+        write: MessageWriter,
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::WindowHandle<GitPicker>,
+        gpui::VisualTestContext,
+        std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
+        Subscription,
+    ) {
+        let (window, events, subscription) = open_on(repo, cx);
+        window
+            .update(cx, |view, _, _| view.write_message = write)
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_input("other");
+        click(&mut visual, "git-option-0");
+        (window, visual, events, subscription)
+    }
+    fn message_of(window: gpui::WindowHandle<GitPicker>, cx: &mut TestAppContext) -> String {
+        window
+            .read_with(cx, |view, cx| {
+                let blocked = view.blocked.as_ref().unwrap();
+                blocked.message.read(cx).content.to_string()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn generate_fills_the_message_and_commit_and_switch_uses_it(cx: &mut TestAppContext) {
+        let repo = conflicting_repo();
+        let root = repo.path().to_owned();
+        let write: MessageWriter = Arc::new(move |cwd, _| {
+            assert_eq!(cwd, root, "the message describes this checkout");
+            Ok("Keep the shared edit".into())
+        });
+        let (window, mut visual, events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        click(&mut visual, "switch-generate");
+        assert_eq!(message_of(window, cx), "Keep the shared edit");
+        window
+            .read_with(cx, |view, cx| {
+                let blocked = view.blocked.as_ref().unwrap();
+                assert!(blocked.idle());
+                assert!(!blocked.message.read(cx).read_only());
+            })
+            .unwrap();
+
+        click(&mut visual, "switch-commit");
+        assert_eq!(events.borrow().as_slice(), ["changed"]);
+        assert_eq!(
+            run_git(repo.path(), &["log", "-1", "--format=%s", "main"]),
+            "Keep the shared edit"
+        );
+    }
+
+    #[gpui::test]
+    fn a_failed_generate_stays_in_the_dialog_and_keeps_what_was_typed(cx: &mut TestAppContext) {
+        let repo = conflicting_repo();
+        let write: MessageWriter = Arc::new(|_, _| Err("No provider".into()));
+        let (window, mut visual, events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        visual.simulate_input("Mine");
+        click(&mut visual, "switch-generate");
+        assert_eq!(message_of(window, cx), "Mine");
+        window
+            .read_with(cx, |view, _| {
+                let blocked = view.blocked.as_ref().unwrap();
+                assert_eq!(blocked.error.as_deref(), Some("No provider"));
+                assert!(blocked.idle());
+            })
+            .unwrap();
+        assert!(events.borrow().is_empty());
+        // The dialog is still usable, and the error clears on the next try.
+        click(&mut visual, "switch-generate");
+        click(&mut visual, "switch-commit");
+        assert_eq!(events.borrow().as_slice(), ["changed"]);
+    }
+
+    /// A provider that records whether it was told to stop. The test executor
+    /// runs it only when the test parks, so everything done in one window update
+    /// happens while the turn is in flight.
+    fn recording_writer(reply: &'static str) -> (MessageWriter, Arc<AtomicBool>) {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let seen = stopped.clone();
+        let write: MessageWriter = Arc::new(move |_, cancel| {
+            seen.store(cancel.load(Ordering::SeqCst), Ordering::SeqCst);
+            Ok(reply.into())
+        });
+        (write, stopped)
+    }
+
+    #[gpui::test]
+    fn while_generating_the_dialog_cannot_commit_stash_or_close(cx: &mut TestAppContext) {
+        let repo = conflicting_repo();
+        let (write, stopped) = recording_writer("Written");
+        let (window, mut visual, events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        visual.simulate_input("Typed");
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |view, window, cx| {
+                view.generate(window, cx);
+                view.resolve(Resolve::Commit, cx);
+                view.resolve(Resolve::Stash, cx);
+                view.cancel(cx);
+                view.generate(window, cx);
+                let blocked = view.blocked.as_ref().unwrap();
+                assert!(blocked.generating.is_some());
+                assert!(blocked.busy.is_none());
+                assert!(blocked.message.read(cx).read_only());
+                assert!(!view.can_commit(cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(events.borrow().is_empty());
+        assert_eq!(run_git(repo.path(), &["branch", "--show-current"]), "main");
+        assert_eq!(run_git(repo.path(), &["stash", "list"]), "");
+        assert!(!stopped.load(Ordering::SeqCst));
+        assert_eq!(message_of(window, cx), "Written");
+    }
+
+    #[gpui::test]
+    fn cancelling_generate_ignores_a_late_reply(cx: &mut TestAppContext) {
+        let repo = conflicting_repo();
+        let (write, stopped) = recording_writer("Too late");
+        let (window, mut visual, _events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        visual.simulate_input("Typed");
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |view, window, cx| {
+                view.generate(window, cx);
+                view.cancel_generate(window, cx);
+                let blocked = view.blocked.as_ref().unwrap();
+                assert!(blocked.idle());
+                assert!(!blocked.message.read(cx).read_only());
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "the provider turn is told to stop"
+        );
+        assert_eq!(message_of(window, cx), "Typed");
+    }
+
+    #[gpui::test]
+    fn closing_the_picker_stops_a_running_generate(cx: &mut TestAppContext) {
+        let repo = conflicting_repo();
+        let (write, stopped) = recording_writer("Unused");
+        let (window, mut visual, _events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        window
+            .update(&mut visual, |view, window, cx| {
+                view.generate(window, cx);
+                view.blocked = None;
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(stopped.load(Ordering::SeqCst));
+    }
+
     #[gpui::test]
     fn a_blocked_switch_can_be_cancelled_or_committed(cx: &mut TestAppContext) {
         let repo = conflicting_repo();
@@ -236,6 +401,7 @@ pub(crate) struct GitPicker {
     existing_only: bool,
     error: Option<String>,
     blocked: Option<Blocked>,
+    write_message: MessageWriter,
     _changed: Subscription,
 }
 /// SwitchBranchDialog: Git refused the switch because it would overwrite
@@ -244,8 +410,29 @@ struct Blocked {
     branch: git::Branch,
     message: Entity<input::Input>,
     busy: Option<Resolve>,
+    /// Set while a commit message is being written; storing true cancels it.
+    generating: Option<Arc<AtomicBool>>,
     error: Option<String>,
     _subscriptions: [Subscription; 2],
+}
+impl Drop for Blocked {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.generating {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    }
+}
+impl Blocked {
+    fn idle(&self) -> bool {
+        self.busy.is_none() && self.generating.is_none()
+    }
+}
+/// Writes a message for a checkout's changes. Blocking.
+type MessageWriter = Arc<dyn Fn(PathBuf, Arc<AtomicBool>) -> Result<String, String> + Send + Sync>;
+fn write_commit_message(cwd: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
+    let (kind, binary) = crate::changes::pick_text_harness(gespan_core::provider::Kind::Claude)
+        .ok_or("No provider CLI is installed to write a commit message.")?;
+    crate::changes::generate_commit_message(kind, binary, cwd, cancel)
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Resolve {
@@ -318,6 +505,7 @@ impl GitPicker {
             existing_only: false,
             error: None,
             blocked: None,
+            write_message: Arc::new(write_commit_message),
             _changed: changed,
         }
     }
@@ -471,21 +659,69 @@ impl GitPicker {
             branch,
             message,
             busy: None,
+            generating: None,
             error: None,
             _subscriptions: subscriptions,
         });
     }
     fn can_commit(&self, cx: &gpui::App) -> bool {
         self.blocked.as_ref().is_some_and(|blocked| {
-            blocked.busy.is_none() && !blocked.message.read(cx).content.trim().is_empty()
+            blocked.idle() && !blocked.message.read(cx).content.trim().is_empty()
         })
+    }
+    /// generate: a message for the changes that would be committed. Failures
+    /// stay in the dialog, like a failed switch.
+    fn generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(blocked) = self.blocked.as_mut().filter(|b| b.idle()) else {
+            return;
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        blocked.generating = Some(cancel.clone());
+        blocked.error = None;
+        blocked.message.update(cx, |m, _| m.set_read_only(true));
+        let (write, cwd, flag) = (self.write_message.clone(), self.cwd.clone(), cancel.clone());
+        let work = cx
+            .background_executor()
+            .spawn(async move { write(cwd, flag) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if cancel.load(Ordering::SeqCst) {
+                    return;
+                }
+                let Some(blocked) = &mut this.blocked else {
+                    return;
+                };
+                blocked.generating = None;
+                blocked.message.update(cx, |m, _| m.set_read_only(false));
+                match result {
+                    Ok(message) => blocked.message.update(cx, |m, cx| m.set_text(message, cx)),
+                    Err(error) => blocked.error = Some(error),
+                }
+                window.focus(&blocked.message.focus_handle(cx), cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn cancel_generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(blocked) = self.blocked.as_mut() else {
+            return;
+        };
+        if let Some(cancel) = blocked.generating.take() {
+            cancel.store(true, Ordering::SeqCst);
+            blocked.message.update(cx, |m, _| m.set_read_only(false));
+            window.focus(&blocked.message.focus_handle(cx), cx);
+            cx.notify();
+        }
     }
     /// Stash & switch or Commit & switch; a failure stays in the dialog.
     fn resolve(&mut self, kind: Resolve, cx: &mut Context<Self>) {
         if kind == Resolve::Commit && !self.can_commit(cx) {
             return;
         }
-        let Some(blocked) = self.blocked.as_mut().filter(|b| b.busy.is_none()) else {
+        let Some(blocked) = self.blocked.as_mut().filter(|b| b.idle()) else {
             return;
         };
         blocked.busy = Some(kind);
@@ -520,14 +756,20 @@ impl GitPicker {
         cx.notify();
     }
     fn cancel(&mut self, cx: &mut Context<Self>) {
-        if self.blocked.as_ref().is_some_and(|b| b.busy.is_some()) {
+        if self.blocked.as_ref().is_some_and(|b| !b.idle()) {
             return;
         }
         cx.emit(Picked::Dismissed);
     }
     fn render_blocked(&self, blocked: &Blocked, cx: &mut Context<Self>) -> AnyElement {
-        let busy = blocked.busy.is_some();
+        let busy = !blocked.idle();
+        let generating = blocked.generating.is_some();
         let can_commit = self.can_commit(cx);
+        let generate_label = if generating {
+            "Cancel commit message generation"
+        } else {
+            "Generate commit message"
+        };
         let small = |button: gpui::Stateful<gpui::Div>| {
             button
                 .h(px(28.))
@@ -588,16 +830,71 @@ impl GitPicker {
             )
             .child(
                 div()
-                    .w_full()
-                    .rounded_md()
-                    .bg(content(0.1))
-                    .py_1()
-                    .px_2()
-                    .text_size(px(13.))
-                    .line_height(px(20.))
-                    .text_color(content(1.))
-                    .when(busy, |d| d.opacity(0.4))
-                    .child(blocked.message.clone()),
+                    .relative()
+                    .child(
+                        div()
+                            .w_full()
+                            .rounded_md()
+                            .bg(content(0.1))
+                            .py_1()
+                            .pl_2()
+                            .pr_8()
+                            .text_size(px(13.))
+                            .line_height(px(20.))
+                            .text_color(content(1.))
+                            .when(busy, |d| d.opacity(0.4))
+                            .child(blocked.message.clone()),
+                    )
+                    .child(
+                        div()
+                            .id("switch-generate")
+                            .debug_selector(|| "switch-generate".into())
+                            .role(Role::Button)
+                            .aria_label(generate_label)
+                            .group("switch-generate")
+                            .absolute()
+                            .top_1()
+                            .right_1()
+                            .size(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(content(0.1))
+                            .when(blocked.busy.is_some(), |d| d.opacity(0.4))
+                            .when(blocked.busy.is_none(), |d| {
+                                d.hover(|s| s.bg(content(0.2))).on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        if generating {
+                                            this.cancel_generate(window, cx);
+                                        } else {
+                                            this.generate(window, cx);
+                                        }
+                                    },
+                                ))
+                            })
+                            .child(if generating {
+                                div()
+                                    .relative()
+                                    .size(px(14.))
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .group_hover("switch-generate", |s| s.opacity(0.))
+                                            .child(spinner("switch-generate-spin", "loader", 14.)),
+                                    )
+                                    .child(
+                                        icon("x", 14.)
+                                            .absolute()
+                                            .text_color(content(1.))
+                                            .opacity(0.)
+                                            .group_hover("switch-generate", |s| s.opacity(1.)),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                icon("wand", 12.).text_color(content(1.)).into_any_element()
+                            }),
+                    ),
             )
             .when_some(blocked.error.clone(), |d, error| {
                 d.child(
