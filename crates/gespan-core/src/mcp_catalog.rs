@@ -14,6 +14,8 @@ use std::{
 };
 
 const FILE: &str = "mcp-catalog.json";
+/// How a registry container starts. `-e` flags for its settings go after this.
+pub(crate) const CONTAINER_RUN: [&str; 3] = ["run", "-i", "--rm"];
 /// Prefix of a server's keychain name.
 const SECRETS: &str = "mcp-server";
 /// Keychain name of the key that seals approvals of servers with secrets.
@@ -57,6 +59,10 @@ pub struct Entry {
     /// Fingerprint of the exact command and environment the user approved,
     /// sealed when that environment holds secrets.
     pub approved: Option<String>,
+    /// A container, which sees only the settings it's handed by name. Those
+    /// are the ones set here: a name alone would hand it the same variable from
+    /// Gespan's own environment.
+    pub container: bool,
     /// Settings it can't run without.
     pub required: Vec<String>,
     /// Those of them with no value yet.
@@ -67,13 +73,26 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Its arguments as they'd run.
+    fn run_args(&self) -> Vec<String> {
+        let mut args = self.args.clone();
+        if self.container {
+            let flags = self
+                .env
+                .iter()
+                .flat_map(|name| ["-e".to_owned(), name.clone()]);
+            args.splice(CONTAINER_RUN.len()..CONTAINER_RUN.len(), flags);
+        }
+        args
+    }
+
     fn spec(&self, env: BTreeMap<String, String>) -> ServerSpec {
         ServerSpec {
             id: self.id.clone(),
             // A remote server's process is a connection, so its address and
             // headers take the place of a command and its environment.
             command: self.url.clone().unwrap_or_else(|| self.command.clone()),
-            args: self.args.clone(),
+            args: self.run_args(),
             env,
             // One sign-in means one set of credentials, so nothing is gained
             // by keeping connections apart.
@@ -92,8 +111,9 @@ impl Entry {
         if let Some(url) = &self.url {
             return url.clone();
         }
+        let args = self.run_args();
         std::iter::once(self.command.as_str())
-            .chain(self.args.iter().map(String::as_str))
+            .chain(args.iter().map(String::as_str))
             .map(|word| match shlex::try_quote(word) {
                 Ok(quoted) => quoted.into_owned(),
                 Err(_) => format!("{word:?}"),
@@ -279,6 +299,7 @@ impl Catalog {
             .get_mut(before)
             .ok_or("That server is already here")?;
         entry.source = Some(format!("MCP Registry {}", listing.version));
+        entry.container = entry.command == "docker";
         entry.required = listing
             .inputs
             .iter()
@@ -781,6 +802,40 @@ mod tests {
         catalog.save(dir.path()).unwrap();
         let reloaded = Catalog::load(dir.path()).unwrap();
         assert_eq!(reloaded.entries[0].required, ["API_KEY"]);
+    }
+
+    #[test]
+    fn a_container_is_handed_only_the_settings_set_here() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let mut container = listing();
+        container.install = crate::mcp_registry::Install::Command {
+            command: "docker".into(),
+            args: ["run", "-i", "--rm", "ghcr.io/a/b:2"]
+                .map(str::to_owned)
+                .to_vec(),
+        };
+        // Declared, optional and never set: it must not come from Gespan's own
+        // environment.
+        container.inputs.push(crate::mcp_registry::Input {
+            name: "GITHUB_TOKEN".into(),
+            description: String::new(),
+            required: false,
+        });
+        let id = catalog.install(dir.path(), &container).unwrap();
+        let values = BTreeMap::from([("API_KEY".to_owned(), "k".to_owned())]);
+        catalog.set_secrets(dir.path(), &id, values).unwrap();
+        catalog.approve(dir.path(), &id).unwrap();
+        let spec = catalog.specs(dir.path()).remove(0);
+        assert_eq!(
+            spec.args,
+            ["run", "-i", "--rm", "-e", "API_KEY", "ghcr.io/a/b:2"]
+        );
+        assert_eq!(
+            catalog.entries[0].command_line(),
+            "docker run -i --rm -e API_KEY ghcr.io/a/b:2",
+            "the approval shows what runs"
+        );
     }
 
     #[test]

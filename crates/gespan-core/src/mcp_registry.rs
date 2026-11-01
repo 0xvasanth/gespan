@@ -59,6 +59,32 @@ impl Listing {
     }
 }
 
+/// Text from a listing that means only itself. On Windows these commands go
+/// through `cmd.exe`, where the rest would be read as syntax.
+fn plain(word: &str) -> bool {
+    !word.contains(['&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\n', '\r'])
+}
+
+/// A package or image name, which can't pass for a flag.
+fn valid_identifier(identifier: &str) -> bool {
+    !identifier.is_empty()
+        && !identifier.starts_with('-')
+        && identifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@/._-:".contains(c))
+}
+
+/// One exact version: `latest`, ranges and wildcards can change after approval.
+fn exact_version(version: &str) -> bool {
+    version.starts_with(|c: char| c.is_ascii_digit())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".+-_".contains(c))
+        && !version
+            .split('.')
+            .any(|part| part.eq_ignore_ascii_case("x"))
+}
+
 /// A listing's arguments as words. One it requires with no fixed value needs
 /// something this can't supply; an optional one is left to its default.
 fn arguments(list: &Value) -> Option<Vec<String>> {
@@ -79,47 +105,48 @@ fn arguments(list: &Value) -> Option<Vec<String>> {
         }
         words.push(value.to_owned());
     }
-    Some(words)
+    words.iter().all(|word| plain(word)).then_some(words)
 }
 
-/// An image name that says which image, by tag, digest or the listed version.
+/// An image name that says which image, by digest, a tag other than `latest`,
+/// or the listed version.
 fn pinned_image(identifier: &str, version: Option<&str>) -> Option<String> {
     let last = identifier.rsplit('/').next().unwrap_or(identifier);
-    if last.contains(':') || last.contains('@') {
+    if last.contains('@') {
         return Some(identifier.to_owned());
     }
-    Some(format!("{identifier}:{}", version?))
+    match last.split_once(':') {
+        Some((_, tag)) => (!tag.is_empty() && tag != "latest").then(|| identifier.to_owned()),
+        None => Some(format!("{identifier}:{}", version?)),
+    }
 }
 
 /// `npx`, `uvx` or `docker`, pinned to the listed version. Anything else is
 /// left out: a prebuilt binary means a download nothing here has checked, and
-/// with no version what runs later may not be what the user approved.
+/// with no exact version what runs later may not be what the user approved.
+/// So is a listing with flags for the runner itself, which could fetch another
+/// package than the one named, or take a container out of its box.
 fn package_install(package: &Value) -> Option<Install> {
     if package["transport"]["type"].as_str().unwrap_or("stdio") != "stdio" {
         return None;
     }
-    let identifier = package["identifier"].as_str()?;
-    let version = package["version"].as_str().filter(|v| !v.is_empty());
-    let runtime = arguments(&package["runtimeArguments"])?;
+    let identifier = package["identifier"]
+        .as_str()
+        .filter(|id| valid_identifier(id))?;
+    let version = package["version"].as_str().filter(|v| exact_version(v));
+    if !arguments(&package["runtimeArguments"])?.is_empty() {
+        return None;
+    }
     let (command, mut args) = match package["registryType"].as_str()? {
-        "npm" => {
-            let mut args = vec!["-y".to_owned()];
-            args.extend(runtime);
-            args.push(format!("{identifier}@{}", version?));
-            ("npx", args)
-        }
-        "pypi" => {
-            let mut args = runtime;
-            args.push(format!("{identifier}=={}", version?));
-            ("uvx", args)
-        }
+        "npm" => (
+            "npx",
+            vec!["-y".to_owned(), format!("{identifier}@{}", version?)],
+        ),
+        "pypi" => ("uvx", vec![format!("{identifier}=={}", version?)]),
         "oci" => {
-            let mut args = ["run", "-i", "--rm"].map(str::to_owned).to_vec();
-            // A container sees only what it's handed by name.
-            for input in inputs(package) {
-                args.extend(["-e".to_owned(), input.name]);
-            }
-            args.extend(runtime);
+            let mut args = crate::mcp_catalog::CONTAINER_RUN
+                .map(str::to_owned)
+                .to_vec();
             args.push(pinned_image(identifier, version)?);
             ("docker", args)
         }
@@ -349,32 +376,8 @@ mod tests {
     }
 
     #[test]
-    fn a_container_is_handed_its_settings_by_name() {
-        let listings = package(json!({
-            "registryType":"oci",
-            "identifier":"ghcr.io/a/b:2",
-            "environmentVariables":[{"name":"API_KEY","isRequired":true},{"name":"LOG_LEVEL"}],
-        }));
-        assert_eq!(
-            command_of(&listings),
-            [
-                "docker",
-                "run",
-                "-i",
-                "--rm",
-                "-e",
-                "API_KEY",
-                "-e",
-                "LOG_LEVEL",
-                "ghcr.io/a/b:2"
-            ]
-        );
-    }
-
-    #[test]
-    fn runtime_and_package_arguments_land_either_side_of_the_package() {
+    fn package_arguments_follow_the_package() {
         let arguments = json!({
-            "runtimeArguments":[{"type":"named","name":"--cache","value":"/tmp/c"}],
             "packageArguments":[
                 {"type":"positional","value":"serve"},
                 {"type":"named","name":"--mode","value":"stdio"},
@@ -384,17 +387,73 @@ mod tests {
         });
         assert_eq!(
             command_of(&package(arguments.clone())),
-            [
-                "npx", "-y", "--cache", "/tmp/c", "x@1", "serve", "--mode", "stdio", "--level",
-                "info"
-            ]
+            ["npx", "-y", "x@1", "serve", "--mode", "stdio", "--level", "info"]
         );
         let mut arguments = arguments;
         arguments["registryType"] = json!("pypi");
         assert_eq!(
             command_of(&package(arguments)),
-            ["uvx", "--cache", "/tmp/c", "x==1", "serve", "--mode", "stdio", "--level", "info"]
+            ["uvx", "x==1", "serve", "--mode", "stdio", "--level", "info"]
         );
+    }
+
+    #[test]
+    fn a_listing_cant_give_the_runner_flags_of_its_own() {
+        for (registry, identifier, name, value) in [
+            ("pypi", "x", "--index-url", "https://evil.example/simple"),
+            ("npm", "x", "--registry", "https://evil.example"),
+            ("oci", "ghcr.io/a/b:2", "--privileged", "true"),
+            ("oci", "ghcr.io/a/b:2", "-v", "/:/host"),
+        ] {
+            let listings = package(json!({
+                "registryType":registry,
+                "identifier":identifier,
+                "runtimeArguments":[{"type":"named","name":name,"value":value}],
+            }));
+            assert!(listings.is_empty(), "{name}");
+        }
+        let unused = json!({"runtimeArguments":[{"type":"named","name":"--cache"}]});
+        assert_eq!(package(unused).len(), 1, "nothing would reach the runner");
+    }
+
+    #[test]
+    fn a_name_that_could_pass_for_a_flag_is_left_out() {
+        for identifier in ["--from=evil", "-x", "", "a b", "a;b", "a&calc"] {
+            assert!(
+                package(json!({"identifier":identifier})).is_empty(),
+                "{identifier}"
+            );
+        }
+        assert_eq!(package(json!({"identifier":"@scope/pkg.name_1"})).len(), 1);
+    }
+
+    #[test]
+    fn text_cmd_would_read_as_syntax_is_left_out() {
+        for value in [
+            "a&calc", "a|b", "%PATH%", "a\"b", "!x!", "(a)", "a>b", "a\nb",
+        ] {
+            let positional = json!({"packageArguments":[{"type":"positional","value":value}]});
+            assert!(package(positional).is_empty(), "{value}");
+        }
+        let spaced = json!({"packageArguments":[{"type":"positional","value":"a b=c"}]});
+        assert_eq!(package(spaced).len(), 1);
+    }
+
+    #[test]
+    fn only_an_exact_version_counts_as_pinned() {
+        for version in [
+            "latest", "^1.2", "~1", ">=1", "1.x", "*", "1.*", "", "1 || 2",
+        ] {
+            assert!(package(json!({"version":version})).is_empty(), "{version}");
+        }
+        for version in ["1", "1.2.3", "1.2.3-beta.1", "1.0.0+build", "2024.1"] {
+            assert_eq!(package(json!({"version":version})).len(), 1, "{version}");
+        }
+        let image = |identifier: &str| {
+            package(json!({"registryType":"oci","identifier":identifier,"version":null}))
+        };
+        assert!(image("ghcr.io/a/b:latest").is_empty());
+        assert!(image("ghcr.io/a/b:").is_empty());
     }
 
     #[test]
