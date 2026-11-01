@@ -73,7 +73,7 @@ gespan-board-store = { path = "../board-store" }
 gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 # Reading report bundles back in tests.
 url = "2"
-zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 # Test log capture: the real JSONL layer under a thread-local registry.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt"] }
 

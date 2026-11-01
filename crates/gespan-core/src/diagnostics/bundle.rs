@@ -340,7 +340,7 @@ pub(crate) mod tests {
                 let mut bytes = Vec::new();
                 file.read_to_end(&mut bytes).unwrap();
                 Entry {
-                    name: file.name().to_owned(),
+                    name: file.name().unwrap().into_owned(),
                     bytes,
                 }
             })
@@ -642,5 +642,31 @@ pub(crate) mod tests {
     #[test]
     fn same_input_same_bytes() {
         assert_eq!(fallback().zip(), fallback().zip());
+    }
+
+    #[test]
+    fn every_entry_is_deflated_stamped_and_world_readable() {
+        let bundle = fallback();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bundle.zip())).unwrap();
+        assert_eq!(archive.len(), bundle.entries.len());
+        for i in 0..archive.len() {
+            let file = archive.by_index(i).unwrap();
+            assert_eq!(file.compression(), zip::CompressionMethod::Deflated);
+            assert_eq!(file.unix_mode().map(|mode| mode & 0o777), Some(0o644));
+            let time = file.last_modified().unwrap();
+            // Zip times count seconds in twos, so 09:14:03 reads back as :02.
+            assert_eq!(
+                (time.year(), time.month(), time.day()),
+                (2026, 10, 25),
+                "{:?}",
+                file.name()
+            );
+            assert_eq!(
+                (time.hour(), time.minute(), time.second()),
+                (9, 14, 2),
+                "{:?}",
+                file.name()
+            );
+        }
     }
 }
