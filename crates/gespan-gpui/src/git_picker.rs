@@ -1,6 +1,9 @@
 //! The composer's searchable BranchPicker and existing-worktree list.
 use crate::{input, popover, right_panel::spinner, theme::*};
-use gespan_core::git::{self, Snapshot};
+use gespan_core::{
+    git::{self, Snapshot},
+    provider::Kind,
+};
 use gpui::{
     AnyElement, Context, Entity, EventEmitter, FocusHandle, Focusable, Role, Subscription, Window,
     div, prelude::*, px,
@@ -56,7 +59,7 @@ mod tests {
         let pickers: Vec<_> = [Mode::Branch, Mode::Base, Mode::Worktree]
             .into_iter()
             .map(|mode| {
-                let picker = cx.new(|cx| GitPicker::new(cwd.into(), mode, None, cx));
+                let picker = cx.new(|cx| GitPicker::new(cwd.into(), mode, None, Kind::Claude, cx));
                 picker.update(cx, |view, cx| {
                     assert!(
                         view.state.is_some(),
@@ -124,7 +127,7 @@ mod tests {
         let cwd = cwd.to_owned();
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
-                cx.new(|cx| GitPicker::new(cwd, Mode::Branch, None, cx))
+                cx.new(|cx| GitPicker::new(cwd, Mode::Branch, None, Kind::Claude, cx))
             })
             .unwrap()
         });
@@ -227,11 +230,15 @@ mod tests {
     fn generate_fills_the_message_and_commit_and_switch_uses_it(cx: &mut TestAppContext) {
         let repo = conflicting_repo();
         let root = repo.path().to_owned();
-        let write: MessageWriter = Arc::new(move |cwd, _| {
+        let write: MessageWriter = Arc::new(move |kind, cwd, _| {
+            assert_eq!(kind, Kind::Codex, "the changes go to the chat's provider");
             assert_eq!(cwd, root, "the message describes this checkout");
             Ok("Keep the shared edit".into())
         });
         let (window, mut visual, events, _subscription) = blocked_dialog(repo.path(), write, cx);
+        window
+            .update(&mut visual, |view, _, _| view.text_provider = Kind::Codex)
+            .unwrap();
         click(&mut visual, "switch-generate");
         assert_eq!(message_of(window, cx), "Keep the shared edit");
         window
@@ -253,7 +260,7 @@ mod tests {
     #[gpui::test]
     fn a_failed_generate_stays_in_the_dialog_and_keeps_what_was_typed(cx: &mut TestAppContext) {
         let repo = conflicting_repo();
-        let write: MessageWriter = Arc::new(|_, _| Err("No provider".into()));
+        let write: MessageWriter = Arc::new(|_, _, _| Err("No provider".into()));
         let (window, mut visual, events, _subscription) = blocked_dialog(repo.path(), write, cx);
         visual.simulate_input("Mine");
         click(&mut visual, "switch-generate");
@@ -278,7 +285,7 @@ mod tests {
     fn recording_writer(reply: &'static str) -> (MessageWriter, Arc<AtomicBool>) {
         let stopped = Arc::new(AtomicBool::new(false));
         let seen = stopped.clone();
-        let write: MessageWriter = Arc::new(move |_, cancel| {
+        let write: MessageWriter = Arc::new(move |_, _, cancel| {
             seen.store(cancel.load(Ordering::SeqCst), Ordering::SeqCst);
             Ok(reply.into())
         });
@@ -402,6 +409,8 @@ pub(crate) struct GitPicker {
     error: Option<String>,
     blocked: Option<Blocked>,
     write_message: MessageWriter,
+    /// The chat's provider: the changes go to the one the user is working with.
+    text_provider: Kind,
     _changed: Subscription,
 }
 /// SwitchBranchDialog: Git refused the switch because it would overwrite
@@ -428,9 +437,14 @@ impl Blocked {
     }
 }
 /// Writes a message for a checkout's changes. Blocking.
-type MessageWriter = Arc<dyn Fn(PathBuf, Arc<AtomicBool>) -> Result<String, String> + Send + Sync>;
-fn write_commit_message(cwd: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
-    let (kind, binary) = crate::changes::pick_text_harness(gespan_core::provider::Kind::Claude)
+type MessageWriter =
+    Arc<dyn Fn(Kind, PathBuf, Arc<AtomicBool>) -> Result<String, String> + Send + Sync>;
+fn write_commit_message(
+    preferred: Kind,
+    cwd: PathBuf,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    let (kind, binary) = crate::changes::pick_text_harness(preferred)
         .ok_or("No provider CLI is installed to write a commit message.")?;
     crate::changes::generate_commit_message(kind, binary, cwd, cancel)
 }
@@ -456,6 +470,7 @@ impl GitPicker {
         cwd: PathBuf,
         mode: Mode,
         selected: Option<String>,
+        text_provider: Kind,
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| {
@@ -506,6 +521,7 @@ impl GitPicker {
             error: None,
             blocked: None,
             write_message: Arc::new(write_commit_message),
+            text_provider,
             _changed: changed,
         }
     }
@@ -679,10 +695,11 @@ impl GitPicker {
         blocked.generating = Some(cancel.clone());
         blocked.error = None;
         blocked.message.update(cx, |m, _| m.set_read_only(true));
-        let (write, cwd, flag) = (self.write_message.clone(), self.cwd.clone(), cancel.clone());
+        let (write, kind) = (self.write_message.clone(), self.text_provider);
+        let (cwd, flag) = (self.cwd.clone(), cancel.clone());
         let work = cx
             .background_executor()
-            .spawn(async move { write(cwd, flag) });
+            .spawn(async move { write(kind, cwd, flag) });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
             let _ = this.update_in(cx, |this, window, cx| {

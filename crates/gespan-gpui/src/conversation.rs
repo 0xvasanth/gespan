@@ -2063,7 +2063,8 @@ impl Conversation {
         } else {
             self.branch.clone()
         };
-        let picker = cx.new(|cx| GitPicker::new(cwd, mode, selected, cx));
+        let provider = Kind::from_id(&self.summary.provider);
+        let picker = cx.new(|cx| GitPicker::new(cwd, mode, selected, provider, cx));
         self.git_events =
             Some(
                 cx.subscribe_in(&picker, window, |this, _, event: &GitPicked, window, cx| {
@@ -2752,6 +2753,7 @@ impl Conversation {
                         self.summary.cwd.clone().into(),
                         GitMode::Worktree,
                         Some(self.execution_cwd().to_owned()),
+                        Kind::from_id(&self.summary.provider),
                         cx,
                     )
                     .existing_worktrees()
