@@ -491,6 +491,12 @@ fn run_turn_using(
             prompt
         } else if let Some(pilot) = &settings.pilot {
             let files = gespan_core::pilot::load_files(&pilot.root, &pilot.pilot)?;
+            // First: a fresh conversation can reach the tools differently.
+            let rotated = provider_id.is_some() && context.ratio().is_some_and(|r| r >= 0.8);
+            if rotated {
+                provider_id = None;
+                locked(&store)?.reset_provider_id(summary.id)?;
+            }
             let access = gespan_core::pilot::AppAccess::for_provider(
                 kind,
                 provider_id.as_deref(),
@@ -499,11 +505,6 @@ fn run_turn_using(
             let added = gespan_core::pilot::context(&pilot.pilot, &files, &access);
             let fingerprint = gespan_core::pilot::files::content_hash(&added);
             pilot_fingerprint = Some(fingerprint.clone());
-            let rotated = provider_id.is_some() && context.ratio().is_some_and(|r| r >= 0.8);
-            if rotated {
-                provider_id = None;
-                locked(&store)?.reset_provider_id(summary.id)?;
-            }
             let receipt = locked(&store)?.setting(&format!("pilot-context:{}", summary.id))?;
             let expected =
                 serde_json::json!({"provider":provider_id,"hash":fingerprint}).to_string();
@@ -739,30 +740,28 @@ fn run_turn_using(
                 toolkits.insert(toolkit.to_owned());
             }
         }
-        if !toolkits.is_empty() {
-            gespan_core::tool_servers::sync_servers();
-            let catalog = data_dir
+        let mut mount = gespan_core::tool_servers::Mount {
+            session: summary.id,
+            worktree: settings
+                .worktree_cwd
                 .as_deref()
-                .and_then(|dir| gespan_core::mcp_catalog::Catalog::load(dir).ok())
-                .unwrap_or_default();
-            let exclusive = catalog.managed;
-            let mount = gespan_core::tool_servers::Mount {
-                servers: catalog.for_project(&summary.cwd),
-                exclusive,
-                codex_own: if exclusive && kind == Kind::Codex {
-                    gespan_core::mcp::codex_server_names(&summary.cwd)
-                } else {
-                    Vec::new()
-                },
-                session: summary.id,
-                worktree: settings
-                    .worktree_cwd
-                    .as_deref()
-                    .unwrap_or(&summary.cwd)
-                    .into(),
-                toolkits,
-            };
-            gespan_core::tool_servers::refresh(&mount);
+                .unwrap_or(&summary.cwd)
+                .into(),
+            toolkits,
+            ..Default::default()
+        };
+        if !mount.toolkits.is_empty() {
+            gespan_core::tool_servers::sync_servers();
+            (mount.servers, mount.exclusive) =
+                gespan_core::tool_servers::catalog_reach(data_dir.as_deref(), &summary.cwd);
+            if mount.exclusive && kind == Kind::Codex {
+                mount.codex_own = gespan_core::mcp::codex_server_names(&summary.cwd);
+            }
+        }
+        // Even with none: a process kept from an earlier turn loses what that
+        // turn could reach.
+        gespan_core::tool_servers::refresh(&mount);
+        if !mount.toolkits.is_empty() {
             if gespan_core::tool_servers::delivery(kind, provider_id.as_deref())
                 == gespan_core::tool_servers::Delivery::Environment
             {

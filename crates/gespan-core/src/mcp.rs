@@ -372,18 +372,55 @@ pub struct Importable {
     pub url: Option<String>,
 }
 
-fn strings(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::to_owned))
-        .collect()
+/// A list of strings, or nothing if any element isn't one: a command with a
+/// word missing is a different command.
+fn strings(value: &Value) -> Option<Vec<String>> {
+    match value {
+        Value::Null => Some(Vec::new()),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_owned))
+            .collect(),
+        _ => None,
+    }
+}
+
+/// An environment value with its references filled in: OpenCode's `{env:NAME}`
+/// and the `${NAME}` and `${NAME:-default}` of Claude and Cursor. `None` if one
+/// names a variable that isn't set, since the reference itself is no secret
+/// and no server could use it.
+fn resolved(value: &str, lookup: &impl Fn(&str) -> Option<String>) -> Option<String> {
+    static REFERENCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}",
+        )
+        .unwrap()
+    });
+    let mut text = String::new();
+    let mut end = 0;
+    for reference in REFERENCE.captures_iter(value) {
+        let whole = reference.get(0)?;
+        let name = reference.get(1).or_else(|| reference.get(2))?.as_str();
+        let found = lookup(name).or_else(|| Some(reference.get(3)?.as_str().to_owned()))?;
+        text.push_str(&value[end..whole.start()]);
+        text.push_str(&found);
+        end = whole.end();
+    }
+    text.push_str(&value[end..]);
+    Some(text)
 }
 
 /// Reads one agent's entry. Claude, Codex and Cursor name `command`, `args` and
 /// `env`; OpenCode puts the whole command in an array, and `environment`.
+/// An entry that couldn't run as written is left out.
 fn importable(connection: McpConnection) -> Option<Importable> {
+    importable_with(connection, &|name| std::env::var(name).ok())
+}
+
+fn importable_with(
+    connection: McpConnection,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Option<Importable> {
     let config = &connection.config;
     let env = config
         .get("env")
@@ -391,18 +428,28 @@ fn importable(connection: McpConnection) -> Option<Importable> {
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
-        .collect();
+        .filter_map(|(key, value)| Some((key, value.as_str()?)))
+        .map(|(key, value)| {
+            let value = resolved(value, lookup);
+            if value.is_none() {
+                tracing::warn!(server = %connection.name, %key, "an MCP server's environment names a variable that isn't set");
+            }
+            Some((key.clone(), value?))
+        })
+        .collect::<Option<_>>()?;
     let url = config.get("url").and_then(Value::as_str).map(str::to_owned);
     let (command, args) = match config.get("command") {
-        Some(Value::String(command)) => (command.clone(), strings(&config["args"])),
+        Some(Value::String(command)) => (command.clone(), strings(&config["args"])?),
         Some(list @ Value::Array(_)) => {
-            let mut parts = strings(list).into_iter();
+            let mut parts = strings(list)?.into_iter();
             (parts.next()?, parts.collect())
         }
         _ if url.is_some() => (String::new(), Vec::new()),
         _ => return None,
     };
+    if command.trim().is_empty() && url.is_none() {
+        return None;
+    }
     Some(Importable {
         provider: connection.provider,
         scope: connection.scope,
@@ -755,6 +802,89 @@ pub fn claude_health(cwd: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    fn connection(config: serde_json::Value) -> super::McpConnection {
+        super::McpConnection {
+            provider: "claude".into(),
+            name: "docs".into(),
+            scope: "user".into(),
+            config_path: String::new(),
+            transport: String::new(),
+            enabled: true,
+            config,
+        }
+    }
+
+    fn import(config: serde_json::Value) -> Option<super::Importable> {
+        super::importable_with(connection(config), &|name| {
+            (name == "SET").then(|| "the-value".to_owned())
+        })
+    }
+
+    #[test]
+    fn each_agents_command_form_imports_the_same_way() {
+        let split = import(serde_json::json!({"command":"npx","args":["-y","docs"]})).unwrap();
+        let whole = import(serde_json::json!({"command":["npx","-y","docs"]})).unwrap();
+        for server in [split, whole] {
+            assert_eq!(server.command, "npx");
+            assert_eq!(server.args, ["-y", "docs"]);
+        }
+        let bare = import(serde_json::json!({"command":"docs-server"})).unwrap();
+        assert!(bare.args.is_empty());
+        let remote = import(serde_json::json!({"url":"https://docs.example/mcp"})).unwrap();
+        assert_eq!(remote.command, "");
+        assert_eq!(remote.url.as_deref(), Some("https://docs.example/mcp"));
+    }
+
+    #[test]
+    fn a_command_that_could_not_run_as_written_is_left_out() {
+        for config in [
+            serde_json::json!({"command":["npx", 5, "docs"]}),
+            serde_json::json!({"command":[]}),
+            serde_json::json!({"command":"  "}),
+            serde_json::json!({"command":"npx","args":["-y", 5]}),
+            serde_json::json!({"command":"npx","args":"-y"}),
+            serde_json::json!({"command":5}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(import(config.clone()), None, "{config}");
+        }
+    }
+
+    #[test]
+    fn environment_values_arrive_with_their_references_filled_in() {
+        let server = import(serde_json::json!({"command":"npx","env":{
+            "PLAIN":"value",
+            "OPENCODE":"{env:SET}",
+            "CLAUDE":"${SET}",
+            "INSIDE":"Bearer ${SET}!",
+            "DEFAULTED":"${UNSET:-fallback}",
+            "SET_OVER_DEFAULT":"${SET:-fallback}",
+        }}))
+        .unwrap();
+        let value = |name: &str| server.env[name].as_str();
+        assert_eq!(value("PLAIN"), "value");
+        assert_eq!(value("OPENCODE"), "the-value");
+        assert_eq!(value("CLAUDE"), "the-value");
+        assert_eq!(value("INSIDE"), "Bearer the-value!");
+        assert_eq!(value("DEFAULTED"), "fallback");
+        assert_eq!(value("SET_OVER_DEFAULT"), "the-value");
+    }
+
+    #[test]
+    fn opencodes_environment_key_is_read_too() {
+        let server =
+            import(serde_json::json!({"command":["x"],"environment":{"KEY":"value"}})).unwrap();
+        assert_eq!(server.env["KEY"], "value");
+    }
+
+    #[test]
+    fn a_reference_to_nothing_never_becomes_a_secret() {
+        for value in ["{env:UNSET}", "${UNSET}", "a {env:SET} and {env:UNSET}"] {
+            let config = serde_json::json!({"command":"npx","env":{"KEY":value}});
+            assert_eq!(import(config), None, "{value}");
+        }
+    }
+
     use super::*;
 
     /// The real entry point, in a child so its HOME and CLI paths are its own.

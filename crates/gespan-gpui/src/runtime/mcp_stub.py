@@ -29,9 +29,14 @@ class Hub:
                 if line.startswith('data:') and line[5:].strip().startswith('{'):
                     reply = json.loads(line[5:])
                     if reply.get('id') == self.next_id:
-                        return reply['result']
+                        return self.unwrap(reply)
                 elif line.startswith('{'):
-                    return json.loads(line)['result']
+                    return self.unwrap(json.loads(line))
+        raise RuntimeError(f'no reply to {method}')
+    def unwrap(self, reply):
+        if 'error' in reply:
+            raise RuntimeError(reply['error']['message'])
+        return reply['result']
     def tools(self):
         return self.request('tools/list')['tools']
     def call(self, name, arguments):

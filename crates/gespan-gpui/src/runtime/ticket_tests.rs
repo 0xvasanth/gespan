@@ -39,19 +39,22 @@ def bridge(key, tool):
     if kind == 'set_status':
         return hub.call('ticket_status', {**arguments, 'target': tool['target'], 'fields': tool.get('fields', {})})
     return hub.call(kind, {name: value for name, value in tool.items() if name != 'tool'})
-record = {'argv': sys.argv[1:], 'environ': dict(os.environ), 'mounted': False}
+record = {'argv': sys.argv[1:], 'mounted': False, 'tools': []}
 for line in sys.stdin:
     value = json.loads(line)
     if value.get('id') == 1:
         send({'id': 1, 'result': {}})
     elif value.get('id') == 2:
         server = value['params'].get('config', {}).get('mcp_servers', {}).get('gespan')
-        record['authorization'] = server and server['http_headers']['Authorization']
+        secret = server and server['http_headers']['Authorization'].split(' ', 1)[1]
+        record['tokenGiven'] = bool(secret)
+        record['tokenLeaked'] = bool(secret) and any(secret in text for text in [*sys.argv, *os.environ.values()])
         hub = server and Hub(server)
         send({'id': 2, 'result': {'thread': {'id': 'native-ticket-test'}}})
     elif value.get('id') == 3:
         record['prompt'] = value['params']['input'][0]['text']
-        record['mounted'] = bool(hub) and any(tool['name'].startswith(('ticket_', 'card_')) for tool in hub.tools())
+        record['tools'] = [tool['name'] for tool in hub.tools()] if hub else []
+        record['mounted'] = any(name.startswith(('ticket_', 'card_')) for name in record['tools'])
         if record['mounted']:
             record['scope'] = scope()
             if 'MOCK_PAUSE' in os.environ:
@@ -230,19 +233,41 @@ fn only_a_provider_without_tool_servers_is_pointed_at_the_cli() {
 }
 
 #[test]
+fn app_and_control_tools_follow_their_markers_and_who_may_use_them() {
+    use gespan_core::pilot::bridge::{APP_MARKER, CONTROL_MARKER};
+    let tools = |marker: Option<&str>, operator: bool| {
+        let mut settings = Settings {
+            operator_enabled: operator,
+            ..Default::default()
+        };
+        if let Some(marker) = marker {
+            settings.environment.insert(marker.into(), "1".into());
+        }
+        let (record, _, status) = run(None, settings);
+        assert_eq!(status, "Ready");
+        let tools = record["tools"].as_array().unwrap().clone();
+        let has = |name: &str| tools.iter().any(|tool| tool == name);
+        (has("app_call"), has("control_call"))
+    };
+    assert_eq!(tools(None, true), (false, false), "no marker, no tools");
+    assert_eq!(
+        tools(Some(APP_MARKER), false),
+        (false, false),
+        "every session holds this marker; only some may use it"
+    );
+    assert_eq!(tools(Some(APP_MARKER), true), (true, false));
+    assert_eq!(tools(Some(CONTROL_MARKER), false), (false, true));
+}
+
+#[test]
 fn a_linked_session_mounts_ticket_tools_and_answers_calls() {
     let (record, ticket_changed, status) = run(linked(), Settings::default());
     assert_eq!(status, "Ready");
     assert_eq!(record["mounted"], true);
     // A command the agent runs inherits its environment, so the credential
     // must not be there, nor in the arguments anything on the machine can read.
-    let token = record["authorization"]
-        .as_str()
-        .unwrap()
-        .strip_prefix("Bearer ")
-        .unwrap();
-    assert!(!record["environ"].to_string().contains(token));
-    assert!(!record["argv"].to_string().contains(token));
+    assert_eq!(record["tokenGiven"], true);
+    assert_eq!(record["tokenLeaked"], false);
     assert!(record["prompt"].as_str().unwrap().starts_with(
         "This session is linked to Linear ticket ENG-1. Use the gespan_ticket tools to read it, comment on it, and change its status.\n\n"
     ));

@@ -1834,6 +1834,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ureq",
+ "url",
 ]
 
 [[package]]

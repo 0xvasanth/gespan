@@ -122,7 +122,8 @@ pub fn delete(tracker: Tracker, data_dir: &Path) -> Result<(), String> {
 
 fn named_entry(name: &str, data_dir: &Path) -> Result<keyring::Entry, String> {
     let resolved = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    keyring::Entry::new(SERVICE, &format!("{name}:{}", resolved.display()))
+    // A prefix of their own, so no name can land on a tracker's account.
+    keyring::Entry::new(SERVICE, &format!("named:{name}:{}", resolved.display()))
         .map_err(|_| "Could not open the keychain".to_owned())
 }
 

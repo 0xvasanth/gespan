@@ -336,7 +336,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "gespan-gpui [--cwd PATH] [--dev-data | --gespan-data | --gespan-db PATH]\nDevelopment builds use a separate database; release builds use the installed Gespan database.\n--dev-data opens an isolated development database using Gespan's existing schema.\n--gespan-data opens the existing desktop gespan.db directly.\n--gespan-db PATH opens a specific desktop database.\n--fixture, --chat-fixture and --visual-fixture add local samples to isolated development data only.\nvisual docs prints the native visual SDK reference.\nvisual check/show --input FILE validates or publishes native session visuals.\nvisual-mcp runs the session visual tool server over standard input/output.\n--check-data validates and lists the selected store read-only, then exits."
+                    "gespan-gpui [--cwd PATH] [--dev-data | --gespan-data | --gespan-db PATH]\nDevelopment builds use a separate database; release builds use the installed Gespan database.\n--dev-data opens an isolated development database using Gespan's existing schema.\n--gespan-data opens the existing desktop gespan.db directly.\n--gespan-db PATH opens a specific desktop database.\n--fixture, --chat-fixture and --visual-fixture add local samples to isolated development data only.\nvisual docs prints the native visual SDK reference.\nvisual check/show --input FILE validates or publishes native session visuals.\nmcp-relay serves a session's tools over standard input/output, for agents that can't reach them over HTTP.\n--check-data validates and lists the selected store read-only, then exits."
                 );
                 return;
             }

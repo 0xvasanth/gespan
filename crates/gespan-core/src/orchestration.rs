@@ -433,7 +433,7 @@ pub fn approved_prompt(request: &str, run: &run::Run) -> String {
         })
         .collect();
     format!(
-        "The user confirmed the orchestration card, including any edits. The app has already queued the exact assignments below; do not delegate duplicates. Supervise them through the control CLI, review their changes, request corrections when needed, and finish the original request.\n\nOriginal request:\n{request}\n\nApproved assignments:\n{}",
+        "The user confirmed the orchestration card, including any edits. The app has already queued the exact assignments below; do not delegate duplicates. Supervise them through the control actions, review their changes, request corrections when needed, and finish the original request.\n\nOriginal request:\n{request}\n\nApproved assignments:\n{}",
         serde_json::to_string(&tasks).unwrap_or_default()
     )
 }
@@ -487,6 +487,17 @@ pub fn worker_prompt(prompt: &str, files: &[String]) -> String {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_lead_is_told_the_way_in_it_actually_has() {
+        use crate::pilot::AppAccess;
+        let tools = super::lead_prompt(&AppAccess::Tools);
+        assert!(tools.contains("control_call") && tools.contains("control_help"));
+        assert!(!tools.contains("--help") && !tools.contains("environment"));
+        let cli = super::lead_prompt(&AppAccess::Cli("/bin/gespan".into()));
+        assert!(cli.contains("/bin/gespan control") && cli.contains("--help"));
+        assert!(!cli.contains("control_call"));
+    }
+
     use super::*;
 
     fn planned_reply() -> String {

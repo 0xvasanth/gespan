@@ -73,13 +73,33 @@ pub(crate) struct Inner {
     toolkits: RwLock<Vec<Arc<dyn Toolkit>>>,
     grants: Mutex<Grants>,
     peers: Mutex<HashMap<i64, Vec<Peer<RoleServer>>>>,
-    changes: broadcast::Sender<Option<i64>>,
+    changes: broadcast::Sender<(Option<i64>, Listing)>,
     runtime: tokio::runtime::Handle,
     pub(crate) pool: Arc<Pool>,
     /// The peer of each session's latest call, for messages about that call.
     callers: Mutex<HashMap<i64, Peer<RoleServer>>>,
     /// What each session asked to hear from server logs.
     levels: Mutex<HashMap<i64, u8>>,
+}
+
+/// The lists a client can be told to read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Listing {
+    Tools,
+    Prompts,
+    Resources,
+}
+
+impl Listing {
+    pub(crate) const ALL: [Self; 3] = [Self::Tools, Self::Prompts, Self::Resources];
+
+    fn of_method(method: &str) -> Self {
+        match method {
+            "notifications/prompts/list_changed" => Self::Prompts,
+            "notifications/resources/list_changed" => Self::Resources,
+            _ => Self::Tools,
+        }
+    }
 }
 
 fn relock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -153,24 +173,34 @@ impl Inner {
 
     /// A list of a server's changed: everyone who can see it reads it again.
     pub(crate) fn server_list_changed(&self, server: &str, method: &str) {
+        let listing = Listing::of_method(method);
         let holders = relock(&self.grants).holders(server);
         for session in holders {
-            let _ = self.changes.send(Some(session));
+            let _ = self.changes.send((Some(session), listing));
             for peer in self.peers_of(session) {
-                let method = method.to_owned();
-                self.runtime.spawn(async move {
-                    let _ = match method.as_str() {
-                        "notifications/prompts/list_changed" => {
-                            peer.notify_prompt_list_changed().await
-                        }
-                        "notifications/resources/list_changed" => {
-                            peer.notify_resource_list_changed().await
-                        }
-                        _ => peer.notify_tool_list_changed().await,
-                    };
-                });
+                self.tell(peer, listing);
             }
         }
+    }
+
+    fn tell(&self, peer: Peer<RoleServer>, listing: Listing) {
+        self.runtime.spawn(async move {
+            let _ = match listing {
+                Listing::Tools => peer.notify_tool_list_changed().await,
+                Listing::Prompts => peer.notify_prompt_list_changed().await,
+                Listing::Resources => peer.notify_resource_list_changed().await,
+            };
+        });
+    }
+
+    /// Ends idle credentials and whatever their sessions held, then stops
+    /// idle servers.
+    fn sweep(&self) {
+        let ended = relock(&self.grants).expire();
+        for session in ended {
+            self.pool.forget(session);
+        }
+        self.pool.sweep();
     }
 
     pub(crate) fn server_action(
@@ -203,9 +233,15 @@ impl Inner {
                 }
             }
             Action::Log { level, message } => {
+                // A log line says nothing of whose work it was about, so with
+                // several users it can't be sent to any of them.
+                let users = upstream.users();
+                if users.len() != 1 {
+                    return;
+                }
                 let rank = log_rank(&level);
                 let levels = relock(&self.levels).clone();
-                for session in upstream.users() {
+                for session in users {
                     // An agent that never set a level hears warnings and up.
                     if rank < levels.get(&session).copied().unwrap_or(log_rank("warning")) {
                         continue;
@@ -247,12 +283,14 @@ impl Inner {
         list.push(peer);
     }
 
-    pub(crate) fn changes(&self) -> broadcast::Receiver<Option<i64>> {
+    pub(crate) fn changes(&self) -> broadcast::Receiver<(Option<i64>, Listing)> {
         self.changes.subscribe()
     }
 
-    fn notify(&self, session: Option<i64>) {
-        let _ = self.changes.send(session);
+    fn notify(&self, session: Option<i64>, listings: &[Listing]) {
+        for listing in listings {
+            let _ = self.changes.send((session, *listing));
+        }
         let peers: Vec<_> = {
             let mut watched = relock(&self.peers);
             watched.retain(|_, list| {
@@ -266,9 +304,9 @@ impl Inner {
                 .collect()
         };
         for peer in peers {
-            self.runtime.spawn(async move {
-                let _ = peer.notify_tool_list_changed().await;
-            });
+            for listing in listings {
+                self.tell(peer.clone(), *listing);
+            }
         }
     }
 }
@@ -361,12 +399,13 @@ impl Hub {
         pool.attach(Arc::downgrade(&inner));
         let stop = CancellationToken::new();
         let sweeper = stop.clone();
+        let swept = inner.clone();
         runtime.spawn(async move {
             let mut ticks = tokio::time::interval(pool.sweep_interval());
             loop {
                 tokio::select! {
                     () = sweeper.cancelled() => return,
-                    _ = ticks.tick() => pool.sweep(),
+                    _ = ticks.tick() => swept.sweep(),
                 }
             }
         });
@@ -428,7 +467,7 @@ impl Hub {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(toolkit);
-        self.inner.notify(None);
+        self.inner.notify(None, &[Listing::Tools]);
     }
 
     /// A credential for a new agent process. Any earlier one for the session
@@ -452,6 +491,11 @@ impl Hub {
         relock(&self.inner.grants).has(session)
     }
 
+    /// Whether this token is still the one a session can use.
+    pub fn holds(&self, session: i64, token: &Token) -> bool {
+        relock(&self.inner.grants).holds(session, token)
+    }
+
     /// Changes what a session may reach and tells its agent, whose tool list
     /// then changes with no restart. Returns whether anything changed.
     pub fn update(
@@ -460,18 +504,28 @@ impl Hub {
         toolkits: BTreeSet<String>,
         servers: BTreeSet<String>,
     ) -> bool {
-        let updated = relock(&self.inner.grants).update(session, toolkits, servers);
-        if updated {
-            self.inner.notify(Some(session));
+        let (updated, before) = {
+            let mut grants = relock(&self.inner.grants);
+            let before = grants.servers_of(session);
+            (grants.update(session, toolkits, servers.clone()), before)
+        };
+        if !updated {
+            return false;
         }
-        updated
+        if before == servers {
+            self.inner.notify(Some(session), &[Listing::Tools]);
+        } else {
+            self.inner.pool.release(session, &(&before - &servers));
+            self.inner.notify(Some(session), &Listing::ALL);
+        }
+        true
     }
 
     /// Replaces the servers on offer and tells every agent. A process for
     /// anything that changed stops.
     pub fn set_servers(&self, servers: Vec<ServerSpec>) {
         self.inner.pool.set(servers);
-        self.inner.notify(None);
+        self.inner.notify(None, &Listing::ALL);
     }
 
     /// The server processes running now.
@@ -486,7 +540,7 @@ impl Hub {
 
     /// Tells a session's agent, or every agent, to read its tool list again.
     pub fn tools_changed(&self, session: Option<i64>) {
-        self.inner.notify(session);
+        self.inner.notify(session, &[Listing::Tools]);
     }
 }
 

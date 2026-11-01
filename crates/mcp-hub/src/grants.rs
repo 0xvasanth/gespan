@@ -190,17 +190,58 @@ impl Grants {
         true
     }
 
-    /// Sessions that may reach this server.
+    /// Sessions that may reach this server now.
     pub(crate) fn holders(&self, server: &str) -> Vec<i64> {
         self.live
             .values()
             .filter(|live| live.grant.servers.contains(server))
+            .filter(|live| live.used.elapsed() < self.idle)
             .map(|live| live.grant.session)
             .collect()
     }
 
+    /// The servers a live session may reach.
+    pub(crate) fn servers_of(&self, session: i64) -> BTreeSet<String> {
+        self.sessions
+            .get(&session)
+            .and_then(|key| self.live.get(key))
+            .map(|live| live.grant.servers.clone())
+            .unwrap_or_default()
+    }
+
+    /// Ends every credential past its idle limit, whether or not anyone
+    /// presents it again, and returns their sessions.
+    pub(crate) fn expire(&mut self) -> Vec<i64> {
+        let idle: Vec<_> = self
+            .live
+            .values()
+            .filter(|live| live.used.elapsed() >= self.idle)
+            .map(|live| live.grant.session)
+            .collect();
+        for session in &idle {
+            self.revoke(*session, Refusal::Expired);
+        }
+        idle
+    }
+
+    /// Whether a session could use its credential right now.
     pub(crate) fn has(&self, session: i64) -> bool {
-        self.sessions.contains_key(&session)
+        self.sessions
+            .get(&session)
+            .is_some_and(|key| self.usable(key))
+    }
+
+    /// Whether this token is the one a session can use right now. A token
+    /// replaced by a newer mint isn't.
+    pub(crate) fn holds(&self, session: i64, token: &Token) -> bool {
+        let key = hash(token.secret());
+        self.sessions.get(&session) == Some(&key) && self.usable(&key)
+    }
+
+    fn usable(&self, key: &[u8; 32]) -> bool {
+        self.live
+            .get(key)
+            .is_some_and(|live| live.used.elapsed() < self.idle)
     }
 }
 
@@ -250,6 +291,42 @@ mod tests {
         assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
         assert!(!grants.has(2));
         assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
+    }
+
+    #[test]
+    fn a_session_past_its_idle_limit_no_longer_counts_as_holding_one() {
+        let mut grants = Grants::new(Duration::ZERO);
+        let token = grants.mint(grant(1));
+        assert!(!grants.has(1), "before any request has seen the expiry");
+        assert!(!grants.holds(1, &token));
+    }
+
+    #[test]
+    fn expiry_ends_idle_credentials_nobody_presents_again() {
+        let mut grants = Grants::new(Duration::ZERO);
+        let token = grants.mint(grant(1));
+        let mut reach = grant(2);
+        reach.servers.insert("docs".to_owned());
+        grants.mint(reach);
+        assert!(grants.holders("docs").is_empty(), "past its limit already");
+        assert_eq!(grants.expire().len(), 2);
+        assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
+        assert!(grants.expire().is_empty());
+    }
+
+    #[test]
+    fn only_the_latest_token_of_a_session_is_held() {
+        let mut grants = Grants::new(Duration::from_secs(60));
+        let old = grants.mint(grant(1));
+        assert!(grants.holds(1, &old));
+        let new = grants.mint(grant(1));
+        assert!(grants.has(1));
+        assert!(
+            !grants.holds(1, &old),
+            "the session lives on, this token doesn't"
+        );
+        assert!(grants.holds(1, &new));
+        assert!(!grants.holds(2, &new), "a token belongs to one session");
     }
 
     #[test]
