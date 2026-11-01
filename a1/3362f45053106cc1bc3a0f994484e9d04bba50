@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/worktree_setups.rs
+  s_765ddcec531e1c::t_1f685bd6b0de90 230,342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a13362f45053106cc1bc3a0f994484e9d04bba50",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
