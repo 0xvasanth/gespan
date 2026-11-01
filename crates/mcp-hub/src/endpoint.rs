@@ -3,8 +3,12 @@
 //! rebinding; the bearer token then names the session.
 use crate::{
     grants::{Grants, Refusal},
+    pool::Pool,
+    router::{log_rank, Action},
     session::Session,
-    Grant, Token, Toolkit,
+    upstream::Upstream,
+    Grant, NoObserver, Observer, Running, ServerError, ServerSpec, Spawned, Spawner, Token,
+    Toolkit,
 };
 use axum::{
     body::Body,
@@ -40,6 +44,13 @@ pub struct Config {
     /// How long a credential lasts with no use. A running turn holds it open
     /// with [`Hub::touch`].
     pub idle: Duration,
+    /// How long a server process waits with nothing to do before it stops.
+    pub server_idle: Duration,
+    /// The most server processes at once. Idle ones stop first.
+    pub max_servers: usize,
+    /// Starts server processes. Without one, the hub serves toolkits alone.
+    pub spawner: Option<Arc<dyn Spawner>>,
+    pub observer: Arc<dyn Observer>,
 }
 
 impl Config {
@@ -48,6 +59,10 @@ impl Config {
             name: name.into(),
             version: version.into(),
             idle: Duration::from_secs(60 * 60),
+            server_idle: Duration::from_secs(5 * 60),
+            max_servers: 20,
+            spawner: None,
+            observer: Arc::new(NoObserver),
         }
     }
 }
@@ -60,6 +75,11 @@ pub(crate) struct Inner {
     peers: Mutex<HashMap<i64, Vec<Peer<RoleServer>>>>,
     changes: broadcast::Sender<Option<i64>>,
     runtime: tokio::runtime::Handle,
+    pub(crate) pool: Arc<Pool>,
+    /// The peer of each session's latest call, for messages about that call.
+    callers: Mutex<HashMap<i64, Peer<RoleServer>>>,
+    /// What each session asked to hear from server logs.
+    levels: Mutex<HashMap<i64, u8>>,
 }
 
 fn relock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -106,6 +126,120 @@ impl Inner {
         toolkit.call(grant, tool, arguments)
     }
 
+    pub(crate) fn calling(&self, session: i64, peer: Peer<RoleServer>) {
+        relock(&self.callers).insert(session, peer);
+    }
+
+    pub(crate) fn set_level(&self, session: i64, level: &str) {
+        relock(&self.levels).insert(session, log_rank(level));
+    }
+
+    fn peers_of(&self, session: i64) -> Vec<Peer<RoleServer>> {
+        let mut peers = relock(&self.peers)
+            .get(&session)
+            .cloned()
+            .unwrap_or_default();
+        peers.retain(|peer| !peer.is_transport_closed());
+        peers
+    }
+
+    fn peer_of(&self, session: i64) -> Option<Peer<RoleServer>> {
+        relock(&self.callers)
+            .get(&session)
+            .filter(|peer| !peer.is_transport_closed())
+            .cloned()
+            .or_else(|| self.peers_of(session).pop())
+    }
+
+    /// A list of a server's changed: everyone who can see it reads it again.
+    pub(crate) fn server_list_changed(&self, server: &str, method: &str) {
+        let holders = relock(&self.grants).holders(server);
+        for session in holders {
+            let _ = self.changes.send(Some(session));
+            for peer in self.peers_of(session) {
+                let method = method.to_owned();
+                self.runtime.spawn(async move {
+                    let _ = match method.as_str() {
+                        "notifications/prompts/list_changed" => {
+                            peer.notify_prompt_list_changed().await
+                        }
+                        "notifications/resources/list_changed" => {
+                            peer.notify_resource_list_changed().await
+                        }
+                        _ => peer.notify_tool_list_changed().await,
+                    };
+                });
+            }
+        }
+    }
+
+    pub(crate) fn server_action(
+        self: &Arc<Self>,
+        server: &str,
+        upstream: &Arc<Upstream>,
+        action: Action,
+    ) {
+        match action {
+            Action::Notify { caller, message } => {
+                let Some(peer) = self.peer_of(caller) else {
+                    return;
+                };
+                let params = serde_json::from_value(message["params"].clone());
+                self.runtime.spawn(async move {
+                    if let Ok(params) = params {
+                        let _ = peer.notify_progress(params).await;
+                    }
+                });
+            }
+            Action::ResourceUpdated { callers, message } => {
+                let uri = message["params"]["uri"].as_str().unwrap_or("");
+                let uri = crate::pool::resource_uri(server, uri);
+                for peer in callers.iter().flat_map(|caller| self.peers_of(*caller)) {
+                    let uri = uri.clone();
+                    self.runtime.spawn(async move {
+                        let params = rmcp::model::ResourceUpdatedNotificationParam::new(uri);
+                        let _ = peer.notify_resource_updated(params).await;
+                    });
+                }
+            }
+            Action::Log { level, message } => {
+                let rank = log_rank(&level);
+                let levels = relock(&self.levels).clone();
+                for session in upstream.users() {
+                    // An agent that never set a level hears warnings and up.
+                    if rank < levels.get(&session).copied().unwrap_or(log_rank("warning")) {
+                        continue;
+                    }
+                    for peer in self.peers_of(session) {
+                        let params = serde_json::from_value(message["params"].clone());
+                        self.runtime.spawn(async move {
+                            if let Ok(params) = params {
+                                let _ = peer.notify_logging_message(params).await;
+                            }
+                        });
+                    }
+                }
+            }
+            Action::Ask {
+                caller,
+                upstream_id,
+                method,
+                params,
+            } => {
+                let peer = self.peer_of(caller);
+                let upstream = upstream.clone();
+                self.runtime.spawn(async move {
+                    let outcome = match peer {
+                        Some(peer) => ask(&peer, &method, params).await,
+                        None => Err("The agent that made this call has gone".to_owned()),
+                    };
+                    upstream.respond(upstream_id, outcome);
+                });
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn watch(&self, session: i64, peer: Peer<RoleServer>) {
         let mut peers = relock(&self.peers);
         let list = peers.entry(session).or_default();
@@ -139,6 +273,41 @@ impl Inner {
     }
 }
 
+/// Passes a server's question to the agent it belongs to.
+async fn ask(peer: &Peer<RoleServer>, method: &str, params: Value) -> Result<Value, String> {
+    fn encode<T: serde::Serialize>(value: T) -> Result<Value, String> {
+        serde_json::to_value(value).map_err(|e| e.to_string())
+    }
+    match method {
+        "sampling/createMessage" => {
+            let params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            encode(
+                peer.create_message(params)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        "elicitation/create" => {
+            let params = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            encode(
+                peer.create_elicitation(params)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        "roots/list" => encode(peer.list_roots().await.map_err(|e| e.to_string())?),
+        _ => Err(format!("{method} isn't available here")),
+    }
+}
+
+/// Used when the host gave no spawner: nothing can be offered, so nothing runs.
+struct NoSpawner;
+impl Spawner for NoSpawner {
+    fn spawn(&self, _: &ServerSpec, _: Option<&std::path::Path>) -> std::io::Result<Spawned> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
 /// The running endpoint. Dropping it stops the listener, and with it every
 /// request in flight: agents see a failed call, not a hang.
 pub struct Hub {
@@ -150,6 +319,7 @@ pub struct Hub {
 impl Drop for Hub {
     fn drop(&mut self) {
         self.stop.cancel();
+        self.inner.pool.shutdown();
     }
 }
 
@@ -170,6 +340,12 @@ impl Hub {
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
+        let pool = Arc::new(Pool::new(
+            config.spawner.unwrap_or_else(|| Arc::new(NoSpawner)),
+            config.observer,
+            config.server_idle,
+            config.max_servers,
+        ));
         let inner = Arc::new(Inner {
             name: config.name,
             version: config.version,
@@ -178,8 +354,22 @@ impl Hub {
             peers: Mutex::default(),
             changes: broadcast::channel(64).0,
             runtime: runtime.handle().clone(),
+            pool: pool.clone(),
+            callers: Mutex::default(),
+            levels: Mutex::default(),
         });
+        pool.attach(Arc::downgrade(&inner));
         let stop = CancellationToken::new();
+        let sweeper = stop.clone();
+        runtime.spawn(async move {
+            let mut ticks = tokio::time::interval(pool.sweep_interval());
+            loop {
+                tokio::select! {
+                    () = sweeper.cancelled() => return,
+                    _ = ticks.tick() => pool.sweep(),
+                }
+            }
+        });
         let service = {
             let inner = inner.clone();
             StreamableHttpService::new(
@@ -250,6 +440,7 @@ impl Hub {
     /// Ends a session's access, for an archived, deleted or moved session.
     pub fn revoke(&self, session: i64) {
         relock(&self.inner.grants).revoke(session, Refusal::Ended);
+        self.inner.pool.forget(session);
     }
 
     /// Keeps a session's credential alive while its turn runs.
@@ -263,12 +454,34 @@ impl Hub {
 
     /// Changes what a session may reach and tells its agent, whose tool list
     /// then changes with no restart. Returns whether anything changed.
-    pub fn update(&self, session: i64, toolkits: BTreeSet<String>) -> bool {
-        let updated = relock(&self.inner.grants).update(session, toolkits);
+    pub fn update(
+        &self,
+        session: i64,
+        toolkits: BTreeSet<String>,
+        servers: BTreeSet<String>,
+    ) -> bool {
+        let updated = relock(&self.inner.grants).update(session, toolkits, servers);
         if updated {
             self.inner.notify(Some(session));
         }
         updated
+    }
+
+    /// Replaces the servers on offer and tells every agent. A process for
+    /// anything that changed stops.
+    pub fn set_servers(&self, servers: Vec<ServerSpec>) {
+        self.inner.pool.set(servers);
+        self.inner.notify(None);
+    }
+
+    /// The server processes running now.
+    pub fn running(&self) -> Vec<Running> {
+        self.inner.pool.snapshot()
+    }
+
+    /// Recent server failures, oldest first.
+    pub fn errors(&self) -> Vec<ServerError> {
+        self.inner.pool.errors()
     }
 
     /// Tells a session's agent, or every agent, to read its tool list again.

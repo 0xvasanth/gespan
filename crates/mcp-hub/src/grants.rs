@@ -18,6 +18,8 @@ pub struct Grant {
     /// The folder this session works in.
     pub workspace: PathBuf,
     pub toolkits: BTreeSet<String>,
+    /// Ids of the servers this session may reach.
+    pub servers: BTreeSet<String>,
 }
 
 impl Grant {
@@ -167,7 +169,12 @@ impl Grants {
     }
 
     /// Replaces what a live session may reach. Returns whether that changed it.
-    pub(crate) fn update(&mut self, session: i64, toolkits: BTreeSet<String>) -> bool {
+    pub(crate) fn update(
+        &mut self,
+        session: i64,
+        toolkits: BTreeSet<String>,
+        servers: BTreeSet<String>,
+    ) -> bool {
         let Some(live) = self
             .sessions
             .get(&session)
@@ -175,11 +182,21 @@ impl Grants {
         else {
             return false;
         };
-        if live.grant.toolkits == toolkits {
+        if live.grant.toolkits == toolkits && live.grant.servers == servers {
             return false;
         }
         live.grant.toolkits = toolkits;
+        live.grant.servers = servers;
         true
+    }
+
+    /// Sessions that may reach this server.
+    pub(crate) fn holders(&self, server: &str) -> Vec<i64> {
+        self.live
+            .values()
+            .filter(|live| live.grant.servers.contains(server))
+            .map(|live| live.grant.session)
+            .collect()
     }
 
     pub(crate) fn has(&self, session: i64) -> bool {
@@ -196,6 +213,7 @@ mod tests {
             session,
             workspace: "/work".into(),
             toolkits: BTreeSet::from(["visual".to_owned()]),
+            servers: BTreeSet::new(),
         }
     }
 
@@ -251,14 +269,17 @@ mod tests {
     fn a_grant_is_read_fresh_after_an_update() {
         let mut grants = Grants::new(Duration::from_secs(60));
         let token = grants.mint(grant(1));
-        assert!(grants.update(1, BTreeSet::from(["ticket".to_owned()])));
+        let ticket = BTreeSet::from(["ticket".to_owned()]);
+        assert!(grants.update(1, ticket.clone(), BTreeSet::new()));
         let current = grants.admit(token.secret()).unwrap();
         assert!(current.allows("ticket") && !current.allows("visual"));
-        assert!(!grants.update(9, BTreeSet::new()));
+        assert!(!grants.update(9, BTreeSet::new(), BTreeSet::new()));
         assert!(
-            !grants.update(1, BTreeSet::from(["ticket".to_owned()])),
+            !grants.update(1, ticket.clone(), BTreeSet::new()),
             "no change, nothing to announce"
         );
+        assert!(grants.update(1, ticket, BTreeSet::from(["docs".to_owned()])));
+        assert_eq!(grants.holders("docs"), [1]);
     }
 
     #[test]
