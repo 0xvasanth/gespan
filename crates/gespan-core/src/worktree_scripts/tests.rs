@@ -108,8 +108,11 @@ fn a_failure_with_nobody_to_ask_stops_and_keeps_the_worktree() {
     let error = create_named_worktree(dir.path(), "unasked").unwrap_err();
     assert!(error.contains("code 3"), "{error}");
     let root = leftovers(dir.path());
-    // Git spells Windows paths with `/`, so only the folder's name is compared.
-    assert!(error.contains("unasked"), "{error}");
+    // Git spells Windows paths with `/`, and a temp folder can have two names,
+    // so this compares the parts that stay the same.
+    let parent = root.file_name().unwrap().to_string_lossy();
+    let expected = format!("{parent}/unasked");
+    assert!(error.replace('\\', "/").contains(&expected), "{error}");
     assert!(root.join("unasked").is_dir());
     assert_eq!(
         record(&root.join("unasked")).unwrap().outcome,
