@@ -85,7 +85,7 @@ impl SettingsView {
         });
         cx.spawn(async move |this, cx| {
             if let Ok(address) = opening.recv().await {
-                let _ = cx.update(|cx| cx.open_url(&address));
+                cx.update(|cx| cx.open_url(&address));
             }
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
