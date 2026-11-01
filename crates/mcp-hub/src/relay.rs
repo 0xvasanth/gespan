@@ -133,6 +133,7 @@ impl Link {
 
     /// One message out, and everything the hub answers it with, until the
     /// reply to its own id. Notifications have no reply to wait for.
+    #[allow(clippy::result_large_err)] // ureq's error is the one it returns.
     fn exchange(&self, message: &Value, deliver: &mut dyn FnMut(Value)) -> Result<(), String> {
         let body = message.to_string();
         let send = || {
