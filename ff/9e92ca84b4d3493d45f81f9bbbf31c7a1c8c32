@@ -1,0 +1,21 @@
+.github/probe/lock_probe.rs
+  s_0700328c6412ff::t_a011fd255a9f35 1-140
+.github/workflows/lock-probe.yml
+  s_0700328c6412ff::t_a8fb27a74193c5 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff9e92ca84b4d3493d45f81f9bbbf31c7a1c8c32",
+  "prompts": {},
+  "sessions": {
+    "s_0700328c6412ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "938c53c6-4bc4-4dd7-8c3d-e83cd5659202",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
