@@ -1,0 +1,21 @@
+docs/diagnostics/bundle-format.md
+  s_2083bf29c8591a::t_8df68d6481afb3 5
+docs/privacy.md
+  s_2083bf29c8591a::t_5f0a3a2ba6af1f 72-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "197bbc733050ca6b5de8ed02f7d78dfc6b515c80",
+  "prompts": {},
+  "sessions": {
+    "s_2083bf29c8591a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72867040-b522-4931-ac63-1c31bf08d3b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
