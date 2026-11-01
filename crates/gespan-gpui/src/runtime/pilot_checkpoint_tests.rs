@@ -57,9 +57,14 @@ for line in sys.stdin:
     binary
 }
 
+/// The checkpoint store is global, and each test's database starts its session
+/// ids again, so only one of these turns may run at a time.
+static TURNS: Mutex<()> = Mutex::new(());
+
 /// Runs one Pilot turn from `chat`, editing `project`, and returns the files
 /// its session recorded.
 fn pilot_turn(fixture: &Path, chat: &Path, project: &Path) -> Vec<String> {
+    let _turn = TURNS.lock().unwrap();
     let binary = mock_provider(fixture, &project.join("made.txt"));
     let store = Store::open_gespan(&fixture.join("sessions.db")).unwrap();
     let cwd = chat.to_str().unwrap().to_owned();
