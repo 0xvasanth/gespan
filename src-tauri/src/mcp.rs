@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gespan_mcp_config::{strip_jsonc, write_json_config, write_json_server};
+use gespan_mcp_config::{claude_project_key, strip_jsonc, write_json_config, write_json_server};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
@@ -407,7 +407,7 @@ fn discover(
             &claude,
             config
                 .get("projects")
-                .and_then(|projects| projects.get(project.to_string_lossy().as_ref()))
+                .and_then(|projects| projects.get(claude_project_key(project)))
                 .and_then(|entry| entry.get("mcpServers")),
         );
     }
@@ -1177,5 +1177,106 @@ mod tests {
         assert!(found.iter().all(|server| server.scope == "user"));
         assert!(found.iter().any(|server| server.name == "servers"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn git(directory: &Path, arguments: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=Gespan", "-c", "user.email=test@gespan.dev"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(arguments)
+            .current_dir(directory)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// A repository and its linked worktree, each with a subdirectory.
+    fn repository_with_worktree(root: &Path) -> (PathBuf, PathBuf) {
+        let repository = root.join("repository");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(repository.join("docs")).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        git(
+            &repository,
+            &["commit", "--quiet", "--allow-empty", "-m", "Start"],
+        );
+        let target = worktree.to_string_lossy();
+        git(&repository, &["worktree", "add", "--quiet", &target]);
+        std::fs::create_dir_all(worktree.join("src/app")).unwrap();
+        (repository, worktree)
+    }
+
+    fn local_claude_servers(home: &Path, project: &Path) -> Vec<String> {
+        discover(home, project, None, &home.join("desktop.json"), None)
+            .into_iter()
+            .filter(|server| server.provider == "claude" && server.scope == "local")
+            .map(|server| server.name)
+            .collect()
+    }
+
+    #[test]
+    fn local_claude_server_is_listed_from_every_checkout_of_a_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let (repository, worktree) = repository_with_worktree(root.path());
+        let key = claude_project_key(&repository);
+        // Claude never reads a worktree's own entry, so neither should Gespan.
+        let unread = worktree.to_string_lossy();
+        std::fs::write(
+            home.join(".claude.json"),
+            serde_json::json!({"projects":{
+                &key:{"mcpServers":{"shared":{"command":"node"}}},
+                unread.as_ref():{"mcpServers":{
+                    "shared":{"command":"node"},
+                    "unread":{"command":"node"},
+                }},
+            }})
+            .to_string(),
+        )
+        .unwrap();
+
+        for project in [
+            repository.clone(),
+            repository.join("docs"),
+            worktree.clone(),
+            worktree.join("src/app"),
+        ] {
+            assert_eq!(
+                local_claude_servers(&home, &project),
+                ["shared"],
+                "listed from {}",
+                project.display()
+            );
+        }
+    }
+
+    #[test]
+    fn local_claude_server_outside_a_repository_stays_with_its_own_path() {
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let home = root.join("home");
+        let project = root.join("project");
+        let nested = project.join("nested");
+        let missing = root.join("missing");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        let key = claude_project_key(&project);
+        #[cfg(not(windows))]
+        assert_eq!(key, project.to_string_lossy());
+        let missing_key = claude_project_key(&missing);
+        std::fs::write(
+            home.join(".claude.json"),
+            serde_json::json!({"projects":{
+                &key:{"mcpServers":{"plain":{"command":"node"}}},
+                &missing_key:{"mcpServers":{"gone":{"command":"node"}}},
+            }})
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(local_claude_servers(&home, &project), ["plain"]);
+        assert!(local_claude_servers(&home, &nested).is_empty());
+        assert_eq!(local_claude_servers(&home, &missing), ["gone"]);
     }
 }

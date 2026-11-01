@@ -219,7 +219,7 @@ fn with_claude_lock<T>(
 
 /// Claude files a project's local servers under its main checkout, so every
 /// worktree and subdirectory of a repository shares one entry.
-fn claude_project_key(project: &Path) -> String {
+pub fn claude_project_key(project: &Path) -> String {
     let project = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
     let root = main_checkout(&project).unwrap_or(project);
     let key = root.to_string_lossy();
