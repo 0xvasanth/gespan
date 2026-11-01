@@ -182,6 +182,53 @@ fn check_proxied(folder: &Path, marker: &Path, seen: &Turn) {
     );
 }
 
+/// A real `app_call` reaching a stand-in for the app, as this session.
+fn pilot_tools_reach_the_app(kind: Kind, binary: &str, session: i64, model: Option<&str>) {
+    let folder = tempfile::tempdir().unwrap();
+    let (dispatcher, calls) = gespan_core::pilot::bridge::Server::start().unwrap();
+    let _route = dispatcher.environment(session);
+    let answering = std::thread::spawn(move || {
+        let call = calls.recv_blocking().unwrap();
+        let seen = (call.session, call.action.clone());
+        call.reply
+            .send(Ok(serde_json::json!({"notes":[{"title":"MANGO"}]})))
+            .unwrap();
+        seen
+    });
+    let seen = turn(
+        kind,
+        &installed(binary),
+        folder.path(),
+        model,
+        None,
+        mount(session, folder.path(), &[APP]),
+        "Call the app_call tool with action notes.list and input {}, then reply with only the title it returned.",
+    );
+    assert_eq!(
+        answering.join().unwrap(),
+        (session, "notes.list".to_owned())
+    );
+    assert!(seen.text.contains("MANGO"), "{}", seen.text);
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn claude_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Claude, "claude", 900_011, Some("claude-haiku-5-5"));
+}
+
+#[test]
+#[ignore = "a real, billed Codex turn"]
+fn codex_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Codex, "codex", 900_012, None);
+}
+
+#[test]
+#[ignore = "a real, billed Kiro turn"]
+fn kiro_reaches_the_pilot_tools() {
+    pilot_tools_reach_the_app(Kind::Kiro, "kiro-cli", 900_013, None);
+}
+
 const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP. Then reply with only the word DONE and the number that command printed.";
 
 fn check_reach(seen: &Turn) {
