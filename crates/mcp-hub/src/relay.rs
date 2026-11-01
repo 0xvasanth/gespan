@@ -354,6 +354,7 @@ mod tests {
             session: 1,
             workspace: "/work".into(),
             toolkits: ["echo".to_owned()].into(),
+            servers: Default::default(),
         });
         let connection = Connection {
             url: hub.url().to_owned(),

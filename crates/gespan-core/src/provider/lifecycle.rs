@@ -20,6 +20,12 @@ mod tool_tests {
     use crate::tool_servers::{Access, Mount, VISUAL};
 
     fn protocol(kind: Kind, session: i64, provider_id: Option<&str>) -> Protocol {
+        let mount = Mount {
+            session,
+            worktree: "/tmp".into(),
+            toolkits: [VISUAL.to_owned()].into(),
+            ..Default::default()
+        };
         let mut protocol = Protocol::new(Request {
             kind,
             binary: "unused".into(),
@@ -27,13 +33,12 @@ mod tool_tests {
             prompt: "Hello".into(),
             provider_id: provider_id.map(str::to_owned),
             model: None,
-            settings: Default::default(),
+            settings: crate::agent::Settings {
+                mount: Some(mount.clone()),
+                ..Default::default()
+            },
         });
-        protocol.access = Access::open(&Mount {
-            session,
-            worktree: "/tmp".into(),
-            toolkits: [VISUAL.to_owned()].into(),
-        });
+        protocol.access = Access::open(&mount);
         protocol
     }
 

@@ -869,6 +869,7 @@ mod tool_tests {
             session,
             worktree: "/work".into(),
             toolkits: [VISUAL.to_owned()].into(),
+            ..Default::default()
         }
     }
 

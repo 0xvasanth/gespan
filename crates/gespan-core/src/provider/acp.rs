@@ -1644,6 +1644,7 @@ mod tests {
             session,
             worktree: "/tmp".into(),
             toolkits: [VISUAL.to_owned()].into(),
+            ..Default::default()
         });
         let mut out = Vec::new();
         p.acp_start(&mut out).unwrap();

@@ -678,7 +678,8 @@ fn run_turn_using(
         let (may_change_status, cards) = source
             .as_ref()
             .map_or((false, false), |source| source.board_scope());
-        if let (Some(source), Some(data_dir), Some(executable)) = (source, data_dir, executable)
+        if let (Some(source), Some(data_dir), Some(executable)) =
+            (source, data_dir.clone(), executable)
             && (ticket.is_some() || cards)
         {
             let scope = gespan_core::ticket_bridge::Scope {
@@ -739,7 +740,7 @@ fn run_turn_using(
                 toolkits.insert(toolkit.to_owned());
             }
         }
-        let mount = gespan_core::tool_servers::Mount {
+        let mut mount = gespan_core::tool_servers::Mount {
             session: summary.id,
             worktree: settings
                 .worktree_cwd
@@ -747,7 +748,16 @@ fn run_turn_using(
                 .unwrap_or(&summary.cwd)
                 .into(),
             toolkits,
+            ..Default::default()
         };
+        if !mount.toolkits.is_empty() {
+            gespan_core::tool_servers::sync_servers();
+            (mount.servers, mount.exclusive) =
+                gespan_core::tool_servers::catalog_reach(data_dir.as_deref(), &summary.cwd);
+            if mount.exclusive && kind == Kind::Codex {
+                mount.codex_own = gespan_core::mcp::codex_server_names(&summary.cwd);
+            }
+        }
         // Even with none: a process kept from an earlier turn loses what that
         // turn could reach.
         gespan_core::tool_servers::refresh(&mount);

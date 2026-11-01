@@ -575,6 +575,7 @@ mod tests {
             session: 1,
             workspace: "/work".into(),
             toolkits: Default::default(),
+            servers: Default::default(),
         };
         let tool = super::Toolkit.call(&grant, "visual_docs", serde_json::json!({}));
         assert!(tool.unwrap().get("cli").is_none());
@@ -637,6 +638,7 @@ mod tests {
             session: 999_001,
             workspace: "/work".into(),
             toolkits: [crate::tool_servers::VISUAL.to_owned()].into(),
+            servers: Default::default(),
         }
     }
 

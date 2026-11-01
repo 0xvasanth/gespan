@@ -577,8 +577,10 @@ impl Protocol {
                             params["developerInstructions"] = "Answer the supplied text request directly. Do not call tools or inspect the workspace.".into();
                         }
                         // Over stdin, so the token reaches neither argv nor env.
-                        if let Some(access) = &self.access {
-                            params["config"] = access.codex_config();
+                        if let (Some(access), Some(mount)) =
+                            (&self.access, &self.request.settings.mount)
+                        {
+                            params["config"] = access.codex_config(mount);
                         }
                         if let Some(model) = &self.request.model {
                             params["model"] = model.clone().into();
@@ -1655,6 +1657,9 @@ fn launch(
                 ]);
             } else if settings.access == AccessMode::ReadOnly {
                 command.args(["--tools", "Read,Glob,Grep,Bash", "--allowedTools", "Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(pwd),Bash(ls *),Bash(rg *)"]);
+            }
+            if settings.mount.as_ref().is_some_and(|mount| mount.exclusive) {
+                command.arg("--strict-mcp-config");
             }
             if mode == "bypassPermissions" {
                 command.arg("--allow-dangerously-skip-permissions");

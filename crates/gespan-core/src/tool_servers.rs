@@ -3,12 +3,14 @@
 //!
 //! Adding a capability means registering a toolkit in `hub` and naming it in
 //! the turn's [`Mount`]; no provider needs to change.
+use crate::mcp_catalog::Catalog;
 use crate::provider::Kind;
-use mcp_hub::{Config, Connection, Grant, Hub, Token};
+use mcp_hub::{Config, Connection, Grant, Hub, Observer, ServerSpec, Spawned, Spawner, Token};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeSet, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -26,10 +28,217 @@ const ENV_URL: &str = "GESPAN_MCP_URL";
 const ENV_TOKEN: &str = "GESPAN_MCP_TOKEN";
 
 static HUB: OnceLock<Result<Hub, String>> = OnceLock::new();
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where the catalogue and the record of running servers live. Set once at
+/// startup; without it the hub offers Gespan's own toolkits alone.
+pub fn configure(data_dir: &Path) {
+    if DATA_DIR.set(data_dir.to_owned()).is_err() && DATA_DIR.get().is_some_and(|d| d != data_dir) {
+        tracing::warn!("the tool endpoint keeps the data folder it started with");
+    }
+}
+
+pub fn data_dir() -> Option<PathBuf> {
+    DATA_DIR.get().cloned()
+}
+
+/// Hands the hub the catalogue's approved servers, when they've changed.
+pub fn sync_servers() {
+    static OFFERED: Mutex<Vec<ServerSpec>> = Mutex::new(Vec::new());
+    let (Some(data_dir), Ok(hub)) = (DATA_DIR.get(), hub()) else {
+        return;
+    };
+    let specs = match Catalog::load(data_dir) {
+        Ok(catalog) => catalog.specs(data_dir),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the MCP catalogue");
+            return;
+        }
+    };
+    let mut offered = OFFERED.lock().unwrap_or_else(|e| e.into_inner());
+    if *offered != specs {
+        hub.set_servers(specs.clone());
+        *offered = specs;
+    }
+}
+
+/// The processes the catalogue's servers are running as, for Settings.
+pub fn running_servers() -> Vec<mcp_hub::Running> {
+    match HUB.get() {
+        Some(Ok(hub)) => hub.running(),
+        _ => Vec::new(),
+    }
+}
+
+/// Recent failures of the catalogue's servers, for Settings.
+pub fn server_errors() -> Vec<mcp_hub::ServerError> {
+    match HUB.get() {
+        Some(Ok(hub)) => hub.errors(),
+        _ => Vec::new(),
+    }
+}
+
+/// What the catalogue gives a project's sessions: the servers they may reach,
+/// and whether agents leave their own off. A catalogue that can't be read is one
+/// the user has, so the agent stays off its own servers rather than quietly
+/// running them, and the turn goes on with Gespan's own tools.
+pub fn catalog_reach(data_dir: Option<&Path>, project: &str) -> (BTreeSet<String>, bool) {
+    let Some(data_dir) = data_dir else {
+        return Default::default();
+    };
+    match Catalog::load(data_dir) {
+        Ok(catalog) => (catalog.for_project(project), catalog.managed),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the MCP catalogue");
+            (BTreeSet::new(), true)
+        }
+    }
+}
+
+/// The folder of server records, read by the next launch's sweep. One file per
+/// running Gespan, named for its pid, so none can touch another's.
+pub fn running_record(data_dir: &Path) -> PathBuf {
+    data_dir.join("mcp-servers")
+}
+
+/// One Mutex for the file, since servers start and stop on many threads.
+fn edit_record(record: &Path, edit: impl FnOnce(&mut BTreeSet<u32>)) -> std::io::Result<()> {
+    static RECORD: Mutex<()> = Mutex::new(());
+    let _held = RECORD.lock().unwrap_or_else(|e| e.into_inner());
+    let text = std::fs::read_to_string(record).unwrap_or_default();
+    let mut pids: BTreeSet<u32> = text.lines().filter_map(|line| line.parse().ok()).collect();
+    edit(&mut pids);
+    if pids.is_empty() {
+        return match std::fs::remove_file(record) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    }
+    if let Some(folder) = record.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let text: String = pids.iter().map(|pid| format!("{pid}\n")).collect();
+    std::fs::write(record, text)
+}
+
+/// Starts a server and records it. One that can't be recorded doesn't run,
+/// since a crash would leave it behind where the sweep can't find it.
+fn start_server(
+    spec: &ServerSpec,
+    workspace: Option<&Path>,
+    record: Option<PathBuf>,
+) -> std::io::Result<Spawned> {
+    // npx and uvx are scripts on Windows, which only cmd can start.
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/C", &spec.command]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = Command::new(&spec.command);
+    crate::scm::shell::apply_gui_env(&mut command);
+    command
+        .args(&spec.args)
+        .envs(&spec.env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(workspace) = workspace {
+        command.current_dir(workspace);
+    }
+    crate::process::isolate(&mut command);
+    let mut child = crate::process::spawn(&mut command)?;
+    let pid = child.id();
+    if let Some(record) = &record {
+        if let Err(error) = edit_record(record, |pids| {
+            pids.insert(pid);
+        }) {
+            crate::process::terminate(&mut child);
+            return Err(error);
+        }
+    }
+    let stdin = child.stdin.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+    let stdout = child.stdout.take().ok_or(std::io::ErrorKind::BrokenPipe)?;
+    Ok(Spawned {
+        pid,
+        stdin: Box::new(stdin),
+        stdout: Box::new(stdout),
+        stop: Box::new(move || {
+            crate::process::terminate(&mut child);
+            if let Some(record) = &record {
+                let stopped = edit_record(record, |pids| {
+                    pids.remove(&pid);
+                });
+                if let Err(error) = stopped {
+                    tracing::warn!(%error, "could not update the MCP server record");
+                }
+            }
+        }),
+    })
+}
+
+struct Processes;
+
+impl Spawner for Processes {
+    fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> std::io::Result<Spawned> {
+        let record = DATA_DIR
+            .get()
+            .map(|dir| running_record(dir).join(std::process::id().to_string()));
+        start_server(spec, workspace, record)
+    }
+}
+
+/// Keeps what the hub learns about a server with its catalogue entry.
+struct Keeper;
+
+fn keep(data_dir: &Path, edit: impl FnOnce(&mut Catalog)) {
+    let kept = crate::mcp_catalog::update(data_dir, |catalog| {
+        edit(catalog);
+        Ok(())
+    });
+    if let Err(error) = kept {
+        tracing::warn!(%error, "could not save to the MCP catalogue");
+    }
+}
+
+fn keep_class(data_dir: &Path, server: &str) {
+    keep(data_dir, |catalog| {
+        if let Some(entry) = catalog.entry_mut(server) {
+            entry.class = crate::mcp_catalog::Class::PerSession;
+        }
+    });
+}
+
+fn keep_tools(data_dir: &Path, server: &str, tools: &[Value]) {
+    keep(data_dir, |catalog| {
+        if let Some(entry) = catalog.entry_mut(server) {
+            entry.tools = Some(tools.to_vec());
+        }
+    });
+}
+
+impl Observer for Keeper {
+    fn demoted(&self, server: &str, method: &str) {
+        tracing::info!(server, method, "a shared MCP server now runs per session");
+        if let Some(data_dir) = DATA_DIR.get() {
+            keep_class(data_dir, server);
+        }
+    }
+
+    fn listed(&self, server: &str, tools: &[Value]) {
+        if let Some(data_dir) = DATA_DIR.get() {
+            keep_tools(data_dir, server, tools);
+        }
+    }
+}
 
 fn hub() -> Result<&'static Hub, String> {
     HUB.get_or_init(|| {
-        let hub = Hub::start(Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))?;
+        let mut config = Config::new(SERVER_NAME, env!("CARGO_PKG_VERSION"));
+        config.spawner = Some(Arc::new(Processes));
+        config.observer = Arc::new(Keeper);
+        let hub = Hub::start(config)?;
         hub.register(Arc::new(crate::visual_bridge::Toolkit));
         hub.register(Arc::new(crate::ticket_bridge::Toolkit));
         hub.register(Arc::new(crate::pilot::bridge::Toolkit::APP));
@@ -47,6 +256,12 @@ pub struct Mount {
     pub session: i64,
     pub worktree: PathBuf,
     pub toolkits: BTreeSet<String>,
+    /// Catalogue servers this session may reach.
+    pub servers: BTreeSet<String>,
+    /// Gespan owns the user's servers, so the agent loads none of its own.
+    pub exclusive: bool,
+    /// Codex's own servers, switched off by name since its overrides merge.
+    pub codex_own: Vec<String>,
 }
 
 impl Mount {
@@ -55,6 +270,7 @@ impl Mount {
             session: self.session,
             workspace: self.worktree.clone(),
             toolkits: self.toolkits.clone(),
+            servers: self.servers.clone(),
         }
     }
 }
@@ -128,11 +344,19 @@ impl Access {
         }})
     }
 
-    pub fn codex_config(&self) -> Value {
-        json!({"mcp_servers":{SERVER_NAME:{
-            "url":self.url,
-            "http_headers":{"Authorization":self.token.bearer()},
-        }}})
+    pub fn codex_config(&self, mount: &Mount) -> Value {
+        let mut servers = serde_json::Map::new();
+        for name in &mount.codex_own {
+            servers.insert(name.clone(), json!({"enabled":false}));
+        }
+        servers.insert(
+            SERVER_NAME.to_owned(),
+            json!({
+                "url":self.url,
+                "http_headers":{"Authorization":self.token.bearer()},
+            }),
+        );
+        json!({"mcp_servers":servers})
     }
 
     pub fn opencode_server(&self) -> Value {
@@ -206,7 +430,7 @@ pub fn environment(mount: &Mount) -> HashMap<String, String> {
 /// change. With no endpoint yet there's no credential, and none is started.
 pub fn refresh(mount: &Mount) {
     if let Some(Ok(hub)) = HUB.get() {
-        hub.update(mount.session, mount.toolkits.clone());
+        hub.update(mount.session, mount.toolkits.clone(), mount.servers.clone());
     }
 }
 
@@ -258,6 +482,7 @@ mod tests {
             session,
             worktree: "/work".into(),
             toolkits: BTreeSet::from([VISUAL.to_owned(), TICKET.to_owned()]),
+            ..Mount::default()
         }
     }
 
@@ -283,7 +508,11 @@ mod tests {
     #[test]
     fn codex_gets_the_endpoint_in_its_thread_config() {
         let access = Access::open(&mount(5002)).unwrap();
-        let config = access.codex_config();
+        let config = access.codex_config(&Mount {
+            codex_own: vec!["github".into()],
+            ..mount(5002)
+        });
+        assert_eq!(config["mcp_servers"]["github"], json!({"enabled":false}));
         let server = &config["mcp_servers"]["gespan"];
         assert_eq!(server["url"], access.url);
         assert_eq!(
@@ -380,6 +609,93 @@ mod tests {
         assert!(!reachable());
     }
 
+    #[test]
+    fn what_the_hub_learns_lands_in_the_catalogue() {
+        gespan_tracker_secrets::testing::use_memory_keychain();
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::default();
+        catalog.entries.push(crate::mcp_catalog::Entry {
+            id: "docs".into(),
+            ..Default::default()
+        });
+        catalog.save(dir.path()).unwrap();
+        keep_tools(dir.path(), "docs", &[json!({"name":"who"})]);
+        keep_class(dir.path(), "docs");
+        keep_tools(dir.path(), "gone", &[]);
+        let saved = Catalog::load(dir.path()).unwrap();
+        assert_eq!(saved.entries[0].tools, Some(vec![json!({"name":"who"})]));
+        assert_eq!(
+            saved.entries[0].class,
+            crate::mcp_catalog::Class::PerSession
+        );
+    }
+
+    #[test]
+    fn an_unreadable_catalogue_keeps_agents_off_their_own_servers() {
+        gespan_tracker_secrets::testing::use_memory_keychain();
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            catalog_reach(Some(dir.path()), "/work"),
+            (BTreeSet::new(), false),
+            "no catalogue yet: nothing changes for the agent"
+        );
+        let mut catalog = Catalog {
+            managed: true,
+            ..Default::default()
+        };
+        catalog.entries.push(crate::mcp_catalog::Entry {
+            id: "docs".into(),
+            enabled: true,
+            ..Default::default()
+        });
+        catalog.save(dir.path()).unwrap();
+        assert_eq!(
+            catalog_reach(Some(dir.path()), "/work"),
+            (BTreeSet::from(["docs".to_owned()]), true)
+        );
+        std::fs::write(dir.path().join("mcp-catalog.json"), "not json").unwrap();
+        assert_eq!(
+            catalog_reach(Some(dir.path()), "/work"),
+            (BTreeSet::new(), true)
+        );
+        assert_eq!(catalog_reach(None, "/work"), (BTreeSet::new(), false));
+    }
+
+    #[cfg(unix)]
+    fn sleeper() -> ServerSpec {
+        ServerSpec {
+            id: "sleeper".into(),
+            command: "/bin/sh".into(),
+            args: vec!["-c".into(), "exec sleep 30".into()],
+            env: Default::default(),
+            sharing: mcp_hub::Sharing::Shared,
+            tools: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_is_on_the_record_for_as_long_as_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("mcp-servers").join("1");
+        let spawned = start_server(&sleeper(), None, Some(record.clone())).unwrap();
+        let text = std::fs::read_to_string(&record).unwrap();
+        assert_eq!(text.trim(), spawned.pid.to_string());
+        (spawned.stop)();
+        assert!(!record.exists(), "the record ends with its last server");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_that_cant_be_recorded_doesnt_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a-file");
+        std::fs::write(&file, "").unwrap();
+        let unwritable = file.join("mcp-servers").join("1");
+        let refused = start_server(&sleeper(), None, Some(unwritable));
+        assert!(refused.is_err());
+    }
+
     /// The fake toolkit the original ticket asked for: registered once, it
     /// reaches every provider's shape, because they all name the same endpoint.
     #[test]
@@ -402,7 +718,7 @@ mod tests {
         let access = Access::open(&mount).unwrap();
         for delivered in [
             access.claude_control("x")["request"]["servers"]["gespan"]["url"].clone(),
-            access.codex_config()["mcp_servers"]["gespan"]["url"].clone(),
+            access.codex_config(&mount)["mcp_servers"]["gespan"]["url"].clone(),
             access.acp_servers(true)[0]["url"].clone(),
             access.opencode_server()["config"]["url"].clone(),
         ] {

@@ -18,6 +18,8 @@ pub struct Grant {
     /// The folder this session works in.
     pub workspace: PathBuf,
     pub toolkits: BTreeSet<String>,
+    /// Ids of the servers this session may reach.
+    pub servers: BTreeSet<String>,
 }
 
 impl Grant {
@@ -167,7 +169,12 @@ impl Grants {
     }
 
     /// Replaces what a live session may reach. Returns whether that changed it.
-    pub(crate) fn update(&mut self, session: i64, toolkits: BTreeSet<String>) -> bool {
+    pub(crate) fn update(
+        &mut self,
+        session: i64,
+        toolkits: BTreeSet<String>,
+        servers: BTreeSet<String>,
+    ) -> bool {
         let Some(live) = self
             .sessions
             .get(&session)
@@ -175,11 +182,46 @@ impl Grants {
         else {
             return false;
         };
-        if live.grant.toolkits == toolkits {
+        if live.grant.toolkits == toolkits && live.grant.servers == servers {
             return false;
         }
         live.grant.toolkits = toolkits;
+        live.grant.servers = servers;
         true
+    }
+
+    /// Sessions that may reach this server now.
+    pub(crate) fn holders(&self, server: &str) -> Vec<i64> {
+        self.live
+            .values()
+            .filter(|live| live.grant.servers.contains(server))
+            .filter(|live| live.used.elapsed() < self.idle)
+            .map(|live| live.grant.session)
+            .collect()
+    }
+
+    /// The servers a live session may reach.
+    pub(crate) fn servers_of(&self, session: i64) -> BTreeSet<String> {
+        self.sessions
+            .get(&session)
+            .and_then(|key| self.live.get(key))
+            .map(|live| live.grant.servers.clone())
+            .unwrap_or_default()
+    }
+
+    /// Ends every credential past its idle limit, whether or not anyone
+    /// presents it again, and returns their sessions.
+    pub(crate) fn expire(&mut self) -> Vec<i64> {
+        let idle: Vec<_> = self
+            .live
+            .values()
+            .filter(|live| live.used.elapsed() >= self.idle)
+            .map(|live| live.grant.session)
+            .collect();
+        for session in &idle {
+            self.revoke(*session, Refusal::Expired);
+        }
+        idle
     }
 
     /// Whether a session could use its credential right now.
@@ -212,6 +254,7 @@ mod tests {
             session,
             workspace: "/work".into(),
             toolkits: BTreeSet::from(["visual".to_owned()]),
+            servers: BTreeSet::new(),
         }
     }
 
@@ -259,6 +302,19 @@ mod tests {
     }
 
     #[test]
+    fn expiry_ends_idle_credentials_nobody_presents_again() {
+        let mut grants = Grants::new(Duration::ZERO);
+        let token = grants.mint(grant(1));
+        let mut reach = grant(2);
+        reach.servers.insert("docs".to_owned());
+        grants.mint(reach);
+        assert!(grants.holders("docs").is_empty(), "past its limit already");
+        assert_eq!(grants.expire().len(), 2);
+        assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
+        assert!(grants.expire().is_empty());
+    }
+
+    #[test]
     fn only_the_latest_token_of_a_session_is_held() {
         let mut grants = Grants::new(Duration::from_secs(60));
         let old = grants.mint(grant(1));
@@ -290,14 +346,17 @@ mod tests {
     fn a_grant_is_read_fresh_after_an_update() {
         let mut grants = Grants::new(Duration::from_secs(60));
         let token = grants.mint(grant(1));
-        assert!(grants.update(1, BTreeSet::from(["ticket".to_owned()])));
+        let ticket = BTreeSet::from(["ticket".to_owned()]);
+        assert!(grants.update(1, ticket.clone(), BTreeSet::new()));
         let current = grants.admit(token.secret()).unwrap();
         assert!(current.allows("ticket") && !current.allows("visual"));
-        assert!(!grants.update(9, BTreeSet::new()));
+        assert!(!grants.update(9, BTreeSet::new(), BTreeSet::new()));
         assert!(
-            !grants.update(1, BTreeSet::from(["ticket".to_owned()])),
+            !grants.update(1, ticket.clone(), BTreeSet::new()),
             "no change, nothing to announce"
         );
+        assert!(grants.update(1, ticket, BTreeSet::from(["docs".to_owned()])));
+        assert_eq!(grants.holders("docs"), [1]);
     }
 
     #[test]

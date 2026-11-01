@@ -396,6 +396,7 @@ mod capability_tests {
             session: 75,
             workspace: "/work".into(),
             toolkits: [toolkit.to_owned()].into(),
+            servers: Default::default(),
         };
         for (toolkit, tool, surface) in [
             (Toolkit::APP, "app_help", crate::tool_servers::APP),
@@ -430,6 +431,7 @@ mod capability_tests {
             session,
             workspace: "/work".into(),
             toolkits: [crate::tool_servers::APP.to_owned()].into(),
+            servers: Default::default(),
         }
     }
 

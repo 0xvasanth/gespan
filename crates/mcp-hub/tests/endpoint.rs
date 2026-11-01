@@ -51,6 +51,7 @@ fn grant(session: i64, toolkits: &[&str]) -> Grant {
         session,
         workspace: format!("/work/{session}").into(),
         toolkits: toolkits.iter().map(|name| (*name).to_owned()).collect(),
+        servers: BTreeSet::new(),
     }
 }
 
@@ -376,7 +377,11 @@ fn a_tool_added_mid_session_reaches_the_connected_agent() {
         &client,
         Duration::from_secs(5),
         || {
-            assert!(hub.update(1, BTreeSet::from(["visual".into(), "ticket".into()])));
+            assert!(hub.update(
+                1,
+                BTreeSet::from(["visual".into(), "ticket".into()]),
+                BTreeSet::new()
+            ));
         }
     ));
     assert_eq!(client.tools(), ["visual_who", "ticket_who"]);

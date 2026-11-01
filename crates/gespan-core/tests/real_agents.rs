@@ -4,6 +4,8 @@
 //! `cargo test --test real_agents -- --ignored --nocapture --test-threads=1`
 use gespan_core::{
     agent::{AccessMode, Settings},
+    mcp::Importable,
+    mcp_catalog::{Catalog, Class},
     provider::{self, Event, Kind, Request},
     tool_servers::{Mount, APP, VISUAL},
     visual_bridge,
@@ -30,6 +32,7 @@ fn mount(session: i64, cwd: &Path, toolkits: &[&str]) -> Mount {
             .iter()
             .map(|name| (*name).to_owned())
             .collect::<BTreeSet<_>>(),
+        ..Mount::default()
     }
 }
 
@@ -103,6 +106,92 @@ fn turn(
         seen.tools, seen.text
     );
     seen
+}
+
+const SERVER: &str = r#"
+import json, os, sys
+open(os.environ['MARKER'], 'a').write(os.path.basename(os.getcwd()) + '\n')
+for line in sys.stdin:
+    message = json.loads(line)
+    if 'id' not in message:
+        continue
+    result = {}
+    if message['method'] == 'initialize':
+        result = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'probe', 'version': '1'}}
+    elif message['method'] == 'tools/list':
+        result = {'tools': [{'name': 'secret_word', 'description': 'Returns the secret word.', 'inputSchema': {'type': 'object', 'properties': {}}}]}
+    elif message['method'] == 'tools/call':
+        result = {'content': [{'type': 'text', 'text': os.environ['WORD']}]}
+    print(json.dumps({'jsonrpc': '2.0', 'id': message['id'], 'result': result}), flush=True)
+"#;
+
+/// The hub keeps the data folder it's first given, so these tests share one.
+fn shared_data() -> &'static Path {
+    static DATA: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DATA.get_or_init(|| tempfile::tempdir().unwrap()).path()
+}
+
+/// A catalogue holding one approved server, and a folder whose own `.mcp.json`
+/// names a server of its own. Each answers with a word of its own, so a reply
+/// says which of them handled the call.
+fn with_catalogue(folder: &Path) -> PathBuf {
+    let script = folder.join("probe.py");
+    std::fs::write(&script, SERVER).unwrap();
+    let hub_marker = folder.join("hub-started");
+    let own_marker = folder.join("own-started");
+    let own = serde_json::json!({"mcpServers":{"own":{
+        "command":"python3",
+        "args":[script],
+        "env":{"MARKER":own_marker,"WORD":"MANGO"},
+    }}});
+    std::fs::write(folder.join(".mcp.json"), own.to_string()).unwrap();
+    let data = shared_data();
+    let mut catalog = Catalog::default();
+    catalog
+        .import(
+            data,
+            vec![Importable {
+                provider: "test".into(),
+                scope: "user".into(),
+                name: "probe".into(),
+                command: "python3".into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                env: [
+                    (
+                        "MARKER".to_owned(),
+                        hub_marker.to_string_lossy().into_owned(),
+                    ),
+                    ("WORD".to_owned(), "PINEAPPLE".to_owned()),
+                ]
+                .into(),
+                url: None,
+            }],
+        )
+        .unwrap();
+    catalog.entries[0].class = Class::Shared;
+    catalog.approve(data, "probe").unwrap();
+    catalog.managed = true;
+    catalog.save(data).unwrap();
+    gespan_core::tool_servers::configure(data);
+    gespan_core::tool_servers::sync_servers();
+    hub_marker
+}
+
+const PROXIED: &str =
+    "Call the tool whose name contains probe__secret_word, then reply with only the word it returned.";
+
+fn check_proxied(folder: &Path, marker: &Path, seen: &Turn) {
+    assert!(
+        seen.tools.iter().any(|name| name.contains("secret_word")),
+        "{:?}",
+        seen.tools
+    );
+    assert!(seen.text.contains("PINEAPPLE"), "{}", seen.text);
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert!(
+        !folder.join("own-started").exists(),
+        "the agent loaded its own copy"
+    );
 }
 
 const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP || true. Then reply with only the word DONE and the number that command printed.";
@@ -227,6 +316,66 @@ fn a_resumed_codex_thread_keeps_the_tools() {
         second.tools,
         second.text
     );
+}
+
+#[test]
+#[ignore = "a real, billed Claude turn"]
+fn claude_uses_a_catalogue_server_and_loads_none_of_its_own() {
+    let folder = tempfile::tempdir().unwrap();
+    let marker = with_catalogue(folder.path());
+    let mut mount = mount(900_006, folder.path(), &[VISUAL]);
+    mount.servers = ["probe".to_owned()].into();
+    mount.exclusive = true;
+    let seen = turn(
+        Kind::Claude,
+        &installed("claude"),
+        folder.path(),
+        Some("claude-haiku-5-5"),
+        None,
+        mount,
+        PROXIED,
+    );
+    check_proxied(folder.path(), &marker, &seen);
+}
+
+#[test]
+#[ignore = "a real, billed Codex turn"]
+fn codex_uses_a_catalogue_server() {
+    let folder = tempfile::tempdir().unwrap();
+    let marker = with_catalogue(folder.path());
+    let mut mount = mount(900_007, folder.path(), &[VISUAL]);
+    mount.servers = ["probe".to_owned()].into();
+    mount.exclusive = true;
+    let seen = turn(
+        Kind::Codex,
+        &installed("codex"),
+        folder.path(),
+        None,
+        None,
+        mount,
+        PROXIED,
+    );
+    check_proxied(folder.path(), &marker, &seen);
+}
+
+#[test]
+#[ignore = "a real, billed Kiro turn"]
+fn kiro_uses_a_catalogue_server() {
+    let folder = tempfile::tempdir().unwrap();
+    let marker = with_catalogue(folder.path());
+    let mut mount = mount(900_008, folder.path(), &[VISUAL]);
+    mount.servers = ["probe".to_owned()].into();
+    let seen = turn(
+        Kind::Kiro,
+        &installed("kiro-cli"),
+        folder.path(),
+        None,
+        None,
+        mount,
+        PROXIED,
+    );
+    assert!(seen.text.contains("PINEAPPLE"), "{}", seen.text);
+    assert!(marker.exists());
 }
 
 #[test]
