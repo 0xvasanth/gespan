@@ -1,0 +1,64 @@
+.github/workflows/native-release.yml
+  h_7bb0b8336911f0 228
+CHANGELOG.md
+  h_7bb0b8336911f0 73-74,84-87
+crates/gespan-core/src/diagnostics/bundle.rs
+  h_7bb0b8336911f0 299-301,315
+crates/gespan-core/src/mcp.rs
+  h_7bb0b8336911f0 426,444-451,849-872
+crates/gespan-core/src/mcp_catalog.rs
+  h_7bb0b8336911f0 17-18,43-48,68-74,82-96,103,122,124,272-276,310-311,317,321,329-336,338-343,347-351,384,795-918,1014-1047
+crates/gespan-core/src/mcp_registry.rs
+  h_7bb0b8336911f0 4,6,10-11,62-175,177-180,187-192,195-200,203-212,216,238-265,278-282,307-319,330,417,423-660
+crates/gespan-core/src/resources.rs
+  h_7bb0b8336911f0 238-240,442-447
+crates/gespan-core/src/ticket_bridge.rs
+  h_7bb0b8336911f0 556,559-563,1562-1609
+crates/gespan-core/src/tool_servers.rs
+  h_7bb0b8336911f0 80-83,89,101,103,232,559-577
+crates/gespan-core/tests/live_catalogue.rs
+  h_7bb0b8336911f0 1-133
+crates/gespan-core/tests/real_agents.rs
+  h_7bb0b8336911f0 203-213,406-407,457-458
+crates/gespan-gpui/src/input.rs
+  h_7bb0b8336911f0 263-267
+crates/gespan-gpui/src/settings/layout_tests.rs
+  h_7bb0b8336911f0 296-300,318-336,339-340,342,357-509
+crates/gespan-gpui/src/settings/mod.rs
+  h_7bb0b8336911f0 257-258,415
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  h_7bb0b8336911f0 71-72,75-77,80,239-249,251,253,263-270,315-320,365-398,473,477,481-483,492,498,500-505,539-543,545-550,617,725,753,831
+crates/gespan-gpui/src/settings/widgets.rs
+  h_7bb0b8336911f0 414
+crates/mcp-hub/src/endpoint.rs
+  h_7bb0b8336911f0 557-563
+crates/mcp-hub/src/lib.rs
+  h_7bb0b8336911f0 24
+crates/mcp-hub/src/oauth.rs
+  h_7bb0b8336911f0 5-6,9-10,64-90,93-113,123,130-133,135-136,138,151-153,164-165,173,180-196,198-199,201-202,204-207,217-226,241-294
+crates/mcp-hub/src/pool.rs
+  h_7bb0b8336911f0 26-38,171-172,199,213-215,254-280,345,365-367,369,490-507,523,531,536,540-541,605-611,666,680-684,705-738,781,808-902
+crates/mcp-hub/src/relay.rs
+  h_7bb0b8336911f0 8-11,23-27,106-107,118-124,132-138,146,150,156,188-203,215,305,308-327,415,480-519,695
+crates/mcp-hub/src/remote.rs
+  h_7bb0b8336911f0 5,11-15,18-117,119-120,126-138,140-142,153,160-162,166,168-171,174-235
+crates/mcp-hub/tests/remote.rs
+  h_7bb0b8336911f0 12-13,18,30-33,45,47-51,55,121-152,180,345-522
+crates/mcp-hub/tests/servers.rs
+  h_7bb0b8336911f0 934,946-949,952-958,960-962,996-1022
+docs/native/mcp-hub.md
+  h_7bb0b8336911f0 52,54,56
+scripts/native-release.test.mjs
+  h_7bb0b8336911f0 2,5,153-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "809b6a040d4417204ac05ae60f766ef44e6fcf7c",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
