@@ -182,8 +182,24 @@ impl Grants {
         true
     }
 
+    /// Whether a session could use its credential right now.
     pub(crate) fn has(&self, session: i64) -> bool {
-        self.sessions.contains_key(&session)
+        self.sessions
+            .get(&session)
+            .is_some_and(|key| self.usable(key))
+    }
+
+    /// Whether this token is the one a session can use right now. A token
+    /// replaced by a newer mint isn't.
+    pub(crate) fn holds(&self, session: i64, token: &Token) -> bool {
+        let key = hash(token.secret());
+        self.sessions.get(&session) == Some(&key) && self.usable(&key)
+    }
+
+    fn usable(&self, key: &[u8; 32]) -> bool {
+        self.live
+            .get(key)
+            .is_some_and(|live| live.used.elapsed() < self.idle)
     }
 }
 
@@ -232,6 +248,29 @@ mod tests {
         assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
         assert!(!grants.has(2));
         assert_eq!(grants.admit(token.secret()), Err(Refusal::Expired));
+    }
+
+    #[test]
+    fn a_session_past_its_idle_limit_no_longer_counts_as_holding_one() {
+        let mut grants = Grants::new(Duration::ZERO);
+        let token = grants.mint(grant(1));
+        assert!(!grants.has(1), "before any request has seen the expiry");
+        assert!(!grants.holds(1, &token));
+    }
+
+    #[test]
+    fn only_the_latest_token_of_a_session_is_held() {
+        let mut grants = Grants::new(Duration::from_secs(60));
+        let old = grants.mint(grant(1));
+        assert!(grants.holds(1, &old));
+        let new = grants.mint(grant(1));
+        assert!(grants.has(1));
+        assert!(
+            !grants.holds(1, &old),
+            "the session lives on, this token doesn't"
+        );
+        assert!(grants.holds(1, &new));
+        assert!(!grants.holds(2, &new), "a token belongs to one session");
     }
 
     #[test]

@@ -37,6 +37,7 @@ fn mount(session: i64, cwd: &Path, toolkits: &[&str]) -> Mount {
 struct Turn {
     text: String,
     tools: Vec<String>,
+    inputs: Vec<String>,
     outputs: Vec<String>,
     provider_id: Option<String>,
     process: Option<u32>,
@@ -85,6 +86,7 @@ fn turn(
                         Event::Text(text) => seen.text.push_str(&text),
                         Event::Tool(tool) => {
                             seen.tools.push(tool.name.clone());
+                            seen.inputs.push(tool.input.clone());
                             seen.outputs.push(tool.output.clone());
                         }
                         Event::SessionId(id) => seen.provider_id = Some(id),
@@ -103,7 +105,7 @@ fn turn(
     seen
 }
 
-const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP. Then reply with only the word DONE and the number that command printed.";
+const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP || true. Then reply with only the word DONE and the number that command printed.";
 
 fn check_reach(seen: &Turn) {
     assert!(
@@ -112,10 +114,17 @@ fn check_reach(seen: &Turn) {
         seen.tools
     );
     assert!(seen.text.contains("DONE"), "{}", seen.text);
-    assert!(
-        seen.text.contains('0'),
-        "the agent's own shell found the credential: {}",
-        seen.text
+    let output = seen
+        .inputs
+        .iter()
+        .zip(&seen.outputs)
+        .rev()
+        .find(|(input, output)| input.contains("grep -c GESPAN_MCP") && !output.is_empty())
+        .map(|(_, output)| output.trim());
+    assert_eq!(
+        output,
+        Some("0"),
+        "the agent's own shell found the credential"
     );
 }
 
