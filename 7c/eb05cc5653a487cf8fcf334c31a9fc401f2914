@@ -1,0 +1,14 @@
+crates/gespan-mcp-config/src/lib.rs
+  h_7bb0b8336911f0 195,197-202,204-205,215-218,737-815
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ceb05cc5653a487cf8fcf334c31a9fc401f2914",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
