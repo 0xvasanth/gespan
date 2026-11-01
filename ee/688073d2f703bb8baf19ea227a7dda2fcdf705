@@ -1,0 +1,21 @@
+.github/workflows/native-release.yml
+  s_a697a7155dfcff::t_353d9e6d19b353 228
+scripts/native-release.test.mjs
+  s_a697a7155dfcff::t_50ff22672f32cc 2,5,153-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee688073d2f703bb8baf19ea227a7dda2fcdf705",
+  "prompts": {},
+  "sessions": {
+    "s_a697a7155dfcff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4149efd8-65d6-4849-9b21-3042f0ee49fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
