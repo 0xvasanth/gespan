@@ -1,0 +1,25 @@
+crates/gespan-core/tests/real_agents.rs
+  s_92be0b300595dd::t_4ccf19c308d30f 9-10,109-180,298-356
+  s_92be0b300595dd::t_273d7d6cfae47b 357
+crates/mcp-hub/tests/servers.rs
+  s_92be0b300595dd::t_d4e2e54dd7a082 236-251,262,464-475
+  s_92be0b300595dd::t_fa142d9974eae2 458-463,476-478
+crates/mcp-hub/src/session.rs
+  s_92be0b300595dd::t_fa142d9974eae2 45-53,68,152-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52cc4654fe167139238e7b7965a10bec5f77e268",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
