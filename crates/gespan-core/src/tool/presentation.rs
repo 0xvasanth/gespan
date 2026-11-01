@@ -367,7 +367,11 @@ pub fn visual_tool(name: &str) -> Option<VisualStep> {
         .or_else(|| name.rsplit_once('.'))
         .or_else(|| name.rsplit_once('/'))
         .unwrap_or(("", name));
-    if !server.is_empty() && !server.contains("gespan") {
+    let server = server
+        .strip_prefix("mcp__")
+        .or_else(|| server.strip_prefix('@'))
+        .unwrap_or(server);
+    if !matches!(server, "" | "gespan" | "gespan_visual") {
         return None;
     }
     match tool {
@@ -1085,6 +1089,13 @@ mod visual_tests {
             assert_eq!(visual_tool(name), Some(VisualStep::Show), "{name}");
         }
         assert_eq!(visual_tool("other_server:visual_show"), None);
+        for name in [
+            "not_gespan:visual_show",
+            "mcp__my-gespan-tools__visual_show",
+            "@gespan-fork/visual_show",
+        ] {
+            assert_eq!(visual_tool(name), None, "{name}");
+        }
         assert_eq!(visual_tool("visual_publish"), None);
         let mut call = ToolCall::new("1", "gespan_visual:visual_show");
         call.input = r#"{"title":"Stars per week","source":"return () => null"}"#.into();

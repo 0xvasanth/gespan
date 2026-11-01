@@ -4,6 +4,9 @@
 mod remote;
 use crate::diagnostics::metrics;
 pub mod report;
+pub(crate) use remote::{
+    remove_worktree as remove_remote_worktree, script_runner as remote_script_runner,
+};
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -569,17 +572,16 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        return remote::create_worktree(
-            cwd,
-            &native_session_branch(session, stamp),
-            Some(base),
-            false,
-        )
-        .map(|tree| PathBuf::from(tree.path));
+        let main = PathBuf::from(remote::main_checkout(cwd)?);
+        let turn = crate::worktree_scripts::turn(&main);
+        let branch = native_session_branch(session, stamp);
+        let tree = remote::create_worktree(cwd, &branch, Some(base), false)?;
+        return remote::set_up(turn, &main, tree).map(|tree| PathBuf::from(tree.path));
     }
-    let state = snapshot(cwd)?;
-    let main = state.worktrees.first().ok_or("No working copies found")?;
+    let trees = worktrees(cwd)?;
+    let main = trees.first().ok_or("No working copies found")?;
     let main = Path::new(&main.path);
+    let turn = crate::worktree_scripts::turn(main);
     let parent = main.with_file_name(format!(
         "{}-worktrees",
         main.file_name().unwrap_or_default().to_string_lossy()
@@ -613,27 +615,75 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             commit.trim(),
         ],
     )?;
-    copy_included(main, &path);
+    let copied = copy_included(main, &path);
+    crate::worktree_scripts::set_up(turn, main, &path, Some(&name), copied)?;
     Ok(path)
 }
 
 /// A worktree missing its ignored files still works, so this never fails the
 /// creation around it.
-fn copy_included(main: &Path, worktree: &Path) {
+fn copy_included(main: &Path, worktree: &Path) -> crate::worktree_copy::Copied {
     match crate::worktree_copy::copy_included(main, worktree) {
-        Ok(copied) if copied.files + copied.skipped > 0 => tracing::info!(
-            files = copied.files,
-            bytes = copied.bytes,
-            shared = copied.shared,
-            skipped = copied.skipped,
-            "copied a project's included files into a worktree"
-        ),
-        Ok(_) => {}
+        Ok(copied) => {
+            if copied.files + copied.skipped > 0 {
+                tracing::info!(
+                    files = copied.files,
+                    bytes = copied.bytes,
+                    shared = copied.shared,
+                    skipped = copied.skipped,
+                    "copied a project's included files into a worktree"
+                );
+            }
+            copied
+        }
         Err(error) => {
             metrics::failure("worktree.copy", metrics::ErrorKind::Other);
             tracing::warn!(%error, "could not copy a project's included files");
+            Default::default()
         }
     }
+}
+
+/// A board card's branch, like `gespan/card-142-fix-login-bug`. A title with
+/// nothing usable in it leaves `gespan/card-142`.
+pub fn card_branch(number: i64, title: &str) -> String {
+    let fragment = crate::scm::text::sanitize_branch_fragment(&format!(
+        "card-{number}-{}",
+        title.replace('/', "-")
+    ));
+    format!("{APP_BRANCH_PREFIX}{fragment}")
+}
+
+/// A worktree named after a board card, from `cwd`'s HEAD. A card that ran
+/// before gets `-2`, `-3`…, so an earlier run's work is left where it is.
+pub fn create_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Worktree, String> {
+    let _span = tracing::info_span!("worktree_create", existing = false).entered();
+    metrics::track("worktree.create", add_card_worktree(cwd, number, title))
+        .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+}
+/// The name is chosen inside the repository's turn, so two runs of one card
+/// can't pick the same one.
+fn add_card_worktree(cwd: &Path, number: i64, title: &str) -> Result<Worktree, String> {
+    let wanted = card_branch(number, title);
+    let main = worktrees(cwd)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?
+        .path;
+    let main = Path::new(&main);
+    let turn = crate::worktree_scripts::turn(main);
+    let parent = crate::worktree_management::default_root(main);
+    let taken = |name: &str| {
+        let reference = format!("refs/heads/{name}");
+        git(cwd, &["show-ref", "--verify", "--quiet", &reference]).is_ok()
+            || parent.join(worktree_folder(name)).exists()
+    };
+    let name = std::iter::once(wanted.clone())
+        .chain((2..=99).map(|n| format!("{wanted}-{n}")))
+        .find(|name| !taken(name))
+        .ok_or_else(|| format!("{wanted} and its numbered variants are taken"))?;
+    valid_branch(cwd, &name)?;
+    add_branch_worktree(turn, cwd, main, &name, None, false, |_| Ok(()))
 }
 
 /// SidebarWorktreeSwitcher: create a named copy from the selected checkout's
@@ -648,44 +698,26 @@ pub fn create_project_worktree(
     base: Option<&str>,
     existing: bool,
 ) -> Result<Worktree, String> {
-    let _span = tracing::info_span!("worktree_create", existing).entered();
-    metrics::track(
-        "worktree.create",
-        create_branch_worktree(cwd, branch, base, existing),
-    )
-    .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+    create_seeded_worktree(cwd, branch, base, existing, |_| Ok(()))
 }
-fn create_branch_worktree(
+/// [`create_project_worktree`] with `seed` run on the new checkout before its
+/// Setup script, so the script sees what the checkout will really hold.
+pub(crate) fn create_seeded_worktree(
     cwd: &Path,
     branch: &str,
     base: Option<&str>,
     existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
 ) -> Result<Worktree, String> {
-    if crate::files::remote::is_remote(cwd) {
-        return remote::create_worktree(cwd, branch.trim(), base, existing);
-    }
-    let branch = branch.trim();
-    valid_branch(cwd, branch)?;
-    let state = snapshot(cwd)?;
-    if state
-        .worktrees
-        .iter()
-        .any(|tree| tree.branch.as_deref() == Some(branch))
-    {
-        return Err("This branch already has a working copy. Select it from the picker.".into());
-    }
-    let main = Path::new(
-        &state
-            .worktrees
-            .first()
-            .ok_or("No working copies found")?
-            .path,
-    );
-    let parent = main.with_file_name(format!(
-        "{}-worktrees",
-        main.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let slug: String = branch
+    let _span = tracing::info_span!("worktree_create", existing).entered();
+    metrics::track(
+        "worktree.create",
+        create_branch_worktree(cwd, branch, base, existing, seed),
+    )
+    .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+}
+fn worktree_folder(branch: &str) -> String {
+    branch
         .chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {
@@ -694,8 +726,53 @@ fn create_branch_worktree(
                 '-'
             }
         })
-        .collect();
-    let path = parent.join(slug);
+        .collect()
+}
+fn create_branch_worktree(
+    cwd: &Path,
+    branch: &str,
+    base: Option<&str>,
+    existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
+) -> Result<Worktree, String> {
+    if crate::files::remote::is_remote(cwd) {
+        let main = PathBuf::from(remote::main_checkout(cwd)?);
+        let turn = crate::worktree_scripts::turn(&main);
+        let tree = remote::create_worktree(cwd, branch.trim(), base, existing)?;
+        seed(&tree)?;
+        return remote::set_up(turn, &main, tree);
+    }
+    let branch = branch.trim();
+    valid_branch(cwd, branch)?;
+    let main = worktrees(cwd)?
+        .into_iter()
+        .next()
+        .ok_or("No working copies found")?
+        .path;
+    let main = Path::new(&main);
+    let turn = crate::worktree_scripts::turn(main);
+    add_branch_worktree(turn, cwd, main, branch, base, existing, seed)
+}
+fn add_branch_worktree(
+    turn: crate::worktree_scripts::Turn,
+    cwd: &Path,
+    main: &Path,
+    branch: &str,
+    base: Option<&str>,
+    existing: bool,
+    seed: impl FnOnce(&Worktree) -> Result<(), String>,
+) -> Result<Worktree, String> {
+    if worktrees(cwd)?
+        .iter()
+        .any(|tree| tree.branch.as_deref() == Some(branch))
+    {
+        return Err("This branch already has a working copy. Select it from the picker.".into());
+    }
+    let parent = main.with_file_name(format!(
+        "{}-worktrees",
+        main.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let path = parent.join(worktree_folder(branch));
     if path.exists() {
         return Err(format!(
             "{} already exists. Choose another branch name.",
@@ -737,14 +814,32 @@ fn create_branch_worktree(
             ],
         )?;
     }
-    copy_included(main, &path);
-    snapshot(cwd)?
-        .worktrees
-        .into_iter()
-        .find(|tree| Path::new(&tree.path) == path)
-        .ok_or_else(|| {
-            "Worktree created, but could not be found. Refresh the working copies.".into()
-        })
+    let copied = copy_included(main, &path);
+    let found = worktrees(cwd).and_then(|trees| {
+        trees
+            .into_iter()
+            .find(|tree| Path::new(&tree.path) == path)
+            .ok_or_else(|| "The new worktree could not be found, so it was removed.".to_owned())
+    });
+    let tree = match found {
+        Ok(tree) => tree,
+        Err(error) => {
+            undo_worktree(cwd, &path, branch, existing);
+            return Err(error);
+        }
+    };
+    seed(&tree)?;
+    crate::worktree_scripts::set_up(turn, main, &path, tree.branch.as_deref(), copied)?;
+    Ok(tree)
+}
+/// Takes back a worktree that nothing has used yet, or it would block the next
+/// try. A branch that was already there stays.
+fn undo_worktree(cwd: &Path, path: &Path, branch: &str, existing: bool) {
+    let path = path.to_string_lossy();
+    let _ = git(cwd, &["worktree", "remove", "--force", "--", &path]);
+    if !existing {
+        let _ = git(cwd, &["branch", "-D", branch]);
+    }
 }
 
 #[cfg(test)]
@@ -773,6 +868,70 @@ mod tests {
         let (result, counts) = capture(|| git(dir.path(), &["--version"]));
         assert!(result.is_ok());
         assert!(counts.is_empty(), "successful git commands are not counted");
+    }
+
+    #[test]
+    fn a_card_branch_comes_from_its_number_and_title() {
+        assert_eq!(
+            card_branch(142, "Fix login bug"),
+            "gespan/card-142-fix-login-bug"
+        );
+        assert_eq!(
+            card_branch(7, "Déjà vu: a/b test!"),
+            "gespan/card-7-d-j-vu-a-b-test"
+        );
+        assert_eq!(card_branch(7, "登录失败"), "gespan/card-7");
+        assert_eq!(card_branch(7, "   "), "gespan/card-7");
+        let long = card_branch(9, &"word ".repeat(40));
+        assert!(long.len() <= "gespan/".len() + 64, "{long}");
+        assert!(!long.ends_with('-'), "{long}");
+        assert!(long.starts_with("gespan/card-9-word-word"), "{long}");
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main"]).unwrap();
+        for name in [card_branch(1, "a.lock"), long, card_branch(7, "登录失败")] {
+            git(dir.path(), &["check-ref-format", "--branch", &name]).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_card_that_ran_before_gets_the_next_free_name() {
+        let (_dir, cwd) = repo();
+        let first = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(first.branch.as_deref(), Some("gespan/card-3-fix-bug"));
+        assert!(first.path.ends_with("gespan-card-3-fix-bug"));
+        let second = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(second.branch.as_deref(), Some("gespan/card-3-fix-bug-2"));
+        // A branch left behind by a removed worktree still counts.
+        crate::worktree_management::remove(&cwd, Path::new(&first.path)).unwrap();
+        let third = create_card_worktree(&cwd, 3, "Fix bug").unwrap();
+        assert_eq!(third.branch.as_deref(), Some("gespan/card-3-fix-bug-3"));
+        // So does a folder nothing registered.
+        std::fs::create_dir_all(
+            crate::worktree_management::default_root(&cwd).join("gespan-card-4"),
+        )
+        .unwrap();
+        let fourth = create_card_worktree(&cwd, 4, "").unwrap();
+        assert_eq!(fourth.branch.as_deref(), Some("gespan/card-4-2"));
+    }
+
+    #[test]
+    fn two_runs_of_one_card_at_once_both_get_a_worktree() {
+        let (_dir, cwd) = repo();
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let cwd = cwd.clone();
+                std::thread::spawn(move || create_card_worktree(&cwd, 8, "Same card"))
+            })
+            .collect();
+        let mut branches: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap().unwrap().branch.unwrap())
+            .collect();
+        branches.sort();
+        assert_eq!(
+            branches,
+            ["gespan/card-8-same-card", "gespan/card-8-same-card-2"]
+        );
     }
 
     #[test]
@@ -1461,6 +1620,21 @@ mod tests {
         tree.unwrap();
         assert!(logged.is_empty(), "{logged:?}");
         assert!(counted(counts).contains(&("worktree.create".into(), None, 1)));
+    }
+
+    #[test]
+    fn undoing_a_worktree_frees_its_name_and_keeps_a_branch_it_did_not_make() {
+        let (_temp, cwd) = repo();
+        let new = create_named_worktree(&cwd, "new").unwrap();
+        undo_worktree(&cwd, Path::new(&new.path), "new", false);
+        assert!(!Path::new(&new.path).exists());
+        assert!(git(&cwd, &["rev-parse", "--verify", "refs/heads/new"]).is_err());
+        create_named_worktree(&cwd, "new").unwrap();
+
+        let kept = create_named_worktree(&cwd, "kept").unwrap();
+        undo_worktree(&cwd, Path::new(&kept.path), "kept", true);
+        assert!(!Path::new(&kept.path).exists());
+        git(&cwd, &["rev-parse", "--verify", "refs/heads/kept"]).unwrap();
     }
 
     #[test]

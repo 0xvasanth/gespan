@@ -20,6 +20,7 @@ tracing = "0.1"
 # OAuth discovery and token calls go over HTTPS; the ring provider matches the
 # app's other TLS and needs no C toolchain beyond what it already builds.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+url = "2"
 ureq = { version = "2.12", default-features = false, features = ["json", "tls"] }
 
 [dev-dependencies]

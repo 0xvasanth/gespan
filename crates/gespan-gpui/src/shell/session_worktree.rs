@@ -121,9 +121,9 @@ impl Shell {
         }
         let store = self.store.clone();
         let target = path.clone();
-        let work = cx
-            .background_executor()
-            .spawn(async move { remove_unused(&store, &ids, &project, &target, None) });
+        let work = crate::runtime::on_own_thread(move || {
+            remove_unused(&store, &ids, &project, &target, None)
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| match result {
@@ -293,9 +293,10 @@ impl Shell {
             let result = match checked {
                 Ok(store) => {
                     let project = worktree.project;
-                    cx.background_executor()
-                        .spawn(async move { remove_unused(&store, &[id], &project, &path, branch) })
-                        .await
+                    crate::runtime::on_own_thread(move || {
+                        remove_unused(&store, &[id], &project, &path, branch)
+                    })
+                    .await
                 }
                 Err(error) => Err(error),
             };

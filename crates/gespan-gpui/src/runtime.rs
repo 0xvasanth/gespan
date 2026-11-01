@@ -491,6 +491,12 @@ fn run_turn_using(
             prompt
         } else if let Some(pilot) = &settings.pilot {
             let files = gespan_core::pilot::load_files(&pilot.root, &pilot.pilot)?;
+            // First: a fresh conversation can reach the tools differently.
+            let rotated = provider_id.is_some() && context.ratio().is_some_and(|r| r >= 0.8);
+            if rotated {
+                provider_id = None;
+                locked(&store)?.reset_provider_id(summary.id)?;
+            }
             let access = gespan_core::pilot::AppAccess::for_provider(
                 kind,
                 provider_id.as_deref(),
@@ -499,11 +505,6 @@ fn run_turn_using(
             let added = gespan_core::pilot::context(&pilot.pilot, &files, &access);
             let fingerprint = gespan_core::pilot::files::content_hash(&added);
             pilot_fingerprint = Some(fingerprint.clone());
-            let rotated = provider_id.is_some() && context.ratio().is_some_and(|r| r >= 0.8);
-            if rotated {
-                provider_id = None;
-                locked(&store)?.reset_provider_id(summary.id)?;
-            }
             let receipt = locked(&store)?.setting(&format!("pilot-context:{}", summary.id))?;
             let expected =
                 serde_json::json!({"provider":provider_id,"hash":fingerprint}).to_string();
@@ -739,30 +740,28 @@ fn run_turn_using(
                 toolkits.insert(toolkit.to_owned());
             }
         }
-        if !toolkits.is_empty() {
-            gespan_core::tool_servers::sync_servers();
-            let catalog = data_dir
+        let mut mount = gespan_core::tool_servers::Mount {
+            session: summary.id,
+            worktree: settings
+                .worktree_cwd
                 .as_deref()
-                .and_then(|dir| gespan_core::mcp_catalog::Catalog::load(dir).ok())
-                .unwrap_or_default();
-            let exclusive = catalog.managed;
-            let mount = gespan_core::tool_servers::Mount {
-                servers: catalog.for_project(&summary.cwd),
-                exclusive,
-                codex_own: if exclusive && kind == Kind::Codex {
-                    gespan_core::mcp::codex_server_names(&summary.cwd)
-                } else {
-                    Vec::new()
-                },
-                session: summary.id,
-                worktree: settings
-                    .worktree_cwd
-                    .as_deref()
-                    .unwrap_or(&summary.cwd)
-                    .into(),
-                toolkits,
-            };
-            gespan_core::tool_servers::refresh(&mount);
+                .unwrap_or(&summary.cwd)
+                .into(),
+            toolkits,
+            ..Default::default()
+        };
+        if !mount.toolkits.is_empty() {
+            gespan_core::tool_servers::sync_servers();
+            (mount.servers, mount.exclusive) =
+                gespan_core::tool_servers::catalog_reach(data_dir.as_deref(), &summary.cwd);
+            if mount.exclusive && kind == Kind::Codex {
+                mount.codex_own = gespan_core::mcp::codex_server_names(&summary.cwd);
+            }
+        }
+        // Even with none: a process kept from an earlier turn loses what that
+        // turn could reach.
+        gespan_core::tool_servers::refresh(&mount);
+        if !mount.toolkits.is_empty() {
             if gespan_core::tool_servers::delivery(kind, provider_id.as_deref())
                 == gespan_core::tool_servers::Delivery::Environment
             {
@@ -1889,5 +1888,31 @@ mod edited_paths_tests {
             ["/folder/a.md", "b.md"]
         );
         assert!(edit_tool_paths(&tool("Read", json!({"file_path":"/folder/a.md"}))).is_empty());
+    }
+}
+
+/// Runs work that can last as long as a Setup script, waiting on a person
+/// included, on a thread of its own. On the background pool it could occupy
+/// every thread, and Linux's pool doesn't grow. Inline in tests, which rely on
+/// the test scheduler seeing the work.
+pub(crate) fn on_own_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> impl std::future::Future<Output = Result<T, String>> {
+    let (sender, result) = async_channel::bounded(1);
+    #[cfg(test)]
+    let spawned = sender.try_send(work()).map_err(|error| error.to_string());
+    #[cfg(not(test))]
+    let spawned = std::thread::Builder::new()
+        .spawn(move || {
+            let _ = sender.send_blocking(work());
+        })
+        .map(drop)
+        .map_err(|error| format!("Could not start the work: {error}"));
+    async move {
+        spawned?;
+        result
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err("The work stopped before it finished.".into()))
     }
 }

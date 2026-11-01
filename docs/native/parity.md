@@ -228,6 +228,7 @@ Known differences:
 | "Running" filter and chip | Counts sessions waiting for input; the chip says waiting | Same |
 | Cost | No data source; stays empty | Same |
 | "Run with…" | Refuses remote projects ("Run with… works with local projects for now") | Local projects only |
+| "Run with…" agents and worktree | Lists agents that aren't installed apart. New boards default to a new worktree, named after the card and linked to it, with a board setting | Lists every agent, and the worktree starts unticked |
 | Agent write-back and turn tracking | Local sessions only; remote turns have no ticket bridge or turn tracking | Local sessions only |
 | Ticket chips on remote sessions | Don't show the ticket's title and status | Same |
 | Quick edits on the card face | Not undoable (moves, sorts, archives and deletes are) | Same |

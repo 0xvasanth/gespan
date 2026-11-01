@@ -1416,6 +1416,12 @@ mod tests {
         use crate::tool_servers::{is_open, Access, Mount};
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(&directory.path().join("sessions.db")).unwrap();
+        // The hub is process-wide, and other tests archive their sessions 1, 2…
+        let first = store.create("claude", "/work").unwrap().id;
+        store
+            .conn
+            .execute("UPDATE native_sessions SET id=70000 WHERE id=?1", [first])
+            .unwrap();
         let open = |id: i64| {
             let mount = Mount {
                 session: id,

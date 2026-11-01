@@ -40,6 +40,7 @@ fn mount(session: i64, cwd: &Path, toolkits: &[&str]) -> Mount {
 struct Turn {
     text: String,
     tools: Vec<String>,
+    inputs: Vec<String>,
     outputs: Vec<String>,
     provider_id: Option<String>,
     process: Option<u32>,
@@ -88,6 +89,7 @@ fn turn(
                         Event::Text(text) => seen.text.push_str(&text),
                         Event::Tool(tool) => {
                             seen.tools.push(tool.name.clone());
+                            seen.inputs.push(tool.input.clone());
                             seen.outputs.push(tool.output.clone());
                         }
                         Event::SessionId(id) => seen.provider_id = Some(id),
@@ -119,12 +121,19 @@ for line in sys.stdin:
     elif message['method'] == 'tools/list':
         result = {'tools': [{'name': 'secret_word', 'description': 'Returns the secret word.', 'inputSchema': {'type': 'object', 'properties': {}}}]}
     elif message['method'] == 'tools/call':
-        result = {'content': [{'type': 'text', 'text': 'PINEAPPLE'}]}
+        result = {'content': [{'type': 'text', 'text': os.environ['WORD']}]}
     print(json.dumps({'jsonrpc': '2.0', 'id': message['id'], 'result': result}), flush=True)
 "#;
 
+/// The hub keeps the data folder it's first given, so these tests share one.
+fn shared_data() -> &'static Path {
+    static DATA: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DATA.get_or_init(|| tempfile::tempdir().unwrap()).path()
+}
+
 /// A catalogue holding one approved server, and a folder whose own `.mcp.json`
-/// names a server of its own.
+/// names a server of its own. Each answers with a word of its own, so a reply
+/// says which of them handled the call.
 fn with_catalogue(folder: &Path) -> PathBuf {
     let script = folder.join("probe.py");
     std::fs::write(&script, SERVER).unwrap();
@@ -133,40 +142,43 @@ fn with_catalogue(folder: &Path) -> PathBuf {
     let own = serde_json::json!({"mcpServers":{"own":{
         "command":"python3",
         "args":[script],
-        "env":{"MARKER":own_marker},
+        "env":{"MARKER":own_marker,"WORD":"MANGO"},
     }}});
     std::fs::write(folder.join(".mcp.json"), own.to_string()).unwrap();
-    let data = folder.join("data");
+    let data = shared_data();
     let mut catalog = Catalog::default();
     catalog
         .import(
-            &data,
+            data,
             vec![Importable {
                 provider: "test".into(),
                 scope: "user".into(),
                 name: "probe".into(),
                 command: "python3".into(),
                 args: vec![script.to_string_lossy().into_owned()],
-                env: [(
-                    "MARKER".to_owned(),
-                    hub_marker.to_string_lossy().into_owned(),
-                )]
+                env: [
+                    (
+                        "MARKER".to_owned(),
+                        hub_marker.to_string_lossy().into_owned(),
+                    ),
+                    ("WORD".to_owned(), "PINEAPPLE".to_owned()),
+                ]
                 .into(),
                 url: None,
             }],
         )
         .unwrap();
     catalog.entries[0].class = Class::Shared;
-    catalog.approve(&data, "probe").unwrap();
+    catalog.approve(data, "probe").unwrap();
     catalog.managed = true;
-    catalog.save(&data).unwrap();
-    gespan_core::tool_servers::configure(&data);
+    catalog.save(data).unwrap();
+    gespan_core::tool_servers::configure(data);
     gespan_core::tool_servers::sync_servers();
     hub_marker
 }
 
 const PROXIED: &str =
-    "Call the tool whose name ends in secret_word, then reply with only the word it returned.";
+    "Call the tool whose name contains probe__secret_word, then reply with only the word it returned.";
 
 fn check_proxied(folder: &Path, marker: &Path, seen: &Turn) {
     assert!(
@@ -182,7 +194,7 @@ fn check_proxied(folder: &Path, marker: &Path, seen: &Turn) {
     );
 }
 
-const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP. Then reply with only the word DONE and the number that command printed.";
+const REACH: &str = "This is a test of your tools. First call the visual_docs tool. Then run this exact shell command: env | grep -c GESPAN_MCP || true. Then reply with only the word DONE and the number that command printed.";
 
 fn check_reach(seen: &Turn) {
     assert!(
@@ -191,10 +203,17 @@ fn check_reach(seen: &Turn) {
         seen.tools
     );
     assert!(seen.text.contains("DONE"), "{}", seen.text);
-    assert!(
-        seen.text.contains('0'),
-        "the agent's own shell found the credential: {}",
-        seen.text
+    let output = seen
+        .inputs
+        .iter()
+        .zip(&seen.outputs)
+        .rev()
+        .find(|(input, output)| input.contains("grep -c GESPAN_MCP") && !output.is_empty())
+        .map(|(_, output)| output.trim());
+    assert_eq!(
+        output,
+        Some("0"),
+        "the agent's own shell found the credential"
     );
 }
 

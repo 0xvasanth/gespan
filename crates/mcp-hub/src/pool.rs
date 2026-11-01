@@ -21,6 +21,8 @@ pub(crate) const SEPARATOR: &str = "__";
 /// Gemini caps tool names at 63 characters and Kiro at 64.
 const MAX_TOOL_NAME: usize = 63;
 const REMEMBERED_ERRORS: usize = 32;
+/// A server chooses what its errors say, so they're kept short.
+const MAX_ERROR_CHARS: usize = 500;
 
 /// How many processes a server gets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -87,6 +89,19 @@ struct Key {
     scope: Scope,
 }
 
+impl Key {
+    /// Whether this process is what the spec would start now.
+    fn serves(&self, spec: &ServerSpec) -> bool {
+        self.fingerprint == spec.fingerprint()
+            && matches!(
+                (spec.sharing, &self.scope),
+                (Sharing::Shared, Scope::All)
+                    | (Sharing::PerWorkspace, Scope::Workspace(_))
+                    | (Sharing::PerSession, Scope::Session(_))
+            )
+    }
+}
+
 fn key(spec: &ServerSpec, grant: &Grant) -> Key {
     Key {
         server: spec.id.clone(),
@@ -136,6 +151,8 @@ pub(crate) struct Pool {
     limit: usize,
     specs: Mutex<HashMap<String, ServerSpec>>,
     running: Mutex<HashMap<Key, Arc<Upstream>>>,
+    /// Off the books, and stopped once nothing is waiting on them.
+    retired: Mutex<Vec<Arc<Upstream>>>,
     starting: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<()>>>>,
     lists: Mutex<Lists>,
     errors: Mutex<VecDeque<ServerError>>,
@@ -161,6 +178,7 @@ impl Pool {
             limit,
             specs: Mutex::default(),
             running: Mutex::default(),
+            retired: Mutex::default(),
             starting: Mutex::default(),
             lists: Mutex::default(),
             errors: Mutex::default(),
@@ -176,8 +194,11 @@ impl Pool {
         relock(&self.hub).upgrade()
     }
 
+    /// Keeps a failure for the host to show its user. The log gets only which
+    /// server: its message is the server's own text and may quote anything.
     fn record(&self, server: &str, message: String) {
-        tracing::warn!(server, %message, "an MCP server failed");
+        tracing::warn!(server, "an MCP server failed");
+        let message = message.chars().take(MAX_ERROR_CHARS).collect();
         let mut errors = relock(&self.errors);
         if errors.len() >= REMEMBERED_ERRORS {
             errors.pop_front();
@@ -196,23 +217,27 @@ impl Pool {
             .into_iter()
             .map(|spec| (spec.id.clone(), spec))
             .collect();
+        // First, so a start that finishes from here on sees the new specs, and
+        // one that finished before is in `running` for the look below.
+        *relock(&self.specs) = specs;
         let stale: Vec<_> = {
             let mut running = relock(&self.running);
             let keys: Vec<_> = running
                 .keys()
-                .filter(|key| {
-                    specs
-                        .get(&key.server)
-                        .is_none_or(|spec| spec.fingerprint() != key.fingerprint)
-                })
+                .filter(|key| !self.current(key))
                 .cloned()
                 .collect();
             keys.iter().filter_map(|key| running.remove(key)).collect()
         };
-        *relock(&self.specs) = specs;
         for upstream in stale {
             upstream.shut();
         }
+    }
+
+    fn current(&self, key: &Key) -> bool {
+        relock(&self.specs)
+            .get(&key.server)
+            .is_some_and(|spec| key.serves(spec))
     }
 
     fn spec(&self, server: &str) -> Option<ServerSpec> {
@@ -242,10 +267,35 @@ impl Pool {
             .entry(key.clone())
             .or_default()
             .clone();
+        let found = self
+            .running_or_started(&gate, key.clone(), spec, grant)
+            .await;
+        let mut gates = relock(&self.starting);
+        // The map's and ours, so nobody else is waiting on it.
+        if gates
+            .get(&key)
+            .is_some_and(|held| Arc::strong_count(held) == 2)
+        {
+            gates.remove(&key);
+        }
+        found
+    }
+
+    async fn running_or_started(
+        self: &Arc<Self>,
+        gate: &tokio::sync::Mutex<()>,
+        key: Key,
+        spec: &ServerSpec,
+        grant: &Grant,
+    ) -> Result<Arc<Upstream>, String> {
         let _turn = gate.lock().await;
         if let Some(upstream) = relock(&self.running).get(&key).cloned() {
             upstream.add_user(grant.session);
             return Ok(upstream);
+        }
+        // The server may have changed while this waited its turn.
+        if !self.current(&key) {
+            return Err(changed(&spec.id));
         }
         self.make_room();
         let (workspace, reach) = match spec.sharing {
@@ -268,8 +318,14 @@ impl Pool {
                 Upstream::start(&spec, spawned, workspace.as_deref(), reach, events)
             });
             let upstream = started.inspect_err(|error| pool.record(&spec.id, error.clone()))?;
+            let mut running = relock(&pool.running);
+            if !pool.current(&key) {
+                drop(running);
+                upstream.shut();
+                return Err(changed(&spec.id));
+            }
             upstream.add_user(session);
-            relock(&pool.running).insert(key, upstream.clone());
+            running.insert(key, upstream.clone());
             Ok::<_, String>(upstream)
         })
         .await
@@ -277,7 +333,9 @@ impl Pool {
         Ok(upstream)
     }
 
-    /// Stops the longest-idle processes until there's room for one more.
+    /// Stops the longest-idle processes until there's room for one more. With
+    /// every process busy there's nothing to stop, and the new one runs anyway:
+    /// a call that fails helps nobody, so the limit is a target, not a wall.
     fn make_room(&self) {
         let mut stopped = Vec::new();
         {
@@ -312,6 +370,17 @@ impl Pool {
         for upstream in idle {
             upstream.shut();
         }
+        let mut drained = Vec::new();
+        relock(&self.retired).retain(|upstream| {
+            let done = upstream.drained();
+            if done {
+                drained.push(upstream.clone());
+            }
+            !done
+        });
+        for upstream in drained {
+            upstream.shut();
+        }
     }
 
     pub(crate) fn sweep_interval(&self) -> Duration {
@@ -322,6 +391,7 @@ impl Pool {
         let all: Vec<_> = relock(&self.running)
             .drain()
             .map(|(_, upstream)| upstream)
+            .chain(relock(&self.retired).drain(..))
             .collect();
         for upstream in all {
             upstream.shut();
@@ -330,15 +400,29 @@ impl Pool {
 
     /// A session ended: its own processes stop, and it lets go of the others.
     pub(crate) fn forget(&self, session: i64) {
+        self.let_go(session, |_| true);
+    }
+
+    /// A session lost these servers: the same, for them alone.
+    pub(crate) fn release(&self, session: i64, servers: &BTreeSet<String>) {
+        self.let_go(session, |key| servers.contains(&key.server));
+    }
+
+    fn let_go(&self, session: i64, chosen: impl Fn(&Key) -> bool) {
         let (own, others): (Vec<_>, Vec<_>) = {
             let mut running = relock(&self.running);
             let keys: Vec<_> = running
                 .keys()
-                .filter(|key| key.scope == Scope::Session(session))
+                .filter(|key| chosen(key) && key.scope == Scope::Session(session))
                 .cloned()
                 .collect();
             let own = keys.iter().filter_map(|key| running.remove(key)).collect();
-            (own, running.values().cloned().collect())
+            let others = running
+                .iter()
+                .filter(|(key, _)| chosen(key))
+                .map(|(_, upstream)| upstream.clone())
+                .collect();
+            (own, others)
         };
         for upstream in own {
             upstream.shut();
@@ -422,7 +506,7 @@ impl Pool {
                         spec.id,
                         item["name"].as_str().unwrap_or("")
                     );
-                    if name.len() > MAX_TOOL_NAME {
+                    if list == TOOLS && name.len() > MAX_TOOL_NAME {
                         continue;
                     }
                     item["name"] = json!(name);
@@ -474,12 +558,14 @@ impl Pool {
     ) -> Result<(), String> {
         let spec = self.resolve(grant, server).ok_or("Unknown resource")?;
         let upstream = self.upstream(&spec, grant).await?;
-        if on {
-            upstream.subscribe(grant.session, uri);
-        } else {
+        if !on {
             upstream.unsubscribe(grant.session, uri);
+            return Ok(());
         }
-        Ok(())
+        let (session, uri) = (grant.session, uri.to_owned());
+        tokio::task::spawn_blocking(move || upstream.subscribe(session, &uri))
+            .await
+            .map_err(|_| "The subscription was interrupted".to_owned())?
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Running> {
@@ -512,7 +598,7 @@ impl Pool {
 
     /// Drops a stale list and tells whoever can see this server.
     fn list_changed(self: &Arc<Self>, key: &Key, upstream: &Arc<Upstream>, method: &str) {
-        let Some(spec) = self.spec(&key.server) else {
+        let Some(spec) = self.spec(&key.server).filter(|spec| key.serves(spec)) else {
             return;
         };
         let list = match method {
@@ -523,8 +609,11 @@ impl Pool {
         let pool = self.clone();
         let upstream = upstream.clone();
         let method = method.to_owned();
+        let key = key.clone();
         std::thread::spawn(move || {
             match upstream.list(list.0, list.1) {
+                // Replaced while it was listing: this list is no one's.
+                Ok(_) if !pool.current(&key) => return,
                 Ok(items) => pool.store(&spec, list, items),
                 Err(error) => pool.record(&spec.id, format!("{}: {error}", list.0)),
             }
@@ -540,10 +629,15 @@ impl Pool {
         };
         spec.sharing = Sharing::PerSession;
         relock(&self.specs).insert(key.server.clone(), spec);
-        // In-flight calls hold it until they finish.
-        relock(&self.running).remove(key);
+        // Calls in flight finish first; the sweep stops it after them.
+        let retired = relock(&self.running).remove(key);
+        relock(&self.retired).extend(retired);
         self.observer.demoted(&key.server, method);
     }
+}
+
+fn changed(server: &str) -> String {
+    format!("{server} changed while it was starting; try again")
 }
 
 /// A resource's URI as agents see it, naming the server it came from.

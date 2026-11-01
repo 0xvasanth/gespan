@@ -6,9 +6,9 @@ use crate::{
     },
     theme::*,
 };
-use gespan_core::mcp_catalog::{self, Catalog, Class, Entry};
+use gespan_core::mcp_catalog::{self, Catalog, Class, Edited, Entry};
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A catalogue change, on a background thread: the keychain can block.
 type Edit = dyn FnOnce(&mut Catalog, &Path) -> Result<(), String> + Send;
@@ -21,8 +21,8 @@ fn class_label(class: Class) -> &'static str {
     }
 }
 
-fn status(entry: &Entry) -> &'static str {
-    match (entry.enabled, entry.approved.is_some()) {
+fn status(entry: &Entry, stale: bool) -> &'static str {
+    match (entry.enabled && !stale, entry.approved.is_some() && !stale) {
         (true, _) => "On",
         (false, true) => "Off",
         (false, false) => "Needs approval",
@@ -34,26 +34,47 @@ impl SettingsView {
         self.catalog_edit(Box::new(|_, _| Ok(())), cx);
     }
 
+    fn catalog_dir(&self) -> Option<PathBuf> {
+        #[cfg(test)]
+        if self.mcp_catalog_dir.is_some() {
+            return self.mcp_catalog_dir.clone();
+        }
+        gespan_core::tool_servers::data_dir()
+    }
+
     fn catalog_edit(&mut self, edit: Box<Edit>, cx: &mut Context<Self>) {
-        let Some(data_dir) = gespan_core::tool_servers::data_dir() else {
+        self.catalog_run(
+            move |data_dir| mcp_catalog::update(data_dir, |catalog| edit(catalog, data_dir)),
+            cx,
+        );
+    }
+
+    fn catalog_run(
+        &mut self,
+        work: impl FnOnce(&Path) -> Result<Edited, String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(data_dir) = self.catalog_dir() else {
             return;
         };
         let work = cx.background_executor().spawn(async move {
-            let mut catalog = Catalog::load(&data_dir)?;
-            let before = catalog.clone();
-            edit(&mut catalog, &data_dir)?;
-            if catalog != before {
-                catalog.save(&data_dir)?;
+            let edited = work(&data_dir)?;
+            if edited.changed {
                 gespan_core::tool_servers::sync_servers();
             }
-            Ok::<_, String>(catalog)
+            let stale = edited.catalog.stale(&data_dir);
+            Ok::<_, String>((edited, stale))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(catalog) => {
-                        this.mcp_catalog = catalog;
+                    Ok((edited, stale)) => {
+                        if edited.revision >= this.mcp_catalog_revision {
+                            this.mcp_catalog_revision = edited.revision;
+                            this.mcp_catalog = edited.catalog;
+                            this.mcp_catalog_stale = stale;
+                        }
                         this.mcp_catalog_error = None;
                     }
                     Err(error) => this.mcp_catalog_error = Some(error),
@@ -115,9 +136,8 @@ impl SettingsView {
         cx.spawn(async move |this, cx| {
             if prompt.await == Ok(0) {
                 let _ = this.update(cx, |this, cx| {
-                    let id = entry.id.clone();
                     this.catalog_edit(
-                        Box::new(move |catalog, data_dir| catalog.approve(data_dir, &id)),
+                        Box::new(move |catalog, data_dir| catalog.approve_shown(data_dir, &entry)),
                         cx,
                     );
                 });
@@ -133,8 +153,9 @@ impl SettingsView {
             Some(url) => url.clone(),
             None => entry.command_line(),
         };
+        let stale = self.mcp_catalog_stale.contains(&entry.id);
         let mut facts = vec![
-            status(&entry).to_owned(),
+            status(&entry, stale).to_owned(),
             class_label(entry.class).to_owned(),
         ];
         facts.extend(entry.source.clone());
@@ -170,6 +191,7 @@ impl SettingsView {
                     )
                     .child(
                         div()
+                            .debug_selector(move || format!("settings-catalog-detail-{ix}"))
                             .truncate()
                             .text_size(px(11.))
                             .text_color(content(0.35))
@@ -240,6 +262,7 @@ impl SettingsView {
                     false,
                     false,
                 )
+                .debug_selector(move || format!("settings-catalog-off-{ix}"))
                 .child("Turn off")
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let id = id.clone();
@@ -254,7 +277,8 @@ impl SettingsView {
                     );
                 })),
             );
-        } else {
+        }
+        if !entry.enabled || stale {
             let approving = entry.clone();
             row = row.child(
                 secondary_button(
@@ -263,6 +287,7 @@ impl SettingsView {
                     false,
                     false,
                 )
+                .debug_selector(move || format!("settings-catalog-approve-{ix}"))
                 .child("Review and turn on")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.catalog_approve(approving.clone(), window, cx);
@@ -292,13 +317,11 @@ impl SettingsView {
                 false,
                 false,
             )
+            .debug_selector(move || format!("settings-catalog-remove-{ix}"))
             .child("Remove")
             .on_click(cx.listener(move |this, _, _, cx| {
                 let id = id.clone();
-                this.catalog_edit(
-                    Box::new(move |catalog, data_dir| mcp_catalog::remove(catalog, data_dir, &id)),
-                    cx,
-                );
+                this.catalog_run(move |data_dir| mcp_catalog::remove(data_dir, &id), cx);
             })),
         )
         .into_any_element()
@@ -381,6 +404,7 @@ impl SettingsView {
             section.push(
                 div()
                     .id("settings-catalog-error")
+                    .debug_selector(|| "settings-catalog-error".into())
                     .role(gpui::Role::Alert)
                     .mt_3()
                     .text_size(px(12.))

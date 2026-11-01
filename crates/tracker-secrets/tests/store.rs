@@ -336,3 +336,20 @@ fn saving_before_the_data_directory_exists_uses_its_final_name() {
         Some("cfg")
     );
 }
+
+#[test]
+fn a_named_secret_can_never_land_on_a_trackers_account() {
+    let dir = dir();
+    gespan_tracker_secrets::write(Tracker::Linear, dir.path(), "tracker").unwrap();
+    let name = Tracker::Linear.key();
+    assert_eq!(
+        gespan_tracker_secrets::read_named(name, dir.path()).unwrap(),
+        None
+    );
+    gespan_tracker_secrets::write_named(name, dir.path(), "named").unwrap();
+    gespan_tracker_secrets::delete_named(name, dir.path()).unwrap();
+    assert_eq!(
+        gespan_tracker_secrets::read(Tracker::Linear, dir.path()).unwrap(),
+        Some("tracker".to_owned())
+    );
+}

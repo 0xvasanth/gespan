@@ -248,6 +248,12 @@ pub(crate) struct SettingsView {
     mcp_catalog: gespan_core::mcp_catalog::Catalog,
     mcp_catalog_error: Option<String>,
     mcp_catalog_loaded: bool,
+    /// Servers turned on whose approval no longer matches.
+    mcp_catalog_stale: std::collections::BTreeSet<String>,
+    /// The newest edit shown, so an older read finishing late can't undo it.
+    mcp_catalog_revision: u64,
+    #[cfg(test)]
+    mcp_catalog_dir: Option<std::path::PathBuf>,
     mcp_health: Option<Task<()>>,
     discovery: data::Discovery,
     discovery_loading: bool,
@@ -256,6 +262,8 @@ pub(crate) struct SettingsView {
     provider_scope: String,
     mcp_filter: String,
     fields: HashMap<&'static str, Entity<Input>>,
+    /// By main checkout, so unsaved text survives picking another project.
+    worktree_scripts: HashMap<String, pages::WorktreeScripts>,
     connections: pages::ConnectionsState,
     skill_preview: Option<std::path::PathBuf>,
     skill_preview_text: Option<Result<std::sync::Arc<skill_document::DocumentData>, String>>,
@@ -389,6 +397,10 @@ impl SettingsView {
             mcp_catalog: Default::default(),
             mcp_catalog_error: None,
             mcp_catalog_loaded: false,
+            mcp_catalog_stale: Default::default(),
+            mcp_catalog_revision: 0,
+            #[cfg(test)]
+            mcp_catalog_dir: None,
             mcp_health: None,
             discovery: data::Discovery::default(),
             discovery_loading: false,
@@ -397,6 +409,7 @@ impl SettingsView {
             provider_scope: "global".into(),
             mcp_filter: "all".into(),
             fields: HashMap::new(),
+            worktree_scripts: HashMap::new(),
             connections: pages::ConnectionsState::default(),
             skill_preview: None,
             skill_preview_text: None,
@@ -436,6 +449,7 @@ impl SettingsView {
             });
         }
         if self.section == Section::Mcp {
+            self.mcp_catalog_loaded = true;
             self.load_catalog(cx);
         }
         let cwd = self.selected_project.clone();

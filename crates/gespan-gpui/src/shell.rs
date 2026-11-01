@@ -1037,6 +1037,13 @@ impl Shell {
         let worktree_focus = workspace.worktree_focus.clone();
         let session_worktrees = sidebar_metadata.worktrees;
         let notification_state = notifications::State::new(&workspace, store.clone(), cx);
+        if let Some(setups) = crate::worktree_setups::get(cx) {
+            cx.observe(&setups, |_, _, cx| cx.notify()).detach();
+        }
+        cx.observe_global::<crate::installed_providers::InstalledProviders>(|this, cx| {
+            this.sync_board_projects(cx);
+        })
+        .detach();
         let classic_session_search = classic_sidebar::session_search(cx);
         let classic_search_subscription =
             classic_sidebar::bind_session_search(&classic_session_search, cx);
@@ -9176,6 +9183,7 @@ impl Render for Shell {
             .children(self.layout_body(sidebar_width, right_shown, right_width, full, window, cx))
             .children(self.peek_watch(window, cx))
             .child(self.notices_overlay(cx))
+            .children(crate::worktree_setups::get(cx).filter(|view| !view.read(cx).is_empty()))
             .children(self.menu.as_ref().map(|open| {
                 let point = matches!(open.anchor, Anchor::Point(_));
                 let beside = matches!(open.target, MenuTarget::Project { .. });
