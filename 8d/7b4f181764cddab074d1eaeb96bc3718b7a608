@@ -1,0 +1,35 @@
+crates/gespan-core/src/worktree_scripts/tests.rs
+  s_765ddcec531e1c::t_9e4ff1ee99996c 1-398
+crates/gespan-core/src/worktree_scripts.rs
+  s_765ddcec531e1c::t_9e4ff1ee99996c 52,278-279,282-285,304-305,307,321,323-324,328,332,334,413,460,630-633,648
+  s_765ddcec531e1c::t_f2225ecc9ffb0d 1-51,53-277,280-281,286-303,306,308-320,322,325-327,329-331,333,335-412,414-459,461-629,634-647,649-679
+crates/gespan-core/src/git.rs
+  s_765ddcec531e1c::t_bea28e8667fcec 580-581,583,617-618,624,626-637,641,657-667,672,681,688-695,757-758,761-764
+crates/gespan-core/src/orchestration/worktree.rs
+  s_765ddcec531e1c::t_bea28e8667fcec 214-224,229,250,325-339
+crates/gespan-core/src/worktree_copy.rs
+  s_765ddcec531e1c::t_bea28e8667fcec 15,20,26,34-35,54-66,73-74,120-122,128,164-166,183
+crates/gespan-core/src/worktree_management.rs
+  s_765ddcec531e1c::t_bea28e8667fcec 75,77-94,185,192,197
+crates/gespan-core/src/orchestration/worktree/tests.rs
+  s_765ddcec531e1c::t_9e4ff1ee99996c 48-66
+  s_765ddcec531e1c::t_7fdaeacba74721 47
+crates/gespan-core/src/lib.rs
+  s_765ddcec531e1c::t_bea28e8667fcec 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d7b4f181764cddab074d1eaeb96bc3718b7a608",
+  "prompts": {},
+  "sessions": {
+    "s_765ddcec531e1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce04e2bc-b6e3-4cab-ba44-bde4dcc4f035",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
