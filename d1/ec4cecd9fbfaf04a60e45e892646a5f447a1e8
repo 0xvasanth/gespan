@@ -1,0 +1,50 @@
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  s_92be0b300595dd::t_ada339591e7917 9-17,38-79,83-167,273-275,408-427,429-430,562,649,668-683,687-756
+  s_92be0b300595dd::t_cb29c09c5a6cb3 466-561
+  s_92be0b300595dd::t_dae7c5a4b949f2 221
+  s_92be0b300595dd::t_269524df1cddac 428,563
+docs/native/mcp-hub.md
+  s_92be0b300595dd::t_527efbd79ea062 54-59
+crates/gespan-core/src/resources.rs
+  s_92be0b300595dd::t_ada339591e7917 228-253,419-442
+  s_92be0b300595dd::t_3d5dcb654ce7d3 443
+crates/gespan-gpui/src/runtime.rs
+  s_92be0b300595dd::t_dae7c5a4b949f2 751
+crates/gespan-core/src/lib.rs
+  s_92be0b300595dd::t_dae7c5a4b949f2 64
+crates/gespan-core/src/mcp_catalog.rs
+  s_92be0b300595dd::t_cb29c09c5a6cb3 9,316-320,322-324,328-330,337-342,344,543-544,548-551,557
+  s_92be0b300595dd::t_ada339591e7917 598-601
+  s_92be0b300595dd::t_dae7c5a4b949f2 5,56-57,211-244,257-259,564-597,602-616
+  s_92be0b300595dd::t_dbef056b344e1e 617
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_92be0b300595dd::t_b5c72e097e98f6 307,314
+crates/gespan-core/src/mcp_registry.rs
+  s_92be0b300595dd::t_dae7c5a4b949f2 1-266
+crates/gespan-gpui/src/settings/mod.rs
+  s_92be0b300595dd::t_ada339591e7917 250-256,397-403
+crates/gespan-core/src/tool_servers.rs
+  s_92be0b300595dd::t_ada339591e7917 108-111,113,121
+  s_92be0b300595dd::t_dae7c5a4b949f2 14,32-33,63-75,266-267,427-429,469-471
+  s_92be0b300595dd::t_cb29c09c5a6cb3 94,155-159
+crates/gespan-core/tests/real_agents.rs
+  s_92be0b300595dd::t_527efbd79ea062 322-337,339-364,370-374
+  s_92be0b300595dd::t_b5c72e097e98f6 338,365-369
+  s_92be0b300595dd::t_c1934650cf0469 375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1ec4cecd9fbfaf04a60e45e892646a5f447a1e8",
+  "prompts": {},
+  "sessions": {
+    "s_92be0b300595dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bd3b0bc-159e-4c11-8da7-e601f11cea55",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
