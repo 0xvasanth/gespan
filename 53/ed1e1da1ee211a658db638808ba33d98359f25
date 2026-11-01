@@ -1,0 +1,14 @@
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  h_7bb0b8336911f0 271-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53ed1e1da1ee211a658db638808ba33d98359f25",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
