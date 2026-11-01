@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Older Cursor sessions show their subagents' details when reopened.
 - Claude's local MCP servers added from a linked worktree or a subdirectory now
   show in Settings → MCP, and so do WebSocket servers.
+- Stopping a remote MCP connection now really stops it, and a server's event
+  stream that ends is reopened while its agent is still connected.
 - Adding an MCP server on Windows no longer fails with Access denied just as
   Claude Code releases its config lock.
 
@@ -79,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values on the command line, where other local processes could read them.
 - Sign-ins for remote MCP servers are tied to the exact address they were issued
   for, and credentials are refused over plain HTTP to anything but loopback.
+- MCP Registry listings can't choose how a server is launched. They must be
+  pinned, and flags for `npx`, `uvx` or `docker` are refused, since they could
+  fetch another package than the one you approved or loosen a container.
+- The `zip` library is updated past versions with known vulnerabilities.
 
 - Inbox sessions, automation Inbox events and board cards made from tracker
   text now mark that text as data, not instructions. Anyone can write it, so
