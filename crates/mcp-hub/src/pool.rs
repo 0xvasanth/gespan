@@ -409,6 +409,10 @@ impl Pool {
         let mut all = Vec::new();
         for spec in self.offered(grant) {
             for mut item in self.items(&spec, grant, list).await {
+                // A server's answer is untrusted; only an object can be named.
+                if !item.is_object() {
+                    continue;
+                }
                 if list == RESOURCES {
                     let uri = item["uri"].as_str().unwrap_or("").to_owned();
                     item["uri"] = json!(resource_uri(&spec.id, &uri));

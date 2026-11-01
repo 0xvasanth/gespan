@@ -245,6 +245,8 @@ pub(crate) struct SettingsView {
     mcp_show_all: bool,
     mcp_remove_scopes: HashMap<String, String>,
     mcp_busy: bool,
+    mcp_catalog: gespan_core::mcp_catalog::Catalog,
+    mcp_catalog_error: Option<String>,
     mcp_health: Option<Task<()>>,
     discovery: data::Discovery,
     discovery_loading: bool,
@@ -383,6 +385,8 @@ impl SettingsView {
             mcp_show_all: false,
             mcp_remove_scopes: HashMap::new(),
             mcp_busy: false,
+            mcp_catalog: Default::default(),
+            mcp_catalog_error: None,
             mcp_health: None,
             discovery: data::Discovery::default(),
             discovery_loading: false,
@@ -428,6 +432,9 @@ impl SettingsView {
                     center.load_provider(kind, true, cx);
                 }
             });
+        }
+        if self.section == Section::Mcp {
+            self.load_catalog(cx);
         }
         let cwd = self.selected_project.clone();
         self.discovery_loading = true;

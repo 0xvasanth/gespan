@@ -31,6 +31,24 @@ OpenCode v2 connects to one managed service shared by every session, so a server
 
 Codex reads its tool list when a thread starts, so a tool added mid-session reaches it on its next session.
 
+## Servers
+
+Settings → MCP holds Gespan's catalogue. Import copies servers out of each agent's config without changing those files. Each lands off, with its env values in the OS keychain, and runs only after the user approves it. The approval is a hash of the exact command, arguments and env, so an edit or a changed secret needs approving again.
+
+Agents see `<server>__<tool>`, served from a cached list, so listing starts nothing. The first call starts the process.
+
+| Class | One process per |
+|---|---|
+| `shared` | server and its command and secrets |
+| `per-worktree` (the default) | worktree, started in that folder |
+| `per-session` | agent session |
+
+A process stops after five minutes with nothing in flight and no subscribers, or sooner if 20 are running. A shared server that asks an agent for sampling, elicitation or roots is refused, because the request can't be traced to one agent, and moves to `per-session`.
+
+With "Agents load only these servers" on, Claude Code runs with `--strict-mcp-config` and Codex's own servers are switched off by name. ACP agents have no such switch: Cursor reads its own config, and Kiro's needs an agent file Gespan would have to write, so they keep loading their own servers alongside Gespan's.
+
+Each server runs in its own process group with the same marker as agents. A record of their pids lets the next launch's sweep find a server that looks like any `node` process, and it still acts only on a dead parent in the marker. On Windows the kill-on-close job does this.
+
 ## Security
 
 - The endpoint listens on `127.0.0.1` only. A request with another `Host` or `Origin` gets 403 before its token is read, which is what stops DNS rebinding.

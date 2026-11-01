@@ -36,6 +36,10 @@ pub fn configure(data_dir: &Path) {
     let _ = DATA_DIR.set(data_dir.to_owned());
 }
 
+pub fn data_dir() -> Option<PathBuf> {
+    DATA_DIR.get().cloned()
+}
+
 /// Hands the hub the catalogue's approved servers, when they've changed.
 pub fn sync_servers() {
     static OFFERED: Mutex<Vec<ServerSpec>> = Mutex::new(Vec::new());

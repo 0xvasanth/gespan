@@ -43,7 +43,12 @@ fn fixture_server() {
                 "serverInfo":{"name":name,"version":"1"},
             }),
             "tools/list" => {
-                let mut tools = vec![json!({"name":"who","inputSchema":{"type":"object"}})];
+                let mut tools = vec![
+                    json!({"name":"who","inputSchema":{"type":"object"}}),
+                    // Junk a broken server might list.
+                    json!(5),
+                    json!({"name":"no-schema"}),
+                ];
                 tools.extend(
                     (1..version).map(
                         |n| json!({"name":format!("extra{n}"),"inputSchema":{"type":"object"}}),
@@ -62,6 +67,10 @@ fn fixture_server() {
                 let arguments = &message["params"]["arguments"];
                 if arguments["crash"] == true {
                     std::process::exit(9);
+                }
+                if arguments["junk"] == true {
+                    send(json!({"jsonrpc":"2.0","id":id,"result":5}));
+                    continue;
                 }
                 if arguments["change"] == true {
                     version += 1;
@@ -453,6 +462,23 @@ fn listing_is_served_from_the_cache_and_starts_nothing() {
     assert_eq!(rig.processes.started.load(Ordering::SeqCst), 0, "lazy");
     agent.call("docs__who", json!({}));
     assert_eq!(rig.processes.started.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_server_that_answers_junk_fails_that_call_and_nothing_else() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["docs"])));
+    assert_eq!(agent.tools(), ["docs__who"], "junk list items are left out");
+    let failed = agent.request(
+        "tools/call",
+        json!({"name":"docs__who","arguments":{"junk":true}}),
+    );
+    assert!(!failed["error"].is_null(), "{failed}");
+    assert_eq!(
+        agent.call("docs__who", json!({"echo":"fine"}))["echo"],
+        "fine"
+    );
 }
 
 /// Kiro negotiates 2026-07-28, which requires this; old servers never send it.

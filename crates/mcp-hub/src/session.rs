@@ -45,8 +45,10 @@ fn internal(error: impl std::fmt::Display) -> ErrorData {
 /// Marks a result as final. Protocol 2026-07-28 requires it of the hub whatever
 /// version the server behind it speaks, and older agents ignore it.
 fn complete(mut result: Value) -> Value {
-    if result.get("resultType").is_none() {
-        result["resultType"] = "complete".into();
+    if let Some(object) = result.as_object_mut() {
+        object
+            .entry("resultType")
+            .or_insert_with(|| "complete".into());
     }
     result
 }

@@ -4,10 +4,10 @@
 //! `cargo test --test real_agents -- --ignored --nocapture --test-threads=1`
 use gespan_core::{
     agent::{AccessMode, Settings},
-    provider::{self, Event, Kind, Request},
-    tool_servers::{Mount, APP, VISUAL},
     mcp::Importable,
     mcp_catalog::{Catalog, Class},
+    provider::{self, Event, Kind, Request},
+    tool_servers::{Mount, APP, VISUAL},
     visual_bridge,
 };
 use std::{
@@ -147,7 +147,11 @@ fn with_catalogue(folder: &Path) -> PathBuf {
                 name: "probe".into(),
                 command: "python3".into(),
                 args: vec![script.to_string_lossy().into_owned()],
-                env: [("MARKER".to_owned(), hub_marker.to_string_lossy().into_owned())].into(),
+                env: [(
+                    "MARKER".to_owned(),
+                    hub_marker.to_string_lossy().into_owned(),
+                )]
+                .into(),
                 url: None,
             }],
         )

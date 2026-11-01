@@ -284,3 +284,32 @@ fn pilot_mascot_is_beside_name_and_reset_stays_visible(cx: &mut TestAppContext) 
     let reset = visual.debug_bounds("settings-pilot-reset").unwrap();
     assert!(reset.right() <= px(700.));
 }
+
+#[gpui::test]
+fn the_mcp_page_shows_what_each_server_would_run_and_whether_it_needs_approval(
+    cx: &mut TestAppContext,
+) {
+    let window = window(Section::Mcp, cx);
+    window
+        .update(cx, |view, _, cx| {
+            view.mcp_catalog.entries = vec![gespan_core::mcp_catalog::Entry {
+                id: "docs".into(),
+                name: "Docs search".into(),
+                command: "npx".into(),
+                args: vec!["-y".into(), "docs-mcp".into()],
+                source: Some("claude (user)".into()),
+                ..Default::default()
+            }];
+            cx.notify();
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let text = window
+        .update(cx, |view, _, cx| {
+            let entry = view.mcp_catalog.entries[0].clone();
+            assert_eq!(entry.command_line(), "npx -y docs-mcp");
+            view.catalog_section(cx).len()
+        })
+        .unwrap();
+    assert_eq!(text, 3, "header, switch and the list");
+}
