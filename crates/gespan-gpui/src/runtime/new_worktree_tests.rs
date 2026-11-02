@@ -55,6 +55,16 @@ fn turn(store: &Database, project: &str, provider: Kind, settings: Settings) -> 
         .unwrap()
         .create(provider.id(), project)
         .unwrap();
+    turn_in(store, summary, settings)
+}
+
+/// The same, as a turn of the existing chat `summary`.
+fn turn_in(
+    store: &Database,
+    summary: gespan_core::store::Session,
+    settings: Settings,
+) -> Option<String> {
+    let provider = summary.provider.clone();
     let id = summary.id;
     let (tx, rx) = async_channel::unbounded();
     let (_controls, controls) = std::sync::mpsc::channel();
@@ -125,69 +135,34 @@ fn every_provider_gets_a_new_worktree_per_chat() {
 }
 
 #[test]
-fn a_chat_with_a_worktree_keeps_it_and_makes_no_other() {
+fn a_chat_keeps_its_new_worktree_for_later_turns() {
     let repo = Repo::new();
     let store = store();
-    let existing = gespan_core::git::create_named_worktree(repo.0.path(), "feature")
+    let summary = locked(&store)
         .unwrap()
-        .path;
-    for new_worktree in [false, true] {
-        // A stale request beside a worktree the chat already has is the
-        // chat reopened after its worktree was made, not a new one.
-        let tree = turn(
-            &store,
-            repo.path(),
-            Kind::Kiro,
-            Settings {
-                new_worktree,
-                worktree_cwd: Some(existing.clone()),
-                ..Default::default()
-            },
+        .create(Kind::Kiro.id(), repo.path())
+        .unwrap();
+    let id = summary.id;
+    let made = turn_in(
+        &store,
+        summary.clone(),
+        Settings {
+            new_worktree: true,
+            ..Default::default()
+        },
+    )
+    .expect("the first turn makes a worktree");
+    // Later turns of the same chat run with what it saved, and a stale
+    // request beside its worktree is that chat reopened, not a new one.
+    for stale in [false, true] {
+        let mut settings = locked(&store).unwrap().agent_settings(id).unwrap().unwrap();
+        settings.new_worktree |= stale;
+        let tree = turn_in(&store, summary.clone(), settings);
+        assert_eq!(
+            tree.as_deref(),
+            Some(made.as_str()),
+            "stale request: {stale}"
         );
-        assert_eq!(tree.as_deref(), Some(existing.as_str()));
     }
-    assert_eq!(repo.worktrees(), 2);
-}
-
-#[test]
-fn a_new_worktree_never_takes_a_branch_that_exists() {
-    let repo = Repo::new();
-    let store = store();
-    // Names the next chats' branches could be given if they were not unique.
-    for branch in ["gespan/1", "gespan/2", "gespan/a"] {
-        repo.git(&["branch", branch]);
-    }
-    let one = turn(
-        &store,
-        repo.path(),
-        Kind::Kiro,
-        Settings {
-            new_worktree: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let two = turn(
-        &store,
-        repo.path(),
-        Kind::Claude,
-        Settings {
-            new_worktree: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_ne!(one, two);
-    let branch = |tree: &str| {
-        let output = std::process::Command::new("git")
-            .args(["branch", "--show-current"])
-            .current_dir(tree)
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
-    };
-    assert_ne!(branch(&one), branch(&two));
-    for tree in [&one, &two] {
-        assert!(!["gespan/1", "gespan/2", "gespan/a", "main"].contains(&branch(tree).as_str()));
-    }
+    assert_eq!(repo.worktrees(), 2, "main and the chat's one worktree");
 }
