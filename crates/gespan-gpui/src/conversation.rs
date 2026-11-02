@@ -164,6 +164,8 @@ struct OpenMenu {
 }
 use response_menu::ResponseMenu;
 pub(crate) struct SessionChanged;
+/// The chat moved into the worktree it was asked to make: its path.
+pub(crate) struct WorktreeCreated(pub(crate) String);
 /// The agent changed the linked ticket through its ticket tools.
 pub(crate) struct TicketChanged(pub(crate) crate::runtime::TicketChange);
 pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
@@ -1522,6 +1524,7 @@ impl Conversation {
                             this.settings.new_worktree = false;
                             this.save_settings(cx);
                             this.refresh_git(cx);
+                            cx.emit(WorktreeCreated(cwd.clone()));
                             this.name_worktree_branch(cwd, cx);
                         }
                         if let Some(commands) = update.commands.filter(|_| source_selected) {
@@ -1858,6 +1861,7 @@ impl Conversation {
 }
 
 impl EventEmitter<SessionChanged> for Conversation {}
+impl EventEmitter<WorktreeCreated> for Conversation {}
 impl EventEmitter<TicketChanged> for Conversation {}
 impl EventEmitter<ChooseFolder> for Conversation {}
 impl EventEmitter<OpenSessionChanges> for Conversation {}
@@ -2134,6 +2138,7 @@ impl Conversation {
                         this.settings.new_worktree = false;
                         this.save_settings(cx);
                         this.refresh_git(cx);
+                        cx.emit(WorktreeCreated(path.clone()));
                         this.name_worktree_branch(path, cx);
                         if this.follow_ups.state.messages.is_empty() {
                             this.send(cx);
