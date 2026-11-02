@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseDecision, RELEASE_CHECKS, releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, previewFeedSource, verifyPreviewFeed, releasePlan, releaseNotes } = require("./release-channel.cjs");
+const { releaseDecision, RELEASE_CHECKS, releaseChannel, updaterEndpoint, updaterPubkey, nativeUpdaterPubkey, NATIVE_UPDATER_KEY_FILE, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeChannel, nativeFixedDownloads, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed, nativeReleaseTag, NATIVE_FEED_ASSET, previewFeedSource, verifyPreviewFeed, releasePlan, releaseNotes } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -262,10 +262,20 @@ test("the native-config CLI exports the endpoint and fails without a pubkey", ()
     env: { PATH: process.env.PATH, GITHUB_ENV: envFile, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
   });
   assert.throws(() => run({}), (error) => /TAURI_UPDATER_PUBKEY/.test(error.stderr));
-  run({ TAURI_UPDATER_PUBKEY: "pub" });
+  assert.throws(() => run({ TAURI_UPDATER_PUBKEY: "pub" }), (error) => /differs from crates\/gespan-gpui\/packaging\/updater\.pub/.test(error.stderr));
+  assert.equal(fs.readFileSync(envFile, "utf8"), "");
+  const committed = fs.readFileSync(path.join(__dirname, "..", NATIVE_UPDATER_KEY_FILE), "utf8").trim();
+  run({ TAURI_UPDATER_PUBKEY: `${committed}\n` });
   const written = fs.readFileSync(envFile, "utf8");
   assert.match(written, new RegExp(`GESPAN_NATIVE_UPDATER_ENDPOINT=${GITHUB_NATIVE_FEED}\n`));
-  assert.match(written, /GESPAN_NATIVE_UPDATER_PUBKEY=pub\n/);
+  assert.ok(written.includes(`GESPAN_NATIVE_UPDATER_PUBKEY=${committed}\n`));
+});
+
+test("a release signs with the key every app build already carries", () => {
+  const committed = "key-in-repo\n";
+  assert.equal(nativeUpdaterPubkey({ TAURI_UPDATER_PUBKEY: " key-in-repo " }, committed), "key-in-repo");
+  assert.throws(() => nativeUpdaterPubkey({ TAURI_UPDATER_PUBKEY: "rotated-key" }, committed), /After rotating the signing key/);
+  assert.throws(() => nativeUpdaterPubkey({}, committed), /TAURI_UPDATER_PUBKEY.*bunx tauri signer generate/s);
 });
 
 test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () => {

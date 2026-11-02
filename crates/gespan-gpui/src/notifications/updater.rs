@@ -53,11 +53,33 @@ enum Progress {
 pub(crate) fn version() -> &'static str {
     option_env!("GESPAN_NATIVE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
+/// The public half of the release signing key. Every build carries it, so an
+/// app built locally still verifies and installs released updates.
+const RELEASE_KEY: &str = include_str!("../../packaging/updater.pub");
+fn setup(endpoint: Option<&str>, key: Option<&str>) -> Result<Config, String> {
+    let endpoint = endpoint
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| app_update::default_endpoint(version()));
+    let key = key
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(RELEASE_KEY.trim());
+    Config::new(endpoint, key, version())
+}
 pub(crate) fn shared(store: Database, cx: &mut App) -> Entity<Updater> {
     if let Some(shared) = cx.try_global::<Shared>() {
         return shared.0.clone();
     }
-    let entity = cx.new(|cx| Updater::new(store, cx));
+    // Tests never reach the real feed.
+    let config = if cfg!(test) {
+        Err("Updates are off in tests".into())
+    } else {
+        setup(
+            option_env!("GESPAN_NATIVE_UPDATER_ENDPOINT"),
+            option_env!("GESPAN_NATIVE_UPDATER_PUBKEY"),
+        )
+    };
+    let entity = cx.new(|cx| Updater::new(store, config, cx));
     let gate = entity.read(cx).gate.clone();
     cx.set_global(Shared(entity.clone(), gate));
     entity
@@ -76,16 +98,7 @@ pub(crate) struct Updater {
 }
 impl EventEmitter<Event> for Updater {}
 impl Updater {
-    fn new(store: Database, cx: &mut Context<Self>) -> Self {
-        let setup = (|| {
-            let endpoint = option_env!("GESPAN_NATIVE_UPDATER_ENDPOINT")
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| app_update::default_endpoint(version()));
-            let key = option_env!("GESPAN_NATIVE_UPDATER_PUBKEY")
-                .filter(|v| !v.is_empty())
-                .ok_or("This build has no update verification key")?;
-            Config::new(endpoint, key, version())
-        })();
+    fn new(store: Database, setup: Result<Config, String>, cx: &mut Context<Self>) -> Self {
         let (config, message) = match setup {
             Ok(config) => (Some(config), None),
             Err(error) => (None, Some(error)),
@@ -141,6 +154,10 @@ impl Updater {
             return;
         }
         let Some(config) = self.config.clone() else {
+            // A click must never look like it did nothing.
+            if manual && let Some(error) = &self.message {
+                cx.emit(Event::Error(format!("Couldn’t check for updates: {error}")));
+            }
             self.changed(cx);
             return;
         };
@@ -423,6 +440,61 @@ mod tests {
         assert!(gate.lock().unwrap().quitting);
         gate.lock().unwrap().installing = false;
         assert!(!cx.update(|cx| defer_quit(cx)));
+    }
+    #[test]
+    fn a_build_without_release_settings_still_checks_the_release_feed() {
+        let config = setup(None, Some("")).unwrap();
+        assert_eq!(config.endpoint, app_update::default_endpoint(version()));
+        assert_eq!(config.public_key, RELEASE_KEY.trim());
+        assert_eq!(setup(Some(""), None).unwrap().public_key, config.public_key);
+        // The key that signed every release so far.
+        let key = String::from_utf8(
+            base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                RELEASE_KEY.trim(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            key.contains("minisign public key: B9DCA4E26B998D59"),
+            "{key}"
+        );
+    }
+    #[test]
+    fn a_key_set_at_build_time_replaces_the_release_key() {
+        assert!(setup(None, Some("not-a-key")).is_err());
+        let padded = format!("  {}\n", RELEASE_KEY.trim());
+        assert_eq!(
+            setup(None, Some(&padded)).unwrap().public_key,
+            RELEASE_KEY.trim()
+        );
+    }
+    #[gpui::test]
+    fn checking_by_hand_says_why_updates_are_off(cx: &mut TestAppContext) {
+        let store = Arc::new(Mutex::new(
+            gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
+        ));
+        let updater = cx.update(|cx| shared(store, cx));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let seen = errors.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&updater, move |_, event, _| {
+                if let Event::Error(error) = event {
+                    seen.lock().unwrap().push(error.clone());
+                }
+            })
+        });
+        updater.update(cx, |view, cx| {
+            assert_eq!(view.phase, Phase::Disabled);
+            view.check(false, cx);
+        });
+        assert!(errors.lock().unwrap().is_empty());
+        updater.update(cx, |view, cx| view.check(true, cx));
+        assert_eq!(
+            *errors.lock().unwrap(),
+            ["Couldn’t check for updates: Updates are off in tests"]
+        );
     }
     #[gpui::test]
     fn windows_share_one_updater_and_busy_operations_cannot_start_again(cx: &mut TestAppContext) {

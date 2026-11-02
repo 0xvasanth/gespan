@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sources for the old app are gone from the repository. Existing data keeps
   working: Native opens the same database.
 
+### Fixed
+
+- A Gespan you built yourself now updates to released versions. Before, only
+  release builds had the update key, so a local build in Applications never
+  checked for updates, and Check for updates did nothing when clicked. It now
+  says why when updates are off.
+
 ## [0.0.5] - 2026-11-01
 
 ### Added

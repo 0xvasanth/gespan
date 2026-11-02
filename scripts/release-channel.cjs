@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const path = require("node:path");
 
 function releaseChannel(tag) {
   const match = /^v\d+\.\d+\.\d+(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(tag || "");
@@ -33,6 +34,17 @@ function updaterPubkey(env) {
       "The TAURI_UPDATER_PUBKEY repository secret is missing. Generate a key pair with `bunx tauri signer generate`, " +
         "store the public key as TAURI_UPDATER_PUBKEY and the private key as TAURI_SIGNING_PRIVATE_KEY (plus TAURI_SIGNING_PRIVATE_KEY_PASSWORD).",
     );
+  }
+  return pubkey;
+}
+
+// Every app build carries this key, so the release secret must match it or
+// installed apps would reject the release's updates.
+const NATIVE_UPDATER_KEY_FILE = "crates/gespan-gpui/packaging/updater.pub";
+function nativeUpdaterPubkey(env, committed) {
+  const pubkey = updaterPubkey(env);
+  if (pubkey !== committed.trim()) {
+    throw new Error(`TAURI_UPDATER_PUBKEY differs from ${NATIVE_UPDATER_KEY_FILE}. After rotating the signing key, commit its public key there too.`);
   }
   return pubkey;
 }
@@ -264,7 +276,7 @@ module.exports = {
   previewFeedSource,
   verifyPreviewFeed,
   verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
-  releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
+  releaseChannel, updaterEndpoint, updaterPubkey, nativeUpdaterPubkey, NATIVE_UPDATER_KEY_FILE, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED,
   GITHUB_NATIVE_FEED, GITHUB_NATIVE_STABLE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
   nativeChannel, nativeFixedDownloads,
   nativeReleaseTag, NATIVE_FEED_ASSET, releasePlan, releaseNotes, releaseDecision, RELEASE_CHECKS,
@@ -332,7 +344,8 @@ if (require.main === module && process.argv[2] === "native-ref") {
   console.log(`The feed from ${process.argv[4]} is on the preview channel`);
 } else if (require.main === module && process.argv[2] === "native-config") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
-  const pubkey = updaterPubkey(process.env);
+  const committed = fs.readFileSync(path.join(__dirname, "..", NATIVE_UPDATER_KEY_FILE), "utf8");
+  const pubkey = nativeUpdaterPubkey(process.env, committed);
   const endpoint = nativeUpdaterEndpoint(process.env);
   fs.appendFileSync(process.env.GITHUB_ENV, `GESPAN_NATIVE_UPDATER_ENDPOINT=${endpoint}\nGESPAN_NATIVE_UPDATER_PUBKEY=${pubkey}\n`);
   console.log(`Native updater endpoint: ${endpoint}`);
