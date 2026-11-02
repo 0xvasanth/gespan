@@ -23,6 +23,8 @@ mod composer_card_tests;
 mod mobile;
 #[cfg(test)]
 mod model_welcome_tests;
+#[cfg(test)]
+mod new_worktree_base_tests;
 mod notifications;
 mod pilot;
 mod remote;
@@ -1429,7 +1431,6 @@ impl Conversation {
         if self.preparing_worktree {
             // This prompt, not one from an earlier attempt that failed.
             self.branch_seed = Some(prompt.clone());
-            settings.worktree_base = settings.worktree_base.or(self.branch.clone());
             self.status = "Creating worktree…".into();
         }
         if settings.pilot.is_none()
@@ -2116,7 +2117,6 @@ impl Conversation {
             .settings
             .worktree_base
             .clone()
-            .or(self.branch.clone())
             .unwrap_or_else(|| "HEAD".into());
         let id = self.summary.id;
         let work = crate::runtime::on_own_thread(move || {
@@ -2168,7 +2168,10 @@ impl Conversation {
         self.menu = None;
         let cwd = self.execution_cwd().into();
         let selected = if mode == GitMode::Base {
-            self.settings.worktree_base.clone().or(self.branch.clone())
+            self.settings
+                .worktree_base
+                .clone()
+                .or_else(|| self.project_branch())
         } else {
             self.branch.clone()
         };
@@ -2413,13 +2416,7 @@ impl Conversation {
                 "workspace:new" => {
                     self.settings.worktree_removed = false;
                     self.settings.new_worktree = true;
-                    // Cut from the project's checkout, as every other way of
-                    // starting in a new worktree is, not from the worktree the
-                    // draft was showing. A base chosen in the picker stays.
-                    if self.settings.worktree_cwd.take().is_some() {
-                        self.git = crate::git_cache::get(&self.summary.cwd);
-                        self.branch = self.git.as_ref().and_then(|git| git.current.clone());
-                    }
+                    self.settings.worktree_cwd = None;
                     self.refresh_git(cx);
                 }
                 "fast" | "fast:on" | "fast:off" => {
@@ -3474,10 +3471,18 @@ impl Conversation {
     /// The branch beside the workspace: for a new worktree, the one it is cut from.
     pub(crate) fn workspace_branch(&self) -> Option<String> {
         if !self.summary.has_messages && self.settings.new_worktree {
-            self.settings.worktree_base.clone().or(self.branch.clone())
+            self.settings
+                .worktree_base
+                .clone()
+                .or_else(|| self.project_branch())
         } else {
             self.branch.clone()
         }
+    }
+    /// The project checkout's branch. Without a chosen base, a new worktree is
+    /// cut from the project's HEAD, never from a worktree the chat was showing.
+    fn project_branch(&self) -> Option<String> {
+        crate::git_cache::get(&self.summary.cwd).and_then(|git| git.current)
     }
     fn workspace_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let draft = !self.summary.has_messages;

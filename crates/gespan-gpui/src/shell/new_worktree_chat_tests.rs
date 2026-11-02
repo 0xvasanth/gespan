@@ -275,3 +275,42 @@ fn a_chat_already_in_a_worktree_keeps_working_there(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(f.worktrees().len(), count, "no other worktree was made");
 }
+
+#[gpui::test]
+fn choosing_new_worktree_before_the_draft_loads_still_cuts_from_the_project(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    // A draft made in the focused worktree, as New chat makes it, with
+    // "New worktree" chosen before its first load lands.
+    let id = f
+        .window
+        .update(cx, |shell, window, cx| {
+            let summary = {
+                let store = locked(&shell.store).unwrap();
+                let summary = store.create("kiro", &f.project).unwrap();
+                store
+                    .save_agent_settings(
+                        summary.id,
+                        &gespan_core::agent::Settings {
+                            worktree_cwd: Some(f.feature.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                summary
+            };
+            let id = summary.id;
+            shell.add(summary, cx);
+            shell.open(id, window, cx);
+            shell.sessions[&id].update(cx, |view, cx| view.menu_choice("workspace:new", cx));
+            id
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(f.chip_branch(id, cx).as_deref(), Some("main"));
+    f.send(id, "Start fresh", cx);
+    let tree = f.working_copy(id, cx);
+    assert!(!same(&tree, &f.feature));
+    assert_eq!(f.head(&tree), f.head(&f.project));
+}
