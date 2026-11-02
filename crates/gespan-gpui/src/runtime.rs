@@ -29,6 +29,8 @@ mod turn_result_tests;
 mod visual_discovery;
 #[cfg(all(test, unix))]
 mod visual_tests;
+#[cfg(test)]
+mod worktree_name_tests;
 use persistence::PendingSave;
 pub(crate) type Database = Arc<Mutex<Store>>;
 struct TurnInput {
@@ -315,10 +317,11 @@ fn run_turn_using(
             },
         )?;
         if creating_worktree {
-            let path = gespan_core::git::create_worktree(
+            let path = gespan_core::git::create_task_worktree(
                 std::path::Path::new(&summary.cwd),
                 settings.worktree_base.as_deref().unwrap_or("HEAD"),
                 summary.id,
+                &prompt,
             )?;
             let cwd = path.to_string_lossy().into_owned();
             created_worktree = Some(cwd.clone());

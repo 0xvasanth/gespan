@@ -2119,8 +2119,9 @@ impl Conversation {
             .clone()
             .unwrap_or_else(|| "HEAD".into());
         let id = self.summary.id;
+        let task = self.branch_seed.clone().unwrap_or_default();
         let work = crate::runtime::on_own_thread(move || {
-            gespan_core::git::create_worktree(Path::new(&cwd), &base, id)
+            gespan_core::git::create_task_worktree(Path::new(&cwd), &base, id, &task)
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
