@@ -2,8 +2,7 @@
 
 A diagnostics bundle is what "Report an issue" saves to the user's Downloads
 folder. Gespan never sends it: the user attaches it to an email to the
-maintainer or to a GitHub issue. Both apps build the same bundle. This is
-`bundle_version: 1`.
+maintainer or to a GitHub issue. The bundle format is `bundle_version: 1`.
 
 Everything in a bundle is scrubbed on the user's machine by
 `crates/gespan-redact` **before** it is shown in the report preview. The
@@ -12,8 +11,8 @@ preview shows exactly the bytes that will be saved.
 ## Layout
 
 A zip named `gespan-diagnostics-<app>-<version>-<timestamp>.zip`, for example
-`gespan-diagnostics-native-0.1.0-20261025T091403Z.zip`. `<app>` is `native` or
-`tauri`, and `<timestamp>` is UTC in the basic format `YYYYMMDDTHHMMSSZ`.
+`gespan-diagnostics-native-0.1.0-20261025T091403Z.zip`. `<app>` is `native`, or
+`tauri` in reports from the old Tauri app, and `<timestamp>` is UTC in the basic format `YYYYMMDDTHHMMSSZ`.
 
 | Entry | Always present | Contents |
 |---|---|---|
@@ -49,7 +48,7 @@ in the format for an automatic crash send, which Gespan doesn't do.
 | `submission_id` | string | yes | A random UUID v4 made when the bundle is built. It tells two reports from the same second apart. |
 | `kind` | string | yes | `"user"` for a report a person wrote, `"crash"` for an automatic crash send. |
 | `created_at` | string | yes | RFC 3339 UTC. |
-| `app` | string | yes | `"native"` or `"tauri"`. |
+| `app` | string | yes | `"native"`. Reports from the old Tauri app say `"tauri"`. |
 | `version` | string | yes | App version. |
 | `build_channel` | string | yes | `"release"`, `"preview"` or `"dev"`. |
 | `os` | string | yes | `"macos"`, `"linux"` or `"windows"`. |
@@ -106,7 +105,7 @@ Records don't pile up when a user never reports them.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `ts` | string | yes | RFC 3339 UTC. |
-| `app` | string | yes | `"native"` or `"tauri"`. |
+| `app` | string | yes | `"native"`. Reports from the old Tauri app say `"tauri"`. |
 | `version` | string | yes | App version. |
 | `os` | string | yes | As in `report.json`. |
 | `os_version` | string | yes | As in `report.json`. |

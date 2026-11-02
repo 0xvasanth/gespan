@@ -13,17 +13,12 @@
 *.jks
 id_rsa*
 id_ed25519*
-.tauri/
 node_modules/
 dist/
-dist-ssr/
 build/
 target/
-gen/schemas/
 coverage/
-playwright-report/
 test-results/
-.vite/
 .turbo/
 *.tsbuildinfo
 *.dmg

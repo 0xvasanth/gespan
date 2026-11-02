@@ -1,4 +1,4 @@
-//! BtwSheet.tsx's isolated side threads. Their transcript and cancellation never
+//! Isolated side threads. Their transcript and cancellation never
 //! share the parent provider session, turn queue, or main transcript rows.
 use super::*;
 use crate::transcript::burst::{self as fx, Bubble, Halo};

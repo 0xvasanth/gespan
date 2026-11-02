@@ -1,12 +1,11 @@
-//! The sidebar's session grouping: sessionFolders.ts, sessionReminders.ts and
-//! sessionWorkItem.ts's URL parsing, without their storage.
+//! The sidebar's session grouping: folders, reminders and work item URL parsing,
+//! without their storage.
 use crate::tickets::TicketRef;
 use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 
-/// sessionFolders.ts's `SessionFolder`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Folder {
     pub id: String,

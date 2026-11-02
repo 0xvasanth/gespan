@@ -1,5 +1,4 @@
-//! useTabCloseMotion.ts with ClosingTab.tsx's TabWidthMotion: with Tab
-//! animations on, an opened tab's slot grows from nothing and a closed one
+//! With Tab animations on, an opened tab's slot grows from nothing and a closed one
 //! collapses in place before it leaves the strip.
 use std::collections::HashMap;
 use std::hash::Hash;

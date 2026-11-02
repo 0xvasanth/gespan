@@ -5,7 +5,7 @@ use super::run::{FlowRun, FlowVisit};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
-/// Exact DDL, pinned by `tests/shared_contracts.rs` so the Tauri twin can match it.
+/// Exact DDL, pinned by `tests/shared_contracts.rs`.
 pub const FLOWS_DDL: &str = "CREATE TABLE IF NOT EXISTS flows (
   id TEXT PRIMARY KEY,
   definition_json TEXT NOT NULL,

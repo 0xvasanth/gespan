@@ -659,8 +659,8 @@ fn run_turn_using(
         let executable = std::env::current_exe()
             .inspect_err(|error| tracing::warn!(%error, "ticket tools need the app executable"))
             .ok();
-        // Leads and workers stay out of the ticket and card tools, as in the
-        // Tauri app: the same refusal is applied again to every answered call.
+        // Leads and workers stay out of the ticket and card tools: the same
+        // refusal is applied again to every answered call.
         let restricted = settings.orchestrator || settings.orchestration_worker;
         let ticket = ticket.filter(|_| !restricted);
         let tool_servers = !settings.text_only && !raw_native_command;
@@ -1036,7 +1036,7 @@ fn run_turn_using(
                             }
                         }
                         Event::GeneratedImage { id, data, alt } => {
-                            // GeneratedImage.tsx: the PNG is a file in the data
+                            // The PNG is a file in the data
                             // folder and the row names it.
                             let saved = locked(&store)?
                                 .data_dir()
@@ -1602,7 +1602,7 @@ fn settle_running_tools<T>(
     first
 }
 
-/// checkpointEdits.ts's sessionEditPaths: files named by successful edit tools.
+/// Files named by successful edit tools.
 pub(crate) fn edited_paths(rows: &[Row]) -> Vec<String> {
     let mut paths = Vec::new();
     for row in rows.iter().filter(|r| r.role == "tool") {
@@ -1657,7 +1657,7 @@ pub(crate) fn edit_tool_paths(tool: &gespan_core::tool::ToolCall) -> Vec<String>
     paths
 }
 
-/// App.tsx's trackSessionEdits: a folder without Git snapshots each file
+/// A folder without Git snapshots each file
 /// before an edit tool writes it and again once the tool succeeds.
 fn track_edit(session: i64, cwd: &str, tool: &gespan_core::tool::ToolCall) {
     use gespan_core::tool::ToolState;

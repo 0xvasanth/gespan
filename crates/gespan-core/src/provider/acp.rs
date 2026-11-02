@@ -1,6 +1,6 @@
 //! ACP lifecycle shared by Cursor, Grok, OpenCode, Antigravity, fx, Hermes, Devin and Kiro.
-//! Mirrors the ACP adapters in src/integrations/harness/providers. Providers own
-//! filesystem/terminal access; we never claim client capabilities we cannot serve.
+//! Providers own filesystem/terminal access; we never claim client capabilities
+//! we cannot serve.
 use super::*;
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -187,8 +187,8 @@ impl Protocol {
                 stdin,
             )?;
         }
-        // Tauri rejects the local prompt promise immediately after notifying;
-        // ACP does not promise a response to a cancelled prompt.
+        // Finish right after notifying: ACP does not promise a response to a
+        // cancelled prompt.
         self.done = true;
         if self.acp.session.is_empty() {
             return Ok(());
@@ -479,8 +479,8 @@ impl Protocol {
                     "build"
                 }
             }
-            // Cursor's Tauri adapter enforces planning in request_permission;
-            // it does not require or change the server's session mode.
+            // Cursor's planning is enforced in request_permission; it does not
+            // require or change the server's session mode.
             Kind::Cursor => "",
             _ => "",
         };
@@ -564,7 +564,7 @@ impl Protocol {
     fn acp_settings(&mut self, setup: &Value) {
         let kind = self.request.kind;
         let settings = &self.request.settings;
-        // Kiro takes only the model; Tauri sends it no other control.
+        // Kiro takes only the model and gets no other control.
         if matches!(kind, Kind::Kiro) {
             return;
         }

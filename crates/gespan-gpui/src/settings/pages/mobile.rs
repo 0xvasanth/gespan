@@ -1,5 +1,4 @@
-//! Port of src/features/mobile/ui/MobileSettings.tsx and PairPhoneDialog.tsx:
-//! the phones paired with this desktop, and the one-use code a new one scans.
+//! The phones paired with this desktop, and the one-use code a new one scans.
 use crate::{
     input::{self, Input},
     settings::{
@@ -27,7 +26,7 @@ const EMERALD: u32 = 0x10b981;
 const TESTFLIGHT_URL: &str = "https://testflight.apple.com/join/xdwX38bB";
 /// How long Pair phone waits for the desktop to listen and make a code.
 const PAIRING_WAIT: Duration = Duration::from_secs(15);
-/// PairPhoneDialog.tsx's LINEUP: mascots fanning out from the middle,
+/// Mascots fanning out from the middle,
 /// nearest first, each side in turn, in TAB_GROUP_COLORS after the wash.
 const LINEUP: [(&str, u32); 9] = [
     ("robot", 0x459bf7),
@@ -40,7 +39,7 @@ const LINEUP: [(&str, u32); 9] = [
     ("mushroom", 0xef8539),
     ("rocket", 0x459bf7),
 ];
-/// Modal.tsx's medium, fitViewport panel and PairPhoneDialog.tsx's QR tile.
+/// The medium dialog panel, fit to the viewport, and its QR tile.
 const DIALOG_WIDTH: f32 = 560.;
 const DIALOG_RADIUS: f32 = 16.;
 const QR_SIDE: f32 = 384.;
@@ -87,7 +86,7 @@ pub(super) fn qr(text: &str) -> Option<Qr> {
     })
 }
 
-/// PairPhoneDialog.tsx's status line.
+/// The pairing dialog's status line.
 pub(super) fn countdown(left: u64) -> String {
     if left == 0 {
         "Code expired".into()
@@ -379,7 +378,7 @@ impl SettingsView {
                 .text_color(content(0.45))
                 .child(text)
         };
-        // Below Your machines, set off as MobileSettings.tsx was.
+        // Below Your machines, set off from them.
         div()
             .relative()
             .mt_10()
@@ -661,7 +660,7 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// MobileSettings.tsx's "Connect away from home" details.
+    /// The "Connect away from home" details.
     fn mobile_away(&mut self, status: &Status, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let open = self.mobile.away;
         let mut page = vec![
@@ -805,7 +804,7 @@ impl SettingsView {
         page
     }
 
-    /// PairPhoneDialog.tsx, presented by Shell alongside the other window
+    /// The pairing dialog, presented by Shell alongside the other window
     /// overlays so its scrim and centering cover the entire viewport.
     pub(crate) fn mobile_overlay_open(&self) -> bool {
         self.section == Section::Connections && self.ctx.mobile_invite.is_some()
@@ -1088,7 +1087,7 @@ fn pairing_icon_action(
         })
 }
 
-/// Modal.tsx's stationary GlassBackdrop, below the scrolling content.
+/// The modal's stationary glass backdrop, below the scrolling content.
 fn pairing_backdrop(classic: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},

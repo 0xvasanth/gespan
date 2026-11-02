@@ -1,5 +1,4 @@
-//! System pressure and the processes Gespan owns, extracted from
-//! src-tauri/src/resources.rs and resourcePressure.ts.
+//! System pressure and the processes Gespan owns.
 use crate::process::{self, Agent};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;

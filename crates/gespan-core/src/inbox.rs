@@ -1,5 +1,6 @@
-//! Native Inbox services. Provider adapters preserve the Tauri API's requests,
-//! validation, response parsers and saved credential formats.
+//! Native Inbox services. Provider adapters hold each provider's requests,
+//! validation and response parsers, and keep the credential formats older Tauri
+//! builds saved.
 pub mod ask;
 mod avatar;
 mod media;
@@ -629,8 +630,7 @@ struct RepoFetch {
 
 /// Fetches issues and PRs for each project's repositories. One failing
 /// repository, such as a fork with issues disabled, must not hide the rest;
-/// like Tauri's collectInboxResults, the provider fails only when no fetch
-/// succeeded.
+/// the provider fails only when no fetch succeeded.
 /// Puts the active checkout first. Several checkouts of the same repository
 /// share its rows, and the first one visited fetches them, so the active
 /// checkout keeps them when the inbox is scoped to it.
@@ -763,9 +763,8 @@ fn collect_repo_items(
     }
 }
 
-/// The Tauri InboxNotificationTracker: provider baselines and revisions are
-/// separate from the user's read state. Startup and query changes never
-/// trigger automations for an existing backlog.
+/// Provider baselines and revisions are separate from the user's read state.
+/// Startup and query changes never trigger automations for an existing backlog.
 #[derive(Default)]
 pub struct NotificationTracker {
     revisions: HashMap<String, i64>,

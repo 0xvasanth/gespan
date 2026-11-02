@@ -1,5 +1,4 @@
-// The prompt outline rail, ported from src/features/sessions/ui/PromptOutline.tsx
-// and its model in src/features/sessions/model/promptOutline.ts.
+// The prompt outline rail and its model.
 use super::TranscriptView;
 use crate::popover::{Align, Anchor, AnchorSlot, Side, popover};
 use crate::theme::*;

@@ -1,4 +1,4 @@
-//! RemoteSession.tsx's host observation and composer restrictions.
+//! Remote sessions' host observation and composer restrictions.
 use super::*;
 use serde_json::{Value, json};
 

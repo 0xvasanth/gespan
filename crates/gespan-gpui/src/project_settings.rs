@@ -106,7 +106,7 @@ pub(crate) fn project_icon(appearance: &ProjectAppearance, project: &str, side: 
         ),
     }
 }
-/// Sidebar.tsx's CurrentProjectIcon: a 10px mascot inside a 20px tile.
+/// The current project's icon: a 10px mascot inside a 20px tile.
 pub(crate) fn header_project_icon(appearance: &ProjectAppearance, project: &str) -> AnyElement {
     if project.starts_with("remote://") && appearance.logo.is_none() {
         return div()

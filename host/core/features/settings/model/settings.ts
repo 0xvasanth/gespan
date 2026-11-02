@@ -1261,9 +1261,9 @@ export type KeybindingRow = {
 };
 
 /**
- * Mirrors the bindings we actually handle: the native menu accelerators in
- * `src-tauri/src/menu.rs`, `tabCommand`, the window key handler in App, and
- * focused surface handlers such as the draft composer workspace toggle.
+ * Mirrors the bindings we actually handle: the native menu accelerators,
+ * `tabCommand`, the window key handler, and focused surface handlers
+ * such as the draft composer workspace toggle.
  */
 export const KEYBINDINGS: KeybindingRow[] = [
   { command: "App: Settings", keys: `${MOD},`, when: "Always" },

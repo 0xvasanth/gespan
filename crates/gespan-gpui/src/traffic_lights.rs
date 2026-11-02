@@ -1,4 +1,4 @@
-//! src-tauri/src/macos.rs's traffic lights: 14 pt buttons, 6 pt apart, 12 pt
+//! Traffic lights: 14 pt buttons, 6 pt apart, 12 pt
 //! from the left edge. GPUI's `traffic_light_position` only moves the row and
 //! keeps AppKit's own spacing, which on recent macOS crowds the sidebar
 //! toggle. Auto Layout pins the buttons, so GPUI's frame updates on resize,
@@ -212,9 +212,9 @@ mod tests {
             .unwrap();
     }
 }
-/// pilot_chat.rs's floating panel: GPUI's pop-up is already a non-activating
-/// panel on every Space. Like Tauri's, it hides the window buttons, resizes,
-/// and floats at the status level instead of above menus.
+/// The floating panel: GPUI's pop-up is already a non-activating panel on every
+/// Space. This hides the window buttons, resizes, and floats at the status
+/// level instead of above menus.
 #[cfg(not(test))]
 pub(crate) fn floating_panel(window: &Window, resizable: bool) {
     use objc2_app_kit::{NSWindowCollectionBehavior, NSWindowStyleMask};

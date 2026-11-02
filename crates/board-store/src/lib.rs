@@ -1,7 +1,7 @@
-//! Board storage: the shared `board*` tables both apps keep in `gespan.db`, and
-//! every read and write on them. The Tauri commands and the native app's
-//! `gespan_core::board::Service` both call these functions, so the two apps run
-//! the same SQL, validation and error strings.
+//! Board storage: the `board*` tables in `gespan.db`, and every read and write
+//! on them. The native app's `gespan_core::board::Service` calls these
+//! functions. Only Native writes now, but the format stays compatible with the
+//! data older Tauri builds saved.
 use serde::Serialize;
 
 mod agent;

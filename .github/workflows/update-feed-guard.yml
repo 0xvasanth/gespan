@@ -15,7 +15,7 @@ permissions:
 
 # Shared with the release, which writes the same feed.
 concurrency:
-  group: native-preview-release
+  group: desktop-release
   cancel-in-progress: false
 
 jobs:

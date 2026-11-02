@@ -1167,7 +1167,7 @@ fn collapsing_keeps_a_wip_limit_set_by_the_other_connection() {
     let column = get_board(&native, &board.id).unwrap().columns[1].id.clone();
     set_column_display(&native, &column, Some("e5534b"), None, false).unwrap();
 
-    // The Tauri app reads the board (no limit yet) and keeps that view.
+    // A second connection reads the board (no limit yet) and keeps that view.
     let stale = get_board(&tauri, &board.id).unwrap().columns[1].clone();
     assert_eq!(stale.wip_limit, None);
 
@@ -1183,8 +1183,8 @@ fn collapsing_keeps_a_wip_limit_set_by_the_other_connection() {
     .unwrap();
     assert_eq!(set.wip_limit, Some(4));
 
-    // The Tauri app collapses the column from its stale view. The patch names
-    // only `collapsed`, so the limit the native app set stays 4.
+    // That connection collapses the column from its stale view. The patch names
+    // only `collapsed`, so the limit the first one set stays 4.
     let collapsed = update_column_display(
         &tauri,
         &stale.id,

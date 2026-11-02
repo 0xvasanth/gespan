@@ -20,7 +20,7 @@ impl Accounts {
                 && s.adding.is_none()
         })
     }
-    /// ProviderSignInPanel.tsx, embedded in the usage popover.
+    /// The provider sign-in panel, embedded in the usage popover.
     pub(crate) fn footer_auth_panel(
         &self,
         kind: Kind,

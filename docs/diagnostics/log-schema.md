@@ -1,7 +1,6 @@
 # Diagnostics log schema
 
-Both Gespan apps, Gespan Native (GPUI) and Gespan (Tauri), write their local
-logs in this one format. Each line of a log file is a single JSON object
+Gespan writes its local logs in this format. Each line of a log file is a single JSON object
 (JSON Lines). The same lines, after scrubbing, become `logs.jsonl` in a
 diagnostics bundle (see [bundle-format.md](bundle-format.md)).
 
@@ -18,13 +17,10 @@ saves a report and sends it on themselves (see [../privacy.md](../privacy.md)).
 | Native (dev data) | macOS | `~/Library/Logs/dev.gespan.native.dev/` |
 | Native (dev data) | Linux | `$XDG_STATE_HOME/gespan-native-dev/logs/` (falls back to `~/.local/state/gespan-native-dev/logs/`) |
 | Native (dev data) | Windows | `%LOCALAPPDATA%\dev.gespan.native.dev\logs\` |
-| Tauri | all | Tauri's `app_log_dir()`, for example `~/Library/Logs/dev.gespan.desktop/` on macOS |
 
 - Dev logs never mix with release logs. Native running with dev data
-  (`--dev-data`) uses the dev folders above. Tauri dev builds run as
-  `dev.gespan.desktop.dev`, so `app_log_dir()` is already separate.
-- Files rotate daily: `gespan-native.YYYY-MM-DD.jsonl` and
-  `gespan-tauri.YYYY-MM-DD.jsonl`. The date is the UTC day.
+  (`--dev-data`) uses the dev folders above.
+- Files rotate daily: `gespan-native.YYYY-MM-DD.jsonl`. The date is the UTC day.
 - Retention: 7 days or 50 MB in total, whichever limit is hit first. Old
   files are pruned at startup, at each UTC midnight rollover, and whenever a
   write would take the total over 50 MB (oldest files first). If today's
@@ -44,9 +40,9 @@ module, for example `GESPAN_LOG=gespan_core::git=debug`.
 |---|---|---|---|
 | `ts` | string | yes | When the event happened: RFC 3339, UTC, millisecond precision (`2026-10-25T09:14:03.512Z`). |
 | `level` | string | yes | One of the levels above, lowercase. |
-| `target` | string | yes | Where the event came from: the Rust module path (`gespan_core::git`), or `webview::<module>` for lines from the Tauri frontend. |
+| `target` | string | yes | Where the event came from: the Rust module path (`gespan_core::git`), or `webview::<module>` in logs from the old Tauri app. |
 | `message` | string | yes | Short, human-readable text. Never put user content here; use a deny-listed field instead so it is dropped. |
-| `app` | string | yes | `"native"` or `"tauri"`. |
+| `app` | string | yes | `"native"`. Logs from the old Tauri app say `"tauri"`. |
 | `version` | string | yes | App version, for example `0.1.0` or `0.1.0-preview.2`. |
 | `session_id` | string | no | The agent session the event belongs to, when there is one. Omitted otherwise, never `null`. |
 | `span` | string | no | The enclosing operation span, outermost first, joined with `>`, for example `worktree.create>git.command`. Omitted when there is none. |
@@ -84,15 +80,6 @@ content, so it is removed automatically:
 Scrubbing also replaces home paths, project paths, emails and tokens in every
 remaining value. The scrubber's own fixtures are the source of truth for
 those rules.
-
-## Lines from the Tauri frontend
-
-The frontend logger sends records through the `diagnostics_log` command as
-`{ level, message, fields, ts }`. The Rust side turns each record into a log
-line: it keeps `level`, `message`, `fields` and `ts`, sets `app` and
-`version`, sets `target` to `webview::<module>` (from `fields.module`, or
-`webview` when missing, and removes `module` from `fields`), and assigns a
-fresh `event_id`.
 
 ## Examples
 

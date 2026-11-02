@@ -1,4 +1,4 @@
-//! Skill discovery ported from the retired Tauri backend. No UI or transport dependencies.
+//! Skill discovery. No UI or transport dependencies.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

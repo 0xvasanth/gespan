@@ -1,4 +1,4 @@
-//! Several workspace windows, after `src-tauri/src/window.rs`.
+//! Several workspace windows.
 //!
 //! Each window is its own `Shell` over the same store. The first one, the
 //! primary, also runs what the app must run once: Pilots, reminders,

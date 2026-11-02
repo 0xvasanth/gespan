@@ -1,4 +1,4 @@
-//! UnifiedDiffView.tsx and unifiedDiffDocument.ts: every file's hunks in one
+//! The unified diff: every file's hunks in one
 //! virtualized review, with sticky file headers, a fixed gutter beside code
 //! lanes that scroll horizontally together, hunk navigation, per-file and
 //! per-hunk staging, and line comments for the chat. Highlighting runs off

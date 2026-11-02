@@ -500,7 +500,7 @@ impl BoardView {
     }
 }
 
-/// Where a card is or would land, as Tauri's announcements word it.
+/// Where a card is or would land, as the announcements word it.
 struct Place {
     column: String,
     index: usize,
@@ -520,7 +520,7 @@ impl Place {
 
 impl BoardView {
     /// What the last board-layout keyboard drag step said: picked up, over,
-    /// dropped or cancelled, in Tauri's words. Positions count every card the
+    /// dropped or cancelled. Positions count every card the
     /// column shows, not the cards its window has mounted.
     pub(crate) fn board_announcement(&self) -> Option<String> {
         self.drag_announcement.clone()

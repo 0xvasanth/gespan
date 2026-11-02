@@ -1,4 +1,4 @@
-//! PixelMascot.tsx / pixelMascots.ts rendered as native quads.
+//! Pixel mascots rendered as native quads.
 use gpui::{AnyElement, Hsla, canvas, prelude::*, px, rgb, rgba};
 use serde::Deserialize;
 use std::sync::LazyLock;

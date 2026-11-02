@@ -416,7 +416,7 @@ impl Conversation {
             cx.notify();
         }
     }
-    /// SessionCardPreview.tsx's compact model/status header and workspace details.
+    /// The session card's compact model/status header and workspace details.
     /// Its latest message is saved as a draft, not sent (`session.draft`).
     pub(crate) fn has_saved_draft(&self) -> bool {
         if self.loaded {
@@ -2913,7 +2913,7 @@ impl Conversation {
                     MenuStyle::Settings,
                 )
             }
-            // Composer.tsx's plus menu with native mode and attachment actions.
+            // The composer's plus menu with native mode and attachment actions.
             ComposerMenu::Add => {
                 let mut items = vec![MenuItem::Header("Add to message".into())];
                 items.extend(
@@ -3148,7 +3148,7 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
-    // Composer.tsx in the inset layout: a frosted, rounded box holding the
+    // The composer in the inset layout: a frosted, rounded box holding the
     // field and its toolbar, with the workspace bar sitting under it.
     fn composer_runner(
         &mut self,
@@ -3753,7 +3753,7 @@ impl Conversation {
             }
         }))
     }
-    // EmptySession.tsx: the composer centred under its question, or resting
+    // An empty session: the composer centred under its question, or resting
     // where it will dock once a neighbouring pane squeezes it narrower than
     // the column. A narrow window alone keeps it centred.
     fn empty(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {

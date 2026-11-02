@@ -1,7 +1,6 @@
-//! Checkpoints for folders without Git, ported from the manifest store in
-//! src-tauri/src/checkpoint.rs. A structured edit snapshots its file before it
-//! starts (`prepare`) and after it succeeds (`capture_edit`). Only files with
-//! both snapshots are reviewed, and Undo restores the first one.
+//! Checkpoints for folders without Git. A structured edit snapshots its file
+//! before it starts (`prepare`) and after it succeeds (`capture_edit`). Only
+//! files with both snapshots are reviewed, and Undo restores the first one.
 use super::*;
 
 const MAX_SNAPSHOT_FILES: usize = 500;

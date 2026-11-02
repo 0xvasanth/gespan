@@ -296,7 +296,7 @@ fn default_variant(family: &Family) -> &Variant {
         .find(|variant| !variant.fast)
         .unwrap_or(&family.variants[0])
 }
-/// Resolve the same family/effort/speed/lead/sidekick picker selections as Tauri.
+/// Resolve the family/effort/speed/lead/sidekick picker selections.
 pub(crate) fn model_value(
     raw: &Value,
     native: &str,

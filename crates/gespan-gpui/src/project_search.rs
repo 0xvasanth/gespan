@@ -1,4 +1,4 @@
-//! ProjectSearch.tsx: content search inside the Explorer, scoped to its checkout.
+//! Content search inside the Explorer, scoped to its checkout.
 use crate::{
     file_icons::file_type_icon,
     input::{self, Input},

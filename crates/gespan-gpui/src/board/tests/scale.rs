@@ -1,7 +1,7 @@
 //! Windowed board columns at 1,000 cards (C6-5): only the cards in or near a
 //! column's view mount, and drops, reloads and density changes still land
 //! where the user sees them. The timing tests run with one test thread, as
-//! `native:test` does.
+//! `test:rust` does.
 use super::*;
 use gespan_core::board::extras::{SortKey, SortSpec};
 use gpui::{ScrollDelta, ScrollWheelEvent, TouchPhase};

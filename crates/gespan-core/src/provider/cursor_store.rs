@@ -1,6 +1,5 @@
-//! Cursor's own per-session SQLite stores, read-only, ported from
-//! src-tauri/src/cursor_store.rs. Cursor's ACP stream omits some tool
-//! arguments and all subagent work; both are in the stores it writes under
+//! Cursor's own per-session SQLite stores, read-only. Cursor's ACP stream
+//! omits some tool arguments and all subagent work; both are in the stores it writes under
 //! `~/.cursor`, which Gespan opens without ever writing.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

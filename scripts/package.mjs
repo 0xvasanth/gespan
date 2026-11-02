@@ -1,0 +1,403 @@
+// Package a prebuilt native executable. Never invokes the Tauri app build or
+// writes production release/update paths.
+import { spawnSync } from "node:child_process";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+  chmod,
+} from "node:fs/promises";
+import { join, resolve, dirname, basename } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+// A stable X.Y.Z, or a prerelease: X.Y.Z-preview.N, X.Y.Z-beta or X.Y.Z-beta.N.
+// Windows version resources need four numbers, so the sequence (0 when absent)
+// is the fourth.
+export function nativeVersion(version) {
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(?:preview\.(0|[1-9]\d*)|beta(?:\.(0|[1-9]\d*))?))?$/.exec(
+      version,
+    );
+  const sequence = match && (match[5] ?? match[6] ?? "0");
+  const numbers = match ? [...match.slice(1, 4), sequence] : [];
+  if (!match || numbers.some((n) => Number(n) > 65535))
+    throw new Error(
+      "Expected a native version such as 0.16.0, 0.16.0-preview.1 or 0.0.1-beta",
+    );
+  return {
+    version,
+    label: !match[4] ? "stable" : match[5] === undefined ? "beta" : "preview",
+    base: match.slice(1, 4).join("."),
+    sequence,
+    windows: numbers.join("."),
+  };
+}
+// A stable release sorts after its own prereleases, whose Release starts with 0.
+export function rpmRelease({ label, sequence }) {
+  return label === "stable" ? "1" : `0.${label}.${sequence}`;
+}
+// Installing over a beta replaces its gespan-native package, or the old Gespan
+// app's package, which own the same desktop entry or /usr/bin/gespan.
+export function rpmSpec(parsed, summary) {
+  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nRequires: gtk3\nRequires: webkit2gtk4.1\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
+}
+// hdiutil's -srcfolder estimate fell short of the app on the macOS 15
+// runner ("No space left on device" inside the image), so the staging
+// image is sized from its contents, with headroom for file system metadata:
+// a fifth more plus 16 MiB, and never less than 64 MiB over the contents.
+export function dmgMegabytes(bytes) {
+  const MiB = 2 ** 20;
+  return Math.max(
+    Math.ceil((bytes * 1.2) / MiB) + 16,
+    Math.ceil(bytes / MiB) + 64,
+  );
+}
+async function folderBytes(path) {
+  const info = await lstat(path);
+  if (!info.isDirectory()) return info.isSymbolicLink() ? 0 : info.size;
+  let total = 0;
+  for (const entry of await readdir(path))
+    total += await folderBytes(join(path, entry));
+  return total;
+}
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: root,
+    stdio: "inherit",
+    ...options,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const error = new Error(`${command} failed (${result.status})`);
+    error.status = result.status;
+    throw error;
+  }
+  return result;
+}
+
+// stapler's EX_NOHOST (68) can indicate a ticket-service/network failure.
+// Retry it boundedly; every other status still stops packaging immediately.
+export async function runStapler(
+  action,
+  file,
+  { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {},
+) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      run("xcrun", ["stapler", action, file]);
+      return;
+    } catch (error) {
+      if (error.status !== 68 || attempt === 5) throw error;
+      const delay = attempt * 10_000;
+      console.warn(
+        `Apple ticket service unavailable during ${action}; retrying in ${delay / 1000}s (${attempt}/5)`,
+      );
+      await wait(delay);
+    }
+  }
+}
+
+async function notices(directory) {
+  await mkdir(directory, { recursive: true });
+  for (const file of [
+    "LICENSE",
+    "NOTICE",
+    "docs/desktop/LICENSE-GPUI-APACHE",
+    "docs/desktop/LICENSE-MERMAID-MIT",
+    "crates/gespan-gpui/assets/hugeicons.LICENSE",
+    "crates/gespan-gpui/assets/dark-plus.LICENSE",
+    "crates/gespan-gpui/assets/native-editor.LICENSE.txt",
+  ]) {
+    await cp(join(root, file), join(directory, file.split("/").at(-1)));
+  }
+  await cp(
+    join(root, "crates/gespan-gpui/assets/material/LICENSE"),
+    join(directory, "material-icons.LICENSE"),
+  );
+}
+export async function linuxTree(directory, binary, kind) {
+  const app = join(directory, "usr/lib/gespan");
+  await mkdir(app, { recursive: true });
+  await cp(binary, join(app, "gespan-gpui"));
+  await chmod(join(app, "gespan-gpui"), 0o755);
+  await writeFile(
+    join(app, "native-install.json"),
+    JSON.stringify({ app_id: "dev.gespan.native", kind }),
+  );
+  await notices(join(app, "licenses"));
+  await mkdir(join(directory, "usr/bin"), { recursive: true });
+  await writeFile(
+    join(directory, "usr/bin/gespan"),
+    '#!/bin/sh\nexec /usr/lib/gespan/gespan-gpui "$@"\n',
+    { mode: 0o755 },
+  );
+  await mkdir(join(directory, "usr/share/applications"), { recursive: true });
+  const desktop =
+    "[Desktop Entry]\nType=Application\nName=Gespan\nExec=gespan %F\nIcon=gespan\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n";
+  await writeFile(
+    join(directory, "usr/share/applications/dev.gespan.native.desktop"),
+    desktop,
+  );
+  const icons = join(directory, "usr/share/icons/hicolor/256x256/apps");
+  await mkdir(icons, { recursive: true });
+  await cp(
+    join(root, "crates/gespan-gpui/assets/gespan.png"),
+    join(icons, "gespan.png"),
+  );
+  return { app, desktop };
+}
+
+export async function packageNative({
+  kind,
+  binary,
+  out,
+  version,
+  arch = "x86_64",
+}) {
+  const parsed = nativeVersion(version);
+  const summary =
+    parsed.label === "stable" ? "Gespan" : "Gespan experimental preview";
+  binary = resolve(binary);
+  out = resolve(out);
+  const embedded = run(binary, ["--version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  }).stdout.trim();
+  if (embedded !== `Gespan ${version}`)
+    throw new Error(`Native executable version does not match ${version}`);
+  await mkdir(out, { recursive: true });
+  const work = join(out, "work");
+  await mkdir(work, { recursive: true });
+  const artifacts = [];
+  const add = (filename, target = null) => {
+    artifacts.push({ filename, target });
+    return join(out, filename);
+  };
+  if (kind === "macos") {
+    const expectedArch = arch === "aarch64" ? "arm64" : "x86_64";
+    const actualArch = run("lipo", ["-archs", binary], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    }).stdout.trim();
+    if (actualArch !== expectedArch)
+      throw new Error(`Expected ${expectedArch}, found ${actualArch}`);
+    run(
+      "bash",
+      [
+        "scripts/bundle-macos.sh",
+        "release",
+        dirname(dirname(binary)),
+        version,
+        "gespan-data",
+      ],
+      {
+        env: {
+          ...process.env,
+          GESPAN_NATIVE_SIGNING_IDENTITY:
+            process.env.APPLE_SIGNING_IDENTITY || "",
+        },
+      },
+    );
+    const app = join(dirname(binary), "Gespan.app");
+    const identity = process.env.APPLE_SIGNING_IDENTITY || "";
+    // Without a Developer ID the app keeps the bundle script's ad-hoc
+    // signature and is not notarized; only an explicit opt-in publishes that.
+    const developerId = identity !== "" && identity !== "-";
+    if (!developerId && process.env.GESPAN_ALLOW_UNSIGNED !== "1")
+      throw new Error(
+        "Public previews require a Developer ID signing identity; run the release with allow_unsigned to publish an ad-hoc signed build",
+      );
+    if (!developerId)
+      console.warn(
+        "No Developer ID: packaging an ad-hoc signed, unnotarized build",
+      );
+    const submit = async (file, staple) => {
+      const result = run(
+        "xcrun",
+        [
+          "notarytool",
+          "submit",
+          file,
+          "--key",
+          process.env.APPLE_API_KEY_PATH,
+          "--key-id",
+          process.env.APPLE_API_KEY,
+          "--issuer",
+          process.env.APPLE_API_ISSUER,
+          "--wait",
+          "--output-format",
+          "json",
+        ],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+      );
+      if (JSON.parse(result.stdout).status !== "Accepted")
+        throw new Error(
+          `Apple did not accept ${basename(file)} for notarization`,
+        );
+      if (staple) {
+        await runStapler("staple", staple);
+        await runStapler("validate", staple);
+      }
+    };
+    if (developerId) {
+      const zip = join(work, "notarize.zip");
+      run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+      await submit(zip, app);
+    }
+    run("codesign", ["--verify", "--deep", "--strict", app]);
+    // Gatekeeper only accepts notarized Developer ID apps.
+    if (developerId) run("spctl", ["--assess", "--type", "execute", app]);
+    const name = arch === "aarch64" ? "aarch64" : "x64";
+    const archive = add(
+      `Gespan_${version}_${name}.app.tar.gz`,
+      `darwin-${arch}-app`,
+    );
+    run("tar", ["-czf", archive, "-C", dirname(app), "Gespan.app"], {
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
+    const imageRoot = join(work, "dmg");
+    await mkdir(imageRoot);
+    run("ditto", [app, join(imageRoot, "Gespan.app")]);
+    run("ln", ["-s", "/Applications", join(imageRoot, "Applications")]);
+    const dmg = add(`Gespan_${version}_${name}.dmg`);
+    run("hdiutil", [
+      "create",
+      "-volname",
+      "Gespan",
+      "-srcfolder",
+      imageRoot,
+      "-size",
+      `${dmgMegabytes(await folderBytes(imageRoot))}m`,
+      "-ov",
+      "-format",
+      "UDZO",
+      "-fs",
+      "HFS+",
+      dmg,
+    ]);
+    if (developerId) {
+      run("codesign", ["--sign", identity, "--timestamp", dmg]);
+      await submit(dmg, dmg);
+    }
+  } else if (kind === "linux") {
+    const debRoot = join(work, "deb");
+    await linuxTree(debRoot, binary, "deb");
+    await mkdir(join(debRoot, "DEBIAN"));
+    await writeFile(
+      join(debRoot, "DEBIAN/control"),
+      `Package: gespan\nVersion: ${version.replace("-", "~")}\nArchitecture: amd64\nMaintainer: Gespan maintainers\nSection: devel\nPriority: optional\nReplaces: gespan-native\nConflicts: gespan-native\nDepends: libasound2, libgtk-3-0, libwebkit2gtk-4.1-0, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: ${summary}\n`,
+    );
+    run("dpkg-deb", [
+      "--build",
+      "--root-owner-group",
+      debRoot,
+      add(`gespan_${version}_amd64.deb`, "linux-x86_64-deb"),
+    ]);
+    const appDir = join(work, "Gespan.AppDir");
+    const { desktop } = await linuxTree(appDir, binary, "appimage");
+    await writeFile(
+      join(appDir, "dev.gespan.native.desktop"),
+      desktop.replace("Exec=gespan %F", "Exec=gespan-gpui %F"),
+    );
+    await cp(
+      join(root, "crates/gespan-gpui/assets/gespan.png"),
+      join(appDir, "gespan.png"),
+    );
+    await cp(join(root, "scripts/appimage-apprun.sh"), join(appDir, "AppRun"));
+    await chmod(join(appDir, "AppRun"), 0o755);
+    run(
+      process.env.APPIMAGETOOL || "appimagetool",
+      [
+        appDir,
+        add(
+          `Gespan_${version}_amd64.AppImage`,
+          "linux-x86_64-appimage",
+        ),
+      ],
+      {
+        env: { ...process.env, ARCH: "x86_64", APPIMAGE_EXTRACT_AND_RUN: "1" },
+      },
+    );
+  } else if (kind === "rpm") {
+    const top = join(work, "rpmbuild");
+    for (const name of ["BUILD", "RPMS", "SOURCES", "SPECS", "SRPMS"])
+      await mkdir(join(top, name), { recursive: true });
+    const tree = join(top, "SOURCES/tree");
+    await linuxTree(tree, binary, "rpm");
+    const spec = join(top, "SPECS/gespan.spec");
+    await writeFile(
+      spec,
+      rpmSpec(parsed, summary),
+    );
+    run("rpmbuild", [
+      "--define",
+      `_topdir ${top}`,
+      "--define",
+      "_build_id_links none",
+      "-bb",
+      spec,
+    ]);
+    const rpms = (await readdir(join(top, "RPMS/x86_64"))).filter(
+      (n) =>
+        n.endsWith(".rpm") &&
+        !n.includes("debuginfo") &&
+        !n.includes("debugsource"),
+    );
+    if (rpms.length !== 1) throw new Error("Expected exactly one native rpm");
+    await cp(
+      join(top, "RPMS/x86_64", rpms[0]),
+      add(rpms[0], "linux-x86_64-rpm"),
+    );
+  } else if (kind === "windows") {
+    const stage = join(work, "windows");
+    await mkdir(stage);
+    await cp(binary, join(stage, "gespan-gpui.exe"));
+    await writeFile(
+      join(stage, "native-install.json"),
+      JSON.stringify({ app_id: "dev.gespan.native", kind: "nsis" }),
+    );
+    await notices(join(stage, "licenses"));
+    const installer = add(
+      `Gespan_${version}_x64-setup.exe`,
+      "windows-x86_64-nsis",
+    );
+    const quote = (value) =>
+      value.replaceAll("$", "$$").replaceAll('"', '$\\"');
+    const template = await readFile(
+      join(root, "scripts/installer.nsi"),
+      "utf8",
+    );
+    const script = template
+      .replaceAll("@STAGE@", quote(stage))
+      .replaceAll("@OUTFILE@", quote(installer))
+      .replaceAll("@ICON@", quote(join(root, "crates/gespan-gpui/packaging/icon.ico")))
+      .replaceAll("@VERSION@", version)
+      .replaceAll("@WINDOWS_VERSION@", parsed.windows);
+    const nsi = join(work, "installer.nsi");
+    await writeFile(nsi, script);
+    run("makensis", [nsi]);
+  } else throw new Error(`Unknown native package kind: ${kind}`);
+  await writeFile(
+    join(out, `artifacts-${kind}-${arch}.json`),
+    JSON.stringify(artifacts, null, 2),
+  );
+  return artifacts;
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  const [kind, binary, out, arch] = process.argv.slice(2);
+  await packageNative({
+    kind,
+    binary,
+    out,
+    arch,
+    version: process.env.GESPAN_NATIVE_VERSION,
+  });
+}

@@ -1,8 +1,7 @@
 //! Session-scoped ticket and card tools for coding agents, served through the
 //! MCP hub. The app acts through `Tickets` with the keychain credentials (or
 //! the board store, for card tools); the agent never sees them. The tools
-//! themselves and their refusal rules live in `gespan_tracker_client::tools`,
-//! shared with Tauri.
+//! themselves and their refusal rules live in `gespan_tracker_client::tools`.
 use crate::tickets::TicketRef;
 use gespan_board_store::CardTool;
 pub use gespan_tracker_client::tools::{answer, Answered, Effect, TicketTool};

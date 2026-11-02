@@ -129,7 +129,6 @@ fn final_text_goes_to_current_cursor(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn leading_space_rule_matches_tauri(cx: &mut TestAppContext) {
-    // insertDictation.test.ts, case for case.
     assert_eq!(spaced("rename the", "helper").as_deref(), Some(" helper"));
     assert_eq!(
         spaced("fix bug", "in parser").as_deref(),

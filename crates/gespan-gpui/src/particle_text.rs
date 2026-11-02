@@ -1,4 +1,4 @@
-//! ParticleText.tsx: reveal the new title while the previous glyphs drift away.
+//! Reveal the new title while the previous glyphs drift away.
 use gpui::{
     AnyElement, App, Bounds, ContentMask, Element, ElementId, Font, Global, GlobalElementId, Hsla,
     InspectorElementId, LayoutId, Pixels, PlatformTextSystem, RenderGlyphParams, ShapedLine, Size,

@@ -38,7 +38,7 @@ export function subscribeToolElapsed(listener: () => void): () => void {
   };
 }
 
-/** `Ns` under a minute, `Mm Ss` after. Same as Gespan Native. */
+/** `Ns` under a minute, `Mm Ss` after. Same as Gespan. */
 export function formatElapsed(seconds: number): string {
   const secs = Math.max(0, Math.floor(seconds));
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;

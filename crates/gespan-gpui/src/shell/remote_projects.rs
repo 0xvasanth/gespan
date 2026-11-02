@@ -1,4 +1,4 @@
-//! AddRemoteProjectDialog.tsx: browse host directories and remember their remote identity.
+//! Browse host directories and remember their remote identity.
 use super::*;
 use crate::settings::widgets::secondary_button;
 use gespan_core::remote::{Connections, Machine};

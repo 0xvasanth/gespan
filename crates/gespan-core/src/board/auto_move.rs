@@ -1,7 +1,7 @@
 //! Where a linked card moves when its work starts, finishes or fails. The
-//! rules and the engine live in `gespan-board-store` (`on_linked_work`), so
-//! the native app and the Tauri app move cards the same way; by default a
-//! card only moves forward (started to doing, completed to review or done).
+//! rules and the engine live in `gespan-board-store` (`on_linked_work`). By
+//! default a card only moves forward (started to doing, completed to review or
+//! done).
 use super::Service;
 
 /// Something a card's linked work reported (`started`, `needs_input`,

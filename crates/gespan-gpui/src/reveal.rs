@@ -1,4 +1,4 @@
-//! Native port of wordFade.tsx: 90 cps floor, 220ms catch-up, 150ms
+//! Word fade: 90 cps floor, 220ms catch-up, 150ms
 //! partial-word hold, 30ms commits and a 320ms opacity fade per word.
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,

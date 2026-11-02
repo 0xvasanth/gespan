@@ -1,4 +1,4 @@
-//! The rail's "Meet Pilots" card (PilotIntro.tsx): it stands in for the Pilots
+//! The rail's "Meet Pilots" card: it stands in for the Pilots
 //! section while the user has none, and its switch hides Pilots altogether.
 use super::{HidePilots, Pilots, avatar::avatar};
 use crate::{

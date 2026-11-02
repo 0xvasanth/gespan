@@ -17,7 +17,7 @@
   <a href="https://github.com/0xvasanth/gespan/releases"><img src="https://img.shields.io/github/v/release/0xvasanth/gespan?include_prereleases&sort=semver&label=release&color=7c3aed" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-a78bfa.svg" alt="License: MIT" /></a>
   <a href="#install"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-4c1d95.svg" alt="Platforms" /></a>
-  <a href="https://tauri.app"><img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-24c8db.svg" alt="Built with Tauri" /></a>
+  <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui"><img src="https://img.shields.io/badge/built%20with-GPUI%20%2B%20Rust-24c8db.svg" alt="Built with GPUI" /></a>
   <a href="https://github.com/0xvasanth/gespan/stargazers"><img src="https://img.shields.io/github/stars/0xvasanth/gespan?style=flat&color=c4b5fd" alt="GitHub stars" /></a>
 </p>
 
@@ -75,7 +75,7 @@ Gespan gives them one home:
   signed in to. Your existing plans, logins, skills and MCP setup carry over.
 - **Tabs are sessions.** Every conversation is a tab. Split panes to watch
   several agents work side by side, each in its own Git worktree if you like.
-- **Native and local.** Gespan is built in Rust, on Tauri and GPUI. Sessions are stored on
+- **Native and local.** Gespan is built in Rust and GPUI. Sessions are stored on
   your machine, and the app has [no telemetry](docs/privacy.md).
 - **You stay in charge.** You can review diffs, keep or undo what each turn
   changed, approve tools and stop runaway agents from a single window.
@@ -249,25 +249,24 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |
 | [Privacy](docs/privacy.md) | What is recorded locally and what never leaves your machine |
-| [Native guide](docs/native/README.md) | The Rust + GPUI app: building, checks and current limitations |
+| [Desktop guide](docs/desktop/README.md) | The Rust + GPUI app: building, checks and current limitations |
 
 ## Build from source
 
-You'll need **Node.js 20+**, **[Bun](https://bun.sh)** and a stable
+You'll need **Node.js 22+**, **[Bun](https://bun.sh)** and a stable
 **Rust** toolchain. See [build setup](docs/building.md) for platform
 dependencies and packaging.
 
 ```bash
 git clone https://github.com/0xvasanth/gespan.git
 cd gespan
-bun install
-bun run tauri dev
+bun run dev
 ```
 
 Before opening a pull request, run the same checks CI runs:
 
 ```bash
-bun run check   # vitest, tsc, cargo fmt, cargo clippy, cargo test
+bun run check   # host tests, cargo fmt, cargo clippy, cargo test
 ```
 
 The mobile app is a separate Expo project in [`mobile/`](mobile/README.md).
@@ -280,12 +279,9 @@ Run it with `cd mobile && bun install && bun run start`.
 
 | Path | What lives there |
 | :-- | :-- |
-| `src/app/` | App composition, startup, window shell, release and update UI |
-| `src/features/` | Product features: sessions, workspace, pilots, inbox, automations and more |
-| `src/integrations/harness/` | The provider-independent harness core and one adapter per agent |
-| `src/platform/tauri/` | Browser-to-Tauri adapters for filesystem, PTY and clipboard |
-| `src-tauri/` | Rust backend: PTYs, filesystem and Git, session storage, native window |
-| `crates/` | Shared Rust crates and the experimental GPUI app |
+| `crates/gespan-gpui/` | The desktop app: shell, composer, transcript, editor, settings and platform UI |
+| `crates/gespan-core/` | Provider transports, persistence, accounts, Git and files, remote connections |
+| `crates/` | Other shared Rust crates: board store, trackers, MCP hub, mobile link and more |
 | `host/` | The remote host that runs sessions on another machine |
 | `mobile/` | The Expo iPhone companion |
 
@@ -303,13 +299,13 @@ Gespan is written in Rust and [GPUI](https://github.com/zed-industries/zed/tree/
 On macOS you need Node.js 22+, Rust and Xcode:
 
 ```sh
-bun run native:dev     # launch with a separate development database
-bun run native:build   # create an optimized app using installed Gespan data
+bun run dev     # launch with a separate development database
+bun run build   # create an optimized app using installed Gespan data
 ```
 
 In the development terminal, type `r` and press Enter to rebuild and restart.
 There is no hot reload. The release app saves changes to your installed Gespan
-data. See the [native guide](docs/native/README.md) for prerequisites, build
+data. See the [desktop guide](docs/desktop/README.md) for prerequisites, build
 output, checks and current limitations.
 
 </details>

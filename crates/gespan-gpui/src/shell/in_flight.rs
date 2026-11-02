@@ -1,6 +1,6 @@
 //! Chats with a running turn survive a quit, a crash or an update restart:
 //! the list is kept current while they run, and the next launch marks each
-//! one interrupted and continues it (as `inFlight.ts` does in the Tauri app).
+//! one interrupted and continues it.
 use super::*;
 
 impl Shell {

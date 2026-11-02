@@ -217,7 +217,7 @@ const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
 #[cfg(target_os = "macos")]
 const TOP_FADE: f32 = 24.;
-/// AgentTranscript.tsx's user bubble: `text-sm`, `max-w-[36rem]` and `px-3`.
+/// The user bubble: `text-sm`, `max-w-[36rem]` and `px-3`.
 /// Measurement, line counting and render share these.
 const PROMPT_TEXT_SIZE: Pixels = px(14.);
 const PROMPT_BUBBLE_MAX: Pixels = px(576.);
@@ -247,7 +247,7 @@ struct Follow {
     /// Growth keeps easing this long after a reply ends.
     until: Option<Instant>,
 }
-/// Units are px per 60fps frame, as in useBottomChatMotion.ts.
+/// Units are px per 60fps frame.
 /// The most a single block of growth may be held below where it lands. The
 /// list paints nothing above its scroll position, so holding a tall block
 /// back would leave that much of the chat blank.
@@ -851,7 +851,7 @@ impl TranscriptView {
         });
         view
     }
-    /// liveAgents.ts's toLiveAgent: the last turn's latest tool, as "Read
+    /// The last turn's latest tool, as "Read
     /// src/app.rs", when that turn was sent, and how long it ran once done.
     pub(crate) fn live_turn(&self, cwd: &str) -> (Option<String>, Option<u64>, Option<u64>) {
         let Some(prompt) = self.source.iter().rposition(|r| r.first && r.is_prompt()) else {
@@ -2826,8 +2826,8 @@ impl TranscriptView {
         crate::notifications::delivery::clip_body(&text)
     }
 
-    /// Tauri's appendUser: paint the prompt and working receipt in the send
-    /// handler. The worker replaces these same rows after saving them. Build
+    /// Paint the prompt and working receipt in the send handler.
+    /// The worker replaces these same rows after saving them. Build
     /// the attachment manifest without touching the filesystem on the UI thread.
     pub(crate) fn submit_prompt(
         &mut self,
@@ -5273,7 +5273,7 @@ impl TranscriptView {
                         content(1.)
                     })
                     .when(user, |d| {
-                        // AgentTranscript.tsx: text-sm (14px / 20px), px-3 py-2.
+                        // text-sm (14px / 20px), px-3 py-2.
                         // Measurement shapes this font at the same size.
                         d.font(gpui::font(crate::fonts::UI))
                             .text_size(PROMPT_TEXT_SIZE)

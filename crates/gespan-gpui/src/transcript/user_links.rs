@@ -1,6 +1,4 @@
-//! A prompt's first web link as a chip, ported from
-//! src/features/sessions/ui/UserLinkPreview.tsx: a GitHub issue or pull
-//! request gets a "PR #12" chip with a hover card, and any other link its
+//! A prompt's first web link as a chip: a GitHub issue or pull request gets a "PR #12" chip with a hover card, and any other link its
 //! page's favicon and title, fetched off the main thread.
 use super::*;
 use crate::popover::Align;

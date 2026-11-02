@@ -1531,8 +1531,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Tauri's row buttons take keyboard focus on press. Keep Escape on the
-        // workspace while a native div row is being dragged as well.
+        // Rows take keyboard focus on press, which keeps Escape on the
+        // workspace while a row is being dragged as well.
         window.focus(&self.focus, cx);
         let now = std::time::Instant::now();
         let items: Vec<(String, Bounds<Pixels>)> = if group {

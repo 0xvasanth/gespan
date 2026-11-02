@@ -2,8 +2,7 @@
 //! results are channels so authorization/dispatch never block the UI thread.
 //!
 //! macOS goes through `UNUserNotificationCenter` directly. Windows and Linux
-//! use GPUI's system notifications (WinRT toasts, the freedesktop bus), as
-//! the Tauri app's `notifications.rs` does through its own crates.
+//! use GPUI's system notifications (WinRT toasts, the freedesktop bus).
 
 use std::sync::mpsc::{self, Receiver};
 

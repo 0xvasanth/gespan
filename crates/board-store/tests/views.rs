@@ -1062,7 +1062,7 @@ fn card_index_has_start_estimate_fields_in_one_read() {
         (columns[1].id.as_str(), 0, None, None)
     );
     assert!(b.labels.is_empty() && b.projects.is_empty() && b.fields.is_empty());
-    // Serialized camelCase for the Tauri side.
+    // Serialized camelCase.
     let json = serde_json::to_value(a).unwrap();
     for key in [
         "cardId",

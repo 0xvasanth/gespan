@@ -654,7 +654,7 @@ fn apply_run_summary(automation: &mut Automation, run: &AutomationRun) {
     }
 }
 
-/// Access to the same tables and JSON used by the Tauri application.
+/// Access to the tables and JSON, in the format older Tauri builds saved.
 /// Open with the session database path to preserve existing definitions and history.
 pub struct Service {
     conn: Connection,

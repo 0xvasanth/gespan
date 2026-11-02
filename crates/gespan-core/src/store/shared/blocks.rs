@@ -873,7 +873,7 @@ mod card_tests {
         assert_eq!(promoted[1]["plan"]["originalText"], "# Plan\n- a\n- b");
         assert_eq!(project(&promoted).unwrap(), rows);
 
-        // A plan the Tauri app saved, built or not, reads as a plan too.
+        // A plan the old Tauri app saved, built or not, reads as a plan too.
         let desktop = json!({"id":"p","role":"plan","text":"# Desktop plan","plan":{"status":"built","approvedText":"# Desktop plan"}});
         let projected = project(std::slice::from_ref(&desktop)).unwrap();
         assert_eq!(projected[0].role, "plan");
@@ -909,7 +909,7 @@ mod card_tests {
         assert_eq!(saved[0]["sentAt"], 5);
         assert_eq!(project(&saved).unwrap(), vec![row]);
 
-        // The Tauri app's blocks read the same, and unknown fields survive.
+        // The old Tauri app's blocks read the same, and unknown fields survive.
         let desktop = json!({"id":"img","role":"image","text":"","image":{"path":"/generated.png","name":"generated-image","future":"keep"}});
         let rows = project(std::slice::from_ref(&desktop)).unwrap();
         let read: crate::generated_image::Image = serde_json::from_str(&rows[0].text).unwrap();

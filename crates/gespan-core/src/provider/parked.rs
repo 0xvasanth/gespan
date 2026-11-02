@@ -94,7 +94,7 @@ impl Wire {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let mut stdin = child.stdin.take().unwrap();
-        // Tauri's JSON-RPC transport has a 15s write deadline. A wedged child
+        // JSON-RPC writes have a 15s deadline. A wedged child
         // must not leave a worker stuck forever in a full stdin pipe.
         let (writes, requests) = mpsc::channel::<WriteRequest>();
         let writer = thread::spawn(move || {
@@ -112,8 +112,8 @@ impl Wire {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut bytes = Vec::new();
-                // Match the Tauri transport: history and tool snapshots can be
-                // large, so read each complete JSON line without a size cap.
+                // History and tool snapshots can be large, so read each
+                // complete JSON line without a size cap.
                 match reader.read_until(b'\n', &mut bytes) {
                     Ok(0) => break,
                     Ok(_) => {

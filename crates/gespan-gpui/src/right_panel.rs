@@ -1,4 +1,4 @@
-//! Sidebar.tsx's inset `RightPanel`: the project tools beside the card, with
+//! The inset right panel: the project tools beside the card, with
 //! reorderable Explorer / Changes / History tabs in the title bar, and a
 //! trailing Terminal tab when the terminal lives in the panel.
 use crate::{

@@ -1,5 +1,5 @@
-//! The plan card above the composer: OrchestrationPreview.tsx's review of a
-//! lead's assignments before any worker starts.
+//! The plan card above the composer: a review of a lead's assignments before
+//! any worker starts.
 use super::composer_features::{ResumeOrchestration, StartOrchestration, StopOrchestration};
 use super::*;
 use gespan_core::{

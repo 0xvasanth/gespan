@@ -36,16 +36,6 @@ replaceFirst(
   `$1${version}$2`,
 );
 replaceFirst(
-  join(root, "src-tauri/Cargo.toml"),
-  /^(version = ")[^"]+(")/m,
-  `$1${version}$2`,
-);
-replaceFirst(
-  join(root, "src-tauri/tauri.conf.json"),
-  /("version": ")[^"]+(")/,
-  `$1${version}$2`,
-);
-replaceFirst(
   join(root, "crates/gespan-gpui/Cargo.toml"),
   /(\[workspace\.package\]\r?\nversion = ")[^"]+(")/,
   `$1${version}$2`,
@@ -54,7 +44,6 @@ replaceFirst(
 // `--locked` builds keep working.
 const lockfiles = {
   "Cargo.lock": ["gespan-models", "gespan-speech"],
-  "src-tauri/Cargo.lock": ["gespan", "gespan-models", "gespan-speech"],
   "crates/gespan-gpui/Cargo.lock": [
     "gespan-core",
     "gespan-first-launch",

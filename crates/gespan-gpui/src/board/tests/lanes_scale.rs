@@ -383,7 +383,7 @@ fn shift_range_in_swimlanes_follows_lane_major_order(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn lane_order_matches_the_tauri_rows_for_the_same_board(cx: &mut TestAppContext) {
-    // The fixed board from Tauri's C6-13: columns Todo and Done; lanes
+    // A fixed board: columns Todo and Done; lanes
     // Urgent (p4), Medium (p2) and None (p0). Urgent holds u1–u5 in Todo and
     // u6–u7 in Done, Medium nothing, None n1–n8 in Done.
     let f = with_board(cx);

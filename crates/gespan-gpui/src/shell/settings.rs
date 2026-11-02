@@ -334,7 +334,7 @@ impl Shell {
         self.focus_active(window, cx);
         this_update(self, cx);
     }
-    /// MobileSettings.tsx's pair: the desktop listens only while a phone is
+    /// The desktop listens only while a phone is
     /// paired or being paired, so start listening before making the code.
     fn pair_mobile(&mut self, cx: &mut Context<Self>) {
         let Some(status) = self.mobile_status() else {

@@ -196,7 +196,7 @@ fn receipt(detail: &str) -> Option<Value> {
 }
 
 /// One receipt list per source block. Listings supply details for accepted sends
-/// but never create launch cards by themselves (pilotSpawnedSessions.ts).
+/// but never create launch cards by themselves.
 pub(crate) fn block_launches(blocks: &[Value]) -> Vec<Vec<Value>> {
     let mut result = Vec::new();
     let mut known = HashMap::new();

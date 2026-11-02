@@ -1,7 +1,6 @@
-//! The file pane a review opens beside the chat (FilePane.tsx with
-//! SurfaceTabs.tsx), holding files, Changes and commit tabs. WorkingTreeDiff.tsx and
-//! CommitDiff.tsx load their files four at a time off the UI thread and
-//! build each diff there too; the view only lays out rows.
+//! The file pane a review opens beside the chat, holding files, Changes and
+//! commit tabs. Working tree and commit diffs load their files four at a time
+//! off the UI thread and build each diff there too; the view only lays out rows.
 use crate::{
     diff_view::{DiffEvent, DiffFile, DiffView},
     file_editor::{FileEditor, FileEvent},

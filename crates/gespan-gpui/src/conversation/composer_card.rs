@@ -1,4 +1,4 @@
-//! InboxMiniCard.tsx and NoteMiniCard.tsx: what a new message starts from,
+//! Inbox and note mini cards: what a new message starts from,
 //! shown above the composer until it is sent or removed.
 use super::*;
 use gespan_core::{inbox::Item, notes::Note};

@@ -9,7 +9,7 @@ const affected = (...files) => [...impact(files)].sort();
 const all = [...pieces].sort();
 
 test("a file no rule names runs every piece", () => {
-  for (const file of ["brand-new.toml", "package.json", "bun.lock", "Cargo.lock", "scripts/bump-version.mjs", ".github/workflows/ci.yml","tests/fixtures/shared/ticket-work-item.json", "public/gespan.png"])
+  for (const file of ["brand-new.toml", "package.json", "bun.lock", "Cargo.lock", "scripts/bump-version.mjs", ".github/workflows/ci.yml","tests/fixtures/shared/ticket-work-item.json"])
     assert.deepEqual(affected(file), all, file);
 });
 
@@ -35,13 +35,13 @@ test("the crates other pieces read run every piece", () => {
 });
 
 test("files only people read run nothing", () => {
-  assert.deepEqual(affected("README.md", "docs/native/verification.md", "LICENSE", ".github/CODEOWNERS", "src-tauri/src/lib.rs"), []);
+  assert.deepEqual(affected("README.md", "docs/desktop/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
 });
 
 test("files Native compiles in are not documentation", async () => {
-  assert.deepEqual(affected("docs/native/examples/visual-scene.js"), all);
+  assert.deepEqual(affected("docs/desktop/examples/visual-scene.js"), all);
   assert.deepEqual(affected("CHANGELOG.md"), all);
-  assert.match(await read("crates/gespan-gpui/src/fixtures.rs"), /docs\/native\/examples\/visual-scene\.js/);
+  assert.match(await read("crates/gespan-gpui/src/fixtures.rs"), /docs\/desktop\/examples\/visual-scene\.js/);
   assert.match(await read("crates/gespan-gpui/src/notifications/app_update.rs"), /CHANGELOG\.md/);
 });
 
@@ -63,22 +63,12 @@ test("every host file a Core contract test reads runs Core, the rest of the host
   const hostFiles = [...source.matchAll(/"(host\/[^"\s]+)"/g)].map((match) => match[1]);
   assert.ok(hostFiles.includes("host/package.mjs"));
   assert.ok(hostFiles.includes("host/windows-acl.ps1"));
-  for (const file of hostFiles) assert.deepEqual(affected(file), ["core", "host", "mobile"], file);
-  assert.deepEqual(affected("host/core/index.ts"), ["host", "mobile"]);
-});
-
-test("a change to src/ reaches mobile, which imports it", async () => {
-  assert.deepEqual(affected("src/features/workspace/types.ts"), ["host", "mobile"]);
-  assert.match(await read("tests/mobile/independence.test.ts"), /\.\.\/src\//);
+  for (const file of hostFiles) assert.deepEqual(affected(file), ["core", "host"], file);
+  assert.deepEqual(affected("host/core/index.ts"), ["host"]);
 });
 
 test("mobile changes stay with mobile", () => {
   assert.deepEqual(affected("mobile/src/app.tsx", "tests/mobile/protocol.test.ts"), ["mobile"]);
-});
-
-test("the Tauri manifests bump-version rewrites still run Core", () => {
-  for (const file of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"])
-    assert.deepEqual(affected(file), ["core"], file);
 });
 
 test("one unknown file among known ones still runs every piece", () => {

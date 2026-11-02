@@ -1225,7 +1225,7 @@ function recordAgentStep(
   }
 
   const next: AgentRunMeta = {
-    // Keep what this app does not touch here, including fields Gespan Native
+    // Keep what this app does not touch here, including fields Gespan
     // wrote into the shared block.
     ...run,
     ...(run?.model ? { model: run.model } : {}),

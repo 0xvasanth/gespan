@@ -116,7 +116,8 @@ fn stable_builds_default_to_the_stable_feed_and_previews_to_the_fixed_one() {
     assert_eq!(default_endpoint("1.2.0"), STABLE_ENDPOINT);
     assert_eq!(default_endpoint("1.2.0-beta"), DEFAULT_ENDPOINT);
     assert_eq!(default_endpoint("not a version"), DEFAULT_ENDPOINT);
-    // Tauri reads latest.json from the same path, so this one has its own name.
+    // Older Tauri builds read latest.json from the same path, so this has its
+    // own name.
     assert!(STABLE_ENDPOINT.ends_with("/releases/latest/download/native-latest.json"));
     assert!(Config::new(STABLE_ENDPOINT, KEY, "1.2.0").is_ok());
 }

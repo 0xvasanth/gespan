@@ -373,7 +373,7 @@ impl Shell {
 
     fn prepare_classic_sidebar_list(&mut self, entries: &[Entry]) {
         let groups = self.project_groups();
-        // Original Sidebar.tsx: the list has p-1.5, gap-0.5 and pb-10.
+        // The original sidebar: the list has p-1.5, gap-0.5 and pb-10.
         // Its project navigation and Pilot roster belong to the first rail.
         let mut rows = vec![Row::ClassicGap(6)];
         for (ix, entry) in entries.iter().enumerate() {
@@ -1347,8 +1347,8 @@ mod tests {
         cx.refresh().unwrap();
         window
             .update(cx, |shell, _, _| {
-                // Like the Tauri sidebar, selecting a session (e.g. from a
-                // title tab) leaves the user's scroll position alone.
+                // Selecting a session (e.g. from a title tab) leaves the
+                // user's scroll position alone.
                 let after = shell.sidebar_list.state.logical_scroll_top();
                 assert_eq!(
                     (after.item_ix, after.offset_in_item),

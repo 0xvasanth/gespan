@@ -1,4 +1,4 @@
-//! The board's last gaps with Tauri: Alt+↑/↓ on subtasks, focusable list and
+//! Board details: Alt+↑/↓ on subtasks, focusable list and
 //! table rows, the template picker with no boards, and the date field on a
 //! card face.
 use super::*;

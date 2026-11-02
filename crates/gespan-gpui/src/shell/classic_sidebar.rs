@@ -1,4 +1,4 @@
-//! Sidebar.tsx's original workspace sidebar: working copy, tabs, and search.
+//! The original workspace sidebar: working copy, tabs, and search.
 //! Project navigation lives in ProjectRail, independently of these panes.
 use super::*;
 use crate::right_panel::RightTab;
@@ -157,8 +157,8 @@ struct ChangeStatLayout {
     width: f32,
 }
 
-/// DiffStat.tsx measures its complete label and scales the font and 0.55em
-/// gap together. Measure the same system font as the rendered runs, including
+/// A diff stat scales its font and 0.55em gap together to fit its complete
+/// label. Measure the same system font as the rendered runs, including
 /// tabular digits and weight, rather than estimating from the character count.
 fn change_stat_layout(
     added: &str,

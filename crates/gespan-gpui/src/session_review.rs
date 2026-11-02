@@ -1,4 +1,4 @@
-//! SessionReview.tsx: the latest turn's recorded workspace changes, under its
+//! The latest turn's recorded workspace changes, under its
 //! reply, with Undo, Keep and Review for the whole turn or one file at a time.
 //! The checkpoint runs off the UI thread.
 use crate::{

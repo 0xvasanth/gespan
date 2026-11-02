@@ -1,8 +1,7 @@
 # Redaction fixtures
 
-`redaction.json` is the shared contract for scrubbing diagnostics. Both apps
-run these cases in their tests, so the Tauri app and Gespan Native scrub
-the same input in the same way.
+`redaction.json` is the contract for scrubbing diagnostics. Gespan runs
+these cases in its tests.
 
 - `contexts` describes one machine per platform: its `home`, its `projects`
   (the first is `<project-1>`) and any known `secrets`.

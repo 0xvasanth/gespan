@@ -1295,7 +1295,7 @@ mod tests {
         service.set_labels(&card, &[label.id]).unwrap();
         service.add_subtask(&card, "One").unwrap();
         service.add_comment(&card, "Hi").unwrap();
-        // The Tauri app deletes cards with a plain DELETE on its own connection.
+        // Older Tauri builds deleted cards with a plain DELETE on their own connection.
         let tauri = rusqlite::Connection::open(&path).unwrap();
         tauri.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         tauri

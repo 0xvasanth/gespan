@@ -1,16 +1,16 @@
 # Board
 
-The board keeps your work in one place: cards you move through columns, with sessions, Pilots, pull requests and tracker tickets linked to them. It is the same in the Tauri app and in Gespan Native. Both read and write the same data, so a change in one shows up in the other. Where the two apps differ, the difference is noted in the text, and the full list is in [Board details](native/parity.md#board-details).
+The board keeps your work in one place: cards you move through columns, with sessions, Pilots, pull requests and tracker tickets linked to them. Details on how it behaves are in [Board details](desktop/parity.md#board-details).
 
 ## Boards
 
 Boards are global. A board is not tied to one project. Each card is tagged with the project it belongs to, and you can filter or group by project.
 
 - **Switcher.** The board header lists your boards. Pick one to open it.
-- **New board.** Choose "New board", give it a name and pick a template (see [Templates](#templates)). Gespan Native does not offer a template picker on the empty state; use the switcher there.
+- **New board.** Choose "New board", give it a name and pick a template (see [Templates](#templates)). Gespan does not offer a template picker on the empty state; use the switcher there.
 - **Rename and delete.** "Rename board" and "Delete board" are in the board actions menu (the switcher in Native). Deleting a board asks first, then removes it with its columns, cards and activity. To keep cards, move them first with Move to board… in the card's More menu.
 - **Board settings.** Also in the header menu. See [Board settings](#board-settings).
-- **Open cards in.** Choose whether a card opens in a side drawer or on a full page. In Native it is in the board header menu. In the Tauri app it is under Settings, General.
+- **Open cards in.** Choose whether a card opens in a side drawer or on a full page. It is in the board header menu.
 
 ## Cards
 
@@ -30,7 +30,7 @@ Open a card to see all of it in a drawer. The full page toggle expands it, and E
 
 - **Properties.** Status, priority, labels, project, start and due dates, estimate and the board's custom fields. Dates have quick picks (Today, Tomorrow, Next week, In 2 weeks, Clear) and a date input. An estimate takes `90`, `90m`, `1h`, `1h 30m` or `1.5h` and is shown as `1h 30m`. Anything else is refused with "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h", and what you typed stays in the field.
 - **Description.** Markdown, with a toolbar for bold, italic, heading, bulleted and numbered lists, link and code. What is stored is plain Markdown.
-- **Subtasks.** Add, tick off, reorder, and "Convert to card". Tauri also reorders with Alt+↑ and Alt+↓; Native uses Move up and Move down in the menu.
+- **Subtasks.** Add, tick off, reorder, and "Convert to card". Reorder with Move up and Move down in the menu.
 - **Comments.** Each comment shows who wrote it: You or Agent.
 - **Relations.** Blocked by, Blocks and Relates to. A relation that would create a cycle is refused.
 - **Links.** The card's session, Pilot, pull request URL and worktree path.
@@ -62,7 +62,7 @@ A view is a layout plus its search, filters, sort and display choices. "All card
 
 ## Search, filters and sort
 
-Press `/` to search. The query matches a card's title and description, and `#12` finds card 12. In the Tauri app the search runs 150 ms after you stop typing.
+Press `/` to search. The query matches a card's title and description, and `#12` finds card 12.
 
 The filter builder uses "Where" and "and" rows with "is" and "is not" and value chips. Rows cover the card's properties, its link and run state (such as running or failed) and custom fields. "Clear all" removes every row. If a label, project or field you filtered on is deleted, its row is dropped and the results still load.
 
@@ -74,7 +74,7 @@ Sort by manual order, priority, due, start, title, created or updated, ascending
 |---|---|
 | ↑ / ↓ | Move focus to the previous or next card in the column. In swimlanes they continue into the next lane |
 | ← / → | Move to the same position in the next column that has cards |
-| Tab | Moves between cards. Tauri cards, and Native board cards, are Tab stops |
+| Tab | Moves between cards. Board cards are Tab stops |
 | Space | Lifts the focused card, then drops it |
 | Arrows while lifted | Move the card between columns and positions |
 | Enter | Drops a lifted card, or opens the focused card |
@@ -144,8 +144,8 @@ Connect a tracker first in Settings, Inbox. [Jira setup](jira.md) shows how for 
 - **Link.** "Link ticket…" in the card drawer, or on a session's ticket chip. Paste a key or a URL. A URL for a different site than the one you connected is refused. A saved `http://` site and a pasted `https://` URL count as different sites.
 - **Chip.** Shows the tracker, key, title and status, and opens the ticket in the tracker. A chip that says the tracker is disconnected means its token is missing; reconnect in Settings.
 - **Refresh and unlink.** The chip menu has Open, Refresh and Unlink. Tickets are read when linked, when a card opens and when you refresh, never on a timer.
-- **New card from ticket…** is a button in the board header in the Tauri app and a command-palette entry in Native. It makes a card in the first To do column (or the first column) and fills in the title.
-- **New session from ticket…** is in the command palette. It starts a local session in the current project, links the ticket and puts the ticket key, then its title, in the message box as a draft. Nothing is sent until you send it. In the Tauri app a blank session saves its ticket link with its first message.
+- **New card from ticket…** is in the command palette. It makes a card in the first To do column (or the first column) and fills in the title.
+- **New session from ticket…** is in the command palette. It starts a local session in the current project, links the ticket and puts the ticket key, then its title, in the message box as a draft. Nothing is sent until you send it.
 
 ### Agents and tickets
 
@@ -165,7 +165,7 @@ Boards are built and tested to stay responsive with 1,000 cards. Each expanded c
 - "Run with…" and write-back are for local projects and sessions only.
 - Pull request state is known for the current branch's pull request only.
 - Cards can't be reordered inside a swimlane cell.
-- In Native, list and table rows don't take keyboard focus. Tauri rows do.
+- List and table rows don't take keyboard focus.
 - In Native, a card shown in two lanes is focused by its id, so the arrows skip its other copy.
 - `gespan://` links are copied but not opened yet.
 - Remote sessions don't show a ticket's title and status.

@@ -242,7 +242,7 @@ export type AgentRunMeta = {
   steps: AgentStep[];
   /**
    * The provider's id for the sub-agent (Claude's agentId), so a later turn
-   * that resumes it can find this run. Shared with Gespan Native.
+   * that resumes it can find this run. Shared with Gespan.
    */
   agentId?: string;
   /** On a resumption or continuation: the original Agent call's tool id. */

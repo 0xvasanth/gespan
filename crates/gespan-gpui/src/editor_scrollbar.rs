@@ -1,4 +1,4 @@
-//! editorScrollbar.ts's geometry, shared by native file and review surfaces.
+//! The editor scrollbar's geometry, shared by native file and review surfaces.
 pub(crate) const WIDTH: f32 = 18.;
 pub(crate) const MIN_THUMB: f32 = 32.;
 

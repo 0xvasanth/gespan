@@ -1,4 +1,4 @@
-// Sidebar.tsx's peek: in the inset layout a collapsed sidebar slides out over
+// The sidebar's peek: in the inset layout a collapsed sidebar slides out over
 // the workspace while the pointer rests on the window's left edge or on the
 // sidebar toggle, and puts itself away once the pointer leaves it.
 use super::Shell;

@@ -1,4 +1,3 @@
-//! Native port of `src/shared/ui/ImageLightbox.tsx`.
 use crate::theme::{black, icon, white};
 use gpui::{
     App, Bounds, BoxShadow, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Image,

@@ -1,10 +1,10 @@
 //! Chats a quit or crash cut short, continued on the next launch.
-//! Ported from src/features/sessions/model/inFlight.ts; the marker text and
-//! the `in_flight_sessions` table are shared, so either app resumes them.
+//! The marker text and the `in_flight_sessions` table are the ones older Tauri
+//! builds used, so chats those builds left behind resume too.
 use crate::tool::{ToolCall, ToolState};
 use crate::transcript::Row;
 
-/// The system row that ends a cut-off turn. The Tauri app matches this text.
+/// The system row that ends a cut-off turn. Older Tauri builds match this text.
 pub const MESSAGE: &str = "Turn interrupted when Gespan quit.";
 /// Sent once to a chat whose last row is [`MESSAGE`].
 pub const CONTINUE: &str = "Continue from where you left off.";

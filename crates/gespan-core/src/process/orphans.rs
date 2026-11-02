@@ -1,12 +1,12 @@
-//! Launch sweep ported from src-tauri/src/harness.rs.
+//! Launch sweep for orphaned agent processes.
 //!
 //! Every agent CLI is spawned through `process::isolate`, which stamps
 //! `GESPAN_HARNESS_PARENT=<our pid>`. A Gespan that crashed or was force-quit
 //! leaves those trees running; the next launch finds them by the marker and
 //! kills them. A marker whose parent is still alive belongs to a running
-//! Gespan (this one, another Native, or the Tauri app) and is left alone.
-//! Windows is not swept: there is no cheap way to read another process's
-//! environment, as in the Tauri app.
+//! Gespan (this one, another Native, or an older Tauri build) and is left
+//! alone. Windows is not swept: there is no cheap way to read another process's
+//! environment.
 #[cfg(any(unix, test))]
 use std::collections::HashSet;
 #[cfg(any(unix, test))]
@@ -100,9 +100,9 @@ fn should_reap(
     if proc.pid == our_pid || proc.pid <= 1 || proc.ppid == our_pid {
         return false;
     }
-    // Only marked processes. Tauri also reaped unmarked `cursor-agent acp`
-    // under pid 1, left by builds from before the marker; that also matches
-    // a Cursor agent another tool started, so Native leaves those alone.
+    // Only marked processes. An unmarked `cursor-agent acp` under pid 1 could
+    // be left by a build from before the marker, but it could also be a Cursor
+    // agent another tool started, so Native leaves those alone.
     let Some(parent) = proc.harness_parent else {
         return false;
     };
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn agents_of_a_running_gespan_are_spared() {
-        // Tauri and Native can run side by side; neither may kill the other's agents.
+        // Two running Gespans: neither may kill the other's agents.
         let other_app = row(500, 1, "/usr/local/bin/codex app-server", Some(400));
         assert!(!should_reap(&other_app, 100, &HashSet::new(), |pid| pid == 400));
         let ours = row(501, 7, "/usr/local/bin/codex app-server", Some(100));

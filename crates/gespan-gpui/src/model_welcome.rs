@@ -1,4 +1,4 @@
-//! OpusWelcome.tsx and AstraWelcome.tsx: picking Opus 5.5 or Astra plays a
+//! Model welcomes: picking Opus 5.5 or Astra plays a
 //! short decorative scene over the session. The scene is computed as plain
 //! shapes for a moment in time, so its timing and layout are testable, and a
 //! canvas paints them each frame without taking any input.

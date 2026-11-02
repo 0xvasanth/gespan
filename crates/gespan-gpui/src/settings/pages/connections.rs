@@ -1,4 +1,4 @@
-//! ConnectionsSettings.tsx: saved hosts, SSH setup, reconnect and credential revocation.
+//! Saved hosts, SSH setup, reconnect and credential revocation.
 use crate::{
     input::{self, Input},
     popover::AnchorSlot,

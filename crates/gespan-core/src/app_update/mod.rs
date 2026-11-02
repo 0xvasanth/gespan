@@ -1,6 +1,7 @@
-//! Native app updates. Uses the same Minisign keys and package signatures as
-//! Tauri. The native feed is additionally signed, binding version, channel and
-//! platform to the package; it cannot dispatch a production Tauri update.
+//! Native app updates. Uses the same Minisign keys and package signature format
+//! as the old Tauri updater. The native feed is additionally signed, binding
+//! version, channel and platform to the package; it cannot dispatch an update
+//! to an older Tauri build.
 mod install;
 #[cfg(test)]
 mod tests;
@@ -21,7 +22,7 @@ pub const APP_ID: &str = "dev.gespan.native";
 pub const PREVIEW_CHANNEL: &str = "native-preview";
 pub const STABLE_CHANNEL: &str = "native-stable";
 /// Signed feed on the fixed `native-latest` GitHub release. It is separate from
-/// the Tauri app's `releases/latest/download/latest.json` feed. Builds may
+/// the old Tauri app's `releases/latest/download/latest.json` feed. Builds may
 /// override it with `GESPAN_NATIVE_UPDATER_ENDPOINT`.
 pub const DEFAULT_ENDPOINT: &str =
     "https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json";

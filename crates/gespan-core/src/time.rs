@@ -1,4 +1,4 @@
-//! Sidebar.tsx's relative session time, shared with native session chrome.
+//! Relative session time, shared with native session chrome.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

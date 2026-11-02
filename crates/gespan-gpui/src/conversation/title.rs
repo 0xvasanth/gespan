@@ -3,8 +3,8 @@ use super::*;
 use gespan_core::session_title::display_title;
 
 impl Conversation {
-    /// Tauri's sessionDisplayTitle: the harness prefix belongs to persistence,
-    /// while every conversation headline shows only the user's title.
+    /// The harness prefix belongs to persistence, while every conversation
+    /// headline shows only the user's title.
     pub(crate) fn display_title(&self) -> String {
         display_title(&self.summary.title, &self.summary.provider).replace('\n', " ")
     }
@@ -76,8 +76,8 @@ impl Conversation {
                     flag,
                 )
             };
-            // Tauri's resolveLinkedWorkItem: a pasted issue or PR links the
-            // session even when a manual name kept the title. Tests never shell
+            // A pasted issue or PR links the session even when a manual name
+            // kept the title. Tests never shell
             // out to `gh`, so they only see pasted URLs.
             let linked = if cfg!(test) {
                 gespan_core::session_groups::parse_github_work_item(&message)
@@ -149,9 +149,9 @@ impl Conversation {
 }
 
 impl Conversation {
-    /// Tauri renames a new worktree's placeholder branch after the work its
-    /// first message asks for. Local sessions only: a remote host's branches
-    /// stay as created, as they do in Tauri.
+    /// Renames a new worktree's placeholder branch after the work its first
+    /// message asks for. Local sessions only: a remote host's branches stay as
+    /// created.
     pub(super) fn name_worktree_branch(&mut self, worktree: String, cx: &mut Context<Self>) {
         let Some(message) = self.branch_seed.take() else {
             return;

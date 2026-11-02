@@ -1,4 +1,4 @@
-//! SettingsView.tsx's building blocks: PageHeader, Group, Row, Toggle,
+//! The Settings building blocks: PageHeader, Group, Row, Toggle,
 //! Segmented, Slider, Select and SecondaryButton, at their Tailwind metrics.
 use super::{SettingsView, SliderKind};
 use crate::{
@@ -61,7 +61,6 @@ pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
         .into_any_element()
 }
 
-/// SecondaryButton.tsx.
 pub(crate) fn secondary_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,

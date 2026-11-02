@@ -1,5 +1,5 @@
-//! The Board app view, over the same `board*` tables the Tauri app uses.
-//! Writes from the Tauri app (or another window) show up when the view opens,
+//! The Board app view, over the `board*` tables.
+//! Writes from another window or process show up when the view opens,
 //! when the window becomes active, and when SQLite's `data_version` moves.
 mod agent_fields;
 mod archive;
@@ -1542,8 +1542,8 @@ impl BoardView {
         {
             cx.notify();
         }
-        // With nothing left to close, Escape does nothing, as in the Tauri
-        // board: it never leaves the Board (its tab or sidebar entry does).
+        // With nothing left to close, Escape does nothing: it never leaves the
+        // Board (its tab or sidebar entry does).
     }
 
     fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

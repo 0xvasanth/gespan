@@ -1,4 +1,4 @@
-//! Native SearchView.tsx, including its compact rows and dotted empty state.
+//! The search view, including its compact rows and dotted empty state.
 use crate::{
     input::{self, Input},
     runtime::{Database, locked},

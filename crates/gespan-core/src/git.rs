@@ -366,8 +366,8 @@ impl From<String> for CheckoutError {
         }
     }
 }
-/// Git's refusal to switch over local changes, the same test as the Tauri app,
-/// and a host's own refusal, which it gives before asking git.
+/// Git's refusal to switch over local changes, and a host's own refusal, which
+/// it gives before asking git.
 fn blocked_by_changes(error: &str) -> bool {
     let text = error.to_ascii_lowercase();
     text.contains("would be overwritten")
@@ -462,9 +462,9 @@ pub fn is_orchestration_branch(name: &str) -> bool {
     has_app_prefix(name, "orch-")
 }
 
-/// A short placeholder, like Tauri's temporaryWorktreeBranchName, until
-/// [`rename_app_branch`] names it after the session's first message. The
-/// session id keeps two sessions created in the same millisecond apart.
+/// A short placeholder, until [`rename_app_branch`] names it after the
+/// session's first message. The session id keeps two sessions created in the
+/// same millisecond apart.
 fn native_session_branch(session: i64, stamp: u128) -> String {
     format!(
         "{APP_BRANCH_PREFIX}{}{}",
@@ -503,8 +503,8 @@ pub fn worktree_branch(root: &Path, worktree: &Path) -> Option<String> {
 }
 
 /// Renames the branch of the app-created worktree at `worktree` from the
-/// placeholder `from` to `gespan/<fragment>`, as Tauri's renameWorktreeBranch
-/// does once the first message names the work. A name already taken gets
+/// placeholder `from` to `gespan/<fragment>` once the first message names the
+/// work. A name already taken gets
 /// `-2`, `-3`… Branches the user created, or renamed since `from` was read,
 /// are never touched. Returns the new branch.
 pub fn rename_app_branch(
@@ -1184,7 +1184,7 @@ mod tests {
         stash_and_checkout(&cwd, &local("other")).unwrap();
         assert_eq!(current(&cwd), "other");
         assert_eq!(read(&cwd, "shared.txt"), "other\n");
-        // As in the Tauri app the stash is not reapplied on the new branch.
+        // The stash is not reapplied on the new branch.
         assert!(!cwd.join("scratch.txt").exists());
         assert_eq!(git(&cwd, &["status", "--porcelain"]).unwrap(), "");
         assert_eq!(

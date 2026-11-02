@@ -1,4 +1,4 @@
-//! Native adapter of the original Tauri Inbox provider. Network parsing and the saved credential format remain identical.
+//! GitLab Inbox adapter. The saved credential format is the one older Tauri builds wrote.
 use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::path::{Path, PathBuf};
 use std::process::Command;

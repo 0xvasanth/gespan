@@ -1,9 +1,9 @@
-//! The phone's transcript (mobileTranscript.ts): turns the desktop has
+//! The phone's transcript: turns the desktop has
 //! already grouped and folded as `TranscriptView` does, so the phone and the
 //! desktop follow one set of rules. Pure: rows and turn provenance in, the
 //! phone's `Turn` JSON (mobile/src/features/workspace/types.ts) out.
 //!
-//! Known gaps against the React port, because native rows do not carry them:
+//! Known gaps, because native rows do not carry them:
 //! approvals are not persisted, so no "Waiting for approval on desktop" notice
 //! (the live header still says `waiting`); there are no Pilot habits, operator
 //! prompts or background-task labels; and assignment wrappers stay in user

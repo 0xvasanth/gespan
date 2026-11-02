@@ -212,8 +212,8 @@ pub(crate) fn activity_text(row: &Activity) -> String {
     format!("{what} · {}", actor_label(&row.actor))
 }
 
-/// Who wrote an activity row, as Tauri's `actorLabel` names it: "You",
-/// "System", or "Agent" for any other writer (`agent`, `agent:<session>`).
+/// Who wrote an activity row: "You", "System", or "Agent" for any other writer
+/// (`agent`, `agent:<session>`).
 pub(crate) fn actor_label(actor: &str) -> &'static str {
     match actor {
         "user" => "You",

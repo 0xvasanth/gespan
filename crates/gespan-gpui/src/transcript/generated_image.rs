@@ -1,4 +1,4 @@
-//! GeneratedImage.tsx: an image a provider made, drawn from its saved file.
+//! An image a provider made, drawn from its saved file.
 use super::*;
 use gespan_core::generated_image::Image;
 use gpui::{AnyElement, ObjectFit, StyledImage};

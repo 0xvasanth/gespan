@@ -1,4 +1,4 @@
-//! LocalMedia.tsx: a reply's local image or video, shown in place of its link.
+//! A reply's local image or video, shown in place of its link.
 use super::*;
 use gpui::{AnyElement, ObjectFit, StyledImage};
 

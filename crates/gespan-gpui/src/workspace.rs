@@ -262,7 +262,6 @@ impl ProjectAction {
     }
 }
 
-/// Port of src/features/projects/model/projectTerminal.ts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum DockSide {
@@ -1163,8 +1162,8 @@ impl Workspace {
     }
 }
 
-/// Port of src/features/workspace/model/tabVisitHistory.ts. Closed tabs are
-/// pruned rather than reopened by Back, and a new visit discards Forward.
+/// Closed tabs are pruned rather than reopened by Back, and a new visit
+/// discards Forward.
 #[derive(Default)]
 pub(crate) struct VisitHistory {
     pub back: Vec<i64>,
@@ -1243,7 +1242,7 @@ pub(crate) fn project_name(path: &str) -> String {
 }
 
 /// Projects whose folder was renamed take their sessions and saved workspace
-/// state to the new folder (App.tsx's applyProjectLocationChange). This runs
+/// state to the new folder. This runs
 /// before the workspace is restored, so the app starts on the new paths.
 pub(crate) fn follow_moved_projects(
     store: &gespan_core::store::Store,

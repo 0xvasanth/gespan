@@ -111,7 +111,7 @@ jobs:
           wait "$android" || status=1
           exit "$status"
       - name: Build and publish desktop
-        run: scripts/release-run.sh native-release.yml "Desktop $TAG" -f dry_run=false
+        run: scripts/release-run.sh desktop-release.yml "Desktop $TAG" -f dry_run=false
       - name: Check the published release
         run: |
           set -euo pipefail

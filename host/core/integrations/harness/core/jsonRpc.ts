@@ -98,7 +98,7 @@ export class JsonRpcClient {
     const id = this.nextId++;
     const key = String(id);
     // Register before writing. A local harness can answer quickly enough for
-    // Tauri to deliver its stdout event before harness_write resolves; adding
+    // its stdout event to arrive before harness_write resolves; adding
     // the pending entry after send() silently discarded that response.
     const response = new Promise<T>((resolve, reject) => {
       const timer =

@@ -1,5 +1,5 @@
 //! Keep the display awake, so the idle timer never locks the screen and pauses
-//! a running agent. Shared by the Tauri app and the native app.
+//! a running agent.
 //!
 //! This only defers the *idle* lock and sleep. A closed lid, a manual lock or a
 //! low battery still win; the OS drops the assertion when the process exits.

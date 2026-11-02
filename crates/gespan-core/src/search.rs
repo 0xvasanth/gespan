@@ -1,5 +1,5 @@
-//! SearchView.tsx/appSearch.ts: fuzzy titles and paths, literal message/content
-//! matches, stable identities, and the same per-scope ordering and limits.
+//! App search: fuzzy titles and paths, literal message/content matches, stable
+//! identities, and per-scope ordering and limits.
 pub mod project;
 use crate::{files::ProjectFile, store::Session, transcript::Row};
 use std::{
@@ -138,7 +138,7 @@ fn pretty_path(path: &str) -> String {
         })
         .unwrap_or_else(|| path.to_owned())
 }
-/// Port of shared/lib/fuzzy.ts. Positions are native UTF-8 byte ranges.
+/// Positions are native UTF-8 byte ranges.
 pub fn fuzzy(query: &str, text: &str) -> Option<(i64, Vec<Range<usize>>)> {
     let chars: Vec<_> = text
         .char_indices()

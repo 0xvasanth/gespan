@@ -1,5 +1,4 @@
-//! Sidebar.tsx's rails: an orchestrator's agents (OrchestrationSidebarAgents,
-//! `tree`) and the sessions an /operator thread started hang off a line under
+//! The sidebar's rails: an orchestrator's agents (`tree`) and the sessions an /operator thread started hang off a line under
 //! its row. Each rail opens while its thread, or one of the thread's
 //! sessions, is in view, chosen or working, and RevealHeight grows it in.
 use super::*;
@@ -131,7 +130,7 @@ impl Shell {
     /// is simply there; later changes grow and fold.
     pub(super) fn sync_rails(&mut self, ids: &[i64], cx: &mut Context<Self>) {
         let (started, children) = if self.workspace.classic_layout {
-            // Original Sidebar.tsx leaves /operator launches in the list.
+            // The original sidebar leaves /operator launches in the list.
             (HashMap::new(), HashSet::new())
         } else {
             self.started_groups(ids)

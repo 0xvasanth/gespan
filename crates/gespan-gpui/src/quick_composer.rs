@@ -1,4 +1,4 @@
-//! QuickComposer.tsx: the Spotlight-style panel opened by the global shortcut
+//! The Spotlight-style panel opened by the global shortcut
 //! and the menu bar. It floats over other apps without activating Gespan,
 //! keeps its draft across a dismiss, and opens its pickers below the toolbar
 //! so the prompt never moves.
@@ -169,7 +169,7 @@ enum Picker {
     Branch,
 }
 
-/// quickWorkspace.ts: the working copy a launch starts in.
+/// The working copy a launch starts in.
 #[derive(Clone, Default)]
 struct Workspace {
     new_worktree: bool,
@@ -531,8 +531,8 @@ impl QuickComposer {
                 self.picker_events =
                     Some(
                         cx.subscribe_in(&list, window, |this, _, picked: &ModelPicked, _, cx| {
-                            // As Tauri's selector: picking keeps it open, so the
-                            // effort beneath can follow the new model.
+                            // Picking keeps it open, so the effort beneath can
+                            // follow the new model.
                             this.set_model(picked.0, picked.1.clone(), cx);
                             crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx);
                             if let Some(list) = this.models.clone() {
@@ -1631,7 +1631,7 @@ impl QuickComposer {
             )
             .into_any_element()
     }
-    /// QuickModelSelector.tsx's footer: fast mode, the effort, and a reset.
+    /// The quick model selector's footer: fast mode, the effort, and a reset.
     fn effort(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let model = self
             .models

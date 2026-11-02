@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
-      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/build-rpm.test.mjs scripts/native-release.test.mjs scripts/package-native.test.mjs
+      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/desktop-release.test.mjs scripts/package.test.mjs
 
   mobile:
     name: Mobile checks
@@ -160,7 +160,7 @@ jobs:
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - if: env.RUN == 'true'
-        run: bun run native:test:dev
+        run: bun run test:scripts
       - if: env.RUN == 'true'
         run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - if: env.RUN == 'true'

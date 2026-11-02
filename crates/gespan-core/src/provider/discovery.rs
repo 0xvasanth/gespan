@@ -9,8 +9,8 @@ pub(super) fn matches(kind: Kind, path: &Path) -> bool {
             return false;
         }
         if path.file_stem().is_some_and(|name| name == "agent") {
-            // Inspect only one symlink hop, as in the Tauri resolver. Never
-            // mistake Grok's unrelated `agent` shim for Cursor.
+            // Inspect only one symlink hop. Never mistake Grok's unrelated
+            // `agent` shim for Cursor.
             return std::fs::read_link(path).ok().is_some_and(|target| {
                 target
                     .to_string_lossy()

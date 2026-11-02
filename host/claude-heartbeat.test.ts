@@ -1,7 +1,7 @@
 /**
  * The host parses Claude frames with the same adapter as the app, so a
  * heartbeat must leave its saved session free of phantom steps and ghost runs
- * there too. Fixtures are shared with the app and Gespan Native tests.
+ * there too. Fixtures are shared with the app and Gespan tests.
  */
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

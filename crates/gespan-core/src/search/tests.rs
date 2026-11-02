@@ -220,7 +220,7 @@ fn transcript_find_returns_each_matching_message_once_by_its_first_row() {
         row("user", "le?", false),
         row("assistant", "No match here", true),
         row("tool", &serde_json::to_string(&tool).unwrap(), true),
-        // Rows the transcript find skips, like a find in the Tauri app.
+        // Rows the transcript find skips.
         row("error", "needle", true),
         row("assistant", "needle and NEEDLE again", true),
     ];

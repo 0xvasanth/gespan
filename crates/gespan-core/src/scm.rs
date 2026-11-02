@@ -1,5 +1,5 @@
-//! Source control for the Changes and History panes, ported from
-//! src-tauri/src/fs.rs. Synchronous: callers run these on a background executor.
+//! Source control for the Changes and History panes. Synchronous: callers run
+//! these on a background executor.
 mod review;
 pub(crate) mod shell;
 pub(crate) mod text;
@@ -421,7 +421,7 @@ pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String
     crate::inbox::github::git_github_pr_checks_for(&expand_home(cwd), repo, number)
 }
 
-/// The working copy's GitHub `owner/name`, via `gh` (Tauri's git_github_repo).
+/// The working copy's GitHub `owner/name`, via `gh`.
 pub fn github_repo(cwd: &Path) -> Result<String, String> {
     if remote_workspace::is_remote(cwd) {
         return remote_workspace::command("git_github_repo", json!({"cwd":cwd}));

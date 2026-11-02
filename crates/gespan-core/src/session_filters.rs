@@ -1,4 +1,4 @@
-//! SessionFiltersMenu/sessionFilters.ts, shared by native sidebar consumers.
+//! Session filters, shared by native sidebar consumers.
 use crate::{provider::Kind, store::Session};
 use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};

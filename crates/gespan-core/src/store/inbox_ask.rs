@@ -1,5 +1,5 @@
 //! Ask sessions, kept out of every session list. The shared store marks them
-//! in its `sessions.inbox_ask` column, as the Tauri app does. The local
+//! in its `sessions.inbox_ask` column, as older Tauri builds do. The local
 //! fallback has no such column, so it uses an `inbox-ask:<id>` setting, which
 //! `local_sessions` and `delete` already honour.
 use super::{Session, Store};
