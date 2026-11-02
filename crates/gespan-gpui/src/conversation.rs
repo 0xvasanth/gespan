@@ -1048,7 +1048,7 @@ impl Conversation {
             .update(cx, |input, cx| input.set_text(prompt, cx));
         self.send(cx);
     }
-    fn send(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn send(&mut self, cx: &mut Context<Self>) {
         self.send_follow_up(false, cx);
     }
     /// A send from a project whose folder is gone first looks for it under its
@@ -2329,7 +2329,7 @@ impl Conversation {
             })
             .detach();
     }
-    fn menu_choice(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn menu_choice(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.git_action_choice(id, cx) {
             return;
         }
@@ -2413,9 +2413,13 @@ impl Conversation {
                 "workspace:new" => {
                     self.settings.worktree_removed = false;
                     self.settings.new_worktree = true;
-                    self.settings.worktree_cwd = None;
-                    self.settings.worktree_base =
-                        self.settings.worktree_base.clone().or(self.branch.clone());
+                    // Cut from the project's checkout, as every other way of
+                    // starting in a new worktree is, not from the worktree the
+                    // draft was showing. A base chosen in the picker stays.
+                    if self.settings.worktree_cwd.take().is_some() {
+                        self.git = crate::git_cache::get(&self.summary.cwd);
+                        self.branch = self.git.as_ref().and_then(|git| git.current.clone());
+                    }
                     self.refresh_git(cx);
                 }
                 "fast" | "fast:on" | "fast:off" => {
@@ -3467,6 +3471,14 @@ impl Conversation {
             .child(self.workspace_bar(cx))
             .into_any_element()
     }
+    /// The branch beside the workspace: for a new worktree, the one it is cut from.
+    pub(crate) fn workspace_branch(&self) -> Option<String> {
+        if !self.summary.has_messages && self.settings.new_worktree {
+            self.settings.worktree_base.clone().or(self.branch.clone())
+        } else {
+            self.branch.clone()
+        }
+    }
     fn workspace_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let draft = !self.summary.has_messages;
         let linked =
@@ -3525,11 +3537,7 @@ impl Conversation {
                 .child(label)
                 .into_any_element()
         };
-        let branch = if new {
-            self.settings.worktree_base.clone().or(self.branch.clone())
-        } else {
-            self.branch.clone()
-        };
+        let branch = self.workspace_branch();
         let ratio = self.context.and_then(|usage| usage.ratio());
         let show_context = ratio.is_some() || draft;
         let headline = ratio

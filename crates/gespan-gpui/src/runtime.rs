@@ -14,6 +14,8 @@ mod follow_up_tests;
 mod handoff;
 #[cfg(all(test, unix))]
 mod handoff_tests;
+#[cfg(test)]
+mod new_worktree_tests;
 mod persistence;
 #[cfg(all(test, unix))]
 mod pilot_checkpoint_tests;
