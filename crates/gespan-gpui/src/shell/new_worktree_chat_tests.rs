@@ -383,3 +383,29 @@ fn a_chat_in_the_background_takes_its_tab_but_leaves_the_window(cx: &mut TestApp
     );
     assert!(same(tab.as_deref().unwrap(), &tree));
 }
+
+#[gpui::test]
+fn a_generated_branch_name_reaches_the_window(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let id = f.new_worktree_chat(Kind::Kiro, "Fix the login redirect", cx);
+    let tree = f.working_copy(id, cx);
+    // A provider that names branches renames it after the first reply.
+    f.window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.rename_worktree_branch(
+                    tree.clone(),
+                    "gespan/fix-the-login-redirect".into(),
+                    "repair login redirect".into(),
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (focus, _) = scopes(&f, id, cx);
+    assert_eq!(
+        focus.unwrap().branch.as_deref(),
+        Some("gespan/repair-login-redirect")
+    );
+}

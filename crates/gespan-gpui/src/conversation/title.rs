@@ -202,7 +202,7 @@ impl Conversation {
         .detach();
     }
     /// Gives the session's worktree branch the generated name, then shows it.
-    pub(super) fn rename_worktree_branch(
+    pub(crate) fn rename_worktree_branch(
         &mut self,
         worktree: String,
         from: String,
@@ -226,6 +226,7 @@ impl Conversation {
                     if this.execution_cwd() == worktree {
                         this.refresh_git(cx);
                     }
+                    cx.emit(super::WorktreeRenamed(worktree));
                 });
             }
         })

@@ -82,6 +82,36 @@ impl Shell {
         self.invalidate_chrome(cx);
         cx.notify();
     }
+    /// A worktree the window shows took a generated branch name: show it.
+    pub(super) fn worktree_renamed(&mut self, path: String, cx: &mut Context<Self>) {
+        if !self
+            .worktree_focus
+            .values()
+            .any(|focus| path_key(&focus.path) == path_key(&path))
+        {
+            return;
+        }
+        let work_path = path.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { crate::git_cache::load(std::path::Path::new(&work_path)).ok() });
+        cx.spawn(async move |this, cx| {
+            let Some(branch) = work.await.and_then(|git| git.current) else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                for focus in this.worktree_focus.values_mut() {
+                    if path_key(&focus.path) == path_key(&path) {
+                        focus.branch = Some(branch.clone());
+                    }
+                }
+                this.persist(cx);
+                this.invalidate_chrome(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     pub(super) fn record_worktree_session(&mut self, id: i64, _cx: &App) {
         let project = self.workspace.project.clone();
         let path = self.working_copy().to_owned();

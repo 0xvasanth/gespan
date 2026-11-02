@@ -166,6 +166,8 @@ use response_menu::ResponseMenu;
 pub(crate) struct SessionChanged;
 /// The chat moved into the worktree it was asked to make: its path.
 pub(crate) struct WorktreeCreated(pub(crate) String);
+/// The branch of the chat's worktree, at this path, took a generated name.
+pub(crate) struct WorktreeRenamed(pub(crate) String);
 /// The agent changed the linked ticket through its ticket tools.
 pub(crate) struct TicketChanged(pub(crate) crate::runtime::TicketChange);
 pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
@@ -1862,6 +1864,7 @@ impl Conversation {
 
 impl EventEmitter<SessionChanged> for Conversation {}
 impl EventEmitter<WorktreeCreated> for Conversation {}
+impl EventEmitter<WorktreeRenamed> for Conversation {}
 impl EventEmitter<TicketChanged> for Conversation {}
 impl EventEmitter<ChooseFolder> for Conversation {}
 impl EventEmitter<OpenSessionChanges> for Conversation {}

@@ -605,9 +605,20 @@ fn task_fragment(task: &str) -> Option<String> {
     if line.starts_with('/') {
         return None;
     }
+    // Branch and folder names outlive the chat and can be pushed, so words
+    // that look like an address, a link, a setting or a secret stay out.
+    let private = |word: &str| {
+        word.contains(['@', '=']) || word.contains("://") || {
+            let (letters, digits) = word.chars().fold((false, false), |(l, d), c| {
+                (l || c.is_ascii_alphabetic(), d || c.is_ascii_digit())
+            });
+            word.len() >= 16 && letters && digits
+        }
+    };
     let mut fragment = String::new();
     for word in line
         .split_whitespace()
+        .filter(|word| !private(word))
         .map(|word| crate::scm::text::sanitize_branch_fragment(&word.replace('/', "-")))
         .filter(|word| !word.is_empty())
         .take(WORDS)
@@ -623,6 +634,14 @@ fn task_fragment(task: &str) -> Option<String> {
     let fragment = fragment.trim_end_matches(['.', '_', '-']);
     (!fragment.is_empty()).then(|| fragment.to_owned())
 }
+/// `gespan/<task words>`, or its first numbered form that is not `taken`;
+/// `None` when the task has no usable words or every form is taken.
+fn task_branch(task: Option<&str>, taken: impl Fn(&str) -> bool) -> Option<String> {
+    let wanted = format!("{APP_BRANCH_PREFIX}{}", task_fragment(task?)?);
+    std::iter::once(wanted.clone())
+        .chain((2..=20).map(|n| format!("{wanted}-{n}")))
+        .find(|name| !taken(name))
+}
 fn create_session_worktree(
     cwd: &Path,
     base: &str,
@@ -636,7 +655,23 @@ fn create_session_worktree(
             .as_millis();
         let main = PathBuf::from(remote::main_checkout(cwd)?);
         let turn = crate::worktree_scripts::turn(&main);
-        let branch = native_session_branch(session, stamp);
+        let known: std::collections::HashSet<String> = remote::snapshot(cwd)
+            .map(|snapshot| {
+                let trees = snapshot
+                    .worktrees
+                    .into_iter()
+                    .filter_map(|tree| tree.branch);
+                snapshot
+                    .branches
+                    .into_iter()
+                    .filter(|branch| branch.remote.is_none())
+                    .map(|branch| branch.name)
+                    .chain(trees)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let branch = task_branch(task, |name| known.contains(name))
+            .unwrap_or_else(|| native_session_branch(session, stamp));
         let tree = remote::create_worktree(cwd, &branch, Some(base), false)?;
         return remote::set_up(turn, &main, tree).map(|tree| PathBuf::from(tree.path));
     }
@@ -667,14 +702,7 @@ fn create_session_worktree(
             .is_ok()
     };
     // Named after the task, numbered like a generated name when taken.
-    let name = task
-        .and_then(task_fragment)
-        .map(|fragment| format!("{APP_BRANCH_PREFIX}{fragment}"))
-        .and_then(|wanted| {
-            std::iter::once(wanted.clone())
-                .chain((2..=20).map(|n| format!("{wanted}-{n}")))
-                .find(|name| !taken(name) && valid_branch(cwd, name).is_ok())
-        })
+    let name = task_branch(task, |name| taken(name) || valid_branch(cwd, name).is_err())
         .unwrap_or_else(|| native_session_branch(session, stamp));
     let path = folder(&name);
     let commit = git(
@@ -1428,6 +1456,42 @@ mod tests {
             );
             assert!(branch.len() <= "gespan/".len() + 24, "{task:?}: {branch}");
         }
+    }
+
+    #[test]
+    fn a_task_name_leaves_out_addresses_links_and_secrets() {
+        for (task, fragment) in [
+            (
+                "Email bob@example.com about the outage",
+                Some("email-about-the-outage"),
+            ),
+            (
+                "Use key sk-live-4f9a8b7c6d5e4f3a2b1c0d9e for the deploy",
+                Some("use-key-for-the-deploy"),
+            ),
+            (
+                "Fetch https://internal.example.com/report and summarise",
+                Some("fetch-and-summarise"),
+            ),
+            ("Set API_TOKEN=abc123 then retry", Some("set-then-retry")),
+            (
+                "Revert 3f9a2c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+                Some("revert"),
+            ),
+            ("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4", None),
+        ] {
+            assert_eq!(task_fragment(task).as_deref(), fragment, "{task}");
+        }
+    }
+
+    #[test]
+    fn a_remote_task_name_skips_branches_the_remote_has() {
+        let taken = ["gespan/fix-login", "gespan/fix-login-2"];
+        assert_eq!(
+            task_branch(Some("Fix login"), |name| taken.contains(&name)).as_deref(),
+            Some("gespan/fix-login-3")
+        );
+        assert_eq!(task_branch(Some("/compact"), |_| false), None);
     }
 
     #[test]
