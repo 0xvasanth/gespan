@@ -389,7 +389,8 @@ fn a_generated_branch_name_reaches_the_window(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let id = f.new_worktree_chat(Kind::Kiro, "Fix the login redirect", cx);
     let tree = f.working_copy(id, cx);
-    // A provider that names branches renames it after the first reply.
+    // Simulates the generated rename that providers with branch naming make
+    // after the first reply (Kiro has none, so the test makes it directly).
     f.window
         .update(cx, |shell, _, cx| {
             shell.sessions[&id].update(cx, |view, cx| {

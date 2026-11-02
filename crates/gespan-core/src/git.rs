@@ -655,7 +655,11 @@ fn create_session_worktree(
             .as_millis();
         let main = PathBuf::from(remote::main_checkout(cwd)?);
         let turn = crate::worktree_scripts::turn(&main);
-        let known: std::collections::HashSet<String> = remote::snapshot(cwd)
+        // The remote's branches are asked for only when there is a name to check.
+        let named = task.and_then(task_fragment).is_some();
+        let known: std::collections::HashSet<String> = named
+            .then(|| remote::snapshot(cwd).ok())
+            .flatten()
             .map(|snapshot| {
                 let trees = snapshot
                     .worktrees
