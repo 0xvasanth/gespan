@@ -24,6 +24,8 @@ mod live_agents;
 mod menu_bar;
 mod mobile_host;
 mod multi_window;
+#[cfg(test)]
+mod new_worktree_chat_tests;
 mod notifications;
 mod open_in_editor;
 mod orchestration;
