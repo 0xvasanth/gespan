@@ -408,6 +408,19 @@ impl Accounts {
                     return;
                 }
                 let queued = std::mem::take(&mut state.queued);
+                match &result {
+                    Ok(snapshot) => tracing::info!(
+                        provider = key.kind.label(),
+                        windows = snapshot.windows.len(),
+                        "usage refreshed"
+                    ),
+                    Err(error) => tracing::warn!(
+                        provider = key.kind.label(),
+                        unavailable = error.unavailable,
+                        message = %error.message,
+                        "usage refresh failed"
+                    ),
+                }
                 let refreshed = result.is_ok();
                 state.complete(result);
                 if refreshed

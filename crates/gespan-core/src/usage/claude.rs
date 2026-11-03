@@ -45,7 +45,12 @@ pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, 
             ureq::Error::Status(status, _) => {
                 FetchError::failed(format!("Claude usage request failed ({status})."))
             }
-            _ => FetchError::failed("Could not reach Claude usage. Try refreshing again."),
+            error => {
+                // The transport error names the cause (timeout, DNS, TLS); the
+                // footer keeps the short message.
+                tracing::warn!(%error, "could not reach Claude usage");
+                FetchError::failed("Could not reach Claude usage. Try refreshing again.")
+            }
         })?;
     let mut body = String::new();
     response
