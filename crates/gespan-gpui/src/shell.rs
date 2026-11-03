@@ -1566,6 +1566,18 @@ impl Shell {
             }));
         self.observations.push(cx.subscribe(
             &view,
+            move |this, _, made: &crate::conversation::WorktreeCreated, cx| {
+                this.session_made_worktree(id, made.0.clone(), cx)
+            },
+        ));
+        self.observations.push(cx.subscribe(
+            &view,
+            |this, _, renamed: &crate::conversation::WorktreeRenamed, cx| {
+                this.worktree_renamed(renamed.0.clone(), cx)
+            },
+        ));
+        self.observations.push(cx.subscribe(
+            &view,
             move |this, _, event: &crate::conversation::TicketChanged, cx| {
                 this.agent_changed_ticket(id, event.0.clone(), cx)
             },

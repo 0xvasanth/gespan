@@ -38,6 +38,80 @@ impl Shell {
                 path_key(self.session_working_copy(id, cx)) == path_key(&focus.path)
             })
     }
+    /// A chat that made its own worktree takes its tab there, and the window
+    /// follows it when it is the chat on screen, so it is never shown under
+    /// the worktree it was started from.
+    pub(super) fn session_made_worktree(&mut self, id: i64, path: String, cx: &mut Context<Self>) {
+        self.session_worktrees.insert(id, Some(path.clone()));
+        if let Some(tab) = self.workspace.tab_of(id) {
+            self.workspace.tab_workspaces.insert(tab, path.clone());
+        }
+        let project = self.session_metadata(id, cx).summary.cwd.clone();
+        let on_screen = self
+            .workspace
+            .active
+            .map(|active| self.workspace.session_for_pane(active))
+            == Some(id);
+        if on_screen && path_key(&project) == path_key(&self.workspace.project) {
+            let work_path = path.clone();
+            let work = cx.background_executor().spawn(async move {
+                crate::git_cache::load(std::path::Path::new(&work_path)).ok()
+            });
+            cx.spawn(async move |this, cx| {
+                let branch = work.await.and_then(|git| git.current);
+                let _ = this.update(cx, |this, cx| {
+                    // Unless the user has moved on to another worktree since.
+                    if this
+                        .workspace
+                        .active
+                        .map(|a| this.workspace.session_for_pane(a))
+                        == Some(id)
+                    {
+                        this.worktree_focus
+                            .insert(project, WorktreeFocus { path, branch });
+                        this.sync_git(cx);
+                        this.persist(cx);
+                        this.invalidate_chrome(cx);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        self.persist(cx);
+        self.invalidate_chrome(cx);
+        cx.notify();
+    }
+    /// A worktree the window shows took a generated branch name: show it.
+    pub(super) fn worktree_renamed(&mut self, path: String, cx: &mut Context<Self>) {
+        if !self
+            .worktree_focus
+            .values()
+            .any(|focus| path_key(&focus.path) == path_key(&path))
+        {
+            return;
+        }
+        let work_path = path.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { crate::git_cache::load(std::path::Path::new(&work_path)).ok() });
+        cx.spawn(async move |this, cx| {
+            let Some(branch) = work.await.and_then(|git| git.current) else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                for focus in this.worktree_focus.values_mut() {
+                    if path_key(&focus.path) == path_key(&path) {
+                        focus.branch = Some(branch.clone());
+                    }
+                }
+                this.persist(cx);
+                this.invalidate_chrome(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     pub(super) fn record_worktree_session(&mut self, id: i64, _cx: &App) {
         let project = self.workspace.project.clone();
         let path = self.working_copy().to_owned();

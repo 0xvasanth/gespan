@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release builds had the update key, so a local build in Applications never
   checked for updates, and Check for updates did nothing when clicked. It now
   says why when updates are off.
+- New worktree in the composer now always makes a fresh worktree from the
+  project's own checkout. Started from a window showing another worktree, the
+  chat used to show that worktree's branch and was cut from it, so it looked
+  like it had reused the existing worktree. A base you pick is still kept.
+- A chat's new worktree is now named after its task, for every provider: the
+  branch and folder take the first words of the first message
+  (`gespan/fix-the-login-redirect`), numbered when the name is taken, instead of
+  a random `gespan/mvz…` name. Once the chat moves into it, its tab goes with
+  it, and the window follows when it is the chat on screen.
 
 ## [0.0.5] - 2026-11-01
 

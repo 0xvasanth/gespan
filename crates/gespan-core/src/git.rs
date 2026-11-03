@@ -571,15 +571,83 @@ pub fn rename_app_branch(
     Err(format!("{wanted} and its numbered variants are taken"))
 }
 
-pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
-    let _span = tracing::info_span!("worktree_create", session_id = session).entered();
-    metrics::track(
-        "worktree.create",
-        create_session_worktree(cwd, base, session),
-    )
-    .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+/// A new session worktree named after `task`, the chat's first message:
+/// `gespan/<first words>` for its branch and folder, numbered when taken.
+pub fn create_task_worktree(
+    cwd: &Path,
+    base: &str,
+    session: i64,
+    task: &str,
+) -> Result<PathBuf, String> {
+    track_worktree(session, || {
+        create_session_worktree(cwd, base, session, Some(task))
+    })
 }
-fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
+pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
+    track_worktree(session, || {
+        create_session_worktree(cwd, base, session, None)
+    })
+}
+fn track_worktree(
+    session: i64,
+    create: impl FnOnce() -> Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    let _span = tracing::info_span!("worktree_create", session_id = session).entered();
+    metrics::track("worktree.create", create())
+        .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
+}
+/// The first words of a task's first line as a branch fragment, or `None`
+/// for a slash command or a line with nothing a branch name can hold.
+fn task_fragment(task: &str) -> Option<String> {
+    const WORDS: usize = 6;
+    const LENGTH: usize = 48;
+    let line = task.lines().map(str::trim).find(|line| !line.is_empty())?;
+    if line.starts_with('/') {
+        return None;
+    }
+    // Branch and folder names outlive the chat and can be pushed, so words
+    // that look like an address, a link, a setting or a secret stay out.
+    let private = |word: &str| {
+        word.contains(['@', '=']) || word.contains("://") || {
+            let (letters, digits) = word.chars().fold((false, false), |(l, d), c| {
+                (l || c.is_ascii_alphabetic(), d || c.is_ascii_digit())
+            });
+            word.len() >= 16 && letters && digits
+        }
+    };
+    let mut fragment = String::new();
+    for word in line
+        .split_whitespace()
+        .filter(|word| !private(word))
+        .map(|word| crate::scm::text::sanitize_branch_fragment(&word.replace('/', "-")))
+        .filter(|word| !word.is_empty())
+        .take(WORDS)
+    {
+        if fragment.is_empty() {
+            fragment = word.chars().take(LENGTH).collect();
+        } else if fragment.len() + 1 + word.len() <= LENGTH {
+            fragment = format!("{fragment}-{word}");
+        } else {
+            break;
+        }
+    }
+    let fragment = fragment.trim_end_matches(['.', '_', '-']);
+    (!fragment.is_empty()).then(|| fragment.to_owned())
+}
+/// `gespan/<task words>`, or its first numbered form that is not `taken`;
+/// `None` when the task has no usable words or every form is taken.
+fn task_branch(task: Option<&str>, taken: impl Fn(&str) -> bool) -> Option<String> {
+    let wanted = format!("{APP_BRANCH_PREFIX}{}", task_fragment(task?)?);
+    std::iter::once(wanted.clone())
+        .chain((2..=20).map(|n| format!("{wanted}-{n}")))
+        .find(|name| !taken(name))
+}
+fn create_session_worktree(
+    cwd: &Path,
+    base: &str,
+    session: i64,
+    task: Option<&str>,
+) -> Result<PathBuf, String> {
     if crate::files::remote::is_remote(cwd) {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -587,7 +655,27 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
             .as_millis();
         let main = PathBuf::from(remote::main_checkout(cwd)?);
         let turn = crate::worktree_scripts::turn(&main);
-        let branch = native_session_branch(session, stamp);
+        // The remote's branches are asked for only when there is a name to check.
+        let named = task.and_then(task_fragment).is_some();
+        let known: std::collections::HashSet<String> = named
+            .then(|| remote::snapshot(cwd).ok())
+            .flatten()
+            .map(|snapshot| {
+                let trees = snapshot
+                    .worktrees
+                    .into_iter()
+                    .filter_map(|tree| tree.branch);
+                snapshot
+                    .branches
+                    .into_iter()
+                    .filter(|branch| branch.remote.is_none())
+                    .map(|branch| branch.name)
+                    .chain(trees)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let branch = task_branch(task, |name| known.contains(name))
+            .unwrap_or_else(|| native_session_branch(session, stamp));
         let tree = remote::create_worktree(cwd, &branch, Some(base), false)?;
         return remote::set_up(turn, &main, tree).map(|tree| PathBuf::from(tree.path));
     }
@@ -603,8 +691,24 @@ fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathB
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let name = native_session_branch(session, stamp);
-    let path = parent.join(name.replace('/', "-"));
+    let folder = |name: &str| parent.join(name.replace('/', "-"));
+    let taken = |name: &str| {
+        folder(name).exists()
+            || git(
+                cwd,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{name}"),
+                ],
+            )
+            .is_ok()
+    };
+    // Named after the task, numbered like a generated name when taken.
+    let name = task_branch(task, |name| taken(name) || valid_branch(cwd, name).is_err())
+        .unwrap_or_else(|| native_session_branch(session, stamp));
+    let path = folder(&name);
     let commit = git(
         cwd,
         &[
@@ -1289,6 +1393,118 @@ mod tests {
         assert_eq!(
             rename(&cwd, &tree, "gespan/open-in-editor-button").unwrap(),
             "gespan/open-in-editor-button"
+        );
+    }
+
+    fn folder(tree: &Path) -> String {
+        tree.file_name().unwrap().to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_task_names_its_new_worktree_branch_and_folder() {
+        let (_temp, cwd) = repo();
+        let tree = create_task_worktree(&cwd, "main", 7, "Fix the login redirect").unwrap();
+        assert_eq!(
+            branch_of(&cwd, &tree).as_deref(),
+            Some("gespan/fix-the-login-redirect")
+        );
+        assert_eq!(folder(&tree), "gespan-fix-the-login-redirect");
+        assert!(tree.is_dir());
+    }
+
+    #[test]
+    fn a_long_task_keeps_its_first_words_from_its_first_line() {
+        let (_temp, cwd) = repo();
+        let tree = create_task_worktree(
+            &cwd,
+            "main",
+            7,
+            "Refactor the authentication middleware so expired sessions redirect to sign in\n\nDetails follow here",
+        )
+        .unwrap();
+        let branch = branch_of(&cwd, &tree).unwrap();
+        assert_eq!(branch, "gespan/refactor-the-authentication-middleware-so");
+        assert!(branch.len() <= "gespan/".len() + 48, "{branch}");
+        assert_eq!(folder(&tree), branch.replace('/', "-"));
+    }
+
+    #[test]
+    fn the_same_task_twice_gets_the_next_number() {
+        let (_temp, cwd) = repo();
+        // One branch of that name exists already, outside any worktree.
+        git(&cwd, &["branch", "gespan/fix-login"]).unwrap();
+        let first = create_task_worktree(&cwd, "main", 7, "Fix login").unwrap();
+        let second = create_task_worktree(&cwd, "main", 8, "Fix login").unwrap();
+        assert_eq!(
+            branch_of(&cwd, &first).as_deref(),
+            Some("gespan/fix-login-2")
+        );
+        assert_eq!(
+            branch_of(&cwd, &second).as_deref(),
+            Some("gespan/fix-login-3")
+        );
+        assert_eq!(folder(&second), "gespan-fix-login-3");
+    }
+
+    #[test]
+    fn a_task_with_no_usable_words_keeps_the_placeholder() {
+        let (_temp, cwd) = repo();
+        for (session, task) in [(7, "/compact"), (8, "  \n "), (9, "🚀✨"), (10, "!!!")] {
+            let tree = create_task_worktree(&cwd, "main", session, task).unwrap();
+            let branch = branch_of(&cwd, &tree).unwrap();
+            assert!(is_app_branch(&branch), "{task:?}: {branch}");
+            assert_eq!(
+                branch,
+                format!("gespan/{}", folder(&tree).trim_start_matches("gespan-")),
+                "{task:?}"
+            );
+            assert!(branch.len() <= "gespan/".len() + 24, "{task:?}: {branch}");
+        }
+    }
+
+    #[test]
+    fn a_task_name_leaves_out_addresses_links_and_secrets() {
+        for (task, fragment) in [
+            (
+                "Email bob@example.com about the outage",
+                Some("email-about-the-outage"),
+            ),
+            (
+                "Use key sk-live-4f9a8b7c6d5e4f3a2b1c0d9e for the deploy",
+                Some("use-key-for-the-deploy"),
+            ),
+            (
+                "Fetch https://internal.example.com/report and summarise",
+                Some("fetch-and-summarise"),
+            ),
+            ("Set API_TOKEN=abc123 then retry", Some("set-then-retry")),
+            (
+                "Revert 3f9a2c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+                Some("revert"),
+            ),
+            ("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4", None),
+        ] {
+            assert_eq!(task_fragment(task).as_deref(), fragment, "{task}");
+        }
+    }
+
+    #[test]
+    fn a_remote_task_name_skips_branches_the_remote_has() {
+        let taken = ["gespan/fix-login", "gespan/fix-login-2"];
+        assert_eq!(
+            task_branch(Some("Fix login"), |name| taken.contains(&name)).as_deref(),
+            Some("gespan/fix-login-3")
+        );
+        assert_eq!(task_branch(Some("/compact"), |_| false), None);
+    }
+
+    #[test]
+    fn a_task_named_branch_can_still_take_a_generated_name() {
+        let (_temp, cwd) = repo();
+        let tree = create_task_worktree(&cwd, "main", 7, "Fix login").unwrap();
+        assert_eq!(
+            rename(&cwd, &tree, "repair login redirect").unwrap(),
+            "gespan/repair-login-redirect"
         );
     }
 

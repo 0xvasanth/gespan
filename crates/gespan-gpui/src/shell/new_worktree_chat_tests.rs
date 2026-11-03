@@ -119,11 +119,12 @@ impl Fixture {
         self.window
             .update(cx, |shell, _, cx| {
                 assert_eq!(shell.workspace.active, Some(id), "the new chat is shown");
+                let focused = shell.worktree_focus[&self.project].path.clone();
                 shell.sessions[&id].update(cx, |view, cx| {
                     assert_eq!(view.summary.provider, kind.id());
                     assert_eq!(
                         view.settings.worktree_cwd.as_deref(),
-                        Some(self.feature.as_str()),
+                        Some(focused.as_str()),
                         "a new chat starts in the focused worktree"
                     );
                     view.menu_choice("workspace:new", cx);
@@ -313,4 +314,99 @@ fn choosing_new_worktree_before_the_draft_loads_still_cuts_from_the_project(
     let tree = f.working_copy(id, cx);
     assert!(!same(&tree, &f.feature));
     assert_eq!(f.head(&tree), f.head(&f.project));
+}
+
+/// The worktree the window shows for the project, and the one the chat's
+/// tab is listed under.
+fn scopes(
+    f: &Fixture,
+    id: i64,
+    cx: &mut TestAppContext,
+) -> (Option<WorktreeFocus>, Option<String>) {
+    f.window
+        .update(cx, |shell, _, _| {
+            let focus = shell.worktree_focus.get(&f.project).cloned();
+            let tab = shell.workspace.tab_of(id).expect("the chat has a tab");
+            (focus, shell.workspace.tab_workspaces.get(&tab).cloned())
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn the_window_follows_the_chat_on_screen_into_its_new_worktree(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let id = f.new_worktree_chat(Kind::Kiro, "Fix the login redirect", cx);
+    let tree = f.working_copy(id, cx);
+    let (focus, tab) = scopes(&f, id, cx);
+    let focus = focus.expect("a worktree is focused");
+    assert!(
+        same(&focus.path, &tree),
+        "the window still shows {}",
+        focus.path
+    );
+    assert_eq!(
+        focus.branch.as_deref(),
+        Some("gespan/fix-the-login-redirect")
+    );
+    assert!(
+        same(tab.as_deref().unwrap(), &tree),
+        "the tab stays under {tab:?}"
+    );
+    f.window
+        .update(cx, |shell, _, cx| assert!(shell.in_worktree_scope(id, cx)))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_chat_in_the_background_takes_its_tab_but_leaves_the_window(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let id = f.draft(Kind::Kiro, cx);
+    // Send, then go back to the other chat before the worktree is made.
+    f.window
+        .update(cx, |shell, window, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.summary.provider = "fixture".into();
+                view.input.update(cx, |input, cx| {
+                    input.set_text("Add a dark mode toggle".into(), cx)
+                });
+                view.send(cx);
+            });
+            shell.open(f.chat, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tree = f.working_copy(id, cx);
+    let (focus, tab) = scopes(&f, id, cx);
+    assert!(
+        same(&focus.unwrap().path, &f.feature),
+        "the window stays on feature"
+    );
+    assert!(same(tab.as_deref().unwrap(), &tree));
+}
+
+#[gpui::test]
+fn a_generated_branch_name_reaches_the_window(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let id = f.new_worktree_chat(Kind::Kiro, "Fix the login redirect", cx);
+    let tree = f.working_copy(id, cx);
+    // Simulates the generated rename that providers with branch naming make
+    // after the first reply (Kiro has none, so the test makes it directly).
+    f.window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.rename_worktree_branch(
+                    tree.clone(),
+                    "gespan/fix-the-login-redirect".into(),
+                    "repair login redirect".into(),
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (focus, _) = scopes(&f, id, cx);
+    assert_eq!(
+        focus.unwrap().branch.as_deref(),
+        Some("gespan/repair-login-redirect")
+    );
 }

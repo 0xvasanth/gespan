@@ -164,6 +164,10 @@ struct OpenMenu {
 }
 use response_menu::ResponseMenu;
 pub(crate) struct SessionChanged;
+/// The chat moved into the worktree it was asked to make: its path.
+pub(crate) struct WorktreeCreated(pub(crate) String);
+/// The branch of the chat's worktree, at this path, took a generated name.
+pub(crate) struct WorktreeRenamed(pub(crate) String);
 /// The agent changed the linked ticket through its ticket tools.
 pub(crate) struct TicketChanged(pub(crate) crate::runtime::TicketChange);
 pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
@@ -1522,6 +1526,7 @@ impl Conversation {
                             this.settings.new_worktree = false;
                             this.save_settings(cx);
                             this.refresh_git(cx);
+                            cx.emit(WorktreeCreated(cwd.clone()));
                             this.name_worktree_branch(cwd, cx);
                         }
                         if let Some(commands) = update.commands.filter(|_| source_selected) {
@@ -1858,6 +1863,8 @@ impl Conversation {
 }
 
 impl EventEmitter<SessionChanged> for Conversation {}
+impl EventEmitter<WorktreeCreated> for Conversation {}
+impl EventEmitter<WorktreeRenamed> for Conversation {}
 impl EventEmitter<TicketChanged> for Conversation {}
 impl EventEmitter<ChooseFolder> for Conversation {}
 impl EventEmitter<OpenSessionChanges> for Conversation {}
@@ -2119,8 +2126,9 @@ impl Conversation {
             .clone()
             .unwrap_or_else(|| "HEAD".into());
         let id = self.summary.id;
+        let task = self.branch_seed.clone().unwrap_or_default();
         let work = crate::runtime::on_own_thread(move || {
-            gespan_core::git::create_worktree(Path::new(&cwd), &base, id)
+            gespan_core::git::create_task_worktree(Path::new(&cwd), &base, id, &task)
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -2133,6 +2141,7 @@ impl Conversation {
                         this.settings.new_worktree = false;
                         this.save_settings(cx);
                         this.refresh_git(cx);
+                        cx.emit(WorktreeCreated(path.clone()));
                         this.name_worktree_branch(path, cx);
                         if this.follow_ups.state.messages.is_empty() {
                             this.send(cx);
