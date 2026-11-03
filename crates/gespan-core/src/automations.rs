@@ -31,6 +31,10 @@ const MAX_NAME: usize = 200;
 const MAX_PROMPT: usize = 1_000_000;
 const MAX_TRIGGERS: usize = 20;
 const MAX_RUNS_PER_AUTOMATION: i64 = 100;
+/// A run that starts this soon after its time is on time, whatever the
+/// missed-run grace. Schedules are polled every 30 seconds and the Inbox is
+/// fetched every few minutes, so "Do not catch up" still runs while Gespan is open.
+const ON_TIME_MS: i64 = 10 * 60_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +67,11 @@ pub struct Automation {
     pub missed_run_grace_minutes: i64,
     pub enabled: bool,
     pub next_run_at: i64,
+    /// Inbox items created before this were already there when the event
+    /// triggers were set up or the automation was turned on, so they never
+    /// run it. Older saves fall back to `created_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events_since: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -580,6 +589,33 @@ fn validate_event_key(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What decides which Inbox items an automation's event triggers match.
+fn event_signature(triggers: &[AutomationTrigger]) -> Vec<(&str, &str, Vec<&str>, &str, &str)> {
+    let mut signature: Vec<_> = triggers
+        .iter()
+        .filter(|trigger| trigger.kind != "time")
+        .map(|trigger| {
+            let mut repos: Vec<_> = trigger
+                .repos
+                .iter()
+                .chain(std::iter::once(&trigger.repo))
+                .map(|repo| repo.as_str())
+                .filter(|repo| !repo.is_empty())
+                .collect();
+            repos.sort_unstable();
+            (
+                trigger.kind.as_str(),
+                trigger.event.as_str(),
+                repos,
+                trigger.branch.as_str(),
+                trigger.actor.as_str(),
+            )
+        })
+        .collect();
+    signature.sort_unstable();
+    signature
+}
+
 fn has_event_trigger(automation: &Automation, kind: &str, event: &str) -> bool {
     match &automation.triggers {
         Some(triggers) => triggers
@@ -692,6 +728,18 @@ impl Service {
             .as_ref()
             .map(|value| value.created_at)
             .unwrap_or(now);
+        // Turning an automation on, or changing what its events are, starts
+        // from now: items that already exist are backlog, not new events.
+        let events_since = match &previous {
+            Some(previous)
+                if (previous.enabled || !automation.enabled)
+                    && event_signature(&previous.triggers())
+                        == event_signature(triggers.as_deref().unwrap_or_default()) =>
+            {
+                previous.events_since
+            }
+            _ => Some(now),
+        };
         let worktree_cwd = if automation.workspace_mode == "existing" {
             automation.worktree_cwd.trim().to_string()
         } else {
@@ -720,6 +768,7 @@ impl Service {
             missed_run_grace_minutes: automation.missed_run_grace_minutes,
             enabled: automation.enabled,
             next_run_at: automation.next_run_at,
+            events_since,
             last_run_at: previous.as_ref().and_then(|value| value.last_run_at),
             last_run_status: previous
                 .as_ref()
@@ -842,15 +891,19 @@ impl Service {
         Ok(run)
     }
 
+    /// Claims the stored occurrence `expected_next_run_at` for the run due at
+    /// `scheduled_for`, the latest occurrence that has passed, and moves the
+    /// schedule on to `next_run_at`. Occurrences in between are not run.
     pub fn claim_occurrence(
         &mut self,
         automation_id: &str,
         expected_next_run_at: i64,
+        scheduled_for: i64,
         next_run_at: i64,
         now: i64,
     ) -> Result<Option<DueAutomationRun>, String> {
         validate_id(automation_id, "automation")?;
-        if next_run_at <= expected_next_run_at {
+        if scheduled_for < expected_next_run_at || next_run_at <= scheduled_for {
             return Err("The following automation occurrence must advance the schedule.".into());
         }
         let conn = self.lock_conn()?;
@@ -878,13 +931,12 @@ impl Service {
         let mut run = new_run(
             automation_id,
             "scheduled",
-            expected_next_run_at,
+            scheduled_for,
             now,
             &automation.prompt,
         );
-        let grace_ms = automation.missed_run_grace_minutes.saturating_mul(60_000);
-        let missed = now.saturating_sub(expected_next_run_at);
-        let dispatch = missed <= grace_ms;
+        let missed = now.saturating_sub(scheduled_for);
+        let dispatch = missed <= catch_up_ms(&automation);
         if !dispatch {
             run.status = "skipped".into();
             run.completed_at = Some(now);
@@ -961,6 +1013,18 @@ impl Service {
         trim_history(&tx, automation_id)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(Some(DueAutomationRun { automation, run }))
+    }
+
+    fn event_claimed(&mut self, automation_id: &str, event_key: &str) -> Result<bool, String> {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM automation_event_claims WHERE automation_id = ?1 AND event_key = ?2",
+                params![automation_id, event_key],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(|error| error.to_string())
     }
 
     pub fn update_run(
@@ -1136,6 +1200,41 @@ pub fn event_label(kind: &str, event: &str) -> String {
     .to_owned()
 }
 
+/// How late a run may start: the missed-run grace, and never less than on time.
+fn catch_up_ms(automation: &Automation) -> i64 {
+    automation
+        .missed_run_grace_minutes
+        .saturating_mul(60_000)
+        .max(ON_TIME_MS)
+}
+
+/// The latest occurrence at or before `now`, starting from the stored one,
+/// and the occurrence after it.
+fn latest_occurrence(automation: &Automation, now: i64) -> Option<(i64, i64)> {
+    const WEEK_MS: i64 = 7 * 86_400_000;
+    let triggers = automation.triggers();
+    let mut latest = automation.next_run_at;
+    // Every schedule repeats within a week, so a long absence starts there
+    // instead of walking every missed hour.
+    if latest < now.saturating_sub(WEEK_MS) {
+        let recent = next_run_at(&triggers, now.saturating_sub(WEEK_MS));
+        if recent <= now {
+            latest = recent;
+        }
+    }
+    for _ in 0..10_000 {
+        let next = next_run_at(&triggers, latest);
+        if next <= latest {
+            return None;
+        }
+        if next > now {
+            return Some((latest, next));
+        }
+        latest = next;
+    }
+    None
+}
+
 pub fn next_run_at(triggers: &[AutomationTrigger], after: i64) -> i64 {
     triggers
         .iter()
@@ -1243,38 +1342,26 @@ impl Service {
         draft.sync_triggers(now_millis());
         self.upsert(draft)
     }
-    /// Atomically claims each due occurrence, including skipped occurrences outside
-    /// the grace period. Bounded work prevents an offline period monopolizing UI polling.
+    /// Atomically claims one run per automation whose time has passed. While
+    /// Gespan was closed or asleep several occurrences may have passed: they
+    /// make a single run for the latest one, or a skipped entry when even that
+    /// is outside the missed-run grace.
     pub fn claim_due(&mut self, now: i64) -> Result<Vec<DueAutomationRun>, String> {
         let mut due = Vec::new();
-        for mut automation in self.list()? {
-            if !automation.enabled || !has_time_trigger(&automation) {
+        for automation in self.list()? {
+            if !automation.enabled || !has_time_trigger(&automation) || automation.next_run_at > now
+            {
                 continue;
             }
-            for _ in 0..100 {
-                if automation.next_run_at > now {
-                    break;
-                }
-                let next = next_run_at(&automation.triggers(), automation.next_run_at);
-                if next <= automation.next_run_at {
-                    break;
-                }
-                let claim = match self.claim_occurrence(
-                    &automation.id,
-                    automation.next_run_at,
-                    next,
-                    now,
-                ) {
-                    Ok(Some(claim)) => claim,
-                    // A failed transaction leaves this occurrence due for the
-                    // next poll. Preserve already committed claims so callers
-                    // can dispatch them instead of stranding pending runs.
-                    Ok(None) | Err(_) => break,
-                };
-                automation = claim.automation.clone();
-                if claim.run.status == "pending" {
-                    due.push(claim);
-                }
+            let Some((latest, next)) = latest_occurrence(&automation, now) else {
+                continue;
+            };
+            match self.claim_occurrence(&automation.id, automation.next_run_at, latest, next, now) {
+                Ok(Some(claim)) if claim.run.status == "pending" => due.push(claim),
+                // A failed transaction leaves this occurrence due for the next
+                // poll. Preserve already committed claims so callers can
+                // dispatch them instead of stranding pending runs.
+                Ok(_) | Err(_) => {}
             }
         }
         Ok(due)
@@ -1340,9 +1427,20 @@ pub fn claim_inbox_events_retry(
             })
             .take(400)
             .collect::<String>();
+        let created = crate::inbox::timestamp_ms(&item.created_at);
         for automation in &automations {
             if !automation.enabled {
                 continue;
+            }
+            // An item with a creation time is new to an automation when it was
+            // created after the automation started watching and recently
+            // enough to catch up, whether or not Gespan was open then. Items
+            // without one are passed only when they first appear in the Inbox.
+            if created != 0 {
+                let since = automation.events_since.unwrap_or(automation.created_at);
+                if created < since.max(now.saturating_sub(catch_up_ms(automation))) {
+                    continue;
+                }
             }
             let tracker_without_project =
                 crate::inbox::is_tracker(&item.provider) && item.project_path.trim().is_empty();
@@ -1387,6 +1485,13 @@ pub fn claim_inbox_events_retry(
             let Some(trigger) = trigger else {
                 continue;
             };
+            // Every Inbox refresh offers the recent items again.
+            if service
+                .event_claimed(&automation.id, &event_key)
+                .unwrap_or(false)
+            {
+                continue;
+            }
             let provider = crate::inbox::provider_label(&item.provider);
             let kind = if crate::inbox::is_tracker(&item.provider) || item.kind != "pr" {
                 "issue"
@@ -1424,7 +1529,6 @@ pub fn claim_inbox_events_retry(
                 automation.prompt.trim(),
                 crate::external_text::external_block(&external, usize::MAX)
             );
-            let created = crate::inbox::timestamp_ms(&item.created_at);
             let occurred_at = if created != 0 {
                 created
             } else {
@@ -1486,9 +1590,14 @@ mod tests {
             number,
             title: format!("Change {number}"),
             url: format!("https://github.com/acme/app/pull/{number}"),
-            created_at: "2026-09-19T10:00:00Z".into(),
+            created_at: rfc3339(now_millis()),
             ..Default::default()
         }
+    }
+    fn rfc3339(at: i64) -> String {
+        chrono::DateTime::from_timestamp_millis(at)
+            .unwrap()
+            .to_rfc3339()
     }
 
     #[test]
@@ -1704,5 +1813,305 @@ mod tests {
         assert_eq!(retried.len(), 1);
         assert_eq!(retried[0].automation.id, failing.id);
         assert_eq!(service.runs(&healthy.id).unwrap().len(), 1);
+    }
+
+    fn move_schedule(service: &mut Service, automation: &Automation, next_run_at: i64) {
+        let mut automation = get(&service.conn, &automation.id).unwrap().unwrap();
+        automation.next_run_at = next_run_at;
+        write_automation(&service.conn, &automation).unwrap();
+    }
+    fn watch_since(service: &mut Service, automation: &Automation, since: i64) {
+        let mut automation = get(&service.conn, &automation.id).unwrap().unwrap();
+        automation.events_since = Some(since);
+        write_automation(&service.conn, &automation).unwrap();
+    }
+    fn github_issue(number: i64, created_at: i64) -> crate::inbox::Item {
+        crate::inbox::Item {
+            kind: "issue".into(),
+            url: format!("https://github.com/acme/app/issues/{number}"),
+            created_at: rfc3339(created_at),
+            ..item(number)
+        }
+    }
+    const HOUR: i64 = 3_600_000;
+
+    #[test]
+    fn a_schedule_missed_while_closed_makes_one_run_for_its_latest_occurrence() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let hourly = AutomationTrigger::new("time", "hourly");
+        let automation = save(&mut service, vec![hourly.clone()]);
+        let now = now_millis();
+        // Five hourly occurrences passed while Gespan was closed or asleep.
+        let first_missed = hourly.next_at(now - 5 * HOUR);
+        move_schedule(&mut service, &automation, first_missed);
+
+        let claimed = service.claim_due(now).unwrap();
+        assert_eq!(claimed.len(), 1, "one run, not one per missed hour");
+        let run = &claimed[0].run;
+        assert_eq!(run.status, "pending");
+        assert_eq!(run.trigger, "scheduled");
+        assert!(run.scheduled_for <= now && now - run.scheduled_for < HOUR);
+        assert_eq!(run.scheduled_for, hourly.next_at(now - HOUR));
+        assert!(claimed[0].automation.next_run_at > now);
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+
+        // The next poll of the same moment has nothing left to claim.
+        assert!(service.claim_due(now).unwrap().is_empty());
+        assert!(service.claim_due(now + 1_000).unwrap().is_empty());
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+    }
+
+    /// A daily automation whose time of day was three hours ago.
+    fn daily_three_hours_ago(service: &mut Service, grace_minutes: i64) -> (Automation, i64) {
+        let now = now_millis();
+        let time = Local
+            .timestamp_millis_opt(now - 3 * HOUR)
+            .unwrap()
+            .format("%H:%M")
+            .to_string();
+        let daily = AutomationTrigger {
+            time,
+            ..AutomationTrigger::new("time", "daily")
+        };
+        let mut draft = AutomationUpsert::new("/repo".into(), "codex".into(), "model".into());
+        draft.name = "Daily".into();
+        draft.prompt = "Report".into();
+        draft.missed_run_grace_minutes = grace_minutes;
+        draft.triggers = Some(vec![daily.clone()]);
+        draft.sync_triggers(now);
+        let automation = service.upsert(draft).unwrap();
+        let latest = daily.next_at(now - 3 * HOUR - 60_000);
+        (automation, latest)
+    }
+
+    #[test]
+    fn a_schedule_missed_beyond_its_grace_is_recorded_once_as_skipped() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let (automation, latest) = daily_three_hours_ago(&mut service, 30);
+        // Three days of occurrences passed; the latest was three hours ago.
+        move_schedule(&mut service, &automation, latest - 2 * 86_400_000);
+        let now = now_millis();
+
+        assert!(service.claim_due(now).unwrap().is_empty());
+        let runs = service.runs(&automation.id).unwrap();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert_eq!(runs[0].status, "skipped");
+        assert_eq!(runs[0].scheduled_for, latest);
+        let saved = get(&service.conn, &automation.id).unwrap().unwrap();
+        assert!(saved.next_run_at > now);
+        assert!(service.claim_due(now).unwrap().is_empty());
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn do_not_catch_up_still_runs_a_schedule_that_comes_due_while_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = AutomationUpsert::new("/repo".into(), "codex".into(), "model".into());
+        draft.name = "No catch-up".into();
+        draft.prompt = "Report".into();
+        draft.missed_run_grace_minutes = 0;
+        draft.triggers = Some(vec![AutomationTrigger::new("time", "hourly")]);
+        draft.sync_triggers(now_millis());
+        let automation = service.upsert(draft).unwrap();
+        let now = now_millis();
+        // The 30-second poll finds an occurrence a few seconds after its time.
+        move_schedule(&mut service, &automation, now - 25_000);
+        let claimed = service.claim_due(now).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].run.status, "pending");
+
+        // An occurrence missed by hours, while Gespan was closed, is not caught up.
+        let (missed, latest) = daily_three_hours_ago(&mut service, 0);
+        move_schedule(&mut service, &missed, latest);
+        assert!(service.claim_due(now_millis()).unwrap().is_empty());
+        let runs = service.runs(&missed.id).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "skipped");
+    }
+
+    #[test]
+    fn disabled_schedules_are_not_claimed_and_claim_again_once_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(&mut service, vec![AutomationTrigger::new("time", "hourly")]);
+        let automation = service.set_enabled(&automation.id, false).unwrap();
+        let now = now_millis();
+        move_schedule(&mut service, &automation, now - 60_000);
+        assert!(service.claim_due(now).unwrap().is_empty());
+        assert!(service.runs(&automation.id).unwrap().is_empty());
+
+        // Turning it back on schedules the next occurrence instead of the old one.
+        let enabled = service.set_enabled(&automation.id, true).unwrap();
+        assert!(enabled.next_run_at > now);
+        assert!(service.claim_due(now).unwrap().is_empty());
+        move_schedule(&mut service, &enabled, now - 60_000);
+        assert_eq!(service.claim_due(now).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn inbox_items_that_existed_before_the_automation_are_backlog() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        let now = now_millis();
+        let old = github_issue(1, automation.created_at - 60_000);
+        assert!(claim_inbox_events(&mut service, &[old], now)
+            .unwrap()
+            .is_empty());
+        let new = github_issue(2, automation.created_at + 1);
+        let claims = claim_inbox_events(&mut service, &[new], now).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].run.trigger, "event");
+        assert_eq!(
+            claims[0].run.event_key.as_deref(),
+            Some("github:issue:acme/app:2")
+        );
+    }
+
+    #[test]
+    fn inbox_items_created_while_gespan_was_closed_run_once_within_the_grace() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.sqlite");
+        let mut service = Service::open(&path).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        let now = now_millis();
+        // The automation has watched for two days; Gespan was closed overnight.
+        watch_since(&mut service, &automation, now - 48 * HOUR);
+        let overnight = github_issue(7, now - 2 * HOUR);
+        let too_old = github_issue(8, now - 13 * HOUR);
+        let claims = claim_inbox_events(&mut service, &[overnight.clone(), too_old], now).unwrap();
+        assert_eq!(claims.len(), 1, "the default grace is 12 hours");
+        assert_eq!(claims[0].run.scheduled_for, now - 2 * HOUR);
+
+        // Every later refresh, and a restart, offers the same item again.
+        assert!(
+            claim_inbox_events(&mut service, std::slice::from_ref(&overnight), now + 1)
+                .unwrap()
+                .is_empty()
+        );
+        drop(service);
+        let mut service = Service::open(&path).unwrap();
+        assert!(claim_inbox_events(&mut service, &[overnight], now + 2)
+            .unwrap()
+            .is_empty());
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn inbox_items_do_not_run_a_disabled_automation_or_one_turned_back_on_after_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        service.set_enabled(&automation.id, false).unwrap();
+        let while_off = github_issue(3, now_millis());
+        assert!(
+            claim_inbox_events(&mut service, std::slice::from_ref(&while_off), now_millis())
+                .unwrap()
+                .is_empty()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let enabled = service.set_enabled(&automation.id, true).unwrap();
+        assert!(enabled.events_since.unwrap() > crate::inbox::timestamp_ms(&while_off.created_at));
+        assert!(claim_inbox_events(&mut service, &[while_off], now_millis())
+            .unwrap()
+            .is_empty());
+        let after = github_issue(4, enabled.events_since.unwrap() + 1);
+        assert_eq!(
+            claim_inbox_events(&mut service, &[after], now_millis())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(service.runs(&automation.id).unwrap().len() == 1);
+    }
+
+    #[test]
+    fn editing_an_automation_keeps_its_event_watermark_unless_its_events_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        let since = automation.events_since.unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut draft = AutomationUpsert::from_automation(&automation);
+        draft.name = "Renamed".into();
+        let renamed = service.upsert(draft).unwrap();
+        assert_eq!(renamed.events_since, Some(since));
+        let mut draft = AutomationUpsert::from_automation(&renamed);
+        draft.triggers.as_mut().unwrap()[0].repos = vec!["acme/app".into()];
+        let narrowed = service.upsert(draft).unwrap();
+        assert!(narrowed.events_since.unwrap() > since);
+    }
+
+    #[test]
+    fn saved_automations_without_a_watermark_watch_from_when_they_were_created() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        let mut legacy = get(&service.conn, &automation.id).unwrap().unwrap();
+        legacy.events_since = None;
+        legacy.created_at = now_millis() - HOUR;
+        write_automation(&service.conn, &legacy).unwrap();
+        let raw: String = service
+            .conn
+            .query_row(
+                "SELECT definition_json FROM automations WHERE id = ?1",
+                [&automation.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!raw.contains("eventsSince"));
+        let now = now_millis();
+        let before = github_issue(5, now - 2 * HOUR);
+        let after = github_issue(6, now - HOUR / 2);
+        let claims = claim_inbox_events(&mut service, &[before, after], now).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(
+            claims[0].run.event_key.as_deref(),
+            Some("github:issue:acme/app:6")
+        );
+    }
+
+    #[test]
+    fn tracker_items_without_a_creation_time_run_when_they_appear() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        save(
+            &mut service,
+            vec![AutomationTrigger::new("linear", "issue_created")],
+        );
+        let issue = crate::inbox::Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            id: "lin-1".into(),
+            identifier: "ENG-1".into(),
+            title: "Crash on start".into(),
+            project_path: String::new(),
+            created_at: String::new(),
+            ..Default::default()
+        };
+        let claims =
+            claim_inbox_events(&mut service, std::slice::from_ref(&issue), now_millis()).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert!(claim_inbox_events(&mut service, &[issue], now_millis())
+            .unwrap()
+            .is_empty());
     }
 }

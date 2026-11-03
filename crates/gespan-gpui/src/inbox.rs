@@ -610,6 +610,7 @@ impl Inbox {
                     }
                 }
                 let appeared = this.notifications.observe(&snapshot, scope);
+                let candidates = model::automation_candidates(&snapshot.items, appeared);
                 // A temporary outage must not erase the last usable provider list.
                 for provider in snapshot.errors.keys() {
                     snapshot.items.extend(
@@ -647,7 +648,7 @@ impl Inbox {
                     this.state.source = source.into();
                 }
                 this.save();
-                cx.emit(Event::ItemsChanged(appeared));
+                cx.emit(Event::ItemsChanged(candidates));
                 if this.selected.is_some()
                     && this
                         .item()
