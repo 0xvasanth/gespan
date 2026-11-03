@@ -1630,14 +1630,33 @@ mod notification_tests {
         assert!(appeared.is_empty());
         assert_eq!(automation_candidates(&switched.items, appeared).len(), 1);
 
+        // One repository loads while another fails; the failed one has no
+        // baseline, so when it recovers its items do not "appear".
         let mut tracker = NotificationTracker::default();
-        let mut failed = snapshot(vec![]);
-        failed.errors.insert("github".into(), "HTTP 502".into());
-        tracker.observe(&failed, "scope".into());
-        let recovered = snapshot(vec![dated]);
+        let (ok, broken) = ("github:/p:acme/ok:issue", "github:/p:acme/app:issue");
+        let mut partial = snapshot(vec![]);
+        partial.fetched.insert(ok.into());
+        partial.repo_errors.insert(broken.into(), "HTTP 502".into());
+        assert!(tracker.observe(&partial, "scope".into()).is_empty());
+        let mut recovered = snapshot(vec![dated]);
+        recovered
+            .fetched
+            .extend([ok.to_string(), broken.to_string()]);
+        recovered
+            .item_scopes
+            .insert(recovered.items[0].key(), broken.into());
         let appeared = tracker.observe(&recovered, "scope".into());
-        assert!(appeared.is_empty());
+        assert!(appeared.is_empty(), "backlog of a recovered repository");
         assert_eq!(automation_candidates(&recovered.items, appeared).len(), 1);
+        // An item in a repository that already had a baseline does appear.
+        let mut fresh = item(2, "github");
+        fresh.created_at = "2026-10-21T11:00:00Z".into();
+        let mut later = recovered.clone();
+        later.items.push(fresh.clone());
+        later.item_scopes.insert(fresh.key(), ok.into());
+        let appeared = tracker.observe(&later, "scope".into());
+        assert_eq!(appeared.len(), 1);
+        assert_eq!(automation_candidates(&later.items, appeared).len(), 2);
     }
 
     #[test]
