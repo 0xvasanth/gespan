@@ -2010,7 +2010,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/0xvasanth/gespan/compare/v0.0.5...v0.0.6
 [0.16.0]: https://github.com/0xvasanth/gespan/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/0xvasanth/gespan/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/0xvasanth/gespan/compare/v0.13.0...v0.14.0
