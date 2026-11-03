@@ -1,0 +1,58 @@
+crates/gespan-core/src/automations.rs
+  s_b739fcedc13780::t_5aa6ba6ea2215c 2117-2121,2123-2149,2151-2166,2168-2187,2189-2206,2208-2266,2268-2294,2296-2315,2317-2339,2341-2359,2361-2382,2384-2403
+  s_b739fcedc13780::t_4bcae39caaf363 2444,2469-2470
+  s_b739fcedc13780::t_595c82d16a3819 2404-2437,2439-2443,2445-2448,2468,2471-2488,2490-2493,2495-2521,2523-2585,2587-2603,2605-2633,2635-2642
+  s_b739fcedc13780::t_326fc62fb44cb5 2449-2467
+  s_b739fcedc13780::t_ad00565152f40a 2122
+  s_b739fcedc13780::t_a26a3eb4677cb1 2150
+  s_b739fcedc13780::t_cdfe1d289bac0c 2167
+  s_b739fcedc13780::t_fc4b0503067858 2188
+  s_b739fcedc13780::t_099e78aa18010c 2207
+  s_b739fcedc13780::t_35c8c8b5b0e01f 2267
+  s_b739fcedc13780::t_53b5c352a0d2aa 2295
+  s_b739fcedc13780::t_3aaf0e5a180d66 2316
+  s_b739fcedc13780::t_f02b76a69b18f8 2340
+  s_b739fcedc13780::t_755c2e695d2ef5 2360
+  s_b739fcedc13780::t_8eb9e624fb3023 2383
+  s_b739fcedc13780::t_54263349687ff3 2438
+  s_b739fcedc13780::t_2dd404527b1da8 2489
+  s_b739fcedc13780::t_7ebdc7c1460f5e 2494
+  s_b739fcedc13780::t_460efb30e59d01 2522
+  s_b739fcedc13780::t_625bba99f9aeab 2586
+  s_b739fcedc13780::t_53fd24ebdf8609 2604
+  s_b739fcedc13780::t_311c1be45e9f71 2634
+crates/gespan-gpui/src/shell/automation_runs_tests.rs
+  s_b739fcedc13780::t_6d3506dba31eec 343,374,377,394,414,425,445-452,486,503
+  s_b739fcedc13780::t_12b692dc9100da 340-342
+  s_b739fcedc13780::t_82be8d6f787d5c 344-346,371-373
+  s_b739fcedc13780::t_9667ba1c8a7d36 375-376
+  s_b739fcedc13780::t_a2c48c9e76553d 378-380,391-393
+  s_b739fcedc13780::t_06ffbc33054355 395-397,411-413
+  s_b739fcedc13780::t_ee6dbda25412b5 415-417,422-424
+  s_b739fcedc13780::t_ba83c4b5673aa6 426-428,442-444
+  s_b739fcedc13780::t_57978666e26fb0 453-455,483-485
+  s_b739fcedc13780::t_7e0c566f24b17c 487-489,500-502
+  s_b739fcedc13780::t_6595c7a4d30297 504-506
+  s_b739fcedc13780::t_402c993670e71d 339,347-370,381-390,398-410,418-421,429-441,456-482,490-499,507-528
+crates/gespan-core/src/inbox.rs
+  s_b739fcedc13780::t_184d79bf889f80 1620-1642
+  s_b739fcedc13780::t_45dba5a7fb4195 1619
+crates/gespan-gpui/src/inbox.rs
+  s_b739fcedc13780::t_9a17f98a2e9f97 154-156,396-397,583-586,591
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e733793990cf80a0a9a23b6350f76a6455cf643",
+  "prompts": {},
+  "sessions": {
+    "s_b739fcedc13780": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7567fee-aeb8-4a4e-b8a0-582c0881e21d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
