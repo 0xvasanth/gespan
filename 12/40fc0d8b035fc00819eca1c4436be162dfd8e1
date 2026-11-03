@@ -1,0 +1,19 @@
+crates/gespan-core/src/inbox.rs
+  s_b739fcedc13780::t_d194c2483a7c62 1633-1634,1636-1647,1649,1651-1659
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1240fc0d8b035fc00819eca1c4436be162dfd8e1",
+  "prompts": {},
+  "sessions": {
+    "s_b739fcedc13780": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7567fee-aeb8-4a4e-b8a0-582c0881e21d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
