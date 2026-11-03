@@ -452,6 +452,9 @@ impl Shell {
         for lead in leads {
             self.schedule_orchestration(lead, cx);
         }
+        // Schedules that came due and Inbox items that arrived while held
+        // start now rather than on the next clock tick.
+        self.poll_automations(cx);
     }
     fn pump_resume(&mut self, cx: &mut Context<Self>) {
         loop {

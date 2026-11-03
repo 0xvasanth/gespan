@@ -728,11 +728,13 @@ impl Service {
             .as_ref()
             .map(|value| value.created_at)
             .unwrap_or(now);
-        // Turning an automation on, or changing what its events are, starts
-        // from now: items that already exist are backlog, not new events.
+        // Turning an automation on, or changing its project or what its
+        // events are, starts from now: items that already exist are backlog.
         let events_since = match &previous {
             Some(previous)
                 if (previous.enabled || !automation.enabled)
+                    && crate::files::path_key(&previous.cwd)
+                        == crate::files::path_key(&automation.cwd)
                     && event_signature(&previous.triggers())
                         == event_signature(triggers.as_deref().unwrap_or_default()) =>
             {
@@ -2639,5 +2641,66 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn moving_an_automation_to_another_project_treats_that_projects_items_as_backlog() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let since = automation.events_since.unwrap();
+        let mut existing = github_issue(1, since + 1);
+        existing.project_path = "/other".into();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut draft = AutomationUpsert::from_automation(&automation);
+        draft.cwd = "/other".into();
+        let moved = service.upsert(draft).unwrap();
+        assert!(moved.events_since.unwrap() > since);
+        assert!(claim_inbox_events(&mut service, &[existing], now_millis())
+            .unwrap()
+            .is_empty());
+        // The same folder written differently is not a move.
+        let mut draft = AutomationUpsert::from_automation(&moved);
+        draft.cwd = "/other/".into();
+        assert_eq!(
+            service.upsert(draft).unwrap().events_since,
+            moved.events_since
+        );
+    }
+
+    #[test]
+    fn a_weekly_schedule_missed_for_weeks_runs_once_within_a_long_grace() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let now = now_millis();
+        let weekly = AutomationTrigger {
+            time: local_hhmm(now - 3 * HOUR),
+            day_of_week: Local
+                .timestamp_millis_opt(now - 3 * HOUR)
+                .unwrap()
+                .weekday()
+                .num_days_from_sunday() as i64,
+            ..AutomationTrigger::new("time", "weekly")
+        };
+        // The longest grace allowed is 30 days; three weeks were missed.
+        let automation = scheduled(&mut service, vec![weekly.clone()], 43_200);
+        move_schedule(
+            &mut service,
+            &automation,
+            weekly.next_at(now - 22 * 24 * HOUR),
+        );
+        let claimed = service.claim_due(now).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].run.status, "pending");
+        assert_eq!(
+            claimed[0].run.scheduled_for,
+            weekly.next_at(now - 3 * HOUR - 60_000)
+        );
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+        assert!(service.claim_due(now).unwrap().is_empty());
     }
 }

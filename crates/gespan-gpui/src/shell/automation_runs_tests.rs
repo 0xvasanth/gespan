@@ -8,19 +8,37 @@ use std::path::{Path, PathBuf};
 
 const HOUR: i64 = 3_600_000;
 
+const CODEX_BINARY: &str = "GESPAN_CODEX_BINARY";
+
 /// A project folder and the database the app and its automations share.
 struct Data {
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
     db: PathBuf,
     project: String,
+    codex_binary: Option<std::ffi::OsString>,
+}
+
+impl Drop for Data {
+    fn drop(&mut self) {
+        // SAFETY: as in `data`; later tests in this process see the
+        // environment they started with.
+        unsafe {
+            match self.codex_binary.take() {
+                Some(value) => std::env::set_var(CODEX_BINARY, value),
+                None => std::env::remove_var(CODEX_BINARY),
+            }
+        }
+    }
 }
 
 fn data() -> Data {
     // A run starts its agent; a missing CLI makes that fail at once instead
     // of starting a real Codex.
+    let codex_binary = std::env::var_os(CODEX_BINARY);
     // SAFETY: set before the window starts any thread that reads the
-    // environment; CI runs each test in its own process.
-    unsafe { std::env::set_var("GESPAN_CODEX_BINARY", "/missing/gespan-test/codex") };
+    // environment, and restored when `Data` drops; CI runs each test in its
+    // own process.
+    unsafe { std::env::set_var(CODEX_BINARY, "/missing/gespan-test/codex") };
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -28,7 +46,8 @@ fn data() -> Data {
     Data {
         project: project.to_string_lossy().into_owned(),
         db,
-        dir,
+        _dir: dir,
+        codex_binary,
     }
 }
 
@@ -194,11 +213,11 @@ fn a_schedule_due_while_held_runs_once_on_resume(cx: &mut TestAppContext) {
     poll(&window, cx);
     assert!(runs(&data.db, &id).is_empty(), "nothing starts while held");
 
+    // Resume starts it without waiting for the next clock tick.
     window
         .update(cx, |shell, _, cx| shell.resume_all(cx))
         .unwrap();
     cx.run_until_parked();
-    poll(&window, cx);
     let saved = runs(&data.db, &id);
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_launched(&saved[0], "scheduled");
@@ -315,7 +334,6 @@ fn inbox_items_wait_while_held_and_run_once_on_resume(cx: &mut TestAppContext) {
         .update(cx, |shell, _, cx| shell.resume_all(cx))
         .unwrap();
     cx.run_until_parked();
-    poll(&window, cx);
     let saved = runs(&data.db, &id);
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_launched(&saved[0], "event");
@@ -334,7 +352,6 @@ fn a_disabled_automation_ignores_new_inbox_items(cx: &mut TestAppContext) {
     deliver(&window, vec![issue(&data, 9, now_ms())], cx);
     assert!(runs(&data.db, &id).is_empty());
     assert_eq!(sessions(&window, &id, cx), 0);
-    drop(data.dir);
 }
 
 #[gpui::test]
@@ -525,4 +542,89 @@ fn a_new_item_in_a_later_inbox_fetch_runs_while_open(cx: &mut TestAppContext) {
     let saved = runs(&data.db, &id);
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_launched(&saved[0], "event");
+}
+
+/// A Linear issue: trackers give no creation time, so the Inbox offers it
+/// only in the refresh where it first appears.
+fn tracker_issue(id: &str) -> gespan_core::inbox::Item {
+    gespan_core::inbox::Item {
+        provider: "linear".into(),
+        kind: "issue".into(),
+        id: id.into(),
+        identifier: format!("ENG-{id}"),
+        title: "Crash on start".into(),
+        ..Default::default()
+    }
+}
+
+fn on_tracker_issue(data: &Data) -> String {
+    save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![AutomationTrigger::new("linear", "issue_created")],
+        ),
+    )
+}
+
+#[gpui::test]
+fn an_undated_item_that_appeared_while_held_still_runs_after_later_refreshes(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let id = on_tracker_issue(&data);
+    let window = open(&data, cx);
+    window
+        .update(cx, |shell, _, cx| shell.hold_all(cx))
+        .unwrap();
+    cx.run_until_parked();
+    deliver(&window, vec![tracker_issue("7")], cx);
+    // Later refreshes no longer offer it: it is not new to the Inbox now.
+    deliver(&window, vec![], cx);
+    deliver(&window, vec![issue(&data, 3, now_ms() - 30 * HOUR)], cx);
+    assert!(runs(&data.db, &id).is_empty());
+    window
+        .update(cx, |shell, _, cx| shell.resume_all(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+    assert_eq!(saved[0].event_key.as_deref(), Some("linear:issue:7"));
+}
+
+#[gpui::test]
+fn an_undated_item_whose_claim_failed_is_retried_after_a_restart(cx: &mut TestAppContext) {
+    let data = data();
+    let id = on_tracker_issue(&data);
+    let window = open(&data, cx);
+    // Evaluating automations fails while their table is unreadable.
+    let conn = rusqlite::Connection::open(&data.db).unwrap();
+    conn.execute_batch("ALTER TABLE automations RENAME TO automations_away")
+        .unwrap();
+    deliver(&window, vec![tracker_issue("8")], cx);
+    conn.execute_batch("ALTER TABLE automations_away RENAME TO automations")
+        .unwrap();
+    assert!(runs(&data.db, &id).is_empty());
+    let saved: String = conn
+        .query_row(
+            "SELECT value FROM native_settings WHERE key = 'native-automation-inbox-retries'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(saved.contains("ENG-8"), "{saved}");
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+
+    // Gespan restarts before the Inbox would offer the item again.
+    let reopened = open(&data, cx);
+    poll(&reopened, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+    assert_eq!(saved[0].event_key.as_deref(), Some("linear:issue:8"));
+    assert_eq!(sessions(&reopened, &id, cx), 1);
 }

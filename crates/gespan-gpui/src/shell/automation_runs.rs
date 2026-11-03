@@ -22,7 +22,7 @@ pub(super) struct State {
     reserved: HashSet<i64>,
     writes: Option<gpui::Task<()>>,
     event_retries: HashMap<String, gespan_core::inbox::Item>,
-    waiting_events: Option<Vec<gespan_core::inbox::Item>>,
+    waiting_events: HashMap<String, gespan_core::inbox::Item>,
     events_polling: bool,
     retry_revision: Arc<AtomicU64>,
     pub session_automations: HashMap<i64, String>,
@@ -42,7 +42,7 @@ impl Default for State {
             reserved: HashSet::new(),
             writes: None,
             event_retries: HashMap::new(),
-            waiting_events: None,
+            waiting_events: HashMap::new(),
             events_polling: false,
             retry_revision: Arc::new(AtomicU64::new(0)),
             session_automations: HashMap::new(),
@@ -185,14 +185,23 @@ impl Shell {
         .detach();
     }
 
-    /// Each Inbox refresh offers every recent item again, so only the latest
-    /// delivery waits while Hold is on or a claim is in flight.
+    /// Deliveries wait, merged by item, while Hold is on or a claim is in
+    /// flight: an item without a creation time is offered only once.
     pub(super) fn inbox_automation_events(
         &mut self,
         items: Vec<gespan_core::inbox::Item>,
         cx: &mut Context<Self>,
     ) {
-        self.automation_state.waiting_events = Some(items);
+        let waiting = &mut self.automation_state.waiting_events;
+        for item in items {
+            waiting.insert(item.key(), item);
+        }
+        if waiting.len() > 500 {
+            let mut items: Vec<_> = std::mem::take(waiting).into_values().collect();
+            items.sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
+            items.truncate(500);
+            *waiting = items.into_iter().map(|item| (item.key(), item)).collect();
+        }
         self.claim_inbox_events(cx);
     }
 
@@ -204,17 +213,11 @@ impl Shell {
         let Some(service) = self.automation_state.service.clone() else {
             return;
         };
-        let mut items = self
-            .automation_state
-            .waiting_events
-            .take()
-            .unwrap_or_default();
-        let mut keys: HashSet<String> = items.iter().map(|item| item.key()).collect();
-        for item in self.automation_state.event_retries.values() {
-            if keys.insert(item.key()) {
-                items.push(item.clone());
-            }
+        let mut waiting = std::mem::take(&mut self.automation_state.waiting_events);
+        for (key, item) in &self.automation_state.event_retries {
+            waiting.entry(key.clone()).or_insert_with(|| item.clone());
         }
+        let items: Vec<_> = waiting.into_values().collect();
         if items.is_empty() {
             return;
         }
@@ -238,14 +241,13 @@ impl Shell {
                     Err(error) => {
                         tracing::warn!(%error, "automation inbox poll failed");
                         this.error = Some(format!("Could not evaluate Inbox automations: {error}"));
-                        this.automation_state
-                            .waiting_events
-                            .get_or_insert(attempted);
+                        // Kept across a restart, like a failed claim.
+                        this.set_event_retries(attempted, cx);
                         cx.notify();
                         return;
                     }
                 }
-                if this.automation_state.waiting_events.is_some() {
+                if !this.automation_state.waiting_events.is_empty() {
                     this.claim_inbox_events(cx);
                 }
             });
