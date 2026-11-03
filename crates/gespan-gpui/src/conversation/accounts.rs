@@ -101,6 +101,18 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
+    /// Limits the running turn reported move this account's footer at once.
+    pub(super) fn live_usage(&mut self, windows: Vec<usage::Window>, cx: &mut Context<Self>) {
+        let kind = Kind::from_id(&self.summary.provider);
+        if let Some(center) = crate::accounts::get(cx) {
+            let key = crate::accounts::Key::new(
+                kind,
+                self.settings.account.clone(),
+                self.account_model(),
+            );
+            center.update(cx, |center, cx| center.live_usage(key, &windows, cx));
+        }
+    }
     pub(super) fn detect_usage_limit(&mut self, cx: &mut Context<Self>) {
         if let Some(limit) = self
             .settings
@@ -374,12 +386,7 @@ impl Conversation {
                 .unwrap_or_default();
             format!(
                 "Resets {when} · in {}",
-                usage::Window {
-                    used_percent: 100.,
-                    minutes: 300,
-                    resets_at: Some(at)
-                }
-                .countdown(now)
+                usage::Window::new(100., 300, Some(at)).countdown(now)
             )
         });
         let mut controls = div()
@@ -669,6 +676,37 @@ mod tests {
                 v.patch(4, vec![row("system", "Network timeout")], cx);
             });
             assert!(view.account_recovery_limit(cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn a_turns_live_limits_reach_the_footers_cache_for_its_account(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let summary = locked(&store).unwrap().create("codex", "/fixture").unwrap();
+        cx.update(|cx| crate::accounts::install(store.clone(), cx));
+        let view = cx.new(|cx| Conversation::new(summary, store, cx));
+        let raw = include_str!("../../../gespan-core/src/usage/fixtures/codex-app-server.jsonl");
+        let notification: serde_json::Value = raw
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|v| v["method"] == "account/rateLimits/updated")
+            .unwrap();
+        view.update(cx, |view, cx| {
+            view.live_usage(usage::codex_live_windows(&notification["params"]), cx);
+            let key = crate::accounts::Key::new(
+                Kind::Codex,
+                view.settings.account.clone(),
+                view.account_model(),
+            );
+            let center = crate::accounts::get(cx).unwrap();
+            let center = center.read(cx);
+            let windows = &center.usage[&key].snapshot.as_ref().unwrap().windows;
+            assert_eq!(windows.len(), 1);
+            assert_eq!((windows[0].minutes, windows[0].used_percent), (43_200, 19.));
+            // Another provider's footer is untouched.
+            assert!(center.usage.keys().all(|k| k.kind == Kind::Codex));
         });
     }
 

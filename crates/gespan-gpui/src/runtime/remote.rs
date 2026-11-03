@@ -29,6 +29,7 @@ fn update(status: impl Into<String>, finished: bool) -> Update {
         context: None,
         metrics: None,
         usage_limit: None,
+        usage_windows: None,
         background: None,
         hold: None,
         approvals: vec![],

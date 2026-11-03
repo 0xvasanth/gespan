@@ -113,7 +113,12 @@ pub enum Event {
         used: Option<u64>,
         window: Option<u64>,
     },
+    /// The share of the context window in use, from providers that report
+    /// no token counts.
+    ContextPercent(f64),
     Metrics(TurnMetrics),
+    /// Plan limits the provider reported mid-turn, fresher than the last probe.
+    UsageWindows(Vec<crate::usage::Window>),
     Approval(Approval),
     ApprovalResolved(String),
     Question(crate::agent::Question),
@@ -666,6 +671,12 @@ impl Protocol {
                 }
                 let p = &v["params"];
                 match v["method"].as_str().unwrap_or("") {
+                    "account/rateLimits/updated" => {
+                        let windows = crate::usage::codex_live_windows(p);
+                        if !windows.is_empty() {
+                            events.push(Event::UsageWindows(windows));
+                        }
+                    }
                     "thread/tokenUsage/updated" => {
                         let usage = &p["tokenUsage"];
                         events.push(Event::Context {
@@ -845,6 +856,10 @@ impl Protocol {
                     "rate_limit_event" if v["parent_tool_use_id"].is_null() => {
                         self.claude_usage_limit =
                             crate::usage::Limit::from_claude_info(&v["rate_limit_info"]);
+                        let windows = crate::usage::claude_live_windows(&v["rate_limit_info"]);
+                        if !windows.is_empty() {
+                            events.push(Event::UsageWindows(windows));
+                        }
                     }
                     "control_response" if v["response"]["request_id"] == "native-init" => {
                         self.claude_prompt(stdin)?;
@@ -1007,6 +1022,10 @@ impl Protocol {
                                 || usage.get("cache_creation_input_tokens").is_some())
                                 && input + read + write > 0)
                                 .then(|| read as f64 / (input + read + write) as f64 * 100.),
+                            cost_usd: v["total_cost_usd"]
+                                .as_f64()
+                                .filter(|cost| cost.is_finite() && *cost >= 0.),
+                            credits: None,
                         };
                         if metrics.reported() {
                             events.push(Event::Metrics(metrics));
@@ -2369,6 +2388,146 @@ mod tests {
                 assert_eq!(started["params"]["sandboxPolicy"]["type"], "readOnly");
             }
         }
+    }
+    fn replay(kind: Kind, raw: &str) -> Vec<Event> {
+        let mut protocol = protocol(kind);
+        raw.lines()
+            .filter(|line| !line.trim().is_empty())
+            .flat_map(|line| {
+                protocol
+                    .frame(serde_json::from_str(line).unwrap(), &mut Vec::new())
+                    .unwrap()
+            })
+            .collect()
+    }
+    fn turn_metrics(events: &[Event]) -> Vec<TurnMetrics> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Metrics(m) => Some(*m),
+                _ => None,
+            })
+            .collect()
+    }
+    fn live_windows(events: &[Event]) -> Vec<Vec<crate::usage::Window>> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::UsageWindows(w) => Some(w.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+    #[test]
+    fn real_claude_turns_report_tokens_cost_context_and_live_limits() {
+        for (raw, cached, written, cost) in [
+            (
+                include_str!("usage/fixtures/claude-stream.jsonl"),
+                23_608,
+                21_991,
+                0.00463648,
+            ),
+            (
+                include_str!("usage/fixtures/claude-stream-turn2.jsonl"),
+                27_635,
+                26_617,
+                0.01023843,
+            ),
+        ] {
+            let events = replay(Kind::Claude, raw);
+            let [metrics] = turn_metrics(&events)[..] else {
+                panic!("one reading per turn: {events:?}")
+            };
+            assert_eq!((metrics.input_tokens, metrics.output_tokens), (2, 4));
+            assert_eq!(
+                (metrics.cache_read_tokens, metrics.cache_write_tokens),
+                (cached, written)
+            );
+            assert_eq!(metrics.cost_usd, Some(cost));
+            assert_eq!(metrics.credits, None);
+            let mut context = crate::context::Usage::default();
+            for event in &events {
+                if let Event::Context { used, window } = event {
+                    context.merge(*used, *window);
+                }
+            }
+            assert_eq!(context.used, 2 + 4 + cached + written);
+            assert_eq!(context.window, Some(1_000_000));
+            assert_eq!(
+                live_windows(&events),
+                vec![vec![crate::usage::Window::new(
+                    2.,
+                    10_080,
+                    Some(1_794_272_400_000)
+                )]]
+            );
+        }
+    }
+    #[test]
+    fn claude_turn_without_cost_or_limits_still_reports_tokens() {
+        let events = replay(
+            Kind::Claude,
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794272400}}
+{"type":"result","usage":{"input_tokens":5,"output_tokens":1}}"#,
+        );
+        assert!(live_windows(&events).is_empty());
+        let [metrics] = turn_metrics(&events)[..] else {
+            panic!()
+        };
+        assert_eq!((metrics.input_tokens, metrics.cost_usd), (5, None));
+        // A subagent's limits are not the account's.
+        assert!(live_windows(&replay(
+            Kind::Claude,
+            r#"{"type":"rate_limit_event","parent_tool_use_id":"x","rate_limit_info":{"unifiedWindows":{"seven_day":{"utilization":0.9}}}}"#
+        ))
+        .is_empty());
+    }
+    #[test]
+    fn real_codex_turns_count_each_request_once_and_push_live_limits() {
+        let raw = include_str!("usage/fixtures/codex-app-server.jsonl");
+        let events = replay(Kind::Codex, raw);
+        let metrics = turn_metrics(&events);
+        assert_eq!(metrics.len(), 2);
+        // Turn one: its own request.
+        assert_eq!(
+            (
+                metrics[0].input_tokens,
+                metrics[0].output_tokens,
+                metrics[0].cache_read_tokens
+            ),
+            (20_129, 5, 6_656)
+        );
+        // A process that carries on adds only the new request, never the
+        // running total again.
+        assert_eq!(
+            (
+                metrics[1].input_tokens,
+                metrics[1].output_tokens,
+                metrics[1].cache_read_tokens
+            ),
+            (40_275, 11, 26_624)
+        );
+        assert!(metrics.iter().all(|m| m.cost_usd.is_none()));
+        assert!(events.contains(&Event::Context {
+            used: Some(20_152),
+            window: Some(258_400)
+        }));
+        let live = live_windows(&events);
+        assert_eq!(live.len(), 2);
+        assert_eq!(
+            live[1],
+            vec![crate::usage::Window::new(
+                19.,
+                43_200,
+                Some(1_795_418_928_000)
+            )]
+        );
+        // A notification with no readable window changes nothing.
+        assert!(live_windows(&replay(
+            Kind::Codex,
+            r#"{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":null,"secondary":null}}}"#
+        ))
+        .is_empty());
     }
     #[test]
     fn context_reports_use_the_latest_request_and_include_cached_tokens() {

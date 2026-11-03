@@ -91,6 +91,17 @@ pub(crate) struct Cached {
     pub queued: bool,
 }
 impl Cached {
+    /// A provider's own mid-turn reading is fresher than any probe, and it
+    /// stands in for a probe that failed or has not answered yet.
+    pub(crate) fn live(&mut self, windows: &[usage::Window], now: i64) {
+        if windows.is_empty() {
+            return;
+        }
+        self.snapshot
+            .get_or_insert_with(Snapshot::default)
+            .merge_live(windows, now);
+        self.error = None;
+    }
     pub(crate) fn complete(&mut self, result: Result<Snapshot, FetchError>) {
         self.fetching = false;
         match result {
@@ -427,6 +438,18 @@ impl Accounts {
             });
         })
         .detach();
+        cx.notify();
+    }
+    pub(crate) fn live_usage(
+        &mut self,
+        key: Key,
+        windows: &[usage::Window],
+        cx: &mut Context<Self>,
+    ) {
+        self.usage
+            .entry(key)
+            .or_default()
+            .live(windows, usage::now_ms());
         cx.notify();
     }
     pub(crate) fn load_provider(&mut self, kind: Kind, force: bool, cx: &mut Context<Self>) {
@@ -845,11 +868,7 @@ mod tests {
     #[test]
     fn usage_cache_preserves_stale_data_on_errors_and_separates_accounts_and_pi_billing() {
         let snapshot = Snapshot {
-            windows: vec![usage::Window {
-                used_percent: 40.,
-                minutes: 300,
-                resets_at: None,
-            }],
+            windows: vec![usage::Window::new(40., 300, None)],
             ..Default::default()
         };
         let mut state = Cached::default();

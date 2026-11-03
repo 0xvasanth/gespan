@@ -484,7 +484,7 @@ impl Accounts {
             .flex()
             .items_center()
             .gap_3()
-            .children(snapshot.windows.iter().map(|w| {
+            .children(snapshot.plan_windows().map(|w| {
                 let used = if w.resets_at.is_some_and(|at| at <= usage::now_ms()) {
                     0.
                 } else {
@@ -612,7 +612,7 @@ impl Accounts {
                 .usage
                 .get(&Key::new(kind, self.profile(&id), None))
                 .and_then(|s| s.snapshot.as_ref())
-                .map(|s| s.windows.clone())
+                .map(|s| s.plan_windows().cloned().collect::<Vec<_>>())
                 .unwrap_or_default();
             let highlighted = self
                 .picker

@@ -222,6 +222,12 @@ pub struct TurnMetrics {
     pub cache_write_tokens: u64,
     #[serde(alias = "cacheHitPercent")]
     pub cache_hit_percent: Option<f64>,
+    /// What the provider priced the turn at, in US dollars.
+    #[serde(alias = "costUsd", skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// Plan credits the turn spent, for providers that bill in credits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credits: Option<f64>,
 }
 impl TurnMetrics {
     pub fn reported(self) -> bool {
@@ -230,6 +236,8 @@ impl TurnMetrics {
             || self.cache_read_tokens > 0
             || self.cache_write_tokens > 0
             || self.cache_hit_percent.is_some()
+            || self.cost_usd.is_some()
+            || self.credits.is_some()
     }
 }
 #[derive(Clone, Debug, PartialEq)]

@@ -55,6 +55,8 @@ pub(crate) struct Update {
     pub(crate) context: Option<gespan_core::context::Usage>,
     pub(crate) metrics: Option<gespan_core::agent::TurnMetrics>,
     pub(crate) usage_limit: Option<gespan_core::usage::Limit>,
+    /// Plan limits the provider reported during this batch, newest last.
+    pub(crate) usage_windows: Option<Vec<gespan_core::usage::Window>>,
     /// The tasks a yielded turn still waits on, when that changed.
     pub(crate) background: Option<Vec<provider::BackgroundTask>>,
     /// A held turn reached its safe point.
@@ -295,6 +297,7 @@ fn run_turn_using(
                 context: None,
                 metrics: None,
                 usage_limit: None,
+                usage_windows: None,
                 background: None,
                 hold: None,
                 approvals: Vec::new(),
@@ -354,6 +357,7 @@ fn run_turn_using(
                     context: None,
                     metrics: None,
                     usage_limit: None,
+                    usage_windows: None,
                     background: None,
                     hold: None,
                     approvals: Vec::new(),
@@ -403,6 +407,7 @@ fn run_turn_using(
                     context: None,
                     metrics: None,
                     usage_limit: None,
+                    usage_windows: None,
                     background: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
@@ -466,6 +471,7 @@ fn run_turn_using(
                     context: None,
                     metrics: None,
                     usage_limit: None,
+                    usage_windows: None,
                     background: None,
                     hold: None,
                     approvals: Vec::new(),
@@ -829,6 +835,7 @@ fn run_turn_using(
                 let mut config_settings = None;
                 let mut context_changed = false;
                 let mut metrics = None;
+                let mut usage_windows = None;
                 let mut background = None;
                 let mut hold = None;
                 let mut approvals = Vec::new();
@@ -1088,6 +1095,12 @@ fn run_turn_using(
                             context_changed = true;
                             pending.context_changed();
                         }
+                        Event::ContextPercent(percent) => {
+                            context.set_percent(percent);
+                            context_changed = true;
+                            pending.context_changed();
+                        }
+                        Event::UsageWindows(windows) => usage_windows = Some(windows),
                         Event::Approval(approval) => {
                             status = "Waiting for approval".into();
                             approvals.push(approval);
@@ -1153,6 +1166,7 @@ fn run_turn_using(
                             context: context_changed.then_some(context),
                             metrics,
                             usage_limit: None,
+                            usage_windows,
                             background,
                             hold,
                             approvals,
@@ -1349,6 +1363,7 @@ fn run_turn_using(
         context: None,
         metrics: None,
         usage_limit: if cancelled { None } else { usage_limit },
+        usage_windows: None,
         background: None,
         hold: None,
         approvals: Vec::new(),

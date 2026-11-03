@@ -1072,6 +1072,7 @@ fn fresh_native_turn_receipts_persist_source_fields_without_changing_saved_prove
     receipt.metrics = Some(crate::agent::TurnMetrics {
         input_tokens: 25,
         output_tokens: 10,
+        cost_usd: Some(0.00463648),
         ..Default::default()
     });
     store.save_agent_settings(session.id, &settings).unwrap();
@@ -1083,7 +1084,16 @@ fn fresh_native_turn_receipts_persist_source_fields_without_changing_saved_prove
     assert_eq!(source[0]["providerTurnId"], "provider-turn");
     assert_eq!(source[0]["durationMs"], 5000);
     assert_eq!(source[0]["turnMetrics"]["outputTokens"], 10);
+    assert_eq!(source[0]["turnMetrics"]["costUsd"], 0.00463648);
+    assert!(
+        source[0]["turnMetrics"].get("credits").is_none(),
+        "an unreported cost is left out, not saved as null"
+    );
     let restored = store.agent_settings(session.id).unwrap().unwrap();
+    assert_eq!(
+        restored.turns[&turn].metrics.unwrap().cost_usd,
+        Some(0.00463648)
+    );
     assert_eq!(restored.turns[&turn].completed_at, Some(5100));
     assert_eq!(store.load(session.id).unwrap().rows, transcript.rows);
     settings.model = Some("new-picker-value".into());

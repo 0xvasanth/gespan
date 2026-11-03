@@ -2,6 +2,7 @@
 //! Blocking probes belong on a worker. Credentials are read only, never rotated.
 pub(crate) mod claude;
 mod devin;
+mod kiro;
 mod opencode;
 mod pi;
 
@@ -14,8 +15,54 @@ pub struct Window {
     pub used_percent: f64,
     pub minutes: u64,
     pub resets_at: Option<i64>,
+    /// A limit that covers only part of the plan, such as one model's weekly
+    /// cap. It never decides whether the account as a whole is usable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<Amount>,
+}
+/// What a window or balance counts, when the provider reports more than a percent.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Amount {
+    pub used: f64,
+    pub limit: Option<f64>,
+    /// "credits", or an ISO currency code.
+    pub unit: String,
+}
+impl Amount {
+    pub fn label(&self) -> String {
+        let value = |n: f64| {
+            if self.unit == "credits" {
+                format!("{}", (n * 100.).round() / 100.)
+            } else if self.unit == "USD" {
+                format!("${n:.2}")
+            } else {
+                format!("{n:.2} {}", self.unit)
+            }
+        };
+        let used = value(self.used);
+        let suffix = if self.unit == "credits" {
+            " credits"
+        } else {
+            ""
+        };
+        match self.limit {
+            Some(limit) => format!("{used} of {}{suffix}", value(limit)),
+            None => format!("{used}{suffix}"),
+        }
+    }
 }
 impl Window {
+    pub fn new(used_percent: f64, minutes: u64, resets_at: Option<i64>) -> Self {
+        Self {
+            used_percent,
+            minutes,
+            resets_at,
+            scope: None,
+            amount: None,
+        }
+    }
     pub fn label(&self) -> String {
         match self.minutes {
             300 => "5h".into(),
@@ -50,6 +97,11 @@ pub struct Snapshot {
     pub extra_usage_balance: Option<f64>,
     #[serde(default)]
     pub identity: Option<crate::accounts::Identity>,
+    /// Pay-as-you-go spend beyond the plan, when the account has it turned on.
+    #[serde(default)]
+    pub extra_usage: Option<Amount>,
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ResetCredits {
@@ -121,10 +173,11 @@ impl FetchError {
     }
 }
 
-/// Whether Gespan can read usage for `kind` at all. Kiro, Cursor and the
-/// other ACP agents report none.
+/// Whether Gespan can read usage for `kind` at all. Cursor and the other ACP
+/// agents report none.
 pub fn has_usage(kind: Kind) -> bool {
-    kind.subscription_usage() || matches!(kind, Kind::Devin | Kind::OpenCode | Kind::Pi)
+    kind.subscription_usage()
+        || matches!(kind, Kind::Devin | Kind::Kiro | Kind::OpenCode | Kind::Pi)
 }
 pub fn fetch(kind: Kind) -> Result<Snapshot, FetchError> {
     fetch_for(kind, &Default::default(), None)
@@ -142,6 +195,9 @@ pub fn fetch_for(
     }
     if kind == Kind::Pi {
         return fetch_pi(model);
+    }
+    if kind == Kind::Kiro {
+        return kiro::fetch_for(profile);
     }
     if !kind.subscription_usage() {
         return Err(FetchError::unavailable(format!(
@@ -178,6 +234,24 @@ pub fn fetch_for(
     Ok(snapshot)
 }
 
+/// Reads a provider's usage report as its probe receives it: Claude's and
+/// Codex's JSON responses, or Kiro's `/usage` text.
+pub fn parse_report(kind: Kind, raw: &str) -> Result<Snapshot, FetchError> {
+    if kind == Kind::Kiro {
+        return kiro::parse(raw);
+    }
+    let value: Value = serde_json::from_str(raw.trim()).map_err(|_| {
+        FetchError::failed(format!("{} usage response was not JSON.", kind.label()))
+    })?;
+    match kind {
+        Kind::Claude => parse_claude(&value),
+        Kind::Codex => Ok(parse_codex(value.get("result").unwrap_or(&value))),
+        _ => Err(FetchError::unavailable(format!(
+            "No subscription usage is available for {}.",
+            kind.label()
+        ))),
+    }
+}
 fn fetch_devin() -> Result<Snapshot, FetchError> {
     let version =
         crate::accounts::login::cli_output(Kind::Devin, &["--version"], &Default::default())
@@ -209,11 +283,11 @@ fn fetch_devin() -> Result<Snapshot, FetchError> {
         ),
     ] {
         if let Some(remaining) = remaining.filter(|n| n.is_finite()) {
-            windows.push(Window {
-                used_percent: (100. - remaining).clamp(0., 100.),
+            windows.push(Window::new(
+                (100. - remaining).clamp(0., 100.),
                 minutes,
                 resets_at,
-            });
+            ));
         }
     }
     Ok(Snapshot {
@@ -286,10 +360,12 @@ fn fetch_pi(model: Option<&str>) -> Result<Snapshot, FetchError> {
             windows: [windows.session, windows.weekly]
                 .into_iter()
                 .flatten()
-                .map(|w| Window {
-                    used_percent: w.used_percent,
-                    minutes: w.window_minutes,
-                    resets_at: w.resets_at.map(|n| n as i64),
+                .map(|w| {
+                    Window::new(
+                        w.used_percent,
+                        w.window_minutes,
+                        w.resets_at.map(|n| n as i64),
+                    )
                 })
                 .collect(),
             updated_at: now_ms(),
@@ -316,9 +392,34 @@ pub fn consume_reset(
     }
 }
 impl Snapshot {
+    /// The windows that limit the whole account, not one model or surface.
+    pub fn plan_windows(&self) -> impl Iterator<Item = &Window> {
+        self.windows.iter().filter(|w| w.scope.is_none())
+    }
+    /// Folds the windows a running turn reported into the last probe, so the
+    /// footer moves with every turn instead of waiting for the next probe.
+    /// A window is matched by its length and scope; the rest stay as probed.
+    pub fn merge_live(&mut self, windows: &[Window], now: i64) {
+        for live in windows {
+            match self
+                .windows
+                .iter_mut()
+                .find(|w| w.minutes == live.minutes && w.scope == live.scope)
+            {
+                Some(window) => {
+                    window.used_percent = live.used_percent;
+                    if live.resets_at.is_some() {
+                        window.resets_at = live.resets_at;
+                    }
+                }
+                None => self.windows.push(live.clone()),
+            }
+        }
+        self.windows.sort_by_key(|w| (w.scope.is_some(), w.minutes));
+        self.updated_at = now;
+    }
     pub fn headroom(&self, now: i64) -> Option<f64> {
-        self.windows
-            .iter()
+        self.plan_windows()
             .map(|w| {
                 if w.resets_at.is_some_and(|at| at <= now) {
                     100.
@@ -330,8 +431,7 @@ impl Snapshot {
     }
     pub fn exhausted_reset(&self) -> Option<i64> {
         let exhausted: Vec<_> = self
-            .windows
-            .iter()
+            .plan_windows()
             .filter(|w| w.used_percent >= 100.)
             .collect();
         if exhausted.is_empty() || exhausted.iter().any(|w| w.resets_at.is_none()) {
@@ -389,11 +489,11 @@ fn timestamp(value: &Value) -> Option<i64> {
         .map(|d| d.timestamp_millis())
 }
 fn window(value: &Value, minutes: u64, percent_keys: &[&str]) -> Option<Window> {
-    Some(Window {
-        used_percent: number(value, percent_keys)?.clamp(0., 100.),
+    Some(Window::new(
+        number(value, percent_keys)?.clamp(0., 100.),
         minutes,
-        resets_at: timestamp(&value["resetsAt"]).or_else(|| timestamp(&value["resets_at"])),
-    })
+        timestamp(&value["resetsAt"]).or_else(|| timestamp(&value["resets_at"])),
+    ))
 }
 fn parse_codex(value: &Value) -> Snapshot {
     let wrapper = value.get("rateLimits").unwrap_or(value);
@@ -428,14 +528,58 @@ fn parse_codex(value: &Value) -> Snapshot {
         windows,
         updated_at: now_ms(),
         reset_credits: parse_reset_credits(value),
+        plan: wrapper["planType"]
+            .as_str()
+            .filter(|plan| !plan.trim().is_empty())
+            .map(title_case),
         ..Default::default()
     }
+}
+/// The windows in Codex's `account/rateLimits/updated` notification.
+pub fn codex_live_windows(params: &Value) -> Vec<Window> {
+    parse_codex(params).windows
+}
+/// The windows in Claude Code's `rate_limit_event`. Its utilization is a
+/// fraction, where the usage API reports a percent.
+pub fn claude_live_windows(info: &Value) -> Vec<Window> {
+    let mut windows: Vec<Window> = [("five_hour", 300), ("seven_day", 10_080)]
+        .into_iter()
+        .filter_map(|(key, minutes)| {
+            let raw = &info["unifiedWindows"][key];
+            let fraction = raw["utilization"].as_f64().filter(|n| n.is_finite())?;
+            Some(Window::new(
+                (fraction * 100.).clamp(0., 100.),
+                minutes,
+                timestamp(&raw["resetsAt"]),
+            ))
+        })
+        .collect();
+    windows.sort_by_key(|w| w.minutes);
+    windows
+}
+fn title_case(text: &str) -> String {
+    text.split(|c: char| c == '_' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| {
+                    first
+                        .to_uppercase()
+                        .chain(chars.flat_map(char::to_lowercase))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 fn parse_claude(value: &Value) -> Result<Snapshot, FetchError> {
     if !value.is_object() {
         return Err(FetchError::failed("Claude usage response was unexpected."));
     }
-    let windows = [("five_hour", 300), ("seven_day", 10_080)]
+    let mut windows = [("five_hour", 300), ("seven_day", 10_080)]
         .into_iter()
         .filter_map(|(key, minutes)| {
             window(
@@ -450,10 +594,42 @@ fn parse_claude(value: &Value) -> Result<Snapshot, FetchError> {
             "No Claude subscription usage available for this account.",
         ));
     }
+    // A model's own weekly cap, such as Fable's, sits beside the plan's.
+    for limit in value["limits"].as_array().into_iter().flatten() {
+        if limit["kind"] != "weekly_scoped" {
+            continue;
+        }
+        let Some(name) = limit["scope"]["model"]["display_name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+        else {
+            continue;
+        };
+        if let Some(mut window) = window(limit, 10_080, &["percent"]) {
+            window.scope = Some(name.into());
+            windows.push(window);
+        }
+    }
     Ok(Snapshot {
         windows,
         updated_at: now_ms(),
+        extra_usage: claude_spend(&value["spend"]),
         ..Default::default()
+    })
+}
+fn claude_spend(spend: &Value) -> Option<Amount> {
+    if spend["enabled"] != true {
+        return None;
+    }
+    let money = |raw: &Value| {
+        let minor = raw["amount_minor"].as_f64().filter(|n| n.is_finite())?;
+        let exponent = raw["exponent"].as_i64().unwrap_or(2).clamp(0, 6) as i32;
+        Some(minor / 10f64.powi(exponent))
+    };
+    Some(Amount {
+        used: money(&spend["used"])?,
+        limit: money(&spend["limit"]),
+        unit: spend["used"]["currency"].as_str().unwrap_or("USD").into(),
     })
 }
 
@@ -538,16 +714,8 @@ mod tests {
     fn exhausted_accounts_wait_for_all_windows_and_resume_only_when_armed() {
         let mut snapshot = Snapshot {
             windows: vec![
-                Window {
-                    used_percent: 100.,
-                    minutes: 300,
-                    resets_at: Some(100_000),
-                },
-                Window {
-                    used_percent: 100.,
-                    minutes: 10080,
-                    resets_at: Some(200_000),
-                },
+                Window::new(100., 300, Some(100_000)),
+                Window::new(100., 10080, Some(200_000)),
             ],
             ..Default::default()
         };
@@ -614,6 +782,130 @@ mod tests {
         assert!(parse_claude(&json!({})).unwrap_err().unavailable);
         assert!(!parse_claude(&json!(null)).unwrap_err().unavailable);
     }
+    fn fixture_lines(raw: &str) -> Vec<Value> {
+        raw.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn claude_usage_api_keeps_plan_windows_and_adds_model_scoped_ones() {
+        let value: Value =
+            serde_json::from_str(include_str!("usage/fixtures/claude-oauth-usage.json")).unwrap();
+        let snapshot = parse_claude(&value).unwrap();
+        // `five_hour` is null for this account: only the weekly plan window.
+        let plan: Vec<_> = snapshot.plan_windows().collect();
+        assert_eq!(plan.len(), 1);
+        assert_eq!((plan[0].minutes, plan[0].used_percent), (10_080, 2.));
+        let scoped: Vec<_> = snapshot
+            .windows
+            .iter()
+            .filter(|w| w.scope.is_some())
+            .collect();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].scope.as_deref(), Some("Fable"));
+        assert_eq!((scoped[0].minutes, scoped[0].used_percent), (10_080, 0.));
+        assert!(scoped[0].resets_at.is_some());
+        // Extra usage is switched off on this account.
+        assert_eq!(snapshot.extra_usage, None);
+    }
+
+    #[test]
+    fn a_maxed_model_cap_does_not_mark_the_account_exhausted() {
+        let mut fable = Window::new(100., 10_080, Some(500));
+        fable.scope = Some("Fable".into());
+        let snapshot = Snapshot {
+            windows: vec![Window::new(40., 10_080, Some(500)), fable],
+            ..Default::default()
+        };
+        assert_eq!(snapshot.headroom(0), Some(60.));
+        assert_eq!(snapshot.exhausted_reset(), None);
+    }
+
+    #[test]
+    fn claude_extra_usage_reads_minor_units_only_when_enabled() {
+        let mut value: Value =
+            serde_json::from_str(include_str!("usage/fixtures/claude-oauth-usage.json")).unwrap();
+        value["spend"]["enabled"] = true.into();
+        value["spend"]["used"]["amount_minor"] = 1234.into();
+        value["spend"]["limit"] =
+            serde_json::json!({"amount_minor":5000,"currency":"USD","exponent":2});
+        let spend = parse_claude(&value).unwrap().extra_usage.unwrap();
+        assert_eq!(spend.label(), "$12.34 of $50.00");
+        value["spend"]["limit"] = Value::Null;
+        assert_eq!(
+            parse_claude(&value).unwrap().extra_usage.unwrap().label(),
+            "$12.34"
+        );
+    }
+
+    #[test]
+    fn claude_stream_rate_limit_event_becomes_live_percent_windows() {
+        let events = fixture_lines(include_str!("usage/fixtures/claude-stream.jsonl"));
+        let event = events
+            .iter()
+            .find(|v| v["type"] == "rate_limit_event")
+            .unwrap();
+        let windows = claude_live_windows(&event["rate_limit_info"]);
+        // 0.02 utilization is the 2% the usage API reports.
+        assert_eq!(
+            windows,
+            vec![Window::new(2., 10_080, Some(1_794_272_400_000))]
+        );
+        assert!(claude_live_windows(&json!({"status":"allowed"})).is_empty());
+    }
+
+    #[test]
+    fn codex_probe_and_live_notifications_agree() {
+        let lines = fixture_lines(include_str!("usage/fixtures/codex-app-server.jsonl"));
+        let probe = parse_codex(&lines.iter().find(|v| v["id"] == 1).unwrap()["result"]);
+        assert_eq!(probe.plan.as_deref(), Some("Free"));
+        assert_eq!(
+            probe.windows,
+            vec![Window::new(19., 43_200, Some(1_795_418_928_000))]
+        );
+        let live: Vec<_> = lines
+            .iter()
+            .filter(|v| v["method"] == "account/rateLimits/updated")
+            .map(|v| codex_live_windows(&v["params"]))
+            .collect();
+        assert_eq!(live.len(), 2, "one per turn");
+        assert!(live.iter().all(|w| *w == probe.windows));
+    }
+
+    #[test]
+    fn live_windows_update_matching_windows_and_keep_the_rest() {
+        let mut fable = Window::new(0., 10_080, None);
+        fable.scope = Some("Fable".into());
+        let mut snapshot = Snapshot {
+            windows: vec![
+                Window::new(10., 300, Some(1)),
+                Window::new(2., 10_080, Some(2)),
+                fable.clone(),
+            ],
+            updated_at: 5,
+            ..Default::default()
+        };
+        snapshot.merge_live(&[Window::new(3., 10_080, None)], 9);
+        assert_eq!(snapshot.windows[0], Window::new(10., 300, Some(1)));
+        // A live reading without a reset keeps the probed one.
+        assert_eq!(snapshot.windows[1], Window::new(3., 10_080, Some(2)));
+        assert_eq!(snapshot.windows[2], fable);
+        assert_eq!(snapshot.updated_at, 9);
+        // A window the probe never saw appears; scoped ones stay last.
+        snapshot.merge_live(&[Window::new(1., 43_200, Some(4))], 10);
+        assert_eq!(
+            snapshot
+                .windows
+                .iter()
+                .map(|w| w.minutes)
+                .collect::<Vec<_>>(),
+            vec![300, 10_080, 43_200, 10_080]
+        );
+        assert!(snapshot.windows[3].scope.is_some());
+    }
+
     #[test]
     fn reset_countdowns_match_the_footer() {
         for (ms, expected) in [
@@ -625,11 +917,7 @@ mod tests {
         ] {
             assert_eq!(duration(ms), expected);
         }
-        let w = Window {
-            used_percent: 4.,
-            minutes: 300,
-            resets_at: None,
-        };
+        let w = Window::new(4., 300, None);
         assert_eq!(w.countdown(0), "5h");
     }
 }
@@ -643,12 +931,13 @@ mod has_usage_tests {
             Kind::Codex,
             Kind::Claude,
             Kind::Devin,
+            Kind::Kiro,
             Kind::OpenCode,
             Kind::Pi,
         ] {
             assert!(has_usage(kind), "{kind:?}");
         }
-        for kind in [Kind::Kiro, Kind::Cursor, Kind::Antigravity, Kind::Hermes] {
+        for kind in [Kind::Cursor, Kind::Antigravity, Kind::Hermes] {
             assert!(!has_usage(kind), "{kind:?}");
         }
     }

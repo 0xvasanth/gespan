@@ -781,7 +781,8 @@ fn host_context_and_latest_turn_metrics_use_actual_session_fields() {
         context,
         Some(gespan_core::context::Usage {
             used: 1200,
-            window: Some(128000)
+            window: Some(128000),
+            percent: None,
         })
     );
     let metrics = metrics.unwrap();
