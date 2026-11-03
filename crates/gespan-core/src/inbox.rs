@@ -1617,6 +1617,30 @@ mod notification_tests {
     }
 
     #[test]
+    fn automation_candidates_survive_a_project_switch_and_a_recovered_fetch() {
+        // Switching projects re-baselines the tracker, and a repository that
+        // failed has no baseline when it recovers: neither may hide an item
+        // that was opened meanwhile.
+        let mut tracker = NotificationTracker::default();
+        let mut dated = item(1, "github");
+        dated.created_at = "2026-10-21T09:00:00Z".into();
+        tracker.observe(&snapshot(vec![]), "one".into());
+        let switched = snapshot(vec![dated.clone()]);
+        let appeared = tracker.observe(&switched, "two".into());
+        assert!(appeared.is_empty());
+        assert_eq!(automation_candidates(&switched.items, appeared).len(), 1);
+
+        let mut tracker = NotificationTracker::default();
+        let mut failed = snapshot(vec![]);
+        failed.errors.insert("github".into(), "HTTP 502".into());
+        tracker.observe(&failed, "scope".into());
+        let recovered = snapshot(vec![dated]);
+        let appeared = tracker.observe(&recovered, "scope".into());
+        assert!(appeared.is_empty());
+        assert_eq!(automation_candidates(&recovered.items, appeared).len(), 1);
+    }
+
+    #[test]
     fn failed_provider_has_its_own_successful_baseline() {
         let mut tracker = NotificationTracker::default();
         let mut failed = snapshot(vec![item(1, "linear")]);

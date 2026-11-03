@@ -336,3 +336,193 @@ fn a_disabled_automation_ignores_new_inbox_items(cx: &mut TestAppContext) {
     assert_eq!(sessions(&window, &id, cx), 0);
     drop(data.dir);
 }
+
+#[gpui::test]
+fn the_window_clock_runs_a_due_schedule_without_anything_else_happening(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let id = scheduled_due(&data, 20_000);
+    // Only the 30-second clock the window starts; nobody calls a poll.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(31));
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "scheduled");
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(31));
+    cx.run_until_parked();
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    assert_eq!(sessions(&window, &id, cx), 1);
+}
+
+#[gpui::test]
+fn a_further_window_leaves_automations_to_the_first(cx: &mut TestAppContext) {
+    let data = data();
+    let first = open(&data, cx);
+    cx.update(crate::windows::open_new_window);
+    cx.run_until_parked();
+    let second = cx
+        .update(|cx| cx.windows())
+        .into_iter()
+        .filter_map(|window| window.downcast::<Shell>())
+        .find(|window| *window != first)
+        .expect("a second window");
+    assert!(second.update(cx, |shell, _, _| shell.secondary).unwrap());
+    let id = scheduled_due(&data, 20_000);
+    poll(&second, cx);
+    assert!(
+        runs(&data.db, &id).is_empty(),
+        "only the first window claims"
+    );
+    poll(&first, cx);
+    poll(&second, cx);
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    assert_eq!(sessions(&first, &id, cx), 1);
+}
+
+#[gpui::test]
+fn a_run_claimed_before_gespan_quit_starts_once_when_it_reopens(cx: &mut TestAppContext) {
+    let data = data();
+    let id = scheduled_due(&data, 20_000);
+    // The schedule was claimed, then Gespan quit before handing it a session.
+    let claimed = Service::open(&data.db)
+        .unwrap()
+        .claim_due(now_ms())
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    let window = open(&data, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "recovered, not claimed again: {saved:?}");
+    assert_eq!(saved[0].id, claimed[0].run.id);
+    assert_launched(&saved[0], "scheduled");
+    poll(&window, cx);
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    assert_eq!(sessions(&window, &id, cx), 1);
+}
+
+#[gpui::test]
+fn a_run_interrupted_by_quitting_is_cancelled_not_restarted(cx: &mut TestAppContext) {
+    let data = data();
+    let id = scheduled_due(&data, 20_000);
+    let mut service = Service::open(&data.db).unwrap();
+    let run = service.claim_due(now_ms()).unwrap().remove(0).run;
+    service
+        .update_run(&run.id, "running", Some("1".into()), None, now_ms())
+        .unwrap();
+    drop(service);
+    let window = open(&data, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].status, "cancelled");
+    assert_eq!(sessions(&window, &id, cx), 0);
+}
+
+#[gpui::test]
+fn several_inbox_deliveries_in_a_row_run_every_new_item(cx: &mut TestAppContext) {
+    let data = data();
+    let id = on_issue(&data);
+    let window = open(&data, cx);
+    // A second refresh lands while the first claim is still in flight.
+    let (one, two) = (issue(&data, 1, now_ms()), issue(&data, 2, now_ms()));
+    window
+        .update(cx, |shell, _, cx| {
+            shell.inbox_automation_events(vec![one.clone()], cx);
+            shell.inbox_automation_events(vec![one, two], cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 2, "{saved:?}");
+    for run in &saved {
+        assert_launched(run, "event");
+    }
+}
+
+#[gpui::test]
+fn the_inbox_first_fetch_after_opening_runs_an_issue_opened_while_closed(cx: &mut TestAppContext) {
+    let data = data();
+    // Opened before the automation exists, so no background Inbox has
+    // fetched yet.
+    let window = open(&data, cx);
+    assert!(
+        window
+            .update(cx, |shell, _, _| shell.inbox.is_none())
+            .unwrap()
+    );
+    let id = on_issue(&data);
+    let since = now_ms() - 24 * HOUR;
+    rusqlite::Connection::open(&data.db)
+        .unwrap()
+        .execute(
+            "UPDATE automations SET definition_json = json_set(definition_json, '$.eventsSince', ?1)
+             WHERE id = ?2",
+            rusqlite::params![since, id],
+        )
+        .unwrap();
+    // The real Inbox's first fetch only sets its "appeared" baseline; the
+    // issue opened overnight and the backlog from before are both in it.
+    let fetched = gespan_core::inbox::Snapshot {
+        items: vec![
+            issue(&data, 40, since - HOUR),
+            issue(&data, 41, now_ms() - 3 * HOUR),
+        ],
+        ..Default::default()
+    };
+    window
+        .update(cx, |shell, window, cx| {
+            shell.ensure_background_inbox(window, cx);
+            let inbox = shell.inbox.clone().unwrap();
+            inbox.update(cx, |inbox, _| inbox.fetched = fetched);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+    assert_eq!(
+        saved[0].event_key.as_deref(),
+        Some("github:issue:acme/app:41")
+    );
+    // Later refreshes list the same items and start nothing more.
+    window
+        .update(cx, |shell, _, cx| {
+            let inbox = shell.inbox.clone().unwrap();
+            inbox.update(cx, |inbox, cx| inbox.refresh(cx));
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    assert_eq!(sessions(&window, &id, cx), 1);
+}
+
+#[gpui::test]
+fn a_new_item_in_a_later_inbox_fetch_runs_while_open(cx: &mut TestAppContext) {
+    let data = data();
+    let id = on_issue(&data);
+    let window = open(&data, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.ensure_background_inbox(window, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(runs(&data.db, &id).is_empty());
+    let opened = gespan_core::inbox::Snapshot {
+        items: vec![issue(&data, 50, now_ms())],
+        ..Default::default()
+    };
+    window
+        .update(cx, |shell, _, cx| {
+            let inbox = shell.inbox.clone().unwrap();
+            inbox.update(cx, |inbox, cx| {
+                inbox.fetched = opened;
+                inbox.refresh(cx);
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+}
