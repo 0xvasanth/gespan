@@ -25,6 +25,7 @@ pub mod inbox;
 pub mod interrupted;
 pub mod link_preview;
 pub mod mobile;
+pub mod net;
 pub mod notes;
 pub mod pilot;
 pub mod plan;

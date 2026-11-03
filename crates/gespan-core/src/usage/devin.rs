@@ -83,7 +83,7 @@ pub(super) fn fetch_sync(app_version: &str, cli_version: &str) -> Result<DevinUs
         }
     });
     // The key rides in the body: refuse any redirect that drops to plain HTTP.
-    let agent = ureq::AgentBuilder::new()
+    let agent = crate::net::agent()
         .timeout(HTTP_TIMEOUT)
         .https_only(true)
         .build();

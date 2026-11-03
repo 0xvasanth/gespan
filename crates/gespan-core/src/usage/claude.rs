@@ -27,7 +27,7 @@ pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, 
             "Claude sign-in expired. Run claude auth login, then refresh.",
         ));
     }
-    let response = ureq::AgentBuilder::new()
+    let response = crate::net::agent()
         .timeout(Duration::from_secs(10))
         .build()
         .get("https://api.anthropic.com/api/oauth/usage")
