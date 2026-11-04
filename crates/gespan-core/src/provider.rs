@@ -493,9 +493,25 @@ impl Protocol {
                 .and_then(|p| serde_json::to_string_pretty(p).ok())
                 .unwrap_or_else(|| "The agent is requesting permission to continue.".into());
         }
+        let read_only = self.request.settings.access == AccessMode::ReadOnly;
+        let read_only_query = read_only
+            && kind == "claude"
+            && request["tool_name"] == "Bash"
+            && request["input"]["command"]
+                .as_str()
+                .is_some_and(claude::read_only::allowed);
         self.approvals
             .insert(id.clone(), (wire, kind.into(), request));
-        if self.request.settings.plan || self.request.settings.access == AccessMode::ReadOnly {
+        if read_only_query {
+            return self.respond(
+                Control {
+                    id,
+                    decision: Decision::Allow,
+                },
+                stdin,
+            );
+        }
+        if self.request.settings.plan || read_only {
             return self.respond(
                 Control {
                     id,
@@ -1870,6 +1886,88 @@ mod tests {
             )
             .unwrap_err()
             .contains("Resume failed"));
+    }
+    #[test]
+    fn read_only_claude_allows_no_bash_pattern_at_launch() {
+        let mut request = protocol(Kind::Claude).request;
+        request.settings.access = AccessMode::ReadOnly;
+        let mut command = Command::new("claude");
+        claude::configure(&mut command, &request, None).unwrap();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let at = |flag: &str| &args[args.iter().position(|arg| arg == flag).unwrap() + 1];
+        assert_eq!(at("--allowedTools"), "Read,Glob,Grep");
+        assert_eq!(at("--tools"), "Read,Glob,Grep,Bash");
+        assert!(
+            !args.iter().any(|arg| arg.contains("Bash(")),
+            "a Bash pattern approves any arguments: {args:?}"
+        );
+    }
+    fn claude_bash(p: &mut Protocol, command: &str) -> (Vec<Event>, Value) {
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":command}}}), &mut out)
+            .unwrap();
+        let response = if out.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice::<Value>(&out).unwrap()["response"]["response"].clone()
+        };
+        (events, response)
+    }
+    #[test]
+    fn read_only_claude_runs_safe_queries_and_denies_flags_that_execute() {
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.access = AccessMode::ReadOnly;
+        for command in [
+            "git status -sb",
+            "git diff --stat HEAD~1",
+            "git log --oneline -5",
+            "ls -la",
+        ] {
+            let (events, response) = claude_bash(&mut p, command);
+            assert!(events.is_empty(), "{command}: {events:?}");
+            assert_eq!(response["behavior"], "allow", "{command}");
+            assert_eq!(response["updatedInput"]["command"], command);
+        }
+        for command in [
+            "rg --pre ./evil x",
+            "git diff --ext-diff",
+            "git log -p --textconv",
+            "git -c core.pager=./evil log",
+            "git log --output=/tmp/owned",
+            "git status && touch owned",
+        ] {
+            let (events, response) = claude_bash(&mut p, command);
+            assert!(events.is_empty(), "{command}: {events:?}");
+            assert_eq!(response["behavior"], "deny", "{command}");
+        }
+        assert!(
+            p.approvals.is_empty(),
+            "every answered request is forgotten"
+        );
+    }
+    #[test]
+    fn safe_bash_still_asks_outside_read_only() {
+        for access in [AccessMode::Supervised, AccessMode::AutoAcceptEdits] {
+            let mut p = protocol(Kind::Claude);
+            p.request.settings.access = access;
+            let (events, response) = claude_bash(&mut p, "git status");
+            assert!(
+                matches!(events.as_slice(), [Event::Approval(_)]),
+                "{access:?}: {events:?}"
+            );
+            assert_eq!(response, Value::Null, "no answer before the user decides");
+        }
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.plan = true;
+        let (_, response) = claude_bash(&mut p, "git status");
+        assert_eq!(
+            response["behavior"], "deny",
+            "a plan turn keeps denying Bash"
+        );
     }
     #[test]
     fn approvals_wait_for_a_decision_and_keep_the_requested_input() {
