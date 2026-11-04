@@ -1,8 +1,24 @@
-use super::{now_ms, parse_claude, FetchError, Snapshot};
+use super::{now_ms, timestamp, window, Amount, FetchError, Snapshot, Source, Window};
 use serde_json::Value;
 use std::{io::Read, path::PathBuf, time::Duration};
 
-pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError> {
+pub(crate) struct Claude;
+impl Source for Claude {
+    fn probe(
+        &self,
+        profile: &crate::accounts::Profile,
+        _model: Option<&str>,
+    ) -> Result<Snapshot, FetchError> {
+        fetch_for(profile)
+    }
+    fn parse(&self, raw: &str) -> Result<Snapshot, FetchError> {
+        let value: Value = serde_json::from_str(raw.trim())
+            .map_err(|_| FetchError::failed("Claude usage response was not JSON."))?;
+        parse(&value)
+    }
+}
+
+fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError> {
     let named = profile
         .directory(crate::provider::Kind::Claude)
         .map_err(FetchError::failed)?;
@@ -55,7 +71,83 @@ pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, 
         .map_err(|_| FetchError::failed("Could not read Claude usage response."))?;
     let value = serde_json::from_str(&body)
         .map_err(|_| FetchError::failed("Claude usage response was not JSON."))?;
-    parse_claude(&value)
+    parse(&value)
+}
+
+pub(super) fn parse(value: &Value) -> Result<Snapshot, FetchError> {
+    if !value.is_object() {
+        return Err(FetchError::failed("Claude usage response was unexpected."));
+    }
+    let mut windows = [("five_hour", 300), ("seven_day", 10_080)]
+        .into_iter()
+        .filter_map(|(key, minutes)| {
+            window(
+                &value[key],
+                minutes,
+                &["utilization", "used_percentage", "usedPercent"],
+            )
+        })
+        .collect::<Vec<_>>();
+    if windows.is_empty() {
+        return Err(FetchError::unavailable(
+            "No Claude subscription usage available for this account.",
+        ));
+    }
+    // A model's own weekly cap, such as Fable's, sits beside the plan's.
+    for limit in value["limits"].as_array().into_iter().flatten() {
+        if limit["kind"] != "weekly_scoped" {
+            continue;
+        }
+        let Some(name) = limit["scope"]["model"]["display_name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+        else {
+            continue;
+        };
+        if let Some(mut window) = window(limit, 10_080, &["percent"]) {
+            window.scope = Some(name.into());
+            windows.push(window);
+        }
+    }
+    Ok(Snapshot {
+        windows,
+        updated_at: now_ms(),
+        extra_usage: claude_spend(&value["spend"]),
+        ..Default::default()
+    })
+}
+fn claude_spend(spend: &Value) -> Option<Amount> {
+    if spend["enabled"] != true {
+        return None;
+    }
+    let money = |raw: &Value| {
+        let minor = raw["amount_minor"].as_f64().filter(|n| n.is_finite())?;
+        let exponent = raw["exponent"].as_i64().unwrap_or(2).clamp(0, 6) as i32;
+        Some(minor / 10f64.powi(exponent))
+    };
+    Some(Amount {
+        used: money(&spend["used"])?,
+        limit: money(&spend["limit"]),
+        unit: spend["used"]["currency"].as_str().unwrap_or("USD").into(),
+    })
+}
+/// The windows in Claude Code's `rate_limit_event`. Its utilization is a
+/// fraction, where the usage API reports a percent.
+pub fn live_windows(info: &Value) -> Vec<Window> {
+    let mut windows: Vec<Window> = [("five_hour", 300), ("seven_day", 10_080)]
+        .into_iter()
+        .filter_map(|(key, minutes)| {
+            let raw = &info["unifiedWindows"][key];
+            let fraction = raw["utilization"].as_f64().filter(|n| n.is_finite())?;
+            Some(Window::new(
+                (fraction * 100.).clamp(0., 100.),
+                minutes,
+                timestamp(&raw["resetsAt"]),
+            ))
+        })
+        .collect();
+    windows.sort_by_key(|w| w.minutes);
+    windows
 }
 
 fn config_dir() -> Option<PathBuf> {

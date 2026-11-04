@@ -20,14 +20,10 @@ pub enum AuthAction {
     SignOut,
 }
 pub fn arguments(kind: Kind, action: AuthAction) -> Option<&'static [&'static str]> {
-    match (kind, action) {
-        (Kind::Claude | Kind::Devin, AuthAction::SignIn) => Some(&["auth", "login"]),
-        (Kind::Claude | Kind::Devin, AuthAction::SignOut) => Some(&["auth", "logout"]),
-        (Kind::Codex | Kind::Cursor, AuthAction::SignIn) => Some(&["login"]),
-        (Kind::Codex | Kind::Cursor, AuthAction::SignOut) => Some(&["logout"]),
-        (Kind::Grok, AuthAction::SignIn) => Some(&["login", "--oauth"]),
-        (Kind::Fx, AuthAction::SignIn) => Some(&["login", "vercel"]),
-        _ => None,
+    let login = kind.spec().login?;
+    match action {
+        AuthAction::SignIn => Some(login.sign_in),
+        AuthAction::SignOut => login.sign_out,
     }
 }
 /// The CLI opens its browser and owns credential writes. Never relay its URLs,

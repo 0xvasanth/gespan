@@ -65,7 +65,7 @@ mod tool_tests {
         let frames = sent(out);
         assert_eq!(frames.len(), 1, "{frames:?}");
         assert_eq!(frames[0]["type"], "user");
-        assert!(protocol.claude_prompt_sent);
+        assert!(protocol.claude.prompt_sent);
     }
 
     #[test]
@@ -93,7 +93,7 @@ mod tool_tests {
         let (mut protocol, mut out) = mounted_first(5203);
         protocol.claude_mcp_tick(&mut out).unwrap();
         assert!(out.is_empty(), "too soon to give up");
-        protocol.claude_mcp = ClaudeMcp::Waiting(Instant::now() - CLAUDE_MCP_WAIT);
+        protocol.claude.mcp = ClaudeMcp::Waiting(Instant::now() - CLAUDE_MCP_WAIT);
         protocol.claude_mcp_tick(&mut out).unwrap();
         prompt_followed(&protocol, &mut out);
     }
@@ -179,15 +179,15 @@ impl Protocol {
     /// Mounts the tool endpoint first, so the prompt's turn can use it. Over
     /// the control channel, the token reaches neither argv nor env.
     pub(super) fn claude_prompt(&mut self, stdin: &mut impl Write) -> Result<(), String> {
-        if self.claude_prompt_sent {
+        if self.claude.prompt_sent {
             return Ok(());
         }
         if let Some(access) = self.access.take() {
             write_json(stdin, access.claude_control(CLAUDE_MCP))?;
-            self.claude_mcp = ClaudeMcp::Waiting(Instant::now());
+            self.claude.mcp = ClaudeMcp::Waiting(Instant::now());
             return Ok(());
         }
-        if matches!(self.claude_mcp, ClaudeMcp::Waiting(_)) {
+        if matches!(self.claude.mcp, ClaudeMcp::Waiting(_)) {
             return Ok(());
         }
         let prompt = if self.request.settings.effort.as_deref() == Some("ultrathink") {
@@ -204,7 +204,7 @@ impl Protocol {
             json!({"type":"user","session_id":"","parent_tool_use_id":null,
                 "message":{"role":"user","content":self.request.claude_content(&prompt)?}}),
         )?;
-        self.claude_prompt_sent = true;
+        self.claude.prompt_sent = true;
         self.follow_up_ready = true;
         Ok(())
     }
@@ -218,16 +218,16 @@ impl Protocol {
         if response["subtype"] != "success" {
             tracing::warn!("Claude refused the tool endpoint");
         }
-        self.claude_mcp = ClaudeMcp::Settled;
+        self.claude.mcp = ClaudeMcp::Settled;
         self.claude_prompt(stdin)
     }
 
     /// A CLI that never answers still gets its prompt, with no tools.
     fn claude_mcp_tick(&mut self, stdin: &mut impl Write) -> Result<(), String> {
-        if let ClaudeMcp::Waiting(since) = self.claude_mcp {
+        if let ClaudeMcp::Waiting(since) = self.claude.mcp {
             if since.elapsed() >= CLAUDE_MCP_WAIT {
                 tracing::warn!("Claude did not answer the tool endpoint request");
-                self.claude_mcp = ClaudeMcp::Settled;
+                self.claude.mcp = ClaudeMcp::Settled;
                 self.claude_prompt(stdin)?;
             }
         }
@@ -248,14 +248,14 @@ impl Protocol {
         } else if self.request.kind == Kind::Claude {
             // The desktop adapter proceeds after eight seconds even when older
             // CLIs never acknowledge the initialize control request.
-            if !self.claude_prompt_sent && started.elapsed() >= Duration::from_secs(8) {
+            if !self.claude.prompt_sent && started.elapsed() >= Duration::from_secs(8) {
                 self.claude_prompt(stdin)?;
             }
             self.sync_background(&mut events);
-            if self.claude_result_seen
+            if self.claude.result_seen
                 && self.activities.claude_background.is_empty()
                 && self.activities.claude_pending.is_empty()
-                && self.claude_resume_at.is_none_or(|at| Instant::now() >= at)
+                && self.claude.resume_at.is_none_or(|at| Instant::now() >= at)
             {
                 self.done = true;
                 events.push(Event::Done);
@@ -296,7 +296,7 @@ impl Protocol {
                     stdin,
                     json!({"type":"control_request","request_id":interrupt_id,"request":{"subtype":"interrupt"}}),
                 )?;
-                Ok(self.claude_prompt_sent)
+                Ok(self.claude.prompt_sent)
             }
             Kind::Claude => {
                 // Deny outstanding permissions and skip questions before interrupt,
@@ -330,7 +330,7 @@ impl Protocol {
                     stdin,
                     json!({"type":"control_request","request_id":interrupt_id,"request":{"subtype":"interrupt"}}),
                 )?;
-                Ok(self.claude_prompt_sent)
+                Ok(self.claude.prompt_sent)
             }
             kind if kind.is_pi() => {
                 self.pi_cancel(stdin)?;

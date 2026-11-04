@@ -44,7 +44,7 @@ pub fn native_prompt(kind: Kind, text: &str) -> String {
 /// OMP and Devin parse a leading slash command themselves, so app context
 /// ahead of it would turn the command into an ordinary message.
 pub fn is_raw_command(kind: Kind, prompt: &str) -> bool {
-    matches!(kind, Kind::Omp | Kind::Devin)
+    kind.spec().features.raw_slash_commands
         && native_prompt(kind, prompt).trim_start().starts_with('/')
 }
 
@@ -57,7 +57,7 @@ pub fn prepare_prompt(
     attachments: &[PathBuf],
 ) -> Result<String, String> {
     let text = native_prompt(kind, text);
-    if matches!(kind, Kind::Omp | Kind::Devin) && text.trim_start().starts_with('/') {
+    if kind.spec().features.raw_slash_commands && text.trim_start().starts_with('/') {
         crate::composer::validate_attachments(attachments)?;
         return Ok(text);
     }

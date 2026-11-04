@@ -221,7 +221,7 @@ impl Accounts {
 
     pub(crate) fn settings_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut rows = Vec::new();
-        for kind in accounts::PROVIDERS {
+        for kind in accounts::providers() {
             let accounts = self.book.list(kind);
             let count = accounts.len();
             let adding = self.editor.as_ref().is_some_and(|e| {

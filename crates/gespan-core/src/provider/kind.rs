@@ -1,4 +1,5 @@
 //! Provider identity is shared by discovery, persistence, pickers and transports.
+use super::spec::Family;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     Codex,
@@ -30,36 +31,10 @@ impl Kind {
         Self::Devin,
     ];
     pub fn id(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-            Self::Cursor => "cursor",
-            Self::Grok => "grok",
-            Self::OpenCode => "opencode",
-            Self::Antigravity => "antigravity",
-            Self::Pi => "pi",
-            Self::Omp => "omp",
-            Self::Fx => "fx",
-            Self::Hermes => "hermes",
-            Self::Devin => "devin",
-            Self::Kiro => "kiro",
-        }
+        self.spec().id
     }
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Codex => "Codex",
-            Self::Claude => "Claude Code",
-            Self::Cursor => "Cursor",
-            Self::Grok => "Grok Build",
-            Self::OpenCode => "OpenCode",
-            Self::Antigravity => "Antigravity",
-            Self::Pi => "Pi",
-            Self::Omp => "omp",
-            Self::Fx => "fx",
-            Self::Hermes => "Hermes Agent",
-            Self::Devin => "Devin",
-            Self::Kiro => "Kiro CLI",
-        }
+        self.spec().label
     }
     pub fn parse(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.id() == id)
@@ -68,34 +43,18 @@ impl Kind {
         Self::parse(id).unwrap_or(Self::Codex)
     }
     pub fn binary_name(self) -> &'static str {
-        match self {
-            Self::Cursor => "cursor-agent",
-            Self::Antigravity => "agy_acp_server.par",
-            Self::Kiro => "kiro-cli",
-            _ => self.id(),
-        }
+        self.spec().binary
     }
     pub(super) fn install_dirs(self) -> &'static [&'static str] {
-        match self {
-            Self::Grok => &[".grok/bin"],
-            Self::OpenCode => &[".opencode/bin"],
-            Self::Fx => &[".fx/bin"],
-            Self::Antigravity => &[".local/share/agy-acp"],
-            Self::Hermes => &[
-                ".hermes/hermes-agent/venv/bin",
-                ".hermes/hermes-agent/.venv/bin",
-            ],
-            _ => &[],
-        }
+        self.spec().install_dirs
     }
+    /// Every provider but Codex, Claude and the Pi family. OpenCode counts:
+    /// its catalog and model handling follow the ACP providers'.
     pub fn is_acp(self) -> bool {
-        !matches!(self, Self::Codex | Self::Claude | Self::Pi | Self::Omp)
+        matches!(self.family(), Family::Acp | Family::OpenCode)
     }
     pub fn is_pi(self) -> bool {
-        matches!(self, Self::Pi | Self::Omp)
-    }
-    pub fn subscription_usage(self) -> bool {
-        matches!(self, Self::Codex | Self::Claude)
+        self.family() == Family::Pi
     }
     /// What the user sees when this provider's CLI cannot be found.
     pub fn missing_binary_message(self) -> String {
@@ -118,57 +77,13 @@ impl Kind {
         }
     }
     pub fn login_hint(self) -> &'static str {
-        match self {
-            Self::Codex => "codex login",
-            Self::Claude => "claude auth login",
-            Self::Cursor => "agent login",
-            Self::Grok => "grok login",
-            Self::OpenCode => "opencode auth login",
-            Self::Antigravity => "agy",
-            Self::Pi => "pi",
-            Self::Omp => "omp",
-            Self::Fx => "fx login",
-            Self::Hermes => "hermes model",
-            Self::Devin => "devin auth login",
-            Self::Kiro => "kiro-cli login",
-        }
+        self.spec().login_hint
     }
-    /// The name shown when the binary is missing, matching the React harness map.
     fn install_name(self) -> &'static str {
-        match self {
-            Self::Codex => "Codex CLI",
-            Self::Claude => "Claude Code CLI",
-            Self::Cursor => "Cursor CLI",
-            Self::Grok => "Grok Build CLI",
-            Self::OpenCode => "OpenCode CLI",
-            Self::Antigravity => "Antigravity ACP server (agy_acp_server.par)",
-            Self::Pi => "Pi CLI",
-            Self::Omp => "omp CLI",
-            Self::Fx => "fx CLI",
-            Self::Hermes => "Hermes Agent CLI",
-            Self::Devin => "Devin CLI",
-            Self::Kiro => "Kiro CLI",
-        }
+        self.spec().install_name
     }
-    /// The install command React shows in its hint, when it has one.
     fn install_command(self) -> Option<&'static str> {
-        match self {
-            Self::Grok => Some("curl -fsSL https://x.ai/cli/install.sh | bash"),
-            Self::Pi => Some("npm i -g @earendil-works/pi-coding-agent"),
-            Self::Omp => Some("curl -fsSL https://omp.sh/install | sh"),
-            Self::Fx => Some("curl -fsSL https://fx.sh/setup.sh | bash"),
-            Self::Hermes => {
-                Some("Install from hermes-agent.nousresearch.com, then run hermes model")
-            }
-            Self::Kiro => {
-                Some("curl -fsSL https://cli.kiro.dev/install | bash, then kiro-cli login")
-            }
-            #[cfg(windows)]
-            Self::Devin => Some("irm https://static.devin.ai/cli/setup.ps1 | iex"),
-            #[cfg(not(windows))]
-            Self::Devin => Some("curl -fsSL https://cli.devin.ai/install.sh | bash"),
-            Self::Codex | Self::Claude | Self::Cursor | Self::OpenCode | Self::Antigravity => None,
-        }
+        self.spec().install_command
     }
     /// The same "not found" copy React uses. React only checks that a binary
     /// exists, so the hint never mentions signing in.

@@ -1,7 +1,21 @@
 //! Kiro plan credits, read from the CLI's own `/usage` report.
-use super::{now_ms, title_case, Amount, FetchError, Snapshot, Window};
+use super::{now_ms, title_case, Amount, FetchError, Snapshot, Source, Window};
 
-pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError> {
+pub(crate) struct Kiro;
+impl Source for Kiro {
+    fn probe(
+        &self,
+        profile: &crate::accounts::Profile,
+        _model: Option<&str>,
+    ) -> Result<Snapshot, FetchError> {
+        fetch_for(profile)
+    }
+    fn parse(&self, raw: &str) -> Result<Snapshot, FetchError> {
+        parse(raw)
+    }
+}
+
+fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError> {
     let output = crate::accounts::login::cli_output(
         crate::provider::Kind::Kiro,
         &["chat", "--no-interactive", "/usage"],
@@ -23,7 +37,7 @@ pub(super) fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, 
 /// Estimated Usage | resets on 2026-12-01 | KIRO FREE
 /// Credits (2.41 of 50 covered in plan), 4.8%
 /// ```
-pub(super) fn parse(output: &str) -> Result<Snapshot, FetchError> {
+fn parse(output: &str) -> Result<Snapshot, FetchError> {
     static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static CREDITS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let output = ANSI

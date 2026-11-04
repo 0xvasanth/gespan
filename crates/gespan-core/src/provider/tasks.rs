@@ -620,10 +620,10 @@ impl Protocol {
                 if subtype == "task_notification" {
                     let background = self.activities.claude_background.remove(id).is_some();
                     self.activities.claude_pending.remove(id);
-                    if background && self.claude_result_seen {
+                    if background && self.claude.result_seen {
                         // Claude may wake itself after a background result. The
                         // desktop adapter leaves a 15s window for that follow-up.
-                        self.claude_resume_at = Some(Instant::now() + Duration::from_secs(15));
+                        self.claude.resume_at = Some(Instant::now() + Duration::from_secs(15));
                         if let Some(summary) =
                             text(&value["summary"]).or_else(|| text(&value["description"]))
                         {
@@ -1111,7 +1111,7 @@ impl Protocol {
     /// Once Claude has yielded, tell the UI which tasks the turn still waits
     /// on, and clear the list when Claude picks the thread back up.
     pub(super) fn sync_background(&mut self, events: &mut Vec<Event>) {
-        let waiting = if self.claude_result_seen && !self.done {
+        let waiting = if self.claude.result_seen && !self.done {
             self.activities.claude_tasks.clone()
         } else {
             Vec::new()

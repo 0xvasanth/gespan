@@ -14,7 +14,7 @@ impl SettingsView {
             center.update(cx, |center, cx| {
                 center.mask_emails = p.mask_emails;
                 center.show_remaining = p.show_remaining_usage;
-                for kind in gespan_core::accounts::PROVIDERS {
+                for kind in gespan_core::accounts::providers() {
                     center.load_provider(kind, false, cx);
                 }
                 center.settings_rows(cx)

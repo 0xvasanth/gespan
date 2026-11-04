@@ -10,10 +10,10 @@ impl Protocol {
             .or_else(|| frame.get("quotaLimits"))
             .or_else(|| frame["apiErrorParams"].get("rate_limit_info"));
         if let Some(limit) = info.and_then(Limit::from_claude_info) {
-            self.claude_usage_limit = Some(limit);
+            self.claude.usage_limit = Some(limit);
         }
-        if self.claude_usage_limit.is_none() {
-            self.claude_usage_limit = Limit::from_error(error).or_else(|| {
+        if self.claude.usage_limit.is_none() {
+            self.claude.usage_limit = Limit::from_error(error).or_else(|| {
                 frame["errors"]
                     .as_array()?
                     .iter()
@@ -21,7 +21,7 @@ impl Protocol {
                     .find_map(Limit::from_error)
             });
         }
-        if self.claude_usage_limit.is_some() {
+        if self.claude.usage_limit.is_some() {
             "Claude Code reached its usage limit. Choose another available model or retry when the limit resets.".into()
         } else {
             error.into()
@@ -66,10 +66,10 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("usage limit"));
         assert_eq!(
-            p.claude_usage_limit.as_ref().unwrap().resets_at,
+            p.claude.usage_limit.as_ref().unwrap().resets_at,
             Some(1_792_600_200_000)
         );
-        assert!(!p.claude_usage_limit.unwrap().resume_at_reset);
+        assert!(!p.claude.usage_limit.unwrap().resume_at_reset);
     }
 
     #[test]
@@ -86,7 +86,7 @@ mod tests {
                 .frame(frame, &mut Vec::new())
                 .unwrap_err()
                 .contains("usage limit"));
-            assert!(p.claude_usage_limit.is_some());
+            assert!(p.claude.usage_limit.is_some());
         }
     }
 
@@ -99,13 +99,13 @@ mod tests {
             json!({"status":"rejected","isUsingOverage":true}),
             json!({"status":"rejected","rateLimitType":"overage"}),
         ] {
-            p.claude_usage_limit = Some(Limit::default());
+            p.claude.usage_limit = Some(Limit::default());
             p.frame(
                 json!({"type":"rate_limit_event","rate_limit_info":info}),
                 &mut out,
             )
             .unwrap();
-            assert!(p.claude_usage_limit.is_none());
+            assert!(p.claude.usage_limit.is_none());
         }
         p.frame(
             json!({"type":"rate_limit_event","parent_tool_use_id":"child",
@@ -114,7 +114,7 @@ mod tests {
             &mut out,
         )
         .unwrap();
-        assert!(p.claude_usage_limit.is_none());
+        assert!(p.claude.usage_limit.is_none());
         assert_eq!(
             p.frame(
                 json!({"type":"assistant","error":"authentication_failed"}),
@@ -123,7 +123,7 @@ mod tests {
             .unwrap_err(),
             "authentication_failed"
         );
-        assert!(p.claude_usage_limit.is_none());
+        assert!(p.claude.usage_limit.is_none());
     }
 
     #[cfg(unix)]

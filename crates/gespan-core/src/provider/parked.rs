@@ -453,7 +453,7 @@ fn park(wire: Wire, mut protocol: Protocol, held: bool) {
     protocol.emitted.clear();
     protocol.tools.clear();
     protocol.active_compaction = None;
-    protocol.claude_tools.clear();
+    protocol.claude.tools.clear();
     protocol.request.prompt.clear();
     protocol.request.settings.attachments.clear();
     protocol.request.settings.turns.clear();
@@ -504,7 +504,7 @@ fn sweep() {
 pub(super) fn settle_cancelled(mut wire: Wire, mut protocol: Protocol) {
     if LIMIT.load(Ordering::Relaxed) == 0
         || (protocol.request.kind == Kind::Codex && protocol.active_turn.is_none())
-        || (protocol.request.kind == Kind::Claude && !protocol.claude_prompt_sent)
+        || (protocol.request.kind == Kind::Claude && !protocol.claude.prompt_sent)
     {
         return;
     }

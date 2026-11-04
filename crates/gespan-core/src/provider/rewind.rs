@@ -35,7 +35,7 @@ fn transport_error(message: String, mutating: bool) -> RewindError {
 }
 
 pub fn supports_rewind(kind: Kind) -> bool {
-    matches!(kind, Kind::Codex | Kind::Pi | Kind::Omp | Kind::OpenCode)
+    kind.spec().features.rewind
 }
 
 /// Runs on a worker, after the caller has reserved its conversation. Returns the

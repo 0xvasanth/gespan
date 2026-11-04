@@ -16,7 +16,7 @@ impl Book {
     pub(crate) fn from_desktop(accounts: &Value, selections: &Value) -> Option<Self> {
         let stored = accounts.as_object()?;
         let mut book = Self::default();
-        for kind in PROVIDERS {
+        for kind in providers() {
             for value in stored
                 .get(kind.id())
                 .and_then(Value::as_array)
@@ -45,7 +45,7 @@ impl Book {
         }
         if let Some(selections) = selections.as_object() {
             for (project, selected) in selections {
-                for kind in PROVIDERS {
+                for kind in providers() {
                     if let Some(id) = selected[kind.id()]
                         .as_str()
                         .filter(|id| book.exists(kind, id))
@@ -61,7 +61,7 @@ impl Book {
 
     pub(crate) fn desktop_overrides(&self, source: &Self) -> DesktopOverrides {
         let mut changes = DesktopOverrides::default();
-        for kind in PROVIDERS {
+        for kind in providers() {
             let desired = self.list(kind);
             let previous = source.list(kind);
             for account in &desired {

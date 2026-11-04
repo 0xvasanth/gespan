@@ -27,17 +27,7 @@ pub(crate) fn bind(cx: &mut App) {
 use crate::accounts::{Cached as CachedUsage, Key};
 
 fn index(kind: Kind) -> usize {
-    match kind {
-        Kind::Codex => 0,
-        Kind::Claude => 1,
-        _ => {
-            2 + Kind::ALL
-                .iter()
-                .filter(|k| !matches!(k, Kind::Codex | Kind::Claude))
-                .position(|k| *k == kind)
-                .unwrap()
-        }
-    }
+    Kind::ALL.iter().position(|k| *k == kind).unwrap()
 }
 
 /// Its own cached surface: clock ticks and probe completions don't rebuild chat.
@@ -1053,7 +1043,7 @@ mod tests {
         });
         window
             .update(cx, |footer, w, cx| {
-                footer.cache[0].complete(Ok(Snapshot {
+                footer.cache[index(Kind::Codex)].complete(Ok(Snapshot {
                     windows: vec![usage::Window::new(28., 300, None)],
                     updated_at: usage::now_ms(),
                     ..Default::default()
@@ -1080,7 +1070,7 @@ mod tests {
                 footer.provider(Kind::Claude, cx);
                 assert!(footer.cache[index(footer.kind)].snapshot.is_none());
                 // A late Codex response belongs to Codex, while Claude stays in view.
-                footer.cache[0].complete(Ok(Snapshot {
+                footer.cache[index(Kind::Codex)].complete(Ok(Snapshot {
                     windows: vec![usage::Window::new(42., 300, None)],
                     updated_at: usage::now_ms(),
                     ..Default::default()
@@ -1088,7 +1078,12 @@ mod tests {
                 assert!(footer.cache[index(footer.kind)].snapshot.is_none());
                 footer.provider(Kind::Codex, cx);
                 assert_eq!(
-                    footer.cache[0].snapshot.as_ref().unwrap().windows[0].used_percent,
+                    footer.cache[index(Kind::Codex)]
+                        .snapshot
+                        .as_ref()
+                        .unwrap()
+                        .windows[0]
+                        .used_percent,
                     42.
                 );
             })

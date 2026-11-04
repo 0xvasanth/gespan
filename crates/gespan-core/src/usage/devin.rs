@@ -1,3 +1,5 @@
+use super::{now_ms, FetchError, Snapshot, Source, Window};
+use crate::provider::Kind;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -282,6 +284,68 @@ fn extra_usage_balance(plan: &Value, info: &Value) -> Option<i64> {
     }
 }
 
+pub(crate) struct Devin;
+impl Source for Devin {
+    fn probe(
+        &self,
+        _profile: &crate::accounts::Profile,
+        _model: Option<&str>,
+    ) -> Result<Snapshot, FetchError> {
+        fetch()
+    }
+}
+fn fetch() -> Result<Snapshot, FetchError> {
+    let version =
+        crate::accounts::login::cli_output(Kind::Devin, &["--version"], &Default::default())
+            .map_err(FetchError::unavailable)?;
+    let version = regex::Regex::new(r"\d+(?:\.\d+)+")
+        .unwrap()
+        .find(&version)
+        .ok_or_else(|| FetchError::failed("Devin CLI version unknown"))?
+        .as_str();
+    let result = fetch_sync(env!("CARGO_PKG_VERSION"), version).map_err(FetchError::failed)?;
+    let Some(usage) = result.usage else {
+        let message = result
+            .error
+            .unwrap_or_else(|| "Devin usage unavailable".into());
+        return Err(if result.status == "unavailable" {
+            FetchError::unavailable(message)
+        } else {
+            FetchError::failed(message)
+        });
+    };
+    let mut windows = Vec::new();
+    for (remaining, resets_at, minutes) in [
+        (usage.daily_remaining_percent, usage.daily_resets_at, 1440),
+        (
+            usage.weekly_remaining_percent,
+            usage.weekly_resets_at,
+            10080,
+        ),
+    ] {
+        if let Some(remaining) = remaining.filter(|n| n.is_finite()) {
+            windows.push(Window::new(
+                (100. - remaining).clamp(0., 100.),
+                minutes,
+                resets_at,
+            ));
+        }
+    }
+    Ok(Snapshot {
+        windows,
+        updated_at: now_ms(),
+        extra_usage_balance: usage
+            .extra_usage_balance_micros
+            .map(|n| n as f64 / 1_000_000.),
+        identity: Some(crate::accounts::Identity {
+            name: usage.name,
+            email: usage.email,
+            plan: usage.plan,
+            organization: None,
+        }),
+        ..Default::default()
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
