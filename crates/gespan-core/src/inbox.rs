@@ -763,6 +763,25 @@ fn collect_repo_items(
     }
 }
 
+/// The fetched items automations may treat as new events. An item with a
+/// creation time is always offered, because its age against each automation
+/// decides that, so items created while Gespan was closed, asleep or between
+/// projects still run. Items without one are offered when they first appear.
+pub fn automation_candidates(items: &[Item], appeared: Vec<Item>) -> Vec<Item> {
+    let mut candidates: Vec<Item> = items
+        .iter()
+        .filter(|item| timestamp_ms(&item.created_at) != 0)
+        .cloned()
+        .collect();
+    let mut keys: HashSet<String> = candidates.iter().map(Item::key).collect();
+    for item in appeared {
+        if keys.insert(item.key()) {
+            candidates.push(item);
+        }
+    }
+    candidates
+}
+
 /// Provider baselines and revisions are separate from the user's read state.
 /// Startup and query changes never trigger automations for an existing backlog.
 #[derive(Default)]
@@ -1563,6 +1582,81 @@ mod notification_tests {
         assert!(tracker
             .observe(&snapshot(vec![item(2, "github")]), "scope".into())
             .is_empty());
+    }
+
+    #[test]
+    fn automation_candidates_offer_dated_items_even_on_the_first_fetch() {
+        // The first fetch after startup only baselines the tracker, so an
+        // issue opened while Gespan was closed never "appears". It is still
+        // offered to automations because it carries its creation time.
+        let mut tracker = NotificationTracker::default();
+        let mut opened_overnight = item(1, "github");
+        opened_overnight.created_at = "2026-10-21T09:00:00Z".into();
+        let undated = item(2, "linear");
+        let first = snapshot(vec![opened_overnight, undated]);
+        let appeared = tracker.observe(&first, "scope".into());
+        assert!(appeared.is_empty());
+        let offered = automation_candidates(&first.items, appeared);
+        assert_eq!(
+            offered.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![1]
+        );
+
+        // An undated item is offered once, when it first appears, and a dated
+        // one that also appeared is not offered twice.
+        let mut new_dated = item(3, "github");
+        new_dated.created_at = "2026-10-21T10:30:00Z".into();
+        let second = snapshot(vec![item(2, "linear"), item(4, "linear"), new_dated]);
+        let appeared = tracker.observe(&second, "scope".into());
+        let mut offered: Vec<_> = automation_candidates(&second.items, appeared)
+            .iter()
+            .map(|i| i.number)
+            .collect();
+        offered.sort_unstable();
+        assert_eq!(offered, vec![3, 4]);
+    }
+
+    #[test]
+    fn automation_candidates_survive_a_project_switch_and_a_recovered_fetch() {
+        // Switching projects re-baselines the tracker, and a repository that
+        // failed has no baseline when it recovers: neither may hide an item
+        // that was opened meanwhile.
+        let mut tracker = NotificationTracker::default();
+        let mut dated = item(1, "github");
+        dated.created_at = "2026-10-21T09:00:00Z".into();
+        tracker.observe(&snapshot(vec![]), "one".into());
+        let switched = snapshot(vec![dated.clone()]);
+        let appeared = tracker.observe(&switched, "two".into());
+        assert!(appeared.is_empty());
+        assert_eq!(automation_candidates(&switched.items, appeared).len(), 1);
+
+        // One repository loads while another fails; the failed one has no
+        // baseline, so when it recovers its items do not "appear".
+        let mut tracker = NotificationTracker::default();
+        let (ok, broken) = ("github:/p:acme/ok:issue", "github:/p:acme/app:issue");
+        let mut partial = snapshot(vec![]);
+        partial.fetched.insert(ok.into());
+        partial.repo_errors.insert(broken.into(), "HTTP 502".into());
+        assert!(tracker.observe(&partial, "scope".into()).is_empty());
+        let mut recovered = snapshot(vec![dated]);
+        recovered
+            .fetched
+            .extend([ok.to_string(), broken.to_string()]);
+        recovered
+            .item_scopes
+            .insert(recovered.items[0].key(), broken.into());
+        let appeared = tracker.observe(&recovered, "scope".into());
+        assert!(appeared.is_empty(), "backlog of a recovered repository");
+        assert_eq!(automation_candidates(&recovered.items, appeared).len(), 1);
+        // An item in a repository that already had a baseline does appear.
+        let mut fresh = item(2, "github");
+        fresh.created_at = "2026-10-21T11:00:00Z".into();
+        let mut later = recovered.clone();
+        later.items.push(fresh.clone());
+        later.item_scopes.insert(fresh.key(), ok.into());
+        let appeared = tracker.observe(&later, "scope".into());
+        assert_eq!(appeared.len(), 1);
+        assert_eq!(automation_candidates(&later.items, appeared).len(), 2);
     }
 
     #[test]

@@ -3,6 +3,8 @@ mod actions;
 mod app_commands;
 mod app_views;
 mod automation_runs;
+#[cfg(test)]
+mod automation_runs_tests;
 mod classic_sidebar;
 #[cfg(test)]
 mod classic_surface_tests;

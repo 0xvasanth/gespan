@@ -151,6 +151,9 @@ pub(crate) struct Inbox {
     /// Refreshes stay away from the real gh and trackers unless a test opts in.
     #[cfg(test)]
     live_refresh: bool,
+    /// What a test's providers return to an offline refresh.
+    #[cfg(test)]
+    pub(crate) fetched: Snapshot,
     active: bool,
     refresh_queued: bool,
     notifications: model::NotificationTracker,
@@ -390,6 +393,8 @@ impl Inbox {
             offline: Offline::Live,
             #[cfg(test)]
             live_refresh: false,
+            #[cfg(test)]
+            fetched: Snapshot::default(),
             active: false,
             refresh_queued: false,
             notifications: model::NotificationTracker::default(),
@@ -575,11 +580,15 @@ impl Inbox {
         let live = true;
         #[cfg(test)]
         let live = self.live_refresh;
+        #[cfg(not(test))]
+        let fetched = Snapshot::default();
+        #[cfg(test)]
+        let fetched = self.fetched.clone();
         let task = cx.background_executor().spawn(async move {
             let snapshot = if live {
                 service.list(&projects, &state)
             } else {
-                Default::default()
+                fetched
             };
             let sessions = locked(&store)
                 .and_then(|db| db.sessions())
@@ -610,6 +619,7 @@ impl Inbox {
                     }
                 }
                 let appeared = this.notifications.observe(&snapshot, scope);
+                let candidates = model::automation_candidates(&snapshot.items, appeared);
                 // A temporary outage must not erase the last usable provider list.
                 for provider in snapshot.errors.keys() {
                     snapshot.items.extend(
@@ -647,7 +657,7 @@ impl Inbox {
                     this.state.source = source.into();
                 }
                 this.save();
-                cx.emit(Event::ItemsChanged(appeared));
+                cx.emit(Event::ItemsChanged(candidates));
                 if this.selected.is_some()
                     && this
                         .item()

@@ -22,6 +22,7 @@ pub(super) struct State {
     reserved: HashSet<i64>,
     writes: Option<gpui::Task<()>>,
     event_retries: HashMap<String, gespan_core::inbox::Item>,
+    waiting_events: HashMap<String, gespan_core::inbox::Item>,
     events_polling: bool,
     retry_revision: Arc<AtomicU64>,
     pub session_automations: HashMap<i64, String>,
@@ -41,6 +42,7 @@ impl Default for State {
             reserved: HashSet::new(),
             writes: None,
             event_retries: HashMap::new(),
+            waiting_events: HashMap::new(),
             events_polling: false,
             retry_revision: Arc::new(AtomicU64::new(0)),
             session_automations: HashMap::new(),
@@ -135,6 +137,7 @@ impl Shell {
             self.initialize_automations(cx);
             return;
         };
+        self.claim_inbox_events(cx);
         if self.automation_state.polling {
             return;
         }
@@ -182,58 +185,45 @@ impl Shell {
         .detach();
     }
 
+    /// Deliveries wait, merged by item, while Hold is on or a claim is in
+    /// flight: an item without a creation time is offered only once.
     pub(super) fn inbox_automation_events(
         &mut self,
         items: Vec<gespan_core::inbox::Item>,
         cx: &mut Context<Self>,
     ) {
+        let waiting = &mut self.automation_state.waiting_events;
         for item in items {
-            self.automation_state.event_retries.insert(item.key(), item);
+            waiting.insert(item.key(), item);
         }
-        if self.automation_state.event_retries.len() > 500 {
-            let mut items = self
-                .automation_state
-                .event_retries
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
+        if waiting.len() > 500 {
+            let mut items: Vec<_> = std::mem::take(waiting).into_values().collect();
             items.sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
-            self.automation_state.event_retries = items
-                .into_iter()
-                .take(500)
-                .map(|item| (item.key(), item))
-                .collect();
+            items.truncate(500);
+            *waiting = items.into_iter().map(|item| (item.key(), item)).collect();
         }
-        if self.automation_state.events_polling || self.automation_state.event_retries.is_empty() {
+        self.claim_inbox_events(cx);
+    }
+
+    fn claim_inbox_events(&mut self, cx: &mut Context<Self>) {
+        // Items stay waiting while held and are claimed on Resume.
+        if self.automation_state.events_polling || crate::hold::active(cx) {
             return;
         }
         let Some(service) = self.automation_state.service.clone() else {
             return;
         };
+        let mut waiting = std::mem::take(&mut self.automation_state.waiting_events);
+        for (key, item) in &self.automation_state.event_retries {
+            waiting.entry(key.clone()).or_insert_with(|| item.clone());
+        }
+        let items: Vec<_> = waiting.into_values().collect();
+        if items.is_empty() {
+            return;
+        }
         self.automation_state.events_polling = true;
-        let items = self
-            .automation_state
-            .event_retries
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        let store = self.store.clone();
         let attempted = items.clone();
-        let revision = self
-            .automation_state
-            .retry_revision
-            .fetch_add(1, Ordering::SeqCst)
-            + 1;
-        let generation = self.automation_state.retry_revision.clone();
         let work = cx.background_executor().spawn(async move {
-            // Persist before claiming so a transient failure can retry after a restart.
-            let saved = serde_json::to_string(&items).map_err(|error| error.to_string())?;
-            {
-                let store = locked(&store)?;
-                if generation.load(Ordering::SeqCst) == revision {
-                    store.save_setting("native-automation-inbox-retries", &saved)?;
-                }
-            }
             let mut service = service_lock(&service)?;
             automations::claim_inbox_events_retry(&mut service, &items, now())
         });
@@ -243,54 +233,72 @@ impl Shell {
                 this.automation_state.events_polling = false;
                 match result {
                     Ok((runs, retry)) => {
-                        for item in attempted {
-                            this.automation_state.event_retries.remove(&item.key());
-                        }
-                        for item in retry {
-                            this.automation_state.event_retries.insert(item.key(), item);
-                        }
+                        this.set_event_retries(retry, cx);
                         for run in runs {
                             this.launch_automation(run, false, cx);
                         }
-                        let store = this.store.clone();
-                        let pending = this
-                            .automation_state
-                            .event_retries
-                            .values()
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        let revision = this
-                            .automation_state
-                            .retry_revision
-                            .fetch_add(1, Ordering::SeqCst)
-                            + 1;
-                        let generation = this.automation_state.retry_revision.clone();
-                        cx.background_executor()
-                            .spawn(async move {
-                                if let Ok(saved) = serde_json::to_string(&pending) {
-                                    let _ = locked(&store).and_then(|store| {
-                                        if generation.load(Ordering::SeqCst) == revision {
-                                            store.save_setting(
-                                                "native-automation-inbox-retries",
-                                                &saved,
-                                            )
-                                        } else {
-                                            Ok(())
-                                        }
-                                    });
-                                }
-                            })
-                            .detach();
                     }
                     Err(error) => {
                         tracing::warn!(%error, "automation inbox poll failed");
                         this.error = Some(format!("Could not evaluate Inbox automations: {error}"));
+                        // Kept across a restart, like a failed claim.
+                        this.set_event_retries(attempted, cx);
                         cx.notify();
+                        return;
                     }
+                }
+                if !this.automation_state.waiting_events.is_empty() {
+                    this.claim_inbox_events(cx);
                 }
             });
         })
         .detach();
+    }
+
+    /// Items whose claim failed are kept across restarts: one without a
+    /// creation time is offered by the Inbox only once.
+    fn set_event_retries(
+        &mut self,
+        mut retry: Vec<gespan_core::inbox::Item>,
+        cx: &mut Context<Self>,
+    ) {
+        retry.sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
+        retry.truncate(500);
+        let retries: HashMap<_, _> = retry.into_iter().map(|item| (item.key(), item)).collect();
+        if retries.len() == self.automation_state.event_retries.len()
+            && retries
+                .keys()
+                .all(|key| self.automation_state.event_retries.contains_key(key))
+        {
+            return;
+        }
+        self.automation_state.event_retries = retries;
+        let pending = self
+            .automation_state
+            .event_retries
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let store = self.store.clone();
+        let revision = self
+            .automation_state
+            .retry_revision
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let generation = self.automation_state.retry_revision.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(saved) = serde_json::to_string(&pending) {
+                    let _ = locked(&store).and_then(|store| {
+                        if generation.load(Ordering::SeqCst) == revision {
+                            store.save_setting("native-automation-inbox-retries", &saved)
+                        } else {
+                            Ok(())
+                        }
+                    });
+                }
+            })
+            .detach();
     }
 
     pub(super) fn launch_automation(
