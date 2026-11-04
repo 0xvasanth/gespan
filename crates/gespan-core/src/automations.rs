@@ -2703,4 +2703,490 @@ mod tests {
         assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
         assert!(service.claim_due(now).unwrap().is_empty());
     }
+
+    /// One item of every kind the Inbox lists, each the source of one event.
+    fn every_kind_of_item(
+        created_at: i64,
+    ) -> Vec<(&'static str, &'static str, crate::inbox::Item)> {
+        let at = rfc3339(created_at);
+        let item = |provider: &str, kind: &str, draft: bool, number: i64| crate::inbox::Item {
+            provider: provider.into(),
+            kind: kind.into(),
+            draft,
+            number,
+            id: format!("{provider}-{number}"),
+            repo: "acme/app".into(),
+            project_path: "/repo".into(),
+            title: format!("Item {number}"),
+            created_at: at.clone(),
+            ..Default::default()
+        };
+        vec![
+            (
+                "github",
+                "pull_request_opened",
+                item("github", "pr", false, 1),
+            ),
+            ("github", "draft_opened", item("github", "pr", true, 2)),
+            ("github", "issue_opened", item("github", "issue", false, 3)),
+            (
+                "gitlab",
+                "merge_request_opened",
+                item("gitlab", "pr", false, 4),
+            ),
+            ("gitlab", "issue_opened", item("gitlab", "issue", false, 5)),
+            (
+                "azuredevops",
+                "pull_request_appeared",
+                item("azuredevops", "pr", false, 6),
+            ),
+            (
+                "azuredevops",
+                "work_item_appeared",
+                item("azuredevops", "issue", false, 7),
+            ),
+            ("linear", "issue_created", item("linear", "issue", false, 8)),
+            ("jira", "issue_created", item("jira", "issue", false, 9)),
+        ]
+    }
+
+    #[test]
+    fn every_trigger_matches_exactly_its_own_kind_of_item_and_no_other() {
+        // The full trigger × item matrix: only the diagonal starts a run.
+        for (provider, event, _) in every_kind_of_item(0) {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let automation = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(provider, event),
+            );
+            let items: Vec<_> = every_kind_of_item(automation.events_since.unwrap())
+                .into_iter()
+                .map(|(_, _, item)| item)
+                .collect();
+            let claims = claim_inbox_events(&mut service, &items, now_millis()).unwrap();
+            assert_eq!(claims.len(), 1, "{provider} {event}: {claims:?}");
+            let run = &claims[0].run;
+            assert_eq!(run.event_kind.as_deref(), Some(provider));
+            assert_eq!(run.event.as_deref(), Some(event));
+            let expected = every_kind_of_item(0)
+                .into_iter()
+                .find(|(p, e, _)| *p == provider && *e == event)
+                .unwrap()
+                .2;
+            assert!(
+                run.prompt.as_deref().unwrap().contains(&expected.title),
+                "{provider} {event}"
+            );
+        }
+    }
+
+    #[test]
+    fn events_the_inbox_never_produces_never_match() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        for event in [
+            "pull_request_merged",
+            "pull_request_review_requested",
+            "issue_assigned",
+            "check_failed",
+        ] {
+            on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new("github", event),
+            );
+        }
+        let items: Vec<_> = every_kind_of_item(now_millis())
+            .into_iter()
+            .map(|(_, _, item)| item)
+            .collect();
+        assert!(claim_inbox_events(&mut service, &items, now_millis())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn repository_filters_match_any_listed_repository_ignoring_case_and_spaces() {
+        let cases: [(Vec<&str>, &str, &str, bool); 7] = [
+            (vec![], "", "acme/app", true),
+            (vec!["acme/app"], "", "acme/app", true),
+            (vec!["  ACME/App "], "", "acme/app", true),
+            (vec!["acme/web", "acme/app"], "", "acme/app", true),
+            (vec!["acme/web"], "", "acme/app", false),
+            // Older saves keep a single repository in `repo`.
+            (vec![], "Acme/App", "acme/app", true),
+            (vec![], "acme/web", "acme/app", false),
+        ];
+        for (number, (repos, repo, item_repo, matches)) in cases.into_iter().enumerate() {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let trigger = AutomationTrigger {
+                repos: repos.iter().map(|r| r.to_string()).collect(),
+                repo: repo.into(),
+                ..AutomationTrigger::new("github", "issue_opened")
+            };
+            let automation = on_event(&mut service, "/repo", trigger);
+            let mut issue = github_issue(number as i64, automation.events_since.unwrap());
+            issue.repo = item_repo.into();
+            let claimed = claim_inbox_events(&mut service, &[issue], now_millis())
+                .unwrap()
+                .len();
+            assert_eq!(claimed == 1, matches, "{repos:?} {repo:?}");
+        }
+    }
+
+    #[test]
+    fn actor_filters_other_than_anyone_never_match_an_appeared_item() {
+        // The Inbox does not report who opened an item, so a named actor
+        // cannot be confirmed and must not start runs for everyone.
+        for (actor, matches) in [
+            ("anyone", true),
+            ("Anyone", true),
+            ("", true),
+            ("octocat", false),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let trigger = AutomationTrigger {
+                actor: actor.into(),
+                ..AutomationTrigger::new("github", "issue_opened")
+            };
+            let automation = on_event(&mut service, "/repo", trigger);
+            let issue = github_issue(1, automation.events_since.unwrap());
+            let claimed = claim_inbox_events(&mut service, &[issue], now_millis())
+                .unwrap()
+                .len();
+            assert_eq!(claimed == 1, matches, "{actor:?}");
+        }
+    }
+
+    #[test]
+    fn tracker_items_without_a_project_run_automations_of_any_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let first = on_event(
+            &mut service,
+            "/one",
+            AutomationTrigger::new("linear", "issue_created"),
+        );
+        let second = on_event(
+            &mut service,
+            "/two",
+            AutomationTrigger::new("jira", "issue_created"),
+        );
+        let linear = crate::inbox::Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            id: "lin-1".into(),
+            identifier: "ENG-1".into(),
+            ..Default::default()
+        };
+        let jira = crate::inbox::Item {
+            provider: "jira".into(),
+            id: "10001".into(),
+            identifier: "OPS-1".into(),
+            ..linear.clone()
+        };
+        let claims = claim_inbox_events(&mut service, &[linear, jira], now_millis()).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert_eq!(service.runs(&first.id).unwrap().len(), 1);
+        assert_eq!(service.runs(&second.id).unwrap().len(), 1);
+        // A tracker item assigned to another project does not.
+        let mut elsewhere = crate::inbox::Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            id: "lin-2".into(),
+            ..Default::default()
+        };
+        elsewhere.project_path = "/three".into();
+        assert!(claim_inbox_events(&mut service, &[elsewhere], now_millis())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn event_keys_are_stable_and_safe_so_an_item_never_runs_twice() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let github = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let mut odd = github_issue(5, github.events_since.unwrap());
+        odd.repo = "Acme Corp/My App".into();
+        let claims = claim_inbox_events(&mut service, &[odd.clone()], now_millis()).unwrap();
+        let key = claims[0].run.event_key.clone().unwrap();
+        assert_eq!(key, "github:issue:acme_corp/my_app:5");
+        // The same item with different letter case is the same event.
+        odd.repo = "ACME CORP/MY APP".into();
+        assert!(claim_inbox_events(&mut service, &[odd], now_millis())
+            .unwrap()
+            .is_empty());
+
+        // Trackers are keyed by their id, then identifier, then number.
+        let linear = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("linear", "issue_created"),
+        );
+        let by_id = crate::inbox::Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            id: "Abc-1".into(),
+            identifier: "ENG-1".into(),
+            number: 1,
+            ..Default::default()
+        };
+        let by_identifier = crate::inbox::Item {
+            id: String::new(),
+            identifier: "ENG-2".into(),
+            number: 2,
+            ..by_id.clone()
+        };
+        let by_number = crate::inbox::Item {
+            id: String::new(),
+            identifier: String::new(),
+            number: 3,
+            ..by_id.clone()
+        };
+        let mut keys: Vec<_> = claim_inbox_events(
+            &mut service,
+            &[by_id, by_identifier, by_number],
+            now_millis(),
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|claim| claim.automation.id == linear.id)
+        .map(|claim| claim.run.event_key.unwrap())
+        .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["linear:issue:3", "linear:issue:abc-1", "linear:issue:eng-2"]
+        );
+    }
+
+    #[test]
+    fn items_claimed_long_ago_never_run_again_after_their_runs_leave_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let since = automation.events_since.unwrap();
+        let first = github_issue(1, since);
+        let claims =
+            claim_inbox_events(&mut service, std::slice::from_ref(&first), now_millis()).unwrap();
+        service
+            .update_run(&claims[0].run.id, "succeeded", None, None, now_millis())
+            .unwrap();
+        // Enough later runs push the first one out of the kept history.
+        for number in 2..=(MAX_RUNS_PER_AUTOMATION + 5) {
+            let claimed =
+                claim_inbox_events(&mut service, &[github_issue(number, since)], now_millis())
+                    .unwrap();
+            service
+                .update_run(&claimed[0].run.id, "succeeded", None, None, now_millis())
+                .unwrap();
+        }
+        let history = service.runs(&automation.id).unwrap();
+        assert_eq!(history.len(), MAX_RUNS_PER_AUTOMATION as usize);
+        assert!(history
+            .iter()
+            .all(|run| run.event_key.as_deref() != Some("github:issue:acme/app:1")));
+        assert!(claim_inbox_events(&mut service, &[first], now_millis())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn pending_and_running_runs_are_kept_when_history_is_trimmed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(&mut service, vec![]);
+        let pending = service
+            .run_now(&automation.id, now_millis() - 10_000)
+            .unwrap();
+        for at in 0..(MAX_RUNS_PER_AUTOMATION + 3) {
+            let run = service.run_now(&automation.id, now_millis() + at).unwrap();
+            service
+                .update_run(&run.id, "succeeded", None, None, now_millis() + at)
+                .unwrap();
+        }
+        let kept: i64 = service
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM automation_runs WHERE id = ?1",
+                [&pending.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "a pending run is never trimmed");
+        // And restart recovery still finds it.
+        let recovered = service.recover(now_millis() + HOUR, now_millis()).unwrap();
+        assert!(recovered.iter().any(|due| due.run.id == pending.id));
+    }
+
+    #[test]
+    fn an_event_run_left_pending_by_a_crash_is_recovered_with_its_item_prompt() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.sqlite");
+        let mut service = Service::open(&path).unwrap();
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let issue = github_issue(9, automation.events_since.unwrap());
+        let claimed =
+            claim_inbox_events(&mut service, std::slice::from_ref(&issue), now_millis()).unwrap();
+        drop(service);
+        let mut service = Service::open(&path).unwrap();
+        let recovered = service.recover(now_millis() + 1, now_millis()).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].run.id, claimed[0].run.id);
+        let prompt = recovered[0].run.prompt.as_deref().unwrap();
+        assert!(prompt.contains(&issue.title) && prompt.contains(&issue.url));
+        // Recovering again, or the item being offered again, starts nothing new.
+        assert!(claim_inbox_events(&mut service, &[issue], now_millis())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn an_event_run_whose_prompt_was_lost_fails_on_recovery_instead_of_running_blind() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let claimed = claim_inbox_events(
+            &mut service,
+            &[github_issue(1, automation.events_since.unwrap())],
+            now_millis(),
+        )
+        .unwrap();
+        let mut run = claimed[0].run.clone();
+        run.prompt = None;
+        write_run(&service.conn, &run).unwrap();
+        assert!(service
+            .recover(now_millis() + 1, now_millis())
+            .unwrap()
+            .is_empty());
+        let history = service.runs(&automation.id).unwrap();
+        assert_eq!(history[0].status, "failed");
+        assert!(history[0].error.as_deref().unwrap().contains("prompt"));
+    }
+
+    #[test]
+    fn runs_started_after_launch_are_left_alone_by_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(&mut service, vec![]);
+        let started = now_millis();
+        let fresh = service.run_now(&automation.id, started + 5).unwrap();
+        service
+            .update_run(&fresh.id, "running", None, None, started + 6)
+            .unwrap();
+        assert!(service.recover(started, started + 10).unwrap().is_empty());
+        assert_eq!(service.runs(&automation.id).unwrap()[0].status, "running");
+    }
+
+    #[test]
+    fn an_automation_with_a_schedule_and_an_event_runs_for_both_independently() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = AutomationUpsert::new("/repo".into(), "codex".into(), "model".into());
+        draft.name = "Both".into();
+        draft.prompt = "Work".into();
+        draft.triggers = Some(vec![
+            AutomationTrigger::new("time", "hourly"),
+            AutomationTrigger::new("github", "issue_opened"),
+        ]);
+        draft.sync_triggers(now_millis());
+        let automation = service.upsert(draft).unwrap();
+        assert_eq!(automation.trigger_kind, "time");
+        let now = now_millis();
+        move_schedule(&mut service, &automation, now - 60_000);
+        let scheduled = service.claim_due(now).unwrap();
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].run.trigger, "scheduled");
+        let events = claim_inbox_events(
+            &mut service,
+            &[github_issue(1, automation.events_since.unwrap())],
+            now,
+        )
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].run.trigger, "event");
+        // The event did not move the schedule, and the schedule did not
+        // consume the event.
+        assert!(stored(&service, &automation.id).next_run_at > now);
+        assert!(service.claim_due(now).unwrap().is_empty());
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn manual_runs_do_not_move_the_schedule_or_claim_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = scheduled(
+            &mut service,
+            vec![AutomationTrigger::new("time", "hourly")],
+            720,
+        );
+        let next = stored(&service, &automation.id).next_run_at;
+        let run = service.run_now(&automation.id, now_millis()).unwrap();
+        assert_eq!(run.trigger, "manual");
+        assert_eq!(run.status, "pending");
+        assert_eq!(stored(&service, &automation.id).next_run_at, next);
+        move_schedule(&mut service, &automation, now_millis() - 60_000);
+        assert_eq!(service.claim_due(now_millis()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn run_status_updates_record_their_outcome_on_the_automation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(&mut service, vec![]);
+        let run = service.run_now(&automation.id, now_millis()).unwrap();
+        service
+            .update_run(
+                &run.id,
+                "running",
+                Some("session-7".into()),
+                None,
+                now_millis(),
+            )
+            .unwrap();
+        let running = &service.runs(&automation.id).unwrap()[0];
+        assert!(running.started_at.is_some() && running.completed_at.is_none());
+        service
+            .update_run(
+                &run.id,
+                "failed",
+                None,
+                Some("agent missing".into()),
+                now_millis(),
+            )
+            .unwrap();
+        let failed = &service.runs(&automation.id).unwrap()[0];
+        assert_eq!(failed.status, "failed");
+        assert!(failed.completed_at.is_some());
+        assert_eq!(failed.session_id.as_deref(), Some("session-7"));
+        let saved = stored(&service, &automation.id);
+        assert_eq!(saved.last_run_status.as_deref(), Some("failed"));
+        assert_eq!(saved.last_run_error.as_deref(), Some("agent missing"));
+        assert_eq!(saved.last_session_id.as_deref(), Some("session-7"));
+        assert!(service
+            .update_run(&run.id, "exploded", None, None, now_millis())
+            .is_err());
+    }
 }
