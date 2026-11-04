@@ -2,6 +2,8 @@
 //! frames only Claude sends.
 use super::*;
 
+pub(super) mod read_only;
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) prompt_sent: bool,
@@ -48,7 +50,14 @@ pub(super) fn configure(
             "{\"mcpServers\":{}}",
         ]);
     } else if settings.access == AccessMode::ReadOnly {
-        command.args(["--tools", "Read,Glob,Grep,Bash", "--allowedTools", "Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(pwd),Bash(ls *),Bash(rg *)"]);
+        // No Bash pattern here: a pattern approves any arguments. Each Bash
+        // call comes to the approval path, which allows only `read_only`.
+        command.args([
+            "--tools",
+            "Read,Glob,Grep,Bash",
+            "--allowedTools",
+            "Read,Glob,Grep",
+        ]);
     }
     if settings.mount.as_ref().is_some_and(|mount| mount.exclusive) {
         command.arg("--strict-mcp-config");
