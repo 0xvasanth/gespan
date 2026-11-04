@@ -14,8 +14,9 @@ pub(crate) use run_view::{duration, visit_status_label};
 pub(crate) use ui::status_color;
 pub(crate) use view::{Event, FlowsView, Waiting};
 
-/// Whether people can reach Flows: the Flows view and its navigation entries,
-/// and a Pilot's SOP Roadmap tab. Set this to `true` to bring them back.
+/// Whether people can reach the Flows view and its navigation entries. Set
+/// this to `true` to bring them back. A Pilot's SOP Roadmap tab shows its
+/// Flows either way, so people can see the workflow their Pilot follows.
 /// Only the UI hangs off this: Flows, their runs and the `flows.*` actions
 /// Pilots use keep working either way.
 pub(crate) const FLOWS_VISIBLE: bool = false;

@@ -747,9 +747,6 @@ impl Pilots {
             .into_any_element()
     }
     pub(super) fn select_overview(&mut self, tab: OverviewTab, cx: &mut Context<Self>) {
-        if tab == OverviewTab::Roadmap && !crate::flows::visible(cx) {
-            return;
-        }
         if tab != OverviewTab::Changes {
             self.pause_changes(cx);
         }
@@ -859,10 +856,6 @@ impl Pilots {
             ),
             (OverviewTab::Roadmap, "SOP Roadmap", "git-merge", 0),
         ];
-        let roadmap_visible = crate::flows::visible(cx);
-        let tabs = tabs
-            .into_iter()
-            .filter(|(tab, ..)| *tab != OverviewTab::Roadmap || roadmap_visible);
         div()
             .id("pilot-overview-tabs")
             .debug_selector(|| "pilot-overview-tabs".into())
@@ -875,7 +868,7 @@ impl Pilots {
             .flex()
             .items_center()
             .gap(px(2.))
-            .children(tabs.map(|(tab, label, glyph, count)| {
+            .children(tabs.into_iter().map(|(tab, label, glyph, count)| {
                 let selected = self.overview_tab == tab;
                 let unfolded = match progress {
                     Some((_, p)) if selected => p,

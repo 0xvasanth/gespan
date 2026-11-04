@@ -1,4 +1,5 @@
-//! With `flows::FLOWS_VISIBLE` off, nothing in the shell leads to Flows.
+//! With `flows::FLOWS_VISIBLE` off, nothing in the shell leads to the Flows
+//! page. A Pilot's SOP Roadmap tab still shows its Flows (`pilots::tests`).
 //! Delete this file when turning it back on.
 use super::*;
 use crate::workspace::{AppView, TitleTab};
