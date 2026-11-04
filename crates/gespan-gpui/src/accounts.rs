@@ -411,11 +411,13 @@ impl Accounts {
                 match &result {
                     Ok(snapshot) => tracing::info!(
                         provider = key.kind.label(),
+                        account = %key.profile.id,
                         windows = snapshot.windows.len(),
                         "usage refreshed"
                     ),
                     Err(error) => tracing::warn!(
                         provider = key.kind.label(),
+                        account = %key.profile.id,
                         unavailable = error.unavailable,
                         message = %error.message,
                         "usage refresh failed"

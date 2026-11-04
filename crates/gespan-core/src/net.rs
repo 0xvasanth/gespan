@@ -13,10 +13,7 @@ use std::{
     collections::VecDeque,
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
-    },
+    sync::{mpsc, Arc, Condvar, Mutex, PoisonError},
     thread,
     time::Duration,
 };
@@ -54,8 +51,10 @@ fn interleave(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
 }
 
 /// Orders `addrs` so the first address that accepts a connection leads. When
-/// none does within `limit`, the interleaved order is returned unchanged and
-/// ureq reports its own connection error.
+/// none does within `limit`, the resolver's order is returned unchanged and
+/// ureq reports its own connection error. Once the race is decided, attempts
+/// still waiting for their turn exit at once; a connect already under way
+/// cannot be cancelled and ends within its share of `limit`.
 fn race<F>(
     addrs: Vec<SocketAddr>,
     connect: F,
@@ -65,12 +64,12 @@ fn race<F>(
 where
     F: Fn(SocketAddr, Duration) -> bool + Send + Sync + 'static,
 {
-    let mut ordered = interleave(addrs);
-    if ordered.len() < 2 {
-        return ordered;
+    if addrs.len() < 2 {
+        return addrs;
     }
+    let ordered = interleave(addrs.clone());
     let connect = Arc::new(connect);
-    let settled = Arc::new(AtomicBool::new(false));
+    let settled = Arc::new((Mutex::new(false), Condvar::new()));
     let (tx, rx) = mpsc::channel();
     for (attempt, addr) in ordered.iter().copied().enumerate() {
         let delay = stagger.saturating_mul(attempt as u32);
@@ -79,26 +78,45 @@ where
         };
         let (tx, connect, settled) = (tx.clone(), connect.clone(), settled.clone());
         thread::spawn(move || {
-            thread::sleep(delay);
-            if !settled.load(Ordering::Relaxed) && connect(addr, budget) {
+            let (done, wake) = &*settled;
+            let done = done.lock().unwrap_or_else(PoisonError::into_inner);
+            let (done, _) = wake
+                .wait_timeout_while(done, delay, |done| !*done)
+                .unwrap_or_else(PoisonError::into_inner);
+            if *done {
+                return;
+            }
+            drop(done);
+            if connect(addr, budget) {
                 let _ = tx.send(addr);
             }
         });
     }
     drop(tx);
     // Ends at the first success, once every attempt has failed, or at `limit`.
-    if let Ok(winner) = rx.recv_timeout(limit) {
-        settled.store(true, Ordering::Relaxed);
-        ordered.retain(|addr| *addr != winner);
-        ordered.insert(0, winner);
+    let winner = rx.recv_timeout(limit).ok();
+    let (done, wake) = &*settled;
+    *done.lock().unwrap_or_else(PoisonError::into_inner) = true;
+    wake.notify_all();
+    match winner {
+        Some(winner) => {
+            let mut ordered = ordered;
+            ordered.retain(|addr| *addr != winner);
+            ordered.insert(0, winner);
+            ordered
+        }
+        None => addrs,
     }
-    ordered
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::TcpListener, sync::atomic::AtomicUsize, time::Instant};
+    use std::{
+        net::TcpListener,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Instant,
+    };
 
     const V6: &str = "[2607:6bc0::10]:443";
     const V4: &str = "160.79.104.10:443";
@@ -170,6 +188,48 @@ mod tests {
         );
         assert_eq!(ordered, vec![addr(V6), addr(V4)]);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn nothing_answering_keeps_the_resolvers_order_not_the_interleaved_one() {
+        // ureq then tries the addresses exactly as DNS returned them.
+        let (v6b, v4b) = (addr("[2607:6bc0::11]:443"), addr("160.79.104.11:443"));
+        let resolved = vec![addr(V6), v6b, addr(V4), v4b];
+        let ordered = race(
+            resolved.clone(),
+            |_, _| false,
+            Duration::from_millis(5),
+            Duration::from_secs(5),
+        );
+        assert_eq!(ordered, resolved);
+    }
+
+    #[test]
+    fn a_winner_releases_attempts_still_waiting_their_turn() {
+        // The first address answers at once; the others are seconds away from
+        // starting. Their threads must end now, not after sleeping that out.
+        let alive = Arc::new(());
+        let held = alive.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let (v6b, v4b) = (addr("[2607:6bc0::11]:443"), addr("160.79.104.11:443"));
+        let ordered = race(
+            vec![addr(V6), v6b, addr(V4), v4b],
+            move |_, _| {
+                let _ = &held;
+                seen.fetch_add(1, Ordering::Relaxed);
+                true
+            },
+            Duration::from_secs(2),
+            Duration::from_secs(10),
+        );
+        assert_eq!(ordered[0], addr(V6));
+        let started = Instant::now();
+        while Arc::strong_count(&alive) > 1 && started.elapsed() < Duration::from_secs(1) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(Arc::strong_count(&alive), 1, "waiting attempts still alive");
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "later attempts never connect");
     }
 
     #[test]
