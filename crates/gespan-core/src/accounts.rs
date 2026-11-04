@@ -22,7 +22,12 @@ use std::{
 };
 
 pub const DEFAULT: &str = "default";
-pub const PROVIDERS: [Kind; 3] = [Kind::Claude, Kind::Codex, Kind::Devin];
+/// The providers Gespan keeps several accounts for, in picker order.
+pub fn providers() -> impl Iterator<Item = Kind> {
+    Kind::ALL
+        .into_iter()
+        .filter(|kind| kind.spec().accounts.is_some())
+}
 fn default_id() -> String {
     DEFAULT.into()
 }
@@ -89,13 +94,10 @@ impl Profile {
         if let Some(dir) = self.directory(kind)? {
             return Ok(dir);
         }
-        let (var, dir) = match kind {
-            Kind::Codex => ("CODEX_HOME", ".codex"),
-            Kind::Claude => ("CLAUDE_CONFIG_DIR", ".claude"),
-            _ => {
-                return Err("Native transcript transfer is not supported for this provider".into())
-            }
+        let Some(profile) = profile_home(kind) else {
+            return Err("Native transcript transfer is not supported for this provider".into());
         };
+        let (var, dir) = (profile.vars[0], profile.default_dir);
         std::env::var_os(var)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
@@ -114,23 +116,14 @@ impl Profile {
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
                 .map_err(|e| e.to_string())?;
         }
-        match kind {
-            Kind::Claude => {
-                command
-                    .env("CLAUDE_CONFIG_DIR", &dir)
-                    .env("CLAUDE_SECURESTORAGE_CONFIG_DIR", &dir)
-                    .env_remove("ANTHROPIC_API_KEY")
-                    .env_remove("ANTHROPIC_AUTH_TOKEN")
-                    .env_remove("CLAUDE_CODE_OAUTH_TOKEN");
+        // `directory` only answers for providers with a profile home.
+        if let Some(profile) = profile_home(kind) {
+            for var in profile.vars {
+                command.env(var, &dir);
             }
-            Kind::Codex => {
-                command
-                    .env("CODEX_HOME", &dir)
-                    .env_remove("OPENAI_API_KEY")
-                    .env_remove("CODEX_API_KEY")
-                    .env_remove("CODEX_ACCESS_TOKEN");
+            for var in profile.clear {
+                command.env_remove(var);
             }
-            _ => unreachable!(),
         }
         Ok(())
     }
@@ -172,11 +165,15 @@ pub fn home() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
 }
+fn profile_home(kind: Kind) -> Option<crate::provider::ProfileHome> {
+    kind.spec().accounts?.profile
+}
+/// Whether each account gets its own config home for the CLI.
 pub fn supports_profiles(kind: Kind) -> bool {
-    matches!(kind, Kind::Codex | Kind::Claude)
+    profile_home(kind).is_some()
 }
 pub fn supports_accounts(kind: Kind) -> bool {
-    PROVIDERS.contains(&kind)
+    kind.spec().accounts.is_some()
 }
 pub fn validate_id(id: &str) -> Result<(), String> {
     if id.is_empty()

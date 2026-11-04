@@ -1,3 +1,4 @@
+use super::{now_ms as now_millis, FetchError, Snapshot, Source, Window};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Read;
@@ -311,6 +312,48 @@ fn percentage(value: &Value) -> Option<f64> {
     value
         .as_f64()
         .filter(|v| v.is_finite() && (0.0..=100.0).contains(v))
+}
+
+pub(crate) struct Pi;
+impl Source for Pi {
+    fn probe(
+        &self,
+        _profile: &crate::accounts::Profile,
+        model: Option<&str>,
+    ) -> Result<Snapshot, FetchError> {
+        probe(model)
+    }
+}
+fn probe(model: Option<&str>) -> Result<Snapshot, FetchError> {
+    let model = model.unwrap_or("").trim_start_matches("pi:");
+    let billing = if model.starts_with("anthropic/") {
+        PiUsageProvider::Anthropic
+    } else if model.starts_with("openai-codex/") {
+        PiUsageProvider::OpenaiCodex
+    } else {
+        return Err(FetchError::unavailable(
+            "Subscription usage is unavailable for this Pi model",
+        ));
+    };
+    match fetch_pi_usage(billing) {
+        PiUsageResult::Ok { windows } => Ok(Snapshot {
+            windows: [windows.session, windows.weekly]
+                .into_iter()
+                .flatten()
+                .map(|w| {
+                    Window::new(
+                        w.used_percent,
+                        w.window_minutes,
+                        w.resets_at.map(|n| n as i64),
+                    )
+                })
+                .collect(),
+            updated_at: now_millis(),
+            ..Default::default()
+        }),
+        PiUsageResult::Unavailable { message } => Err(FetchError::unavailable(message)),
+        PiUsageResult::Error { message } => Err(FetchError::failed(message)),
+    }
 }
 
 #[cfg(test)]

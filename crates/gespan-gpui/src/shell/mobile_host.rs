@@ -1594,9 +1594,8 @@ impl Shell {
                         let status = center.status(kind, id);
                         let snapshot = state.and_then(|s| s.snapshot.as_ref());
                         let meters: Vec<Value> = snapshot
-                            .map(|s| s.windows.as_slice())
-                            .unwrap_or_default()
-                            .iter()
+                            .into_iter()
+                            .flat_map(|s| s.plan_windows())
                             .filter_map(|window| {
                                 let title = match window.minutes {
                                     300 => "5h",

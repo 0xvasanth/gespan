@@ -459,7 +459,7 @@ impl SettingsView {
             && let Some(center) = crate::accounts::get(cx)
         {
             center.update(cx, |center, cx| {
-                for kind in gespan_core::accounts::PROVIDERS {
+                for kind in gespan_core::accounts::providers() {
                     center.load_provider(kind, true, cx);
                 }
             });

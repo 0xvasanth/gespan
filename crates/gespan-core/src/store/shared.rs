@@ -963,9 +963,15 @@ impl Store {
                 }
             }
             if let Some(metrics) = info.metrics.filter(|metrics| metrics.reported()) {
-                fields.push(("turnMetrics", json!({"inputTokens":metrics.input_tokens,
+                let mut saved = json!({"inputTokens":metrics.input_tokens,
                     "outputTokens":metrics.output_tokens,"cacheReadTokens":metrics.cache_read_tokens,
-                    "cacheWriteTokens":metrics.cache_write_tokens,"cacheHitPercent":metrics.cache_hit_percent})));
+                    "cacheWriteTokens":metrics.cache_write_tokens,"cacheHitPercent":metrics.cache_hit_percent});
+                for (key, value) in [("costUsd", metrics.cost_usd), ("credits", metrics.credits)] {
+                    if let Some(value) = value {
+                        saved[key] = json!(value);
+                    }
+                }
+                fields.push(("turnMetrics", saved));
             }
             for (key, value) in fields {
                 if block[key].is_null() {
@@ -1013,6 +1019,7 @@ impl Store {
         Ok(used.filter(|u| *u >= 0).map(|used| Usage {
             used: used as u64,
             window: window.filter(|w| *w > 0).map(|w| w as u64),
+            percent: None,
         }))
     }
     /// The blocks whose rows this store numbers: an indexed Pilot's window, or

@@ -1,3 +1,4 @@
+use super::{now_ms, window, FetchError, Snapshot, Source};
 use crate::provider::devin::jsonc::strip_jsonc_comments;
 use serde::Serialize;
 use serde_json::Value;
@@ -278,5 +279,54 @@ pub(crate) fn extract_opencode_go_api_key(raw: &str) -> Option<String> {
         None
     } else {
         Some(key.to_string())
+    }
+}
+pub(crate) struct OpenCode;
+impl Source for OpenCode {
+    fn probe(
+        &self,
+        _profile: &crate::accounts::Profile,
+        _model: Option<&str>,
+    ) -> Result<Snapshot, FetchError> {
+        probe()
+    }
+}
+fn probe() -> Result<Snapshot, FetchError> {
+    let result = fetch().map_err(FetchError::failed)?;
+    if result.status != "ok" {
+        let message = result
+            .error
+            .unwrap_or_else(|| "OpenCode Go usage unavailable".into());
+        return Err(if result.status == "unavailable" {
+            FetchError::unavailable(message)
+        } else {
+            FetchError::failed(message)
+        });
+    }
+    let value: Value = serde_json::from_str(result.body.as_deref().unwrap_or(""))
+        .map_err(|_| FetchError::failed("OpenCode Go response was not JSON"))?;
+    let snapshot = parse(&value);
+    if snapshot.windows.is_empty() {
+        return Err(FetchError::failed(
+            "OpenCode Go usage response was unexpected",
+        ));
+    }
+    Ok(snapshot)
+}
+pub(super) fn parse(value: &Value) -> Snapshot {
+    let value = value.get("usage").unwrap_or(value);
+    Snapshot {
+        windows: [("rolling", 300), ("weekly", 10080), ("monthly", 43200)]
+            .into_iter()
+            .filter_map(|(key, minutes)| {
+                let raw = &value[key];
+                if !matches!(raw["status"].as_str(), Some("ok" | "rate-limited")) {
+                    return None;
+                }
+                window(raw, minutes, &["percent", "usedPercent"])
+            })
+            .collect(),
+        updated_at: now_ms(),
+        ..Default::default()
     }
 }

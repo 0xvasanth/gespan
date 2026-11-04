@@ -2376,35 +2376,7 @@ impl TranscriptView {
                 ),
                 "handoff" => ("Handoff".into(), None),
                 "opinion" => ("Second opinion".into(), None),
-                _ => {
-                    let metrics = metrics.unwrap_or_default();
-                    let mut summary = Vec::new();
-                    if let Some(hit) = metrics.cache_hit_percent {
-                        summary.push(format!("Cache hit {hit:.0}%"));
-                    }
-                    if info.duration_ms > 0 && metrics.output_tokens > 0 {
-                        summary.push(format!(
-                            "Output {:.0} tok/s",
-                            metrics.output_tokens as f64 / (info.duration_ms as f64 / 1000.)
-                        ));
-                    }
-                    let headline = if summary.is_empty() {
-                        "Turn tokens".into()
-                    } else {
-                        summary.join(" · ")
-                    };
-                    let detail = [
-                        (metrics.input_tokens, "input"),
-                        (metrics.output_tokens, "output"),
-                        (metrics.cache_read_tokens, "cached"),
-                    ]
-                    .into_iter()
-                    .filter(|(n, _)| *n > 0)
-                    .map(|(n, label)| format!("{} {label}", gespan_core::context::format_tokens(n)))
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                    (headline, Some(detail))
-                }
+                _ => metrics_summary(metrics.unwrap_or_default(), info.duration_ms),
             };
             if let Some(anchor) = self.action_anchors.get(&(turn, action)) {
                 row = row.child(
@@ -6004,6 +5976,101 @@ fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {
     // a seam above the composer. Only the Metal backend supports a real mask.
     #[cfg(not(target_os = "macos"))]
     let _ = (bounds, begin, window);
+}
+
+/// The turn-metrics tooltip: a headline of cost and rates, then the counts.
+fn metrics_summary(
+    metrics: gespan_core::agent::TurnMetrics,
+    duration_ms: u64,
+) -> (String, Option<String>) {
+    let mut summary = Vec::new();
+    if let Some(cost) = metrics.cost_usd {
+        summary.push(if cost > 0. && cost < 0.01 {
+            format!("${cost:.4}")
+        } else {
+            format!("${cost:.2}")
+        });
+    }
+    if let Some(credits) = metrics.credits {
+        let credits = (credits * 100.).round() / 100.;
+        summary.push(if credits == 1. {
+            "1 credit".into()
+        } else {
+            format!("{credits} credits")
+        });
+    }
+    if let Some(hit) = metrics.cache_hit_percent {
+        summary.push(format!("Cache hit {hit:.0}%"));
+    }
+    if duration_ms > 0 && metrics.output_tokens > 0 {
+        summary.push(format!(
+            "Output {:.0} tok/s",
+            metrics.output_tokens as f64 / (duration_ms as f64 / 1000.)
+        ));
+    }
+    let headline = if summary.is_empty() {
+        "Turn tokens".into()
+    } else {
+        summary.join(" · ")
+    };
+    let detail = [
+        (metrics.input_tokens, "input"),
+        (metrics.output_tokens, "output"),
+        (metrics.cache_read_tokens, "cached"),
+    ]
+    .into_iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, label)| format!("{} {label}", gespan_core::context::format_tokens(n)))
+    .collect::<Vec<_>>()
+    .join(" · ");
+    (headline, (!detail.is_empty()).then_some(detail))
+}
+#[cfg(test)]
+mod metrics_summary_tests {
+    use super::metrics_summary;
+    use gespan_core::agent::TurnMetrics;
+
+    #[test]
+    fn claude_turns_lead_with_cost_and_kiro_turns_with_credits() {
+        // The real first Claude turn: tokens plus total_cost_usd.
+        let claude = TurnMetrics {
+            input_tokens: 2,
+            output_tokens: 4,
+            cache_read_tokens: 23_608,
+            cache_write_tokens: 21_991,
+            cache_hit_percent: Some(51.77),
+            cost_usd: Some(0.00463648),
+            credits: None,
+        };
+        let (headline, detail) = metrics_summary(claude, 2000);
+        assert_eq!(headline, "$0.0046 · Cache hit 52% · Output 2 tok/s");
+        assert_eq!(detail.as_deref(), Some("2 input · 4 output · 24K cached"));
+        // The real first Kiro turn reports credits only: no empty token line.
+        let kiro = TurnMetrics {
+            credits: Some(0.054773099170812606),
+            ..Default::default()
+        };
+        assert_eq!(metrics_summary(kiro, 8505), ("0.05 credits".into(), None));
+        // Codex reports no cost: tokens only, as before.
+        let codex = TurnMetrics {
+            input_tokens: 20_129,
+            output_tokens: 5,
+            cache_read_tokens: 6_656,
+            ..Default::default()
+        };
+        assert_eq!(metrics_summary(codex, 0).0, "Turn tokens");
+        assert_eq!(
+            metrics_summary(
+                TurnMetrics {
+                    cost_usd: Some(1.5),
+                    ..Default::default()
+                },
+                0
+            )
+            .0,
+            "$1.50"
+        );
+    }
 }
 
 #[cfg(test)]

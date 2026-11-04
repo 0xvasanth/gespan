@@ -190,7 +190,7 @@ fn provider(blocks: &[Value], owner: usize, thread: &Value, fallback: &str) -> O
         })
         .unwrap_or(fallback);
     let kind = Kind::parse(kind)?;
-    (!matches!(kind, Kind::Fx | Kind::Hermes | Kind::Antigravity)).then(|| kind.id().into())
+    kind.spec().features.side_threads.then(|| kind.id().into())
 }
 impl Store {
     pub fn desktop_side_threads(&self, id: i64) -> Result<Vec<DesktopSideThread>, String> {

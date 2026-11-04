@@ -1210,6 +1210,9 @@ impl Protocol {
             "usage_update" => {
                 usage_events(update, events);
             }
+            "session_info_update" if self.request.kind == Kind::Kiro => {
+                kiro_usage_events(&update["_meta"]["kiro"], events);
+            }
             "current_model_update" => {
                 if let Some(model) = update["currentModelId"].as_str() {
                     events.push(Event::Model(model.into()));
@@ -1495,6 +1498,37 @@ fn background_finished(dispatch: &BackgroundDispatch) -> bool {
         })
 }
 
+/// Kiro reports context as a percent, and each turn's cost in plan credits.
+fn kiro_usage_events(meta: &Value, events: &mut Vec<Event>) {
+    match meta["kind"].as_str().unwrap_or("") {
+        "context_usage" => {
+            if let Some(percent) = meta["usagePercentage"]
+                .as_f64()
+                .or_else(|| meta["contextUsage"]["usagePercentage"].as_f64())
+                .filter(|n| n.is_finite() && *n >= 0.)
+            {
+                events.push(Event::ContextPercent(percent.min(100.)));
+            }
+        }
+        "turn_completion" => {
+            let credits = meta["promptTurnSummaries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|summary| summary["unit"] == "credit")
+                .filter_map(|summary| summary["usage"].as_f64())
+                .filter(|n| n.is_finite() && *n >= 0.)
+                .reduce(|a, b| a + b);
+            if let Some(credits) = credits {
+                events.push(Event::Metrics(TurnMetrics {
+                    credits: Some(credits),
+                    ..Default::default()
+                }));
+            }
+        }
+        _ => {}
+    }
+}
 fn usage_events(update: &Value, events: &mut Vec<Event>) {
     let usage = update
         .get("usage")
@@ -1535,6 +1569,7 @@ fn usage_events(update: &Value, events: &mut Vec<Event>) {
             cache_write_tokens: write.unwrap_or(0),
             cache_hit_percent: ((read.is_some() || write.is_some()) && total > 0)
                 .then(|| read.unwrap_or(0) as f64 / total as f64 * 100.),
+            ..Default::default()
         }));
     }
 }
@@ -1928,6 +1963,67 @@ mod tests {
         assert!(choices
             .iter()
             .any(|p| p["configId"] == "fast" && p["type"].is_null() && p["value"] == "false"));
+    }
+    #[test]
+    fn real_kiro_turns_report_context_percent_and_credits() {
+        let mut p = protocol(Kind::Kiro);
+        p.acp.stage = Stage::Prompt;
+        p.acp.session = "sess_8b67c7e3-079d-40b5-b1dc-c6abb7d0d189".into();
+        let mut events = Vec::new();
+        for line in include_str!("../usage/fixtures/kiro-acp.jsonl").lines() {
+            let frame: Value = serde_json::from_str(line).unwrap();
+            if frame["method"] == "session/update" {
+                events.extend(p.frame(frame, &mut Vec::new()).unwrap());
+            }
+        }
+        let percents: Vec<f64> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ContextPercent(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        assert!(percents.contains(&1.7247001), "{percents:?}");
+        assert_eq!(percents.last(), Some(&1.7351999));
+        let credits: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Metrics(m) => Some(*m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(credits.len(), 2, "one reading per turn");
+        assert_eq!(credits[0].credits, Some(0.054773099170812606));
+        assert_eq!(credits[1].credits, Some(0.03082334792703149));
+        assert!(credits.iter().all(|m| m.reported() && m.input_tokens == 0));
+        // Other providers' session info is not read as Kiro's.
+        let mut cursor = protocol(Kind::Cursor);
+        cursor.acp.stage = Stage::Prompt;
+        cursor.acp.session = p.acp.session.clone();
+        let frame = include_str!("../usage/fixtures/kiro-acp.jsonl")
+            .lines()
+            .next()
+            .unwrap();
+        assert!(cursor
+            .frame(serde_json::from_str(frame).unwrap(), &mut Vec::new())
+            .unwrap()
+            .iter()
+            .all(|e| !matches!(e, Event::ContextPercent(_))));
+    }
+    #[test]
+    fn kiro_turn_summaries_without_credits_report_nothing() {
+        let mut events = Vec::new();
+        kiro_usage_events(
+            &json!({"kind":"turn_completion","promptTurnSummaries":[{"unit":"request","usage":1}]}),
+            &mut events,
+        );
+        kiro_usage_events(&json!({"kind":"context_usage"}), &mut events);
+        assert!(events.is_empty());
+        kiro_usage_events(
+            &json!({"kind":"turn_completion","promptTurnSummaries":[{"unit":"credit","usage":0.25},{"unit":"credit","usage":0.5}]}),
+            &mut events,
+        );
+        assert!(matches!(events[..], [Event::Metrics(m)] if m.credits == Some(0.75)));
     }
     fn launch_args(request: &Request, fallback: bool) -> Vec<String> {
         let mut command = Command::new("unused");

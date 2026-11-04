@@ -27,17 +27,7 @@ pub(crate) fn bind(cx: &mut App) {
 use crate::accounts::{Cached as CachedUsage, Key};
 
 fn index(kind: Kind) -> usize {
-    match kind {
-        Kind::Codex => 0,
-        Kind::Claude => 1,
-        _ => {
-            2 + Kind::ALL
-                .iter()
-                .filter(|k| !matches!(k, Kind::Codex | Kind::Claude))
-                .position(|k| *k == kind)
-                .unwrap()
-        }
-    }
+    Kind::ALL.iter().position(|k| *k == kind).unwrap()
 }
 
 /// Its own cached surface: clock ticks and probe completions don't rebuild chat.
@@ -404,6 +394,10 @@ impl UsageFooter {
             }
             _ => "Rate-limit details".into(),
         };
+        let updated = match state.snapshot.as_ref().and_then(|s| s.plan.as_deref()) {
+            Some(plan) => format!("{plan} · {updated}"),
+            None => updated,
+        };
         let windows = state.snapshot.iter().flat_map(|s| &s.windows);
         let has_windows = state
             .snapshot
@@ -545,6 +539,40 @@ impl UsageFooter {
                 state
                     .snapshot
                     .as_ref()
+                    .and_then(|s| s.extra_usage.as_ref())
+                    .map(|spend| {
+                        div()
+                            .id("usage-extra-spend")
+                            .debug_selector(|| "usage-extra-spend".into())
+                            .mt(px(6.))
+                            .rounded_lg()
+                            .bg(content(0.045))
+                            .border_1()
+                            .border_color(content(0.06))
+                            .px_3()
+                            .py(px(10.))
+                            .flex()
+                            .justify_between()
+                            .items_baseline()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(content(0.65))
+                                    .child("Extra usage"),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(spend.label()),
+                            )
+                    }),
+            )
+            .children(
+                state
+                    .snapshot
+                    .as_ref()
                     .and_then(|s| s.extra_usage_balance)
                     .map(|balance| {
                         div()
@@ -645,12 +673,7 @@ impl UsageFooter {
     fn window_card(&self, w: &usage::Window, now: i64) -> gpui::Div {
         let used = w.used_percent.clamp(0., 100.);
         let shown = self.display_percent(used);
-        let label = match w.minutes {
-            1_440 => "Daily limit",
-            10_080 => "Weekly limit",
-            43_200 => "Monthly limit",
-            _ => "5-hour limit",
-        };
+        let label = window_title(w);
         div()
             .rounded_lg()
             .bg(content(0.045))
@@ -709,15 +732,18 @@ impl UsageFooter {
                     .text_size(px(10.))
                     .line_height(px(16.))
                     .text_color(content(0.4))
-                    .child(format!(
-                        "{:.0}% {}",
-                        100. - shown,
-                        if self.show_remaining {
-                            "used"
-                        } else {
-                            "remaining"
-                        }
-                    ))
+                    .child(match &w.amount {
+                        Some(amount) => amount.label(),
+                        None => format!(
+                            "{:.0}% {}",
+                            100. - shown,
+                            if self.show_remaining {
+                                "used"
+                            } else {
+                                "remaining"
+                            }
+                        ),
+                    })
                     .child(div().truncate().child(w.reset_label(now))),
             )
     }
@@ -808,6 +834,36 @@ impl UsageFooter {
     }
 }
 use crate::accounts::ui::bar_color as usage_color;
+/// The card title: the limit's length, and the model or surface it covers.
+fn window_title(w: &usage::Window) -> String {
+    let length = match w.minutes {
+        1_440 => "Daily",
+        10_080 => "Weekly",
+        43_200 => "Monthly",
+        300 => "5-hour",
+        _ => return format!("{} limit", w.label()),
+    };
+    match &w.scope {
+        Some(scope) => format!("{length} · {scope}"),
+        None => format!("{length} limit"),
+    }
+}
+/// The chip: each plan-wide window's percent and reset. A model's own cap
+/// stays in the details, so it never reads as the account running out.
+fn chip_label(snapshot: &usage::Snapshot, remaining: bool, now: i64) -> String {
+    snapshot
+        .plan_windows()
+        .map(|w| {
+            let used = w.used_percent.clamp(0., 100.);
+            format!(
+                "{:.0}% {}",
+                if remaining { 100. - used } else { used },
+                w.countdown(now)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
 impl Render for UsageFooter {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.cache[index(self.kind)];
@@ -817,18 +873,7 @@ impl Render for UsageFooter {
         let label = if !tracked {
             String::new()
         } else if let Some(snapshot) = &state.snapshot {
-            snapshot
-                .windows
-                .iter()
-                .map(|w| {
-                    format!(
-                        "{:.0}% {}",
-                        self.display_percent(w.used_percent),
-                        w.countdown(now)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" · ")
+            chip_label(snapshot, self.show_remaining, now)
         } else if state.fetching || state.error.is_none() {
             "···".into()
         } else if state.error.as_ref().is_some_and(|e| e.unavailable) {
@@ -844,7 +889,8 @@ impl Render for UsageFooter {
                     .iter()
                     .map(|w| {
                         format!(
-                            "{} · {}",
+                            "{} {} · {}",
+                            window_title(w),
                             self.percent_label(w.used_percent),
                             w.reset_label(now)
                         )
@@ -863,7 +909,7 @@ impl Render for UsageFooter {
         let tightest = state
             .snapshot
             .as_ref()
-            .and_then(|s| s.windows.iter().map(|w| w.used_percent).reduce(f64::max));
+            .and_then(|s| s.plan_windows().map(|w| w.used_percent).reduce(f64::max));
         let weak = cx.weak_entity();
         let classic = self.classic;
         div()
@@ -997,12 +1043,8 @@ mod tests {
         });
         window
             .update(cx, |footer, w, cx| {
-                footer.cache[0].complete(Ok(Snapshot {
-                    windows: vec![usage::Window {
-                        used_percent: 28.,
-                        minutes: 300,
-                        resets_at: None,
-                    }],
+                footer.cache[index(Kind::Codex)].complete(Ok(Snapshot {
+                    windows: vec![usage::Window::new(28., 300, None)],
                     updated_at: usage::now_ms(),
                     ..Default::default()
                 }));
@@ -1028,23 +1070,134 @@ mod tests {
                 footer.provider(Kind::Claude, cx);
                 assert!(footer.cache[index(footer.kind)].snapshot.is_none());
                 // A late Codex response belongs to Codex, while Claude stays in view.
-                footer.cache[0].complete(Ok(Snapshot {
-                    windows: vec![usage::Window {
-                        used_percent: 42.,
-                        minutes: 300,
-                        resets_at: None,
-                    }],
+                footer.cache[index(Kind::Codex)].complete(Ok(Snapshot {
+                    windows: vec![usage::Window::new(42., 300, None)],
                     updated_at: usage::now_ms(),
                     ..Default::default()
                 }));
                 assert!(footer.cache[index(footer.kind)].snapshot.is_none());
                 footer.provider(Kind::Codex, cx);
                 assert_eq!(
-                    footer.cache[0].snapshot.as_ref().unwrap().windows[0].used_percent,
+                    footer.cache[index(Kind::Codex)]
+                        .snapshot
+                        .as_ref()
+                        .unwrap()
+                        .windows[0]
+                        .used_percent,
                     42.
                 );
             })
             .unwrap();
+    }
+    const CLAUDE_USAGE: &str =
+        include_str!("../../gespan-core/src/usage/fixtures/claude-oauth-usage.json");
+    const KIRO_USAGE: &str = include_str!("../../gespan-core/src/usage/fixtures/kiro-usage.txt");
+    const CODEX_STREAM: &str =
+        include_str!("../../gespan-core/src/usage/fixtures/codex-app-server.jsonl");
+    /// 2026-11-03T19:47:19Z, when the Claude and Kiro reports were captured.
+    const CAPTURED: i64 = 1_793_735_239_000;
+
+    #[test]
+    fn real_reports_draw_the_numbers_each_provider_gave() {
+        let claude = usage::parse_report(Kind::Claude, CLAUDE_USAGE).unwrap();
+        // The chip carries only the plan-wide weekly window, not Fable's cap.
+        assert_eq!(chip_label(&claude, false, CAPTURED), "2% 6d 5h");
+        assert_eq!(chip_label(&claude, true, CAPTURED), "98% 6d 5h");
+        let titles: Vec<_> = claude.windows.iter().map(window_title).collect();
+        assert_eq!(titles, ["Weekly limit", "Weekly · Fable"]);
+
+        let kiro = usage::parse_report(Kind::Kiro, KIRO_USAGE).unwrap();
+        assert_eq!(chip_label(&kiro, false, CAPTURED), "5% 27d 4h");
+        assert_eq!(window_title(&kiro.windows[0]), "Monthly limit");
+        assert_eq!(
+            kiro.windows[0].amount.as_ref().unwrap().label(),
+            "2.41 of 50 credits"
+        );
+        assert_eq!(kiro.plan.as_deref(), Some("Kiro Free"));
+
+        let probe = CODEX_STREAM.lines().next().unwrap();
+        let codex = usage::parse_report(Kind::Codex, probe).unwrap();
+        assert_eq!(codex.plan.as_deref(), Some("Free"));
+        assert_eq!(window_title(&codex.windows[0]), "Monthly limit");
+        assert!(chip_label(&codex, false, CAPTURED).starts_with("19% "));
+    }
+
+    #[test]
+    fn live_turn_readings_fill_a_failed_or_missing_probe_and_keep_scoped_caps() {
+        // The probe failed; Codex's per-turn notification still fills the footer.
+        let mut state = CachedUsage::default();
+        state.complete(Err(FetchError {
+            message: "Offline".into(),
+            unavailable: false,
+        }));
+        for line in CODEX_STREAM.lines() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            if v["method"] == "account/rateLimits/updated" {
+                state.live(&usage::codex_live_windows(&v["params"]), CAPTURED);
+            }
+        }
+        assert!(state.error.is_none());
+        let snapshot = state.snapshot.as_ref().unwrap();
+        assert!(chip_label(snapshot, false, CAPTURED).starts_with("19% "));
+        assert_eq!(snapshot.updated_at, CAPTURED);
+
+        // Claude: a later turn's 37% replaces the probed weekly 2%, and the
+        // Fable cap the stream never mentions stays.
+        let mut state = CachedUsage::default();
+        state.complete(Ok(usage::parse_report(Kind::Claude, CLAUDE_USAGE).unwrap()));
+        let later = serde_json::json!({"unifiedWindows":{"seven_day":{"utilization":0.37,"resetsAt":1794272400}}});
+        state.live(&usage::claude_live_windows(&later), CAPTURED);
+        let snapshot = state.snapshot.as_ref().unwrap();
+        assert_eq!(chip_label(snapshot, false, CAPTURED), "37% 6d 5h");
+        assert_eq!(snapshot.windows.len(), 2);
+        assert_eq!(snapshot.windows[1].scope.as_deref(), Some("Fable"));
+        // An empty reading is not a reset to nothing.
+        state.live(&[], CAPTURED + 1);
+        assert_eq!(state.snapshot.as_ref().unwrap().updated_at, CAPTURED);
+    }
+
+    #[gpui::test]
+    fn kiro_usage_shows_its_credits_and_extra_spend_shows_when_enabled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(bind);
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| UsageFooter::new(Kind::Kiro, cx))
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |footer, _, cx| {
+                footer.cache[index(Kind::Kiro)]
+                    .complete(usage::parse_report(Kind::Kiro, KIRO_USAGE));
+                cx.notify();
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        // Kiro now has usage to read and refresh.
+        assert!(visual.debug_bounds("refresh-usage").is_some());
+        let chip = visual.debug_bounds("usage-provider-chip").unwrap();
+        assert!(chip.size.width > gpui::px(40.), "{chip:?}");
+
+        let mut value: serde_json::Value = serde_json::from_str(CLAUDE_USAGE).unwrap();
+        for enabled in [false, true] {
+            value["spend"]["enabled"] = enabled.into();
+            let snapshot = usage::parse_report(Kind::Claude, &value.to_string());
+            window
+                .update(visual, |footer, window, cx| {
+                    footer.provider(Kind::Claude, cx);
+                    footer.cache[index(Kind::Claude)].complete(snapshot);
+                    if !footer.open {
+                        footer.toggle(window, cx);
+                    }
+                    cx.notify();
+                })
+                .unwrap();
+            visual.refresh().unwrap();
+            assert_eq!(visual.debug_bounds("usage-extra-spend").is_some(), enabled);
+        }
     }
     #[test]
     fn failed_refresh_keeps_snapshot_but_sign_out_clears_it() {
@@ -1073,7 +1226,7 @@ mod tests {
         cx.update(bind);
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
-                cx.new(|cx| UsageFooter::new(Kind::Kiro, cx))
+                cx.new(|cx| UsageFooter::new(Kind::Cursor, cx))
             })
             .unwrap()
         });

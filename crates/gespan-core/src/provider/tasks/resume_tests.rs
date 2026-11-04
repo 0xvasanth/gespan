@@ -558,7 +558,7 @@ fn a_user_follow_up_after_the_notification_is_not_marked_as_a_wake() {
     p.seed_agent_runs();
     // Through the resumed agent's task_notification (line 195).
     replay(&mut p, &frames[TURN_ONE..line(196)]);
-    assert!(p.claude_resume_at.is_some(), "inside the wake window");
+    assert!(p.claude.resume_at.is_some(), "inside the wake window");
     let sent = p
         .steer(
             crate::follow_up::Message {
@@ -633,11 +633,11 @@ fn the_window_for_the_next_wake_opens_at_the_result_of_a_long_first_wake() {
     let first = replay(&mut p, std::slice::from_ref(&init));
     assert_eq!(markers(&first[0]), [summary(&frames, SEND)]);
     // Nothing is armed while the wake runs, so no time into it can expire it.
-    assert!(p.claude_resume_at.is_none());
+    assert!(p.claude.resume_at.is_none());
     let result = replay(&mut p, &[wake_result()]);
     assert!(markers(&result[0]).is_empty());
     // The 15 s are counted from the result, however long the wake took.
-    let at = p.claude_resume_at.expect("window for the queued wake");
+    let at = p.claude.resume_at.expect("window for the queued wake");
     assert!(at > Instant::now() + Duration::from_secs(10));
     // The run is not ended inside it, and the second wake is marked.
     assert!(!p.done);
@@ -651,7 +651,7 @@ fn a_summary_a_wake_could_not_lead_with_is_shown_by_its_result() {
     let mut p = claude();
     two_close_notifications(&mut p, &frames);
     // The window ran out before Claude woke.
-    p.claude_resume_at = None;
+    p.claude.resume_at = None;
     let start = replay(&mut p, &frames[line(197)..=line(197)]);
     assert!(markers(&start[0]).is_empty());
     assert_eq!(
@@ -686,7 +686,7 @@ fn a_user_steer_during_a_wake_does_not_get_the_next_wake_marker() {
     let result = replay(&mut p, &[wake_result()]);
     assert!(markers(&result[0]).is_empty());
     // No window for another wake, so the reply is not mistaken for one.
-    assert!(p.claude_resume_at.is_none());
+    assert!(p.claude.resume_at.is_none());
     let reply = replay(&mut p, &[init]);
     assert!(markers(&reply[0]).is_empty(), "{:?}", reply[0]);
     // The second summary is kept for a genuine wake.

@@ -352,14 +352,17 @@ pub enum Delivery {
 }
 
 pub fn delivery(kind: Kind, provider_id: Option<&str>) -> Delivery {
-    match kind {
-        Kind::Claude => Delivery::ClaudeControl,
-        Kind::Codex => Delivery::CodexThread,
-        Kind::OpenCode => Delivery::OpenCodeApi,
-        Kind::Pi | Kind::Omp => Delivery::Environment,
+    use crate::provider::Family;
+    match kind.family() {
+        Family::Claude => Delivery::ClaudeControl,
+        Family::Codex => Delivery::CodexThread,
+        Family::OpenCode => Delivery::OpenCodeApi,
+        Family::Pi => Delivery::Environment,
         // Their resume requests don't refresh mcpServers.
-        Kind::Grok | Kind::Fx if provider_id.is_some() => Delivery::Environment,
-        _ => Delivery::AcpSession,
+        Family::Acp if matches!(kind, Kind::Grok | Kind::Fx) && provider_id.is_some() => {
+            Delivery::Environment
+        }
+        Family::Acp => Delivery::AcpSession,
     }
 }
 

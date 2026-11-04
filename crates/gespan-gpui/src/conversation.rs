@@ -1621,6 +1621,9 @@ impl Conversation {
                         if let Some(metrics) = update.metrics {
                             this.transcript.update(cx, |v, _| v.metrics(metrics));
                         }
+                        if let Some(windows) = update.usage_windows.filter(|_| source_selected) {
+                            this.live_usage(windows, cx);
+                        }
                         if update.turn_ready && !stopping {
                             this.follow_ups.ready = true;
                         }
@@ -3557,13 +3560,16 @@ impl Conversation {
         let headline = ratio
             .map(|r| format!("{:.0}% context used", r * 100.))
             .unwrap_or_else(|| "No context used yet".into());
-        let detail = self.context.map(|usage| {
-            format!(
-                "{} / {} tokens",
-                gespan_core::context::format_tokens(usage.used),
-                gespan_core::context::format_tokens(usage.window.unwrap_or(0))
-            )
-        });
+        let detail = self
+            .context
+            .filter(|usage| usage.has_tokens())
+            .map(|usage| {
+                format!(
+                    "{} / {} tokens",
+                    gespan_core::context::format_tokens(usage.used),
+                    gespan_core::context::format_tokens(usage.window.unwrap_or(0))
+                )
+            });
         div()
             .min_w_0()
             .flex()

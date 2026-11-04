@@ -6,16 +6,7 @@ static STEER_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 impl Kind {
     pub fn can_steer(self) -> bool {
-        matches!(
-            self,
-            Self::Codex
-                | Self::Claude
-                | Self::Cursor
-                | Self::Pi
-                | Self::Omp
-                | Self::Hermes
-                | Self::OpenCode
-        )
+        self.spec().features.steer.is_some()
     }
 }
 
@@ -24,15 +15,15 @@ impl Protocol {
     /// stopping earlier would drop the user's message.
     pub(super) fn prompt_delivered(&self) -> bool {
         match self.request.kind {
-            Kind::Claude => self.claude_prompt_sent,
+            Kind::Claude => self.claude.prompt_sent,
             _ => self.ready(),
         }
     }
     pub(super) fn ready(&self) -> bool {
-        match self.request.kind {
-            Kind::Codex => self.active_turn.is_some(),
-            Kind::Claude | Kind::Pi | Kind::Omp => self.follow_up_ready,
-            _ => self.acp_active_session().is_some(),
+        match self.request.kind.family() {
+            Family::Codex => self.active_turn.is_some(),
+            Family::Claude | Family::Pi => self.follow_up_ready,
+            Family::Acp | Family::OpenCode => self.acp_active_session().is_some(),
         }
     }
     pub(super) fn steer(
@@ -83,7 +74,7 @@ impl Protocol {
                 )?;
                 // After Claude yielded, the next turn answers this message. Mid-turn,
                 // Claude folds it into the current turn instead.
-                if self.claude_result_seen {
+                if self.claude.result_seen {
                     self.activities.user_turn_pending = true;
                 } else {
                     self.activities.steered_in_turn = true;
@@ -167,12 +158,10 @@ impl Protocol {
     pub(super) fn expire_steering(&mut self) -> Vec<Event> {
         // These are acknowledgement deadlines, not turn deadlines. Codex's
         // JSON-RPC steer request deliberately waits without a response timer.
-        let timeout = match self.request.kind {
-            Kind::Pi | Kind::Omp => Duration::from_secs(15),
-            Kind::Hermes => Duration::from_secs(20),
-            Kind::OpenCode => Duration::from_secs(30),
-            _ => return Vec::new(),
+        let Some(Some(seconds)) = self.request.kind.spec().features.steer else {
+            return Vec::new();
         };
+        let timeout = Duration::from_secs(seconds);
         let expired: Vec<_> = self
             .steering
             .iter()

@@ -28,7 +28,7 @@ const MODEL_NOTE: &str = "Answer side questions with another model.";
 const BLOCK_CHARS: usize = 8_000;
 
 fn supported(kind: Kind) -> bool {
-    !matches!(kind, Kind::Fx | Kind::Hermes | Kind::Antigravity)
+    kind.spec().features.side_threads
 }
 fn bounded(text: &str, chars: usize) -> String {
     text.chars().take(chars).collect()
