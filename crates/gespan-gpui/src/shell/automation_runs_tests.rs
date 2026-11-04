@@ -1,7 +1,9 @@
 //! Automations start on their own: a due schedule or a new Inbox item opens a
 //! run in the main window without the Automations view ever being open.
 use super::*;
-use gespan_core::automations::{AutomationRun, AutomationTrigger, AutomationUpsert, Service};
+use gespan_core::automations::{
+    AutomationRun, AutomationTrigger, AutomationUpsert, DueAutomationRun, Service,
+};
 use gespan_core::store::Store;
 use gpui::{TestAppContext, WindowHandle};
 use std::path::{Path, PathBuf};
@@ -627,4 +629,177 @@ fn an_undated_item_whose_claim_failed_is_retried_after_a_restart(cx: &mut TestAp
     assert_launched(&saved[0], "event");
     assert_eq!(saved[0].event_key.as_deref(), Some("linear:issue:8"));
     assert_eq!(sessions(&reopened, &id, cx), 1);
+}
+
+#[gpui::test]
+fn a_run_whose_project_folder_is_gone_fails_with_a_reason_and_the_schedule_moves_on(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let mut missing = draft(
+        &data.project,
+        vec![AutomationTrigger::new("time", "hourly")],
+    );
+    missing.cwd = format!("{}/deleted", data.project);
+    let id = save(&data.db, missing);
+    reschedule(&data.db, &id, now_ms() - 20_000);
+    let window = open(&data, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].status, "failed", "never left pending: {saved:?}");
+    assert!(
+        saved[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("project folder is unavailable"),
+        "{saved:?}"
+    );
+    assert_eq!(sessions(&window, &id, cx), 0);
+    let next = Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap()
+        .next_run_at;
+    assert!(next > now_ms(), "the next occurrence is still scheduled");
+}
+
+#[gpui::test]
+fn several_automations_due_at_once_each_run_once_in_their_own_session(cx: &mut TestAppContext) {
+    let data = data();
+    let ids: Vec<_> = (0..3).map(|_| scheduled_due(&data, 20_000)).collect();
+    let issue_id = on_issue(&data);
+    let window = open(&data, cx);
+    deliver(&window, vec![issue(&data, 70, now_ms())], cx);
+    for id in ids.iter().chain(std::iter::once(&issue_id)) {
+        let saved = runs(&data.db, id);
+        assert_eq!(saved.len(), 1, "{id}: {saved:?}");
+        assert_eq!(sessions(&window, id, cx), 1, "{id}");
+    }
+    let distinct: std::collections::HashSet<_> = ids
+        .iter()
+        .chain(std::iter::once(&issue_id))
+        .map(|id| runs(&data.db, id)[0].session_id.clone().unwrap())
+        .collect();
+    assert_eq!(distinct.len(), 4, "every run has its own session");
+}
+
+#[gpui::test]
+fn inbox_items_delivered_before_automations_finish_opening_still_run(cx: &mut TestAppContext) {
+    let data = data();
+    let id = on_issue(&data);
+    let store = Arc::new(Mutex::new(Store::open(&data.db).unwrap()));
+    cx.update(crate::shell::bind_keys);
+    let cwd = data.project.clone();
+    let item = issue(&data, 80, now_ms());
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |_, cx| {
+            cx.new(|cx| {
+                let mut shell = Shell::new(store, vec![], cwd, None, cx);
+                // The automation service opens in the background; an Inbox
+                // refresh can land first.
+                assert!(shell.automation_state.service.is_none());
+                shell.inbox_automation_events(vec![item], cx);
+                shell
+            })
+        })
+        .unwrap()
+    });
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+    assert_eq!(sessions(&window, &id, cx), 1);
+}
+
+#[gpui::test]
+fn an_automation_with_a_schedule_and_an_event_runs_for_each(cx: &mut TestAppContext) {
+    let data = data();
+    let id = save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![
+                AutomationTrigger::new("time", "hourly"),
+                AutomationTrigger::new("github", "issue_opened"),
+            ],
+        ),
+    );
+    reschedule(&data.db, &id, now_ms() - 20_000);
+    let window = open(&data, cx);
+    deliver(&window, vec![issue(&data, 90, now_ms())], cx);
+    let saved = runs(&data.db, &id);
+    let mut triggers: Vec<_> = saved.iter().map(|run| run.trigger.as_str()).collect();
+    triggers.sort_unstable();
+    assert_eq!(triggers, ["event", "scheduled"], "{saved:?}");
+    for run in &saved {
+        assert_launched(run, &run.trigger);
+    }
+    assert_eq!(sessions(&window, &id, cx), 2);
+}
+
+#[gpui::test]
+fn run_now_starts_a_run_and_shows_its_session(cx: &mut TestAppContext) {
+    let data = data();
+    let id = save(&data.db, draft(&data.project, vec![]));
+    let window = open(&data, cx);
+    let automation = Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap();
+    let run = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    // What the Automations view's Run now emits.
+    window
+        .update(cx, |shell, _, cx| {
+            shell.launch_automation(DueAutomationRun { automation, run }, true, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "manual");
+    let active = window
+        .update(cx, |shell, _, _| shell.workspace.active)
+        .unwrap();
+    let session = window
+        .update(cx, |shell, _, _| {
+            shell
+                .automation_state
+                .session_automations
+                .iter()
+                .find(|(_, automation)| *automation == &id)
+                .map(|(session, _)| *session)
+        })
+        .unwrap();
+    assert_eq!(active, session, "Run now opens the run's session");
+}
+
+#[gpui::test]
+fn a_run_reuses_the_last_conversation_when_asked(cx: &mut TestAppContext) {
+    let data = data();
+    let mut reusing = draft(
+        &data.project,
+        vec![AutomationTrigger::new("time", "hourly")],
+    );
+    reusing.reuse_session = true;
+    let id = save(&data.db, reusing);
+    reschedule(&data.db, &id, now_ms() - 20_000);
+    let window = open(&data, cx);
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    // The next hour comes due.
+    reschedule(&data.db, &id, now_ms() - 10_000);
+    poll(&window, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 2, "{saved:?}");
+    assert_eq!(saved[0].session_id, saved[1].session_id, "{saved:?}");
+    assert_eq!(sessions(&window, &id, cx), 1);
 }
