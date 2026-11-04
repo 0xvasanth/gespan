@@ -25,6 +25,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(test)]
+mod contract_tests;
 mod editor;
 mod gallery;
 mod trigger_menu;
