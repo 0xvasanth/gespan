@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A Pilot's SOP Roadmap tab is back, so you can see the workflow your Pilot is
+  following. The Flows page stays hidden from the sidebar.
+
 ## [0.0.6] - 2026-11-03
 
 ### Removed

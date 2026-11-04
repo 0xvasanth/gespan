@@ -4159,48 +4159,47 @@ mod roadmap {
         cx.run_until_parked();
         cx.update(|_, cx| s.manager.read(cx).roadmaps[&s.id].0.clone())
     }
+    /// The Roadmap needs no switch: it shows while the Flows page is hidden.
     fn roadmap_visual(s: &Setup, cx: &mut TestAppContext) -> gpui::VisualTestContext {
-        cx.update(|cx| {
-            cx.set_reduce_motion(true);
-            crate::flows::show_for_test(cx);
-        });
+        cx.update(|cx| cx.set_reduce_motion(true));
         gpui::VisualTestContext::from_window(s.window.into(), cx)
     }
     #[gpui::test]
-    fn the_roadmap_tab_is_gone_while_flows_are_hidden(cx: &mut TestAppContext) {
+    fn the_roadmap_shows_the_pilots_flow_while_the_flows_page_stays_hidden(
+        cx: &mut TestAppContext,
+    ) {
         let s = setup(cx);
-        cx.update(|cx| cx.set_reduce_motion(true));
-        hold_flow_launches(&s, cx);
-        flows_ok(
-            &s,
-            "save",
-            "flows.save",
-            json!({"flow":flow_blueprint("", &s.project)}),
-            cx,
+        assert!(
+            !cx.update(|cx| crate::flows::visible(cx)),
+            "Flows stay hidden"
         );
-        let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+        hold_flow_launches(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow = save_pilot_flow(&s, "save", "Ship a fix", visual);
         s.manager.update(visual, |m, cx| {
             m.settings = None;
             cx.notify();
         });
         visual.run_until_parked();
         visual.refresh().unwrap();
-        assert!(visual.debug_bounds("pilot-overview-Sessions").is_some());
-        assert!(
-            visual.debug_bounds("pilot-overview-roadmap").is_none(),
-            "a Pilot with Flows still offers no Roadmap tab"
-        );
-
-        s.manager
-            .update(visual, |m, cx| m.select_overview(OverviewTab::Roadmap, cx));
+        let tab = visual
+            .debug_bounds("pilot-overview-roadmap")
+            .expect("the SOP Roadmap tab is offered");
+        visual.simulate_click(tab.center(), Default::default());
         visual.run_until_parked();
-        visual.refresh().unwrap();
         s.manager.read_with(visual, |m, _| {
-            assert!(m.overview_tab == OverviewTab::Sessions);
-            assert!(m.roadmaps.is_empty(), "no Roadmap was drawn");
+            assert!(m.overview_tab == OverviewTab::Roadmap);
         });
-        assert!(visual.debug_bounds("pilot-roadmap").is_none());
-        assert!(visual.debug_bounds("pilot-session-list").is_some());
+        let roadmap = visual.update(|_, cx| s.manager.read(cx).roadmaps[&s.id].0.clone());
+        roadmap.read_with(visual, |r, _| {
+            let ids: Vec<&str> = r.flows.iter().map(|f| f.id.as_str()).collect();
+            assert_eq!(ids, vec![flow.as_str()], "the workflow the Pilot follows");
+        });
+        assert!(visual.debug_bounds("pilot-roadmap").is_some());
+
+        // The Flows page stays out of reach (`shell::hidden_flows_tests`).
+        assert!(visual.debug_bounds("flows-view").is_none());
+        assert!(!visual.update(|_, cx| crate::flows::visible(cx)));
     }
 
     fn reload_roadmap(roadmap: &Entity<Roadmap>, cx: &mut gpui::VisualTestContext) {
