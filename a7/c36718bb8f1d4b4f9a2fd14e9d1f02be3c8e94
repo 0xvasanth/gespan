@@ -1,0 +1,28 @@
+crates/gespan-core/src/provider/claude.rs
+  s_d67e84a73d120b::t_c1ef0e2bd14eb0 5-6,53-54
+  s_d67e84a73d120b::t_4e4d35a47a11c5 55-60
+crates/gespan-core/src/provider.rs
+  s_d67e84a73d120b::t_47bb47246101c6 1891-1923,1930-1946,1951-1966,1971-1972
+  s_d67e84a73d120b::t_4e4d35a47a11c5 1924-1929,1947-1950,1967-1970
+  s_d67e84a73d120b::t_c1ef0e2bd14eb0 496,498-501,506-514
+  s_d67e84a73d120b::t_f6a0e4a0521510 497,502,505
+crates/gespan-core/src/provider/claude/read_only.rs
+  s_d67e84a73d120b::t_9c5378160046f2 1-43,51-109,113-284
+  s_d67e84a73d120b::t_4e4d35a47a11c5 44-50,110-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7c36718bb8f1d4b4f9a2fd14e9d1f02be3c8e94",
+  "prompts": {},
+  "sessions": {
+    "s_d67e84a73d120b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82f44e1c-80d8-476a-ba34-be3a5b5aafbf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
