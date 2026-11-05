@@ -43,7 +43,7 @@ fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError>
             "Claude sign-in expired. Run claude auth login, then refresh.",
         ));
     }
-    let response = ureq::AgentBuilder::new()
+    let response = crate::net::agent()
         .timeout(Duration::from_secs(10))
         .build()
         .get("https://api.anthropic.com/api/oauth/usage")
@@ -61,7 +61,12 @@ fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError>
             ureq::Error::Status(status, _) => {
                 FetchError::failed(format!("Claude usage request failed ({status})."))
             }
-            _ => FetchError::failed("Could not reach Claude usage. Try refreshing again."),
+            error => {
+                // The transport error names the cause (timeout, DNS, TLS); the
+                // footer keeps the short message.
+                tracing::warn!(%error, "could not reach Claude usage");
+                FetchError::failed("Could not reach Claude usage. Try refreshing again.")
+            }
         })?;
     let mut body = String::new();
     response

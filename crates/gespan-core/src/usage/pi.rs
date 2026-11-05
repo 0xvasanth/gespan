@@ -206,7 +206,7 @@ fn read_usage(
     result
 }
 fn request_usage(provider: PiUsageProvider, credentials: &PiOAuth, url: &str) -> PiUsageResult {
-    let agent = ureq::AgentBuilder::new()
+    let agent = crate::net::agent()
         .timeout(Duration::from_secs(10))
         .redirects(0)
         .build();
