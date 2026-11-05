@@ -30,6 +30,7 @@ mod pilot;
 mod remote;
 pub(crate) mod remote_plans;
 mod response_menu;
+mod sign_in;
 #[cfg(test)]
 mod submission_tests;
 mod title;
@@ -176,6 +177,7 @@ pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
 pub(crate) struct Conversation {
     editing_last_turn: edit_last_turn::State,
     find: find::State,
+    sign_in: sign_in::State,
     btw: Option<Entity<btw::Btw>>,
     /// The composer box the /btw sheet morphs out of, and how visible the
     /// composer is under the sheet.
@@ -709,6 +711,7 @@ impl Conversation {
         Self {
             editing_last_turn: Default::default(),
             find: Default::default(),
+            sign_in: Default::default(),
             btw: None,
             btw_home: (AnchorSlot::default(), 1.),
             _btw_observer: None,
@@ -1346,7 +1349,9 @@ impl Conversation {
         }
         self.settings.usage_limit = None;
         self.attach_account(cx);
-        if !self.is_remote() {
+        // A replay sends the failed turn's own settings, prompt and files again.
+        let replaying = self.sign_in.replaying.take();
+        if !self.is_remote() && replaying.is_none() {
             self.generate_title(&prompt, cx);
         }
         let model_label = self.model_label();
@@ -1374,8 +1379,9 @@ impl Conversation {
         self.app_read_only = self.settings.plan
             || self.settings.orchestrator
             || self.settings.access == AccessMode::ReadOnly;
-        let mut settings = self.settings.clone();
-        if let Some(model) = self.model_info() {
+        let replay = replaying.is_some();
+        let mut settings = replaying.unwrap_or_else(|| self.settings.clone());
+        if let Some(model) = self.model_info().filter(|_| !replay) {
             for control in &model.controls {
                 settings
                     .model_settings
@@ -1383,53 +1389,55 @@ impl Conversation {
                     .or_insert_with(|| control.current.clone());
             }
         }
-        settings.turn_model = Some(gespan_core::agent::TurnInfo {
-            provider: self.summary.provider.clone(),
-            model: model_label.to_string(),
-            model_id: self
-                .model_info()
-                .map(|model| model.id.clone())
-                .or(self.model.clone()),
-            started_at: Some(gespan_core::time::now_ms()),
-            ..Default::default()
-        });
-        if !self.is_remote() && settings.prepared_prompt.is_none() {
-            let mut prepared = self.completion.read(cx).prepare_prompt(&prompt);
-            if let Some(note) = self.pending_note.take() {
-                prepared = gespan_core::notes::compose_message(&note, &prepared);
-                settings.note_card = Some(gespan_core::notes::card_meta(&note));
+        if !replay {
+            settings.turn_model = Some(gespan_core::agent::TurnInfo {
+                provider: self.summary.provider.clone(),
+                model: model_label.to_string(),
+                model_id: self
+                    .model_info()
+                    .map(|model| model.id.clone())
+                    .or(self.model.clone()),
+                started_at: Some(gespan_core::time::now_ms()),
+                ..Default::default()
+            });
+            if !self.is_remote() && settings.prepared_prompt.is_none() {
+                let mut prepared = self.completion.read(cx).prepare_prompt(&prompt);
+                if let Some(note) = self.pending_note.take() {
+                    prepared = gespan_core::notes::compose_message(&note, &prepared);
+                    settings.note_card = Some(gespan_core::notes::card_meta(&note));
+                }
+                if prepared != prompt {
+                    settings.prepared_prompt = Some(prepared);
+                }
             }
-            if prepared != prompt {
-                settings.prepared_prompt = Some(prepared);
+            if self.inbox_ask.is_some() {
+                let prepared = settings.prepared_prompt.take();
+                settings.prepared_prompt =
+                    Some(self.ask_prompt(prepared.unwrap_or_else(|| prompt.clone())))
+                        .filter(|prepared| *prepared != prompt);
             }
-        }
-        if self.inbox_ask.is_some() {
-            let prepared = settings.prepared_prompt.take();
-            settings.prepared_prompt =
-                Some(self.ask_prompt(prepared.unwrap_or_else(|| prompt.clone())))
-                    .filter(|prepared| *prepared != prompt);
-        }
-        settings.disable_claude_hooks = cx
-            .try_global::<crate::settings::Preferences>()
-            .is_some_and(|p| !p.claude_hooks);
-        settings.model = self.model.clone();
-        settings.environment.extend(self.app_environment.clone());
-        if settings.remote_action.as_ref().is_none_or(|action| {
-            (action["type"] == "send"
-                && action["draftBlockId"].is_null()
-                && action["planBlockId"].is_null())
-                || action["type"] == "draft"
-        }) {
-            settings
-                .attachments
-                .extend(std::mem::take(&mut self.attachments));
-        }
-        if settings
-            .remote_action
-            .as_ref()
-            .is_some_and(|action| action["planBlockId"].is_string())
-        {
-            settings.attachments.clear();
+            settings.disable_claude_hooks = cx
+                .try_global::<crate::settings::Preferences>()
+                .is_some_and(|p| !p.claude_hooks);
+            settings.model = self.model.clone();
+            settings.environment.extend(self.app_environment.clone());
+            if settings.remote_action.as_ref().is_none_or(|action| {
+                (action["type"] == "send"
+                    && action["draftBlockId"].is_null()
+                    && action["planBlockId"].is_null())
+                    || action["type"] == "draft"
+            }) {
+                settings
+                    .attachments
+                    .extend(std::mem::take(&mut self.attachments));
+            }
+            if settings
+                .remote_action
+                .as_ref()
+                .is_some_and(|action| action["planBlockId"].is_string())
+            {
+                settings.attachments.clear();
+            }
         }
         self.preparing_worktree = settings.new_worktree && settings.worktree_cwd.is_none();
         if self.preparing_worktree {
@@ -1438,6 +1446,7 @@ impl Conversation {
             self.status = "Creating worktree…".into();
         }
         if settings.pilot.is_none()
+            && !replay
             && settings
                 .remote_action
                 .as_ref()
@@ -1473,6 +1482,9 @@ impl Conversation {
             self.summary.id,
             settings.prepared_prompt.as_deref().unwrap_or(&prompt),
         );
+        if !self.is_remote() {
+            self.remember_launch(&prompt, &settings);
+        }
         let alive = Arc::new(());
         self.turn_alive = Arc::downgrade(&alive);
         cx.background_executor()
@@ -1752,6 +1764,7 @@ impl Conversation {
                             if !stopping && let Some(limit) = update.usage_limit {
                                 this.settings.usage_limit = Some(limit);
                             }
+                            this.turn_signed_out(update.signed_out && !stopping);
                             if !this.is_remote() {
                                 this.detect_usage_limit(cx);
                             }
@@ -3251,7 +3264,7 @@ impl Conversation {
             .children(self.hold_notice(cx))
             .child(self.background_shelf(window, cx))
             .child(self.message_queue(window, cx))
-            .children(if self.is_remote() { None } else { self.auth_notice(cx) })
+            .children(if self.is_remote() { None } else { self.sign_in_card(cx).or_else(|| self.auth_notice(cx)) })
             .when(self.settings.worktree_removed,|d|d.child(div().mb_2().p_3().rounded_lg().border_1().border_color(content(0.1)).flex().items_center().gap_3().text_size(px(12.)).child(div().flex_1().child("Worktree deleted. Select a branch or worktree to continue this conversation.")).child(tool_pill("reattach-worktree","Select worktree").child("Select worktree").on_click(cx.listener(|this,_,window,cx|this.open_git(GitMode::Worktree,window,cx))))))
             .when_some(self.settings.handoff.clone(), |d, handoff| {
                 d.child(
@@ -4193,6 +4206,9 @@ pub(crate) mod turn_capture {
     }
     pub(crate) fn last() -> Option<(i64, String)> {
         TURNS.with(|turns| turns.borrow().last().cloned())
+    }
+    pub(crate) fn all() -> Vec<(i64, String)> {
+        TURNS.with(|turns| turns.borrow().clone())
     }
 }
 

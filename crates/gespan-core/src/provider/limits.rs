@@ -121,7 +121,7 @@ mod tests {
                 &mut out
             )
             .unwrap_err(),
-            "authentication_failed"
+            "Signed out of Claude Code."
         );
         assert!(p.claude.usage_limit.is_none());
     }

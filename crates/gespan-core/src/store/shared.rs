@@ -1321,6 +1321,20 @@ impl Store {
         // The source appRequestId is the durable, transactional receipt.
         Ok(())
     }
+    pub(super) fn shared_trim_rows(&self, id: i64, from: usize) -> Result<(), String> {
+        self.shared_writable()?;
+        let tx = sql(super::write_transaction(&self.conn))?;
+        let next = blocks::trim(&self.shared_blocks(id)?, from)?;
+        self.shared_store_blocks(id, &next)?;
+        sql(tx.commit())?;
+        self.shared
+            .as_ref()
+            .unwrap()
+            .snapshots
+            .borrow_mut()
+            .insert(id, HistoryRevision::of(&next));
+        Ok(())
+    }
     pub(super) fn shared_reset_provider_id_if(
         &self,
         id: i64,

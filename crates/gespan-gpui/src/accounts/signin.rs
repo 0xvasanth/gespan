@@ -196,6 +196,8 @@ mod tests {
                 complete: false,
                 error: None,
                 adding: None,
+                prompt: Default::default(),
+                codes: None,
             });
             assert!(!accounts.has_modal_auth());
             accounts.signin.as_mut().unwrap().complete = true;
@@ -228,6 +230,8 @@ mod tests {
                     complete: false,
                     error: None,
                     adding: None,
+                    prompt: Default::default(),
+                    codes: None,
                 });
                 cx.notify();
                 previous

@@ -73,6 +73,7 @@ pub fn forget_session(kind: Kind, provider_id: &str, account_id: &str, cwd: &Pat
 }
 mod questions;
 mod rewind;
+pub mod signed_out;
 mod tasks;
 pub use cursor_live::recover_cursor_subagents;
 pub use rewind::{rewind_last_turn, supports_rewind, RewindError};
@@ -135,6 +136,9 @@ pub enum Event {
     /// What the turn still waits on after the provider yielded; empty clears it.
     Background(Vec<BackgroundTask>),
     UsageLimited(crate::usage::Limit),
+    /// The turn failed because the provider CLI is signed out or its sign-in
+    /// expired.
+    SignedOut,
     Interjection {
         text: String,
         custom_type: String,
@@ -173,6 +177,18 @@ pub struct BackgroundTask {
     pub latest: Option<String>,
     /// Tool steps recorded on that block so far.
     pub steps: u32,
+}
+
+impl Protocol {
+    /// A terminal Codex error, marking the turn signed out when Codex says so.
+    fn codex_failure(&mut self, error: &Value, fallback: &str) -> String {
+        let message = codex_error(error, fallback);
+        if signed_out::codex(error) {
+            self.signed_out = true;
+            return signed_out::message(self.request.kind, &message);
+        }
+        message
+    }
 }
 
 fn codex_error(error: &Value, fallback: &str) -> String {
@@ -307,6 +323,8 @@ struct Protocol {
     interrupt_id: Option<String>,
     /// Hold was requested: pending questions wait instead of auto-resolving.
     holding: bool,
+    /// The terminal error was the provider's own signed-out signal.
+    signed_out: bool,
     follow_up_ready: bool,
     steering: HashMap<String, (crate::follow_up::Message, Instant)>,
     request: Request,
@@ -345,6 +363,7 @@ impl Protocol {
             previous_turn: None,
             interrupt_id: None,
             holding: false,
+            signed_out: false,
             follow_up_ready: false,
             steering: HashMap::new(),
             emitted: HashMap::new(),
@@ -833,7 +852,7 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
 }
 
 fn kiro_auth_error(detail: &str) -> String {
-    format!("{}: {detail} {}", Kind::Kiro.label(), acp::KIRO_AUTH_HELP)
+    signed_out::message(Kind::Kiro, &format!("{detail} {}", acp::KIRO_AUTH_HELP))
 }
 
 /// Kiro's sign-in failure from stderr. An exited process gets a moment for
@@ -1117,6 +1136,7 @@ fn launch(
             // same, so the line only explains a failure that happens anyway.
             if !interrupted && protocol.acp_starting() {
                 if let Some(detail) = auth.lock().unwrap().as_deref() {
+                    protocol.signed_out = true;
                     return Err(kiro_auth_error(detail));
                 }
             }
@@ -1302,7 +1322,13 @@ fn launch(
     }
     let result = match result {
         Err(error) if protocol.request.kind == Kind::Kiro && !stopped => {
-            Err(kiro_stderr_failure(&mut wire).unwrap_or(error))
+            match kiro_stderr_failure(&mut wire) {
+                Some(failure) => {
+                    protocol.signed_out = true;
+                    Err(failure)
+                }
+                None => Err(error),
+            }
         }
         result => result,
     };
@@ -1324,6 +1350,9 @@ fn launch(
         }
         if let Some(limit) = protocol.claude.usage_limit.take() {
             pending.push(Event::UsageLimited(limit));
+        }
+        if protocol.signed_out {
+            pending.push(Event::SignedOut);
         }
     }
     if !pending.is_empty() {
@@ -2373,7 +2402,9 @@ elif method == 'session/prompt':
         let (result, _) = kiro_run(request);
         assert_eq!(
             result,
-            Err(format!("Kiro CLI: Error: not logged in {help}"))
+            Err(format!(
+                "Signed out of Kiro CLI. Error: not logged in {help}"
+            ))
         );
         assert!(started.elapsed() < Duration::from_secs(10));
 
@@ -2385,7 +2416,9 @@ elif method == 'session/prompt':
         let (result, _) = kiro_run(request);
         assert_eq!(
             result,
-            Err(format!("Kiro CLI: authentication required {help}"))
+            Err(format!(
+                "Signed out of Kiro CLI. authentication required {help}"
+            ))
         );
     }
     #[test]
@@ -2395,7 +2428,9 @@ elif method == 'session/prompt':
         let (result, _) = kiro_run(request.clone());
         assert_eq!(
             result,
-            Err(format!("Kiro CLI: Error: not logged in {help}"))
+            Err(format!(
+                "Signed out of Kiro CLI. Error: not logged in {help}"
+            ))
         );
         assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
     }

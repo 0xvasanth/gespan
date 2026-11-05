@@ -358,6 +358,7 @@ impl Conversation {
     pub(crate) fn account_authenticated(&mut self, cx: &mut Context<Self>) {
         self.attach_account(cx);
         self.refresh_catalog(cx);
+        self.signed_in_again(cx);
         cx.notify();
     }
     pub(super) fn usage_notice(&self, pilot: bool, cx: &mut Context<Self>) -> Option<AnyElement> {

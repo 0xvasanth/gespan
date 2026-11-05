@@ -1,0 +1,6 @@
+
+Confirm the following code in the browser
+Code: TEST-CODE2
+
+Open this URL: https://view.awsapps.com/start/#/device?user_code=TEST-CODE2
+[?25l▰▱▱ Logging in...▰▰▱ Logging in...

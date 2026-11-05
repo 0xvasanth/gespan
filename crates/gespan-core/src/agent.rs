@@ -124,6 +124,10 @@ pub struct Settings {
     pub pilot_sent_at: Option<u64>,
     #[serde(skip)]
     pub internal_message: bool,
+    /// Re-run the conversation's failed last turn in place: its saved prompt
+    /// is sent again and the reply replaces its error row.
+    #[serde(skip)]
+    pub replay_failed_turn: bool,
     #[serde(skip)]
     pub attachments: Vec<std::path::PathBuf>,
     /// Agent-run tool blocks already in this conversation. Transport-only: it

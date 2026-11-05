@@ -1,0 +1,3 @@
+{"method":"turn/started","params":{"threadId":"thread-expired","turn":{"id":"turn-expired","status":"inProgress","error":null}}}
+{"method":"error","params":{"error":{"message":"Your access token could not be refreshed. Please log out and sign in again.","codexErrorInfo":"unauthorized","additionalDetails":null,"misalignment":null},"willRetry":false,"threadId":"thread-expired","turnId":"turn-expired"}}
+{"method":"turn/completed","params":{"threadId":"thread-expired","turn":{"id":"turn-expired","status":"failed","error":{"message":"Your access token could not be refreshed. Please log out and sign in again.","codexErrorInfo":"unauthorized","additionalDetails":null,"misalignment":null}}}}
