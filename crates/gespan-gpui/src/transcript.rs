@@ -131,6 +131,8 @@ struct Message {
     /// The turn this message belongs to, as `Body::Actions` numbers it.
     turn: usize,
     attachments: Arc<[attachments::Attachment]>,
+    /// An error row that only says the provider is signed out.
+    signed_out: bool,
     /// A user message's displayed chunks and attachments, which its cached
     /// bubble width depends on.
     prompt_fingerprint: u64,
@@ -2801,6 +2803,25 @@ impl TranscriptView {
     /// Paint the prompt and working receipt in the send handler.
     /// The worker replaces these same rows after saving them. Build
     /// the attachment manifest without touching the filesystem on the UI thread.
+    #[cfg(test)]
+    pub(crate) fn source_len(&self) -> usize {
+        self.source.len()
+    }
+    /// Whether the message starting at row `at` reads as a quiet sign-out.
+    #[cfg(test)]
+    pub(crate) fn message_signed_out(&self, at: usize) -> Option<bool> {
+        self.messages
+            .iter()
+            .find(|message| message.start == at)
+            .map(|message| message.signed_out)
+    }
+    /// The provider a conversation ending in a sign-out error is signed out of.
+    pub(crate) fn signed_out_tail(&self) -> Option<gespan_core::provider::Kind> {
+        let tail = self.source.last()?;
+        (tail.role == "error")
+            .then(|| gespan_core::provider::signed_out::provider_of(&tail.text))
+            .flatten()
+    }
     pub(crate) fn submit_prompt(
         &mut self,
         prompt: &str,
@@ -3237,12 +3258,23 @@ impl TranscriptView {
             };
             // Older native versions saved user cancellation as an error row.
             let stopped_notice = role == "error" && text.trim() == "Stopped";
+            // A sign-out reads as a quiet line; the chat's sign-in card carries
+            // the action and the provider's wording.
+            let signed_out = (role == "error")
+                .then(|| gespan_core::provider::signed_out::provider_of(&text))
+                .flatten();
+            let text = match signed_out {
+                Some(kind) => format!("Signed out of {}.", kind.label()),
+                None => text,
+            };
             let (display_text, attachments) = if role == "user" {
                 let (display, attachments) = attachments::message(&self.source, end, &text);
                 // A Build sends the whole approved plan; the message names it.
                 let build = gespan_core::plan::approved_plan(&text)
                     .map(|_| gespan_core::plan::BUILD_LABEL.to_owned());
                 (build.or(display), attachments)
+            } else if signed_out.is_some() {
+                (Some(text.clone()), Arc::default())
             } else {
                 (None, Arc::default())
             };
@@ -3747,6 +3779,7 @@ impl TranscriptView {
                 },
                 attachments,
                 prompt_fingerprint,
+                signed_out: signed_out.is_some(),
             });
             let last_prompt = self.source.iter().rposition(|r| r.is_prompt());
             if self.pilot
@@ -4731,7 +4764,8 @@ impl TranscriptView {
         let user = message.role == "user";
         let stacked = user && self.pilot && self.stacks_on_next(message.start);
         let message_turn = message.turn;
-        let error = message.role == "error";
+        let error = message.role == "error" && !message.signed_out;
+        let signed_out = message.signed_out;
         let reasoning = message.role == "reasoning";
         let message_start = message.start;
         let first = row.first;
@@ -5241,6 +5275,8 @@ impl TranscriptView {
                     .flex_col()
                     .text_color(if error {
                         rgb(0xf87171).into()
+                    } else if signed_out {
+                        content(0.55)
                     } else {
                         content(1.)
                     })

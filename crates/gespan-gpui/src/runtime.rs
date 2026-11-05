@@ -20,6 +20,8 @@ mod persistence;
 #[cfg(all(test, unix))]
 mod pilot_checkpoint_tests;
 pub(crate) mod remote;
+#[cfg(all(test, unix))]
+mod sign_in_tests;
 mod ticket_context;
 pub(crate) mod ticket_scope;
 #[cfg(all(test, unix))]
@@ -57,6 +59,8 @@ pub(crate) struct Update {
     pub(crate) usage_limit: Option<gespan_core::usage::Limit>,
     /// Plan limits the provider reported during this batch, newest last.
     pub(crate) usage_windows: Option<Vec<gespan_core::usage::Window>>,
+    /// On the final update: the turn failed because the provider is signed out.
+    pub(crate) signed_out: bool,
     /// The tasks a yielded turn still waits on, when that changed.
     pub(crate) background: Option<Vec<provider::BackgroundTask>>,
     /// A held turn reached its safe point.
@@ -199,6 +203,7 @@ fn run_turn_using(
         .and_then(|s| s.context_usage(summary.id).ok().flatten())
         .unwrap_or_default();
     let mut usage_limit = None;
+    let mut signed_out = false;
     let result = (|| {
         if let Some(reason) = locked(&store)?.edit_recovery_reason(summary.id)? {
             return Err(reason);
@@ -216,8 +221,20 @@ fn run_turn_using(
             );
         }
         transcript = locked(&store)?.load(summary.id)?;
+        // A refused replay leaves the conversation as it is: it has no row
+        // baseline, like a rejected preflight.
+        let replay = if settings.replay_failed_turn {
+            let replay = failed_turn(&transcript.rows).ok_or(
+                "This conversation changed after the failed message. Send it again to continue.",
+            )?;
+            transcript.rows.truncate(replay.reply);
+            locked(&store)?.trim_rows(summary.id, replay.reply)?;
+            Some(replay)
+        } else {
+            None
+        };
         history_loaded = true;
-        turn_start = transcript.rows.len();
+        turn_start = replay.map_or(transcript.rows.len(), |replay| replay.prompt);
         settings.operator_enabled |= settings.operator;
         let mut persisted = settings.clone();
         persisted.handoff = None;
@@ -225,27 +242,33 @@ fn run_turn_using(
         persisted.plan = false;
         persisted.operator = false;
         persisted.orchestrator = false;
-        let start = transcript.begin(if settings.internal_message {
-            "pilot-system"
+        let start = if let Some(replay) = replay {
+            // The prompt is already saved; only its reply is written again.
+            replay.prompt
         } else {
-            "user"
-        });
-        if let Some(at) = settings
-            .turn_model
-            .as_ref()
-            .and_then(|turn| turn.started_at)
-        {
-            transcript.rows[start].sent_at = Some(at);
-        }
-        if settings.pilot.is_some()
-            && let Some(at) = settings.pilot_sent_at
-        {
-            transcript.rows[start].sent_at = Some(at);
-        }
+            let start = transcript.begin(if settings.internal_message {
+                "pilot-system"
+            } else {
+                "user"
+            });
+            if let Some(at) = settings
+                .turn_model
+                .as_ref()
+                .and_then(|turn| turn.started_at)
+            {
+                transcript.rows[start].sent_at = Some(at);
+            }
+            if settings.pilot.is_some()
+                && let Some(at) = settings.pilot_sent_at
+            {
+                transcript.rows[start].sent_at = Some(at);
+            }
+            transcript.append(&prompt);
+            transcript.attach_files(&settings.attachments);
+            transcript.attach_note(settings.note_card.as_ref());
+            start
+        };
         let started_at = transcript.rows[start].sent_at;
-        transcript.append(&prompt);
-        transcript.attach_files(&settings.attachments);
-        transcript.attach_note(settings.note_card.as_ref());
         // Show the working receipt while connecting, before the first token.
         transcript.begin("assistant");
         // Keep the already painted prompt in the failure replay even if saving
@@ -298,6 +321,7 @@ fn run_turn_using(
                 metrics: None,
                 usage_limit: None,
                 usage_windows: None,
+                signed_out: false,
                 background: None,
                 hold: None,
                 approvals: Vec::new(),
@@ -358,6 +382,7 @@ fn run_turn_using(
                     metrics: None,
                     usage_limit: None,
                     usage_windows: None,
+                    signed_out: false,
                     background: None,
                     hold: None,
                     approvals: Vec::new(),
@@ -408,6 +433,7 @@ fn run_turn_using(
                     metrics: None,
                     usage_limit: None,
                     usage_windows: None,
+                    signed_out: false,
                     background: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
@@ -472,6 +498,7 @@ fn run_turn_using(
                     metrics: None,
                     usage_limit: None,
                     usage_windows: None,
+                    signed_out: false,
                     background: None,
                     hold: None,
                     approvals: Vec::new(),
@@ -1126,6 +1153,7 @@ fn run_turn_using(
                             boundary = true;
                         }
                         Event::UsageLimited(limit) => usage_limit = Some(limit),
+                        Event::SignedOut => signed_out = true,
                         Event::Done => {
                             status = "Ready".into();
                             boundary = true;
@@ -1167,6 +1195,7 @@ fn run_turn_using(
                             metrics,
                             usage_limit: None,
                             usage_windows,
+                            signed_out: false,
                             background,
                             hold,
                             approvals,
@@ -1364,6 +1393,7 @@ fn run_turn_using(
         metrics: None,
         usage_limit: if cancelled { None } else { usage_limit },
         usage_windows: None,
+        signed_out: signed_out && !cancelled,
         background: None,
         hold: None,
         approvals: Vec::new(),
@@ -1377,6 +1407,34 @@ fn run_turn_using(
         reply,
         finished: true,
     });
+}
+
+/// Where a conversation's failed last turn sits: its prompt and attachments,
+/// then from `reply` on only an empty reply and the error that ended it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FailedTurn {
+    pub(crate) prompt: usize,
+    pub(crate) reply: usize,
+}
+pub(crate) fn failed_turn(rows: &[Row]) -> Option<FailedTurn> {
+    let error = rows.len().checked_sub(1)?;
+    if rows[error].role != "error" || !rows[error].first {
+        return None;
+    }
+    let prompt = rows[..error]
+        .iter()
+        .rposition(|row| row.first && row.role == "user")?;
+    let reply = (prompt + 1..error)
+        .find(|&at| {
+            rows[at].first
+                && rows[at].role != gespan_core::transcript::attachments::ROLE
+                && rows[at].role != gespan_core::notes::CARD_ROLE
+        })
+        .unwrap_or(error);
+    rows[reply..error]
+        .iter()
+        .all(|row| row.role == "assistant" && row.text.trim().is_empty())
+        .then_some(FailedTurn { prompt, reply })
 }
 
 /// The most of a turn error the log keeps.
@@ -1719,6 +1777,61 @@ fn shlex_quote(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_prompt_ended_by_one_error_can_be_replayed() {
+        use super::{FailedTurn, failed_turn};
+        use gespan_core::transcript::Row;
+        let row = |role: &str, text: &str, first: bool| Row {
+            role: role.into(),
+            text: text.into(),
+            first,
+            sent_at: None,
+        };
+        let earlier = [row("user", "Earlier", true), row("assistant", "Kept", true)];
+        let failed = |tail: &[Row]| {
+            let mut rows = earlier.to_vec();
+            rows.extend_from_slice(tail);
+            failed_turn(&rows)
+        };
+        assert_eq!(
+            failed(&[
+                row("user", "Fix ", true),
+                row("user", "the login", false),
+                row(gespan_core::transcript::attachments::ROLE, "[]", true),
+                row("error", "Signed out of Codex.", true),
+            ]),
+            Some(FailedTurn {
+                prompt: 2,
+                reply: 5
+            })
+        );
+        // The working receipt saved before the provider failed is replaced too.
+        assert_eq!(
+            failed(&[
+                row("user", "Fix the login", true),
+                row("assistant", "", true),
+                row("error", "Signed out of Codex.", true),
+            ]),
+            Some(FailedTurn {
+                prompt: 2,
+                reply: 3
+            })
+        );
+        // A reply that began before the failure is not thrown away.
+        assert_eq!(
+            failed(&[
+                row("user", "Fix the login", true),
+                row("assistant", "Looking", true),
+                row("error", "Signed out of Codex.", true),
+            ]),
+            None
+        );
+        // A conversation that moved on, or never failed, has nothing to replay.
+        assert_eq!(failed(&[row("user", "Fix the login", true)]), None);
+        assert_eq!(failed_turn(&earlier), None);
+        assert_eq!(failed_turn(&[row("error", "No prompt", true)]), None);
+        assert_eq!(failed_turn(&[]), None);
+    }
     #[test]
     fn only_comments_and_moves_change_the_ticket_and_a_move_wins() {
         use gespan_core::ticket_bridge::Effect;

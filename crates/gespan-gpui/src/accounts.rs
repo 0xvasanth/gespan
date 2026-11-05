@@ -1,4 +1,5 @@
 //! Shared provider accounts, identities and per-account subscription snapshots.
+pub(crate) mod chat_signin;
 mod masked;
 pub(crate) mod resets;
 mod signin;
@@ -151,6 +152,8 @@ pub(crate) enum Surface {
     Settings,
     InlineSettings,
     Footer,
+    /// The sign-in card a chat shows when its provider signed out.
+    Chat,
 }
 struct Editor {
     kind: Kind,
@@ -170,6 +173,10 @@ struct SignIn {
     complete: bool,
     error: Option<String>,
     adding: Option<Account>,
+    /// What the CLI asks of the user, for the chat card.
+    prompt: accounts::LoginPrompt,
+    /// Codes the user pastes back, for a CLI that waits for one.
+    codes: Option<std::sync::mpsc::Sender<String>>,
 }
 struct Picker {
     kind: Kind,
@@ -700,9 +707,12 @@ impl Accounts {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let request = cancel.clone();
-        if surface != Surface::Footer || adding.is_some() {
+        if !matches!(surface, Surface::Footer | Surface::Chat) || adding.is_some() {
             self.working = true;
         }
+        let interactive = surface == Surface::Chat && action == AuthAction::SignIn;
+        let (codes, code_rx) = std::sync::mpsc::channel();
+        let (prompt_tx, prompt_rx) = async_channel::unbounded();
         self.error = None;
         let profile = self.profile(id);
         if self.signin.is_none() {
@@ -720,6 +730,8 @@ impl Accounts {
             complete: false,
             error: None,
             adding,
+            prompt: Default::default(),
+            codes: interactive.then_some(codes),
         });
         if self.has_modal_auth() {
             cx.emit(AccountEvent::AuthStarted);
@@ -733,10 +745,39 @@ impl Accounts {
             if action == AuthAction::SignOut {
                 accounts::stop_processes(kind, &profile);
             }
-            let result = accounts::authenticate(kind, &profile, action, cancel);
+            let interaction = interactive.then(|| accounts::Interaction {
+                prompt: Box::new(move |prompt| {
+                    let _ = prompt_tx.try_send(prompt);
+                }),
+                codes: code_rx,
+            });
+            let result = accounts::authenticate_with(kind, &profile, action, cancel, interaction);
             gespan_core::catalog::invalidate(kind, &profile);
             result
         });
+        if interactive {
+            let request = request.clone();
+            cx.spawn(async move |this, cx| {
+                while let Ok(prompt) = prompt_rx.recv().await {
+                    let live = this.update(cx, |this, cx| {
+                        let Some(signin) = this
+                            .signin
+                            .as_mut()
+                            .filter(|s| Arc::ptr_eq(&s.cancel, &request))
+                        else {
+                            return false;
+                        };
+                        signin.prompt = prompt;
+                        cx.notify();
+                        true
+                    });
+                    if !matches!(live, Ok(true)) {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
@@ -748,9 +789,12 @@ impl Accounts {
                 if !Arc::ptr_eq(&signin.cancel, &request) || signin.cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                if signin.surface != Surface::Footer || signin.adding.is_some() {
+                if !matches!(signin.surface, Surface::Footer | Surface::Chat)
+                    || signin.adding.is_some()
+                {
                     this.working = false;
                 }
+                signin.codes = None;
                 if let Some(editor) = &this.editor {
                     editor
                         .input

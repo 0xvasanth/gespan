@@ -314,7 +314,7 @@ impl Protocol {
             "turn/completed" | "turn/aborted" => {
                 let status = p["turn"]["status"].as_str().unwrap_or("completed");
                 if status == "failed" {
-                    return Err(codex_error(&p["turn"]["error"], "Codex turn failed"));
+                    return Err(self.codex_failure(&p["turn"]["error"], "Codex turn failed"));
                 }
                 let interrupted = matches!(status, "interrupted" | "cancelled" | "canceled")
                     || v["method"] == "turn/aborted";
@@ -340,7 +340,7 @@ impl Protocol {
                 self.done = true;
             }
             "error" if p["willRetry"] != true => {
-                return Err(codex_error(&p["error"], "Codex stream error"));
+                return Err(self.codex_failure(&p["error"], "Codex stream error"));
             }
             "error" => {
                 events.push(Event::Status(codex_error(

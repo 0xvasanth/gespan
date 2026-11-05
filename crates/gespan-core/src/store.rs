@@ -809,6 +809,24 @@ impl Store {
         }
         Ok(Transcript { rows })
     }
+    /// Drops a conversation's transcript rows from `start` on.
+    pub fn trim_rows(&mut self, session: i64, start: usize) -> Result<(), String> {
+        if self.remote_session(session)?.is_some() {
+            return Err("Remote transcripts are owned by the host".into());
+        }
+        if self.shared.is_some() {
+            return self.shared_trim_rows(session, start);
+        }
+        let start = i64::try_from(start)
+            .map_err(|_| "Conversation row index exceeds SQLite's integer range".to_owned())?;
+        self.conn
+            .execute(
+                "DELETE FROM native_rows WHERE session_id=?1 AND row_ix>=?2",
+                params![session, start],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
     pub fn write_rows(&mut self, session: i64, start: usize, rows: &[Row]) -> Result<(), String> {
         self.write_rows_with_message(session, start, rows, None)
     }
@@ -1749,5 +1767,47 @@ mod tests {
             store.sessions().unwrap()[0].provider_id.as_deref(),
             Some("thread-1")
         );
+    }
+}
+
+#[cfg(test)]
+mod trim_tests {
+    use super::*;
+
+    fn rows(pairs: &[(&str, &str)]) -> Vec<Row> {
+        let mut transcript = Transcript::default();
+        for (role, text) in pairs {
+            transcript.begin(role);
+            transcript.append(text);
+        }
+        transcript.rows
+    }
+    #[test]
+    fn trimming_drops_only_the_tail_in_both_stores() {
+        for shared in [false, true] {
+            let mut store = if shared {
+                Store::open_gespan(Path::new(":memory:"))
+            } else {
+                Store::open(Path::new(":memory:"))
+            }
+            .unwrap();
+            let session = store.create("codex", "/project").unwrap().id;
+            let saved = rows(&[
+                ("user", "Earlier"),
+                ("assistant", "Kept"),
+                ("user", "Fix the login"),
+                ("error", "Signed out of Codex."),
+            ]);
+            store.write_rows(session, 0, &saved).unwrap();
+            store.trim_rows(session, 3).unwrap();
+            assert_eq!(
+                store.load(session).unwrap().rows,
+                saved[..3],
+                "shared: {shared}"
+            );
+            // Trimming past the end changes nothing.
+            store.trim_rows(session, 10).unwrap();
+            assert_eq!(store.load(session).unwrap().rows.len(), 3);
+        }
     }
 }

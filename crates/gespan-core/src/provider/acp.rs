@@ -747,6 +747,10 @@ impl Protocol {
         // A JSON-RPC failure is not evidence that the user needs to log in,
         // except for Kiro, which reports signed-out errors as RPC failures.
         if kind == Kind::Kiro {
+            if super::signed_out::kiro(error) {
+                self.signed_out = true;
+                return Err(super::signed_out::message(kind, detail));
+            }
             if kiro_auth_detail(detail) {
                 return Err(format!("{}: {detail} {KIRO_AUTH_HELP}", kind.label()));
             }

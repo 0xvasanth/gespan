@@ -476,6 +476,24 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
     }
     Ok(block)
 }
+/// The blocks before displayed row `from`. Hidden blocks, such as queued
+/// drafts, are kept wherever they sit.
+pub(super) fn trim(blocks: &[Value], from: usize) -> Result<Vec<Value>, String> {
+    let mut offset = 0;
+    let mut kept = Vec::new();
+    for block in blocks {
+        let rows = project_block(block)?.len();
+        if rows == 0 || offset + rows <= from {
+            kept.push(block.clone());
+        } else if offset < from {
+            return Err(
+                "A saved message boundary changed; the original conversation was preserved".into(),
+            );
+        }
+        offset += rows;
+    }
+    Ok(kept)
+}
 pub(super) fn merge(blocks: &[Value], start: usize, delta: &[Row]) -> Result<Vec<Value>, String> {
     let mut rows = project(blocks)?;
     let original_len = rows.len();

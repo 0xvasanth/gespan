@@ -248,3 +248,121 @@ for line in sys.stdin:
         assert!(profile.identity(Kind::Codex).is_none());
     }
 }
+
+/// The chat's sign-in shows the CLI's link and code prompt, types the
+/// pasted code back, and believes the CLI's status over its exit code.
+#[cfg(unix)]
+#[test]
+fn chat_sign_in_relays_the_prompt_and_trusts_only_the_cli_status() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc, Mutex,
+        },
+    };
+    struct Binary(std::ffi::OsString, Option<std::ffi::OsString>);
+    impl Drop for Binary {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(value) = &self.1 {
+                    std::env::set_var(&self.0, value);
+                } else {
+                    std::env::remove_var(&self.0);
+                }
+            }
+        }
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let binary = fixture.path().join("kiro-cli");
+    // Signs in only for the right code; `whoami` reports what really happened.
+    std::fs::write(
+        &binary,
+        r#"#!/usr/bin/env python3
+import os, sys
+state = os.path.join(os.path.dirname(sys.argv[0]), 'signed-in')
+if sys.argv[1:] == ['whoami']:
+    if os.path.exists(state):
+        print('Logged in with Google')
+    else:
+        print('Not logged in')
+        sys.exit(1)
+    sys.exit(0)
+if sys.argv[1:] == ['login']:
+    sys.stdout.write("If the browser didn't open, visit: https://auth.example.test/device?state=abc\nPaste code here if prompted > ")
+    sys.stdout.flush()
+    code = sys.stdin.readline().strip()
+    if code == 'GOOD-CODE':
+        open(state, 'w').close()
+    sys.exit(0)
+sys.exit(2)
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let key = std::ffi::OsString::from("GESPAN_KIRO_BINARY");
+    let _restore = Binary(key.clone(), std::env::var_os(&key));
+    unsafe {
+        std::env::set_var(&key, &binary);
+    }
+    let attempt = |code: &'static str| {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let (codes, code_rx) = mpsc::channel();
+        let seen = prompts.clone();
+        let result = authenticate_with(
+            Kind::Kiro,
+            &Profile::default(),
+            AuthAction::SignIn,
+            Arc::new(AtomicBool::new(false)),
+            Some(Interaction {
+                prompt: Box::new(move |prompt: LoginPrompt| {
+                    if prompt.wants_code {
+                        let _ = codes.send(code.to_owned());
+                    }
+                    seen.lock().unwrap().push(prompt);
+                }),
+                codes: code_rx,
+            }),
+        );
+        let last = prompts.lock().unwrap().last().cloned().unwrap();
+        (result, last)
+    };
+    // The CLI exits 0 for a wrong code, but `whoami` says signed out.
+    let (result, prompt) = attempt("WRONG-CODE");
+    assert_eq!(
+        result,
+        Err("Kiro CLI still reports that you are signed out. Please try again.".into())
+    );
+    assert_eq!(
+        prompt.url.as_deref(),
+        Some("https://auth.example.test/device?state=abc")
+    );
+    assert!(prompt.wants_code);
+    assert_eq!(signed_in(Kind::Kiro, &Profile::default()), Some(false));
+
+    let (result, _) = attempt("GOOD-CODE");
+    assert_eq!(result, Ok(()));
+    assert_eq!(signed_in(Kind::Kiro, &Profile::default()), Some(true));
+
+    // Cancelling stops a sign-in that waits for its code.
+    std::fs::remove_file(fixture.path().join("signed-in")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let stop = cancel.clone();
+    let (_codes, code_rx) = mpsc::channel();
+    let result = authenticate_with(
+        Kind::Kiro,
+        &Profile::default(),
+        AuthAction::SignIn,
+        cancel,
+        Some(Interaction {
+            prompt: Box::new(move |prompt: LoginPrompt| {
+                if prompt.wants_code {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            }),
+            codes: code_rx,
+        }),
+    );
+    assert_eq!(result, Err("Sign-in cancelled".into()));
+    assert_eq!(signed_in(Kind::Kiro, &Profile::default()), Some(false));
+}

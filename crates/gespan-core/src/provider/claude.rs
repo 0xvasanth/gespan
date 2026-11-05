@@ -276,6 +276,13 @@ impl Protocol {
                 }
             }
             "assistant" => {
+                if signed_out::claude(&v) {
+                    self.signed_out = true;
+                    return Err(signed_out::message(
+                        self.request.kind,
+                        &signed_out::claude_detail(&v),
+                    ));
+                }
                 if let Some(error) = v["error"].as_str() {
                     return Err(self.claude_error(error, &v));
                 }
