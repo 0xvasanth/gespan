@@ -229,7 +229,11 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(Arc::strong_count(&alive), 1, "waiting attempts still alive");
-        assert_eq!(calls.load(Ordering::Relaxed), 1, "later attempts never connect");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "later attempts never connect"
+        );
     }
 
     #[test]
