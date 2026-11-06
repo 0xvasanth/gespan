@@ -1,0 +1,19 @@
+crates/gespan-core/src/process.rs
+  s_8fec0de53ddfa1::t_4122cbff3280e3 325-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d429eaffc495d504107da2aae902635dcbb63286",
+  "prompts": {},
+  "sessions": {
+    "s_8fec0de53ddfa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1e82c2f-e11d-4678-81e0-ffbc0bc0843b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
