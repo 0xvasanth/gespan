@@ -1,0 +1,138 @@
+host/core/platform/commands.test.ts
+  s_798596e0fc787c::t_9a83e303216817 1-44
+host/core/platform/fs.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1-231
+host/core/features/settings/model/settings.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 7
+docs/desktop/parity.md
+  s_798596e0fc787c::t_3a92308dd06a5c 8,74,77,79,81,98,100-118
+host/core/features/quick-composer/model/quickComposerShortcut.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 3
+host/core/features/inbox/model/azureDevOps.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/settings/model/settings.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 53
+host/core/integrations/harness/providers/cursor/cursorCatalog.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 19
+host/core/features/quick-composer/model/quickComposerShortcut.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/pi/piCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/inbox/model/githubTasks.providers.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1,10
+host/core/features/inbox/model/jira.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/large-sync.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 26
+host/core/integrations/harness/providers/grok/grokCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/connections/model/connections.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/providers/model/providerBinaryPaths.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 7
+host/core/integrations/harness/providers/kiro/kiroCatalog.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 9
+host/core/integrations/harness/providers/cursor/cursorStore.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/codex/codexCatalog.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 13
+mobile/src/features/workspace/types.ts
+  s_798596e0fc787c::t_d715d0cc0ade9c 44
+host/core/features/inbox/model/gitlab.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/inbox/model/githubTasks.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1-2
+host/core/integrations/harness/providers/claude/claudeCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/codex/codexCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/inbox/model/githubPrChecks.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/shared/lib/paths.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/inbox/model/githubTasks.repositories.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1,3,17
+host/core/features/inbox/model/linear.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/source-control/model/worktrees.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1,7
+host/core/integrations/harness/providers/codex/codex.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 42
+host/core/integrations/harness/providers/codex/codexGit.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 4
+host/core/integrations/harness/providers/codex/codexText.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 81
+host/core/integrations/harness/providers/devin/devinAuth.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/platform/commands.ts
+  s_798596e0fc787c::t_8815c56b37ec94 21
+  s_798596e0fc787c::t_2b59fd846c8db9 1-20,22-23
+host/core/platform/fs.ts
+  s_798596e0fc787c::t_559c49721f34c2 2-4,6
+  s_798596e0fc787c::t_2b59fd846c8db9 1,5,7-633
+host/core/features/inbox/model/githubPrChecks.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 2,14
+host/core/integrations/harness/providers/pi/piCatalog.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 13
+host/core/features/sessions/model/attachments.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+  s_798596e0fc787c::t_80b1bab9916f0e 2
+host/core/integrations/harness/providers/claude/claudeGit.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 4
+host/workspace-commands.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 17
+host/core/features/workspace/model/layout.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/sessions/model/sessionWorkItem.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/devin/devinCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/core/child.ts
+  s_798596e0fc787c::t_9d2c86fd977232 2-5,93,100
+  s_798596e0fc787c::t_9277d436e5411c 1
+host/core/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/workspace.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 19
+host/core/integrations/harness/core/child.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 2
+  s_798596e0fc787c::t_ca1211b9f0a0ff 10-13
+host/core/features/providers/model/providerBinaryPaths.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/artifacts/artifacts.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/fx/fxCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/search/model/search.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1-2
+host/core/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/sessions/model/ticketLinks.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+host/core/features/source-control/model/worktrees.test.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 15
+host/core/features/terminal/model/terminalTab.ts
+  s_798596e0fc787c::t_2b59fd846c8db9 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51c4ece37fd2f308bd91fa281508ee671ff1403d",
+  "prompts": {},
+  "sessions": {
+    "s_798596e0fc787c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ba8df61-6053-4e96-908f-a5b6470d56c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
