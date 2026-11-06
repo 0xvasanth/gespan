@@ -29,7 +29,7 @@
   <a href="#install"><strong>Install</strong></a> ·
   <a href="#how-it-works"><strong>How it works</strong></a> ·
   <a href="#features"><strong>Features</strong></a> ·
-  <a href="#supported-agents"><strong>Providers</strong></a> ·
+  <a href="#supported-agents"><strong>Agents</strong></a> ·
   <a href="#documentation"><strong>Docs</strong></a> ·
   <a href="#build-from-source"><strong>Build from source</strong></a> ·
   <a href="#faq"><strong>FAQ</strong></a> ·
@@ -184,12 +184,12 @@ in from your phone.
 </tr>
 </table>
 
-
 ## Install
 
 > [!IMPORTANT]
 > Install and sign in to at least one [supported agent](docs/providers.md) first.
 
+<!-- release:start -->
 The current release is
 [**0.0.7**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.7).
 
@@ -199,6 +199,7 @@ The current release is
 | macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_x64.dmg) |
 | Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_x64-setup.exe) |
 | Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/gespan_0.0.7_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/gespan-0.0.7-1.el10.x86_64.rpm) |
+<!-- release:end -->
 
 Gespan on Windows and Linux is less tested than on macOS.
 
@@ -216,7 +217,7 @@ Every release is listed on the
 
 ### Coming from a beta
 
-Betas, including Gespan Native, don't update to this version on their own.
+Betas, including Gespan Native, don't update to a stable release on their own.
 Install Gespan from the table above. Your data doesn't need copying: it opens
 the same `dev.gespan.desktop` folder, so your conversations, notes and Pilots
 are there on first launch. Quit the beta first, and on macOS delete
@@ -242,7 +243,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | Guide | What's inside |
 | :-- | :-- |
 | [Provider setup](docs/providers.md) | Install and log in to each supported agent |
-| [Board](docs/board.md) | Cards, columns and tracker tickets, with sessions started from them |
+| [Board](docs/board.md) | Cards, columns and tracker tickets, and starting sessions from them |
 | [Linux installation](docs/install.md) | System dependencies and `.deb` / `.rpm` / AppImage packages |
 | [Agent access with `/operator`](docs/agent-access.md) | Let agents open sessions and manage worktrees and notes |
 | [Remote sessions](docs/remote-access.md) | Run agents on another machine over SSH *(experimental)* |
@@ -253,20 +254,26 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 
 ## Build from source
 
-You'll need **Node.js 22+**, **[Bun](https://bun.sh)** and a stable
-**Rust** toolchain. See [build setup](docs/building.md) for platform
-dependencies and packaging.
+Gespan is written in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
+You'll need **Node.js 22+**, **[Bun](https://bun.sh)**, a stable **Rust**
+toolchain and, on macOS, **Xcode**. See [build setup](docs/building.md) for
+platform dependencies and packaging.
 
 ```bash
 git clone https://github.com/0xvasanth/gespan.git
 cd gespan
-bun run dev
+bun run dev     # launch with a separate development database
+bun run build   # create an optimized app that uses your installed Gespan data
 ```
+
+In the development terminal, type `r` and press Enter to rebuild and restart.
+There is no hot reload. See the [desktop guide](docs/desktop/README.md) for
+build output, checks and current limitations.
 
 Before opening a pull request, run the same checks CI runs:
 
 ```bash
-bun run check   # host tests, cargo fmt, cargo clippy, cargo test
+bun run check   # host tests, Rust fmt, clippy and tests, script tests
 ```
 
 The mobile app is a separate Expo project in [`mobile/`](mobile/README.md).
@@ -284,29 +291,6 @@ Run it with `cd mobile && bun install && bun run start`.
 | `crates/` | Other shared Rust crates: board store, trackers, MCP hub, mobile link and more |
 | `host/` | The remote host that runs sessions on another machine |
 | `mobile/` | The Expo iPhone companion |
-
-</details>
-
-## Run from source
-
-Gespan is written in Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
-
-<details>
-<summary><strong>Run Gespan from source</strong></summary>
-
-<br/>
-
-On macOS you need Node.js 22+, Rust and Xcode:
-
-```sh
-bun run dev     # launch with a separate development database
-bun run build   # create an optimized app using installed Gespan data
-```
-
-In the development terminal, type `r` and press Enter to rebuild and restart.
-There is no hot reload. The release app saves changes to your installed Gespan
-data. See the [desktop guide](docs/desktop/README.md) for prerequisites, build
-output, checks and current limitations.
 
 </details>
 

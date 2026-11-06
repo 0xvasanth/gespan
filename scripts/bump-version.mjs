@@ -2,6 +2,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { updateReadme } from "./readme-release.mjs";
 
 const version = process.argv[2];
 // X.Y.Z with an optional prerelease such as -beta or -beta.2.
@@ -14,6 +15,10 @@ if (
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// Built before anything is written, so a README without its release block
+// fails the bump without leaving the other files half updated.
+const readme = join(root, "README.md");
+const nextReadme = updateReadme(readFileSync(readme, "utf8"), version);
 
 function replaceFirst(path, pattern, replacement) {
   const text = readFileSync(path, "utf8");
@@ -61,5 +66,7 @@ for (const [lockfile, names] of Object.entries(lockfiles)) {
     );
   }
 }
+
+writeFileSync(readme, nextReadme);
 
 console.log(`version ${version}`);
