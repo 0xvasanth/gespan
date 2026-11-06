@@ -47,8 +47,9 @@ pub(super) struct Wire {
     reader: Option<thread::JoinHandle<()>>,
     stderr_reader: Option<thread::JoinHandle<()>>,
     writer: Option<thread::JoinHandle<()>>,
-    _registration: process::Registration,
-    _account: crate::accounts::Tracked,
+    // Held until the child is gone, which may be after `Wire` is dropped.
+    _registration: Option<process::Registration>,
+    _account: Option<crate::accounts::Tracked>,
 }
 /// Why a provider did not start. A missing working folder fails the same
 /// way as a missing binary, so name the folder rather than blame the CLI.
@@ -184,8 +185,8 @@ impl Wire {
             reader: Some(reader),
             stderr_reader: Some(stderr_reader),
             writer: Some(writer),
-            _registration: registration,
-            _account: account,
+            _registration: Some(registration),
+            _account: Some(account),
         })
     }
     /// Whether stderr reached its end, so nothing more can be learned from it.
@@ -196,6 +197,30 @@ impl Wire {
     }
 }
 impl Drop for Wire {
+    /// Close stdin and let the provider exit on its own before any signal, on
+    /// a background thread: `process::retire_pid` explains why a hard kill can
+    /// sign Claude out. Pool locks and turn completion never wait on this.
+    #[cfg(unix)]
+    fn drop(&mut self) {
+        self.stdin.sender.take();
+        // Disconnect before joining so a bounded stdout sender cannot deadlock.
+        let (_, empty) = mpsc::channel();
+        drop(std::mem::replace(&mut self.rx, empty));
+        let pid = self.child.id();
+        let writer = self.writer.take();
+        let readers = [self.reader.take(), self.stderr_reader.take()];
+        let held = (self._registration.take(), self._account.take());
+        thread::spawn(move || {
+            process::retire_pid(pid, || {
+                if let Some(writer) = writer {
+                    let _ = writer.join();
+                }
+                join_readers(readers);
+            });
+            drop(held);
+        });
+    }
+    #[cfg(not(unix))]
     fn drop(&mut self) {
         process::terminate(&mut self.child);
         self.stdin.sender.take();
@@ -205,20 +230,20 @@ impl Drop for Wire {
         // Disconnect before joining so a bounded stdout sender cannot deadlock.
         let (_, empty) = mpsc::channel();
         drop(std::mem::replace(&mut self.rx, empty));
-        // The readers end at EOF, but a helper outside the process group
-        // (Kiro's engine) can hold the pipes open for tens of seconds after
-        // the kill. Wait briefly, then let them finish on their own.
-        let deadline = Instant::now() + READER_GRACE;
-        for reader in [self.reader.take(), self.stderr_reader.take()]
-            .into_iter()
-            .flatten()
-        {
-            while !reader.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(5));
-            }
-            if reader.is_finished() {
-                let _ = reader.join();
-            }
+        join_readers([self.reader.take(), self.stderr_reader.take()]);
+    }
+}
+/// The readers end at EOF, but a helper outside the process group (Kiro's
+/// engine) can hold the pipes open for tens of seconds after the provider is
+/// gone. Wait briefly, then let them finish on their own.
+fn join_readers(readers: [Option<thread::JoinHandle<()>>; 2]) {
+    let deadline = Instant::now() + READER_GRACE;
+    for reader in readers.into_iter().flatten() {
+        while !reader.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if reader.is_finished() {
+            let _ = reader.join();
         }
     }
 }
