@@ -13,7 +13,9 @@ const rules = [
   // Nothing reads these. docs/desktop/examples is compiled into Native, and
   // Native and the release scripts read CHANGELOG.md, so neither matches.
   [/^docs\/(?!desktop\/examples\/)/, []],
-  [/^(CODE_OF_CONDUCT|CONTRIBUTING|README|SECURITY)\.md$/, []],
+  [/^(CODE_OF_CONDUCT|CONTRIBUTING|SECURITY)\.md$/, []],
+  // set-version rewrites its Install section, and a release test checks it.
+  [/^README\.md$/, ["release"]],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.
