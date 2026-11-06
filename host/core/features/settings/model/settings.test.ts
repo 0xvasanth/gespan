@@ -50,7 +50,7 @@ import {
   saveQuickComposerShortcut,
   saveTabAnimationsEnabled,
 } from "./settings";
-import { IS_MAC, MOD, SHIFT } from "../../../platform/tauri/platform";
+import { IS_MAC, MOD, SHIFT } from "../../../platform/platform";
 
 const KEY = "gespan.composerRunner";
 const MODEL_CONTROLS_KEY = "gespan.modelControls";

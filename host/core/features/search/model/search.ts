@@ -1,5 +1,5 @@
-import { invokeWorkspace } from "../../../platform/tauri/fs";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeWorkspace } from "../../../platform/fs";
+import { invoke } from "../../../platform/commands";
 import { isLocalProject } from "../../projects/model/recents";
 import { pathKey, slash } from "../../../shared/lib/paths";
 

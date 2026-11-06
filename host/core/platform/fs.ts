@@ -1,10 +1,9 @@
-import { invoke as invokeLocal } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { joinPath, slash } from "../../shared/lib/paths";
-import { REMOTE_PATH_PREFIX } from "../../shared/lib/remotePaths";
-import type { InterjectionMeta } from "../../features/sessions/model/session";
+import { invoke as invokeLocal } from "./commands";
+import { joinPath, slash } from "../shared/lib/paths";
+import { REMOTE_PATH_PREFIX } from "../shared/lib/remotePaths";
+import type { InterjectionMeta } from "../features/sessions/model/session";
 
-export { REMOTE_PATH_PREFIX } from "../../shared/lib/remotePaths";
+export { REMOTE_PATH_PREFIX } from "../shared/lib/remotePaths";
 
 type RemoteCommandRunner = (
   command: string,
@@ -529,39 +528,6 @@ export function openPathWithDefaultApp(path: string): Promise<void> {
 
 export function homeDir(): Promise<string> {
   return invoke<string>("home_dir");
-}
-
-/**
- * Folders chosen from the system picker. Multi-select is on, so several
- * projects can be opened in one pass; the dialog still returns a bare string
- * when only one was taken.
- */
-export async function pickFolders(title = "Open projects"): Promise<string[]> {
-  const selected = await open({
-    directory: true,
-    multiple: true,
-    title,
-  });
-  if (Array.isArray(selected)) {
-    return selected.filter((path) => !!path).map(slash);
-  }
-  return typeof selected === "string" && selected ? [slash(selected)] : [];
-}
-
-export async function pickFiles(title = "Attach files"): Promise<string[] | null> {
-  const selected = await open({
-    multiple: true,
-    directory: false,
-    title,
-  });
-  if (Array.isArray(selected)) {
-    const paths = selected
-      .filter((path): path is string => Boolean(path))
-      .map(slash);
-    return paths.length > 0 ? paths : null;
-  }
-  if (typeof selected === "string" && selected) return [slash(selected)];
-  return null;
 }
 
 export function cloneRepo(url: string, parent: string): Promise<string> {

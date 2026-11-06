@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   writeChild: vi.fn(async (_id: string, _line: string) => {}),
 }));
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../platform/fs", () => ({
   homeDir: vi.fn(async () => "/home/test"),
 }));
 vi.mock("../../../../features/sessions/model/models", () => ({

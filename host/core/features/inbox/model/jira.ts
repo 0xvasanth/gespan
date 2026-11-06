@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import { recordInboxSelfActivity } from "./inboxSelfActivity";
 import { notifyTicketConnectionsChanged } from "../../sessions/model/ticketLinks";
 

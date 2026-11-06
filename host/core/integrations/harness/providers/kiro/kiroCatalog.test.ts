@@ -6,7 +6,7 @@ const killed: string[] = [];
 /** What the fake `session/new` returns; `undefined` makes it fail. */
 let sessionNew: unknown;
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../platform/fs", () => ({
   homeDir: async () => "/home/kiro-user",
 }));
 

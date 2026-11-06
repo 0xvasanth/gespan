@@ -23,7 +23,7 @@ const desktop = vi.hoisted(() => ({
   methods: [] as string[],
   largest: 0,
 }));
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("./core/platform/commands", () => ({
   invoke: async (
     _command: string,
     input: { method: string; params: unknown },

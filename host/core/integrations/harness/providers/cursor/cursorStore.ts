@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../../platform/commands";
 import { hasHeadlessChildBackend } from "../../core/child";
 
 export type StoredCursorToolCall = {

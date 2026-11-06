@@ -1,4 +1,4 @@
-import { homeDir, type DiscoveredSkill } from "../../../../platform/tauri/fs";
+import { homeDir, type DiscoveredSkill } from "../../../../platform/fs";
 import {
   setHarnessModels,
   type AgentModel,

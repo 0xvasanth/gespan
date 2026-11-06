@@ -1,4 +1,4 @@
-import { gitPrStatus } from "../../../platform/tauri/fs";
+import { gitPrStatus } from "../../../platform/fs";
 import {
   githubRepo,
   inboxIdentityKey,

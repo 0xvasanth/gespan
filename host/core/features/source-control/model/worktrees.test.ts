@@ -12,7 +12,7 @@ import {
 } from "./worktrees";
 
 const dirs = vi.hoisted(() => new Set<string>());
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../../../platform/commands", () => ({
   invoke: async (_command: string, args: { path: string }) =>
     dirs.has(args.path) ? { path: args.path, identity: "dir" } : null,
 }));

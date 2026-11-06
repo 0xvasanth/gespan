@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import type { HarnessId } from "../../sessions/model/session";
 
 export type ConfigurableBinaryProvider = HarnessId;

@@ -5,8 +5,7 @@ hand on every platform. See [checks](verification.md) for the commands to
 check it locally.
 
 The Tauri app is retired, after every feature it had was ported (epic #217). Its
-checklist is in this file's history. Where the sections below compare the two
-apps, they record how Native differs from what people were used to.
+checklist and the old side-by-side comparisons are in this file's history.
 
 ## Providers
 
@@ -72,15 +71,14 @@ Shared by both apps:
 - Saved-view tabs: "All cards" comes first and cannot be deleted. Rename, Duplicate (copies unsaved edits) and Delete. A "•" on the tab marks unsaved changes, with Save and Revert. A view changed in the other app re-applies unless this app has local edits.
 - List layout grouped by status, priority, label, project or due, with collapsible groups and "No status", "No label", "No project" and "No due date" groups. Collapse keys are `mode:value` and are shared across apps.
 - Table layout: a column picker, resizable columns (60 px minimum), and inline edits of title, status, priority, due and labels. A draft title survives refreshes, and pressing Enter without typing does not overwrite a rename from the other app.
-- List and table render only the visible rows. The board layout is windowed too: an expanded column mounts only the cards in view plus a margin (Tauri 4 cards beyond each edge; Native 240 px), and always keeps the focused, dragged and open-drawer cards mounted. A collapsed column mounts none. A reload that leaves a column's cards unchanged keeps its scroll position.
+- List and table render only the visible rows. The board layout is windowed too: an expanded column mounts only the cards in view plus a 240 px margin, and always keeps the focused, dragged and open-drawer cards mounted. A collapsed column mounts none. A reload that leaves a column's cards unchanged keeps its scroll position.
 - Swimlanes are windowed as rows: a lane header, then bands of 4 cards per cell. Lane headers stay mounted and carry a drop target per column, which keyboard drags use to reach another lane. A drop anywhere in a cell's bands appends to that cell. Collapsed columns are thin strips showing the count and taking drops.
 - Keyboard focus at scale: cards are Tab stops. ↑/↓ move to the previous or next visible card in the column and ←/→ to the same index in the next column with cards. In swimlanes ↑/↓ also cross into the neighbouring lane. Moving to a card that is not mounted scrolls it into view first.
-- Keyboard drags announce "Picked up card #N, {title}. {column}, position i of {total}.", the "is over" line, "Dropped card #N in …" and "Moving card #N was cancelled…". `{total}` is the column's visible count, never the mounted count. Tauri cards also carry `aria-description="{i} of {total} in {column}"`; the Native column label reads "{name}, {total} cards".
+- Keyboard drags announce "Picked up card #N, {title}. {column}, position i of {total}.", the "is over" line, "Dropped card #N in …" and "Moving card #N was cancelled…". `{total}` is the column's visible count, never the mounted count. The column label reads "{name}, {total} cards".
 - Shift ranges, bulk actions and announcements count from the data in display order, not from mounted elements. With swimlanes the order is lane by lane, then column by column, then position.
-- Search: Tauri waits 150 ms after the last keystroke before querying; Native queries synchronously. Filter rows, sort and view changes apply at once in both.
+- Search queries as you type. Filter rows, sort and view changes apply at once.
 - Column display changes (collapse, colour, WIP limit) are written as patches, so collapsing a column never resets a colour or WIP limit the other app just set.
-- Activity authors read You, Agent or System in both apps.
-- "New session from ticket…" in Tauri's command palette opens a local session in the active project, links the ticket and puts its key, then its title, in the composer as an unsent draft.
+- Activity authors read You, Agent or System.
 - Bulk select: ⌘-click (Ctrl-click) toggles a card and Shift-click selects a range in on-screen order. The selection holds only visible cards. A floating bar offers Status…, Priority…, Labels…, Archive, Delete and Clear; a bulk delete is a held delete with Undo. Esc clears the selection last, after the drawer and menus.
 - Shortcuts N (new card), `/` (search), E (open the focused card) and Delete / Backspace (held delete of the focused card or the selection) work only when not typing and not inside the open drawer.
 - Command palette: Create card, Go to board and Switch board….
@@ -97,27 +95,27 @@ Shared by both apps:
 - Automation toggles in settings: "Run with…", write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
 - If settings can't be read, the board still loads, the sections show "Couldn't load settings" with Retry, and nothing is saved.
 
-Known differences:
+Known behavior:
 
-| Area | Native | Tauri |
-|---|---|---|
-| "Open cards in" setting | Board header menu (setting `board-card-open`) | Settings → General (flag `gespan.boardCardOpen`) |
-| Keyboard dragging | Space lifts, arrows move, Space or Enter drops, Escape cancels | Same keys, through dnd-kit |
-| Collapsed column strip | Stacks the letters one per line (first 18 characters) | Rotates the text (vertical writing mode) |
-| Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
-| "Running" filter and chip | Counts sessions waiting for input; the chip says waiting | Same |
-| Cost | No data source; stays empty | Same |
-| "Run with…" | Refuses remote projects ("Run with… works with local projects for now") | Local projects only |
-| "Run with…" agents and worktree | Lists agents that aren't installed apart. New boards default to a new worktree, named after the card and linked to it, with a board setting | Lists every agent, and the worktree starts unticked |
-| Agent write-back and turn tracking | Local sessions only; remote turns have no ticket bridge or turn tracking | Local sessions only |
-| Ticket chips on remote sessions | Don't show the ticket's title and status | Same |
-| Quick edits on the card face | Not undoable (moves, sorts, archives and deletes are) | Same |
-| PR state | Known only for the current branch's PR, otherwise "unknown"; remote workspaces show "unknown" | Same |
-| Swimlane card in two lanes | Focus follows the card by id (its first appearance); arrows skip the other copy | Focus follows the copy that has focus |
-| A reload moves the focused card to another lane | Focus stays on the card | Focus passes to a neighbour in the old cell |
-| Header "Move cards to…" before Delete column | Moves the cards, then deletes the column as two separate writes; not atomic and no Undo | Moves, then deletes, in two steps; no Undo |
-| Keyboard drag in swimlanes | Steps one lane at a time | Hops between lane headers' drop targets |
-| "New session from ticket…" | Asks for the ticket, then opens a new session linked to it and drafts its key | Same, but the session is saved with its first message |
+| Area | Behavior |
+|---|---|
+| "Open cards in" setting | Board header menu (setting `board-card-open`) |
+| Keyboard dragging | Space lifts, arrows move, Space or Enter drops, Escape cancels |
+| Collapsed column strip | Stacks the letters one per line (first 18 characters) |
+| Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet |
+| "Running" filter and chip | Counts sessions waiting for input; the chip says waiting |
+| Cost | No data source; stays empty |
+| "Run with…" | Refuses remote projects ("Run with… works with local projects for now") |
+| "Run with…" agents and worktree | Lists agents that aren't installed apart. New boards default to a new worktree, named after the card and linked to it, with a board setting |
+| Agent write-back and turn tracking | Local sessions only; remote turns have no ticket bridge or turn tracking |
+| Ticket chips on remote sessions | Don't show the ticket's title and status |
+| Quick edits on the card face | Not undoable (moves, sorts, archives and deletes are) |
+| PR state | Known only for the current branch's PR, otherwise "unknown"; remote workspaces show "unknown" |
+| Swimlane card in two lanes | Focus follows the card by id (its first appearance); arrows skip the other copy |
+| A reload moves the focused card to another lane | Focus stays on the card |
+| Header "Move cards to…" before Delete column | Moves the cards, then deletes the column as two separate writes; not atomic and no Undo |
+| Keyboard drag in swimlanes | Steps one lane at a time |
+| "New session from ticket…" | Asks for the ticket, then opens a new session linked to it and drafts its key |
 
 ## Platform and distribution
 

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearInboxCache,
@@ -7,7 +7,7 @@ import {
   type GithubWorkItem,
 } from "./githubTasks";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../../../platform/commands", () => ({ invoke: vi.fn() }));
 
 function workItem(repo: string, kind: GithubTaskKind) {
   return {

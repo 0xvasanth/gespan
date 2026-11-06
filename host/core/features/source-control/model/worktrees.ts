@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import { appendReadyHandoff, buildDeterministicHandoff } from "../../sessions/model/handoff";
 import {
   invokeWorkspace,
   notifyGitChanged,
   resolveProjectLocation,
-} from "../../../platform/tauri/fs";
+} from "../../../platform/fs";
 import { isFilesystemTab, type FilePaneTab } from "../../workspace/model/layout";
 import { isEqualOrInside, parentPath, pathKey } from "../../../shared/lib/paths";
 import { APP_BRANCH_PREFIX } from "../../../shared/lib/branchOwnership";

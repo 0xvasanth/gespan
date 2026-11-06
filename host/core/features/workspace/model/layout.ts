@@ -1,4 +1,4 @@
-import type { GitFileDiffKind } from "../../../platform/tauri/fs";
+import type { GitFileDiffKind } from "../../../platform/fs";
 import {
   applyTerminalMeta,
   defaultTerminalTitle,

@@ -1,4 +1,4 @@
-import { basename } from "../../../platform/tauri/fs";
+import { basename } from "../../../platform/fs";
 import type { FilePaneTab } from "../../workspace/model/layout";
 
 export type TerminalMetaPatch = {

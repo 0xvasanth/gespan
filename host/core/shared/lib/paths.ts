@@ -1,4 +1,4 @@
-import { IS_WIN } from "../../platform/tauri/platform";
+import { IS_WIN } from "../../platform/platform";
 
 function windowsPath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\") || path.startsWith("//");
