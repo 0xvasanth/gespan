@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-channel",
  "base64 0.23.1",
@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-first-launch"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-gpui"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
@@ -2774,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-models"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "dirs 7.0.0",
  "sha2 0.11.1",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-speech"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "cpal",
  "gespan-models",
