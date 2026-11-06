@@ -177,6 +177,7 @@ struct SignIn {
     prompt: accounts::LoginPrompt,
     /// Codes the user pastes back, for a CLI that waits for one.
     codes: Option<std::sync::mpsc::Sender<String>>,
+    started: Instant,
 }
 struct Picker {
     kind: Kind,
@@ -747,6 +748,7 @@ impl Accounts {
             adding,
             prompt: Default::default(),
             codes: interactive.then_some(codes),
+            started: Instant::now(),
         });
         if self.has_modal_auth() {
             cx.emit(AccountEvent::AuthStarted);
@@ -908,6 +910,40 @@ impl Accounts {
                 })
                 .detach();
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+impl Accounts {
+    /// Gespan came back to the front while a browser sign-in is still
+    /// waiting. A finished login reaches the CLI within a second or two, so if
+    /// it is still waiting after a short grace the browser was closed or
+    /// abandoned: reset to Sign in instead of waiting out the CLI's 10 minutes.
+    /// A chat sign-in that waits for a pasted code is left alone, because the
+    /// user comes back from the browser to paste it.
+    pub(crate) fn app_reactivated(&mut self, cx: &mut Context<Self>) {
+        let Some(signin) = &self.signin else {
+            return;
+        };
+        if signin.complete
+            || signin.error.is_some()
+            || signin.action != AuthAction::SignIn
+            || signin.codes.is_some()
+            || signin.started.elapsed() < Duration::from_secs(2)
+        {
+            return;
+        }
+        let attempt = signin.cancel.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            let _ = this.update(cx, |this, cx| {
+                let waiting = this.signin.as_ref().is_some_and(|s| {
+                    Arc::ptr_eq(&s.cancel, &attempt) && !s.complete && s.error.is_none()
+                });
+                if waiting {
+                    this.cancel_auth(cx);
+                }
             });
         })
         .detach();
