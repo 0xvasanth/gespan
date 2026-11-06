@@ -10,7 +10,7 @@ const mock = vi.hoisted(() => ({
   kill: vi.fn(async (_id: string) => undefined),
 }));
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../platform/fs", () => ({
   homeDir: async () => "/home",
 }));
 vi.mock("../../core/child", () => ({

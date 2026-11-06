@@ -41,7 +41,7 @@ export type Project = {
   defaultRuntimeMode?: RuntimeMode;
 };
 
-// Trimmed from the desktop's GitChangedFile (src/platform/tauri/fs.ts) and
+// Trimmed from the host's GitChangedFile (host/core/platform/fs.ts) and
 // UnifiedLine (src/features/source-control/model/unifiedDiff.ts).
 export type ChangeStatus = "modified" | "added" | "deleted" | "untracked";
 

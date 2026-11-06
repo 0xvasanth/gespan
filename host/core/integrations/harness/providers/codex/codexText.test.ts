@@ -78,7 +78,7 @@ vi.mock("../../core/child", () => ({
   },
 }));
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../platform/fs", () => ({
   gitStagedContext: async () => ({
     branch: "helpers",
     summary: "1 file changed",

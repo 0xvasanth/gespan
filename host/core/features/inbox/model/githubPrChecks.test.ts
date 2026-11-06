@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import {
   checkDuration,
   countChecks,
@@ -11,7 +11,7 @@ import {
   type GithubPrCheck,
 } from "./githubPrChecks";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../../../platform/commands", () => ({ invoke: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke);
 

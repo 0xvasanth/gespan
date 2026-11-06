@@ -1,5 +1,8 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  invoke as unbackedInvoke,
+  listen as unbackedListen,
+  type UnlistenFn,
+} from "../../../platform/commands";
 import {
   runtimeProviderBinaryPath,
   type ConfigurableBinaryProvider,
@@ -87,14 +90,14 @@ function invoke<T>(
 ): Promise<T> {
   return backend
     ? backend.invoke<T>(command, args)
-    : tauriInvoke<T>(command, args);
+    : unbackedInvoke<T>(command, args);
 }
 
 function listen<T>(
   event: string,
   handler: (event: { payload: T }) => void,
 ): Promise<UnlistenFn> {
-  return backend ? backend.listen(event, handler) : tauriListen(event, handler);
+  return backend ? backend.listen(event, handler) : unbackedListen(event, handler);
 }
 
 type LinePayload = { sessionId: string; line: string };

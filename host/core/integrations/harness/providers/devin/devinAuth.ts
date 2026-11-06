@@ -1,4 +1,4 @@
-import { homeDir } from "../../../../platform/tauri/fs";
+import { homeDir } from "../../../../platform/fs";
 import { execChild, readHarnessTextFile } from "../../core/child";
 import {
   devinApiKeyFromCredentials,

@@ -1,4 +1,4 @@
-import { IS_MAC } from "../../../platform/tauri/platform";
+import { IS_MAC } from "../../../platform/platform";
 
 export const QUICK_COMPOSER_DEFAULT_SHORTCUT = "Command+Shift+Space";
 

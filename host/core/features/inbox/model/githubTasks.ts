@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { invokeWorkspace } from "../../../platform/tauri/fs";
+import { invoke } from "../../../platform/commands";
+import { invokeWorkspace } from "../../../platform/fs";
 import { clearKnownInboxItems } from "./inboxSeen";
 import {
   linearConnected,

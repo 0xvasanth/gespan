@@ -4,7 +4,7 @@ import {
   IS_WIN,
   MOD,
   SHIFT,
-} from "../../../platform/tauri/platform";
+} from "../../../platform/platform";
 import {
   canonicalShortcut,
   isGlobalShortcut,

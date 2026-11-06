@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("../../../platform/commands", () => ({ invoke: mocks.invoke }));
 
 import {
   loadProviderBinaryPath,

@@ -16,7 +16,7 @@ import type {
   GitChangedFile,
   GitDiffIndex,
   GitFileDiff,
-} from "./core/platform/tauri/fs";
+} from "./core/platform/fs";
 import type {
   ProjectSearchMatch,
   ProjectSearchResult,

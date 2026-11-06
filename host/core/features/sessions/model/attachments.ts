@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { basename, pickFiles as pickFilePaths } from "../../../platform/tauri/fs";
+import { invoke } from "../../../platform/commands";
+import { basename } from "../../../platform/fs";
 import type { Attachment, AttachmentKind } from "./session";
 
 export const MAX_ATTACHMENTS = 20;
@@ -235,12 +235,6 @@ function dropMacScreenshotTwins(files: File[]): File[] {
   );
   if (!hasOtherImage) return files;
   return files.filter((file) => !unnamedTiff(file));
-}
-
-export async function pickAttachments(): Promise<Attachment[]> {
-  const paths = await pickFilePaths();
-  if (!paths?.length) return [];
-  return attachmentsFromPaths(paths);
 }
 
 export async function attachmentsFromPaths(

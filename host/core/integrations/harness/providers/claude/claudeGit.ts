@@ -1,7 +1,7 @@
 import {
   gitRangeContext,
   gitStagedContext,
-} from "../../../../platform/tauri/fs";
+} from "../../../../platform/fs";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
