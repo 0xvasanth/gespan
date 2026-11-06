@@ -1,0 +1,38 @@
+.github/workflows/ci.yml
+  s_798596e0fc787c::t_167aa67c8f9cca 55
+README.md
+  s_798596e0fc787c::t_bf286fb902fcd8 32,192,202,220,246,257-260,265-266,269-272,276
+scripts/readme-release.mjs
+  s_798596e0fc787c::t_28c10b06fe07de 1-30,32-39
+  s_798596e0fc787c::t_50ed9245ac79e1 31
+scripts/cargo-workspaces.test.mjs
+  s_798596e0fc787c::t_167aa67c8f9cca 49-51,83-99
+scripts/bump-version.mjs
+  s_798596e0fc787c::t_3584ee34346bb4 5
+  s_798596e0fc787c::t_4419e3aa00224b 18-21,70
+  s_798596e0fc787c::t_7873c83c5e7041 71
+scripts/ci-impact.test.mjs
+  s_798596e0fc787c::t_1f795ff44aaab6 38-43
+package.json
+  s_798596e0fc787c::t_167aa67c8f9cca 28
+scripts/ci-impact.mjs
+  s_798596e0fc787c::t_1f795ff44aaab6 16-18
+scripts/readme-release.test.mjs
+  s_798596e0fc787c::t_082898b410692d 1-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4245c1a5090ea33e20bd8c11b58038e7a9d45aac",
+  "prompts": {},
+  "sessions": {
+    "s_798596e0fc787c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ba8df61-6053-4e96-908f-a5b6470d56c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
