@@ -215,14 +215,6 @@ Gespan on Windows and Linux is less tested than on macOS.
 Every release is listed on the
 [Releases page](https://github.com/0xvasanth/gespan/releases).
 
-### Coming from a beta
-
-Betas, including Gespan Native, don't update to a stable release on their own.
-Install Gespan from the table above. Your data doesn't need copying: it opens
-the same `dev.gespan.desktop` folder, so your conversations, notes and Pilots
-are there on first launch. Quit the beta first, and on macOS delete
-`Gespan Native.app` afterwards.
-
 ## Quick start
 
 1. **Open a project folder.** Gespan groups your sessions by project.
