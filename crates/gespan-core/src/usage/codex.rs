@@ -9,6 +9,16 @@ use serde_json::Value;
 
 pub(crate) struct Codex;
 impl Source for Codex {
+    fn banked_resets(&self) -> bool {
+        true
+    }
+    fn consume_reset(
+        &self,
+        profile: &crate::accounts::Profile,
+        credit: Option<&str>,
+    ) -> Result<String, String> {
+        consume_reset(profile, credit)
+    }
     fn probe(
         &self,
         profile: &crate::accounts::Profile,

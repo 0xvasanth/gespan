@@ -1,5 +1,5 @@
 id = "devin"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Devin"
 binary = "devin"
@@ -25,4 +25,5 @@ side_threads = true
 rewind = false
 raw_slash_commands = true
 attachments = true
+permission_modes = true
 text_turns = false

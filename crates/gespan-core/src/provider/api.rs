@@ -50,6 +50,8 @@ pub struct Capabilities {
     pub raw_slash_commands: bool,
     /// The composer can send images and files with a prompt.
     pub attachments: bool,
+    /// The composer offers Gespan's permission modes.
+    pub permission_modes: bool,
     /// Vetted for one-shot text work, so it may stand in for the preferred
     /// provider.
     pub text_turns: bool,
@@ -76,6 +78,8 @@ pub struct Descriptor {
     pub usage: Option<String>,
     pub capabilities: Capabilities,
     pub discovery_timeout: Option<u64>,
+    /// What the composer calls the effort control.
+    pub effort_label: String,
     pub version: u32,
     /// Where the manifest came from, for diagnostics.
     pub source: Source,
@@ -91,6 +95,7 @@ impl Descriptor {
                 rewind: m.features.rewind,
                 raw_slash_commands: m.features.raw_slash_commands,
                 attachments: m.features.attachments,
+                permission_modes: m.features.permission_modes,
                 text_turns: m.features.text_turns,
                 steer: m.features.steer.map(|s| s.ack_timeout),
             },
@@ -104,6 +109,7 @@ impl Descriptor {
             accounts: m.accounts,
             usage: m.usage,
             discovery_timeout: m.discovery_timeout,
+            effort_label: m.effort_label.unwrap_or_else(|| "Effort".into()),
             version: m.version,
             source: loaded.source,
         }
@@ -137,6 +143,23 @@ pub trait Provider: Send + Sync + 'static {
     /// The picker's hint when the CLI is not installed.
     fn unavailable_hint(&self) -> String {
         self.kind().unavailable_hint()
+    }
+
+    /// The account can bank limit resets and spend them early; this comes
+    /// from the provider's usage reader, which also spends them.
+    fn banked_resets(&self) -> bool {
+        self.kind().spec().usage.is_some_and(|u| u.banked_resets())
+    }
+    /// Spends one banked reset. Blocking.
+    fn consume_reset(
+        &self,
+        profile: &crate::accounts::Profile,
+        credit: Option<&str>,
+    ) -> Result<String, String> {
+        match self.kind().spec().usage {
+            Some(usage) => usage.consume_reset(profile, credit),
+            None => Err("This provider has no banked resets.".into()),
+        }
     }
 
     fn transport(&self) -> Transport {
@@ -393,6 +416,7 @@ mod tests {
                     raw_slash_commands: f.raw_slash_commands,
                     // No `Spec` field yet: these were lists in the UI.
                     attachments: d.capabilities.attachments,
+                    permission_modes: d.capabilities.permission_modes,
                     text_turns: d.capabilities.text_turns,
                     steer: f.steer,
                 },
@@ -588,5 +612,51 @@ mod tests {
             kinds_where(|p| p.descriptor().family == Family::Pi),
             [Kind::Pi, Kind::Omp]
         );
+    }
+
+    #[test]
+    fn only_fx_has_no_permission_modes_to_offer() {
+        assert_eq!(
+            kinds_where(|p| !p.capabilities().permission_modes),
+            [Kind::Fx]
+        );
+    }
+
+    #[test]
+    fn codex_calls_its_effort_control_reasoning_and_the_rest_effort() {
+        for provider in ProviderRegistry::builtin().iter() {
+            let want = if provider.kind() == Kind::Codex {
+                "Reasoning"
+            } else {
+                "Effort"
+            };
+            assert_eq!(
+                provider.descriptor().effort_label,
+                want,
+                "{:?}",
+                provider.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn only_codex_banks_limit_resets() {
+        assert_eq!(kinds_where(|p| p.banked_resets()), [Kind::Codex]);
+    }
+
+    #[test]
+    fn spending_a_reset_on_a_provider_without_them_fails_without_a_request() {
+        let profile = crate::accounts::Profile::default();
+        for provider in ProviderRegistry::builtin().iter() {
+            if provider.banked_resets() {
+                continue;
+            }
+            assert_eq!(
+                provider.consume_reset(&profile, None),
+                Err("This provider has no banked resets.".into()),
+                "{:?}",
+                provider.kind()
+            );
+        }
     }
 }

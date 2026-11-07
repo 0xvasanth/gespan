@@ -66,13 +66,14 @@ impl ResetAction {
 
 impl Accounts {
     pub(crate) fn consume_reset(&mut self, key: Key, row: &str, cx: &mut Context<Self>) {
+        let kind = key.kind;
         self.consume_reset_with(
             key,
             row,
-            |profile, credit| {
-                let result = usage::consume_reset(profile, credit);
+            move |profile, credit| {
+                let result = kind.provider().consume_reset(profile, credit);
                 // Read even after errors: the server may have applied the claim.
-                let refreshed = usage::fetch_for(Kind::Codex, profile, None);
+                let refreshed = usage::fetch_for(kind, profile, None);
                 (result, refreshed)
             },
             cx,
@@ -91,7 +92,7 @@ impl Accounts {
         + 'static,
         cx: &mut Context<Self>,
     ) {
-        if key.kind != Kind::Codex
+        if !key.kind.provider().banked_resets()
             || (key.profile.id != accounts::DEFAULT && !self.book.exists(key.kind, &key.profile.id))
             || self.reset_actions.get(&key).is_some_and(|a| {
                 a.applying()
