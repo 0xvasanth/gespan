@@ -123,14 +123,18 @@ fn word(value: &Value) -> Option<String> {
 /// Fills in variables, quotes and joins the command, and settles `cwd`.
 pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found) -> Action {
     let mut blocked = found.blocked;
-    let fill = |blocked: &mut Option<String>, text: &str| match variables(ctx, text) {
-        Ok(pieces) => Some(pieces),
-        Err(reason) => {
-            blocked.get_or_insert(reason);
-            None
-        }
-    };
-    let program = fill(&mut blocked, &found.command);
+    let fill_with =
+        |blocked: &mut Option<String>, text: &str, quoted: bool| match variables(ctx, text, quoted)
+        {
+            Ok(pieces) => Some(pieces),
+            Err(reason) => {
+                blocked.get_or_insert(reason);
+                None
+            }
+        };
+    let fill = |blocked: &mut Option<String>, text: &str| fill_with(blocked, text, false);
+    // A shell-mode line is the user's own, so a path put into it needs quoting.
+    let program = fill_with(&mut blocked, &found.command, found.shell);
     let args: Vec<_> = found
         .args
         .iter()
@@ -231,9 +235,17 @@ impl Piece {
     }
 }
 
-/// `text` with the workspace variables filled in, or why it can't be.
-fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
-    let root = ctx.checkout.display().to_string();
+/// `text` with the workspace variables filled in, or why it can't be. With
+/// `quoted`, the paths are put in as one shell word each.
+fn variables(ctx: &Ctx, text: &str, quoted: bool) -> Result<Vec<Piece>, String> {
+    let word = |path: &str| {
+        if quoted {
+            quote(&[Piece::Text(path.to_string())]).unwrap_or_else(|| path.to_string())
+        } else {
+            path.to_string()
+        }
+    };
+    let root = word(&ctx.checkout.display().to_string());
     let mut pieces = Vec::new();
     let mut plain = String::new();
     let mut rest = text;
@@ -246,12 +258,12 @@ fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
         let name = &variable[2..variable.len() - 1];
         match name {
             "workspaceFolder" => plain.push_str(&root),
-            "workspaceFolderBasename" => plain.push_str(
+            "workspaceFolderBasename" => plain.push_str(&word(
                 &ctx.checkout
                     .file_name()
                     .map(|name| name.to_string_lossy())
                     .unwrap_or_default(),
-            ),
+            )),
             _ => match name.strip_prefix("env:") {
                 Some(var) if is_env_name(var) => {
                     pieces.push(Piece::Text(std::mem::take(&mut plain)));

@@ -394,3 +394,54 @@ fn a_task_without_a_command_is_blocked() {
         None
     );
 }
+
+#[test]
+fn a_workspace_path_with_spaces_stays_one_word() {
+    let checkout = std::env::temp_dir()
+        .join("Application Support")
+        .join("my app");
+    let ctx = ctx(&checkout);
+    let line = |command: &str| {
+        let found = Found {
+            label: "Run".into(),
+            command: command.into(),
+            shell: true,
+            ..Found::default()
+        };
+        resolve(&ctx, "gespan", ".gespan/tasks.json", found).command
+    };
+    let root = checkout.display().to_string();
+    let quoted = line("${workspaceFolder}/bin/run --fast");
+    let zed = line("$ZED_WORKTREE_ROOT/bin/run");
+    let base = line("echo ${workspaceFolderBasename}");
+    #[cfg(not(windows))]
+    {
+        assert_eq!(quoted, format!("'{root}'/bin/run --fast"));
+        assert_eq!(zed, format!("'{root}'/bin/run"));
+        assert_eq!(base, "echo 'my app'");
+    }
+    #[cfg(windows)]
+    {
+        assert_eq!(quoted, format!("\"{root}\"/bin/run --fast"));
+        assert_eq!(zed, format!("\"{root}\"/bin/run"));
+        assert_eq!(base, "echo \"my app\"");
+    }
+    // A path with nothing to quote stays as written.
+    let plain = std::env::temp_dir().join("plain");
+    let found = Found {
+        label: "Run".into(),
+        command: "ls ${workspaceFolder}".into(),
+        shell: true,
+        ..Found::default()
+    };
+    let action = resolve(
+        &super::super::Ctx {
+            checkout: &plain,
+            package_manager: "npm",
+        },
+        "gespan",
+        "f",
+        found,
+    );
+    assert_eq!(action.command, format!("ls {}", plain.display()));
+}
