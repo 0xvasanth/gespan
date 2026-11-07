@@ -372,7 +372,9 @@ impl Drop for Stdout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, Error, Machine};
+    #[cfg(unix)]
+    use crate::Client;
+    use crate::{Error, Machine};
 
     const ID: &str = "5b800c51aa3f4d2e9c11";
 
