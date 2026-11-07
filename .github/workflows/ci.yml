@@ -178,6 +178,7 @@ jobs:
       - if: env.RUN == 'true' && runner.os == 'Linux'
         name: Start a local sshd and herdr
         run: |
+          sudo apt-get update
           sudo apt-get install --no-install-recommends -y openssh-server
           sudo systemctl start ssh
           mkdir -p ~/.ssh ~/.local/bin
