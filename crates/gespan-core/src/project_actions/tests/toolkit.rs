@@ -94,7 +94,10 @@ fn a_read_only_session_is_offered_list_only_and_run_is_refused() {
         ]
     );
     for (tool, input) in [
-        ("actions_run", json!({"id": "gespan:Mark"})),
+        (
+            "actions_run",
+            json!({"id": "gespan:Mark", "command": "echo x > ran.txt"}),
+        ),
         ("actions_output", json!({"runId": "run-1"})),
         ("actions_stop", json!({"runId": "run-1"})),
         ("actions_anything", json!({})),
@@ -127,7 +130,11 @@ fn the_hub_keeps_a_read_only_session_off_the_run_tools() {
     });
     let listed = mcp_hub::call_tool(connection.clone(), "actions_list", json!({})).unwrap();
     assert_eq!(listed["actions"][0]["id"], "gespan:Mark");
-    let refused = mcp_hub::call_tool(connection, "actions_run", json!({"id": "gespan:Mark"}));
+    let refused = mcp_hub::call_tool(
+        connection,
+        "actions_run",
+        json!({"id": "gespan:Mark", "command": "echo x > ran.txt"}),
+    );
     assert!(
         refused.unwrap_err().contains("isn't available"),
         "never offered, so never reached"
@@ -214,15 +221,19 @@ fn run_returns_exit_code_and_output() {
     let report = mcp_hub::call_tool(
         connection.clone(),
         "actions_run",
-        json!({"id": "gespan:Hi"}),
+        json!({"id": "gespan:Hi", "command": "echo hi"}),
     )
     .unwrap();
     assert_eq!(report["status"], "exited", "{report}");
     assert_eq!(report["exitCode"], 0);
     assert_eq!(lines(&report), ["hi"]);
     assert!(report["runId"].as_str().unwrap().starts_with("run-"));
-    let failed =
-        mcp_hub::call_tool(connection, "actions_run", json!({"id": "gespan:Fail"})).unwrap();
+    let failed = mcp_hub::call_tool(
+        connection,
+        "actions_run",
+        json!({"id": "gespan:Fail", "command": "echo oops && exit 3"}),
+    )
+    .unwrap();
     assert_eq!(failed["status"], "exited", "{failed}");
     assert_eq!(
         failed["exitCode"], 3,
@@ -255,7 +266,7 @@ fn run_uses_the_sessions_checkout() {
         .call(
             &grant(7105, worktree.path(), ACTIONS),
             "actions_run",
-            json!({"id": "gespan:Where"}),
+            json!({"id": "gespan:Where", "command": print}),
         )
         .unwrap();
     assert_eq!(report["status"], "exited", "{report}");
@@ -271,7 +282,7 @@ fn an_unknown_id_is_refused_with_a_hint() {
     let refused = RUN.call(
         &grant(7106, dir.path(), ACTIONS),
         "actions_run",
-        json!({"id": "gespan:Nope"}),
+        json!({"id": "gespan:Nope", "command": "echo hi"}),
     );
     assert_eq!(
         refused.unwrap_err(),
@@ -290,7 +301,7 @@ fn a_blocked_action_is_refused_with_its_reason() {
     let refused = RUN.call(
         &grant(7107, root, ACTIONS),
         "actions_run",
-        json!({"id": "gespan:Open"}),
+        json!({"id": "gespan:Open", "command": "echo x > ran.txt ${file}"}),
     );
     assert_eq!(
         refused.unwrap_err(),
@@ -310,9 +321,16 @@ fn a_background_action_returns_while_running_and_stops_on_request() {
         ),
     );
     let grant = grant(7108, dir.path(), ACTIONS);
+    let listed = RUN.call(&grant, "actions_list", json!({})).unwrap();
+    let command = listed["actions"][0]["command"].clone();
     let started = Instant::now();
     let report = RUN
-        .call_waiting(&grant, "actions_run", json!({"id": "gespan:Serve"}), &SHORT)
+        .call_waiting(
+            &grant,
+            "actions_run",
+            json!({"id": "gespan:Serve", "command": command}),
+            &SHORT,
+        )
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(20));
     assert_eq!(report["status"], "running", "{report}");
@@ -390,7 +408,17 @@ fn arguments_are_checked() {
         ("actions_run", json!({"id": 3}), "id must be a string"),
         (
             "actions_run",
-            json!({"id": "gespan:Hi", "waitMs": 1}),
+            json!({"id": "gespan:Hi"}),
+            "command is required",
+        ),
+        (
+            "actions_run",
+            json!({"id": "gespan:Hi", "command": ["echo"]}),
+            "command must be a string",
+        ),
+        (
+            "actions_run",
+            json!({"id": "gespan:Hi", "command": "echo hi", "waitMs": 1}),
             "Unknown argument: waitMs",
         ),
         (
@@ -417,4 +445,109 @@ fn arguments_are_checked() {
             "{tool} {input}"
         );
     }
+}
+
+#[test]
+fn a_changed_command_is_refused_until_listed_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    gespan(
+        root,
+        r#"{ "label": "Mark", "command": "echo x > ran.txt" }"#,
+    );
+    let grant = grant(7113, root, ACTIONS);
+    let approved = json!({"id": "gespan:Mark", "command": "echo x > ran.txt"});
+    // The repository's file changed after the agent listed it.
+    gespan(
+        root,
+        r#"{ "label": "Mark", "command": "echo y > ran.txt" }"#,
+    );
+    assert_eq!(
+        RUN.call(&grant, "actions_run", approved).unwrap_err(),
+        "The command for gespan:Mark is now `echo y > ran.txt`; call actions_list again."
+    );
+    assert!(!root.join("ran.txt").exists(), "nothing ran");
+    let report = RUN
+        .call(
+            &grant,
+            "actions_run",
+            json!({"id": "gespan:Mark", "command": "echo y > ran.txt"}),
+        )
+        .unwrap();
+    assert_eq!(report["exitCode"], 0, "{report}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("ran.txt"))
+            .unwrap()
+            .trim(),
+        "y"
+    );
+}
+
+#[test]
+fn a_run_is_out_of_reach_from_another_checkout() {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    gespan(
+        ours.path(),
+        &format!(
+            r#"{{ "label": "Serve", "command": "{}", "isBackground": true }}"#,
+            sleeper(60)
+        ),
+    );
+    let mine = grant(7114, ours.path(), ACTIONS);
+    let other = grant(7115, theirs.path(), ACTIONS);
+    let listed = RUN.call(&mine, "actions_list", json!({})).unwrap();
+    let command = listed["actions"][0]["command"].clone();
+    let report = RUN
+        .call_waiting(
+            &mine,
+            "actions_run",
+            json!({"id": "gespan:Serve", "command": command}),
+            &SHORT,
+        )
+        .unwrap();
+    let run_id = report["runId"].as_str().unwrap().to_owned();
+    let unknown = |id: &str| format!("No run {id}. Finished runs are kept only for a while.");
+    for tool in ["actions_output", "actions_stop"] {
+        assert_eq!(
+            RUN.call_waiting(&other, tool, json!({"runId": run_id}), &SHORT)
+                .unwrap_err(),
+            unknown(&run_id),
+            "{tool}: the same as an id that doesn't exist"
+        );
+        assert_eq!(
+            RUN.call_waiting(&other, tool, json!({"runId": "run-0"}), &SHORT)
+                .unwrap_err(),
+            unknown("run-0")
+        );
+    }
+    let still = RUN
+        .call_waiting(&mine, "actions_output", json!({"runId": run_id}), &SHORT)
+        .unwrap();
+    assert_eq!(still["status"], "running", "{still}");
+    let stopped = RUN
+        .call(&mine, "actions_stop", json!({"runId": run_id}))
+        .unwrap();
+    assert_eq!(stopped["status"], "stopped", "{stopped}");
+}
+
+#[test]
+fn tools_tell_the_agent_which_ones_change_things() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = RUN.tools(&grant(7116, dir.path(), ACTIONS));
+    let annotations =
+        |name: &str| tools.iter().find(|tool| tool["name"] == name).unwrap()["annotations"].clone();
+    assert_eq!(annotations("actions_list")["readOnlyHint"], true);
+    assert_eq!(annotations("actions_output")["readOnlyHint"], true);
+    assert_eq!(annotations("actions_run")["destructiveHint"], true);
+    assert_eq!(annotations("actions_stop")["destructiveHint"], true);
+    let run = tools
+        .iter()
+        .find(|tool| tool["name"] == "actions_run")
+        .unwrap();
+    assert_eq!(run["inputSchema"]["required"], json!(["id", "command"]));
+    assert!(run["inputSchema"]["properties"]["command"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("exactly as actions_list returned it"));
 }

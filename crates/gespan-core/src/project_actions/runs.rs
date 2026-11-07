@@ -120,18 +120,32 @@ fn emit(event: RunEvent) {
 
 #[derive(Default)]
 struct Registry {
-    next: u64,
     /// Oldest first.
     runs: Vec<Arc<Run>>,
 }
 
 impl Registry {
-    fn find(&self, run_id: &str) -> Result<Arc<Run>, String> {
+    /// The run, if it runs in `root` or below when one is given. A run outside
+    /// it gets the same error as an id that doesn't exist, so nothing leaks.
+    fn find(&self, root: Option<&Path>, run_id: &str) -> Result<Arc<Run>, String> {
+        let root = root.map(super::tasks_json::normalize);
         self.runs
             .iter()
-            .find(|run| run.id == run_id)
+            .find(|run| {
+                run.id == run_id && root.as_ref().is_none_or(|root| run.cwd.starts_with(root))
+            })
             .cloned()
             .ok_or_else(|| format!("No run {run_id}. Finished runs are kept only for a while."))
+    }
+
+    /// Random, so one session can't guess another's.
+    fn new_id(&self) -> String {
+        loop {
+            let id = format!("run-{:016x}", rand::random::<u64>());
+            if !self.runs.iter().any(|run| run.id == id) {
+                return id;
+            }
+        }
     }
 
     /// Forgets the oldest finished runs past [`MAX_FINISHED`].
@@ -327,8 +341,7 @@ pub fn start(project: &str, action: &Action, wait: Duration) -> Report {
         }
         // Reserved under the lock, so a second start of the same action finds
         // this run; it is spawned after.
-        registry.next += 1;
-        let run = Arc::new(Run::new(format!("run-{}", registry.next), action));
+        let run = Arc::new(Run::new(registry.new_id(), action));
         registry.runs.push(run.clone());
         registry.evict();
         run
@@ -340,15 +353,35 @@ pub fn start(project: &str, action: &Action, wait: Duration) -> Report {
 
 /// The lines since the last read, once the run ends or `wait` passes.
 pub fn output(run_id: &str, wait: Duration) -> Result<Report, String> {
-    let run = lock(&RUNS).find(run_id)?;
-    run.wait(wait);
-    Ok(run.report(false))
+    read(None, run_id, wait)
 }
 
 /// Kills the run with everything it started, even what it left running after
 /// it exited, and reports how it ended.
 pub fn stop(run_id: &str) -> Result<Report, String> {
-    let run = lock(&RUNS).find(run_id)?;
+    end(None, run_id)
+}
+
+/// [`output`], for a caller whose checkout is `root`: a run elsewhere is
+/// reported as unknown.
+pub fn output_within(root: &Path, run_id: &str, wait: Duration) -> Result<Report, String> {
+    read(Some(root), run_id, wait)
+}
+
+/// [`stop`], for a caller whose checkout is `root`: a run elsewhere is
+/// reported as unknown and left alone.
+pub fn stop_within(root: &Path, run_id: &str) -> Result<Report, String> {
+    end(Some(root), run_id)
+}
+
+fn read(root: Option<&Path>, run_id: &str, wait: Duration) -> Result<Report, String> {
+    let run = lock(&RUNS).find(root, run_id)?;
+    run.wait(wait);
+    Ok(run.report(false))
+}
+
+fn end(root: Option<&Path>, run_id: &str) -> Result<Report, String> {
+    let run = lock(&RUNS).find(root, run_id)?;
     run.terminate();
     run.wait(STOP_WAIT);
     Ok(run.report(false))

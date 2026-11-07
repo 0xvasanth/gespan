@@ -1,5 +1,6 @@
 use super::super::runs::{
-    expand_env, output, set_mirror, start, stop, Mirror, Report, RunEvent, Status,
+    expand_env, output, output_within, set_mirror, start, stop, stop_within, Mirror, Report,
+    RunEvent, Status,
 };
 use super::super::Action;
 use std::path::Path;
@@ -359,6 +360,74 @@ fn the_mirror_sees_started_output_finished() {
 fn an_unknown_run_id_is_an_error() {
     assert!(output("run-unknown", Duration::ZERO).is_err());
     assert!(stop("run-unknown").is_err());
+}
+
+#[test]
+fn run_ids_are_random_not_sequential() {
+    let dir = tempfile::tempdir().unwrap();
+    let ids: Vec<u64> = (0..3)
+        .map(|n| {
+            let run = start(
+                "p",
+                &action(&format!("test:id{n}"), "echo x", dir.path()),
+                LONG,
+            );
+            let hex = run.run_id.strip_prefix("run-").expect(&run.run_id);
+            assert_eq!(hex.len(), 16, "{}", run.run_id);
+            u64::from_str_radix(hex, 16).unwrap()
+        })
+        .collect();
+    assert!(
+        ids.windows(2).all(|pair| pair[0].abs_diff(pair[1]) > 1),
+        "{ids:x?}"
+    );
+}
+
+#[test]
+fn a_run_is_reached_only_from_inside_its_checkout() {
+    let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let ours = dir.path().join("a");
+    // A sibling whose name only starts with ours.
+    let theirs = dir.path().join("ab");
+    std::fs::create_dir_all(ours.join("sub")).unwrap();
+    std::fs::create_dir_all(&theirs).unwrap();
+    let run = start(
+        "p",
+        &action("test:scoped", &sleeper(30), &ours.join("sub")),
+        Duration::ZERO,
+    );
+    let unknown = output_within(&ours, "run-none", Duration::ZERO).unwrap_err();
+    assert_eq!(
+        unknown,
+        "No run run-none. Finished runs are kept only for a while."
+    );
+    let hidden = format!(
+        "No run {}. Finished runs are kept only for a while.",
+        run.run_id
+    );
+    for root in [
+        theirs.as_path(),
+        &ours.join("sub/deeper"),
+        &dir.path().join("a/../ab"),
+    ] {
+        assert_eq!(
+            output_within(root, &run.run_id, Duration::ZERO).unwrap_err(),
+            hidden
+        );
+        assert_eq!(stop_within(root, &run.run_id).unwrap_err(), hidden);
+    }
+    assert_eq!(
+        output_within(&ours, &run.run_id, Duration::ZERO)
+            .unwrap()
+            .status,
+        Status::Running,
+        "the refused stops left it running"
+    );
+    assert_eq!(
+        stop_within(&ours, &run.run_id).unwrap().status,
+        Status::Stopped
+    );
 }
 
 #[test]

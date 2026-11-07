@@ -73,16 +73,21 @@ impl Toolkit {
                 Ok(list(grant))
             }
             "actions_run" => {
-                only(&fields, &["id"])?;
-                run(grant, required(&fields, "id")?, waits)
+                only(&fields, &["id", "command"])?;
+                let id = required(&fields, "id")?;
+                run(grant, id, required(&fields, "command")?, waits)
             }
             "actions_output" => {
                 only(&fields, &["runId"])?;
-                report(runs::output(required(&fields, "runId")?, waits.output))
+                let run_id = required(&fields, "runId")?;
+                report(runs::output_within(&grant.workspace, run_id, waits.output)?)
             }
             "actions_stop" => {
                 only(&fields, &["runId"])?;
-                report(runs::stop(required(&fields, "runId")?))
+                report(runs::stop_within(
+                    &grant.workspace,
+                    required(&fields, "runId")?,
+                )?)
             }
             _ => Err("Unknown actions tool".into()),
         }
@@ -103,14 +108,17 @@ fn run_tools() -> [Value; 3] {
     [
         json!({
             "name": "actions_run",
-            "description": "Run one of the project's actions from actions_list in your checkout, through Gespan, and return its exit code and output. Prefer this over guessing a command. A run still going after about 50 seconds, or a background action such as a dev server after about 5, returns with status \"running\": read more with actions_output and end it with actions_stop.",
+            "description": "Run one of the project's actions from actions_list in your checkout, through Gespan, and return its exit code and output. Prefer this over guessing a command. Pass the command actions_list showed; if the project's files have changed it since, nothing runs and you are asked to list again. A run still going after about 50 seconds, or a background action such as a dev server after about 5, returns with status \"running\": read more with actions_output and end it with actions_stop.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"id": {"type": "string", "description": "The id from actions_list"}},
-                "required": ["id"],
+                "properties": {
+                    "id": {"type": "string", "description": "The id from actions_list"},
+                    "command": {"type": "string", "description": "The action's command exactly as actions_list returned it"},
+                },
+                "required": ["id", "command"],
                 "additionalProperties": false,
             },
-            "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
         }),
         json!({
             "name": "actions_output",
@@ -184,7 +192,9 @@ fn row(action: &Action) -> Value {
     })
 }
 
-fn run(grant: &Grant, id: &str, waits: &Waits) -> Result<Value, String> {
+/// Runs `id` only while its command is still `command`, the one the agent
+/// listed and its approval showed: a file changed since then runs nothing.
+fn run(grant: &Grant, id: &str, command: &str, waits: &Waits) -> Result<Value, String> {
     let project = project(grant);
     let listing = detect(&project, &grant.workspace);
     let action = listing
@@ -195,14 +205,20 @@ fn run(grant: &Grant, id: &str, waits: &Waits) -> Result<Value, String> {
     if let Some(reason) = &action.blocked {
         return Err(format!("{} can't run: {reason}", action.label));
     }
+    if action.command != command {
+        return Err(format!(
+            "The command for {id} is now `{}`; call actions_list again.",
+            action.command
+        ));
+    }
     let wait = if action.background {
         waits.background
     } else {
         waits.run
     };
-    report(Ok(runs::start(&project, action, wait)))
+    report(runs::start(&project, action, wait))
 }
 
-fn report(report: Result<runs::Report, String>) -> Result<Value, String> {
-    serde_json::to_value(report?).map_err(|error| error.to_string())
+fn report(report: runs::Report) -> Result<Value, String> {
+    serde_json::to_value(report).map_err(|error| error.to_string())
 }
