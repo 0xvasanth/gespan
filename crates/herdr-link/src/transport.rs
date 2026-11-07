@@ -34,20 +34,36 @@ impl Transport for LocalSocket {
 }
 
 #[cfg(test)]
-pub(crate) use fake::FakeTransport;
+pub(crate) use fake::{FakeTransport, Step};
 
 #[cfg(test)]
 mod fake {
     use super::*;
+    use crate::SshFailure;
     use std::collections::VecDeque;
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
 
+    enum Script {
+        Reply(Vec<u8>),
+        Fail(SshFailure),
+    }
+
+    /// What happened to the connections, in order. Connections are numbered
+    /// by successful open, so `Opened(i)` carries `requests()[i]`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Step {
+        Opened(usize),
+        Closed(usize),
+    }
+
     #[derive(Default)]
     struct State {
-        scripts: VecDeque<Vec<u8>>,
+        scripts: VecDeque<Script>,
         opens: usize,
+        conns: usize,
         written: Vec<u8>,
+        log: Vec<Step>,
     }
 
     /// A scripted transport: each `open` hands out the next reply script and
@@ -67,17 +83,49 @@ mod fake {
         }
     }
 
+    /// Notes when a connection is dropped.
+    struct CloseMark(Arc<Mutex<State>>, usize);
+
+    impl Drop for CloseMark {
+        fn drop(&mut self) {
+            if let Ok(mut state) = self.0.lock() {
+                state.log.push(Step::Closed(self.1));
+            }
+        }
+    }
+
     impl FakeTransport {
         pub(crate) fn new(scripts: &[&str]) -> Self {
-            let state = State {
-                scripts: scripts.iter().map(|s| s.as_bytes().to_vec()).collect(),
-                ..State::default()
-            };
-            Self(Arc::new(Mutex::new(state)))
+            let fake = Self::default();
+            for script in scripts {
+                fake.push(script);
+            }
+            fake
+        }
+
+        /// Queue one more reply script.
+        pub(crate) fn push(&self, script: &str) {
+            let mut state = self.0.lock().unwrap();
+            state
+                .scripts
+                .push_back(Script::Reply(script.as_bytes().to_vec()));
+        }
+
+        /// Queue an open that fails the way `SshBridge` reports a failure.
+        pub(crate) fn push_failure(&self, failure: SshFailure) {
+            self.0
+                .lock()
+                .unwrap()
+                .scripts
+                .push_back(Script::Fail(failure));
         }
 
         pub(crate) fn opens(&self) -> usize {
             self.0.lock().unwrap().opens
+        }
+
+        pub(crate) fn log(&self) -> Vec<Step> {
+            self.0.lock().unwrap().log.clone()
         }
 
         /// Every request line written so far, parsed.
@@ -94,13 +142,23 @@ mod fake {
         fn open(&self) -> io::Result<Conn> {
             let mut state = self.0.lock().unwrap();
             state.opens += 1;
-            let script = state.scripts.pop_front().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::ConnectionRefused, "no script left")
-            })?;
+            let script = match state.scripts.pop_front() {
+                Some(Script::Reply(script)) => script,
+                Some(Script::Fail(failure)) => return Err(io::Error::other(failure)),
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionRefused,
+                        "no script left",
+                    ))
+                }
+            };
+            let n = state.conns;
+            state.conns += 1;
+            state.log.push(Step::Opened(n));
             Ok(Conn {
                 writer: Box::new(Recorder(self.0.clone())),
                 reader: Box::new(Cursor::new(script)),
-                guard: None,
+                guard: Some(Box::new(CloseMark(self.0.clone(), n))),
             })
         }
     }
