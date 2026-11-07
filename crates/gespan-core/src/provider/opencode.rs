@@ -871,20 +871,13 @@ mod tool_tests {
     use std::io::{BufRead, BufReader, Read, Write};
 
     /// A `serve` stand-in: answers `POST /mcp` with this status, and counts them.
-    fn opencode(status: u16) -> (Client, mpsc::Receiver<serde_json::Value>) {
-        let (client, seen) = opencode_seen(status, false);
-        let (posted, received) = mpsc::channel();
-        std::thread::spawn(move || {
-            for (_, body) in seen {
-                if posted.send(body).is_err() {
-                    return;
-                }
-            }
-        });
-        (client, received)
+    fn opencode(status: u16) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
+        opencode_seen(status, false)
     }
 
-    /// The stand-in, keeping each request's first line with its body.
+    /// The stand-in, keeping each request's first line with its body. It
+    /// records a request before answering it, so once the client has its
+    /// answer the request is already waiting here.
     fn opencode_seen(
         status: u16,
         v2: bool,
@@ -935,7 +928,7 @@ mod tool_tests {
         let mount = mount(5101);
         let mut held = None;
         mount_tools(&client, &mut held, Some(&mount));
-        let server = posted.try_recv().unwrap();
+        let (_, server) = posted.try_recv().unwrap();
         assert_eq!(server["name"], "gespan");
         let authorization = server["config"]["headers"]["Authorization"].clone();
         assert!(held.as_ref().unwrap().is_live(5101));
@@ -958,11 +951,11 @@ mod tool_tests {
         let mount = mount(5102);
         let mut held = None;
         mount_tools(&client, &mut held, Some(&mount));
-        let first = posted.try_recv().unwrap();
+        let (_, first) = posted.try_recv().unwrap();
         // Another process of this session took over, then this server came back.
         let _other = Access::open(&mount).unwrap();
         mount_tools(&client, &mut held, Some(&mount));
-        let second = posted.try_recv().unwrap();
+        let (_, second) = posted.try_recv().unwrap();
         assert_ne!(first["config"]["headers"], second["config"]["headers"]);
         assert!(held.as_ref().unwrap().is_live(5102));
     }
