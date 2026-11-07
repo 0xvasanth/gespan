@@ -263,7 +263,7 @@ impl Shell {
             .and_then(|terminal| {
                 let ix = live.iter().position(|t| *t == terminal)?;
                 let t = terminal.read(cx);
-                let idle = t.foreground.is_none() && !t.exited;
+                let idle = t.foreground.is_none() && !t.exited && !t.read_only();
                 (idle && t.cwd == cwd && t.env == env).then_some((ix, terminal))
             });
         let reveal = self.workspace.preferences.action_opens_terminal;

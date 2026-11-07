@@ -309,7 +309,7 @@ impl DockSide {
 }
 /// A project's dock: its place, size and the terminals it holds. Shells are
 /// not restored; the dock reopens the same tabs in their directories.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(default)]
 pub(crate) struct TerminalDock {
     pub side: DockSide,
@@ -318,6 +318,36 @@ pub(crate) struct TerminalDock {
     /// Each terminal's working directory, in tab order.
     pub terminals: Vec<String>,
     pub active: usize,
+    /// Which tabs mirror an agent's run, in tab order. They are never saved,
+    /// so a restart doesn't reopen them as shells.
+    #[serde(skip)]
+    pub mirrors: Vec<bool>,
+}
+impl Serialize for TerminalDock {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Saved<'a> {
+            side: DockSide,
+            size: f32,
+            open: bool,
+            terminals: Vec<&'a String>,
+            active: usize,
+        }
+        let shells: Vec<&String> = (self.terminals.iter().enumerate())
+            .filter(|(ix, _)| !self.is_mirror(*ix))
+            .map(|(_, cwd)| cwd)
+            .collect();
+        // An active mirror leaves the shell before it active.
+        let before = (0..self.active).filter(|ix| !self.is_mirror(*ix)).count();
+        Saved {
+            side: self.side,
+            size: self.size,
+            open: self.open,
+            active: before.min(shells.len().saturating_sub(1)),
+            terminals: shells,
+        }
+        .serialize(serializer)
+    }
 }
 impl Default for TerminalDock {
     fn default() -> Self {
@@ -327,12 +357,33 @@ impl Default for TerminalDock {
             open: true,
             terminals: Vec::new(),
             active: 0,
+            mirrors: Vec::new(),
         }
     }
 }
 impl TerminalDock {
+    /// A tab mirroring an agent's run. It neither opens the dock nor takes
+    /// over the active tab.
+    pub fn add_mirror(&mut self, cwd: String) -> usize {
+        if self.terminals.is_empty() {
+            self.active = 0;
+            self.open = false;
+        }
+        self.marks().push(true);
+        self.terminals.push(cwd);
+        self.terminals.len() - 1
+    }
+    pub fn is_mirror(&self, ix: usize) -> bool {
+        self.mirrors.get(ix).copied().unwrap_or(false)
+    }
+    /// The mirror markers, one per tab; a restored dock has none.
+    fn marks(&mut self) -> &mut Vec<bool> {
+        self.mirrors.resize(self.terminals.len(), false);
+        &mut self.mirrors
+    }
     /// addTerminalToDock: the new terminal is active and the dock opens.
     pub fn add(&mut self, cwd: String) -> usize {
+        self.marks().push(false);
         self.terminals.push(cwd);
         self.active = self.terminals.len() - 1;
         self.open = true;
@@ -344,6 +395,7 @@ impl TerminalDock {
         if ix >= self.terminals.len() {
             return true;
         }
+        self.marks().remove(ix);
         self.terminals.remove(ix);
         if self.terminals.is_empty() {
             self.active = 0;
@@ -361,6 +413,9 @@ impl TerminalDock {
             return;
         }
         let active = self.active;
+        let marks = self.marks();
+        let mirror = marks.remove(from);
+        marks.insert(to, mirror);
         let cwd = self.terminals.remove(from);
         self.terminals.insert(to, cwd);
         self.active = if active == from {
@@ -376,6 +431,7 @@ impl TerminalDock {
     /// onCloseOtherProjectTerminals: `keep` is left, and active.
     pub fn keep_only(&mut self, keep: usize) {
         if keep < self.terminals.len() {
+            self.mirrors = vec![self.is_mirror(keep)];
             self.terminals = vec![self.terminals.swap_remove(keep)];
             self.active = 0;
         }
@@ -1856,6 +1912,70 @@ mod tests {
             (dock.terminals.clone(), dock.active),
             (vec!["/c".to_string()], 0)
         );
+    }
+    #[test]
+    fn mirror_tabs_follow_close_and_reorder_and_are_never_saved() {
+        let saved = |dock: &TerminalDock| {
+            let json = serde_json::to_value(dock).unwrap();
+            assert!(json.get("mirrors").is_none());
+            let terminals: Vec<String> = serde_json::from_value(json["terminals"].clone()).unwrap();
+            (terminals, json["active"].as_u64().unwrap())
+        };
+        let mut dock = TerminalDock::default();
+        dock.add("/a".into());
+        dock.open = false;
+        // Gaining a mirror neither opens the dock nor moves its active tab.
+        assert_eq!(dock.add_mirror("/agent".into()), 1);
+        assert!(!dock.open);
+        assert_eq!(dock.active, 0);
+        dock.add("/b".into());
+        dock.add_mirror("/agent2".into());
+        assert_eq!(dock.active, 2);
+        assert_eq!(saved(&dock), (vec!["/a".into(), "/b".into()], 1));
+        // The marker moves with its tab.
+        dock.reorder(1, 0);
+        assert_eq!(dock.terminals, ["/agent", "/a", "/b", "/agent2"]);
+        let marks = |dock: &TerminalDock| {
+            (0..dock.terminals.len())
+                .map(|ix| dock.is_mirror(ix))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(marks(&dock), [true, false, false, true]);
+        assert_eq!(saved(&dock), (vec!["/a".into(), "/b".into()], 1));
+        // Closing the mirror before the shells keeps the rest marked right.
+        assert!(dock.close(0));
+        assert_eq!(marks(&dock), [false, false, true]);
+        assert_eq!(saved(&dock), (vec!["/a".into(), "/b".into()], 1));
+        // A mirror that is active saves the shell before it as active.
+        dock.active = 2;
+        assert_eq!(saved(&dock), (vec!["/a".into(), "/b".into()], 1));
+        dock.reorder(2, 0);
+        assert_eq!(dock.terminals, ["/agent2", "/a", "/b"]);
+        assert_eq!(marks(&dock), [true, false, false]);
+        assert_eq!(saved(&dock), (vec!["/a".into(), "/b".into()], 0));
+        // Closing a shell after the mirror leaves the mirror marked.
+        assert!(dock.close(1));
+        assert_eq!(marks(&dock), [true, false]);
+        assert_eq!(saved(&dock), (vec!["/b".into()], 0));
+        // A dock left holding only a mirror is not restored.
+        dock.keep_only(0);
+        assert_eq!(marks(&dock), [true]);
+        assert_eq!(saved(&dock), (vec![], 0));
+        let mut s = Workspace::default();
+        s.docks.insert("/w".into(), dock);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("/agent"), "{json}");
+        let s = Workspace::restore(Some(&json), &[], "/w");
+        assert!(!s.docks.contains_key("/w"));
+        // A restored dock has no mirrors, however its tabs were set.
+        let mut restored = TerminalDock {
+            terminals: vec!["/x".into(), "/y".into()],
+            ..Default::default()
+        };
+        assert_eq!(marks(&restored), [false, false]);
+        restored.add_mirror("/agent".into());
+        assert!(restored.close(0));
+        assert_eq!(marks(&restored), [false, true]);
     }
     #[test]
     fn restore_keeps_project_selection_and_prunes_stale_project_focus() {

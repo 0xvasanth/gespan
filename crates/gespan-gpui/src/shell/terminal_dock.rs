@@ -156,6 +156,10 @@ impl Shell {
             .enumerate()
             .filter_map(|(ix, terminal)| {
                 let t = terminal.read(cx);
+                // An agent's run is not the user's running process.
+                if t.read_only() {
+                    return None;
+                }
                 let process = t.foreground.as_deref()?.trim();
                 (!process.is_empty()).then(|| Running {
                     ix,
@@ -630,8 +634,11 @@ impl Shell {
                                 let t = terminal.read(cx);
                                 let label: SharedString = t.title.clone().into();
                                 let agent = t.agent();
-                                let description =
-                                    SharedString::from(format!("{} — {}", t.title, t.cwd));
+                                let status = t.status().map(|s| SharedString::from(s.to_owned()));
+                                let description = SharedString::from(match &status {
+                                    Some(status) => format!("{} — {} — {status}", t.title, t.cwd),
+                                    None => format!("{} — {}", t.title, t.cwd),
+                                });
                                 let active = ix == dock.active;
                                 let held = dragged == Some(ix);
                                 let hovered = self.dock_hover == Some(ix) && dragged.is_none();
@@ -735,6 +742,12 @@ impl Shell {
                                                     .truncate()
                                                     .child(label.clone()),
                                             )
+                                            .children(status.map(|status| {
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_color(content(0.5))
+                                                    .child(status)
+                                            }))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 if std::mem::take(&mut this.dock_skip_click) {
                                                     return;
