@@ -1,0 +1,19 @@
+.gitattributes
+  s_353640b5854a00::t_dbf7255363cbc3 9-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8d1d4dff29a3576dac35195aabde1330588e391",
+  "prompts": {},
+  "sessions": {
+    "s_353640b5854a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fafb205-0362-4b25-8806-8b016ab8cdef",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
