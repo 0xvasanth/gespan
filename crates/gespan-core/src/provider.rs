@@ -938,7 +938,11 @@ fn run_operation(
     if cancel.load(Ordering::Relaxed) {
         return Err(ProviderError::Stopped.into());
     }
-    if request.kind == Kind::OpenCode {
+    if api::ProviderRegistry::builtin()
+        .get(request.kind)
+        .transport()
+        == api::Transport::Http
+    {
         baseline_recorded(&request, &cancel)?;
         return opencode::run(request, cancel, controls, probe, compact, emit);
     }
@@ -996,10 +1000,8 @@ fn launch(
     relaunch: &mut bool,
     emit: &mut impl FnMut(Vec<Event>) -> Result<(), String>,
 ) -> Result<Option<Value>, String> {
-    let claude_new_session = (request.kind == Kind::Claude
-        && request.provider_id.is_none()
-        && !request.settings.text_only)
-        .then(lifecycle::claude_session_id);
+    let provider = api::ProviderRegistry::builtin().get(request.kind);
+    let claude_new_session = provider.new_session_id(&request);
     #[cfg(unix)]
     if tracing::enabled!(tracing::Level::DEBUG) {
         unsafe {
@@ -1015,19 +1017,17 @@ fn launch(
     crate::scm::shell::apply_gui_env(&mut command);
     command.envs(&request.settings.environment);
     request.settings.account.apply(request.kind, &mut command)?;
-    configure_by_family(
+    provider.configure(
         &mut command,
         &request,
-        probe || command_probe,
-        fallback,
+        api::Attempt {
+            probe: probe || command_probe,
+            fallback,
+        },
         claude_new_session.as_deref(),
     )?;
     command
-        .current_dir(if request.kind == Kind::Antigravity {
-            request.binary.parent().unwrap_or(&request.cwd)
-        } else {
-            &request.cwd
-        })
+        .current_dir(provider.working_dir(&request))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1368,7 +1368,7 @@ fn launch(
         result => result,
     };
     let stopped = held || cancel.load(Ordering::Relaxed);
-    if protocol.request.kind == Kind::Kiro && result.is_err() && !stopped {
+    if provider.retry_policy() == api::RetryPolicy::FallbackOnce && result.is_err() && !stopped {
         // A CLI without the V3 engine rejects the flag and exits; a live
         // process that timed out or answered with an error is not retried.
         if !fallback && !warm && protocol.acp_initializing() && exited(&mut wire.child) {
@@ -2453,6 +2453,69 @@ elif method == 'session/prompt':
             Ok(())
         });
         (result, text)
+    }
+    #[test]
+    fn a_new_claude_conversation_launches_with_the_id_gespan_picked() {
+        let launched_args = |provider_id: Option<&str>| {
+            let (tmp, mut request) =
+                fixture("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GESPAN_TEST_ARGS\"\n");
+            let args = tmp.path().join("args");
+            request.kind = Kind::Claude;
+            request.provider_id = provider_id.map(Into::into);
+            request
+                .settings
+                .environment
+                .insert("GESPAN_TEST_ARGS".into(), args.display().to_string());
+            let _ = run(request, Arc::new(AtomicBool::new(false)), |_| Ok(()));
+            let args = std::fs::read_to_string(args).unwrap();
+            args.lines().map(str::to_owned).collect::<Vec<_>>()
+        };
+        let value_after = |args: &[String], flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .map(|i| args[i + 1].clone())
+        };
+
+        let new = launched_args(None);
+        let id = value_after(&new, "--session-id").expect("a new conversation names its id");
+        assert_eq!(id.len(), 36, "{id}");
+        assert_eq!(value_after(&new, "--resume"), None);
+
+        let resumed = launched_args(Some("previous-session"));
+        assert_eq!(value_after(&resumed, "--session-id"), None);
+        assert_eq!(
+            value_after(&resumed, "--resume").as_deref(),
+            Some("previous-session")
+        );
+    }
+    #[test]
+    fn a_provider_process_starts_in_the_folder_its_provider_names() {
+        for (kind, in_install_folder) in [
+            (Kind::Antigravity, true),
+            (Kind::Codex, false),
+            (Kind::Cursor, false),
+            (Kind::Kiro, false),
+        ] {
+            let (tmp, mut request) = fixture("#!/bin/sh\npwd -P > \"$GESPAN_TEST_PWD\"\n");
+            let project = tmp.path().join("project");
+            std::fs::create_dir(&project).unwrap();
+            let mark = tmp.path().join("started-in");
+            request.kind = kind;
+            request.cwd = project.clone();
+            request
+                .settings
+                .environment
+                .insert("GESPAN_TEST_PWD".into(), mark.display().to_string());
+            // The stand-in exits at once, so the turn fails; only where it ran matters.
+            let _ = run(request, Arc::new(AtomicBool::new(false)), |_| Ok(()));
+            let started = std::fs::read_to_string(&mark).unwrap();
+            let expected = if in_install_folder {
+                tmp.path().canonicalize().unwrap()
+            } else {
+                project.canonicalize().unwrap()
+            };
+            assert_eq!(PathBuf::from(started.trim()), expected, "{kind:?}");
+        }
     }
     #[test]
     fn kiro_launches_v3_and_falls_back_to_plain_acp_when_v3_exits() {

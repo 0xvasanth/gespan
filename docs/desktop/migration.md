@@ -35,9 +35,14 @@ you change a `Spec` row, change its manifest and bump the manifest's `version`.
 registry (`get(kind)`, `parse(id)`, `iter()`) rather than match on `Kind`. The
 trait's default methods still forward to the `Kind` helpers, and callers move
 over in later changes.
-provider's `Spec` row field for field, a test keeps the two in step, and
-nothing reads the manifests yet. When you change a `Spec` row, change its
-manifest and bump the manifest's `version`.
+
+`launch()` asks the provider how to start its process: `transport()` (OpenCode
+is HTTP), `working_dir()`, `new_session_id()`, `configure()` and
+`retry_policy()` (Kiro retries once without its V3 flag). Put a provider's
+launch difference in an override on its struct in `provider/api.rs`, not in a
+`Kind` check. `launch_argv_tests` snapshots every provider's arguments in
+`provider/fixtures/launch_argv.txt`; after an intended change, re-record it
+with `GESPAN_BLESS_LAUNCH_ARGV=1` and review the diff.
 
 ## Rendering and responsiveness
 

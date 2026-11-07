@@ -157,17 +157,19 @@ fn assert_snapshot(actual: String) {
 
 #[test]
 fn every_provider_launches_with_its_recorded_command() {
+    // Recorded from the per-family match `launch()` used before the trait;
+    // the trait's launch must still produce exactly that.
     assert_snapshot(snapshot(|request, case| {
+        let provider = api::ProviderRegistry::builtin().get(request.kind);
         let mut command = Command::new(&request.binary);
-        let session = (request.kind == Kind::Claude
-            && request.provider_id.is_none()
-            && !request.settings.text_only)
-            .then_some("new-session-id");
-        configure_by_family(
+        let session = provider.new_session_id(request).map(|_| "new-session-id");
+        provider.configure(
             &mut command,
             request,
-            matches!(case, Case::Probe),
-            matches!(case, Case::Fallback),
+            api::Attempt {
+                probe: matches!(case, Case::Probe),
+                fallback: matches!(case, Case::Fallback),
+            },
             session,
         )?;
         Ok(command)
