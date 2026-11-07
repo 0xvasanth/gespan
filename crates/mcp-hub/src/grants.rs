@@ -84,6 +84,8 @@ impl fmt::Display for Refusal {
 struct Live {
     grant: Grant,
     used: Instant,
+    /// A `_meta` key and the value every tool call must carry in it.
+    bound: Option<(String, serde_json::Value)>,
 }
 
 /// Live tokens by hash, each session holding at most one.
@@ -118,9 +120,32 @@ impl Grants {
             Live {
                 grant,
                 used: Instant::now(),
+                bound: None,
             },
         );
         token
+    }
+
+    /// From now on the session's tool calls must carry `value` under `key` in
+    /// their `_meta`. Returns whether the session had a live credential.
+    pub(crate) fn bind(&mut self, session: i64, key: &str, value: serde_json::Value) -> bool {
+        let Some(live) = self
+            .sessions
+            .get(&session)
+            .and_then(|hashed| self.live.get_mut(hashed))
+        else {
+            return false;
+        };
+        live.bound = Some((key.to_owned(), value));
+        true
+    }
+
+    /// What a session's tool calls must carry, if anything.
+    pub(crate) fn bound(&self, session: i64) -> Option<(String, serde_json::Value)> {
+        self.sessions
+            .get(&session)
+            .and_then(|key| self.live.get(key))
+            .and_then(|live| live.bound.clone())
     }
 
     pub(crate) fn revoke(&mut self, session: i64, why: Refusal) -> bool {

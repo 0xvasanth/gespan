@@ -1405,3 +1405,43 @@ fn a_sessionless_server_hears_of_subscriptions_on_its_stream() {
         "the stream is still open"
     );
 }
+
+/// A client that shares one connection between its conversations names the
+/// one calling in `_meta`; a bound credential serves that one only.
+#[test]
+fn a_bound_credential_serves_only_calls_from_its_own_caller() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let token = rig.hub.mint(grant(1, folder.path(), &["docs"]));
+    let agent = Agent::connect(&rig.hub, &token);
+    let call = |conversation: Option<&str>| {
+        let mut params = json!({"name":"docs__who","arguments":{}});
+        if let Some(conversation) = conversation {
+            params["_meta"] = json!({"client.example/conversation":conversation});
+        }
+        agent.request("tools/call", params)
+    };
+    assert!(
+        call(None)["error"].is_null(),
+        "an unbound credential serves anyone"
+    );
+    assert!(rig
+        .hub
+        .bind(1, "client.example/conversation", json!("mine")));
+    assert!(call(Some("mine"))["error"].is_null());
+    for other in [Some("theirs"), None] {
+        let refused = call(other);
+        assert_eq!(
+            refused["error"]["message"], "This tool credential belongs to another conversation",
+            "{refused}"
+        );
+    }
+    let fresh = rig.hub.mint(grant(1, folder.path(), &["docs"]));
+    let agent = Agent::connect(&rig.hub, &fresh);
+    let reply = agent.request("tools/call", json!({"name":"docs__who","arguments":{}}));
+    assert!(
+        reply["error"].is_null(),
+        "a new credential starts unbound: {reply}"
+    );
+    assert!(!rig.hub.bind(99, "client.example/conversation", json!("x")));
+}

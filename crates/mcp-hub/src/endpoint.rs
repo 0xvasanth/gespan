@@ -168,6 +168,20 @@ impl Inner {
         peers
     }
 
+    /// Turns away a tool call made for another caller of a bound credential.
+    pub(crate) fn check_caller(
+        &self,
+        session: i64,
+        meta: &serde_json::Map<String, Value>,
+    ) -> Result<(), String> {
+        match relock(&self.grants).bound(session) {
+            Some((key, value)) if meta.get(&key) != Some(&value) => {
+                Err("This tool credential belongs to another conversation".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn peer_of(&self, session: i64) -> Option<Peer<RoleServer>> {
         self.call_of(session)
             .map(|(peer, _)| peer)
@@ -508,6 +522,15 @@ impl Hub {
     /// stops working.
     pub fn mint(&self, grant: Grant) -> Token {
         relock(&self.inner.grants).mint(grant)
+    }
+
+    /// Binds a session's credential to one caller of a client that shares its
+    /// connections: from now on its tool calls must carry `value` under `key`
+    /// in their `_meta`, which that client sets and its model can't, and calls
+    /// without it are turned away. A new credential starts unbound. Returns
+    /// whether the session had a live credential to bind.
+    pub fn bind(&self, session: i64, key: &str, value: Value) -> bool {
+        relock(&self.inner.grants).bind(session, key, value)
     }
 
     /// Ends a session's access, for an archived, deleted or moved session.

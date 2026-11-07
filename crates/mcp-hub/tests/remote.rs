@@ -528,3 +528,106 @@ fn a_sign_in_nobody_finishes_times_out() {
     assert_eq!(error, "The sign-in timed out");
     assert!(store.load().unwrap().is_none());
 }
+
+/// Opens the system browser at a sign-in page, for a person to finish.
+fn system_browser(url: &str) {
+    eprintln!("\nSign in here if no browser opens:\n{url}\n");
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let opened = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .status();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let opened = std::process::Command::new("xdg-open").arg(url).status();
+    if let Err(error) = opened {
+        eprintln!("No browser opened: {error}");
+    }
+}
+
+/// What a session lists through the hub, over plain HTTP.
+fn listed_through(hub: &Hub, session: i64) -> Vec<String> {
+    let token = hub.mint(grant(session));
+    let post = |session_id: Option<&str>, body: Value| {
+        let mut request = ureq::post(hub.url())
+            .set("Authorization", &token.bearer())
+            .set("Accept", "application/json, text/event-stream")
+            .set("Content-Type", "application/json")
+            .timeout(Duration::from_secs(120));
+        if let Some(session_id) = session_id {
+            request = request
+                .set("Mcp-Session-Id", session_id)
+                .set("MCP-Protocol-Version", "2025-11-25");
+        }
+        let response = request.send_string(&body.to_string()).unwrap();
+        let session_id = response.header("mcp-session-id").map(str::to_owned);
+        (session_id, response.into_string().unwrap())
+    };
+    let (session_id, _) = post(
+        None,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"},
+        }}),
+    );
+    let session_id = session_id.expect("the hub named a session");
+    post(
+        Some(&session_id),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    let (_, body) = post(
+        Some(&session_id),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    );
+    let reply = body
+        .lines()
+        .filter_map(|line| {
+            serde_json::from_str::<Value>(line.strip_prefix("data:").unwrap_or(line).trim()).ok()
+        })
+        .find(|message| message["id"] == 2)
+        .unwrap_or_else(|| panic!("no reply in {body}"));
+    let tools = reply["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"));
+    tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// A person signs in at a real provider. `MCP_HUB_REAL_SERVER` picks the
+/// server, Linear's hosted one by default; run with `--nocapture` to see the
+/// sign-in address.
+#[test]
+#[ignore = "a person signs in at a real provider"]
+fn a_person_signs_in_once_at_a_real_provider_and_every_agent_lists_its_tools() {
+    let url = std::env::var("MCP_HUB_REAL_SERVER")
+        .unwrap_or_else(|_| "https://mcp.linear.app/mcp".to_owned());
+    let store = Arc::new(Memory::default());
+    sign_in(
+        &url,
+        "mcp-hub test",
+        store.clone(),
+        system_browser,
+        Duration::from_secs(300),
+    )
+    .unwrap();
+    let saved: Value = serde_json::from_str(&store.load().unwrap().unwrap()).unwrap();
+    let provider_token = saved["token_response"]["access_token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no access token was saved: {saved}"))
+        .to_owned();
+    let hub = hub_for(&url, store);
+    let first = listed_through(&hub, 1);
+    eprintln!("{} lists {} tools", url, first.len());
+    assert!(!first.is_empty(), "the provider lists tools once signed in");
+    assert!(first.iter().all(|name| name.starts_with("remote__")));
+    assert_eq!(
+        listed_through(&hub, 2),
+        first,
+        "one sign-in, for both agents"
+    );
+    assert!(
+        hub.mint(grant(3)).secret() != provider_token,
+        "agents hold the hub's token, never the provider's"
+    );
+}

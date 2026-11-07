@@ -171,6 +171,9 @@ impl ServerHandler for Session {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let grant = caller(&context)?;
+        self.inner
+            .check_caller(grant.session, &context.meta.0 .0)
+            .map_err(|message| ErrorData::invalid_request(message, None))?;
         let name = request.name.to_string();
         if let Some((server, tool)) = name.split_once(SEPARATOR) {
             let mut params = serde_json::to_value(&request).map_err(internal)?;
