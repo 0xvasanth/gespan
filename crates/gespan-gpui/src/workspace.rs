@@ -139,6 +139,10 @@ pub(crate) struct Workspace {
     /// Pilots dragged into a split, by their negative pane IDs. Each keeps the
     /// Pilot tab it came from, which it becomes again once it stands alone.
     pub pilot_panes: HashMap<i64, TitleTab>,
+    /// Terminals pulled out of a dock into a split or onto the title strip,
+    /// by their negative pane IDs. Like file panes, each borrows its owner
+    /// session's project and worktree scope.
+    pub terminal_panes: HashMap<i64, TerminalPane>,
     /// Split trees of tabs with more than one pane, by tab key.
     pub layouts: HashMap<i64, PaneNode>,
     /// The pane each split tab returns to when it is activated.
@@ -298,6 +302,14 @@ impl DockSide {
         (min, (span * 0.7).floor().max(min))
     }
 }
+/// A terminal living in the pane tree. Shells are not restored; the pane
+/// reopens a fresh shell in the same directory, as a dock tab does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TerminalPane {
+    pub owner: i64,
+    pub cwd: String,
+}
+
 /// A project's dock: its place, size and the terminals it holds. Shells are
 /// not restored; the dock reopens the same tabs in their directories.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -412,6 +424,7 @@ impl Default for Workspace {
             changes_view: Default::default(),
             reviews: Default::default(),
             review_owners: Default::default(),
+            terminal_panes: Default::default(),
             pilot_panes: Default::default(),
             layouts: Default::default(),
             focused: Default::default(),
@@ -567,6 +580,14 @@ impl Workspace {
             *id < 0 && !owners.contains_key(id) && matches!(pilot, TitleTab::Pilot { .. })
         });
         known.extend(state.pilot_panes.keys().copied());
+        let (owners, pilots) = (&state.review_owners, &state.pilot_panes);
+        state.terminal_panes.retain(|id, pane| {
+            *id < 0
+                && !owners.contains_key(id)
+                && !pilots.contains_key(id)
+                && sessions.iter().any(|(known, _)| *known == pane.owner)
+        });
+        known.extend(state.terminal_panes.keys().copied());
         let mut seen = HashSet::new();
         let mut layouts = std::mem::take(&mut state.layouts);
         let mut focused = std::mem::take(&mut state.focused);
@@ -599,6 +620,7 @@ impl Workspace {
             }
         }
         state.settle_pilot_panes();
+        state.prune_terminal_panes();
         state.normalize_title_order();
         if state
             .desktop_project_preferences
@@ -660,13 +682,18 @@ impl Workspace {
         }
         state.add_project(cwd);
         let open: HashSet<_> = state.open_sessions().into_iter().collect();
-        let review_owners = &state.review_owners;
-        state.project_focus.retain(|project, id| {
-            open.contains(id)
-                && sessions.iter().any(|(known, path)| {
-                    *known == review_owners.get(id).copied().unwrap_or(*id) && path == project
-                })
-        });
+        let focus = std::mem::take(&mut state.project_focus);
+        let owner = |id: i64| state.session_for_pane(id);
+        let focus: HashMap<_, _> = focus
+            .into_iter()
+            .filter(|(project, id)| {
+                open.contains(id)
+                    && sessions
+                        .iter()
+                        .any(|(known, path)| *known == owner(*id) && path == project)
+            })
+            .collect();
+        state.project_focus = focus;
         if let Some((_, project)) = sessions.iter().find(|(id, _)| {
             state
                 .active
@@ -783,13 +810,23 @@ impl Workspace {
         self.move_project(path, to)
     }
     pub fn session_for_pane(&self, id: i64) -> i64 {
-        self.review_owners.get(&id).copied().unwrap_or(id)
+        self.review_owners
+            .get(&id)
+            .copied()
+            .or_else(|| self.terminal_panes.get(&id).map(|t| t.owner))
+            .unwrap_or(id)
     }
-    /// File and Pilot panes share the negative IDs below every session.
+    /// A file or terminal pane standing in for its owner session.
+    pub fn is_detached_pane(&self, id: i64) -> bool {
+        self.review_owners.contains_key(&id) || self.terminal_panes.contains_key(&id)
+    }
+    /// File, Pilot and terminal panes share the negative IDs below every
+    /// session.
     pub fn next_pane_id(&self) -> i64 {
         self.review_owners
             .keys()
             .chain(self.pilot_panes.keys())
+            .chain(self.terminal_panes.keys())
             .copied()
             .min()
             .unwrap_or(0)
@@ -1093,6 +1130,21 @@ impl Workspace {
             self.pilot_panes.remove(&pane);
         }
         focused
+    }
+    /// Terminal panes no tab holds any more, forgotten. Their shells stop
+    /// with them, so the caller drops their views.
+    pub fn prune_terminal_panes(&mut self) -> Vec<i64> {
+        let open: HashSet<_> = self.open_sessions().into_iter().collect();
+        let gone: Vec<_> = self
+            .terminal_panes
+            .keys()
+            .copied()
+            .filter(|id| !open.contains(id))
+            .collect();
+        for id in &gone {
+            self.terminal_panes.remove(id);
+        }
+        gone
     }
     /// A pane dragged onto the tab strip becomes its own tab at `to`.
     pub fn detach(&mut self, id: i64, to: usize) {
