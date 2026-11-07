@@ -1,0 +1,3 @@
+{"data":{"agent":"claude","agent_status":"working","pane_id":"w1:p1","workspace_id":"w1"},"event":"pane.agent_status_changed"}
+{"data":{"pane":{"agent_status":"unknown","pane_id":"w2:p1","tab_id":"w2:t1","terminal_id":"term_65fb02a318aad2","workspace_id":"w2"},"type":"pane_created"},"event":"pane_created"}
+{"id":"watch","result":{"type":"subscription_started"}}

@@ -1,0 +1,1 @@
+{"id":"cli:agent:list","result":{"agents":[{"agent":"claude","agent_status":"blocked","cwd":"/home/dev/app","focused":false,"pane_id":"w1:p1","revision":3,"state_change_seq":2,"tab_id":"w1:t1","terminal_id":"term_65fb12c5fe2fe1","title":"fix the build","workspace_id":"w1"}],"type":"agent_list"}}
