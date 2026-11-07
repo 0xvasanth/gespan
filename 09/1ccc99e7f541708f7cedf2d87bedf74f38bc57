@@ -1,0 +1,49 @@
+crates/gespan-gpui/src/main.rs
+  s_9844206a362899::t_f9d71f7ae46769 570
+  s_9844206a362899::t_18680158ef020f 50
+crates/gespan-gpui/src/settings/mod.rs
+  s_9844206a362899::t_5cb7339c0b5511 144-147
+  s_9844206a362899::t_2204eeea5a5dbb 143,281,441
+  s_9844206a362899::t_f9d71f7ae46769 366-370,462,549
+crates/gespan-gpui/src/settings/pages/mod.rs
+  s_9844206a362899::t_f9d71f7ae46769 42
+  s_9844206a362899::t_2204eeea5a5dbb 9
+  s_9844206a362899::t_5cb7339c0b5511 25
+crates/gespan-core/src/machines.rs
+  s_9844206a362899::t_ed80388b21aca5 8-9
+crates/gespan-gpui/src/settings/model.rs
+  s_9844206a362899::t_f9d71f7ae46769 146-148,200-205,609
+  s_9844206a362899::t_197360b69b780a 610-611
+crates/gespan-gpui/src/settings/pages/herdr_machines.rs
+  s_9844206a362899::t_512694afce1d42 1-16,19-20,24,26-28,30-35,38-39,43-63,66-79,81-299,311-339,341-376,384-411,413-456,474-487,490,492-618
+  s_9844206a362899::t_02a5004db99a45 17,22,41-42,64-65,80,488-489,491,619-620
+  s_9844206a362899::t_5cb7339c0b5511 300-310,340,377-383,457-473,718-719,963-965
+  s_9844206a362899::t_856ae8506e970c 412
+  s_9844206a362899::t_c831df143c7359 653-655,660
+  s_9844206a362899::t_6d2a38f89fe908 621-652,656-659,661-717,720-962,966-969
+  s_9844206a362899::t_2204eeea5a5dbb 18,21,23,25,29,36-37,40
+crates/gespan-gpui/src/machines/mod.rs
+  s_9844206a362899::t_282f2dabd13ef8 1-129,131-180
+  s_9844206a362899::t_5cb7339c0b5511 130
+crates/gespan-gpui/src/shell/settings.rs
+  s_9844206a362899::t_af294d9a46de31 334,630-677,680-683
+  s_9844206a362899::t_f9d71f7ae46769 265-267,321-331,333
+  s_9844206a362899::t_16880fbf66fe28 332,678-679
+  s_9844206a362899::t_b546efa3bb7f1d 629
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "091ccc99e7f541708f7cedf2d87bedf74f38bc57",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
