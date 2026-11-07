@@ -1,0 +1,42 @@
+crates/herdr-link/src/types.rs
+  s_9844206a362899::t_d940aa81145dd1 1-109,113-139,143-177,182-186,189-207,210,215-216,224-225
+  s_9844206a362899::t_21ee54c5139db8 110-112,140-142,178-181,187-188,208-209,211-214,217-223
+scripts/ci-impact.mjs
+  s_9844206a362899::t_21ee54c5139db8 24
+crates/herdr-link/Cargo.toml
+  s_9844206a362899::t_d940aa81145dd1 1-13
+crates/herdr-link/src/lib.rs
+  s_9844206a362899::t_d940aa81145dd1 1-6
+crates/herdr-link/tests/fixtures/events.json
+  s_9844206a362899::t_d940aa81145dd1 1-3
+crates/herdr-link/tests/fixtures/ping.json
+  s_9844206a362899::t_d940aa81145dd1 1
+crates/herdr-link/tests/fixtures/agent_list.json
+  s_9844206a362899::t_d940aa81145dd1 1
+crates/herdr-link/tests/fixtures/machine_list.json
+  s_9844206a362899::t_d940aa81145dd1 1
+crates/herdr-link/tests/fixtures/workspace_list.json
+  s_9844206a362899::t_d940aa81145dd1 1
+.github/workflows/ci.yml
+  s_9844206a362899::t_21ee54c5139db8 175
+Cargo.toml
+  s_9844206a362899::t_d940aa81145dd1 3
+Cargo.lock
+  s_9844206a362899::t_a12dbf48330288 1335-1343
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "684db236b8e183a2025990b3c97b534e8a5d0abe",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
