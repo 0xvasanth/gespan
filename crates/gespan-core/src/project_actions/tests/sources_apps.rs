@@ -82,14 +82,14 @@ args = ["x"]
     let found = parse(&Conductor, ".conductor/settings.toml", text);
     let labels: Vec<_> = found.iter().map(|f| f.label.as_str()).collect();
     // A script with no command is listed, blocked.
-    assert_eq!(labels, ["dev", "empty", "secret"]);
-    assert_eq!(found[1].blocked.as_deref(), Some(NO_COMMAND));
+    assert_eq!(labels, ["dev", "secret", "empty"]);
+    assert_eq!(found[2].blocked.as_deref(), Some(NO_COMMAND));
     assert_eq!(found[0].command, "bun");
     assert_eq!(found[0].args, ["run", "dev"]);
     assert_eq!(found[0].cwd.as_deref(), Some("web"));
     assert!(found[0].shell);
     assert!(!found[0].hide);
-    assert!(found[2].hide);
+    assert!(found[1].hide);
 }
 
 #[test]

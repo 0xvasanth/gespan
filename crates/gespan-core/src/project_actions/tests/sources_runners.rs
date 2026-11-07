@@ -77,7 +77,7 @@ fn package_manager_follows_the_lockfile() {
 
 #[test]
 fn package_scripts_skip_pre_and_post_hooks() {
-    let text = r#"{ "scripts": {
+    let text = r#"{ "config": { "scripts": { "zz": "not a script" } }, "scripts": {
         "build": "tsc",
         "prebuild": "rm -rf dist",
         "postbuild": "echo done",
@@ -87,7 +87,8 @@ fn package_scripts_skip_pre_and_post_hooks() {
         "notascript": 5
     } }"#;
     let found = parse_with("pnpm", &PackageJson, "package.json", text);
-    assert_eq!(labels(&found), ["build", "pre", "predeploy", "test"]);
+    // In the order the file lists them; a nested `scripts` doesn't count.
+    assert_eq!(labels(&found), ["build", "predeploy", "pre", "test"]);
     let build = &found[0];
     assert_eq!(build.detail.as_deref(), Some("tsc"));
     assert!(!build.background);
@@ -138,11 +139,10 @@ fn deno_tasks_string_and_object() {
         }
     }"#;
     let found = parse(&Deno, "deno.jsonc", text);
-    // serde_json keeps keys sorted, so the names come out alphabetically.
-    assert_eq!(labels(&found), ["all", "check", "dev"]);
-    assert_eq!(found[0].detail, None);
+    assert_eq!(labels(&found), ["dev", "check", "all"]);
+    assert_eq!(found[0].detail.as_deref(), Some("deno run -A main.ts"));
     assert_eq!(found[1].detail.as_deref(), Some("Type-check"));
-    assert_eq!(found[2].detail.as_deref(), Some("deno run -A main.ts"));
+    assert_eq!(found[2].detail, None);
     assert_eq!(line("deno", "deno.json", &found[1]), "deno task check");
 }
 
@@ -167,12 +167,13 @@ hide = true
 fmt = "cargo fmt"
 "#;
     let found = parse(&Mise, ".mise.toml", text);
-    assert_eq!(labels(&found), ["build", "fmt", "lint", "test:unit"]);
+    // In file order, the `[tasks]` table's own keys after the sub-tables.
+    assert_eq!(labels(&found), ["build", "test:unit", "lint", "fmt"]);
     assert_eq!(found[0].detail.as_deref(), Some("Build it"));
-    assert_eq!(found[3].detail, None);
+    assert_eq!(found[1].detail, None);
     assert!(found[2].hide);
     assert!(!found[0].hide);
-    assert_eq!(line("mise", "mise.toml", &found[3]), "mise run test:unit");
+    assert_eq!(line("mise", "mise.toml", &found[1]), "mise run test:unit");
 }
 
 #[test]
@@ -236,15 +237,15 @@ fn cargo_aliases() {
 target-dir = "out"
 
 [alias]
-b = "build --release"
 t = ["test", "--workspace"]
 n = 3
+b = "build --release"
 "#;
     let found = parse(&CargoAlias, ".cargo/config.toml", text);
-    assert_eq!(labels(&found), ["b", "t"]);
-    assert_eq!(found[0].detail.as_deref(), Some("build --release"));
-    assert_eq!(found[1].detail.as_deref(), Some("test --workspace"));
-    assert_eq!(line("cargo", ".cargo/config.toml", &found[0]), "cargo b");
+    assert_eq!(labels(&found), ["t", "b"]);
+    assert_eq!(found[0].detail.as_deref(), Some("test --workspace"));
+    assert_eq!(found[1].detail.as_deref(), Some("build --release"));
+    assert_eq!(line("cargo", ".cargo/config.toml", &found[1]), "cargo b");
     assert!(parse(&CargoAlias, ".cargo/config.toml", "[build]\njobs = 2").is_empty());
 }
 

@@ -1,6 +1,8 @@
 //! Agent apps' project configs. Only their run commands count: setup,
 //! teardown, archive and install scripts are lifecycle steps, not actions.
-use super::{env, json_object, string, strings, toml_object, Source};
+use super::{
+    env, in_order, json_keys, json_object, string, strings, toml_keys, toml_object, Source,
+};
 use crate::project_actions::tasks_json::NO_COMMAND;
 use crate::project_actions::{Ctx, Found};
 use serde_json::Value;
@@ -24,7 +26,8 @@ impl Source for Conductor {
         &[".conductor/settings.toml", "conductor.json"]
     }
     fn parse(&self, _ctx: &Ctx, file: &str, text: &str) -> Result<Vec<Found>, String> {
-        let root = if file.ends_with(".toml") {
+        let toml = file.ends_with(".toml");
+        let root = if toml {
             toml_object(text)?
         } else {
             json_object(text)?
@@ -32,19 +35,27 @@ impl Source for Conductor {
         // `run_mode` only says how Conductor starts them, so it is ignored.
         Ok(match root.pointer("/scripts/run") {
             Some(Value::String(command)) => run("Run", command).into_iter().collect(),
-            Some(Value::Object(scripts)) => scripts
-                .iter()
-                .filter_map(|(name, script)| {
-                    let mut found = entry(name, string(script, "command"))?;
-                    found.args = strings(script, "args");
-                    found.cwd = script
-                        .pointer("/options/cwd")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    found.hide = script.get("hide").and_then(Value::as_bool) == Some(true);
-                    Some(found)
-                })
-                .collect(),
+            Some(Value::Object(scripts)) => {
+                let path = ["scripts", "run"];
+                let order = if toml {
+                    toml_keys(text, &path)
+                } else {
+                    json_keys(text, &path)
+                };
+                in_order(scripts, &order)
+                    .into_iter()
+                    .filter_map(|(name, script)| {
+                        let mut found = entry(name, string(script, "command"))?;
+                        found.args = strings(script, "args");
+                        found.cwd = script
+                            .pointer("/options/cwd")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        found.hide = script.get("hide").and_then(Value::as_bool) == Some(true);
+                        Some(found)
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
         })
     }

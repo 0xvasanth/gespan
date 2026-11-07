@@ -2,6 +2,8 @@
 //! config lists commands. Parsers fill [`Found`] only; `tasks_json::resolve`
 //! fills in variables, quoting and `cwd` afterwards.
 use super::{Ctx, Found};
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
+use serde_json::{Map, Value};
 
 pub(crate) mod agent_apps;
 pub(crate) mod editors;
@@ -32,6 +34,104 @@ pub(super) fn json_object(text: &str) -> Result<serde_json::Value, String> {
 pub(super) fn toml_object(text: &str) -> Result<serde_json::Value, String> {
     let value: toml::Value = toml::from_str(text).map_err(|error| error.to_string())?;
     serde_json::to_value(value).map_err(|error| error.to_string())
+}
+
+/// The keys of the object at `path` in a JSON or JSONC file, in file order.
+/// `serde_json` sorts an object's keys, so they are read from the text again.
+pub(super) fn json_keys(text: &str, path: &[&str]) -> Vec<String> {
+    let json = super::jsonc::strip(text).json;
+    let mut keys = Vec::new();
+    let mut parser = serde_json::Deserializer::from_str(&json);
+    // On an error, the keys read so far still count; the rest go last.
+    let _ = KeysAt {
+        path,
+        keys: &mut keys,
+    }
+    .deserialize(&mut parser);
+    keys
+}
+
+/// The keys of the table at `path` in a TOML file, in file order. The parser
+/// sorts them too, but each key keeps where it was written.
+pub(super) fn toml_keys(text: &str, path: &[&str]) -> Vec<String> {
+    use toml::de::{DeTable, DeValue};
+    let Ok(root) = DeTable::parse(text) else {
+        return Vec::new();
+    };
+    let mut table = root.get_ref();
+    for name in path {
+        let found = table.iter().find_map(|(key, value)| match value.get_ref() {
+            DeValue::Table(inner) if key.get_ref() == name => Some(inner),
+            _ => None,
+        });
+        let Some(inner) = found else {
+            return Vec::new();
+        };
+        table = inner;
+    }
+    let mut keys: Vec<_> = table.keys().collect();
+    keys.sort_by_key(|key| key.span().start);
+    keys.into_iter()
+        .map(|key| key.get_ref().to_string())
+        .collect()
+}
+
+/// `map`'s entries in `order`, then any that `order` misses, sorted.
+pub(super) fn in_order<'a>(
+    map: &'a Map<String, Value>,
+    order: &[String],
+) -> Vec<(&'a String, &'a Value)> {
+    let mut entries: Vec<_> = Vec::with_capacity(map.len());
+    for key in order {
+        if let Some(entry) = map.get_key_value(key) {
+            if !entries.iter().any(|(seen, _)| *seen == entry.0) {
+                entries.push(entry);
+            }
+        }
+    }
+    if entries.len() < map.len() {
+        let rest: Vec<_> = map.iter().filter(|(key, _)| !order.contains(key)).collect();
+        entries.extend(rest);
+    }
+    entries
+}
+
+/// Collects the keys of the object at `path`, skipping everything else.
+struct KeysAt<'a> {
+    path: &'a [&'a str],
+    keys: &'a mut Vec<String>,
+}
+
+impl<'de> DeserializeSeed<'de> for KeysAt<'_> {
+    type Value = ();
+    fn deserialize<D: serde::Deserializer<'de>>(self, from: D) -> Result<(), D::Error> {
+        from.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for KeysAt<'_> {
+    type Value = ();
+    fn expecting(&self, out: &mut std::fmt::Formatter) -> std::fmt::Result {
+        out.write_str("an object")
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while let Some(key) = map.next_key::<String>()? {
+            match self.path.split_first() {
+                None => {
+                    map.next_value::<IgnoredAny>()?;
+                    self.keys.push(key);
+                }
+                Some((name, rest)) if *name == key => map.next_value_seed(KeysAt {
+                    path: rest,
+                    keys: &mut *self.keys,
+                })?,
+                Some(_) => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A string field, if it is one and isn't blank.

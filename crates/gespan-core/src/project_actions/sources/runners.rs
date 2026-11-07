@@ -1,7 +1,7 @@
 //! Task runners: `package.json`, Deno, mise, just, Cargo aliases, a
 //! `Procfile` and make. Each lists the names the tool itself would run, as
 //! `<tool> <name>`. Only `just` and `make` files are scanned as text.
-use super::{json_object, string, toml_object, Source};
+use super::{in_order, json_keys, json_object, string, toml_keys, toml_object, Source};
 use crate::project_actions::{Ctx, Found};
 use serde_json::Value;
 use std::path::Path;
@@ -47,8 +47,8 @@ impl Source for PackageJson {
         let Some(Value::Object(scripts)) = root.get("scripts") else {
             return Ok(Vec::new());
         };
-        Ok(scripts
-            .iter()
+        Ok(in_order(scripts, &json_keys(text, &["scripts"]))
+            .into_iter()
             .filter_map(|(name, body)| {
                 let body = body.as_str()?;
                 // npm runs `pre<name>` and `post<name>` around `<name>` itself.
@@ -79,8 +79,8 @@ impl Source for Deno {
         let Some(Value::Object(tasks)) = root.get("tasks") else {
             return Ok(Vec::new());
         };
-        Ok(tasks
-            .iter()
+        Ok(in_order(tasks, &json_keys(text, &["tasks"]))
+            .into_iter()
             .filter_map(|(name, task)| {
                 let mut found = tool(name, "deno", &["task"]);
                 found.detail = match task {
@@ -109,8 +109,8 @@ impl Source for Mise {
         let Some(Value::Object(tasks)) = root.get("tasks") else {
             return Ok(Vec::new());
         };
-        Ok(tasks
-            .iter()
+        Ok(in_order(tasks, &toml_keys(text, &["tasks"]))
+            .into_iter()
             .filter_map(|(name, task)| {
                 if !matches!(task, Value::Object(_) | Value::String(_) | Value::Array(_)) {
                     return None;
@@ -197,8 +197,8 @@ impl Source for CargoAlias {
         let Some(Value::Object(aliases)) = root.get("alias") else {
             return Ok(Vec::new());
         };
-        Ok(aliases
-            .iter()
+        Ok(in_order(aliases, &toml_keys(text, &["alias"]))
+            .into_iter()
             .filter_map(|(name, alias)| {
                 let expands_to = match alias {
                     Value::String(text) => text.clone(),
