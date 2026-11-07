@@ -3244,9 +3244,23 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Entity<Terminal> {
         let terminal = cx.new(|cx| Terminal::new(cwd, env, cx));
-        self.observations
-            .push(cx.subscribe(&terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
+        self.observe_terminal(&terminal, cx);
         terminal
+    }
+    /// A terminal running `command` instead of the login shell.
+    fn spawn_command_terminal(
+        &mut self,
+        cwd: String,
+        command: &str,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let terminal = cx.new(|cx| Terminal::running(cwd, command, cx));
+        self.observe_terminal(&terminal, cx);
+        terminal
+    }
+    fn observe_terminal(&mut self, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
+        self.observations
+            .push(cx.subscribe(terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
     }
     /// A restored dock reopens its tabs as fresh shells once it is shown.
     fn ensure_terminals(&mut self, project: &str, cx: &mut Context<Self>) {

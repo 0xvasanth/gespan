@@ -217,6 +217,38 @@ impl Shell {
         self.terminals.entry(project).or_default().push(terminal);
         self.persist(cx);
     }
+    /// A new dock tab in the home folder that runs `command` through the
+    /// system shell instead of the login shell, and shows the dock.
+    // Unused until the herdr machine screens open their commands here.
+    #[allow(dead_code)]
+    pub(crate) fn open_command_terminal(
+        &mut self,
+        title: SharedString,
+        command: String,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let project = self.workspace.project.clone();
+        let cwd = String::from("~");
+        let was_open = self.dock_open(cx);
+        self.ensure_terminals(&project, cx);
+        let viewport = self.viewport();
+        let dock = self.workspace.docks.entry(project.clone()).or_default();
+        dock.size = dock.side.clamp(dock.size, viewport);
+        let added = dock.add(cwd.clone());
+        self.dock_tab_scroll.scroll_to_item(added);
+        let terminal = self.spawn_command_terminal(cwd, &command, cx);
+        terminal.update(cx, |t, _| t.title = title.to_string());
+        self.terminals
+            .entry(project)
+            .or_default()
+            .push(terminal.clone());
+        if !was_open {
+            self.slide_dock(true, cx);
+        }
+        self.persist(cx);
+        cx.notify();
+        terminal
+    }
     /// Opens the right panel on its Terminal tab and focuses the shell.
     pub(super) fn show_panel_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_right_panel(window, cx);
@@ -1199,6 +1231,47 @@ mod tests {
         assert_eq!(chip_label(["vite"]), "vite");
         assert_eq!(chip_label(["vite", "jest"]), "vite · jest");
         assert_eq!(chip_label(["vite", "jest", "vite"]), "vite ×2 · jest");
+    }
+
+    #[gpui::test]
+    fn open_command_terminal_adds_a_titled_tab_that_spawns_the_command_directly(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                cx.set_reduce_motion(true);
+                let project = shell.workspace.project.clone();
+                let before = shell.terminals.get(&project).map_or(0, Vec::len);
+                let command = "herdr machine add 'my box' --ssh \"o'brien@host\"".to_owned();
+                let terminal =
+                    shell.open_command_terminal("Add machine".into(), command.clone(), cx);
+                let tabs = &shell.terminals[&project];
+                assert_eq!(tabs.len(), before + 1);
+                assert_eq!(tabs.last(), Some(&terminal));
+                let dock = &shell.workspace.docks[&project];
+                assert_eq!(dock.terminals.len(), before + 1);
+                assert_eq!(dock.active, before);
+                assert!(dock.open);
+                let t = terminal.read(cx);
+                assert_eq!(t.title, "Add machine");
+                // The shell never sees the text, so fish and nushell cannot misread it.
+                #[cfg(unix)]
+                assert_eq!(
+                    t.command(),
+                    Some(("/bin/sh", ["-c".to_owned(), command].as_slice()))
+                );
+                #[cfg(windows)]
+                assert_eq!(
+                    t.command(),
+                    Some(("cmd", ["/C".to_owned(), command].as_slice()))
+                );
+                // A second call opens a second tab rather than reusing the first.
+                let again = shell.open_command_terminal("Again".into(), "true".into(), cx);
+                assert_ne!(again, terminal);
+                assert_eq!(shell.terminals[&project].len(), before + 2);
+            })
+            .unwrap();
     }
 
     #[gpui::test]
