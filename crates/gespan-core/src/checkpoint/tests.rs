@@ -1170,3 +1170,97 @@ fn git_turns_ignore_folder_edit_events() {
         ["a.txt"]
     );
 }
+
+/// Snapshots start from a copy of the checkout's index so `add -A` only
+/// hashes changed files. Entries git was told to skip would hide an edit
+/// from that copy, so those checkouts are snapshotted from HEAD instead.
+#[test]
+fn edits_to_files_git_is_told_to_skip_are_still_recorded() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let f = Fixture::new();
+        run_git(&f.repo, &["update-index", flag, "a.txt"]).unwrap();
+        f.store.begin_turn("session", f.cwd(), "first").unwrap();
+        f.write("a.txt", "edited by the agent\n");
+        f.write("new.txt", "new\n");
+        f.store.finish_turn("session", f.cwd(), "first").unwrap();
+        let files: Vec<_> = f
+            .store
+            .status("session", f.cwd())
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| (file.relative, file.status))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("a.txt".to_string(), "modified".to_string()),
+                ("new.txt".to_string(), "added".to_string())
+            ],
+            "{flag}"
+        );
+    }
+}
+
+/// The seeded copy must not change what a snapshot holds: staged, unstaged,
+/// untracked and deleted work all land in the baseline, so a turn that
+/// changes nothing shows nothing.
+#[test]
+fn a_turn_that_changes_nothing_shows_nothing_over_existing_work() {
+    let f = Fixture::new();
+    f.write("a.txt", "staged\n");
+    run_git(&f.repo, &["add", "a.txt"]).unwrap();
+    f.write("a.txt", "staged then edited\n");
+    f.write("untracked.txt", "user work\n");
+    std::fs::remove_file(f.repo.join("delete.txt")).unwrap();
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+}
+
+/// Git trusts a cached file stat unless the entry is "racily clean": not
+/// older than the index file itself. The snapshot's copy of the index must
+/// keep the original's modified time, or an edit made in the same instant as
+/// the index write, with the same size, slips past `add -A` and out of the
+/// baseline.
+#[test]
+fn an_edit_in_the_same_instant_as_the_index_write_is_in_the_baseline() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let f = Fixture::new();
+    // Compare only what most filesystems keep: whole-second times and size.
+    run_git(&f.repo, &["config", "core.checkStat", "minimal"]).unwrap();
+    run_git(&f.repo, &["config", "core.trustctime", "false"]).unwrap();
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 60;
+    let instant = UNIX_EPOCH + Duration::from_secs(seconds);
+    let stamp = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(instant)
+            .unwrap();
+    };
+    let file = f.repo.join("a.txt");
+    stamp(&file);
+    run_git(&f.repo, &["update-index", "--refresh"]).unwrap();
+    // Same size and modified time as the cached entry, and the index was
+    // written in that same instant.
+    assert_eq!("changed!\n".len(), "original\n".len());
+    f.write("a.txt", "changed!\n");
+    stamp(&file);
+    stamp(&f.repo.join(".git/index"));
+
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    f.write("a.txt", "the agent's edit\n");
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    let diff = f.store.file_diff("session", f.cwd(), "a.txt").unwrap();
+    assert_eq!(
+        diff.original, "changed!\n",
+        "the baseline missed the user's edit"
+    );
+    assert_eq!(diff.current, "the agent's edit\n");
+}

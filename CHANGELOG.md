@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The first reply after Send starts sooner, by about 0.2 to 0.35 s on every
+  message for Claude Code and Kiro. The turn's workspace snapshot used to run,
+  with a dozen `git` calls, before the CLI was even launched. It now records
+  while the CLI starts, and only the prompt waits for it. The snapshot reuses
+  the project's own index, so large projects no longer rehash every file
+  first, and the first token reaches the chat without waiting for the next
+  streaming batch.
+
 ## [0.0.7] - 2026-11-06
 
 ### Added

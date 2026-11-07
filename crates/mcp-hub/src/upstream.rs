@@ -1,11 +1,17 @@
 //! One running MCP server, spoken to over stdio. The hub initializes it once
 //! with its own capabilities, whoever asked for it first.
+//!
+//! A server that refuses `initialize` is spoken to on the sessionless protocol
+//! instead: found with `server/discover`, every request carries who's asking,
+//! notifications come on a stream the hub opens, and a call that needs input
+//! answers `input_required` and is sent again with it.
 use crate::{
-    router::{cancelled, Action, Caller, Reach, Router},
+    router::{cancelled, Action, Caller, Input, Reach, Router},
     ServerSpec,
 };
 use serde_json::{json, Value};
 use std::{
+    borrow::Cow,
     collections::{BTreeSet, HashMap, HashSet},
     io::{self, BufRead, BufReader, Read, Write},
     path::Path,
@@ -16,6 +22,11 @@ use tokio::sync::oneshot;
 
 const MAX_LINE_BYTES: u64 = 16 * 1024 * 1024;
 const PROTOCOL_VERSION: &str = "2025-11-25";
+/// The sessionless version, for a server that won't take `initialize`.
+const SESSIONLESS_VERSION: &str = "2026-07-28";
+/// More rounds of `input_required` than a real call needs, so a server can't
+/// keep one going forever.
+const MAX_ROUNDS: usize = 10;
 /// A server that doesn't answer in this long is treated as failed.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const START_TIMEOUT: Duration = Duration::from_secs(60);
@@ -37,10 +48,15 @@ pub trait Spawner: Send + Sync + 'static {
     fn spawn(&self, spec: &ServerSpec, workspace: Option<&Path>) -> io::Result<Spawned>;
 }
 
+/// Called once with what an agent answered.
+pub(crate) type Answer = Box<dyn FnOnce(Result<Value, String>) + Send>;
+
 /// What an upstream reports to the pool.
 pub(crate) trait Events: Send + Sync + 'static {
     fn action(&self, upstream: &Arc<Upstream>, action: Action);
     fn exited(&self, upstream: &Arc<Upstream>);
+    /// Puts a server's question to the agent whose call it belongs to.
+    fn ask(&self, caller: Caller, method: String, params: Value, answer: Answer);
 }
 
 type Reply = oneshot::Sender<Result<Value, Value>>;
@@ -54,6 +70,11 @@ struct Link {
     /// Requests the hub is waiting on for itself.
     owned: usize,
     closed: bool,
+    /// The `_meta` every request carries on the sessionless protocol; `None`
+    /// on the older one, which says it once in `initialize`.
+    context: Option<Value>,
+    /// The open `subscriptions/listen` request, on the sessionless protocol.
+    listen: Option<u64>,
 }
 
 pub(crate) struct Upstream {
@@ -62,10 +83,23 @@ pub(crate) struct Upstream {
     link: Mutex<Link>,
     input: Mutex<Box<dyn Write + Send>>,
     stop: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    events: Arc<dyn Events>,
 }
 
 fn gone() -> Value {
     json!({"code":-32000,"message":"The MCP server stopped"})
+}
+
+fn timed_out() -> Value {
+    json!({"code":-32001,"message":"timed out"})
+}
+
+fn failed(message: impl Into<String>) -> Value {
+    json!({"code":-32603,"message":message.into()})
+}
+
+fn client_info() -> Value {
+    json!({"name":"mcp-hub","version":env!("CARGO_PKG_VERSION")})
 }
 
 impl Upstream {
@@ -74,6 +108,16 @@ impl Upstream {
     }
 
     fn write(&self, frame: &Value) -> bool {
+        let mut frame = Cow::Borrowed(frame);
+        let context = self.linked().context.clone();
+        if let Some(context) = context.filter(|_| frame.get("method").is_some()) {
+            if frame.get("id").is_some() {
+                let meta = &mut frame.to_mut()["params"]["_meta"];
+                for (key, value) in context.as_object().into_iter().flatten() {
+                    meta[key] = value.clone();
+                }
+            }
+        }
         let mut input = self.input.lock().unwrap_or_else(|e| e.into_inner());
         writeln!(input, "{frame}")
             .and_then(|()| input.flush())
@@ -105,9 +149,12 @@ impl Upstream {
                 used: Instant::now(),
                 owned: 0,
                 closed: false,
+                context: None,
+                listen: None,
             }),
             input: Mutex::new(stdin),
             stop: Mutex::new(Some(stop)),
+            events: events.clone(),
         });
         let reader = upstream.clone();
         std::thread::Builder::new()
@@ -122,20 +169,27 @@ impl Upstream {
                 json!({"roots":{"listChanged":false},"sampling":{},"elicitation":{}})
             }
         };
+        // Every server out there takes `initialize`, so it goes first and costs
+        // them nothing; one that answers it with a refusal is asked the new way.
         let answer = upstream.own(
             "initialize",
             json!({
                 "protocolVersion":PROTOCOL_VERSION,
                 "capabilities":capabilities,
-                "clientInfo":{"name":"mcp-hub","version":env!("CARGO_PKG_VERSION")},
+                "clientInfo":client_info(),
             }),
             START_TIMEOUT,
         );
-        match answer {
+        let answer = match answer {
             Ok(_) => {
                 upstream.write(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
-                Ok(upstream)
+                Ok(())
             }
+            Err(error) if error == gone() || error == timed_out() => Err(error),
+            Err(_) => upstream.discover(capabilities),
+        };
+        match answer {
+            Ok(()) => Ok(upstream),
             Err(error) => {
                 upstream.shut();
                 Err(format!(
@@ -144,6 +198,60 @@ impl Upstream {
                     error["message"].as_str().unwrap_or("no answer")
                 ))
             }
+        }
+    }
+
+    /// Starts the sessionless protocol, for a server that refused `initialize`.
+    fn discover(&self, capabilities: Value) -> Result<(), Value> {
+        let context = json!({
+            "io.modelcontextprotocol/protocolVersion":SESSIONLESS_VERSION,
+            "io.modelcontextprotocol/clientInfo":client_info(),
+            "io.modelcontextprotocol/clientCapabilities":capabilities,
+        });
+        let found = self.own(
+            "server/discover",
+            json!({"_meta":context.clone()}),
+            START_TIMEOUT,
+        )?;
+        let versions = found["supportedVersions"].as_array();
+        if !versions.is_some_and(|versions| versions.iter().any(|v| v == SESSIONLESS_VERSION)) {
+            return Err(failed(format!(
+                "it speaks none of the protocol versions {PROTOCOL_VERSION} or {SESSIONLESS_VERSION}"
+            )));
+        }
+        self.linked().context = Some(context);
+        self.listen();
+        Ok(())
+    }
+
+    fn sessionless(&self) -> bool {
+        self.linked().context.is_some()
+    }
+
+    /// On the sessionless protocol a server sends notifications only on a
+    /// stream the client opens, saying what it wants. One stream carries all
+    /// of them, and it's opened again whenever the resources wanted change:
+    /// the new one first, so nothing falls between them.
+    fn listen(&self) {
+        let (old, frame) = {
+            let mut link = self.linked();
+            let mut wanted = json!({
+                "toolsListChanged":true,
+                "promptsListChanged":true,
+                "resourcesListChanged":true,
+            });
+            let uris = link.router.subscribed();
+            if !uris.is_empty() {
+                wanted["resourceSubscriptions"] = json!(uris);
+            }
+            let (id, frame) = link
+                .router
+                .own_request("subscriptions/listen", json!({"notifications":wanted}));
+            (link.listen.replace(id), frame)
+        };
+        self.write(&frame);
+        if let Some(old) = old {
+            self.write(&cancelled(old));
         }
     }
 
@@ -257,7 +365,61 @@ impl Upstream {
             .await
     }
 
+    /// On the sessionless protocol a call that needs something of the agent
+    /// comes back `input_required`; it's sent again with the answers, and with
+    /// the state the server asked to have back, until it's done.
     async fn request_within(
+        &self,
+        caller: Caller,
+        method: &str,
+        mut params: Value,
+        timeout: Duration,
+    ) -> Result<Value, Value> {
+        for _ in 0..MAX_ROUNDS {
+            let answer = self.once(caller, method, params.clone(), timeout).await?;
+            if answer["resultType"] != "input_required" {
+                return Ok(answer);
+            }
+            params["inputResponses"] = self.fulfil(caller, &answer["inputRequests"]).await?;
+            match answer.get("requestState").filter(|state| !state.is_null()) {
+                Some(state) => params["requestState"] = state.clone(),
+                None => {
+                    params
+                        .as_object_mut()
+                        .map(|params| params.remove("requestState"));
+                }
+            }
+        }
+        Err(failed("The MCP server kept asking for more input"))
+    }
+
+    async fn fulfil(&self, caller: Caller, requests: &Value) -> Result<Value, Value> {
+        let mut responses = serde_json::Map::new();
+        for (key, request) in requests.as_object().into_iter().flatten() {
+            let method = request["method"].as_str().unwrap_or("");
+            let params = request["params"].clone();
+            let input = self.linked().router.input(method);
+            let response = match input {
+                Input::Answer(result) => result,
+                Input::Refuse(message) => return Err(failed(message)),
+                Input::Ask => {
+                    let (send, receive) = oneshot::channel();
+                    let answer: Answer = Box::new(move |outcome| {
+                        let _ = send.send(outcome);
+                    });
+                    self.events.ask(caller, method.to_owned(), params, answer);
+                    let outcome = receive.await;
+                    let outcome = outcome
+                        .unwrap_or_else(|_| Err("The agent that made this call has gone".into()));
+                    outcome.map_err(failed)?
+                }
+            };
+            responses.insert(key.clone(), response);
+        }
+        Ok(Value::Object(responses))
+    }
+
+    async fn once(
         &self,
         caller: Caller,
         method: &str,
@@ -322,6 +484,13 @@ impl Upstream {
     /// for this resource. One it refuses isn't held by anyone.
     pub(crate) fn subscribe(&self, caller: Caller, uri: &str) -> Result<(), String> {
         let frame = self.linked().router.subscribe(caller, uri);
+        if self.sessionless() {
+            // The stream has no answer to wait on: the server takes what it can.
+            if frame.is_some() {
+                self.listen();
+            }
+            return Ok(());
+        }
         let Some((id, frame)) = frame.and_then(|frame| Some((frame["id"].as_u64()?, frame))) else {
             return Ok(());
         };
@@ -338,8 +507,12 @@ impl Upstream {
 
     pub(crate) fn unsubscribe(&self, caller: Caller, uri: &str) {
         let frame = self.linked().router.unsubscribe(caller, uri);
-        if let Some(frame) = frame {
-            self.write(&frame);
+        match frame {
+            Some(_) if self.sessionless() => self.listen(),
+            Some(frame) => {
+                self.write(&frame);
+            }
+            None => {}
         }
     }
 
@@ -349,8 +522,17 @@ impl Upstream {
             link.users.remove(&caller);
             link.router.forget(caller)
         };
+        let sessionless = self.sessionless();
+        let mut unsubscribed = false;
         for frame in frames {
-            self.write(&frame);
+            if sessionless && frame["method"] == "resources/unsubscribe" {
+                unsubscribed = true;
+            } else {
+                self.write(&frame);
+            }
+        }
+        if unsubscribed {
+            self.listen();
         }
     }
 
@@ -404,7 +586,7 @@ fn wait(
             Ok(outcome) => return outcome,
             Err(oneshot::error::TryRecvError::Closed) => return Err(gone()),
             Err(oneshot::error::TryRecvError::Empty) if Instant::now() >= deadline => {
-                return Err(json!({"code":-32001,"message":"timed out"}));
+                return Err(timed_out());
             }
             Err(oneshot::error::TryRecvError::Empty) => {
                 std::thread::sleep(Duration::from_millis(5));
@@ -441,6 +623,9 @@ mod tests {
     impl Events for NoEvents {
         fn action(&self, _: &Arc<Upstream>, _: Action) {}
         fn exited(&self, _: &Arc<Upstream>) {}
+        fn ask(&self, _: Caller, _: String, _: Value, answer: Answer) {
+            answer(Err("nobody to ask".into()));
+        }
     }
 
     /// A server on real pipes. It answers `initialize`, leaves `silent` methods
@@ -566,6 +751,25 @@ mod tests {
         assert!(tokio::time::timeout(SHORT, call).await.is_err());
         assert!(upstream.linked().replies.is_empty());
         assert_eq!(wait_for_cancel(&frames).len(), 1);
+    }
+
+    #[test]
+    fn a_server_that_takes_initialize_never_hears_of_the_new_protocol() {
+        let (upstream, frames, _) = server(&[], |_| json!({"result":{"tools":[]}}));
+        upstream.list("tools/list", "tools").unwrap();
+        upstream.subscribe(1, "file:///r").unwrap();
+        let frames = frames.lock().unwrap();
+        let methods: Vec<_> = frames.iter().map(|frame| frame["method"].clone()).collect();
+        assert_eq!(
+            methods,
+            [
+                "initialize",
+                "notifications/initialized",
+                "tools/list",
+                "resources/subscribe"
+            ]
+        );
+        assert!(frames[2]["params"].get("_meta").is_none(), "{}", frames[2]);
     }
 
     #[test]
