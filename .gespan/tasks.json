@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Test core",
+      "type": "shell",
+      "command": "cargo test --lib",
+      "options": { "cwd": "crates/gespan-core" },
+      "detail": "gespan-core unit tests",
+      "icon": { "id": "test-tube" }
+    },
+    {
+      "label": "Check app",
+      "type": "shell",
+      "command": "cargo check",
+      "options": { "cwd": "crates/gespan-gpui" },
+      "detail": "Type-check the native app",
+      "icon": { "id": "hammer" }
+    },
+    {
+      "label": "Run app",
+      "type": "shell",
+      "command": "bun run dev",
+      "detail": "Launch Gespan Dev with its own database",
+      "isBackground": true,
+      "icon": { "id": "rocket" }
+    }
+  ]
+}
