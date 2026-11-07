@@ -241,9 +241,14 @@ fn map_failure(target: &str, code: i32, stderr: &str) -> SshFailure {
         .iter()
         .any(|p| lower.contains(p)) =>
         {
-            SshFailure::NeedsSignIn {
-                hint: format!("ssh {target}"),
-            }
+            // A refused key is usually one with a passphrase that no agent
+            // holds yet; a host key needs only a plain ssh to accept it.
+            let hint = if lower.contains("permission denied (publickey") {
+                format!("ssh-add, then ssh {target}")
+            } else {
+                format!("ssh {target}")
+            };
+            SshFailure::NeedsSignIn { hint }
         }
         2 if lower.contains("herdr-not-found") => SshFailure::HerdrMissing,
         2 if lower.contains("does not support") => SshFailure::HerdrTooOld,
@@ -630,11 +635,37 @@ mod tests {
     }
 
     #[test]
-    fn exit_255_permission_denied_needs_sign_in() {
-        assert!(matches!(
-            map_failure("box", 255, "box: Permission denied (publickey)."),
-            SshFailure::NeedsSignIn { .. }
-        ));
+    fn exit_255_permission_denied_needs_a_key_loaded_first() {
+        // With BatchMode a passphrase-protected key, or an agent with no
+        // identities, ends here; ssh-add loads the key.
+        for stderr in [
+            "box: Permission denied (publickey).",
+            "me@box: Permission denied (publickey,password).\n",
+        ] {
+            assert_eq!(
+                map_failure("box", 255, stderr),
+                SshFailure::NeedsSignIn {
+                    hint: "ssh-add, then ssh box".into()
+                },
+                "{stderr}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_key_problems_keep_the_plain_ssh_hint() {
+        for stderr in [
+            "Host key verification failed.",
+            "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @",
+        ] {
+            assert_eq!(
+                map_failure("box", 255, stderr),
+                SshFailure::NeedsSignIn {
+                    hint: "ssh box".into()
+                },
+                "{stderr}"
+            );
+        }
     }
 
     #[test]
@@ -796,7 +827,7 @@ mod tests {
             );
             let err = Client::new(b).ping().unwrap_err();
             assert!(
-                matches!(&err, Error::Ssh(SshFailure::NeedsSignIn { hint }) if hint == "ssh box"),
+                matches!(&err, Error::Ssh(SshFailure::NeedsSignIn { hint }) if hint == "ssh-add, then ssh box"),
                 "{err:?}"
             );
         }
