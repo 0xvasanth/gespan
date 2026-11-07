@@ -24,6 +24,7 @@ fn chat(kind: Kind) -> (SignIn, std::sync::mpsc::Receiver<String>) {
                 wants_code: true,
             },
             codes: Some(codes),
+            started: std::time::Instant::now(),
         },
         received,
     )

@@ -8717,6 +8717,9 @@ impl Render for Shell {
                         crate::windows::set_hidden(cx.entity_id(), false, cx);
                         this.resume_git(cx);
                         this.schedule_session_sync(cx);
+                        if let Some(center) = crate::accounts::get(cx) {
+                            center.update(cx, |center, cx| center.app_reactivated(cx));
+                        }
                     }
                 }));
             self.observations
