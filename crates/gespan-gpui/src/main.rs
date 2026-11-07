@@ -440,6 +440,7 @@ fn main() {
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
     gespan_core::tool_servers::configure(tool_data);
+    gespan_core::machines::configure(tool_data);
     gespan_core::checkpoint::init(
         database
             .parent()

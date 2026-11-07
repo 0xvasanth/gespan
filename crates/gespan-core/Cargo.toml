@@ -59,6 +59,7 @@ rayon = "1"
 gespan-redact = { path = "../gespan-redact" }
 gespan-mcp-config = { path = "../gespan-mcp-config" }
 mcp-hub = { path = "../mcp-hub" }
+herdr-link = { path = "../herdr-link" }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
