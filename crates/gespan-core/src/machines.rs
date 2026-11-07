@@ -572,8 +572,10 @@ impl Registry {
 
     /// Re-reads herdr's saved machines, connects newly enabled ones and
     /// drops connections to removed or disabled ones. A machine whose
-    /// target or session changed is reconnected. Runs herdr, so it blocks;
-    /// call from a background task.
+    /// target or session changed is reconnected; a kept one that is not
+    /// online tries again at once, since the user may have signed in or
+    /// installed herdr meanwhile. Runs herdr, so it blocks; call from a
+    /// background task.
     pub fn reload(&self) {
         let _reloading = lock(&self.reloading);
         let listed = (self.list)();
@@ -595,6 +597,9 @@ impl Registry {
                                     && live.machine.session == m.session =>
                             {
                                 live.machine = m.clone();
+                                if live.connection.snapshot().online != Online::Online {
+                                    live.connection.refresh();
+                                }
                                 live
                             }
                             replaced => {

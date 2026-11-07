@@ -345,6 +345,76 @@ impl Transport for Unreachable {
     }
 }
 
+/// How a test machine answers. Only the unreachable kind is used where
+/// the online one cannot be built.
+#[derive(Clone, Copy)]
+enum Reply {
+    Unreachable,
+    /// Needs a sign-in, so its connection waits for a refresh.
+    #[cfg(unix)]
+    SignIn,
+    /// A herdr with no agents; a stream stays open until cut.
+    #[cfg(unix)]
+    Online,
+}
+
+/// A test machine answering as `reply` says. Counts the attempts.
+struct TestLink {
+    opens: Arc<AtomicUsize>,
+    reply: Reply,
+}
+
+impl Transport for TestLink {
+    fn open(&self) -> std::io::Result<Conn> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        match self.reply {
+            Reply::Unreachable => Err(std::io::Error::other("no route")),
+            #[cfg(unix)]
+            Reply::SignIn => Err(std::io::Error::other(herdr_link::SshFailure::NeedsSignIn {
+                hint: "ssh box".into(),
+            })),
+            #[cfg(unix)]
+            Reply::Online => online_conn(),
+        }
+    }
+}
+
+/// One connection to a pretend herdr: answers the request it is sent.
+#[cfg(unix)]
+fn online_conn() -> std::io::Result<Conn> {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
+    let (ours, theirs) = UnixStream::pair()?;
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(theirs.try_clone().unwrap());
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let result = match request["method"].as_str().unwrap() {
+            "ping" => serde_json::json!({"version": HERDR_VERSION, "protocol": 22}),
+            "agent.list" => serde_json::json!({"agents": []}),
+            "workspace.list" => serde_json::json!({"workspaces": []}),
+            _ => serde_json::json!({"type": "subscription_started"}),
+        };
+        let reply = serde_json::json!({"id": request["id"], "result": result});
+        let mut out = &theirs;
+        let _ = writeln!(out, "{reply}");
+        // Held open until the other end goes.
+        let _ = reader.read_line(&mut line);
+    });
+    let cut = ours.try_clone()?;
+    Ok(Conn {
+        writer: Box::new(ours.try_clone()?),
+        reader: Box::new(std::io::BufReader::new(ours)),
+        guard: None,
+        closer: Some(herdr_link::Closer::new(move || {
+            let _ = cut.shutdown(std::net::Shutdown::Both);
+        })),
+    })
+}
+
 struct Harness {
     registry: Arc<Registry>,
     list: Arc<Mutex<Result<Vec<Machine>, String>>>,
@@ -358,6 +428,10 @@ struct Harness {
 }
 
 fn harness(machines: Vec<Machine>) -> Harness {
+    harness_with(machines, |_| Reply::Unreachable)
+}
+
+fn harness_with(machines: Vec<Machine>, reply: fn(&str) -> Reply) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let list = Arc::new(Mutex::new(Ok(machines)));
     let started = Arc::new(Mutex::new(Vec::new()));
@@ -377,7 +451,14 @@ fn harness(machines: Vec<Machine>) -> Harness {
             s.lock().unwrap().push(m.id.clone());
             let count = Arc::new(AtomicUsize::new(0));
             o.lock().unwrap().insert(m.id.clone(), count.clone());
-            Connection::start(Unreachable(count), on_change)
+            let reply = reply(&m.id);
+            Connection::start(
+                TestLink {
+                    opens: count,
+                    reply,
+                },
+                on_change,
+            )
         }),
         SeenStore::open(Some(dir.path())),
         move || {
@@ -442,6 +523,34 @@ fn reload_connects_enabled_machines_only() {
         h.changes.load(Ordering::SeqCst) > h.direct.load(Ordering::SeqCst)
     });
     assert_eq!(h.direct.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn reload_retries_waiting_machines_but_leaves_online_ones() {
+    let h = harness_with(
+        vec![machine("signin", "a", true), machine("up", "b", true)],
+        |id| match id {
+            "signin" => Reply::SignIn,
+            _ => Reply::Online,
+        },
+    );
+    h.registry.reload();
+    wait_until("one waiting and one online", || {
+        matches!(online_of(&h.registry, "signin"), Online::NeedsSignIn { .. })
+            && online_of(&h.registry, "up") == Online::Online
+    });
+    let (waiting, up) = (opens_of(&h, "signin"), opens_of(&h, "up"));
+    assert_eq!(waiting, 1, "a sign-in failure is not retried on its own");
+    // The user signed in, then the list is read again.
+    h.registry.reload();
+    wait_until("the waiting machine to try again", || {
+        opens_of(&h, "signin") > waiting
+    });
+    assert_eq!(h.started.lock().unwrap().len(), 2, "kept, not reconnected");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(opens_of(&h, "up"), up, "an online machine is left alone");
+    assert_eq!(online_of(&h.registry, "up"), Online::Online);
 }
 
 #[test]
@@ -553,16 +662,15 @@ fn removed_and_disabled_machines_stop_connecting() {
         machine("kept", "a", true),
         machine("disabled", "c", false),
     ]);
+    // Read before the reload: it retries the waiting kept machine at once,
+    // which can land before a later read and leave the next try 8 s away.
+    let kept = opens_of(&h, "kept");
     h.registry.reload();
-    let (removed, disabled, kept) = (
-        opens_of(&h, "removed"),
-        opens_of(&h, "disabled"),
-        opens_of(&h, "kept"),
-    );
+    let (removed, disabled) = (opens_of(&h, "removed"), opens_of(&h, "disabled"));
     std::thread::sleep(Duration::from_millis(3000));
     assert_eq!(opens_of(&h, "removed"), removed);
     assert_eq!(opens_of(&h, "disabled"), disabled);
-    // The kept machine went on retrying meanwhile.
+    // The kept machine went on connecting meanwhile.
     assert!(opens_of(&h, "kept") > kept);
 }
 
