@@ -250,8 +250,7 @@ pub(crate) struct ProjectAction {
     pub icon: String,
 }
 /// The icons an action can wear, in picker order; the first is the default.
-pub(crate) const ACTION_ICONS: [&str; 6] =
-    ["play", "test-tube", "hammer", "rocket", "bug", "package"];
+pub(crate) use gespan_core::project_actions::ACTION_ICONS;
 impl ProjectAction {
     pub fn icon(&self) -> &'static str {
         ACTION_ICONS
@@ -259,6 +258,15 @@ impl ProjectAction {
             .find(|icon| **icon == self.icon)
             .copied()
             .unwrap_or(ACTION_ICONS[0])
+    }
+    /// As core lists it, so agents see the same personal actions.
+    pub fn personal(&self) -> gespan_core::project_actions::Personal {
+        gespan_core::project_actions::Personal {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            command: self.command.clone(),
+            icon: self.icon.clone(),
+        }
     }
 }
 

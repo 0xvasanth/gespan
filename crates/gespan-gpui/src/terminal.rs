@@ -111,6 +111,8 @@ pub(crate) struct Terminal {
     sender: Option<EventLoopSender>,
     focus: FocusHandle,
     pub cwd: String,
+    /// Variables set on top of Gespan's, such as an action's `env`.
+    pub env: Vec<(String, String)>,
     /// The tab label: the foreground command, else the directory.
     pub title: String,
     /// A command other than the shell holds the terminal.
@@ -147,9 +149,9 @@ struct Spawned {
     shell_pid: u32,
     events: async_channel::Receiver<TermEvent>,
 }
-/// Start the login shell on a PTY with TerminalView's environment. A failure
-/// is written into the grid, as TerminalView prints it.
-fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
+/// Start the login shell on a PTY with TerminalView's environment plus
+/// `extra`. A failure is written into the grid, as TerminalView prints it.
+fn spawn(cwd: &str, extra: &[(String, String)], size: GridSize, id: u64) -> Spawned {
     let (tx, rx) = async_channel::unbounded();
     let listener = Listener(tx);
     let config = Config {
@@ -174,6 +176,7 @@ fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
     ] {
         env.insert(key.to_owned(), value);
     }
+    env.extend(extra.iter().cloned());
     let options = tty::Options {
         shell: Some(tty::Shell::new(program, args)),
         working_directory: Some(workdir),
@@ -246,7 +249,7 @@ fn detached(size: GridSize) -> Spawned {
 }
 
 impl Terminal {
-    pub(crate) fn new(cwd: String, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(cwd: String, env: &[(String, String)], cx: &mut Context<Self>) -> Self {
         let size = GridSize {
             columns: 80,
             lines: 24,
@@ -262,7 +265,7 @@ impl Terminal {
             // PTY thread; UI tests run the dock without a shell behind it.
             detached(size)
         } else {
-            spawn(&cwd, size, cx.entity_id().as_u64())
+            spawn(&cwd, env, size, cx.entity_id().as_u64())
         };
         let events = cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv().await {
@@ -313,6 +316,7 @@ impl Terminal {
             focus: cx.focus_handle(),
             title: default_title(&cwd),
             cwd,
+            env: env.to_vec(),
             foreground: None,
             exited: false,
             size,
@@ -1525,7 +1529,7 @@ mod tests {
 
     #[gpui::test]
     fn links_cover_plain_urls_and_osc8_hyperlinks(cx: &mut gpui::TestAppContext) {
-        let view = cx.new(|cx| Terminal::new("/tmp".into(), cx));
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
         view.update(cx, |terminal, _| {
             let cell = size(px(8.), px(16.));
             terminal.resize(20, 4, cell);
@@ -1567,7 +1571,7 @@ mod tests {
 
     #[gpui::test]
     fn dragging_at_edges_extends_selection_through_history(cx: &mut gpui::TestAppContext) {
-        let view = cx.new(|cx| Terminal::new("/tmp".into(), cx));
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
         view.update(cx, |terminal, cx| {
             let cell = size(px(8.), px(16.));
             terminal.resize(40, 4, cell);
@@ -1698,7 +1702,7 @@ mod tests {
             columns: 60,
             lines: 10,
         };
-        let spawned = spawn(&dir, size, 1);
+        let spawned = spawn(&dir, &[], size, 1);
         let sender = spawned.sender.expect("the shell started");
         assert!(spawned.shell_pid > 1);
         // The command line itself must not contain the text we wait for.

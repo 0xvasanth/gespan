@@ -552,11 +552,7 @@ fn shell(line: &str) -> Command {
 
 /// Fills in the shell references in an `env` value: `${NAME}` for `sh`,
 /// `%NAME%` for `cmd`. A variable that isn't set is empty. Anything else stays.
-pub(crate) fn expand_env(
-    value: &str,
-    windows: bool,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> String {
+pub fn expand_env(value: &str, windows: bool, lookup: impl Fn(&str) -> Option<String>) -> String {
     let (open, close) = if windows { ("%", "%") } else { ("${", "}") };
     let mut out = String::with_capacity(value.len());
     let mut rest = value;

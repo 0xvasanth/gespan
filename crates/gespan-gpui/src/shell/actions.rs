@@ -1,8 +1,19 @@
-//! Actions: saved project commands the footer runs in a dock terminal with
-//! one click. The button shows the last action run; its chevron lists the
+//! Actions: project commands the footer runs in a dock terminal with one
+//! click. They come from every source core detects, plus the personal ones
+//! saved here. The button shows the last action run; its chevron lists the
 //! rest and opens the editor.
 use super::*;
 use crate::workspace::{ACTION_ICONS, ProjectAction};
+use gespan_core::project_actions::{self as project_actions, Action, Listing};
+use std::path::Path;
+
+/// The menu row id that expands a collapsed section.
+pub(super) const EXPAND: &str = "expand:";
+/// `.gespan/tasks.json`'s source, listed under "Project".
+const PROJECT: &str = "gespan";
+const PERSONAL: &str = "personal";
+/// A section with more rows than this starts collapsed.
+const COLLAPSE_OVER: usize = 8;
 
 pub(super) struct ActionDialog {
     /// The action being edited, or `None` for a new one.
@@ -14,25 +25,124 @@ pub(super) struct ActionDialog {
     _events: Vec<Subscription>,
 }
 
+/// A project's detected actions and the checkout they were read from.
+pub(super) struct ActionListing {
+    project: String,
+    checkout: String,
+    listing: Listing,
+}
+
+/// Hands `project`'s personal actions to core, so agents list them too.
+pub(super) fn publish_personal(project: &str, actions: &[ProjectAction]) {
+    project_actions::set_personal(
+        project,
+        actions.iter().map(ProjectAction::personal).collect(),
+    );
+}
+
+/// `id` in `actions`. A bare id, saved before actions had sources, is a
+/// personal one.
+fn find<'a>(actions: &'a [Action], id: &str) -> Option<&'a Action> {
+    actions.iter().find(|a| a.id == id).or_else(|| {
+        let personal = format!("{PERSONAL}:{id}");
+        actions.iter().find(|a| a.id == personal)
+    })
+}
+
+/// `env` with its shell references filled in from Gespan's own environment.
+fn expand_env(env: &[(String, String)]) -> Vec<(String, String)> {
+    env.iter()
+        .map(|(name, value)| {
+            let value =
+                project_actions::runs::expand_env(value, cfg!(windows), |n| std::env::var(n).ok());
+            (name.clone(), value)
+        })
+        .collect()
+}
+
+/// The menu row for `action`: its detail or command beneath, or why it
+/// can't run.
+fn action_row(action: &Action) -> MenuItem {
+    let description = action
+        .blocked
+        .clone()
+        .or_else(|| action.detail.clone())
+        .unwrap_or_else(|| action.command.clone());
+    MenuAction::new(
+        SharedString::from(format!("run:{}", action.id)),
+        action.label.clone(),
+    )
+    .icon(action.icon)
+    .description(description)
+    .disabled(action.blocked.is_some())
+    .into()
+}
+
 impl Shell {
-    fn project_actions(&self) -> &[ProjectAction] {
+    fn personal_actions(&self) -> &[ProjectAction] {
         self.workspace
             .actions
             .get(&self.workspace.project)
             .map_or(&[], Vec::as_slice)
     }
-    /// The action the footer button runs: the last one run, else the first.
-    fn current_action(&self) -> Option<&ProjectAction> {
-        let actions = self.project_actions();
+    /// Hands this project's personal actions to core.
+    pub(super) fn sync_personal(&self) {
+        publish_personal(&self.workspace.project, self.personal_actions());
+    }
+    /// The project's actions as found in the active session's checkout.
+    /// Reads files; core skips the ones that haven't changed.
+    pub(super) fn listing(&self, cx: &App) -> Listing {
+        let project = &self.workspace.project;
+        if project.is_empty() || project.starts_with("remote://") {
+            return Listing::default();
+        }
+        project_actions::detect(project, Path::new(&self.terminal_cwd(cx)))
+    }
+    /// Detects the actions again, for a menu that is opening.
+    pub(super) fn refresh_actions(&mut self, cx: &App) {
+        self.action_sections.clear();
+        self.action_listing = Some(ActionListing {
+            project: self.workspace.project.clone(),
+            checkout: self.terminal_cwd(cx),
+            listing: self.listing(cx),
+        });
+    }
+    /// Detects the actions again only when the project or checkout changed.
+    pub(super) fn sync_actions(&mut self, cx: &App) {
+        let fresh = self.action_listing.as_ref().is_some_and(|l| {
+            l.project == self.workspace.project && l.checkout == self.terminal_cwd(cx)
+        });
+        if !fresh {
+            self.refresh_actions(cx);
+        }
+    }
+    fn actions(&self) -> &[Action] {
+        self.action_listing
+            .as_ref()
+            .filter(|l| l.project == self.workspace.project)
+            .map_or(&[], |l| l.listing.actions.as_slice())
+    }
+    /// The action the footer button runs: the last one run, else the first
+    /// one that can run.
+    fn current_action(&self) -> Option<&Action> {
+        let actions = self.actions();
         self.workspace
             .last_actions
             .get(&self.workspace.project)
-            .and_then(|id| actions.iter().find(|a| a.id == *id))
-            .or_else(|| actions.first())
+            .and_then(|id| find(actions, id))
+            .filter(|a| a.blocked.is_none())
+            .or_else(|| actions.iter().find(|a| a.blocked.is_none()))
+    }
+    /// Shows or hides a long section's rows in the open menu.
+    pub(super) fn toggle_action_section(&mut self, section: &str) {
+        if !self.action_sections.remove(section) {
+            self.action_sections.insert(section.to_owned());
+        }
     }
 
-    /// Runs `id` in its own dock terminal, reusing that terminal while it
-    /// sits idle at a prompt and opening a fresh one otherwise.
+    /// Runs `id` in its own dock terminal at the action's `cwd` with its
+    /// `env`, reusing that terminal while it sits idle at a prompt in the
+    /// same place, and opening a fresh one otherwise.
     pub(super) fn run_action(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.workspace.project.clone();
         if project.starts_with("remote://") {
@@ -40,9 +150,19 @@ impl Shell {
             cx.notify();
             return;
         }
-        let Some(action) = self.project_actions().iter().find(|a| a.id == id).cloned() else {
+        let checkout = self.terminal_cwd(cx);
+        let listing = self.listing(cx);
+        let action = find(&listing.actions, id).cloned();
+        self.action_listing = Some(ActionListing {
+            project: project.clone(),
+            checkout,
+            listing,
+        });
+        let Some(action) = action.filter(|a| a.blocked.is_none()) else {
             return;
         };
+        let cwd = action.cwd.to_string_lossy().into_owned();
+        let env = expand_env(&action.env);
         self.workspace
             .last_actions
             .insert(project.clone(), action.id.clone());
@@ -56,7 +176,8 @@ impl Shell {
             .and_then(|terminal| {
                 let ix = live.iter().position(|t| *t == terminal)?;
                 let t = terminal.read(cx);
-                (t.foreground.is_none() && !t.exited).then_some((ix, terminal))
+                let idle = t.foreground.is_none() && !t.exited;
+                (idle && t.cwd == cwd && t.env == env).then_some((ix, terminal))
             });
         let reveal = self.workspace.preferences.action_opens_terminal;
         // The right panel shows the terminal instead of the dock.
@@ -73,13 +194,11 @@ impl Shell {
                 terminal
             }
             None => {
-                let cwd = self.terminal_cwd(cx);
-                let dock = self.workspace.docks.entry(project.clone()).or_default();
                 dock.size = dock.side.clamp(dock.size, viewport);
                 dock.add(cwd.clone());
                 // `add` opens the dock; a background run leaves it as it was.
                 dock.open = (reveal && !in_panel) || was_open;
-                let terminal = self.spawn_terminal(cwd, cx);
+                let terminal = self.spawn_terminal(cwd, &env, cx);
                 self.terminals
                     .entry(project.clone())
                     .or_default()
@@ -105,23 +224,89 @@ impl Shell {
         cx.notify();
     }
 
+    /// Every source's actions: "Project", "Personal", then each detected
+    /// file, with the files that couldn't be read. Long sections collapse.
     pub(super) fn actions_menu(&self) -> Vec<MenuItem> {
-        let actions = self.project_actions();
-        let mut items: Vec<MenuItem> = actions
+        let (actions, errors) = self
+            .action_listing
+            .as_ref()
+            .filter(|l| l.project == self.workspace.project)
+            .map_or((&[][..], &[][..]), |l| {
+                (l.listing.actions.as_slice(), l.listing.errors.as_slice())
+            });
+        let mut sections: Vec<(&str, Vec<MenuItem>)> =
+            vec![("Project", Vec::new()), ("Personal", Vec::new())];
+        fn rows<'a, 'b>(
+            sections: &'b mut Vec<(&'a str, Vec<MenuItem>)>,
+            name: &'a str,
+        ) -> &'b mut Vec<MenuItem> {
+            let at = match sections.iter().position(|(n, _)| *n == name) {
+                Some(at) => at,
+                None => {
+                    sections.push((name, Vec::new()));
+                    sections.len() - 1
+                }
+            };
+            &mut sections[at].1
+        }
+        for action in actions {
+            let name = match action.source {
+                PROJECT => "Project",
+                PERSONAL => "Personal",
+                _ => action.file.as_str(),
+            };
+            rows(&mut sections, name).push(action_row(action));
+        }
+        let project_files = project_actions::SOURCES
             .iter()
-            .map(|a| {
-                MenuAction::new(SharedString::from(format!("run:{}", a.id)), a.name.clone())
-                    .icon(a.icon())
-                    .into()
-            })
-            .collect();
-        if !actions.is_empty() {
+            .find(|source| source.id() == PROJECT)
+            .map_or(&[][..], |source| source.files());
+        for error in errors {
+            let name = if project_files.contains(&error.file.as_str()) {
+                "Project"
+            } else {
+                error.file.as_str()
+            };
+            let label = format!("Couldn't read {}: {}", error.file, error.reason);
+            rows(&mut sections, name).push(
+                MenuAction::new(SharedString::from(format!("error:{}", error.file)), label)
+                    .icon("alert-circle")
+                    .disabled(true)
+                    .into(),
+            );
+        }
+
+        let mut items: Vec<MenuItem> = Vec::new();
+        for (name, rows) in sections.into_iter().filter(|(_, rows)| !rows.is_empty()) {
+            if !items.is_empty() {
+                items.push(MenuItem::Separator);
+            }
+            if rows.len() > COLLAPSE_OVER && !self.action_sections.contains(name) {
+                items.push(
+                    MenuAction::new(
+                        SharedString::from(format!("{EXPAND}{name}")),
+                        format!("{name} ({})", rows.len()),
+                    )
+                    .icon("chevron-right")
+                    .keep_open()
+                    .into(),
+                );
+            } else {
+                items.push(MenuItem::Header(SharedString::from(name.to_owned())));
+                items.extend(rows);
+            }
+        }
+        if !items.is_empty() {
             items.push(MenuItem::Separator);
+        }
+        // Only personal actions are edited here so far.
+        let personal = self.personal_actions();
+        if !personal.is_empty() {
             items.push(
                 MenuAction::new("edit", "Edit action")
                     .icon("pencil-edit-02")
                     .submenu(
-                        actions
+                        personal
                             .iter()
                             .map(|a| {
                                 MenuAction::new(
@@ -150,6 +335,8 @@ impl Shell {
             self.run_action(id, window, cx);
         } else if let Some(id) = action.strip_prefix("edit:") {
             self.open_action_dialog(Some(id.to_owned()), window, cx);
+        } else if let Some(section) = action.strip_prefix(EXPAND) {
+            self.toggle_action_section(section);
         }
     }
 
@@ -182,14 +369,14 @@ impl Shell {
             Some(action) => {
                 let id = action.id.clone();
                 segment("footer-action-run")
-                    .aria_label(SharedString::from(format!("Run {}", action.name)))
+                    .aria_label(SharedString::from(format!("Run {}", action.label)))
                     .aria_description(SharedString::from(action.command.clone()))
                     .px(pad)
                     .gap(px(6.))
                     .max_w(px(180.))
                     .min_w_0()
-                    .child(icon(action.icon(), 12.).text_color(content(0.55)))
-                    .child(div().min_w_0().truncate().child(action.name.clone()))
+                    .child(icon(action.icon, 12.).text_color(content(0.55)))
+                    .child(div().min_w_0().truncate().child(action.label.clone()))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.run_action(&id, window, cx)),
                     )
@@ -251,7 +438,7 @@ impl Shell {
         self.close_preview(cx);
         let existing = editing
             .as_ref()
-            .and_then(|id| self.project_actions().iter().find(|a| a.id == *id))
+            .and_then(|id| self.personal_actions().iter().find(|a| a.id == *id))
             .cloned();
         let name = cx.new(|cx| input::Input::field("Action name", "Test", content(0.3), cx));
         let command = cx.new(input::Input::action_command);
@@ -329,7 +516,11 @@ impl Shell {
             Some(slot) => *slot = action.clone(),
             None => actions.push(action.clone()),
         }
-        self.workspace.last_actions.insert(project, action.id);
+        self.workspace
+            .last_actions
+            .insert(project, format!("{PERSONAL}:{}", action.id));
+        self.sync_personal();
+        self.refresh_actions(cx);
         self.persist(cx);
         self.close_action_dialog(window, cx);
     }
@@ -344,10 +535,18 @@ impl Shell {
                 self.workspace.actions.remove(&project);
             }
         }
-        if self.workspace.last_actions.get(&project) == Some(&id) {
+        let full = format!("{PERSONAL}:{id}");
+        if self
+            .workspace
+            .last_actions
+            .get(&project)
+            .is_some_and(|last| *last == id || *last == full)
+        {
             self.workspace.last_actions.remove(&project);
         }
-        self.action_terminals.remove(&(project, id));
+        self.action_terminals.remove(&(project, full));
+        self.sync_personal();
+        self.refresh_actions(cx);
         self.persist(cx);
         self.close_action_dialog(window, cx);
     }
@@ -559,6 +758,310 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    use crate::popover::MenuItem;
+    use crate::shell::Shell;
+    use crate::workspace::ProjectAction;
+    use gpui::Context;
+    use std::path::Path;
+
+    fn write(dir: &Path, file: &str, text: &str) {
+        let path = dir.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn tasks(tasks: &str) -> String {
+        format!(r#"{{ "version": "2.0.0", "tasks": [{tasks}] }}"#)
+    }
+
+    /// Makes `dir` the project and the active session's worktree, so each
+    /// test has its own personal actions and checkout.
+    fn checkout(shell: &mut Shell, active: i64, dir: &Path, cx: &mut Context<Shell>) {
+        let path = dir.to_string_lossy().into_owned();
+        shell.workspace.project = path.clone();
+        shell.workspace.active = Some(active);
+        shell.ensure_session(active, cx);
+        shell.sessions[&active].update(cx, |chat, _| chat.settings.worktree_cwd = Some(path));
+    }
+
+    /// Each row as text: `# header`, `---`, or `label | description`, with
+    /// `(off)` on disabled rows.
+    fn rows(items: &[MenuItem]) -> Vec<String> {
+        items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Header(text) => format!("# {text}"),
+                MenuItem::Separator => "---".into(),
+                MenuItem::Note(text) => format!("note {text}"),
+                MenuItem::Custom(..) => "custom".into(),
+                MenuItem::Action(action) => format!(
+                    "{}{}{}",
+                    action.label,
+                    action
+                        .description
+                        .as_ref()
+                        .map(|d| format!(" | {d}"))
+                        .unwrap_or_default(),
+                    if action.disabled { " (off)" } else { "" }
+                ),
+            })
+            .collect()
+    }
+
+    fn cwd(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    #[gpui::test]
+    fn menu_groups_project_personal_then_detected_sources(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(r#"{ "label": "Ship", "command": "echo ship", "detail": "Ships it" }"#),
+        );
+        let targets: String = (1..=9).map(|n| format!("t{n}:\n\techo {n}\n")).collect();
+        write(root, "Makefile", &targets);
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.open_action_dialog(None, window, cx);
+                let dialog = shell.action_dialog.as_mut().unwrap();
+                dialog.icon = "rocket";
+                let (name, command) = (dialog.name.clone(), dialog.command.clone());
+                name.update(cx, |i, cx| i.set_text("Deploy".into(), cx));
+                command.update(cx, |i, cx| i.set_text("./deploy.sh".into(), cx));
+                shell.save_action(window, cx);
+
+                shell.refresh_actions(cx);
+                let menu = shell.actions_menu();
+                let rows = rows(&menu);
+                let headers: Vec<_> = rows.iter().filter(|r| r.starts_with("# ")).collect();
+                assert_eq!(
+                    headers,
+                    ["# Project", "# Personal", "# package.json"],
+                    "{rows:?}"
+                );
+                let at = |text: &str| {
+                    let at = rows.iter().position(|r| r == text);
+                    at.unwrap_or_else(|| panic!("{text} not in {rows:?}"))
+                };
+                assert!(at("# Project") < at("Ship | Ships it"));
+                assert!(at("Ship | Ships it") < at("# Personal"));
+                assert!(at("# Personal") < at("Deploy | ./deploy.sh"));
+                assert!(at("Deploy | ./deploy.sh") < at("# package.json"));
+                assert!(at("# package.json") < at("dev | vite"));
+                // Nine Makefile targets start collapsed behind one row.
+                assert!(at("dev | vite") < at("Makefile (9)"));
+                assert!(!rows.iter().any(|r| r.starts_with("t1")));
+                let deploy = menu.iter().find_map(|item| match item {
+                    MenuItem::Action(a) if a.label.as_ref() == "Deploy" => Some(a.clone()),
+                    _ => None,
+                });
+                assert_eq!(deploy.unwrap().icon, Some("rocket"));
+                // The rest of the menu stays: edit personal ones, add one.
+                assert!(rows.iter().any(|r| r == "Edit action"));
+                assert_eq!(rows.last().unwrap(), "Add action");
+
+                // Expanding shows the section's rows under its header.
+                shell.toggle_action_section("Makefile");
+                let rows = super::tests::rows(&shell.actions_menu());
+                let header = rows.iter().position(|r| r == "# Makefile").unwrap();
+                assert_eq!(rows[header + 1], "t1 | make t1");
+                assert_eq!(rows[header + 9], "t9 | make t9");
+                assert!(!rows.iter().any(|r| r == "Makefile (9)"));
+                // A fresh menu starts collapsed again.
+                shell.refresh_actions(cx);
+                assert!(
+                    super::tests::rows(&shell.actions_menu())
+                        .iter()
+                        .any(|r| r == "Makefile (9)")
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn clicking_a_detected_action_runs_it_in_its_cwd(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Web", "command": "echo web",
+                      "options": { "cwd": "web", "env": { "GREETING": "hi", "P": "${env:PATH}" } } },
+                    { "label": "Root", "command": "echo root" }"#,
+            ),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("run:gespan:Web", window, cx);
+                let terminals = shell.terminals[&project].clone();
+                assert_eq!(terminals.len(), 1);
+                let web = cwd(&root.join("web"));
+                assert_eq!(terminals[0].read(cx).cwd, web);
+                assert_eq!(shell.workspace.docks[&project].terminals, [web]);
+                // `env` reaches the terminal, its references filled in from
+                // Gespan's own environment.
+                let env = terminals[0].read(cx).env.clone();
+                assert!(env.contains(&("GREETING".into(), "hi".into())), "{env:?}");
+                let own = std::env::var("PATH").unwrap_or_default();
+                assert!(env.contains(&("P".into(), own)), "{env:?}");
+                assert_eq!(
+                    shell.workspace.last_actions[&project],
+                    "gespan:Web".to_string()
+                );
+                assert_eq!(
+                    shell.current_action().map(|a| a.id.clone()),
+                    Some("gespan:Web".into())
+                );
+
+                // Idle, the same action reuses its terminal.
+                terminals[0].update(cx, |t, _| t.foreground = None);
+                shell.run_action("gespan:Web", window, cx);
+                assert_eq!(shell.terminals[&project].len(), 1);
+                // Another action runs at the checkout root in its own.
+                shell.run_action("gespan:Root", window, cx);
+                let terminals = shell.terminals[&project].clone();
+                assert_eq!(terminals.len(), 2);
+                assert_eq!(terminals[1].read(cx).cwd, cwd(root));
+                assert!(terminals[1].read(cx).env.is_empty());
+            })
+            .unwrap();
+        // The file changes the action's cwd: its idle terminal isn't reused.
+        std::fs::create_dir_all(root.join("api")).unwrap();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(r#"{ "label": "Web", "command": "echo web", "options": { "cwd": "api" } }"#),
+        );
+        window
+            .update(cx, |shell, window, cx| {
+                let project = shell.workspace.project.clone();
+                for t in &shell.terminals[&project] {
+                    t.update(cx, |t, _| t.foreground = None);
+                }
+                shell.run_action("gespan:Web", window, cx);
+                let terminals = shell.terminals[&project].clone();
+                assert_eq!(terminals.len(), 3);
+                assert_eq!(terminals[2].read(cx).cwd, cwd(&root.join("api")));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_legacy_personal_last_action_still_resolves(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                let action = ProjectAction {
+                    id: "abc".into(),
+                    name: "Deploy".into(),
+                    command: "./deploy.sh".into(),
+                    icon: "rocket".into(),
+                };
+                shell
+                    .workspace
+                    .actions
+                    .insert(project.clone(), vec![action]);
+                // Saved before actions had sources: a bare id.
+                shell
+                    .workspace
+                    .last_actions
+                    .insert(project.clone(), "abc".into());
+                shell.sync_personal();
+                shell.refresh_actions(cx);
+                let current = shell.current_action().cloned().unwrap();
+                assert_eq!(current.id, "personal:abc");
+                assert_eq!(current.label, "Deploy");
+
+                // The bare id still runs it, at the checkout root.
+                shell.run_action("abc", window, cx);
+                let terminals = shell.terminals[&project].clone();
+                assert_eq!(terminals.len(), 1);
+                assert_eq!(terminals[0].read(cx).cwd, cwd(root));
+                assert_eq!(shell.workspace.last_actions[&project], "personal:abc");
+
+                // Deleting it forgets it as the last one run.
+                shell.open_action_dialog(Some("abc".into()), window, cx);
+                shell.delete_action(window, cx);
+                assert!(!shell.workspace.last_actions.contains_key(&project));
+                shell.refresh_actions(cx);
+                assert_eq!(
+                    shell.current_action().map(|a| a.id.clone()),
+                    Some("package.json:dev".into())
+                );
+                // Gone for agents too.
+                let listing = gespan_core::project_actions::detect(&project, root);
+                assert!(listing.actions.iter().all(|a| a.source != "personal"));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn blocked_and_error_rows_are_disabled(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Pick", "command": "echo ${input:target}" },
+                   { "label": "Fine", "command": "echo fine" }"#,
+            ),
+        );
+        write(root, ".vscode/tasks.json", "{ \"tasks\": [ ");
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                shell.refresh_actions(cx);
+                let listing = shell.listing(cx);
+                let reason = listing.actions[0].blocked.clone().unwrap();
+                assert!(reason.starts_with("Uses ${input:target}"), "{reason}");
+                let error = &listing.errors[0];
+                assert_eq!(error.file, ".vscode/tasks.json");
+
+                let rows = rows(&shell.actions_menu());
+                assert!(rows.contains(&format!("Pick | {reason} (off)")), "{rows:?}");
+                assert!(rows.contains(&"Fine | echo fine".to_string()));
+                let header = rows
+                    .iter()
+                    .position(|r| r == "# .vscode/tasks.json")
+                    .unwrap();
+                assert_eq!(
+                    rows[header + 1],
+                    format!("Couldn't read .vscode/tasks.json: {} (off)", error.reason)
+                );
+                // The first runnable one is the footer's default.
+                assert_eq!(
+                    shell.current_action().map(|a| a.id.clone()),
+                    Some("gespan:Fine".into())
+                );
+
+                // A blocked action never runs.
+                shell.run_action("gespan:Pick", window, cx);
+                assert!(shell.terminals.get(&project).is_none_or(Vec::is_empty));
+                assert!(!shell.workspace.last_actions.contains_key(&project));
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn saved_actions_run_in_one_reused_terminal(cx: &mut gpui::TestAppContext) {
         let (window, _, _) = crate::shell::tests::window(cx);
@@ -577,7 +1080,7 @@ mod tests {
                 assert_eq!((action.name.as_str(), action.icon()), ("Deploy", "rocket"));
                 assert_eq!(
                     shell.current_action().map(|a| a.id.clone()),
-                    Some(action.id.clone())
+                    Some(format!("personal:{}", action.id))
                 );
 
                 shell.run_action(&action.id, window, cx);

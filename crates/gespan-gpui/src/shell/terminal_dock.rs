@@ -208,7 +208,7 @@ impl Shell {
         dock.add(cwd.clone());
         // The dock stays shut until the terminal moves back out of the panel.
         dock.open = false;
-        let terminal = self.spawn_terminal(cwd, cx);
+        let terminal = self.spawn_terminal(cwd, &[], cx);
         self.terminals.entry(project).or_default().push(terminal);
         self.persist(cx);
     }
@@ -931,6 +931,7 @@ impl Shell {
         let running = self.running_terminals(cx);
         let open = self.dock_open(cx);
         let classic = self.workspace.boxy_layout();
+        self.sync_actions(cx);
         // The classic footer's own `px-3` and border hold these in place.
         let group = div()
             .flex()
