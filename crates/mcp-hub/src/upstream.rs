@@ -61,6 +61,17 @@ const CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 /// What a server answered was no result at all.
 pub(crate) const MALFORMED: i64 = -32700;
 
+/// A server's list, with what it said about keeping it.
+#[derive(Debug, Default)]
+pub(crate) struct Listed {
+    pub(crate) items: Vec<Value>,
+    /// How long it may be kept, when the server said; until it says the list
+    /// changed, when it didn't.
+    pub(crate) fresh_for: Option<Duration>,
+    /// Only for the credentials it was listed with.
+    pub(crate) private: bool,
+}
+
 /// A started server process, handed back by the host's [`Spawner`].
 pub struct Spawned {
     pub pid: u32,
@@ -398,8 +409,9 @@ impl Upstream {
     /// On the sessionless protocol a server sends notifications only on a
     /// stream the client opens, saying what it wants. One stream carries all
     /// of them, and it's opened again whenever the resources wanted change:
-    /// the new one first, so nothing falls between them.
-    async fn listen(&self) {
+    /// the new one first, so nothing falls between them. Gives what the
+    /// server said it took, which may be less than was asked for.
+    async fn listen(&self) -> Option<SubscriptionFilter> {
         let (generation, filter) = {
             let mut link = self.linked();
             link.listens += 1;
@@ -418,9 +430,10 @@ impl Upstream {
             Ok(subscription) => subscription,
             Err(error) => {
                 tracing::warn!(%error, "an MCP server refused its notification stream");
-                return;
+                return None;
             }
         };
+        let taken = subscription.acknowledged().clone();
         let shared = self.shared.clone();
         let task = self.shared.runtime.spawn(async move {
             while let Ok(Some(notification)) = subscription.next().await {
@@ -435,7 +448,7 @@ impl Upstream {
                 // A newer one is already in place.
                 Some((installed, _)) if *installed > generation => {
                     task.abort();
-                    return;
+                    return Some(taken);
                 }
                 _ => link.listening.replace((generation, task.abort_handle())),
             }
@@ -444,6 +457,7 @@ impl Upstream {
         if let Some((_, old)) = replaced {
             old.abort();
         }
+        Some(taken)
     }
 
     fn sessionless(&self) -> bool {
@@ -479,8 +493,8 @@ impl Upstream {
     }
 
     /// A list of `key`, across every page, for the hub's own cache.
-    pub(crate) async fn list(&self, method: &str, key: &str) -> Result<Vec<Value>, Value> {
-        let mut items = Vec::new();
+    pub(crate) async fn list(&self, method: &str, key: &str) -> Result<Listed, Value> {
+        let mut listed = Listed::default();
         let mut cursor = Value::Null;
         let mut seen = HashSet::new();
         for _ in 0..MAX_PAGES {
@@ -490,10 +504,17 @@ impl Upstream {
                 json!({"cursor":cursor})
             };
             let page = self.own(method, params, START_TIMEOUT).await?;
-            items.extend(page[key].as_array().into_iter().flatten().cloned());
+            listed
+                .items
+                .extend(page[key].as_array().into_iter().flatten().cloned());
+            // The list is as fresh as its stalest page.
+            if let Some(ttl) = page["ttlMs"].as_u64().map(Duration::from_millis) {
+                listed.fresh_for = Some(listed.fresh_for.map_or(ttl, |fresh| fresh.min(ttl)));
+            }
+            listed.private |= page["cacheScope"] == "private";
             cursor = page.get("nextCursor").cloned().unwrap_or(Value::Null);
             if cursor.is_null() {
-                return Ok(items);
+                return Ok(listed);
             }
             if !seen.insert(cursor.to_string()) {
                 break;
@@ -625,9 +646,16 @@ impl Upstream {
             return Ok(());
         }
         if self.sessionless() {
-            // The stream has no answer to wait on: the server takes what it can.
-            self.listen().await;
-            return Ok(());
+            // The stream's acknowledgement says which resources it took.
+            let taken = self
+                .listen()
+                .await
+                .and_then(|taken| taken.resource_subscriptions);
+            if taken.is_some_and(|uris| uris.iter().any(|taken| taken == uri)) {
+                return Ok(());
+            }
+            self.linked().router.refused(uri);
+            return Err(format!("The server turned down the subscription to {uri}"));
         }
         self.own("resources/subscribe", json!({"uri":uri}), START_TIMEOUT)
             .await
@@ -1405,6 +1433,7 @@ mod tests {
                 .list("tools/list", "tools")
                 .await
                 .unwrap()
+                .items
                 .len(),
             1
         );
@@ -1420,7 +1449,7 @@ mod tests {
         })
         .await;
         let tools = server.upstream.list("tools/list", "tools").await.unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.items.len(), 2);
         assert_eq!(sent(&server.frames, "tools/list").len(), 2);
     }
 

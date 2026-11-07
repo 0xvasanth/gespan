@@ -4,7 +4,7 @@
 use crate::{
     endpoint::Inner,
     router::{Action, Caller, Reach},
-    upstream::{Answer, Events, Upstream},
+    upstream::{Answer, Events, Listed, Upstream},
     Grant, Spawner,
 };
 use serde_json::{json, Value};
@@ -13,7 +13,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The separator between a server and its tool: `github__create_issue`.
@@ -154,8 +154,22 @@ fn relock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A list as the hub keeps it.
+struct Kept {
+    items: Vec<Value>,
+    /// When the server said it would be out of date.
+    fresh_until: Option<Instant>,
+}
+
+impl Kept {
+    fn stale(&self) -> bool {
+        self.fresh_until
+            .is_some_and(|until| Instant::now() >= until)
+    }
+}
+
 /// Lists by server and fingerprint, then by list name.
-type Lists = HashMap<(String, String), HashMap<&'static str, Vec<Value>>>;
+type Lists = HashMap<(String, String), HashMap<&'static str, Kept>>;
 
 pub(crate) struct Pool {
     spawner: Arc<dyn Spawner>,
@@ -478,15 +492,29 @@ impl Pool {
         }
     }
 
+    #[cfg(test)]
     fn cached(&self, spec: &ServerSpec, list: (&'static str, &'static str)) -> Option<Vec<Value>> {
+        self.kept(spec, list).map(|(items, _)| items)
+    }
+
+    /// A kept list, and whether the server said it's out of date by now.
+    fn kept(
+        &self,
+        spec: &ServerSpec,
+        list: (&'static str, &'static str),
+    ) -> Option<(Vec<Value>, bool)> {
+        // A restart, which a sign-in is, drops every list kept before it.
         let stored = relock(&self.lists)
             .get(&(spec.id.clone(), spec.fingerprint()))
             .and_then(|lists| lists.get(list.1))
-            .cloned();
-        stored.or_else(|| (list == TOOLS).then(|| spec.tools.clone()).flatten())
+            .map(|kept| (kept.items.clone(), kept.stale()));
+        stored.or_else(|| {
+            let tools = (list == TOOLS).then(|| spec.tools.clone()).flatten();
+            tools.map(|tools| (tools, false))
+        })
     }
 
-    /// Keeps a list, unless the server restarted since it was asked for.
+    /// Keeps a list the server said nothing about keeping.
     fn store(
         &self,
         spec: &ServerSpec,
@@ -494,50 +522,103 @@ impl Pool {
         items: Vec<Value>,
         restarts: u64,
     ) {
+        let listed = Listed {
+            items,
+            ..Listed::default()
+        };
+        self.keep(spec, list, listed, restarts);
+    }
+
+    /// Keeps a list, unless the server restarted since it was asked for.
+    fn keep(
+        &self,
+        spec: &ServerSpec,
+        list: (&'static str, &'static str),
+        listed: Listed,
+        restarts: u64,
+    ) {
+        let Listed {
+            items,
+            fresh_for,
+            private,
+        } = listed;
         {
             let mut lists = relock(&self.lists);
             if self.restarts_of(&spec.id) != restarts {
                 return;
             }
+            let kept = Kept {
+                items: items.clone(),
+                // Further off than an `Instant` reaches is never.
+                fresh_until: fresh_for.and_then(|fresh| Instant::now().checked_add(fresh)),
+            };
             lists
                 .entry((spec.id.clone(), spec.fingerprint()))
                 .or_default()
-                .insert(list.1, items.clone());
+                .insert(list.1, kept);
         }
-        if list == TOOLS {
+        // The host keeps tool lists past this run, and a private one mustn't
+        // outlive its sign-in.
+        if list == TOOLS && !private {
             self.observer.listed(&spec.id, &items);
         }
     }
 
-    /// A server's list, from the cache when it has one.
+    /// A server's list, from the cache when it has one. One the server said
+    /// is out of date is listed again, but only from a process already
+    /// running: listing never starts anything that has run once.
     async fn items(
         self: &Arc<Self>,
         spec: &ServerSpec,
         grant: &Grant,
         list: (&'static str, &'static str),
     ) -> Vec<Value> {
-        if let Some(items) = self.cached(spec, list) {
-            return items;
-        }
         let restarts = self.restarts_of(&spec.id);
-        let upstream = match self.upstream(spec, grant).await {
-            Ok(upstream) => upstream,
-            Err(_) => return Vec::new(),
+        let upstream = match self.kept(spec, list) {
+            Some((items, false)) => return items,
+            Some((items, true)) => {
+                let running = relock(&self.running).get(&key(spec, grant)).cloned();
+                let Some(upstream) = running else {
+                    return items;
+                };
+                return self
+                    .fetch(spec, &upstream, list, restarts)
+                    .await
+                    .unwrap_or(items);
+            }
+            None => match self.upstream(spec, grant).await {
+                Ok(upstream) => upstream,
+                Err(_) => return Vec::new(),
+            },
         };
+        self.fetch(spec, &upstream, list, restarts)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Lists afresh and keeps what came back. `None` when listing failed.
+    async fn fetch(
+        &self,
+        spec: &ServerSpec,
+        upstream: &Upstream,
+        list: (&'static str, &'static str),
+        restarts: u64,
+    ) -> Option<Vec<Value>> {
         match upstream.list(list.0, list.1).await {
-            Ok(items) => {
-                self.store(spec, list, items.clone(), restarts);
-                items
+            Ok(listed) => {
+                let items = listed.items.clone();
+                self.keep(spec, list, listed, restarts);
+                Some(items)
             }
             // A server without this list says so; it isn't a failure.
             Err(error) if error["code"] == -32601 => {
                 self.store(spec, list, Vec::new(), restarts);
-                Vec::new()
+                Some(Vec::new())
             }
             Err(error) => {
                 let message = format!("{}: {error}", list.0);
                 self.record(&spec.id, without_secrets(message, &spec.env));
-                Vec::new()
+                None
             }
         }
     }
@@ -671,7 +752,7 @@ impl Pool {
             match upstream.list(list.0, list.1).await {
                 // Replaced while it was listing: this list is no one's.
                 Ok(_) if !pool.current(&key) => return,
-                Ok(items) => pool.store(&spec, list, items, restarts),
+                Ok(listed) => pool.keep(&spec, list, listed, restarts),
                 Err(error) => {
                     let message = format!("{}: {error}", list.0);
                     pool.record(&spec.id, without_secrets(message, &spec.env));
