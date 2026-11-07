@@ -363,7 +363,7 @@ impl Protocol {
                     }
                 }
             }
-            "result" => {
+            "result" if super::claude_turn_result(&v) => {
                 if self.compact && !self.compact_confirmed && v["is_error"] != true {
                     return Err("Claude Code did not confirm context compaction".into());
                 }
@@ -455,6 +455,8 @@ impl Protocol {
                     events.push(Event::Status("Waiting for background tasks…".into()));
                 }
             }
+            // A limit reported for the replay must not carry over to the real turn.
+            "result" => self.claude.usage_limit = None,
             "control_request" => {
                 let request = &v["request"];
                 if request["subtype"] == "can_use_tool" {
