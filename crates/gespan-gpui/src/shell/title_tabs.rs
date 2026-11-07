@@ -65,7 +65,7 @@ impl Shell {
             .title_order
             .iter()
             .filter(|tab| match tab {
-                TitleTab::Search => true,
+                TitleTab::Search => !self.workspace.preferences.search_panel,
                 TitleTab::App(view) => {
                     !self.workspace.classic_layout
                         && (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
@@ -108,7 +108,7 @@ impl Shell {
         if let Some(view) = self.active_app_view {
             return Some(TitleTab::App(view));
         }
-        if self.app_search.is_some() {
+        if self.search_page() {
             return Some(TitleTab::Search);
         }
         self.pilots

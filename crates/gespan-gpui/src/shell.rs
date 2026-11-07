@@ -1430,7 +1430,7 @@ impl Shell {
         if let Some(inbox) = &self.inbox {
             let active = self.active_app_view == Some(app_views::AppView::Inbox)
                 && self.settings.is_none()
-                && self.app_search.is_none();
+                && !self.search_page();
             inbox.update(cx, |inbox, cx| inbox.set_active(active, cx));
         }
         // Every pane of the active tab is on screen, not just the focused one.
@@ -1438,7 +1438,7 @@ impl Shell {
             Some(tab)
                 if !self.app_view_open()
                     && self.settings.is_none()
-                    && self.app_search.is_none()
+                    && !self.search_page()
                     && !self.pilot_active(cx) =>
             {
                 self.workspace.layout(tab).leaf_ids().into_iter().collect()
@@ -1451,7 +1451,7 @@ impl Shell {
             && self.workspace.right_panel_open
             && !self.app_view_open()
             && self.settings.is_none()
-            && self.app_search.is_none()
+            && !self.search_page()
         {
             shown.extend(
                 self.pilots
@@ -1856,7 +1856,7 @@ impl Shell {
             && (!self.workspace.classic_layout || self.pilot_active(cx))
             && !self.app_view_open()
             && self.settings.is_none()
-            && self.app_search.is_none()
+            && !self.search_page()
             && (self.pilot_active(cx) || self.git.read(cx).available())
     }
     fn sync_right_panel(&mut self, cx: &mut Context<Self>) {
@@ -1866,7 +1866,7 @@ impl Shell {
             && self.workspace.right_panel_open
             && !self.app_view_open()
             && self.settings.is_none()
-            && self.app_search.is_none()
+            && !self.search_page()
             && !opening;
         if let Some(panel) = &self.right_panel {
             let sidebar_tab = (self.workspace.classic_layout
@@ -8123,7 +8123,7 @@ impl Shell {
                 let active = self.workspace.active_tab() == Some(id)
                     && !self.app_view_open()
                     && !self.pilot_active(cx)
-                    && self.app_search.is_none();
+                    && !self.search_page();
                 // The press itself redraws the strip to arm tab dragging.
                 // Keep its ink stable until that press is released, even if
                 // hover hitboxes are being replaced during that redraw.
@@ -8940,8 +8940,12 @@ impl Render for Shell {
                     }
                     return;
                 }
-                if this.app_search.is_some() {
+                if this.search_page() {
                     this.close_search_tab(window, cx);
+                    return;
+                }
+                if this.app_search.is_some() {
+                    this.close_app_search(window, cx);
                     return;
                 }
                 if let Some(TitleTab::Pilot { id, .. }) = this.active_title_tab(cx) {
@@ -9270,6 +9274,7 @@ impl Render for Shell {
             .children(self.hold_details(window, cx))
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
+            .children(self.search_modal(window, cx))
             .children(self.remote_project_modal(window, cx))
             .children(self.notice_modals(window, cx))
             .children(self.folder_picker_popover(window, cx))
