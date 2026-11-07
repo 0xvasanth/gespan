@@ -3,7 +3,7 @@
 pub(crate) mod sidebar;
 
 use crate::terminal::Terminal;
-use gespan_core::machines::{Agent, MachineView, Mark, Registry};
+use gespan_core::machines::{Agent, AgentStatus, MachineView, Mark, Online, Registry};
 use gpui::{App, AppContext, Entity, Global, WeakEntity};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -48,6 +48,77 @@ pub(crate) fn show_for_test(cx: &mut App) {
     cx.set_global(ShownForTest);
 }
 
+/// Why an agent on a machine is worth a desktop notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MachineNotice {
+    NeedsAttention,
+    Finished,
+}
+
+/// An agent that changed in a way worth telling the user about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Notice {
+    pub machine_id: String,
+    pub machine_label: String,
+    pub terminal_id: String,
+    pub agent_label: String,
+    pub notice: MachineNotice,
+}
+
+/// What changed between two snapshots of one machine's agents, per
+/// terminal. An agent that blocked, or a new agent that is already blocked,
+/// needs attention; one that completed a turn the user has not seen has
+/// finished. A new agent that is idle only says what it was doing before.
+/// `seen` is the last turn the user saw per terminal.
+pub(crate) fn transitions(
+    before: &[Agent],
+    after: &[Agent],
+    seen: impl Fn(&str) -> Option<u64>,
+) -> Vec<(String, MachineNotice)> {
+    after
+        .iter()
+        .filter_map(|agent| {
+            let prev = before.iter().find(|a| a.terminal_id == agent.terminal_id);
+            let notice = match agent.agent_status {
+                AgentStatus::Blocked
+                    if prev.is_none_or(|p| p.agent_status != AgentStatus::Blocked) =>
+                {
+                    MachineNotice::NeedsAttention
+                }
+                AgentStatus::Idle | AgentStatus::Done => {
+                    let turn = agent.completion_seq.unwrap_or(0);
+                    let was = prev?.completion_seq.unwrap_or(0);
+                    let unseen = seen(&agent.terminal_id).unwrap_or(0);
+                    if turn > was && turn > unseen {
+                        MachineNotice::Finished
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            };
+            Some((agent.terminal_id.clone(), notice))
+        })
+        .collect()
+}
+
+/// The notices for one machine's new view. With no earlier view, or one
+/// from before the machine was online, the agents are only being learned
+/// about, so nothing is announced for how they already are.
+fn view_transitions(
+    before: Option<&MachineView>,
+    after: &MachineView,
+    seen: impl Fn(&str) -> Option<u64>,
+) -> Vec<(String, MachineNotice)> {
+    if after.snapshot.online != Online::Online {
+        return Vec::new();
+    }
+    match before.filter(|b| b.snapshot.online == Online::Online) {
+        Some(before) => transitions(&before.snapshot.agents, &after.snapshot.agents, seen),
+        None => Vec::new(),
+    }
+}
+
 /// The saved machines as last read from the registry.
 pub(crate) struct Machines {
     registry: Option<Arc<Registry>>,
@@ -67,6 +138,8 @@ pub(crate) struct Machines {
     #[cfg(test)]
     pub(crate) reloads: usize,
 }
+
+impl gpui::EventEmitter<Notice> for Machines {}
 
 impl Machines {
     pub(crate) fn views(&self) -> &[MachineView] {
@@ -139,6 +212,30 @@ impl Machines {
         if self.loaded && self.views == views && self.seen == seen && self.list_error == list_error
         {
             return;
+        }
+        for view in views.iter().filter(|v| v.machine.enabled) {
+            let id = &view.machine.id;
+            let before = self.views.iter().find(|v| v.machine.id == *id);
+            let notices = view_transitions(before, view, |terminal| {
+                seen.get(&key(id, terminal)).copied()
+            });
+            for (terminal_id, notice) in notices {
+                let Some(agent) = view
+                    .snapshot
+                    .agents
+                    .iter()
+                    .find(|a| a.terminal_id == terminal_id)
+                else {
+                    continue;
+                };
+                cx.emit(Notice {
+                    machine_id: id.clone(),
+                    machine_label: view.machine.label.clone(),
+                    agent_label: sidebar::agent_label(agent).to_owned(),
+                    terminal_id,
+                    notice,
+                });
+            }
         }
         self.views = views;
         self.seen = seen;
@@ -307,4 +404,232 @@ pub(crate) fn set_attach_for_test(
     cx: &mut App,
 ) {
     machines.update(cx, |m, _| m.attach = Arc::new(attach));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gespan_core::machines::{Machine, Snapshot};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn agent(terminal: &str, status: AgentStatus, seq: Option<u64>) -> Agent {
+        Agent {
+            terminal_id: terminal.into(),
+            pane_id: format!("w1:p-{terminal}"),
+            workspace_id: "w1".into(),
+            tab_id: "w1:t1".into(),
+            name: Some(format!("{terminal} agent")),
+            agent: None,
+            title: None,
+            agent_status: status,
+            completion_seq: seq,
+            cwd: None,
+        }
+    }
+
+    fn view(online: Online, agents: Vec<Agent>) -> MachineView {
+        MachineView {
+            machine: Machine {
+                id: "m1".into(),
+                label: "box".into(),
+                target: "me@box".into(),
+                session: "default".into(),
+                enabled: true,
+            },
+            snapshot: Snapshot {
+                online,
+                version: None,
+                workspaces: Vec::new(),
+                agents,
+            },
+            version_mismatch: None,
+            needs_install: false,
+        }
+    }
+
+    fn none_seen(_: &str) -> Option<u64> {
+        None
+    }
+
+    #[test]
+    fn notifications_working_to_blocked_needs_attention() {
+        let before = [agent("a", AgentStatus::Working, None)];
+        let after = [agent("a", AgentStatus::Blocked, None)];
+        assert_eq!(
+            transitions(&before, &after, none_seen),
+            [("a".to_owned(), MachineNotice::NeedsAttention)]
+        );
+    }
+
+    #[test]
+    fn notifications_staying_blocked_does_not_repeat() {
+        let blocked = [agent("a", AgentStatus::Blocked, None)];
+        assert!(transitions(&blocked, &blocked, none_seen).is_empty());
+    }
+
+    #[test]
+    fn notifications_a_new_turn_finishes_but_a_steady_idle_does_not() {
+        let before = [agent("a", AgentStatus::Working, Some(1))];
+        let after = [agent("a", AgentStatus::Idle, Some(2))];
+        assert_eq!(
+            transitions(&before, &after, |_| Some(1)),
+            [("a".to_owned(), MachineNotice::Finished)]
+        );
+        // Done counts the same as Idle.
+        let done = [agent("a", AgentStatus::Done, Some(2))];
+        assert_eq!(transitions(&before, &done, |_| Some(1)).len(), 1);
+        // Nothing moved.
+        assert!(transitions(&after, &after, none_seen).is_empty());
+        let idle = [agent("a", AgentStatus::Idle, None)];
+        assert!(transitions(&idle, &idle, none_seen).is_empty());
+    }
+
+    #[test]
+    fn notifications_a_turn_already_seen_is_not_announced() {
+        let before = [agent("a", AgentStatus::Working, Some(1))];
+        let after = [agent("a", AgentStatus::Idle, Some(2))];
+        // The user opened turn 2 before this snapshot arrived.
+        assert!(transitions(&before, &after, |_| Some(2)).is_empty());
+        assert!(transitions(&before, &after, |_| Some(5)).is_empty());
+    }
+
+    #[test]
+    fn notifications_working_and_unknown_agents_stay_quiet() {
+        let before = [agent("a", AgentStatus::Idle, Some(1))];
+        let after = [
+            agent("a", AgentStatus::Working, Some(1)),
+            agent("b", AgentStatus::Unknown, None),
+        ];
+        assert!(transitions(&before, &after, none_seen).is_empty());
+    }
+
+    #[test]
+    fn notifications_a_new_agent_is_announced_only_when_blocked() {
+        let after = [
+            agent("blocked", AgentStatus::Blocked, None),
+            agent("idle", AgentStatus::Idle, Some(4)),
+            agent("working", AgentStatus::Working, None),
+        ];
+        let before = [agent("old", AgentStatus::Idle, None)];
+        assert_eq!(
+            transitions(&before, &after, none_seen),
+            [("blocked".to_owned(), MachineNotice::NeedsAttention)]
+        );
+    }
+
+    #[test]
+    fn notifications_agents_are_matched_by_terminal_not_position() {
+        let before = [
+            agent("a", AgentStatus::Blocked, None),
+            agent("b", AgentStatus::Working, None),
+        ];
+        let after = [
+            agent("b", AgentStatus::Blocked, None),
+            agent("a", AgentStatus::Blocked, None),
+        ];
+        assert_eq!(
+            transitions(&before, &after, none_seen),
+            [("b".to_owned(), MachineNotice::NeedsAttention)]
+        );
+    }
+
+    #[test]
+    fn notifications_the_first_snapshot_of_a_connection_announces_nothing() {
+        let blocked = view(
+            Online::Online,
+            vec![
+                agent("a", AgentStatus::Blocked, None),
+                agent("b", AgentStatus::Idle, Some(3)),
+            ],
+        );
+        // Never seen before.
+        assert!(view_transitions(None, &blocked, none_seen).is_empty());
+        // Seen only while connecting or after the link dropped.
+        for online in [Online::Connecting, Online::HerdrMissing] {
+            let earlier = view(online, Vec::new());
+            assert!(view_transitions(Some(&earlier), &blocked, none_seen).is_empty());
+        }
+        let offline = view(
+            Online::Offline {
+                reason: "no route".into(),
+                retry_in: std::time::Duration::from_secs(4),
+            },
+            vec![agent("a", AgentStatus::Working, None)],
+        );
+        assert!(view_transitions(Some(&offline), &blocked, none_seen).is_empty());
+    }
+
+    #[test]
+    fn notifications_a_machine_that_was_online_announces_a_brand_new_blocked_agent() {
+        let earlier = view(Online::Online, vec![agent("a", AgentStatus::Blocked, None)]);
+        let later = view(
+            Online::Online,
+            vec![
+                agent("a", AgentStatus::Blocked, None),
+                agent("new", AgentStatus::Blocked, None),
+            ],
+        );
+        assert_eq!(
+            view_transitions(Some(&earlier), &later, none_seen),
+            [("new".to_owned(), MachineNotice::NeedsAttention)]
+        );
+        // A machine that drops offline announces nothing.
+        let dropped = view(
+            Online::Offline {
+                reason: "no route".into(),
+                retry_in: std::time::Duration::from_secs(4),
+            },
+            Vec::new(),
+        );
+        assert!(view_transitions(Some(&later), &dropped, none_seen).is_empty());
+    }
+
+    #[gpui::test]
+    fn notifications_a_registry_change_emits_the_notice_with_labels(cx: &mut gpui::TestAppContext) {
+        let machines = cx.update(|cx| {
+            install_for_test(
+                vec![view(
+                    Online::Online,
+                    vec![
+                        agent("a", AgentStatus::Working, None),
+                        agent("b", AgentStatus::Working, Some(1)),
+                    ],
+                )],
+                cx,
+            )
+        });
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let sink = got.clone();
+        let _sub = cx.update(|cx| {
+            cx.subscribe(&machines, move |_, notice: &Notice, _| {
+                sink.borrow_mut().push(notice.clone())
+            })
+        });
+        // `b`'s turn 2 is seen by the time the change arrives.
+        cx.update(|cx| mark_seen("m1", "b", 2, cx));
+        cx.update(|cx| {
+            set_for_test(
+                &machines,
+                vec![view(
+                    Online::Online,
+                    vec![
+                        agent("a", AgentStatus::Blocked, None),
+                        agent("b", AgentStatus::Idle, Some(2)),
+                    ],
+                )],
+                None,
+                cx,
+            )
+        });
+        assert_eq!(
+            *got.borrow(),
+            [Notice {
+                machine_id: "m1".into(),
+                machine_label: "box".into(),
+                terminal_id: "a".into(),
+                agent_label: "a agent".into(),
+                notice: MachineNotice::NeedsAttention,
+            }]
+        );
+    }
 }

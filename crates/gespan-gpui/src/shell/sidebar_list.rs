@@ -2003,5 +2003,106 @@ mod tests {
                 "a closed window left the agent stuck as attaching"
             );
         }
+
+        fn notice(terminal: &str, kind: crate::machines::MachineNotice) -> crate::machines::Notice {
+            crate::machines::Notice {
+                machine_id: "m1".into(),
+                machine_label: "box".into(),
+                terminal_id: terminal.into(),
+                agent_label: format!("{terminal} agent"),
+                notice: kind,
+            }
+        }
+
+        fn deliver(
+            window: &WindowHandle<Shell>,
+            notice: &crate::machines::Notice,
+            cx: &mut impl gpui::AppContext,
+        ) -> Vec<String> {
+            window
+                .update(cx, |shell, window, cx| {
+                    shell.deliver_machine_notice(notice, window, cx);
+                    shell.notification_state.machine_notices.clone()
+                })
+                .unwrap()
+        }
+
+        #[gpui::test]
+        fn machines_notices_skip_the_agent_being_watched_only(cx: &mut TestAppContext) {
+            use crate::machines::MachineNotice::{Finished, NeedsAttention};
+            let (window, _) = window(
+                vec![view(
+                    Online::Online,
+                    vec![
+                        agent("a", "w1", AgentStatus::Working, None),
+                        agent("b", "w1", AgentStatus::Working, None),
+                    ],
+                )],
+                true,
+                cx,
+            );
+            window
+                .update(cx, |shell, _, _| shell.allow_notices_for_test(true))
+                .unwrap();
+            click_agent(&window, "a", cx);
+            let visual = &mut VisualTestContext::from_window(*window, cx);
+            visual.update(|window, _| window.activate_window());
+            visual.run_until_parked();
+            assert!(visual.update(|window, _| window.is_window_active()));
+
+            // Its tab is focused in the active window, so the user sees it.
+            assert!(deliver(&window, &notice("a", NeedsAttention), visual).is_empty());
+            // Another agent has no tab to look at.
+            assert_eq!(
+                deliver(&window, &notice("b", NeedsAttention), visual),
+                ["b agent needs your input"]
+            );
+            assert_eq!(
+                deliver(&window, &notice("b", Finished), visual),
+                ["b agent needs your input", "b agent finished"]
+            );
+            // With the window in the background the focused tab goes unseen.
+            visual.deactivate_window();
+            visual.run_until_parked();
+            assert_eq!(deliver(&window, &notice("a", Finished), visual).len(), 3);
+        }
+
+        #[gpui::test]
+        fn machines_notices_follow_the_global_switch(cx: &mut TestAppContext) {
+            let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
+            let blocked = notice("b", crate::machines::MachineNotice::NeedsAttention);
+            window
+                .update(cx, |shell, _, _| shell.allow_notices_for_test(false))
+                .unwrap();
+            assert!(deliver(&window, &blocked, cx).is_empty());
+            window
+                .update(cx, |shell, _, _| shell.allow_notices_for_test(true))
+                .unwrap();
+            assert_eq!(deliver(&window, &blocked, cx).len(), 1);
+        }
+
+        #[gpui::test]
+        fn machines_blocked_agent_reaches_the_window_that_tells_the_user(cx: &mut TestAppContext) {
+            let working = view(
+                Online::Online,
+                vec![agent("b", "w1", AgentStatus::Working, None)],
+            );
+            let (window, machines) = window(vec![working], true, cx);
+            window
+                .update(cx, |shell, _, _| shell.allow_notices_for_test(true))
+                .unwrap();
+            let blocked = view(
+                Online::Online,
+                vec![agent("b", "w1", AgentStatus::Blocked, None)],
+            );
+            cx.update(|cx| crate::machines::set_for_test(&machines, vec![blocked], None, cx));
+            cx.run_until_parked();
+            let delivered = window
+                .update(cx, |shell, _, _| {
+                    shell.notification_state.machine_notices.clone()
+                })
+                .unwrap();
+            assert_eq!(delivered, ["b agent needs your input"]);
+        }
     }
 }

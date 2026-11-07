@@ -44,6 +44,9 @@ pub(super) struct State {
     sounds_enabled: bool,
     sounds_enabled_at: u64,
     poll: Option<gpui::Task<()>>,
+    /// The bodies of the herdr agent notices that reached the OS.
+    #[cfg(test)]
+    pub(super) machine_notices: Vec<String>,
 }
 
 impl State {
@@ -83,6 +86,8 @@ impl State {
             sounds_enabled: workspace.preferences.sounds,
             sounds_enabled_at: 0,
             poll: None,
+            #[cfg(test)]
+            machine_notices: Vec::new(),
         }
     }
 }
@@ -599,6 +604,88 @@ impl Shell {
             cue,
             cx,
         );
+    }
+
+    /// Tells the user a herdr agent needs input or finished a turn, unless
+    /// they are looking at its terminal tab. Follows the global
+    /// notification and sound preferences; herdr agents belong to no project.
+    pub(super) fn deliver_machine_notice(
+        &mut self,
+        notice: &crate::machines::Notice,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::machines::MachineNotice;
+        let watching = crate::machines::get(cx)
+            .and_then(|machines| {
+                machines
+                    .read(cx)
+                    .attach_tab(&notice.machine_id, &notice.terminal_id)?
+                    .upgrade()
+            })
+            .is_some_and(|tab| {
+                window.is_window_active() && tab.focus_handle(cx).is_focused(window)
+            });
+        if watching {
+            return;
+        }
+        let (body, cue) = match notice.notice {
+            MachineNotice::NeedsAttention => (
+                format!("{} needs your input", notice.agent_label),
+                crate::sound::Cue::Input,
+            ),
+            MachineNotice::Finished => (
+                format!("{} finished", notice.agent_label),
+                crate::sound::Cue::Finished,
+            ),
+        };
+        let prefs = &self.workspace.preferences;
+        let notify = delivery::should_notify(
+            prefs.notifications,
+            self.notification_state.permission,
+            self.window_active,
+            false,
+        );
+        if !notify {
+            if prefs.sounds {
+                crate::sound::play(cue);
+            }
+            return;
+        }
+        #[cfg(test)]
+        self.notification_state.machine_notices.push(body.clone());
+        let receiver = platform::show(
+            platform::Notification {
+                tag: format!("herdr:{}:{}", notice.machine_id, notice.terminal_id),
+                subtitle: notice.machine_label.clone(),
+                body: delivery::clip_body(&body),
+                sound: prefs.sounds,
+            },
+            cx,
+        );
+        let work = cx.background_executor().spawn(async move {
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .ok()
+                .is_some_and(|result| result.is_ok())
+        });
+        cx.spawn(async move |this, cx| {
+            let accepted = work.await;
+            let _ = this.update(cx, |this, _| {
+                if !accepted && this.workspace.preferences.sounds {
+                    crate::sound::play(cue);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Lets notices reach the OS, as a granted permission and the switch on
+    /// would.
+    #[cfg(test)]
+    pub(super) fn allow_notices_for_test(&mut self, on: bool) {
+        self.notification_state.permission = Permission::Granted;
+        self.workspace.preferences.notifications = on;
     }
 
     pub(super) fn deliver_reminder_notice(&mut self, id: i64, due_at: u64, cx: &mut Context<Self>) {

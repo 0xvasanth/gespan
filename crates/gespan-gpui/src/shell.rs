@@ -1437,6 +1437,21 @@ impl Shell {
         if let Some(machines) = crate::machines::get(cx) {
             this.observations
                 .push(cx.observe(&machines, |this, _, cx| this.machines_changed(cx)));
+            // One window tells the user; the others would repeat it.
+            if !secondary {
+                this.observations.push(cx.subscribe(
+                    &machines,
+                    |_, _, notice: &crate::machines::Notice, cx| {
+                        let notice = notice.clone();
+                        cx.spawn(async move |this, cx| {
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                this.deliver_machine_notice(&notice, window, cx)
+                            });
+                        })
+                        .detach();
+                    },
+                ));
+            }
             this.sync_machine_marks(cx);
         }
         if this.workspace.active.is_none() {
