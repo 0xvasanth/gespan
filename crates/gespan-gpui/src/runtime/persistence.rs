@@ -323,11 +323,11 @@ mod tests {
 
     #[test]
     fn worktree_creation_follows_message_acceptance_and_reports_the_checkout_in_the_final_update() {
-        let root = std::env::temp_dir().join(format!(
-            "gespan-optimistic-worktree-{}",
-            gespan_core::pilot::new_id()
-        ));
-        let repo = root.join("repo");
+        // Git tools hooked in through trace2 (git-ai's daemon, for one) can
+        // write into the repo after git exits, so removal must not fail the
+        // test; the temporary folder's drop tries its best instead.
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         for args in [
             vec!["init", "-q"],
@@ -398,7 +398,6 @@ mod tests {
             1
         );
         assert_eq!(rows[0].text, "Create the checkout");
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// Runs one turn the preflight rejects, with the given cancel flag, and
