@@ -722,9 +722,15 @@ impl Shell {
             agent.pane_id.clone(),
             agent.completion_seq,
         );
-        let open_tab = m
+        // A tab whose attach has exited shows nothing live: open a fresh
+        // one, and close the dead one once it is up.
+        let (open_tab, dead_tab) = match m
             .attach_tab(machine_id, terminal_id)
-            .and_then(|tab| tab.upgrade());
+            .and_then(|tab| tab.upgrade())
+        {
+            Some(tab) if tab.read(cx).exited => (None, Some(tab)),
+            tab => (tab, None),
+        };
         if let Some(ix) = open_tab.and_then(|tab| {
             self.terminals
                 .get(&self.workspace.project)?
@@ -765,6 +771,15 @@ impl Shell {
                 machines.update(cx, |m, _| {
                     m.set_attach_tab(&machine, &terminal, tab.downgrade())
                 });
+                let project = this.workspace.project.clone();
+                if let Some(ix) = dead_tab.and_then(|dead| {
+                    this.terminals
+                        .get(&project)?
+                        .iter()
+                        .position(|t| *t == dead)
+                }) {
+                    this.remove_terminal(&project, ix, window, cx);
+                }
                 if let Some(seq) = seq {
                     crate::machines::mark_seen(&machine, &terminal, seq, cx);
                 }
@@ -1964,6 +1979,45 @@ mod tests {
             // Another agent gets a tab of its own.
             click_agent(&window, "b", cx);
             assert_eq!(terminal_count(&window, cx), before + 2);
+        }
+
+        #[gpui::test]
+        fn machines_clicking_an_agent_whose_attach_exited_opens_a_fresh_tab(
+            cx: &mut TestAppContext,
+        ) {
+            let (window, machines) = window(vec![two_agents(Online::Online)], true, cx);
+            window
+                .update(cx, |_, _, cx| cx.set_reduce_motion(true))
+                .unwrap();
+            let before = terminal_count(&window, cx);
+            click_agent(&window, "a", cx);
+            let attached = |cx: &mut TestAppContext| {
+                cx.update(|cx| {
+                    machines
+                        .read(cx)
+                        .attach_tab("m1", "a")
+                        .and_then(|t| t.upgrade())
+                })
+                .unwrap()
+            };
+            let dead = attached(cx);
+            // herdr's attach ended, say the connection dropped.
+            cx.update(|cx| dead.update(cx, |t, _| t.exited = true));
+            click_agent(&window, "a", cx);
+            let fresh = attached(cx);
+            assert_ne!(fresh, dead, "a new attach tab, not the dead one");
+            assert!(!fresh.read_with(cx, |t, _| t.exited));
+            window
+                .update(cx, |shell, window, cx| {
+                    let project = shell.workspace.project.clone();
+                    let tabs = &shell.terminals[&project];
+                    assert!(!tabs.contains(&dead), "the dead tab is closed");
+                    assert_eq!(tabs.len(), before + 1);
+                    let dock = &shell.workspace.docks[&project];
+                    assert_eq!(tabs[dock.active], fresh);
+                    assert!(fresh.focus_handle(cx).is_focused(window));
+                })
+                .unwrap();
         }
 
         #[gpui::test]
