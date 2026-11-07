@@ -1,0 +1,21 @@
+crates/gespan-core/src/project_actions/runs.rs
+  s_06c13895f99daf::t_d6307364d54c07 29-30,32-34,441-444
+crates/gespan-core/src/project_actions/tests/runs.rs
+  s_06c13895f99daf::t_d6307364d54c07 93-99,107,144,146-147,183-189,192,199-216,252,255,257,281-294,317,430,433,435,475,486,500-503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a546d0527df772095364a6797a80d3e568aa1705",
+  "prompts": {},
+  "sessions": {
+    "s_06c13895f99daf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6231037d-9205-483b-a028-f07b29f28fbc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
