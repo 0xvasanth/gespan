@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod jsonc;
 #[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod sources;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod tasks_json;
 
 /// The icons an action can show. Anything else shows as `play`.
