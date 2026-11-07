@@ -42,6 +42,11 @@ pub static SOURCES: &[&dyn Source] = &[
 ];
 
 const PERSONAL: &str = "personal";
+/// Config files are small; anything bigger isn't read at all.
+const MAX_FILE: u64 = 1024 * 1024;
+const TOO_LARGE: &str = "Too large to read (over 1 MB)";
+const OUTSIDE: &str = "Links outside the project";
+const NOT_A_FILE: &str = "It isn't a regular file";
 const PERSONAL_FILE: &str = "Personal";
 
 /// The icons an action can show. Anything else shows as `play`.
@@ -172,9 +177,11 @@ pub fn detect(project: &str, checkout: &Path) -> Listing {
         package_manager: package_manager(checkout),
     };
     let mut listing = Listing::default();
+    // Files are only read when they really are inside this folder.
+    let root = std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_path_buf());
     let mut found: Vec<Action> = Vec::new();
     for (at, source) in SOURCES.iter().enumerate() {
-        match read(&ctx, *source) {
+        match read(&ctx, &root, *source) {
             None => {}
             Some((file, Ok(entries))) => found.extend(
                 entries
@@ -193,6 +200,8 @@ pub fn detect(project: &str, checkout: &Path) -> Listing {
     }
 
     let gespan = Gespan.id();
+    // A repo's file can name an action anything, so it never hides the
+    // user's own personal one.
     let gespan_labels: HashSet<String> = found
         .iter()
         .filter(|action| action.source == gespan)
@@ -200,24 +209,28 @@ pub fn detect(project: &str, checkout: &Path) -> Listing {
         .collect();
     let mut commands: HashSet<(String, PathBuf)> = HashSet::new();
     let mut ids: HashSet<String> = HashSet::new();
+    // The next number to try per clashing id, so many clashes stay linear.
+    let mut next: HashMap<String, usize> = HashMap::new();
     for mut action in found {
-        if action.source != gespan && gespan_labels.contains(&action.label) {
+        let detected = action.source != gespan && action.source != PERSONAL;
+        if detected && gespan_labels.contains(&action.label) {
             continue;
         }
-        // A blocked row with no command is never the same as another.
-        if !action.command.trim().is_empty()
+        // A blocked row neither hides nor is hidden by another.
+        if action.blocked.is_none()
+            && !action.command.trim().is_empty()
             && !commands.insert((action.command.clone(), action.cwd.clone()))
         {
             continue;
         }
         if ids.contains(&action.id) {
-            let (label, id) = (action.label.clone(), action.id.clone());
-            let mut n = 2;
-            while ids.contains(&format!("{id} ({n})")) {
-                n += 1;
+            let n = next.entry(action.id.clone()).or_insert(2);
+            while ids.contains(&format!("{} ({n})", action.id)) {
+                *n += 1;
             }
-            action.label = format!("{label} ({n})");
-            action.id = format!("{id} ({n})");
+            action.label = format!("{} ({n})", action.label);
+            action.id = format!("{} ({n})", action.id);
+            *n += 1;
         }
         ids.insert(action.id.clone());
         listing.actions.push(action);
@@ -242,31 +255,37 @@ fn personal(project: &str, checkout: &Path) -> Vec<Action> {
             env: Vec::new(),
             background: false,
             icon: tasks_json::icon(Some(&personal.icon)),
-            blocked: None,
+            blocked: personal
+                .command
+                .trim()
+                .is_empty()
+                .then(|| tasks_json::NO_COMMAND.into()),
             note: None,
         })
         .collect()
 }
 
 /// The first of `source`'s files that exists, and what it lists. A file that
-/// is gone drops its cache entry.
-fn read(ctx: &Ctx, source: &dyn Source) -> Option<(&'static str, Result<Vec<Found>, String>)> {
+/// is gone drops its cache entry. Only regular files inside the checkout, up
+/// to [`MAX_FILE`], are read: a link out of it, a pipe or a huge file is an
+/// error instead.
+fn read(
+    ctx: &Ctx,
+    root: &Path,
+    source: &dyn Source,
+) -> Option<(&'static str, Result<Vec<Found>, String>)> {
     for file in source.files() {
         let path = ctx.checkout.join(file);
         let key = std::path::absolute(&path).unwrap_or_else(|_| path.clone());
-        let meta = match std::fs::metadata(&path) {
-            Ok(meta) if !meta.is_dir() => meta,
-            Ok(_) => {
+        let (real, meta) = match regular_file(root, &path) {
+            Ok(Some(found)) => found,
+            Ok(None) => {
                 cache().remove(&key);
                 continue;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(reason) => {
                 cache().remove(&key);
-                continue;
-            }
-            Err(error) => {
-                cache().remove(&key);
-                return Some((file, Err(error.to_string())));
+                return Some((file, Err(reason)));
             }
         };
         let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -280,9 +299,7 @@ fn read(ctx: &Ctx, source: &dyn Source) -> Option<(&'static str, Result<Vec<Foun
         }
         #[cfg(test)]
         READS.with(|reads| reads.set(reads.get() + 1));
-        let parsed = std::fs::read_to_string(&path)
-            .map_err(|error| error.to_string())
-            .and_then(|text| source.parse(ctx, file, &text));
+        let parsed = read_capped(&real).and_then(|text| source.parse(ctx, file, &text));
         match &parsed {
             Ok(found) => {
                 let cached = Cached {
@@ -300,6 +317,60 @@ fn read(ctx: &Ctx, source: &dyn Source) -> Option<(&'static str, Result<Vec<Foun
         return Some((file, parsed));
     }
     None
+}
+
+/// Where `path` really is and its metadata, if it is there to read. `None`
+/// when it is missing, a folder or a broken link.
+fn regular_file(root: &Path, path: &Path) -> Result<Option<(PathBuf, std::fs::Metadata)>, String> {
+    use std::io::ErrorKind::NotFound;
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.kind() == NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    }
+    // Resolves every link on the way, a linked config folder included.
+    let real = match std::fs::canonicalize(path) {
+        Ok(real) => real,
+        Err(error) if error.kind() == NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !real.starts_with(root) {
+        return Err(OUTSIDE.into());
+    }
+    let meta = std::fs::symlink_metadata(&real).map_err(|error| error.to_string())?;
+    if meta.is_dir() {
+        Ok(None)
+    } else if !meta.is_file() {
+        Err(NOT_A_FILE.into())
+    } else if meta.len() > MAX_FILE {
+        Err(TOO_LARGE.into())
+    } else {
+        Ok(Some((real, meta)))
+    }
+}
+
+/// `path` as text, never more than [`MAX_FILE`] of it, even if it grew or was
+/// swapped for a pipe since it was checked.
+fn read_capped(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // Opening a pipe would wait for a writer.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path).map_err(|error| error.to_string())?;
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return Err(NOT_A_FILE.into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_FILE {
+        return Err(TOO_LARGE.into());
+    }
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 fn cache() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Cached>> {

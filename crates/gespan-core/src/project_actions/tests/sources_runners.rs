@@ -4,9 +4,9 @@ use super::super::sources::runners::{
 use super::super::sources::Source;
 use super::super::tasks_json::resolve;
 use super::super::{Ctx, Found};
+use std::path::Path;
 
 const NEEDS_ARGUMENTS: &str = "Needs arguments, which Gespan can't pass yet";
-use std::path::Path;
 
 fn parse_with(manager: &'static str, source: &dyn Source, file: &str, text: &str) -> Vec<Found> {
     let ctx = Ctx {
@@ -239,6 +239,8 @@ expression x=(a + \"b:c\") y=VAR:
 exported $port='80':
 plus_default +flags='-q':
 triple x='''it's here''' y=\"\"\"a \"b\" c\"\"\":
+call target=arch():
+call_args x=env_var_or_default(\"A\", \"b:)\") y=join(arch(), 'x'):
 required target:
 required_plus +files:
 required_exported $env:
@@ -257,6 +259,8 @@ set dotenv-load := true
         "exported",
         "plus_default",
         "triple",
+        "call",
+        "call_args",
     ];
     let blocked = ["required", "required_plus", "required_exported", "mixed"];
     let expected: Vec<_> = runnable.iter().chain(&blocked).copied().collect();
