@@ -875,7 +875,7 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
 /// Other transports hold only their prompt step (`prompt_gate`).
 fn baseline_recorded(request: &Request, cancel: &AtomicBool) -> Result<(), String> {
     match &request.settings.baseline {
-        Some(baseline) if !baseline.wait(cancel) => Err("Stopped".into()),
+        Some(baseline) if !baseline.wait(cancel) => Err(ProviderError::Stopped.into()),
         _ => Ok(()),
     }
 }
@@ -1106,7 +1106,7 @@ fn launch(
             if cancel.load(Ordering::Relaxed) && !interrupted {
                 // The provider never got the prompt: there is no turn to stop.
                 if protocol.prompt_held() {
-                    return Err("Stopped".into());
+                    return Err(ProviderError::Stopped.into());
                 }
                 interrupted = true;
                 if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
