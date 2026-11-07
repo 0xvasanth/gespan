@@ -4,9 +4,8 @@
 use super::{CORNER_BUTTONS_WIDTH, CORNER_CONTROL_GAP, Shell, titlebar_drag_area};
 use crate::{
     popover::{Anchor, popover},
-    project_tabs::{TabReveal, tab_button},
     resource_pressure::SessionInfo,
-    right_panel::{RightPanel, RightTab},
+    right_panel::RightPanel,
     theme::*,
     workspace::TitleTab,
 };
@@ -529,13 +528,8 @@ impl Shell {
         if !self.git.read(cx).available() {
             return 6. + 24. + self.open_in_editor_room(cx) + 12. + controls;
         }
-        // The toggle and the compact tool tabs, including the open label's padding.
-        let tabs = if self.corner_tabs_shown() {
-            self.project_tabs_width(cx) + 6.
-        } else {
-            0.
-        };
-        6. + tabs + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12. + controls
+        // The toggle alone; the panel heads itself with its tabs.
+        6. + 24. + 12. + controls
     }
     fn corner_tabs_shown(&self) -> bool {
         self.workspace.right_panel_open
@@ -543,10 +537,9 @@ impl Shell {
             && self.settings.is_none()
             && self.app_search.is_none()
     }
-    /// Classic: the panel toggle holds the corner while Explorer, Terminal (when
-    /// it lives in the panel) and History start at the panel's left edge. The
-    /// open tab names itself.
-    pub(super) fn classic_corner(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// Classic: the panel toggle holds the corner, spanning an open panel;
+    /// the panel's own row of tabs switches its tools.
+    pub(super) fn classic_corner(&self, cx: &mut Context<Self>) -> AnyElement {
         let row = div()
             .h(px(TITLE_BAR_HEIGHT))
             .flex_shrink_0()
@@ -566,101 +559,16 @@ impl Shell {
         let panel_off = self.app_view_open();
         let changes = !panel_off && self.git.read(cx).has_changes();
         let open = self.corner_tabs_shown();
-        let current = self
-            .right_panel
-            .as_ref()
-            .map_or(self.workspace.right_panel_tab, |p| p.read(cx).tab());
-        // How far the open tab's label has unfolded, and the old one folded.
-        let progress = self
-            .corner_reveal
-            .as_ref()
-            .and_then(|reveal| reveal.progress(current, window, cx));
-        let mut tabs = vec![
-            (
-                "right-panel-explorer",
-                "Explorer",
-                "file-script",
-                RightTab::Files,
-            ),
-            ("right-panel-history", "History", "clock", RightTab::Graph),
-        ];
-        if self.terminal_in_panel(cx) {
-            tabs.insert(
-                1,
-                (
-                    "right-panel-terminal",
-                    "Terminal",
-                    "terminal",
-                    RightTab::Terminal,
-                ),
-            );
-        }
-        let count = tabs.len();
         row.pl_1p5()
             .pr(px(12. + self.window_controls))
             .when(open, |d| {
                 // Follow the panel's leading edge, reserving enough room for
                 // the controls while the panel is still sliding open.
                 d.w(px(self.right_drawn.max(self.corner_room(cx))))
-                    .child(
-                        div()
-                            .id("right-panel-corner-tabs")
-                            .role(Role::TabList)
-                            .aria_label("Project")
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.))
-                            .mr(px(6.))
-                            .children(tabs.into_iter().map(|(id, label, path, tab)| {
-                                let selected = tab == current;
-                                let unfolded = match progress {
-                                    Some((_, p)) if selected => p,
-                                    Some((closing, p)) if tab == closing => 1. - p,
-                                    _ if selected => 1.,
-                                    _ => 0.,
-                                };
-                                tab_button(
-                                    id,
-                                    crate::project_tabs::TabLabel::from(label).max_width(
-                                        crate::right_panel::tab_label_width(
-                                            self.project_tabs_width(cx),
-                                            count,
-                                        ),
-                                    ),
-                                    path,
-                                    selected,
-                                    false,
-                                    unfolded,
-                                    window,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let Some(panel) = this.right_panel.clone() else {
-                                            return;
-                                        };
-                                        let closing = panel.read(cx).tab();
-                                        if closing == tab {
-                                            return;
-                                        }
-                                        this.corner_reveal = Some(TabReveal::new(tab, closing));
-                                        panel.update(cx, |p, cx| p.select(tab, cx));
-                                        this.invalidate_chrome(cx);
-                                        cx.notify();
-                                    },
-                                ))
-                            })),
-                    )
                     .child(titlebar_drag_area().flex_1().min_w_0())
             })
-            .children(self.project_diff_stat(cx))
-            .children(
-                self.open_in_editor_button(cx)
-                    .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
-            )
-            .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
             .child(
-                // Closed, the toggle carries the changes dot itself.
+                // The toggle carries the changes dot.
                 panel_button(!panel_off, !open && changes).when(!panel_off, |d| {
                     d.on_click(
                         cx.listener(|this, _, window, cx| this.toggle_right_panel(window, cx)),
@@ -913,6 +821,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::right_panel::RightTab;
     use crate::{pilots::Pilots, shell::tests::window};
     use gpui::{TestAppContext, WindowHandle};
     use std::time::{Duration, Instant};
@@ -935,9 +844,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn project_tabs_abbreviate_then_become_icons_without_losing_header_controls(
-        cx: &mut TestAppContext,
-    ) {
+    fn narrow_panels_keep_every_text_tab_in_their_row(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         window
@@ -955,17 +862,13 @@ mod tests {
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
+        let selectors = [
+            "right-panel-tab-Explorer",
+            "right-panel-tab-Changes",
+            "right-panel-tab-History",
+        ];
         for boxy in [false, true] {
-            let selectors = if boxy {
-                ["right-panel-explorer", "right-panel-history"]
-            } else {
-                ["right-panel-tab-Explorer", "right-panel-tab-History"]
-            };
-            let label_selector = Box::leak(format!("{}-label", selectors[1]).into_boxed_str());
-            let mut full_label_width = None;
-            // With the Open in editor button, 320px abbreviates the label and
-            // 280px hides it; below 280px the button steps aside.
-            for width in [420., 320., 280., 260., 220., 420.] {
+            for width in [420., 320., 220.] {
                 window
                     .update(visual, |shell, _, cx| {
                         shell.workspace.new_layout_boxy = boxy;
@@ -981,54 +884,39 @@ mod tests {
                     .unwrap();
                 visual.run_until_parked();
                 visual.refresh().unwrap();
+                let context = format!("boxy {boxy}, {width}px");
+                let strip = visual.debug_bounds("right-panel-tabs").unwrap();
                 let tabs = selectors.map(|selector| visual.debug_bounds(selector).unwrap());
-                let stats = visual.debug_bounds("project-diff-stat").unwrap();
+                // Even the largest diff stat leaves every tab inside the
+                // strip, clear of the toggle.
+                for pair in tabs.windows(2) {
+                    assert!(pair[0].right() <= pair[1].left(), "{context}");
+                }
+                assert!(tabs[0].left() >= strip.left(), "{context}");
+                assert!(tabs[2].right() <= strip.right(), "{context}");
                 let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
-                let search = visual.debug_bounds("titlebar-file-search").unwrap();
-                assert!(tabs[0].right() <= tabs[1].left());
-                assert!(tabs[1].right() <= stats.left());
-                assert!(stats.right() <= search.left());
-                assert!(search.right() <= toggle.left());
-                // Open in editor sits between the stat and search while the
-                // panel has room for it.
-                match visual.debug_bounds("titlebar-open-in-editor") {
-                    Some(editor) => {
-                        assert!(width >= 280., "{width}px has no room for it");
-                        assert_eq!(editor.left() - stats.right(), px(CORNER_CONTROL_GAP));
-                        assert_eq!(search.left() - editor.right(), px(CORNER_CONTROL_GAP));
-                    }
-                    None => {
-                        assert!(width < 280., "{width}px has room for it");
-                        assert_eq!(search.left() - stats.right(), px(CORNER_CONTROL_GAP));
-                    }
-                }
-                assert_eq!(toggle.left() - search.right(), px(CORNER_CONTROL_GAP));
+                assert!(toggle.bottom() <= strip.top(), "{context}");
                 assert_eq!(toggle.size.width, px(24.));
-                if width == 420. {
-                    let label = visual.debug_bounds(label_selector).unwrap();
-                    if let Some(full_width) = full_label_width {
-                        assert_eq!(label.size.width, full_width);
-                    }
-                    full_label_width = Some(label.size.width);
-                } else if width == 320. {
-                    let label = visual.debug_bounds(label_selector).unwrap();
-                    assert!(label.size.width > px(0.));
-                    assert!(label.size.width < full_label_width.unwrap());
-                } else {
-                    assert!(visual.debug_bounds(label_selector).is_none());
-                    assert!(tabs.iter().all(|tab| tab.size.width == px(26.)));
-                    // The icon keeps its action after the label disappears.
-                    visual.simulate_click(tabs[0].center(), Default::default());
-                    visual.run_until_parked();
-                    window
-                        .update(visual, |shell, _, cx| {
-                            assert_eq!(
-                                shell.right_panel.as_ref().unwrap().read(cx).tab(),
-                                RightTab::Files
-                            )
-                        })
-                        .unwrap();
-                }
+                assert!(
+                    visual.debug_bounds("project-diff-stat").is_none(),
+                    "{context}"
+                );
+                assert!(
+                    visual.debug_bounds("titlebar-file-search").is_none(),
+                    "{context}"
+                );
+                // A narrow tab still switches the pane.
+                visual.simulate_click(tabs[0].center(), Default::default());
+                visual.run_until_parked();
+                window
+                    .update(visual, |shell, _, cx| {
+                        assert_eq!(
+                            shell.right_panel.as_ref().unwrap().read(cx).tab(),
+                            RightTab::Files,
+                            "{context}"
+                        )
+                    })
+                    .unwrap();
             }
         }
     }

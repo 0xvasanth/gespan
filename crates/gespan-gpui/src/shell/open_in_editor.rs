@@ -103,9 +103,9 @@ impl Shell {
             0.
         }
     }
-    /// An open right panel shares the corner with its tool tabs and diff
-    /// stat. Too narrow for all of them, the button steps aside instead of
-    /// pushing the tabs off the panel's edge; the project menu still has it.
+    /// An open right panel's corner holds its buttons. Too narrow for them
+    /// all, the button steps aside instead of pushing past the panel's edge;
+    /// the project menu still has it.
     fn editor_fits_corner(&self, cx: &App) -> bool {
         let git = self.git.read(cx);
         if !self.workspace.right_panel_open || self.app_view_open() || !git.available() {
@@ -116,12 +116,7 @@ impl Shell {
         } else {
             12.
         };
-        self.workspace.right_panel_width
-            >= crate::right_panel::tab_icons_width(self.right_tab_count(cx))
-                + crate::right_panel::diff_stat_width(git.stats.as_ref())
-                + CORNER_BUTTONS_WIDTH
-                + OPEN_IN_EDITOR_WIDTH
-                + padding
+        self.workspace.right_panel_width >= CORNER_BUTTONS_WIDTH + OPEN_IN_EDITOR_WIDTH + padding
     }
     /// Original layout: the strip's end keeps the button `pl-1.5 pr-3` clear
     /// of the edge, where the new layouts have their corner.
@@ -428,6 +423,23 @@ mod tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         for (name, classic, boxy) in LAYOUTS {
             set_layout(window, visual, classic, boxy);
+            if !classic {
+                // The new layouts' corner is the panel toggle alone.
+                assert!(
+                    visual.debug_bounds("titlebar-open-in-editor").is_none(),
+                    "{name}"
+                );
+                assert!(
+                    visual.debug_bounds("titlebar-file-search").is_none(),
+                    "{name}"
+                );
+                let viewport = window
+                    .update(visual, |_, w, _| w.viewport_size().width)
+                    .unwrap();
+                let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+                assert_eq!(toggle.right(), viewport - px(12.), "{name}");
+                continue;
+            }
             let button = visual
                 .debug_bounds("titlebar-open-in-editor")
                 .unwrap_or_else(|| panic!("{name}: no Open in editor button"));
@@ -446,23 +458,12 @@ mod tests {
                 strip.right() <= button.left(),
                 "{name}: the tabs make room for it"
             );
-            if classic {
-                // The strip ends with it, `pr-3` clear of the column's edge.
-                assert_eq!(
-                    button.right(),
-                    viewport - px(right_drawn) - px(12.),
-                    "{name}"
-                );
-            } else {
-                let search = visual.debug_bounds("titlebar-file-search").unwrap();
-                let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
-                assert_eq!(
-                    search.left() - button.right(),
-                    px(CORNER_CONTROL_GAP),
-                    "{name}"
-                );
-                assert_eq!(toggle.right(), viewport - px(12.), "{name}");
-            }
+            // The strip ends with it, `pr-3` clear of the column's edge.
+            assert_eq!(
+                button.right(),
+                viewport - px(right_drawn) - px(12.),
+                "{name}"
+            );
         }
     }
 
@@ -471,7 +472,8 @@ mod tests {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        for (name, classic, boxy) in LAYOUTS {
+        // Only the original layout's title bar keeps the button.
+        for (name, classic, boxy) in LAYOUTS.into_iter().filter(|(_, classic, _)| *classic) {
             set_layout(window, visual, classic, boxy);
             let button = visual.debug_bounds("titlebar-open-in-editor").unwrap();
             visual.simulate_click(button.center(), Default::default());
@@ -539,7 +541,8 @@ mod tests {
     }
 
     fn open_editor_menu(window: WindowHandle<Shell>, visual: &mut VisualTestContext) {
-        visual.refresh().unwrap();
+        // The original layout's title bar keeps the button.
+        set_layout(window, visual, true, false);
         let button = visual.debug_bounds("titlebar-open-in-editor").unwrap();
         visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
@@ -865,35 +868,26 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_narrow_open_panel_keeps_its_tabs_and_drops_the_button(cx: &mut TestAppContext) {
+    fn the_project_corner_leaves_open_in_editor_to_the_project_menu(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        window
-            .update(visual, |shell, w, cx| shell.toggle_right_panel(w, cx))
-            .unwrap();
         for boxy in [false, true] {
             set_layout(window, visual, false, boxy);
-            // Two tool tabs leave room for the button even at the minimum
-            // width; a docked terminal adds a third tab and squeezes it out.
-            let min = crate::right_panel::WIDTH_MIN;
-            for (terminal, width, shown) in
-                [(true, min, false), (false, min, true), (true, 420., true)]
-            {
+            for open in [false, true] {
                 window
-                    .update(visual, |shell, _, cx| {
-                        shell.workspace.preferences.terminal_in_panel = terminal;
-                        shell.workspace.right_panel_width = width;
-                        shell.invalidate_chrome(cx);
-                        cx.notify();
+                    .update(visual, |shell, w, cx| {
+                        if shell.workspace.right_panel_open != open {
+                            shell.toggle_right_panel(w, cx);
+                        }
                     })
                     .unwrap();
                 visual.run_until_parked();
                 visual.refresh().unwrap();
-                assert_eq!(
-                    visual.debug_bounds("titlebar-open-in-editor").is_some(),
-                    shown,
-                    "boxy {boxy}, terminal tab {terminal}, panel {width}px"
+                // The corner is the toggle alone, open or closed.
+                assert!(
+                    visual.debug_bounds("titlebar-open-in-editor").is_none(),
+                    "boxy {boxy}, open {open}"
                 );
                 assert!(visual.debug_bounds("toggle-right-panel").is_some());
             }

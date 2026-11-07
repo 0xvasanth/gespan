@@ -1,18 +1,17 @@
-//! The inset right panel: the project tools beside the card, with
-//! reorderable Explorer / Changes / History tabs in the title bar, and a
-//! trailing Terminal tab when the terminal lives in the panel.
+//! The inset right panel: the project tools beside the card, headed by a row
+//! of reorderable Explorer / Changes / History text tabs, with a Terminal tab
+//! when the terminal lives in the panel. The title bar keeps only its toggle.
 use crate::{
     changes::Changes,
     explorer::Explorer,
     git_status::{GitChanged, ProjectGit},
     history::History,
-    project_tabs::{TabLabel, TabReveal, tab_button},
     theme::*,
 };
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, FontFeatures,
     FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Role, SharedString,
-    Stateful, StyleRefinement, Subscription, WeakEntity, Window, div, prelude::*, px,
+    Stateful, StyleRefinement, Subscription, Window, div, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -20,21 +19,6 @@ use std::sync::Arc;
 pub(crate) const WIDTH_MIN: f32 = 220.;
 pub(crate) const WIDTH_MAX: f32 = 640.;
 pub(crate) const WIDTH_DEFAULT: f32 = 288.;
-/// `count` 26px icon tabs, one unfolded label with 4px extra padding, and the gaps.
-pub(crate) fn tabs_width(count: usize) -> f32 {
-    tab_icons_width(count) + 64. + 4.
-}
-pub(crate) fn tab_icons_width(count: usize) -> f32 {
-    count as f32 * 26. + count.saturating_sub(1) as f32 * 2.
-}
-
-pub(crate) fn tab_label_width(width: f32, count: usize) -> f32 {
-    // The selected tab adds 2px of padding per side. Below 30px there is
-    // insufficient room for a useful abbreviated label and its 6px gap.
-    let available = (width - tab_icons_width(count) - 4.).max(0.);
-    if available < 30. { 0. } else { available }
-}
-
 // Separators inside the inset card use its 4% hairline; dark selection is 10%.
 pub(crate) fn stroke() -> Hsla {
     content(0.04)
@@ -75,13 +59,25 @@ impl RightTab {
             Self::Terminal => "Terminal",
         }
     }
-    /// loadRightPanelTabOrder: unique known tabs, the missing ones appended.
-    /// Changes has no tab; the title bar's diff stat opens it.
+    /// loadRightPanelTabOrder: unique known tabs, each missing one placed after
+    /// the tab it follows by default, so an order saved without Changes gets
+    /// it back between Explorer and History.
     pub(crate) fn normalize(order: &[RightTab]) -> Vec<RightTab> {
-        let mut out = Vec::new();
-        for tab in order.iter().chain(&[Self::Files, Self::Graph]) {
-            if !matches!(tab, Self::Terminal | Self::Changes) && !out.contains(tab) {
+        const DEFAULT: [RightTab; 3] = [RightTab::Files, RightTab::Changes, RightTab::Graph];
+        let mut out: Vec<RightTab> = Vec::new();
+        for tab in order {
+            if *tab != Self::Terminal && !out.contains(tab) {
                 out.push(*tab);
+            }
+        }
+        for (ix, tab) in DEFAULT.iter().enumerate() {
+            if !out.contains(tab) {
+                let at = DEFAULT[..ix]
+                    .iter()
+                    .filter_map(|before| out.iter().position(|t| t == before))
+                    .max()
+                    .map_or(0, |p| p + 1);
+                out.insert(at, *tab);
             }
         }
         out
@@ -171,56 +167,32 @@ pub(crate) fn format_integer(value: i64) -> String {
     if value < 0 { format!("-{out}") } else { out }
 }
 
-pub(crate) fn diff_stat_width(stats: Option<&gespan_core::scm::DiffStats>) -> f32 {
-    let added = format_integer(stats.map_or(0, |s| s.additions.max(0)));
-    let deleted = format_integer(stats.map_or(0, |s| s.deletions.max(0)));
-    // Tabular digits at 10px, the signs, a 6px gap and 6px padding per side.
-    (added.len() + deleted.len() + 2) as f32 * 6.5 + 18.
-}
-
 /// Fit the complete diff label together so one number cannot push the other
 /// outside its slot. Callers include any gap that scales with their text.
 pub(crate) fn diff_stat_scale(available: f32, natural: f32) -> f32 {
     (available.max(0.) / natural.max(f32::EPSILON)).clamp(0.1, 1.)
 }
 
-pub(crate) fn diff_stat(
-    stats: Option<&gespan_core::scm::DiffStats>,
-    width: f32,
-) -> Stateful<gpui::Div> {
-    let added = format_integer(stats.map_or(0, |s| s.additions.max(0)));
-    let deleted = format_integer(stats.map_or(0, |s| s.deletions.max(0)));
-    let scale = diff_stat_scale(width - 18., diff_stat_width(stats) - 18.);
-    div()
-        .id("project-diff-stat")
-        .debug_selector(|| "project-diff-stat".into())
-        .role(Role::Button)
-        .aria_label(format!(
-            "Open Changes: {added} lines added, {deleted} lines deleted"
-        ))
-        .w(px(width))
-        .h(px(24.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap(px(6.))
-        .px_1p5()
-        .rounded_md()
-        .whitespace_nowrap()
-        .text_size(px(10. * scale))
-        .font_weight(FontWeight::MEDIUM)
-        .font_features(tabular())
-        .child(
-            div()
-                .text_color(gpui::rgb(DIFF_ADD))
-                .child(format!("+{added}")),
-        )
-        .child(
-            div()
-                .text_color(gpui::rgb(DIFF_DEL))
-                .child(format!("-{deleted}")),
-        )
+/// The Changes tab's diff stat, `+added` and `-deleted`, each only when
+/// nonzero. Empty when the tree is clean, so the tab reads "Changes".
+pub(crate) fn changes_stat(stats: Option<&gespan_core::scm::DiffStats>) -> Vec<(String, u32)> {
+    let (added, deleted) = stats.map_or((0, 0), |s| (s.additions.max(0), s.deletions.max(0)));
+    let mut parts = Vec::new();
+    if added > 0 {
+        parts.push((format!("+{}", format_integer(added)), DIFF_ADD));
+    }
+    if deleted > 0 {
+        parts.push((format!("-{}", format_integer(deleted)), DIFF_DEL));
+    }
+    parts
+}
+
+/// The Changes tab's accessible name: "Changes", then its diff stat.
+pub(crate) fn changes_tab_label(stats: Option<&gespan_core::scm::DiffStats>) -> String {
+    std::iter::once("Changes".to_string())
+        .chain(changes_stat(stats).into_iter().map(|(text, _)| text))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 struct TabDrag {
@@ -230,23 +202,8 @@ struct TabDrag {
     active: bool,
 }
 
-/// The title-bar strip observes the panel so selection and drag motion
-/// repaint independently of the cached pane and session tabs.
-pub(crate) struct ProjectTabs {
-    panel: WeakEntity<RightPanel>,
-    _subscription: Subscription,
-}
-
-impl Render for ProjectTabs {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.panel
-            .update(cx, |panel, cx| panel.tab_strip(window, cx))
-            .unwrap_or_else(|_| div().into_any_element())
-    }
-}
-
 pub(crate) struct RightPanel {
-    pub tabs: Entity<ProjectTabs>,
+    git: Entity<ProjectGit>,
     pub explorer: Entity<Explorer>,
     pub changes: Entity<Changes>,
     pub history: Entity<History>,
@@ -260,9 +217,7 @@ pub(crate) struct RightPanel {
     /// Classic reserves the title bar's height; rounded content starts at
     /// the card's top edge, below the window-wide title bar.
     top_inset: f32,
-    tab_width: f32,
     drag: Option<TabDrag>,
-    reveal: Option<TabReveal>,
     skip_click: bool,
     tab_bounds: Vec<crate::popover::AnchorSlot>,
     _subscriptions: Vec<Subscription>,
@@ -289,13 +244,8 @@ impl RightPanel {
             cx.observe(&git, |_, _, cx| cx.notify()),
             cx.subscribe(&git, |_, _, _: &GitChanged, cx| cx.notify()),
         ];
-        let panel = cx.entity();
-        let tabs = cx.new(|cx| ProjectTabs {
-            panel: panel.downgrade(),
-            _subscription: cx.observe(&panel, |_, _, cx| cx.notify()),
-        });
         Self {
-            tabs,
+            git,
             focus: cx.focus_handle(),
             explorer,
             changes,
@@ -306,19 +256,17 @@ impl RightPanel {
             sidebar_tab: None,
             terminal_tab: false,
             top_inset: 0.,
-            tab_width: tabs_width(3),
             drag: None,
-            reveal: None,
             skip_click: false,
-            tab_bounds: (0..4).map(|_| Default::default()).collect(),
+            tab_bounds: (0..5).map(|_| Default::default()).collect(),
             _subscriptions: subscriptions,
         }
     }
     pub(crate) fn tab(&self) -> RightTab {
         self.tab
     }
-    /// The tabs in strip order: the saved two, with Terminal between them
-    /// when enabled.
+    /// The tabs in strip order: the saved three, with Terminal after the
+    /// first when enabled.
     pub(crate) fn tabs(&self) -> Vec<RightTab> {
         let mut tabs = self.order.clone();
         if self.terminal_tab {
@@ -350,12 +298,6 @@ impl RightPanel {
             cx.notify();
         }
     }
-    pub(crate) fn set_tab_width(&mut self, width: f32, cx: &mut Context<Self>) {
-        if self.tab_width != width {
-            self.tab_width = width;
-            cx.notify();
-        }
-    }
     /// The panes read and poll only while their tab is on screen.
     pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
         if self.shown == shown {
@@ -365,9 +307,6 @@ impl RightPanel {
         self.sync_panes(cx);
     }
     pub(crate) fn select(&mut self, tab: RightTab, cx: &mut Context<Self>) {
-        if self.tab != tab {
-            self.reveal = Some(TabReveal::new(tab, self.tab));
-        }
         self.tab = tab;
         self.sync_panes(cx);
         cx.emit(PanelEvent::Tab(tab));
@@ -489,75 +428,101 @@ impl RightPanel {
         }
     }
 
-    fn tab_strip(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let progress = self
-            .reveal
-            .as_ref()
-            .and_then(|reveal| reveal.progress(self.tab, window, cx));
+    /// The project tab row: equal text tabs sharing the panel's width,
+    /// the selected one filled. Changes shows the working tree's diff stat.
+    pub(crate) fn tab_strip(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let stat = changes_stat(self.git.read(cx).stats.as_ref());
+        let changes_label = changes_tab_label(self.git.read(cx).stats.as_ref());
         let dragging = self
             .drag
             .as_ref()
             .filter(|d| d.active)
             .map(|d| (d.tab, d.offset));
-        let count = self.tabs().len();
         let tabs: Vec<AnyElement> = self
             .tabs()
             .into_iter()
             .enumerate()
             .map(|(ix, tab)| {
                 let active = self.tab == tab;
-                let (id, path) = match tab {
-                    RightTab::Files => ("right-panel-tab-Explorer", "file-script"),
-                    RightTab::Changes => ("right-panel-tab-Changes", "git-branch"),
-                    RightTab::Graph => ("right-panel-tab-History", "clock"),
-                    RightTab::Terminal => ("right-panel-tab-Terminal", "terminal"),
+                let id = match tab {
+                    RightTab::Files => "right-panel-tab-Explorer",
+                    RightTab::Changes => "right-panel-tab-Changes",
+                    RightTab::Graph => "right-panel-tab-History",
+                    RightTab::Terminal => "right-panel-tab-Terminal",
                 };
-                let unfolded = match progress {
-                    Some((_, p)) if active => p,
-                    Some((closing, p)) if tab == closing => 1. - p,
-                    _ if active => 1.,
-                    _ => 0.,
+                let label: SharedString = if tab == RightTab::Changes {
+                    changes_label.clone().into()
+                } else {
+                    tab.label().into()
+                };
+                let body = if tab == RightTab::Changes && !stat.is_empty() {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .whitespace_nowrap()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_features(tabular())
+                        .children(stat.iter().map(|(text, color)| {
+                            div().text_color(gpui::rgb(*color)).child(text.clone())
+                        }))
+                        .into_any_element()
+                } else {
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(tab.label())
+                        .into_any_element()
                 };
                 let shift = dragging.filter(|(t, _)| *t == tab).map(|(_, o)| o);
                 div()
                     .relative()
-                    .flex_shrink_0()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .items_stretch()
+                    .items_center()
                     // Keep the measured slot still while its button follows
                     // the pointer; drag offsets are relative to the slot.
                     .child(self.tab_bounds[ix].probe())
                     .child(
-                        tab_button(
-                            id,
-                            TabLabel::from(tab.label())
-                                .max_width(tab_label_width(self.tab_width, count)),
-                            path,
-                            active,
-                            false,
-                            unfolded,
-                            window,
-                        )
-                        .relative()
-                        .when_some(shift, |d, o| d.left(o))
-                        .when(!active && shift.is_some(), |d| {
-                            d.opacity(1.).text_color(content(1.))
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                                this.start_drag(tab, event)
-                            }),
-                        )
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
+                        div()
+                            .id(id)
+                            .debug_selector(move || id.into())
+                            .role(Role::Tab)
+                            .aria_label(label)
+                            .aria_selected(active)
+                            .relative()
+                            .when_some(shift, |d, o| d.left(o))
+                            .h(px(24.))
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .overflow_hidden()
+                            .text_size(px(12.))
+                            .text_color(content(if active || shift.is_some() { 1. } else { 0.5 }))
+                            .when(active, |d| d.bg(selection()))
+                            .when(!active, |d| d.hover(|s| s.text_color(content(1.))))
+                            .child(body)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.start_drag(tab, event)
+                                }),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 if std::mem::take(&mut this.skip_click) {
                                     return;
                                 }
                                 this.select(tab, cx);
                                 this.focus_pane(window, cx);
-                            },
-                        )),
+                            })),
                     )
                     .into_any_element()
             })
@@ -567,12 +532,15 @@ impl RightPanel {
             .debug_selector(|| "right-panel-tabs".into())
             .role(Role::TabList)
             .aria_label("Project")
-            .h(px(TITLE_BAR_HEIGHT))
+            .h(px(PANE_HEADER_HEIGHT))
             .w_full()
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(px(2.))
+            .gap(px(1.))
+            .px_2()
+            .border_b_1()
+            .border_color(stroke())
             .on_mouse_move(
                 cx.listener(|this, event: &MouseMoveEvent, _, cx| this.move_drag(event, cx)),
             )
@@ -590,7 +558,8 @@ impl RightPanel {
 }
 
 impl Render for RightPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let strip = self.tab_strip(cx);
         let pane: AnyElement = match self.tab {
             RightTab::Files => self
                 .explorer
@@ -628,6 +597,7 @@ impl Render for RightPanel {
                         .border_color(stroke()),
                 )
             })
+            .child(strip)
             .child(pane)
     }
 }
@@ -638,14 +608,61 @@ mod tests {
     #[test]
     fn tab_order_keeps_known_tabs_once() {
         assert_eq!(
-            RightTab::normalize(&[RightTab::Graph, RightTab::Graph]),
-            [RightTab::Graph, RightTab::Files]
+            RightTab::normalize(&[]),
+            [RightTab::Files, RightTab::Changes, RightTab::Graph]
         );
         assert_eq!(
-            RightTab::normalize(&[RightTab::Changes, RightTab::Graph]),
-            [RightTab::Graph, RightTab::Files]
+            RightTab::normalize(&[RightTab::Graph, RightTab::Graph]),
+            [RightTab::Files, RightTab::Changes, RightTab::Graph]
+        );
+        // Orders saved while Changes had no tab get it back after Explorer.
+        assert_eq!(
+            RightTab::normalize(&[RightTab::Files, RightTab::Graph]),
+            [RightTab::Files, RightTab::Changes, RightTab::Graph]
+        );
+        assert_eq!(
+            RightTab::normalize(&[RightTab::Graph, RightTab::Files]),
+            [RightTab::Graph, RightTab::Files, RightTab::Changes]
+        );
+        // A reordered strip keeps its order; Terminal is never saved.
+        assert_eq!(
+            RightTab::normalize(&[
+                RightTab::Changes,
+                RightTab::Terminal,
+                RightTab::Graph,
+                RightTab::Files
+            ]),
+            [RightTab::Changes, RightTab::Graph, RightTab::Files]
         );
         assert_eq!(format_integer(1234567), "1,234,567");
         assert_eq!(format_integer(12), "12");
+    }
+
+    #[test]
+    fn changes_tab_shows_only_nonzero_counts() {
+        use gespan_core::scm::DiffStats;
+        let stats = |additions, deletions| DiffStats {
+            files: 1,
+            additions,
+            deletions,
+        };
+        assert!(changes_stat(None).is_empty());
+        assert_eq!(changes_tab_label(None), "Changes");
+        assert_eq!(changes_tab_label(Some(&stats(0, 0))), "Changes");
+        assert_eq!(
+            changes_stat(Some(&stats(5, 0))),
+            [("+5".to_string(), DIFF_ADD)]
+        );
+        assert_eq!(changes_tab_label(Some(&stats(5, 0))), "Changes +5");
+        assert_eq!(
+            changes_stat(Some(&stats(0, 3))),
+            [("-3".to_string(), DIFF_DEL)]
+        );
+        assert_eq!(
+            changes_tab_label(Some(&stats(1234, 56))),
+            "Changes +1,234 -56"
+        );
+        // Negative counts from a bad parse never show as "+-1".
+        assert!(changes_stat(Some(&stats(-1, -1))).is_empty());
     }
 }
