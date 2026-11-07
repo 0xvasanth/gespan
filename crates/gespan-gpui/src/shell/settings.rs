@@ -319,7 +319,8 @@ impl Shell {
         }
     }
     /// Settings covers the terminal, so it closes first. herdr may have
-    /// changed the machine list by the time the tab goes away.
+    /// changed the machine list once its command exits, or, if the tab is
+    /// closed while it runs, by then; the list is read again once.
     fn run_machine_command(
         &mut self,
         title: gpui::SharedString,
@@ -329,7 +330,23 @@ impl Shell {
     ) {
         self.close_settings(window, cx);
         let terminal = self.open_command_terminal(title, command, window, cx);
-        cx.observe_release(&terminal, |_, _, cx| crate::machines::reload(cx))
+        let reloaded = std::rc::Rc::new(std::cell::Cell::new(false));
+        let reload_once = move |cx: &mut App| {
+            if !reloaded.replace(true) {
+                crate::machines::reload(cx);
+            }
+        };
+        let on_exit = reload_once.clone();
+        cx.subscribe(
+            &terminal,
+            move |_, terminal, _: &crate::terminal::TerminalEvent, cx| {
+                if terminal.read(cx).exited {
+                    on_exit(cx);
+                }
+            },
+        )
+        .detach();
+        cx.observe_release(&terminal, move |_, _, cx| reload_once(cx))
             .detach();
     }
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -626,6 +643,77 @@ mod tests {
     use crate::shell::tests::window;
     use gpui::TestAppContext;
 
+    /// Runs `command` the way Settings asks for an Add or Upgrade tab and
+    /// returns that tab.
+    fn run_from_settings(
+        window: &gpui::WindowHandle<Shell>,
+        command: &str,
+        cx: &mut TestAppContext,
+    ) -> Entity<crate::terminal::Terminal> {
+        window
+            .update(cx, |shell, w, cx| {
+                cx.set_reduce_motion(true);
+                shell.open_settings(Section::General, w, cx)
+            })
+            .unwrap();
+        let settings = window
+            .update(cx, |shell, _, _| shell.settings.clone().unwrap())
+            .unwrap();
+        settings.update(cx, |_, cx| {
+            cx.emit(SettingsEvent::RunMachineCommand {
+                title: "Add me@box".into(),
+                command: command.into(),
+            })
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                shell.terminals[&shell.workspace.project]
+                    .last()
+                    .unwrap()
+                    .clone()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn herdr_machines_command_reloads_once_when_herdr_exits(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        let machines = cx.update(|cx| crate::machines::install_for_test(Vec::new(), cx));
+        let terminal = run_from_settings(&window, "sleep 30", cx);
+        let reloads = |cx: &mut TestAppContext| machines.read_with(cx, |m, _| m.reloads);
+        let before = reloads(cx);
+        // Output while herdr runs is no reason to re-read.
+        terminal.update(cx, |_, cx| cx.emit(crate::terminal::TerminalEvent::Changed));
+        cx.run_until_parked();
+        assert_eq!(reloads(cx), before);
+        // herdr finished: the tab stays open for its output, the list
+        // re-reads now.
+        for _ in 0..2 {
+            terminal.update(cx, |t, cx| {
+                t.exited = true;
+                cx.emit(crate::terminal::TerminalEvent::Changed)
+            });
+        }
+        cx.run_until_parked();
+        assert_eq!(reloads(cx), before + 1, "an exit reloads once");
+        // Closing it later has nothing new to read.
+        window
+            .update(cx, |shell, w, cx| {
+                let project = shell.workspace.project.clone();
+                let ix = shell.terminals[&project]
+                    .iter()
+                    .position(|t| *t == terminal)
+                    .unwrap();
+                shell.remove_terminal(&project, ix, w, cx);
+            })
+            .unwrap();
+        drop(terminal);
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert_eq!(reloads(cx), before + 1);
+    }
+
     #[gpui::test]
     fn herdr_machines_command_runs_in_a_titled_terminal_and_reloads_when_it_closes(
         cx: &mut TestAppContext,
@@ -644,7 +732,8 @@ mod tests {
         settings.update(cx, |_, cx| {
             cx.emit(SettingsEvent::RunMachineCommand {
                 title: "Add me@box".into(),
-                command: "true".into(),
+                // Still running when the tab closes.
+                command: "sleep 30".into(),
             })
         });
         cx.run_until_parked();
