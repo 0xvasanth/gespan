@@ -910,6 +910,8 @@ pub(crate) enum MenuItem {
     Custom(AnyView, FocusHandle),
     /// A quiet uppercase caption, like the composer's "Add to message".
     Header(SharedString),
+    /// A [`MenuItem::Header`] that keeps its case, for names like file paths.
+    Caption(SharedString),
     Separator,
     Action(Box<MenuAction>),
     /// A footnote paragraph, like AccessPicker's busy note.
@@ -1579,17 +1581,8 @@ impl Render for Menu {
                 MenuItem::Custom(view, _) => {
                     div().flex_shrink_0().child(view.clone()).into_any_element()
                 }
-                MenuItem::Header(text) => div()
-                    .flex_shrink_0()
-                    .px_2()
-                    .pt(px(2.))
-                    .pb_1()
-                    .text_size(px(10.))
-                    .line_height(px(15.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(content(0.4))
-                    .child(text.to_uppercase())
-                    .into_any(),
+                MenuItem::Header(text) => header(text.to_uppercase()),
+                MenuItem::Caption(text) => header(text.to_string()),
                 MenuItem::Note(text) => div()
                     .flex_shrink_0()
                     .px_2()
@@ -1761,6 +1754,20 @@ impl Render for Menu {
             .children(rows)
             .children(submenu)
     }
+}
+/// A section caption's row.
+fn header(text: String) -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .px_2()
+        .pt(px(2.))
+        .pb_1()
+        .text_size(px(10.))
+        .line_height(px(15.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(content(0.4))
+        .child(text)
+        .into_any()
 }
 fn separator(ix: usize, style: MenuStyle) -> AnyElement {
     div()

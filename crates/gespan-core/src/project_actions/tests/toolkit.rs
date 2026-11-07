@@ -189,6 +189,7 @@ fn list_shape_has_ids_and_sources() {
             "cwd": cwd,
             "background": false,
             "blocked": null,
+            "env": [],
         })
     );
     assert_eq!(actions[1]["background"], true);
@@ -550,4 +551,23 @@ fn tools_tell_the_agent_which_ones_change_things() {
         .as_str()
         .unwrap()
         .contains("exactly as actions_list returned it"));
+}
+
+#[test]
+fn a_listed_action_shows_its_env_names_but_never_the_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    gespan(
+        root,
+        r#"{ "label": "Serve", "command": "echo serve",
+             "options": { "env": { "A_PORT": "3000", "B_TOKEN": "s3cret" } } },
+           { "label": "Plain", "command": "echo plain" }"#,
+    );
+    let listed = RUN
+        .call(&grant(7121, root, ACTIONS), "actions_list", json!({}))
+        .unwrap();
+    let actions = listed["actions"].as_array().unwrap();
+    assert_eq!(actions[0]["env"], json!(["A_PORT", "B_TOKEN"]));
+    assert_eq!(actions[1]["env"], json!([]));
+    assert!(!listed.to_string().contains("s3cret"));
 }

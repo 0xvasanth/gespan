@@ -25,6 +25,10 @@ can stay visible in history without switching the user's current conversation.
 Retry an uncertain mutation with the same request ID and identical input.
 Unknown fields and invalid options produce errors instead of being ignored.
 
+## Project actions
+
+Agents can also list and run a project's commands with the `actions` tools; see [Project actions](actions.md#agents).
+
 ## Orchestration workers
 
 Orchestration workers keep their existing scoped `control` workflow and do not receive this app access.

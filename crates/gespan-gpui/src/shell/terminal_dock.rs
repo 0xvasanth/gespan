@@ -156,6 +156,10 @@ impl Shell {
             .enumerate()
             .filter_map(|(ix, terminal)| {
                 let t = terminal.read(cx);
+                // An agent's run is not the user's running process.
+                if t.read_only() {
+                    return None;
+                }
                 let process = t.foreground.as_deref()?.trim();
                 (!process.is_empty()).then(|| Running {
                     ix,
@@ -199,7 +203,8 @@ impl Shell {
             .workspace
             .docks
             .get(&project)
-            .is_some_and(|d| !d.terminals.is_empty())
+            // A read-only mirror can't be the panel's terminal.
+            .is_some_and(|d| (0..d.terminals.len()).any(|ix| !d.is_mirror(ix)))
         {
             return;
         }
@@ -208,7 +213,7 @@ impl Shell {
         dock.add(cwd.clone());
         // The dock stays shut until the terminal moves back out of the panel.
         dock.open = false;
-        let terminal = self.spawn_terminal(cwd, cx);
+        let terminal = self.spawn_terminal(cwd, &[], cx);
         self.terminals.entry(project).or_default().push(terminal);
         self.persist(cx);
     }
@@ -630,8 +635,11 @@ impl Shell {
                                 let t = terminal.read(cx);
                                 let label: SharedString = t.title.clone().into();
                                 let agent = t.agent();
-                                let description =
-                                    SharedString::from(format!("{} — {}", t.title, t.cwd));
+                                let status = t.status().map(|s| SharedString::from(s.to_owned()));
+                                let description = SharedString::from(match &status {
+                                    Some(status) => format!("{} — {} — {status}", t.title, t.cwd),
+                                    None => format!("{} — {}", t.title, t.cwd),
+                                });
                                 let active = ix == dock.active;
                                 let held = dragged == Some(ix);
                                 let hovered = self.dock_hover == Some(ix) && dragged.is_none();
@@ -735,6 +743,12 @@ impl Shell {
                                                     .truncate()
                                                     .child(label.clone()),
                                             )
+                                            .children(status.map(|status| {
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_color(content(0.5))
+                                                    .child(status)
+                                            }))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 if std::mem::take(&mut this.dock_skip_click) {
                                                     return;
@@ -931,6 +945,7 @@ impl Shell {
         let running = self.running_terminals(cx);
         let open = self.dock_open(cx);
         let classic = self.workspace.boxy_layout();
+        self.sync_actions(cx);
         // The classic footer's own `px-3` and border hold these in place.
         let group = div()
             .flex()

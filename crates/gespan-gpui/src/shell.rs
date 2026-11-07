@@ -1,4 +1,5 @@
 mod accounts;
+pub(crate) mod action_runs;
 mod actions;
 mod app_commands;
 mod app_views;
@@ -713,11 +714,19 @@ pub(crate) struct Shell {
     /// New-session composers holding only the ticket key until its title arrives.
     ticket_drafts: HashMap<i64, String>,
     action_dialog: Option<actions::ActionDialog>,
+    /// A short note about an action, such as where it was saved.
+    action_notice: Option<SharedString>,
+    /// Counts notes shown, so only the latest one's timer clears it.
+    action_notice_seq: u64,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
     editor_menu: open_in_editor::EditorMenu,
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
+    /// The footer's actions, as last detected.
+    action_listing: Option<actions::ActionListing>,
+    /// Long Actions menu sections the open menu shows expanded.
+    action_sections: HashSet<String>,
     deleting: HashSet<i64>,
     /// A removal prompt or its worktree lookup is under way.
     removal_prompt: bool,
@@ -958,6 +967,9 @@ impl Shell {
         let metadata: Vec<_> = summaries.iter().map(|s| (s.id, s.cwd.clone())).collect();
         let workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
         gespan_core::cli::initialize(&workspace.preferences.binary_paths);
+        for (project, saved) in &workspace.actions {
+            actions::publish_personal(project, saved);
+        }
         crate::installed_providers::probe(cx);
         let latest_state = Arc::new(Mutex::new(serde_json::to_string(&workspace).unwrap()));
         let quit_state = latest_state.clone();
@@ -1135,10 +1147,14 @@ impl Shell {
             ticket_sequence: 0,
             ticket_drafts: HashMap::new(),
             action_dialog: None,
+            action_notice: None,
+            action_notice_seq: 0,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
             editor_menu: Default::default(),
             action_terminals: HashMap::new(),
+            action_listing: None,
+            action_sections: HashSet::new(),
             deleting: HashSet::new(),
             removal_prompt: false,
             worktree_cleanups: HashMap::new(),
@@ -3220,8 +3236,14 @@ impl Shell {
             })
             .unwrap_or_else(|| self.working_copy().to_owned())
     }
-    fn spawn_terminal(&mut self, cwd: String, cx: &mut Context<Self>) -> Entity<Terminal> {
-        let terminal = cx.new(|cx| Terminal::new(cwd, cx));
+    /// A dock terminal at `cwd`, with `env` set on top of Gespan's own.
+    fn spawn_terminal(
+        &mut self,
+        cwd: String,
+        env: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let terminal = cx.new(|cx| Terminal::new(cwd, env, cx));
         self.observations
             .push(cx.subscribe(&terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
         terminal
@@ -3237,7 +3259,7 @@ impl Shell {
         let wanted = dock.terminals.clone();
         let have = self.terminals.get(project).map_or(0, Vec::len);
         for cwd in wanted.into_iter().skip(have) {
-            let terminal = self.spawn_terminal(cwd, cx);
+            let terminal = self.spawn_terminal(cwd, &[], cx);
             self.terminals
                 .entry(project.to_owned())
                 .or_default()
@@ -3311,7 +3333,7 @@ impl Shell {
         dock.size = dock.side.clamp(dock.size, viewport);
         let added = dock.add(cwd.clone());
         self.dock_tab_scroll.scroll_to_item(added);
-        let terminal = self.spawn_terminal(cwd, cx);
+        let terminal = self.spawn_terminal(cwd, &[], cx);
         self.terminals.entry(project).or_default().push(terminal);
         if self.terminal_in_panel(cx) {
             if let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project) {
@@ -5567,6 +5589,9 @@ impl Shell {
         // Close the previous menu first, so the new one remembers the focus
         // that was there before either opened.
         self.menu = None;
+        if target == MenuTarget::Actions {
+            self.refresh_actions(cx);
+        }
         let mut events = Vec::new();
         let (label, items, width, style) = self.menu_items(&target, &mut events, window, cx);
         let menu = cx.new(|cx| {
@@ -5585,6 +5610,20 @@ impl Shell {
                     let menu = open.menu.clone();
                     this.change_sidebar_option(id, cx);
                     let items = this.sidebar_options_menu_items();
+                    menu.update(cx, |menu, cx| menu.replace_items(items, cx));
+                    return;
+                }
+                // A long section expands in place.
+                if let MenuEvent::Picked(id, _) = event
+                    && let Some(section) = id.strip_prefix(actions::EXPAND)
+                    && let Some(open) = this
+                        .menu
+                        .as_ref()
+                        .filter(|m| m.target == MenuTarget::Actions)
+                {
+                    let menu = open.menu.clone();
+                    this.toggle_action_section(section);
+                    let items = this.actions_menu();
                     menu.update(cx, |menu, cx| menu.replace_items(items, cx));
                     return;
                 }
