@@ -3,8 +3,8 @@
 //! list tools from a cache, so listing never starts anything that has run once.
 use crate::{
     endpoint::Inner,
-    router::{Action, Reach},
-    upstream::{Events, Upstream},
+    router::{Action, Caller, Reach},
+    upstream::{Answer, Events, Upstream},
     Grant, Spawner,
 };
 use serde_json::{json, Value};
@@ -768,6 +768,13 @@ impl Events for PoolEvents {
                     hub.server_action(&self.key.server, upstream, action);
                 }
             }
+        }
+    }
+
+    fn ask(&self, caller: Caller, method: String, params: Value, answer: Answer) {
+        match self.pool.upgrade().and_then(|pool| pool.hub()) {
+            Some(hub) => hub.ask_agent(caller, method, params, answer),
+            None => answer(Err("The hub has stopped".to_owned())),
         }
     }
 

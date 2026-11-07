@@ -38,10 +38,9 @@ fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError>
         .as_i64()
         .or_else(|| oauth["expiresAt"].as_str()?.parse::<i64>().ok());
     // The CLI owns its rotating refresh token. Never refresh or write it here.
+    let expired = || expired_error(oauth);
     if expiry.is_some_and(|at| at <= now_ms()) {
-        return Err(FetchError::unavailable(
-            "Claude sign-in expired. Run claude auth login, then refresh.",
-        ));
+        return Err(expired());
     }
     let response = crate::net::agent()
         .timeout(Duration::from_secs(10))
@@ -52,9 +51,7 @@ fn fetch_for(profile: &crate::accounts::Profile) -> Result<Snapshot, FetchError>
         .set("User-Agent", "claude-code/2.1.0")
         .call()
         .map_err(|error| match error {
-            ureq::Error::Status(401, _) => FetchError::unavailable(
-                "Claude sign-in expired. Run claude auth login, then refresh.",
-            ),
+            ureq::Error::Status(401, _) => expired(),
             ureq::Error::Status(403, _) => {
                 FetchError::unavailable("Claude usage is unavailable for this account.")
             }
@@ -155,16 +152,34 @@ pub fn live_windows(info: &Value) -> Vec<Window> {
     windows
 }
 
+/// The access token lasts about 8 hours. While a refresh token is present the
+/// CLI renews it on its next run, so that is not a sign-out: a failed (not
+/// unavailable) result keeps the last usage and hides the sign-in panel.
+fn expired_error(oauth: &Value) -> FetchError {
+    if oauth["refreshToken"]
+        .as_str()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        FetchError::failed("Claude usage updates after your next Claude message.")
+    } else {
+        FetchError::unavailable("Claude sign-in expired. Run claude auth login, then refresh.")
+    }
+}
+
 fn config_dir() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
 }
 fn credentials(config: Option<PathBuf>) -> Option<Value> {
+    // On macOS the CLI keeps its login in Keychain only. An item that is there
+    // but blank (the CLI clears it when a refresh fails) means signed out; an
+    // old .credentials.json must not stand in for it, or the footer would
+    // promise a renewal with a long-dead refresh token and hide Sign in.
     #[cfg(target_os = "macos")]
     {
-        if let Some(value) = keychain(config.as_deref()) {
-            return Some(value);
+        if let Some(raw) = keychain(config.as_deref()) {
+            return credential_blob(&raw);
         }
     }
     let dir = config.or_else(|| {
@@ -247,7 +262,8 @@ fn keychain_service(config: Option<&std::path::Path>) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn keychain(config: Option<&std::path::Path>) -> Option<Value> {
+/// The raw Keychain secret, or None when there is no item (or it cannot be read).
+fn keychain(config: Option<&std::path::Path>) -> Option<String> {
     use crate::process;
     use std::{
         process::{Command, Stdio},
@@ -291,7 +307,7 @@ fn keychain(config: Option<&std::path::Path>) -> Option<Value> {
     process::terminate(&mut child);
     drop(rx);
     let _ = reader.join();
-    credential_blob(&result?)
+    result
 }
 
 #[cfg(test)]
@@ -307,6 +323,15 @@ mod tests {
             "Claude Code-credentials-902e721c"
         );
         assert_eq!(keychain_service(None), "Claude Code-credentials");
+    }
+    #[test]
+    fn an_expired_access_token_with_a_refresh_token_is_not_a_sign_out() {
+        let renewable = serde_json::json!({"accessToken":"a","refreshToken":"r","expiresAt":1});
+        assert!(!expired_error(&renewable).unavailable);
+        // Claude Code blanks both tokens when a refresh fails.
+        let wiped = serde_json::json!({"accessToken":"","refreshToken":"","expiresAt":0});
+        assert!(expired_error(&wiped).unavailable);
+        assert!(expired_error(&serde_json::json!({"accessToken":"a"})).unavailable);
     }
     #[test]
     fn accepts_nested_and_legacy_credentials_without_logging_secrets() {

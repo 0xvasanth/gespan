@@ -6,7 +6,7 @@ use crate::{
     pool::Pool,
     router::{log_rank, Action},
     session::Session,
-    upstream::Upstream,
+    upstream::{Answer, Upstream},
     Grant, NoObserver, Observer, Running, ServerError, ServerSpec, Spawned, Spawner, Token,
     Toolkit,
 };
@@ -168,6 +168,20 @@ impl Inner {
         peers
     }
 
+    /// Turns away a tool call made for another caller of a bound credential.
+    pub(crate) fn check_caller(
+        &self,
+        session: i64,
+        meta: &serde_json::Map<String, Value>,
+    ) -> Result<(), String> {
+        match relock(&self.grants).bound(session) {
+            Some((key, value)) if meta.get(&key) != Some(&value) => {
+                Err("This tool credential belongs to another conversation".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn peer_of(&self, session: i64) -> Option<Peer<RoleServer>> {
         self.call_of(session)
             .map(|(peer, _)| peer)
@@ -272,21 +286,29 @@ impl Inner {
                 method,
                 params,
             } => {
-                let call = self
-                    .call_of(caller)
-                    .map(|(peer, request)| (peer, Some(request)))
-                    .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
                 let upstream = upstream.clone();
-                self.runtime.spawn(async move {
-                    let outcome = match call {
-                        Some((peer, origin)) => ask(&peer, origin, &method, params).await,
-                        None => Err("The agent that made this call has gone".to_owned()),
-                    };
-                    upstream.respond(upstream_id, outcome);
-                });
+                let answer: Answer =
+                    Box::new(move |outcome| upstream.respond(upstream_id, outcome));
+                self.ask_agent(caller, method, params, answer);
             }
             _ => {}
         }
+    }
+
+    /// Puts a server's question to a session's agent, on the call it's
+    /// making if there is one.
+    pub(crate) fn ask_agent(&self, caller: i64, method: String, params: Value, answer: Answer) {
+        let call = self
+            .call_of(caller)
+            .map(|(peer, request)| (peer, Some(request)))
+            .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
+        self.runtime.spawn(async move {
+            let outcome = match call {
+                Some((peer, origin)) => ask(&peer, origin, &method, params).await,
+                None => Err("The agent that made this call has gone".to_owned()),
+            };
+            answer(outcome);
+        });
     }
 
     pub(crate) fn watch(&self, session: i64, peer: Peer<RoleServer>) {
@@ -502,6 +524,15 @@ impl Hub {
         relock(&self.inner.grants).mint(grant)
     }
 
+    /// Binds a session's credential to one caller of a client that shares its
+    /// connections: from now on its tool calls must carry `value` under `key`
+    /// in their `_meta`, which that client sets and its model can't, and calls
+    /// without it are turned away. A new credential starts unbound. Returns
+    /// whether the session had a live credential to bind.
+    pub fn bind(&self, session: i64, key: &str, value: Value) -> bool {
+        relock(&self.inner.grants).bind(session, key, value)
+    }
+
     /// Ends a session's access, for an archived, deleted or moved session.
     pub fn revoke(&self, session: i64) {
         relock(&self.inner.grants).revoke(session, Refusal::Ended);
@@ -620,20 +651,29 @@ fn refuse(message: &str) -> Response {
         .unwrap_or_default()
 }
 
+/// Reads the request body before answering. A connection closed with part of
+/// a request unread is reset, and on Windows the reset discards a refusal the
+/// agent hasn't read yet, so the agent would see an unreachable endpoint
+/// instead of the reason.
+async fn turn_away(request: Request, message: &str) -> Response {
+    let _ = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES).await;
+    refuse(message)
+}
+
 async fn admit(State(gate): State<Gate>, mut request: Request, next: Next) -> Response {
     let headers = request.headers();
     if !host_allowed(headers, gate.address) {
-        return refuse("Host not allowed");
+        return turn_away(request, "Host not allowed").await;
     }
     if !origin_allowed(headers, gate.address) {
-        return refuse("Origin not allowed");
+        return turn_away(request, "Origin not allowed").await;
     }
     let admitted = bearer(headers)
         .ok_or(Refusal::Invalid)
         .and_then(|secret| relock(&gate.inner.grants).admit(secret));
     let grant = match admitted {
         Ok(grant) => grant,
-        Err(refusal) => return refuse(&refusal.to_string()),
+        Err(refusal) => return turn_away(request, &refusal.to_string()).await,
     };
     request.extensions_mut().insert(grant);
     let request = request.map(|body| Body::new(http_body_util::Limited::new(body, MAX_BODY_BYTES)));

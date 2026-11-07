@@ -81,9 +81,12 @@ impl Protocol {
         if id == "native-prompt" {
             self.pi.prompt_id = wire;
         }
-        self.pi
-            .deadlines
-            .insert(id, Instant::now() + Duration::from_secs(seconds));
+        let wait = Duration::from_secs(seconds);
+        #[cfg(test)]
+        let wait = super::acp::DEADLINE_OVERRIDE
+            .with(|o| o.get())
+            .unwrap_or(wait);
+        self.pi.deadlines.insert(id, Instant::now() + wait);
         write_json(stdin, request)
     }
     pub(super) fn pi_cancel(&mut self, stdin: &mut impl Write) -> Result<(), String> {
@@ -218,7 +221,14 @@ impl Protocol {
         self.pi.pending.clear();
         self.done = true;
     }
+    /// Takes the held prompt step again once the baseline is recorded.
+    pub(super) fn pi_prompt_step(&mut self, stdin: &mut impl Write) -> Result<(), String> {
+        self.pi_prompt(stdin)
+    }
     fn pi_prompt(&mut self, stdin: &mut impl Write) -> Result<(), String> {
+        if self.hold_prompt(super::prompt_gate::HeldPrompt::Pi) {
+            return Ok(());
+        }
         if self.compact {
             return self.pi_send("native-compact", json!({"type":"compact"}), 30 * 60, stdin);
         }
@@ -770,6 +780,31 @@ mod tests {
             model: None,
             settings: Default::default(),
         })
+    }
+    /// A prompt held for the turn's baseline starts its acknowledgement
+    /// deadline when it is sent, not when it was held: Pi's is 15 s.
+    #[test]
+    fn a_held_prompt_starts_its_deadline_when_it_is_sent() {
+        use crate::provider::prompt_gate::tests::{pending, protocol as held, recorded, sent};
+        let (baseline, release) = pending();
+        let mut p = held(Kind::Pi, &baseline);
+        let mut out = Vec::new();
+        p.pi_start(&mut out).unwrap();
+        p.frame(json!({"type":"response","id":"native-state","success":true,"data":{"sessionId":"saved"}}),&mut out).unwrap();
+        assert!(p.prompt_held());
+        assert!(!sent(&out).iter().any(|f| f["type"] == "prompt"));
+        assert!(!p.pi.deadlines.contains_key("native-prompt"));
+        recorded(&baseline, &release);
+        let released = Instant::now();
+        p.release_prompt(&mut out).unwrap();
+        assert!(sent(&out)
+            .iter()
+            .any(|f| f["type"] == "prompt" && f["message"] == "the user's message"));
+        let deadline = p.pi.deadlines["native-prompt"];
+        assert!(
+            deadline >= released + Duration::from_secs(14),
+            "the deadline started while held"
+        );
     }
     #[test]
     fn prompt_acknowledgements_do_not_finish_a_turn_and_retries_are_kept_alive() {

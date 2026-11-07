@@ -154,6 +154,158 @@ fn fixture_server() {
     std::process::exit(0);
 }
 
+/// Runs as a server that speaks only protocol 2026-07-28 when the test binary
+/// is re-executed: it refuses `initialize`, wants who's asking on every
+/// request, sends notifications only on a `subscriptions/listen` stream, and
+/// asks for input by answering `input_required`.
+#[test]
+fn sessionless_fixture_server() {
+    let Some(name) = std::env::var_os(FIXTURE) else {
+        return;
+    };
+    let name = name.to_string_lossy().into_owned();
+    let mut output = std::io::stdout();
+    let mut send = |value: Value| {
+        writeln!(output, "{value}").unwrap();
+        output.flush().unwrap();
+    };
+    let mut version = 1;
+    // The open stream and what it asked for.
+    let mut listen: Option<(Value, Value)> = None;
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        let Ok(message) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let id = message["id"].clone();
+        let method = message["method"].as_str().unwrap_or("");
+        let params = &message["params"];
+        if id.is_null() {
+            if method == "notifications/cancelled"
+                && listen
+                    .as_ref()
+                    .is_some_and(|(open, _)| *open == params["requestId"])
+            {
+                listen = None;
+            }
+            continue;
+        }
+        let error = |code: i64, text: &str| json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":text,"data":{"supported":["2026-07-28"]}}});
+        if method == "initialize" {
+            send(error(-32022, "Only 2026-07-28 is spoken here"));
+            continue;
+        }
+        let meta = &params["_meta"];
+        if meta["io.modelcontextprotocol/protocolVersion"] != "2026-07-28"
+            || !meta["io.modelcontextprotocol/clientCapabilities"].is_object()
+        {
+            send(error(-32602, "request _meta is missing who is asking"));
+            continue;
+        }
+        let input_required = |requests: Value, state: &str| json!({"resultType":"input_required","inputRequests":requests,"requestState":state});
+        let text = |value: Value| json!({"resultType":"complete","content":[{"type":"text","text":value.to_string()}],"isError":false});
+        let result = match method {
+            "server/discover" => json!({
+                "resultType":"complete",
+                "supportedVersions":["2026-07-28"],
+                "capabilities":{"tools":{"listChanged":true},"resources":{"subscribe":true}},
+                "ttlMs":0,
+                "cacheScope":"private",
+                "_meta":{"io.modelcontextprotocol/serverInfo":{"name":name,"version":"1"}},
+            }),
+            "subscriptions/listen" => {
+                let wanted = params["notifications"].clone();
+                send(
+                    json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{
+                        "_meta":{"io.modelcontextprotocol/subscriptionId":id},
+                        "notifications":wanted,
+                    }}),
+                );
+                listen = Some((id.clone(), wanted));
+                // The stream stays open; it has no answer until it ends.
+                continue;
+            }
+            "resources/subscribe" | "resources/unsubscribe" => {
+                send(error(-32601, "subscriptions are a stream on this version"));
+                continue;
+            }
+            "tools/list" => {
+                let mut tools = vec![json!({"name":"who","inputSchema":{"type":"object"}})];
+                tools.extend(
+                    (1..version).map(
+                        |n| json!({"name":format!("extra{n}"),"inputSchema":{"type":"object"}}),
+                    ),
+                );
+                json!({"resultType":"complete","tools":tools,"ttlMs":0,"cacheScope":"private"})
+            }
+            "resources/list" => {
+                json!({"resultType":"complete","resources":[{"uri":"file:///r","name":"r"}]})
+            }
+            "tools/call" => {
+                let arguments = &params["arguments"];
+                let responses = &params["inputResponses"];
+                let state = params["requestState"].as_str().unwrap_or("");
+                if arguments["change"] == true {
+                    version += 1;
+                    if let Some((open, wanted)) = &listen {
+                        if wanted["toolsListChanged"] == true {
+                            send(
+                                json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{
+                                    "_meta":{"io.modelcontextprotocol/subscriptionId":open},
+                                }}),
+                            );
+                        }
+                    }
+                }
+                if arguments["roots"] == true {
+                    if state != "roots" {
+                        send(json!({"jsonrpc":"2.0","id":id,"result":input_required(
+                            json!({"r":{"method":"roots/list","params":{}}}),
+                            "roots",
+                        )}));
+                        continue;
+                    }
+                    send(json!({"jsonrpc":"2.0","id":id,"result":text(responses["r"].clone())}));
+                    continue;
+                }
+                if arguments["elicit"] == true {
+                    if state != "asked" {
+                        let ask = json!({"method":"elicitation/create","params":{
+                            "mode":"form",
+                            "message":"Go ahead?",
+                            "requestedSchema":{"type":"object","properties":{"ok":{"type":"boolean"}}},
+                        }});
+                        send(
+                            json!({"jsonrpc":"2.0","id":id,"result":input_required(json!({"go":ask}),"asked")}),
+                        );
+                        continue;
+                    }
+                    send(json!({"jsonrpc":"2.0","id":id,"result":text(responses["go"].clone())}));
+                    continue;
+                }
+                if arguments["forever"] == true {
+                    send(
+                        json!({"jsonrpc":"2.0","id":id,"result":{"resultType":"input_required","requestState":"again"}}),
+                    );
+                    continue;
+                }
+                text(json!({
+                    "server":name,
+                    "pid":std::process::id(),
+                    "version":meta["io.modelcontextprotocol/protocolVersion"],
+                    "listening":listen.as_ref().map(|(_, wanted)| wanted.clone()),
+                }))
+            }
+            _ => {
+                send(error(-32601, "no"));
+                continue;
+            }
+        };
+        send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+    }
+    std::process::exit(0);
+}
+
 #[derive(Default)]
 struct Processes {
     started: AtomicUsize,
@@ -228,6 +380,13 @@ fn server(id: &str, sharing: Sharing) -> ServerSpec {
         sharing,
         tools: None,
     }
+}
+
+/// A server that speaks only protocol 2026-07-28.
+fn sessionless(id: &str, sharing: Sharing) -> ServerSpec {
+    let mut spec = server(id, sharing);
+    spec.args[1] = "sessionless_fixture_server".into();
+    spec
 }
 
 #[derive(Default)]
@@ -1091,4 +1250,228 @@ fn stopping_the_hub_stops_every_server() {
     assert_eq!(processes.alive(), 1);
     drop(hub);
     assert_eq!(processes.alive(), 0);
+}
+
+#[test]
+fn a_server_that_speaks_only_the_sessionless_protocol_starts_and_answers() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    assert_eq!(agent.tools(), ["new__who"]);
+    let answer = agent.call("new__who", json!({}));
+    assert_eq!(answer["server"], "new");
+    assert_eq!(answer["version"], "2026-07-28", "it was told who's asking");
+    assert!(rig.hub.errors().is_empty(), "{:?}", rig.hub.errors());
+}
+
+#[test]
+fn old_and_new_servers_run_side_by_side_for_one_agent() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(
+        vec![
+            server("old", Sharing::Shared),
+            sessionless("new", Sharing::Shared),
+        ],
+        |_| {},
+    );
+    let agent = Agent::connect(
+        &rig.hub,
+        &rig.hub.mint(grant(1, folder.path(), &["old", "new"])),
+    );
+    assert_eq!(agent.call("old__who", json!({}))["server"], "old");
+    assert_eq!(agent.call("new__who", json!({}))["server"], "new");
+}
+
+#[test]
+fn a_sessionless_server_gets_its_folder_from_the_hub_when_it_asks_for_roots() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("files", Sharing::PerWorkspace)], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["files"])));
+    let roots = agent.call("files__who", json!({"roots":true}));
+    let uri = roots["roots"][0]["uri"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{roots}"));
+    assert!(uri.starts_with("file://"), "{uri}");
+    let name = folder.path().file_name().unwrap().to_string_lossy();
+    assert!(uri.contains(&*name), "{uri} is the session's folder");
+}
+
+/// The call an input belongs to is known on this protocol, so even a shared
+/// process can ask the one agent that made it, and isn't moved for asking.
+#[test]
+fn a_shared_sessionless_servers_question_goes_to_the_agent_of_that_call() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    let _b = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["new"])));
+    let call = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+        "name":"new__who","arguments":{"elicit":true},
+    }});
+    let mut stream = TcpStream::connect(&a.authority).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let body = call.to_string();
+    write!(
+        stream,
+        "POST /mcp HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAuthorization: {}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nMcp-Session-Id: {}\r\nMCP-Protocol-Version: 2025-11-25\r\n\r\n{body}",
+        a.authority, a.bearer, body.len(), a.session
+    )
+    .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let answer = loop {
+        line.clear();
+        assert!(reader.read_line(&mut line).unwrap() > 0, "the stream ended");
+        let Some(message) = line
+            .strip_prefix("data:")
+            .and_then(|data| serde_json::from_str::<Value>(data.trim()).ok())
+        else {
+            continue;
+        };
+        if message["method"] == "elicitation/create" {
+            assert_eq!(message["params"]["message"], "Go ahead?");
+            let reply = json!({"jsonrpc":"2.0","id":message["id"],"result":{"action":"accept","content":{"ok":true}}});
+            exchange(&a, Some(&a.session), &reply.to_string());
+        } else if message["id"] == 7 {
+            break message;
+        }
+    };
+    let text = answer["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{answer}"));
+    let given: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(given["action"], "accept");
+    assert_eq!(given["content"]["ok"], true);
+    assert!(rig.notes.demoted.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_sessionless_server_that_never_stops_asking_fails_that_call_only() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let agent = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    let reply = agent.request(
+        "tools/call",
+        json!({"name":"new__who","arguments":{"forever":true}}),
+    );
+    let failure = reply.to_string();
+    assert!(failure.contains("kept asking"), "{failure}");
+    assert_eq!(agent.call("new__who", json!({}))["server"], "new");
+}
+
+#[test]
+fn a_sessionless_servers_tool_change_reaches_other_agents_through_its_stream() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    let b = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["new"])));
+    let listening = a.call("new__who", json!({}))["listening"].clone();
+    assert_eq!(listening["toolsListChanged"], true, "{listening}");
+    std::thread::scope(|scope| {
+        let waiting =
+            scope.spawn(|| stream_has(&b, "tools/list_changed", Duration::from_secs(5), || {}));
+        std::thread::sleep(Duration::from_millis(200));
+        a.call("new__who", json!({"change":true}));
+        assert!(waiting.join().unwrap(), "the other user was told");
+    });
+    assert_eq!(b.tools(), ["new__extra1", "new__who"]);
+}
+
+#[test]
+fn a_sessionless_server_hears_of_subscriptions_on_its_stream() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    let b = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["new"])));
+    let uri = "hub+new:file:///r";
+    assert!(a.request("resources/subscribe", json!({"uri":uri}))["error"].is_null());
+    assert!(b.request("resources/subscribe", json!({"uri":uri}))["error"].is_null());
+    let listening = a.call("new__who", json!({}))["listening"].clone();
+    assert_eq!(listening["resourceSubscriptions"], json!(["file:///r"]));
+    assert_eq!(listening["toolsListChanged"], true);
+    a.request("resources/unsubscribe", json!({"uri":uri}));
+    let listening = a.call("new__who", json!({}))["listening"].clone();
+    assert_eq!(
+        listening["resourceSubscriptions"],
+        json!(["file:///r"]),
+        "b holds it"
+    );
+    b.request("resources/unsubscribe", json!({"uri":uri}));
+    let listening = a.call("new__who", json!({}))["listening"].clone();
+    assert!(listening["resourceSubscriptions"].is_null(), "{listening}");
+    assert_eq!(
+        listening["toolsListChanged"], true,
+        "the stream is still open"
+    );
+}
+
+/// A client that shares one connection between its conversations names the
+/// one calling in `_meta`; a bound credential serves that one only.
+#[test]
+fn a_bound_credential_serves_only_calls_from_its_own_caller() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let token = rig.hub.mint(grant(1, folder.path(), &["docs"]));
+    let agent = Agent::connect(&rig.hub, &token);
+    let call = |conversation: Option<&str>| {
+        let mut params = json!({"name":"docs__who","arguments":{}});
+        if let Some(conversation) = conversation {
+            params["_meta"] = json!({"client.example/conversation":conversation});
+        }
+        agent.request("tools/call", params)
+    };
+    assert!(
+        call(None)["error"].is_null(),
+        "an unbound credential serves anyone"
+    );
+    assert!(rig
+        .hub
+        .bind(1, "client.example/conversation", json!("mine")));
+    assert!(call(Some("mine"))["error"].is_null());
+    for other in [Some("theirs"), None] {
+        let refused = call(other);
+        assert_eq!(
+            refused["error"]["message"], "This tool credential belongs to another conversation",
+            "{refused}"
+        );
+    }
+    // Whatever reaches the server is held to it, not just tool calls.
+    let theirs = json!({"client.example/conversation":"theirs"});
+    for (method, params) in [
+        (
+            "prompts/get",
+            json!({"name":"docs__greet","arguments":{"who":"x"},"_meta":theirs}),
+        ),
+        (
+            "resources/read",
+            json!({"uri":"hub+docs:file:///r","_meta":theirs}),
+        ),
+        (
+            "resources/subscribe",
+            json!({"uri":"hub+docs:file:///r","_meta":theirs}),
+        ),
+    ] {
+        let refused = agent.request(method, params);
+        assert_eq!(
+            refused["error"]["message"], "This tool credential belongs to another conversation",
+            "{method}: {refused}"
+        );
+    }
+    let mine = json!({"client.example/conversation":"mine"});
+    let read = agent.request(
+        "resources/read",
+        json!({"uri":"hub+docs:file:///r","_meta":mine}),
+    );
+    assert!(read["error"].is_null(), "{read}");
+    // A client that shares its connections lists for all of them at once.
+    assert_eq!(agent.tools(), ["docs__who"]);
+    let fresh = rig.hub.mint(grant(1, folder.path(), &["docs"]));
+    let agent = Agent::connect(&rig.hub, &fresh);
+    let reply = agent.request("tools/call", json!({"name":"docs__who","arguments":{}}));
+    assert!(
+        reply["error"].is_null(),
+        "a new credential starts unbound: {reply}"
+    );
+    assert!(!rig.hub.bind(99, "client.example/conversation", json!("x")));
 }

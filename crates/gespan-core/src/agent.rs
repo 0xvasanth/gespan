@@ -130,6 +130,10 @@ pub struct Settings {
     pub replay_failed_turn: bool,
     #[serde(skip)]
     pub attachments: Vec<std::path::PathBuf>,
+    /// The turn's workspace snapshot, still being recorded while the provider
+    /// starts. Transport-only: the provider sends no prompt before it is done.
+    #[serde(skip)]
+    pub baseline: Option<crate::checkpoint::Baseline>,
     /// Agent-run tool blocks already in this conversation. Transport-only: it
     /// seeds Claude's cross-turn agent registry when a process (re)starts.
     #[serde(skip)]

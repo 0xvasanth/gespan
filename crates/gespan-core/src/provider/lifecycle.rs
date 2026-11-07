@@ -190,6 +190,9 @@ impl Protocol {
         if matches!(self.claude.mcp, ClaudeMcp::Waiting(_)) {
             return Ok(());
         }
+        if self.hold_prompt(super::prompt_gate::HeldPrompt::Claude) {
+            return Ok(());
+        }
         let prompt = if self.request.settings.effort.as_deref() == Some("ultrathink") {
             if self.request.prompt.is_empty() {
                 "Ultrathink:".into()
@@ -199,6 +202,7 @@ impl Protocol {
         } else {
             self.request.prompt.clone()
         };
+        tracing::debug!(target: "gespan::send", stage = "claude.prompt_written");
         write_json(
             stdin,
             json!({"type":"user","session_id":"","parent_tool_use_id":null,
@@ -218,6 +222,7 @@ impl Protocol {
         if response["subtype"] != "success" {
             tracing::warn!("Claude refused the tool endpoint");
         }
+        tracing::debug!(target: "gespan::send", stage = "claude.mcp_answered");
         self.claude.mcp = ClaudeMcp::Settled;
         self.claude_prompt(stdin)
     }
