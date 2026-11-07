@@ -1492,6 +1492,42 @@ fn a_bound_credential_serves_only_calls_from_its_own_caller() {
     assert!(!rig.hub.bind(99, "client.example/conversation", json!("x")));
 }
 
+/// A credential minted bound never serves another caller, not even before
+/// its client first uses it, and withdrawing it ends it for everyone.
+#[test]
+fn a_credential_minted_bound_serves_only_its_caller_until_withdrawn() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![server("docs", Sharing::Shared)], |_| {});
+    let key = "client.example/conversation";
+    let token = rig
+        .hub
+        .mint_bound(grant(1, folder.path(), &["docs"]), key, json!("mine"));
+    let agent = Agent::connect(&rig.hub, &token);
+    let call = |conversation: Option<&str>| {
+        let mut params = json!({"name":"docs__who","arguments":{}});
+        if let Some(conversation) = conversation {
+            params["_meta"] = json!({key:conversation});
+        }
+        agent.request("tools/call", params)
+    };
+    for other in [None, Some("theirs")] {
+        let refused = call(other);
+        assert_eq!(
+            refused["error"]["message"], "This tool credential belongs to another conversation",
+            "{refused}"
+        );
+    }
+    assert!(call(Some("mine"))["error"].is_null());
+    let newer = rig.hub.mint(grant(1, folder.path(), &["docs"]));
+    assert!(
+        !rig.hub.withdraw(1, &token),
+        "a replaced credential is already gone"
+    );
+    assert!(rig.hub.holds(1, &newer), "and its successor is left alone");
+    assert!(rig.hub.withdraw(1, &newer));
+    assert!(!rig.hub.has_grant(1));
+}
+
 /// On this protocol a subscription is taken or turned down in the stream's
 /// acknowledgement, and one turned down fails like a refused subscribe.
 #[test]

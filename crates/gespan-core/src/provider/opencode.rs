@@ -241,24 +241,28 @@ fn announce_missing_tools(request: &mut Request, mounted: bool) {
 /// v2's service is shared by every conversation in the folder, so this
 /// session's server gets a name of its own, the session's permissions hide
 /// everyone else's, and the credential serves calls from this conversation
-/// only. A server added there lasts only while the service keeps the folder
-/// open, so each turn adds it again with a fresh credential.
+/// only, from before the service ever sees it. A server added there lasts
+/// only while the service keeps the folder open, so each turn adds it again
+/// with a fresh credential.
 fn mount_tools_v2(
     client: &Client,
     mount: Option<&crate::tool_servers::Mount>,
     conversation: &str,
 ) -> Option<crate::tool_servers::Access> {
     let mount = mount?;
-    let access = crate::tool_servers::Access::open(mount)?;
+    let access = crate::tool_servers::Access::open_opencode(mount, conversation)?;
     let name = crate::tool_servers::opencode_name(mount.session);
     let path = client.path(&format!("/experimental/mcp/{}", client::encode(&name)));
     let body = json!({"config":access.opencode_config()});
     match client.request("PUT", &path, Some(body)) {
-        Ok(_) if access.bind_opencode(mount.session, conversation) => Some(access),
-        Ok(_) => None,
+        Ok(_) => Some(access),
         // The error stays out of the log: it may quote the token back.
         Err(_) => {
             tracing::warn!("OpenCode refused the tool endpoint");
+            // A refusal may still have stored the server: its credential
+            // ends here, and the entry goes too where the service allows.
+            access.withdraw(mount.session);
+            let _ = client.request("DELETE", &path, None);
             None
         }
     }
@@ -895,6 +899,15 @@ mod tool_tests {
         status: u16,
         v2: bool,
     ) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
+        opencode_probing(status, v2, |_| {})
+    }
+
+    /// The stand-in, running `probe` on each body before it answers.
+    fn opencode_probing(
+        status: u16,
+        v2: bool,
+        probe: impl Fn(&serde_json::Value) + Send + 'static,
+    ) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (posted, received) = mpsc::channel();
@@ -914,6 +927,7 @@ mod tool_tests {
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
                 let body = serde_json::from_slice(&body).unwrap_or_default();
+                probe(&body);
                 posted.send((first.trim().to_owned(), body)).unwrap();
                 let mut stream = stream;
                 write!(
@@ -1048,6 +1062,77 @@ mod tool_tests {
                 .unwrap_err()
                 .contains("belongs to another conversation"),
             "a call from elsewhere is turned away"
+        );
+    }
+
+    /// A call through the hub with the credential in an OpenCode server
+    /// config, from no conversation at all.
+    fn call_as_anyone(config: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let bearer = config["headers"]["Authorization"].as_str().unwrap_or("");
+        let connection = mcp_hub::Connection {
+            url: config["url"].as_str().unwrap_or("").to_owned(),
+            token: bearer.trim_start_matches("Bearer ").to_owned(),
+        };
+        mcp_hub::call_tool(connection, "visual_show", json!({}))
+    }
+
+    #[test]
+    fn a_v2_credential_is_bound_before_the_service_sees_it() {
+        let (probed, probes) = mpsc::channel();
+        let (client, _seen) = opencode_probing(204, true, move |body| {
+            // Called while the PUT is still unanswered.
+            let _ = probed.send(call_as_anyone(&body["config"]));
+        });
+        let access = mount_tools_v2(&client, Some(&mount(5108)), "ses_mine").unwrap();
+        let refused = probes.try_recv().unwrap().unwrap_err();
+        assert!(
+            refused.contains("belongs to another conversation"),
+            "no other caller is served, even mid-mount: {refused}"
+        );
+        assert!(access.is_live(5108));
+    }
+
+    #[test]
+    fn a_refused_v2_mount_ends_its_credential_and_removes_the_server() {
+        let (client, seen) = opencode_seen(500, true);
+        let mount = mount(5109);
+        assert!(mount_tools_v2(&client, Some(&mount), "ses_mine").is_none());
+        let (put, body) = seen.try_recv().unwrap();
+        assert!(
+            put.starts_with("PUT /api/experimental/mcp/gespan_s5109?"),
+            "{put}"
+        );
+        let (delete, _) = seen.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            delete.starts_with("DELETE /api/experimental/mcp/gespan_s5109?"),
+            "{delete}"
+        );
+        let refused = call_as_anyone(&body["config"]).unwrap_err();
+        assert!(refused.contains("session has ended"), "{refused}");
+    }
+
+    #[test]
+    fn a_refused_v2_mount_leaves_a_newer_credential_alone() {
+        let mount = mount(5110);
+        let (newer, took) = mpsc::channel();
+        let (client_ok, _ok_seen) = opencode_seen(204, true);
+        // The session moves on to a credential of its own while this mount
+        // is still waiting on the service.
+        let (slow, _slow_seen) = opencode_probing(500, true, {
+            let mount = mount.clone();
+            move |body| {
+                // On the PUT only, not the DELETE that follows its refusal.
+                if body["config"].is_null() {
+                    return;
+                }
+                let _ = newer.send(mount_tools_v2(&client_ok, Some(&mount), "ses_mine"));
+            }
+        });
+        assert!(mount_tools_v2(&slow, Some(&mount), "ses_mine").is_none());
+        let newer = took.try_recv().unwrap().unwrap();
+        assert!(
+            newer.is_live(5110),
+            "only the refused mount's own credential ends"
         );
     }
 
