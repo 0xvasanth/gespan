@@ -169,7 +169,7 @@ impl Shell {
             })
             .collect()
     }
-    fn dock_open(&self, cx: &App) -> bool {
+    pub(super) fn dock_open(&self, cx: &App) -> bool {
         if self.terminal_in_panel(cx) {
             return self.panel_terminal_shown(cx);
         }

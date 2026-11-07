@@ -680,6 +680,8 @@ pub(crate) struct Shell {
     history_clock: u64,
     session_marks: HashMap<i64, Entity<SessionMark>>,
     tab_marks: HashMap<i64, Entity<SessionMark>>,
+    /// The Machines section's agent marks, by machine id and terminal id.
+    machine_marks: HashMap<(String, String), Entity<SessionMark>>,
     /// The live agents card's spinners, apart from the sidebar rows' marks.
     live_marks: HashMap<i64, Entity<SessionMark>>,
     live_agents_expanded: bool,
@@ -1123,6 +1125,7 @@ impl Shell {
             history_clock: 0,
             session_marks: HashMap::new(),
             tab_marks: HashMap::new(),
+            machine_marks: HashMap::new(),
             live_marks: HashMap::new(),
             live_agents_expanded: false,
             live_tick: None,
@@ -1430,6 +1433,11 @@ impl Shell {
             this.observations.push(
                 cx.observe_global::<crate::hold::Hold>(|this, cx| this.hold_changed_elsewhere(cx)),
             );
+        }
+        if let Some(machines) = crate::machines::get(cx) {
+            this.observations
+                .push(cx.observe(&machines, |this, _, cx| this.machines_changed(cx)));
+            this.sync_machine_marks(cx);
         }
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {

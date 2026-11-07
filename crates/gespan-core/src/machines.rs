@@ -5,8 +5,8 @@
 //! Anything here that runs herdr or writes to disk blocks. Call it from a
 //! background task, never the UI thread.
 use crate::scm::shell::{dirs_home, gui_search_path, which_in_path};
-use herdr_link::{Agent, AgentStatus, Connection, SshBridge};
-pub use herdr_link::{Machine, Online, Snapshot};
+pub use herdr_link::{Agent, AgentStatus, Machine, Online, Snapshot, Workspace};
+use herdr_link::{Connection, SshBridge};
 use std::{
     collections::HashMap,
     ffi::OsString,

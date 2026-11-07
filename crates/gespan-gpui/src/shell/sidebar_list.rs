@@ -1,5 +1,6 @@
 //! Only construct and lay out sidebar cards near the viewport.
 use super::*;
+use crate::machines::sidebar as machine_rows;
 use gespan_core::session_groups::Entry;
 use gpui::{ListAlignment, ListState, list};
 use std::cell::{Cell, RefCell};
@@ -31,6 +32,13 @@ enum Row {
     ClassicFolderNew(String),
     ClassicGap(usize),
     Empty,
+    MachinesHeading,
+    /// A herdr machine, by id.
+    Machine(String),
+    MachineAgent {
+        machine: String,
+        terminal_id: String,
+    },
 }
 
 pub(super) struct SidebarList {
@@ -120,6 +128,40 @@ impl SidebarList {
         // Navigation and the Pilot overview can change height independently.
         self.state.remeasure_items(0..self.rows.len().min(2));
     }
+}
+
+/// The Machines section, when it is shown and has a machine to list.
+/// Whether any rows were added.
+fn push_machine_rows(rows: &mut Vec<Row>, cx: &App) -> bool {
+    if !crate::machines::visible(cx) {
+        return false;
+    }
+    let Some(machines) = crate::machines::get(cx) else {
+        return false;
+    };
+    let mut listed = machines
+        .read(cx)
+        .views()
+        .iter()
+        .filter(|view| machine_rows::listed(view))
+        .peekable();
+    if listed.peek().is_none() {
+        return false;
+    }
+    rows.push(Row::MachinesHeading);
+    for view in listed {
+        let machine = view.machine.id.clone();
+        rows.push(Row::Machine(machine.clone()));
+        rows.extend(
+            machine_rows::agents(view)
+                .into_iter()
+                .map(|agent| Row::MachineAgent {
+                    machine: machine.clone(),
+                    terminal_id: agent.terminal_id.clone(),
+                }),
+        );
+    }
+    true
 }
 
 fn age_label(updated_at: u64, now: u64) -> &'static str {
@@ -281,12 +323,15 @@ impl Shell {
 
     pub(super) fn prepare_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
         if self.workspace.classic_layout {
-            self.prepare_classic_sidebar_list(entries);
+            self.prepare_classic_sidebar_list(entries, cx);
             return;
         }
         let groups = self.project_groups();
         let now = gespan_core::time::now_ms();
         let mut rows = vec![Row::Navigation, Row::Pilots];
+        if push_machine_rows(&mut rows, cx) {
+            rows.push(Row::Gap);
+        }
         let mut folders = false;
         for entry in entries {
             let (members, collapsed) = match entry {
@@ -371,7 +416,7 @@ impl Shell {
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
 
-    fn prepare_classic_sidebar_list(&mut self, entries: &[Entry]) {
+    fn prepare_classic_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
         let groups = self.project_groups();
         // The original sidebar: the list has p-1.5, gap-0.5 and pb-10.
         // Its project navigation and Pilot roster belong to the first rail.
@@ -421,6 +466,7 @@ impl Shell {
         if entries.is_empty() {
             rows.push(Row::Empty);
         }
+        push_machine_rows(&mut rows, cx);
         rows.push(Row::ClassicGap(40));
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
@@ -539,6 +585,24 @@ impl Shell {
                     .into_any();
             }
             Row::ClassicGap(height) => return div().h(px(height as f32)).into_any(),
+            Row::MachinesHeading => section_label("Machines").into_any(),
+            Row::Machine(id) => {
+                let Some(view) = crate::machines::get(cx).and_then(|machines| {
+                    let machines = machines.read(cx);
+                    machines
+                        .views()
+                        .iter()
+                        .find(|v| v.machine.id == id)
+                        .cloned()
+                }) else {
+                    return div().into_any();
+                };
+                machine_rows::machine_row(&view).into_any_element()
+            }
+            Row::MachineAgent {
+                machine,
+                terminal_id,
+            } => self.machine_agent_row(&machine, &terminal_id, cx),
             Row::Empty => div()
                 .px_2()
                 .py_2()
@@ -556,6 +620,182 @@ impl Shell {
             .when(!self.workspace.classic_layout, |d| d.px_2().pb_px())
             .child(content)
             .into_any()
+    }
+}
+
+impl Shell {
+    /// The machine list or a turn seen changed: marks follow, and the
+    /// sidebar index is rebuilt only when machines or agents come or go.
+    pub(super) fn machines_changed(&mut self, cx: &mut Context<Self>) {
+        self.sync_machine_marks(cx);
+        let mut rows = Vec::new();
+        push_machine_rows(&mut rows, cx);
+        let shown = self.sidebar_list.rows.iter().filter(|row| {
+            matches!(
+                row,
+                Row::MachinesHeading | Row::Machine(_) | Row::MachineAgent { .. }
+            )
+        });
+        if !shown.eq(rows.iter()) {
+            self.sidebar_list.invalidate_structure();
+        }
+        self.sidebar_frame.update(cx, |_, cx| cx.notify());
+    }
+
+    /// One cached mark per listed agent with a known status; the rest are
+    /// dropped.
+    pub(super) fn sync_machine_marks(&mut self, cx: &mut Context<Self>) {
+        let mut marks = HashMap::new();
+        if crate::machines::visible(cx)
+            && let Some(machines) = crate::machines::get(cx)
+        {
+            let machines = machines.read(cx);
+            for view in machines.views().iter().filter(|v| machine_rows::listed(v)) {
+                let id = &view.machine.id;
+                for agent in &view.snapshot.agents {
+                    if let Some(mark) = machines.mark(id, agent) {
+                        let provider = agent.agent.clone().unwrap_or_default();
+                        let key = (id.clone(), agent.terminal_id.clone());
+                        marks.insert(key, (provider, machine_rows::state_for(mark)));
+                    }
+                }
+            }
+        }
+        self.machine_marks.retain(|key, _| marks.contains_key(key));
+        for (key, (provider, state)) in marks {
+            let mark = self
+                .machine_marks
+                .entry(key)
+                .or_insert_with(|| cx.new(|_| SessionMark::new(provider.clone())))
+                .clone();
+            mark.update(cx, |mark, cx| mark.set(&provider, state, cx));
+        }
+    }
+
+    fn machine_agent_row(
+        &mut self,
+        machine_id: &str,
+        terminal_id: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(machines) = crate::machines::get(cx) else {
+            return div().into_any();
+        };
+        let machines = machines.read(cx);
+        let Some((view, agent)) = machine_rows::find(machines.views(), machine_id, terminal_id)
+        else {
+            return div().into_any();
+        };
+        let (greyed, _) = machine_rows::machine_status(view);
+        let mark = self
+            .machine_marks
+            .get(&(machine_id.to_owned(), terminal_id.to_owned()))
+            .map(|mark| mark.clone().into_any_element());
+        // Without a herdr there is no client to open.
+        let on_click = (machines.herdr_found() == Some(true)).then(|| {
+            let (machine, terminal) = (machine_id.to_owned(), terminal_id.to_owned());
+            cx.listener(move |this, _, window, cx| {
+                this.open_machine_agent(&machine, &terminal, window, cx)
+            })
+        });
+        machine_rows::agent_row(machine_id, agent, greyed, mark, on_click).into_any_element()
+    }
+
+    /// Opens herdr's own client for the agent in a terminal tab, or returns
+    /// to the one already open, and counts its finished turn as seen.
+    fn open_machine_agent(
+        &mut self,
+        machine_id: &str,
+        terminal_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(machines) = crate::machines::get(cx) else {
+            return;
+        };
+        let m = machines.read(cx);
+        let Some((view, agent)) = machine_rows::find(m.views(), machine_id, terminal_id) else {
+            return;
+        };
+        let (title, pane, seq) = (
+            machine_rows::attach_title(view, agent),
+            agent.pane_id.clone(),
+            agent.completion_seq,
+        );
+        let open_tab = m
+            .attach_tab(machine_id, terminal_id)
+            .and_then(|tab| tab.upgrade());
+        if let Some(ix) = open_tab.and_then(|tab| {
+            self.terminals
+                .get(&self.workspace.project)?
+                .iter()
+                .position(|t| *t == tab)
+        }) {
+            self.show_terminal_tab(ix, window, cx);
+            if let Some(seq) = seq {
+                crate::machines::mark_seen(machine_id, terminal_id, seq, cx);
+            }
+            return;
+        }
+        let Some(attach) = machines.update(cx, |m, _| m.begin_attach(machine_id, terminal_id))
+        else {
+            return;
+        };
+        let (machine, terminal) = (machine_id.to_owned(), terminal_id.to_owned());
+        let lookup = {
+            let machine = machine.clone();
+            cx.background_executor()
+                .spawn(async move { attach(&machine, &pane) })
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let command = lookup.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                machines.update(cx, |m, cx| {
+                    m.end_attach(&machine, &terminal);
+                    if command.is_none() {
+                        m.set_herdr_found(false, cx);
+                    }
+                });
+                let Some(command) = command else {
+                    return;
+                };
+                let tab = this.open_command_terminal(title.into(), command, window, cx);
+                machines.update(cx, |m, _| {
+                    m.set_attach_tab(&machine, &terminal, tab.downgrade())
+                });
+                if let Some(seq) = seq {
+                    crate::machines::mark_seen(&machine, &terminal, seq, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Brings the dock's tab `ix` into view, in the panel or the dock, and
+    /// focuses it.
+    fn show_terminal_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let in_panel = self.terminal_in_panel(cx);
+        let was_open = self.dock_open(cx);
+        let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project) else {
+            return;
+        };
+        dock.active = ix.min(dock.terminals.len().saturating_sub(1));
+        let opening = !in_panel && !was_open;
+        if opening {
+            dock.open = true;
+        }
+        self.dock_tab_scroll.scroll_to_item(dock.active);
+        if in_panel {
+            self.show_panel_terminal(window, cx);
+        } else {
+            if opening {
+                self.slide_dock(true, cx);
+                self.fit_sidebar(cx);
+            }
+            self.focus_terminal(window, cx);
+        }
+        self.persist(cx);
+        cx.notify();
     }
 }
 
@@ -1376,5 +1616,367 @@ mod tests {
         assert_eq!(age_label(0, now), "Older");
         // A local calendar day remains Yesterday across daylight-saving changes.
         assert_eq!(age_label(ms(25, 0, 1), ms(26, 0, 5)), "Yesterday");
+    }
+
+    mod machines {
+        use super::super::super::*;
+        use super::super::Row;
+        use crate::machines::Machines;
+        use crate::session_mark::State;
+        use gespan_core::machines::{
+            Agent, AgentStatus, Machine, MachineView, Online, Snapshot, Workspace,
+        };
+        use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+        use std::time::Duration;
+
+        fn agent(terminal: &str, workspace: &str, status: AgentStatus, seq: Option<u64>) -> Agent {
+            Agent {
+                terminal_id: terminal.into(),
+                pane_id: format!("{workspace}:p-{terminal}"),
+                workspace_id: workspace.into(),
+                tab_id: format!("{workspace}:t1"),
+                name: Some(format!("{terminal} agent")),
+                agent: Some("claude".into()),
+                title: None,
+                agent_status: status,
+                completion_seq: seq,
+                cwd: None,
+            }
+        }
+
+        fn view(online: Online, agents: Vec<Agent>) -> MachineView {
+            MachineView {
+                machine: Machine {
+                    id: "m1".into(),
+                    label: "box".into(),
+                    target: "me@box".into(),
+                    session: "default".into(),
+                    enabled: true,
+                },
+                snapshot: Snapshot {
+                    online,
+                    version: None,
+                    workspaces: vec![
+                        Workspace {
+                            workspace_id: "w1".into(),
+                            label: "one".into(),
+                        },
+                        Workspace {
+                            workspace_id: "w2".into(),
+                            label: "two".into(),
+                        },
+                    ],
+                    agents,
+                },
+                version_mismatch: None,
+                needs_install: false,
+            }
+        }
+
+        /// One machine: `a` finished a turn not yet seen, `b` is working.
+        /// herdr lists `b` first, but its workspace comes second.
+        fn two_agents(online: Online) -> MachineView {
+            view(
+                online,
+                vec![
+                    agent("b", "w2", AgentStatus::Working, None),
+                    agent("a", "w1", AgentStatus::Done, Some(3)),
+                ],
+            )
+        }
+
+        fn window(
+            views: Vec<MachineView>,
+            shown: bool,
+            cx: &mut TestAppContext,
+        ) -> (WindowHandle<Shell>, Entity<Machines>) {
+            let machines = cx.update(|cx| {
+                if shown {
+                    crate::machines::show_for_test(cx);
+                }
+                crate::machines::install_for_test(views, cx)
+            });
+            let (window, _, _) = super::super::super::tests::window(cx);
+            (window, machines)
+        }
+
+        fn rows(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<Row> {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.refresh_sidebar_structure(cx);
+                    shell.sidebar_list.rows.clone()
+                })
+                .unwrap()
+        }
+
+        fn machine_rows(rows: &[Row]) -> Vec<Row> {
+            rows.iter()
+                .filter(|row| {
+                    matches!(
+                        row,
+                        Row::MachinesHeading | Row::Machine(_) | Row::MachineAgent { .. }
+                    )
+                })
+                .cloned()
+                .collect()
+        }
+
+        fn agent_row(terminal: &str) -> Row {
+            Row::MachineAgent {
+                machine: "m1".into(),
+                terminal_id: terminal.into(),
+            }
+        }
+
+        fn mark(
+            window: &WindowHandle<Shell>,
+            terminal: &str,
+            cx: &mut TestAppContext,
+        ) -> Option<State> {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell
+                        .machine_marks
+                        .get(&("m1".to_owned(), terminal.to_owned()))
+                        .map(|mark| mark.read(cx).state())
+                })
+                .unwrap()
+        }
+
+        fn click_agent(window: &WindowHandle<Shell>, terminal: &str, cx: &mut TestAppContext) {
+            let visual = &mut VisualTestContext::from_window((*window).into(), cx);
+            visual.run_until_parked();
+            let selector = format!("machine-agent-m1-{terminal}");
+            let bounds = visual
+                .debug_bounds(Box::leak(selector.into_boxed_str()))
+                .unwrap_or_else(|| panic!("agent {terminal} is not in the sidebar"));
+            visual.simulate_click(bounds.center(), Default::default());
+            visual.run_until_parked();
+        }
+
+        fn terminal_count(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> usize {
+            window
+                .update(cx, |shell, _, _| {
+                    shell
+                        .terminals
+                        .get(&shell.workspace.project)
+                        .map_or(0, Vec::len)
+                })
+                .unwrap()
+        }
+
+        #[gpui::test]
+        fn machines_follow_pilots_with_agents_in_workspace_order(cx: &mut TestAppContext) {
+            let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
+            let rows = rows(&window, cx);
+            assert_eq!(
+                rows[..6],
+                [
+                    Row::Navigation,
+                    Row::Pilots,
+                    Row::MachinesHeading,
+                    Row::Machine("m1".into()),
+                    agent_row("a"),
+                    agent_row("b"),
+                ]
+            );
+            assert_eq!(mark(&window, "a", cx), Some(State::Done));
+            assert_eq!(mark(&window, "b", cx), Some(State::Working));
+        }
+
+        #[gpui::test]
+        fn machines_show_in_the_classic_sidebar_after_the_sessions(cx: &mut TestAppContext) {
+            let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.workspace.classic_layout = true;
+                    shell.sidebar_list.invalidate_structure();
+                    shell.refresh_sidebar_structure(cx);
+                })
+                .unwrap();
+            let rows = rows(&window, cx);
+            let at = rows
+                .iter()
+                .position(|r| *r == Row::MachinesHeading)
+                .unwrap();
+            assert_eq!(
+                rows[at..],
+                [
+                    Row::MachinesHeading,
+                    Row::Machine("m1".into()),
+                    agent_row("a"),
+                    agent_row("b"),
+                    Row::ClassicGap(40),
+                ]
+            );
+        }
+
+        #[gpui::test]
+        fn machines_offline_machine_keeps_its_agents(cx: &mut TestAppContext) {
+            let offline = Online::Offline {
+                reason: "no route".into(),
+                retry_in: Duration::from_secs(8),
+            };
+            let (window, _) = window(vec![two_agents(offline)], true, cx);
+            assert_eq!(
+                machine_rows(&rows(&window, cx)),
+                [
+                    Row::MachinesHeading,
+                    Row::Machine("m1".into()),
+                    agent_row("a"),
+                    agent_row("b"),
+                ]
+            );
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            assert!(visual.debug_bounds("machine-m1-offline").is_some());
+            assert!(visual.debug_bounds("machine-agent-m1-a").is_some());
+        }
+
+        #[gpui::test]
+        fn machines_rows_are_absent_without_machines(cx: &mut TestAppContext) {
+            let (window, _) = window(Vec::new(), true, cx);
+            assert!(machine_rows(&rows(&window, cx)).is_empty());
+        }
+
+        #[gpui::test]
+        fn machines_rows_are_absent_when_hidden(cx: &mut TestAppContext) {
+            let (window, _) = window(vec![two_agents(Online::Online)], false, cx);
+            assert!(machine_rows(&rows(&window, cx)).is_empty());
+            let marks = window
+                .update(cx, |shell, _, _| shell.machine_marks.len())
+                .unwrap();
+            assert_eq!(marks, 0);
+        }
+
+        #[gpui::test]
+        fn machines_rows_and_marks_follow_the_list(cx: &mut TestAppContext) {
+            let (window, machines) = window(vec![two_agents(Online::Online)], true, cx);
+            assert_eq!(machine_rows(&rows(&window, cx)).len(), 4);
+            // `b` closed and `a` started working.
+            let next = view(
+                Online::Online,
+                vec![agent("a", "w1", AgentStatus::Working, Some(3))],
+            );
+            cx.update(|cx| crate::machines::set_for_test(&machines, vec![next], None, cx));
+            cx.run_until_parked();
+            assert_eq!(
+                machine_rows(&rows(&window, cx)),
+                [
+                    Row::MachinesHeading,
+                    Row::Machine("m1".into()),
+                    agent_row("a"),
+                ]
+            );
+            assert_eq!(mark(&window, "a", cx), Some(State::Working));
+            assert_eq!(mark(&window, "b", cx), None);
+            // An unknown status shows no mark.
+            let unknown = view(
+                Online::Online,
+                vec![agent("a", "w1", AgentStatus::Unknown, Some(3))],
+            );
+            cx.update(|cx| crate::machines::set_for_test(&machines, vec![unknown], None, cx));
+            cx.run_until_parked();
+            assert_eq!(mark(&window, "a", cx), None);
+            // A status change repaints without rebuilding the sidebar index.
+            let rebuilds = window
+                .update(cx, |shell, _, _| shell.sidebar_list.structural_rebuilds)
+                .unwrap();
+            let blocked = view(
+                Online::Online,
+                vec![agent("a", "w1", AgentStatus::Blocked, Some(3))],
+            );
+            cx.update(|cx| crate::machines::set_for_test(&machines, vec![blocked], None, cx));
+            cx.run_until_parked();
+            assert_eq!(mark(&window, "a", cx), Some(State::Attention));
+            rows(&window, cx);
+            assert_eq!(
+                window
+                    .update(cx, |shell, _, _| shell.sidebar_list.structural_rebuilds)
+                    .unwrap(),
+                rebuilds
+            );
+            // The last machine going away takes the section with it.
+            cx.update(|cx| crate::machines::set_for_test(&machines, Vec::new(), None, cx));
+            cx.run_until_parked();
+            assert!(machine_rows(&rows(&window, cx)).is_empty());
+        }
+
+        #[gpui::test]
+        fn machines_clicking_an_agent_attaches_and_marks_it_seen(cx: &mut TestAppContext) {
+            let (window, machines) = window(vec![two_agents(Online::Online)], true, cx);
+            window
+                .update(cx, |_, _, cx| cx.set_reduce_motion(true))
+                .unwrap();
+            let before = terminal_count(&window, cx);
+            click_agent(&window, "a", cx);
+            assert_eq!(terminal_count(&window, cx), before + 1);
+            let terminal = window
+                .update(cx, |shell, window, cx| {
+                    let terminal = shell.terminals[&shell.workspace.project]
+                        .last()
+                        .unwrap()
+                        .clone();
+                    let t = terminal.read(cx);
+                    assert_eq!(t.title, "a agent on box");
+                    #[cfg(unix)]
+                    assert_eq!(
+                        t.command().map(|(_, args)| args[1].clone()),
+                        Some("herdr --machine 'm1' agent attach 'w1:p-a'".to_owned())
+                    );
+                    assert!(t.focus_handle(cx).is_focused(window));
+                    terminal
+                })
+                .unwrap();
+            // Seen at once, without waiting for the registry.
+            assert_eq!(
+                cx.update(|cx| machines.read(cx).seen_seq("m1", "a")),
+                Some(3)
+            );
+            assert_eq!(mark(&window, "a", cx), Some(State::Idle));
+            assert_eq!(
+                cx.update(|cx| machines
+                    .read(cx)
+                    .attach_tab("m1", "a")
+                    .and_then(|t| t.upgrade())),
+                Some(terminal.clone())
+            );
+
+            // A second click returns to that tab instead of opening another.
+            window
+                .update(cx, |shell, window, cx| {
+                    shell.select_terminal(0, window, cx);
+                })
+                .unwrap();
+            click_agent(&window, "a", cx);
+            assert_eq!(terminal_count(&window, cx), before + 1);
+            window
+                .update(cx, |shell, window, cx| {
+                    let project = shell.workspace.project.clone();
+                    let dock = &shell.workspace.docks[&project];
+                    assert_eq!(shell.terminals[&project][dock.active], terminal);
+                    assert!(terminal.focus_handle(cx).is_focused(window));
+                })
+                .unwrap();
+
+            // Another agent gets a tab of its own.
+            click_agent(&window, "b", cx);
+            assert_eq!(terminal_count(&window, cx), before + 2);
+        }
+
+        #[gpui::test]
+        fn machines_clicking_without_herdr_does_nothing(cx: &mut TestAppContext) {
+            let (window, machines) = window(vec![two_agents(Online::Online)], true, cx);
+            cx.update(|cx| crate::machines::set_attach_for_test(&machines, |_, _| None, cx));
+            let before = terminal_count(&window, cx);
+            click_agent(&window, "a", cx);
+            assert_eq!(terminal_count(&window, cx), before);
+            // Nothing was opened, so nothing counts as seen.
+            assert_eq!(mark(&window, "a", cx), Some(State::Done));
+            assert_eq!(cx.update(|cx| machines.read(cx).herdr_found()), Some(false));
+            // Known missing, the row stops offering the click at all.
+            click_agent(&window, "a", cx);
+            assert_eq!(terminal_count(&window, cx), before);
+        }
     }
 }
