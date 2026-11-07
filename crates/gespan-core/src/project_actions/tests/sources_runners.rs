@@ -4,6 +4,8 @@ use super::super::sources::runners::{
 use super::super::sources::Source;
 use super::super::tasks_json::resolve;
 use super::super::{Ctx, Found};
+
+const NEEDS_ARGUMENTS: &str = "Needs arguments, which Gespan can't pass yet";
 use std::path::Path;
 
 fn parse_with(manager: &'static str, source: &dyn Source, file: &str, text: &str) -> Vec<Found> {
@@ -215,13 +217,56 @@ tidy:
     echo ok
 ";
     let found = parse(&Just, "justfile", text);
-    assert_eq!(labels(&found), ["build", "quiet", "deploy", "tidy"]);
+    assert_eq!(labels(&found), ["build", "test", "quiet", "deploy", "tidy"]);
     assert_eq!(found[0].detail.as_deref(), Some("Build everything"));
-    // `test target=.all.:` has a default argument, which the recipe pattern
-    // skips, and its doc comment must not carry over to `quiet`.
-    assert_eq!(found[1].detail, None);
+    assert_eq!(found[1].detail.as_deref(), Some("Run the tests"));
     assert_eq!(found[2].detail, None);
     assert_eq!(line("just", "justfile", &found[0]), "just build");
+    // `test` has a default for its only parameter, so it runs as is.
+    assert_eq!(found[1].blocked, None);
+    assert_eq!(line("just", "justfile", &found[1]), "just test");
+    assert_eq!(found[3].blocked.as_deref(), Some(NEEDS_ARGUMENTS));
+}
+
+#[test]
+fn just_recipes_run_when_every_parameter_has_a_default() {
+    let text = "\
+plain:
+quoted a='1' b=\"two words\":
+variadic mode=\"debug\" *flags: plain
+colon url='http://x:1' :
+expression x=(a + \"b:c\") y=VAR:
+exported $port='80':
+plus_default +flags='-q':
+triple x='''it's here''' y=\"\"\"a \"b\" c\"\"\":
+required target:
+required_plus +files:
+required_exported $env:
+mixed a='1' b:
+alias p := plain
+x := 'not a recipe'
+set dotenv-load := true
+";
+    let found = parse(&Just, "justfile", text);
+    let runnable = [
+        "plain",
+        "quoted",
+        "variadic",
+        "colon",
+        "expression",
+        "exported",
+        "plus_default",
+        "triple",
+    ];
+    let blocked = ["required", "required_plus", "required_exported", "mixed"];
+    let expected: Vec<_> = runnable.iter().chain(&blocked).copied().collect();
+    assert_eq!(labels(&found), expected);
+    for found in &found {
+        let name = found.label.as_str();
+        assert_eq!(line("just", "justfile", found), format!("just {name}"));
+        let reason = blocked.contains(&name).then_some(NEEDS_ARGUMENTS);
+        assert_eq!(found.blocked.as_deref(), reason, "{name}");
+    }
 }
 
 #[test]
@@ -306,4 +351,42 @@ test:
     assert_eq!(found[1].detail, None);
     assert_eq!(found[2].detail.as_deref(), Some("Run the suite"));
     assert_eq!(line("make", "Makefile", &found[0]), "make all");
+}
+
+#[test]
+fn a_huge_package_json_lists_in_file_order_quickly() {
+    // A repo's file is untrusted, so ordering must stay linear in its size.
+    let names: Vec<String> = (0..50_000).rev().map(|n| format!("s{n}")).collect();
+    let scripts: Vec<String> = names
+        .iter()
+        .map(|name| format!("\"{name}\": \"x\""))
+        .collect();
+    let text = format!("{{ \"scripts\": {{ {} }} }}", scripts.join(", "));
+    let started = std::time::Instant::now();
+    let found = parse(&PackageJson, "package.json", &text);
+    let took = started.elapsed();
+    assert_eq!(labels(&found), names);
+    assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+}
+
+#[test]
+fn huge_justfiles_and_makefiles_list_quickly() {
+    let names: Vec<String> = (0..50_000).map(|n| format!("t{n}")).collect();
+    for (source, file, body) in [
+        (&Just as &dyn Source, "justfile", "    x"),
+        (&Makefile, "Makefile", "\tx"),
+    ] {
+        let text: String = names
+            .iter()
+            .map(|name| format!("{name}:\n{body}\n"))
+            .collect();
+        let started = std::time::Instant::now();
+        let found = parse(source, file, &text);
+        let took = started.elapsed();
+        assert_eq!(labels(&found), names);
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "{file} took {took:?}"
+        );
+    }
 }

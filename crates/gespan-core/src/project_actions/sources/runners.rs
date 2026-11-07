@@ -4,7 +4,10 @@
 use super::{in_order, json_keys, json_object, string, toml_keys, toml_object, Source};
 use crate::project_actions::{Ctx, Found};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::Path;
+
+const NEEDS_ARGUMENTS: &str = "Needs arguments, which Gespan can't pass yet";
 
 /// `scripts` in `package.json`, run with the project's package manager.
 pub struct PackageJson;
@@ -133,6 +136,7 @@ impl Source for Just {
     }
     fn parse(&self, _ctx: &Ctx, _file: &str, text: &str) -> Result<Vec<Found>, String> {
         let mut found: Vec<Found> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         let mut doc: Option<String> = None;
         let mut private = false;
         for line in text.lines() {
@@ -151,38 +155,104 @@ impl Source for Just {
                     .any(|attribute| attribute.trim() == "private");
                 continue;
             }
-            let name = just_recipe(line);
+            let recipe = just_recipe(line);
             let (doc, private) = (doc.take(), std::mem::take(&mut private));
-            let Some(name) = name else { continue };
-            if private || name.starts_with('_') || found.iter().any(|f| f.label == name) {
+            let Some((name, needs_arguments)) = recipe else {
+                continue;
+            };
+            if private || name.starts_with('_') || !seen.insert(name) {
                 continue;
             }
             let mut recipe = tool(name, "just", &[]);
             recipe.detail = doc;
+            recipe.blocked = needs_arguments.then(|| NEEDS_ARGUMENTS.into());
             found.push(recipe);
         }
         Ok(found)
     }
 }
 
-/// The recipe a line starts, matching `^@?([A-Za-z0-9_-]+)(\s[^:=]*)?:(?!=)`.
-/// Settings, aliases and assignments end in `:=` or `=`, so they don't match.
-fn just_recipe(line: &str) -> Option<&str> {
+/// The recipe a line starts, and whether it needs arguments: a parameter
+/// with no default that isn't `*` variadic. Settings, aliases and
+/// assignments end in `:=`, so they don't match.
+fn just_recipe(line: &str) -> Option<(&str, bool)> {
     let line = line.strip_prefix('@').unwrap_or(line);
-    let end = line
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(line.len());
-    let (name, rest) = line.split_at(end);
+    let (name, mut rest) = line.split_at(name_end(line));
     if name.is_empty() {
         return None;
     }
-    let after_params = if rest.starts_with(char::is_whitespace) {
-        let at = rest.find([':', '='])?;
-        rest[at..].strip_prefix(':')?
-    } else {
-        rest.strip_prefix(':')?
-    };
-    (!after_params.starts_with('=')).then_some(name)
+    let mut needs_arguments = false;
+    loop {
+        let spaced = rest.starts_with(char::is_whitespace);
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix(':') {
+            return (!after.starts_with('=')).then_some((name, needs_arguments));
+        }
+        // `name`, `$name`, `*name` or `+name`, then `=default`.
+        if !spaced {
+            return None;
+        }
+        let optional = rest.starts_with('*');
+        rest = rest.strip_prefix(['*', '+']).unwrap_or(rest);
+        rest = rest.strip_prefix('$').unwrap_or(rest);
+        let (parameter, after) = rest.split_at(name_end(rest));
+        if parameter.is_empty() {
+            return None;
+        }
+        rest = after;
+        match rest.strip_prefix('=') {
+            Some(value) => rest = &value[just_value(value)?..],
+            None => needs_arguments |= !optional,
+        }
+    }
+}
+
+/// Where a name of letters, digits, `_` and `-` ends.
+fn name_end(text: &str) -> usize {
+    text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(text.len())
+}
+
+/// The length of a parameter's default: a quoted string, a name, or an
+/// expression in parentheses, which may hold quoted strings of its own.
+fn just_value(text: &str) -> Option<usize> {
+    for triple in ["'''", "\"\"\""] {
+        if let Some(body) = text.strip_prefix(triple) {
+            return Some(2 * triple.len() + body.find(triple)?);
+        }
+    }
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' && open == '"' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+                if depth == 0 {
+                    return Some(at + 1);
+                }
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(at + 1);
+                }
+            }
+            _ if depth > 0 => {}
+            _ if at == 0 => return (name_end(text) > 0).then(|| name_end(text)),
+            _ => return None,
+        }
+    }
+    None
 }
 
 impl Source for CargoAlias {
@@ -255,12 +325,13 @@ impl Source for Makefile {
     }
     fn parse(&self, _ctx: &Ctx, _file: &str, text: &str) -> Result<Vec<Found>, String> {
         let mut found: Vec<Found> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         for line in text.lines() {
             // Recipe lines start with a tab.
             let Some((name, rest)) = make_target(line) else {
                 continue;
             };
-            if found.iter().any(|f| f.label == name) {
+            if !seen.insert(name) {
                 continue;
             }
             let mut target = tool(name, "make", &[]);

@@ -4,6 +4,7 @@
 use super::{Ctx, Found};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 
 pub(crate) mod agent_apps;
 pub(crate) mod editors;
@@ -76,22 +77,20 @@ pub(super) fn toml_keys(text: &str, path: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// `map`'s entries in `order`, then any that `order` misses, sorted.
+/// `map`'s entries in `order`, then any that `order` misses, sorted. Linear,
+/// since a repo's file can list any number of keys.
 pub(super) fn in_order<'a>(
     map: &'a Map<String, Value>,
     order: &[String],
 ) -> Vec<(&'a String, &'a Value)> {
-    let mut entries: Vec<_> = Vec::with_capacity(map.len());
-    for key in order {
-        if let Some(entry) = map.get_key_value(key) {
-            if !entries.iter().any(|(seen, _)| *seen == entry.0) {
-                entries.push(entry);
-            }
-        }
-    }
+    let mut seen: HashSet<&str> = HashSet::with_capacity(map.len());
+    let mut entries: Vec<_> = order
+        .iter()
+        .filter_map(|key| map.get_key_value(key))
+        .filter(|(key, _)| seen.insert(key.as_str()))
+        .collect();
     if entries.len() < map.len() {
-        let rest: Vec<_> = map.iter().filter(|(key, _)| !order.contains(key)).collect();
-        entries.extend(rest);
+        entries.extend(map.iter().filter(|(key, _)| !seen.contains(key.as_str())));
     }
     entries
 }
