@@ -1260,14 +1260,14 @@ fn paint_label(
     let line = window
         .text_system()
         .shape_line(text.into(), px(font_size), &[run], None);
-    let _ = line.paint(
-        at,
-        px(font_size * 1.4),
-        gpui::TextAlign::Left,
-        None,
-        window,
-        cx,
-    );
+    let (top, height) = label_box(at, line.ascent, line.descent);
+    let _ = line.paint(top, height, gpui::TextAlign::Left, None, window, cx);
+}
+/// The line box for a label whose `y` is its baseline, as in SVG text and
+/// canvas `fillText`. A box of exactly ascent + descent has no leading, so
+/// gpui puts the baseline one ascent below the box's top.
+fn label_box(baseline: Point<Pixels>, ascent: Pixels, descent: Pixels) -> (Point<Pixels>, Pixels) {
+    (baseline - point(px(0.), ascent), ascent + descent)
 }
 fn drawing(width: f32, height: f32, shapes: Vec<Shape>) -> AnyElement {
     div()
