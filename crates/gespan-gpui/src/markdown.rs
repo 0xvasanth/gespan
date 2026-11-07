@@ -630,6 +630,10 @@ fn rich_inline(
                 children.push(
                     div()
                         .id(SharedString::from(format!("{id}-{run_ix}-{part_ix}")))
+                        .debug_selector(move || format!("rich-prose-{run_ix}-{part_ix}"))
+                        // Unspaced prose (Japanese, Chinese) is one fragment, so
+                        // it must wrap inside the column instead of overflowing.
+                        .max_w_full()
                         .text_size(px(font_size))
                         .line_height(px(24.))
                         .opacity(alpha)
@@ -1097,5 +1101,78 @@ mod file_link_tests {
             Some(native("/project/docs/src/lib.rs").as_str())
         );
         assert_eq!(runs[2].style.link.as_deref(), Some("https://example.com"));
+    }
+}
+
+#[cfg(test)]
+mod rich_wrap_tests {
+    use super::*;
+    use crate::markdown_model::InlineStyle;
+    use gpui::{Context, TestAppContext};
+
+    struct Fixture;
+    impl gpui::Render for Fixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let runs = vec![
+                InlineRun {
+                    text: "メモには".into(),
+                    style: InlineStyle::default(),
+                },
+                InlineRun {
+                    text: "example".into(),
+                    style: InlineStyle {
+                        code: true,
+                        ..Default::default()
+                    },
+                },
+                InlineRun {
+                    text: "午後は近所を散歩してから部屋に戻り夕方まで穏やかな時間を過ごしました"
+                        .repeat(4),
+                    style: InlineStyle::default(),
+                },
+                InlineRun {
+                    text: " after".into(),
+                    style: InlineStyle::default(),
+                },
+            ];
+            div()
+                .w(px(220.))
+                .debug_selector(|| "rich-wrap".into())
+                .child(rich_inline(
+                    &runs,
+                    "fixture".into(),
+                    Tone::Normal,
+                    None,
+                    Instant::now(),
+                    0,
+                    14.,
+                    None,
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn unspaced_prose_beside_inline_code_wraps_within_the_column(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|_| Fixture))
+                .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let column = visual.debug_bounds("rich-wrap").unwrap();
+        let long = visual.debug_bounds("rich-prose-2-0").unwrap();
+        assert!(
+            long.right() <= column.right(),
+            "prose {long:?} runs past {column:?}"
+        );
+        assert!(
+            long.size.height > px(24.),
+            "long prose did not wrap: {long:?}"
+        );
+        // A short word still sizes to its text rather than the column.
+        let short = visual.debug_bounds("rich-prose-0-0").unwrap();
+        assert!(short.size.width < column.size.width, "{short:?}");
+        assert_eq!(short.size.height, px(24.));
     }
 }
