@@ -145,3 +145,128 @@ fn a_pilot_chat_in_a_plain_home_records_edits_in_its_projects() {
         ["project/made.txt"]
     );
 }
+
+/// A mock Codex that logs its stdin, then writes `file` during its turn.
+fn logging_provider(dir: &Path, file: &Path) -> std::path::PathBuf {
+    let binary = dir.join("logging-provider");
+    std::fs::write(
+        &binary,
+        format!(
+            r#"#!/usr/bin/env python3
+import json, os, sys
+folder = os.path.dirname(os.path.abspath(sys.argv[0]))
+open(os.path.join(folder, 'started'), 'w').close()
+item = {{'type': 'fileChange', 'id': 'edit', 'status': 'inProgress', 'changes': [{{'path': {path}, 'kind': {{'type': 'add'}}, 'diff': 'x'}}]}}
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    with open(os.path.join(folder, 'stdin.log'), 'a') as log:
+        log.write(line)
+    value = json.loads(line)
+    if value.get('id') == 1:
+        send({{'id': 1, 'result': {{}}}})
+    elif value.get('id') == 2:
+        send({{'id': 2, 'result': {{'thread': {{'id': 'baseline-order-test'}}}}}})
+    elif value.get('id') == 3:
+        send({{'method': 'item/started', 'params': {{'item': item}}}})
+        open({path}, 'w').write('made during the turn\n')
+        send({{'method': 'item/completed', 'params': {{'item': dict(item, status='completed')}}}})
+        send({{'method': 'item/agentMessage/delta', 'params': {{'itemId': 'reply', 'delta': 'Done'}}}})
+        send({{'method': 'turn/completed', 'params': {{'turn': {{'status': 'completed'}}}}}})
+        break
+"#,
+            path = serde_json::to_string(file.to_str().unwrap()).unwrap(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    binary
+}
+
+/// Sending used to record the whole workspace before the provider was even
+/// launched. Now the provider starts while the baseline records, and its
+/// prompt waits for it, so the turn's edit is still measured against it.
+#[test]
+fn the_provider_starts_while_the_baseline_records_and_prompts_after_it() {
+    let _turn = TURNS.lock().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    git(&project, &["init", "-q"]);
+    git(&project, &["config", "user.email", "demo@example.com"]);
+    git(&project, &["config", "user.name", "Demo"]);
+    std::fs::write(project.join("kept.txt"), "kept\n").unwrap();
+    git(&project, &["add", "."]);
+    git(&project, &["commit", "-qm", "First"]);
+    let binary = logging_provider(fixture.path(), &project.join("made.txt"));
+    let store = Store::open_gespan(&fixture.path().join("sessions.db")).unwrap();
+    let cwd = project.to_str().unwrap().to_owned();
+    let summary = store.create("codex", &cwd).unwrap();
+    let session = summary.id.to_string();
+    let checkpoints = checkpoints();
+    checkpoints.forget(&session).unwrap();
+    let store = Arc::new(Mutex::new(store));
+    let (updates, receive) = async_channel::bounded(64);
+    let (_controls, control_rx) = std::sync::mpsc::channel();
+    let started = fixture.path().join("started");
+    let stdin_log = fixture.path().join("stdin.log");
+    let read_log = || std::fs::read_to_string(&stdin_log).unwrap_or_default();
+    let eventually = |ready: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline && !ready() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        ready()
+    };
+
+    // Holding the checkpoint store keeps the turn's baseline from recording.
+    let worker = checkpoints
+        .exclusive(|_| {
+            let worker = std::thread::spawn(move || {
+                run_turn_using(
+                    TurnInput {
+                        summary,
+                        prompt: "Make a file".into(),
+                        settings: Settings::default(),
+                    },
+                    control_rx,
+                    store,
+                    Arc::new(AtomicBool::new(false)),
+                    updates,
+                    |_| Some(binary),
+                );
+            });
+            assert!(
+                eventually(&|| started.exists()),
+                "the provider waited for the workspace snapshot before starting"
+            );
+            assert!(
+                eventually(&|| read_log().contains("\"initialize\"")),
+                "the handshake waited for the workspace snapshot"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(
+                !read_log().contains("turn/start"),
+                "the prompt went out before the baseline:\n{}",
+                read_log()
+            );
+            Ok(worker)
+        })
+        .unwrap();
+
+    loop {
+        let update = receive.recv_blocking().expect("runtime closed early");
+        if update.finished {
+            assert_eq!(update.status, "Ready");
+            break;
+        }
+    }
+    worker.join().unwrap();
+    assert!(read_log().contains("turn/start"));
+    let status = checkpoints
+        .exclusive(|store| store.status_readonly(&session, &cwd))
+        .unwrap();
+    checkpoints.forget(&session).unwrap();
+    let files: Vec<_> = status.files.into_iter().map(|file| file.relative).collect();
+    assert_eq!(files, ["made.txt"]);
+}
