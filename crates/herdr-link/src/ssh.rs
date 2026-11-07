@@ -37,60 +37,102 @@ impl fmt::Display for SshFailure {
 impl std::error::Error for SshFailure {}
 
 /// herdr's API on another machine, reached through `ssh` and herdr's own
-/// `remote-api-bridge`. Every connection shares one ssh master, so it only
-/// authenticates once.
+/// `remote-api-bridge`. Connections share one ssh master when `control_dir`
+/// is usable, so they only authenticate once.
 pub struct SshBridge {
     pub target: String,
     pub session: String,
-    pub control_dir: PathBuf,
+    /// Where the shared control socket lives; `None` means no sharing.
+    pub control_dir: Option<PathBuf>,
     pub ssh: PathBuf,
 }
 
 impl SshBridge {
-    pub fn for_machine(m: &Machine, control_dir: PathBuf) -> Self {
+    pub fn for_machine(m: &Machine) -> Self {
         Self {
             target: m.target.clone(),
             session: m.session.clone(),
-            control_dir,
+            control_dir: default_control_dir(m),
             ssh: PathBuf::from("ssh"),
         }
     }
 
-    pub fn command(&self) -> Command {
-        create_private_dir(&self.control_dir);
+    /// The target, if it cannot be mistaken for an ssh option or carry
+    /// control characters (same rule as herdr's own ssh commands).
+    fn validated_target(&self) -> io::Result<&str> {
+        let t = self.target.as_str();
+        if t.is_empty() || t.starts_with('-') || t.chars().any(char::is_control) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid SSH target",
+            ));
+        }
+        Ok(t)
+    }
+
+    /// The socket to share, if the control directory is safe to use.
+    fn shared_socket(&self) -> Option<PathBuf> {
+        let dir = self.control_dir.as_deref()?;
+        prepare_private_dir(dir).then(|| dir.join("cm"))
+    }
+
+    pub fn command(&self) -> io::Result<Command> {
+        let target = self.validated_target()?;
         let mut cmd = Command::new(&self.ssh);
         for opt in [
             "BatchMode=yes",
             "StrictHostKeyChecking=yes",
-            "ControlMaster=auto",
-            "ControlPersist=600",
             "ServerAliveInterval=15",
             "ServerAliveCountMax=3",
             "ConnectTimeout=10",
         ] {
             cmd.arg("-o").arg(opt);
         }
-        cmd.arg("-o").arg(format!(
-            "ControlPath={}",
-            self.control_dir.join("cm").display()
-        ));
-        cmd.arg("-T").arg(&self.target);
+        match self.shared_socket() {
+            Some(socket) => {
+                cmd.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=600", "-S"])
+                    .arg(socket);
+            }
+            None => {
+                cmd.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+            }
+        }
+        cmd.arg("-T").arg("--").arg(target);
         // ssh hands the remote command to the login shell as one string.
         cmd.arg(format!(
             "sh -c {}",
             shell_quote(&remote_script(&self.session))
         ));
-        cmd
+        Ok(cmd)
     }
 }
 
-fn create_private_dir(dir: &Path) {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    // If this fails ssh still runs, just without connection sharing.
-    let _ = builder.create(dir);
+/// Make sure `dir` is a private directory we own, creating it if needed. A
+/// directory someone else could have planted or can read is never used.
+#[cfg(unix)]
+fn prepare_private_dir(dir: &Path) -> bool {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    if let Some(parent) = dir.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(_) => return false,
+    }
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return false;
+    };
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let me = unsafe { libc::getuid() };
+    meta.file_type().is_dir() && meta.uid() == me && meta.mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn prepare_private_dir(_dir: &Path) -> bool {
+    false
 }
 
 fn shell_quote(s: &str) -> String {
@@ -101,29 +143,68 @@ fn shell_quote(s: &str) -> String {
 /// 17 byte suffix while it sets the master up.
 const MAX_CONTROL_PATH: usize = 104 - 17;
 
-/// A short, per-machine directory for the shared ssh control socket.
-pub fn control_dir_for(base: &Path, machine_id: &str) -> PathBuf {
-    let hex: String = machine_id
-        .chars()
-        .filter(char::is_ascii_hexdigit)
-        .take(10)
-        .collect();
-    let name = format!("hl-{hex}");
-    let dir = base.join(&name);
-    if cfg!(unix) && dir.join("cm").as_os_str().len() > MAX_CONTROL_PATH {
-        return Path::new("/tmp").join(name);
+/// FNV-1a, 64 bit: a stable hash that needs no dependency.
+fn fnv1a(parts: &[&str]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for part in parts {
+        for b in part.bytes().chain([0xff]) {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x100000001b3);
+        }
     }
-    dir
+    h
+}
+
+/// The control directory for a machine under `base`. Named from the machine
+/// id and target, so editing the target never reuses the old master.
+pub fn control_dir_for(base: &Path, m: &Machine) -> PathBuf {
+    base.join(format!("hl-{:016x}", fnv1a(&[&m.id, &m.target])))
+}
+
+/// The first base directory whose control socket path is short enough.
+fn first_fitting(bases: &[PathBuf], m: &Machine) -> Option<PathBuf> {
+    bases
+        .iter()
+        .map(|base| control_dir_for(base, m))
+        .find(|dir| dir.join("cm").as_os_str().len() <= MAX_CONTROL_PATH)
+}
+
+/// Where to keep a machine's control socket: `$XDG_RUNTIME_DIR`, the temp
+/// dir, or `~/.cache/herdr-link`, whichever fits first. `None` means no
+/// sharing.
+pub fn default_control_dir(m: &Machine) -> Option<PathBuf> {
+    let mut bases = Vec::new();
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        bases.push(PathBuf::from(dir));
+    }
+    bases.push(std::env::temp_dir());
+    if let Some(home) = std::env::var_os("HOME").filter(|d| !d.is_empty()) {
+        bases.push(Path::new(&home).join(".cache").join("herdr-link"));
+    }
+    first_fitting(&bases, m)
 }
 
 /// Finds herdr on the remote and execs its API bridge. Mirrors herdr's own
 /// discovery in src/remote/attach.rs (posix_remote_api_discovery_script).
 pub fn remote_script(session: &str) -> String {
+    script_with(
+        session,
+        &[
+            r#""$HOME/.local/bin/herdr""#,
+            "/opt/homebrew/bin/herdr",
+            "/usr/local/bin/herdr",
+        ],
+    )
+}
+
+/// `candidates` are shell words tried after `command -v herdr`.
+fn script_with(session: &str, candidates: &[&str]) -> String {
     let s = shell_quote(session);
+    let candidates = candidates.join(" ");
     format!(
         r#"set -f
 found=
-for c in "$(command -v herdr)" "$HOME/.local/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr; do
+for c in "$(command -v herdr)" {candidates}; do
     case "$c" in
         */mise/shims/herdr) continue ;;
         /*) ;;
@@ -171,7 +252,7 @@ fn map_failure(target: &str, code: i32, stderr: &str) -> SshFailure {
 impl Transport for SshBridge {
     fn open(&self) -> io::Result<Conn> {
         let mut child = self
-            .command()
+            .command()?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -306,7 +387,9 @@ mod tests {
     }
 
     fn bridge() -> SshBridge {
-        SshBridge::for_machine(&machine(), std::env::temp_dir().join("hl-test-base"))
+        let mut b = SshBridge::for_machine(&machine());
+        b.control_dir = Some(std::env::temp_dir().join("hl-test-base"));
+        b
     }
 
     fn args(c: &std::process::Command) -> Vec<String> {
@@ -326,7 +409,7 @@ mod tests {
     #[test]
     fn command_shares_one_key_only_connection() {
         let b = bridge();
-        let a = args(&b.command());
+        let a = args(&b.command().unwrap());
         for want in [
             "BatchMode=yes",
             "ControlMaster=auto",
@@ -338,9 +421,9 @@ mod tests {
         ] {
             assert!(a.iter().any(|x| x == want), "missing {want}: {a:?}");
         }
-        assert!(a
-            .iter()
-            .any(|x| x.starts_with("ControlPath=") && x.ends_with("/cm")));
+        let socket = b.control_dir.as_ref().unwrap().join("cm");
+        let at = a.iter().position(|x| x == "-S").expect("-S given");
+        assert_eq!(Path::new(&a[at + 1]), socket);
         assert_eq!(a.iter().filter(|x| *x == "box").count(), 1);
         assert!(a.iter().any(|x| x == "-T"));
     }
@@ -348,47 +431,151 @@ mod tests {
     #[test]
     fn command_runs_the_script_as_one_remote_argument() {
         let b = bridge();
-        let a = args(&b.command());
+        let a = args(&b.command().unwrap());
         let remote = a.last().unwrap();
         assert!(remote.starts_with("sh -c '"), "{remote}");
         assert!(remote.contains("remote-api-bridge --check"));
-        // The target is the last argument before the remote command.
-        assert_eq!(a[a.len() - 2], "box");
+        // `--` ends options, so the target can never be read as one.
+        assert_eq!(&a[a.len() - 3..a.len() - 1], ["--", "box"]);
+    }
+
+    fn sharing(a: &[String]) -> bool {
+        a.iter().any(|x| x == "-S") && !a.iter().any(|x| x == "ControlPath=none")
     }
 
     #[cfg(unix)]
     #[test]
-    fn command_creates_the_control_dir_private() {
+    fn fresh_control_dir_is_created_private_and_shared() {
         use std::os::unix::fs::PermissionsExt;
         let base = tempfile::tempdir().unwrap();
         let mut b = bridge();
-        b.control_dir = base.path().join("a").join("hl-x");
-        let _ = b.command();
-        let mode = std::fs::metadata(&b.control_dir)
-            .unwrap()
-            .permissions()
-            .mode();
+        let dir = base.path().join("a").join("hl-x");
+        b.control_dir = Some(dir.clone());
+        assert!(sharing(&args(&b.command().unwrap())));
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_readable_control_dir_is_not_shared() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join("hl-x");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut b = bridge();
+        b.control_dir = Some(dir);
+        let a = args(&b.command().unwrap());
+        assert!(!sharing(&a), "{a:?}");
+        assert!(a.iter().any(|x| x == "ControlMaster=no"));
+        assert!(a.iter().any(|x| x == "ControlPath=none"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_control_dir_is_not_shared() {
+        let base = tempfile::tempdir().unwrap();
+        let real = base.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = base.path().join("hl-x");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut b = bridge();
+        b.control_dir = Some(link);
+        assert!(!sharing(&args(&b.command().unwrap())));
+    }
+
+    #[test]
+    fn no_control_dir_means_no_sharing() {
+        let mut b = bridge();
+        b.control_dir = None;
+        assert!(!sharing(&args(&b.command().unwrap())));
+    }
+
+    #[test]
+    fn control_dir_name_is_a_hash_of_id_and_target() {
+        let m = machine();
+        let d = control_dir_for(Path::new("/tmp/base"), &m);
+        let name = d.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name.len(), 3 + 16);
+        assert!(name.starts_with("hl-") && name[3..].chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(d, control_dir_for(Path::new("/tmp/base"), &m.clone()));
+    }
+
+    #[test]
+    fn control_dir_changes_with_target_and_with_non_hex_ids() {
+        let m = machine();
+        let moved = Machine {
+            target: "other".into(),
+            ..m.clone()
+        };
+        assert_ne!(
+            control_dir_for(Path::new("/t"), &m),
+            control_dir_for(Path::new("/t"), &moved)
+        );
+        // Ids that share no hex characters must not collide.
+        let x = Machine {
+            id: "ghijk".into(),
+            ..m.clone()
+        };
+        let y = Machine {
+            id: "lmnop".into(),
+            ..m.clone()
+        };
+        assert_ne!(
+            control_dir_for(Path::new("/t"), &x),
+            control_dir_for(Path::new("/t"), &y)
+        );
     }
 
     #[test]
     fn control_path_fits_sun_path() {
         let long = PathBuf::from("/private/tmp/".to_owned() + &"x".repeat(120));
-        let p = control_dir_for(&long, ID).join("cm");
-        assert!(p.as_os_str().len() < 104);
+        let short = PathBuf::from("/tmp");
+        let dir = first_fitting(&[long, short.clone()], &machine()).unwrap();
+        assert!(dir.starts_with(&short), "over-long base falls through");
+        assert!(dir.join("cm").as_os_str().len() <= MAX_CONTROL_PATH);
     }
 
     #[test]
-    fn control_dir_uses_base_when_it_fits() {
-        let d = control_dir_for(Path::new("/tmp/base"), ID);
-        assert_eq!(d, PathBuf::from("/tmp/base/hl-5b800c51aa"));
+    fn no_candidate_that_fits_means_none() {
+        let long = PathBuf::from("/private/tmp/".to_owned() + &"x".repeat(120));
+        assert_eq!(first_fitting(&[long.clone(), long], &machine()), None);
     }
 
     #[test]
-    fn control_dir_differs_per_machine() {
-        let a = control_dir_for(Path::new("/tmp"), "aaaaaaaaaaaa");
-        let b = control_dir_for(Path::new("/tmp"), "bbbbbbbbbbbb");
-        assert_ne!(a, b);
+    fn default_control_dir_fits_and_names_the_machine() {
+        let m = machine();
+        let dir = default_control_dir(&m).expect("a candidate fits");
+        assert_eq!(
+            dir.file_name(),
+            control_dir_for(Path::new(""), &m).file_name()
+        );
+        assert!(dir.join("cm").as_os_str().len() <= MAX_CONTROL_PATH);
+    }
+
+    #[test]
+    fn hostile_targets_are_refused_before_spawning() {
+        for target in ["-oProxyCommand=touch /tmp/pwned", "", "a\nb", "-J x"] {
+            let mut b = bridge();
+            b.target = target.into();
+            // A program that does not exist: spawning would be NotFound.
+            b.ssh = PathBuf::from("/nonexistent/ssh");
+            assert_eq!(
+                b.command().unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "{target:?}"
+            );
+            let err = b.open().err().expect("open refuses");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{target:?}");
+        }
+    }
+
+    #[test]
+    fn user_at_host_targets_are_allowed() {
+        let mut b = bridge();
+        b.target = "me@host.example".into();
+        assert!(b.command().is_ok());
     }
 
     #[test]
@@ -498,18 +685,12 @@ mod tests {
         fn run(home: &Path, path_env: &str) -> Output {
             Command::new("sh")
                 .arg("-c")
-                .arg(remote_script("work"))
+                .arg(script_with("work", &[r#""$HOME/.local/bin/herdr""#]))
                 .env_clear()
                 .env("HOME", home)
                 .env("PATH", path_env)
                 .output()
                 .unwrap()
-        }
-
-        fn system_herdr() -> bool {
-            ["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"]
-                .iter()
-                .any(|p| Path::new(p).exists())
         }
 
         #[test]
@@ -538,9 +719,6 @@ mod tests {
 
         #[test]
         fn a_herdr_that_fails_the_check_is_too_old() {
-            if system_herdr() {
-                return;
-            }
             let home = tempfile::tempdir().unwrap();
             install(&home.path().join(".local/bin/herdr"), false);
             let out = run(home.path(), "/usr/bin:/bin");
@@ -551,9 +729,6 @@ mod tests {
 
         #[test]
         fn no_herdr_anywhere_is_missing() {
-            if system_herdr() {
-                return;
-            }
             let home = tempfile::tempdir().unwrap();
             let out = run(home.path(), "/usr/bin:/bin");
             assert_eq!(out.status.code(), Some(2));
@@ -563,9 +738,6 @@ mod tests {
 
         #[test]
         fn mise_shims_are_never_probed() {
-            if system_herdr() {
-                return;
-            }
             let home = tempfile::tempdir().unwrap();
             let shims = tempfile::tempdir().unwrap();
             let shim = shims.path().join("mise/shims/herdr");
@@ -581,7 +753,8 @@ mod tests {
             let path = dir.join("fake-ssh");
             std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            let mut b = SshBridge::for_machine(&machine(), dir.join("ctl"));
+            let mut b = SshBridge::for_machine(&machine());
+            b.control_dir = Some(dir.join("ctl"));
             b.ssh = path;
             b
         }
@@ -643,12 +816,17 @@ mod tests {
                 &format!("echo $$ > {}\nexec sleep 30", marker.display()),
             );
             let conn = b.open().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             let pid = loop {
                 if let Ok(s) = std::fs::read_to_string(&marker) {
                     if let Ok(p) = s.trim().parse::<i32>() {
                         break p;
                     }
                 }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fake ssh never wrote its pid"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(20));
             };
             drop(conn);
