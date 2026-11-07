@@ -20,6 +20,8 @@ pub enum Error {
     },
     /// A reply that is not shaped the way the API says.
     BadReply(String),
+    /// ssh could not reach the machine's herdr.
+    Ssh(crate::ssh::SshFailure),
 }
 
 impl fmt::Display for Error {
@@ -29,6 +31,7 @@ impl fmt::Display for Error {
             Error::Closed => write!(f, "connection closed"),
             Error::Api { code, message } => write!(f, "herdr error {code}: {message}"),
             Error::BadReply(why) => write!(f, "unexpected reply: {why}"),
+            Error::Ssh(failure) => write!(f, "{failure}"),
         }
     }
 }
@@ -37,6 +40,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
+            Error::Ssh(f) => Some(f),
             _ => None,
         }
     }
@@ -44,6 +48,13 @@ impl std::error::Error for Error {
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
+        // A transport reports why it died by wrapping an `SshFailure`.
+        if let Some(failure) = e
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<crate::ssh::SshFailure>())
+        {
+            return Error::Ssh(failure.clone());
+        }
         Error::Io(e)
     }
 }
