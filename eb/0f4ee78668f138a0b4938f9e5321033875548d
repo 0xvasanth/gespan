@@ -1,0 +1,27 @@
+crates/gespan-core/src/provider.rs
+  s_353640b5854a00::t_0ff00cb3ab6d5a 969-987,1018-1024
+  s_353640b5854a00::t_1534344e3a716c 45-46
+crates/gespan-core/src/provider/launch_argv_tests.rs
+  s_353640b5854a00::t_25f3c63008b6a4 122
+  s_353640b5854a00::t_fcb0cb0a75a6c9 1-68,88-121,123-172
+  s_353640b5854a00::t_da65442ef64b61 69-87
+  s_353640b5854a00::t_3194b13e186f7c 173-175
+crates/gespan-core/src/provider/fixtures/launch_argv.txt
+  s_353640b5854a00::t_b2f70b77c58581 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb0f4ee78668f138a0b4938f9e5321033875548d",
+  "prompts": {},
+  "sessions": {
+    "s_353640b5854a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fafb205-0362-4b25-8806-8b016ab8cdef",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
