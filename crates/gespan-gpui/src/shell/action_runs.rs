@@ -21,11 +21,7 @@ pub(crate) fn install(cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut tabs = Tabs::default();
         while let Ok(event) = events.recv().await {
-            // Output comes in bursts; one update covers the burst.
-            let mut batch = vec![event];
-            while let Ok(more) = events.try_recv() {
-                batch.push(more);
-            }
+            let batch = burst(event, &events);
             cx.update(|cx| {
                 for event in batch {
                     tabs.apply(event, cx);
@@ -34,6 +30,27 @@ pub(crate) fn install(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// The most output one update shows, so a chatty run can't make one huge
+/// frame; the rest waits for the next update.
+const BURST_BYTES: usize = 256 * 1024;
+
+/// `first` and whatever else is waiting, up to [`BURST_BYTES`] of output.
+fn burst(first: RunEvent, events: &async_channel::Receiver<RunEvent>) -> Vec<RunEvent> {
+    let size = |event: &RunEvent| match event {
+        RunEvent::Output { bytes, .. } => bytes.len(),
+        _ => 0,
+    };
+    let mut bytes = size(&first);
+    let mut batch = vec![first];
+    while bytes < BURST_BYTES
+        && let Ok(more) = events.try_recv()
+    {
+        bytes += size(&more);
+        batch.push(more);
+    }
+    batch
 }
 
 /// Each run's tab, while the run lasts.
@@ -90,28 +107,17 @@ fn status_label(status: Status, exit_code: Option<i32>) -> String {
     }
 }
 
-/// A window showing `project`, else one with it in its rail.
+/// The window showing `project`. Every window's rail lists every project,
+/// so one only listing it doesn't count.
 fn window_for(project: &str, cx: &App) -> Option<WindowHandle<Shell>> {
-    let shells: Vec<WindowHandle<Shell>> = cx
-        .windows()
+    cx.windows()
         .into_iter()
         .filter_map(|window| window.downcast::<Shell>())
-        .collect();
-    let shows = |window: &&WindowHandle<Shell>| {
-        window
-            .read(cx)
-            .is_ok_and(|shell| shell.workspace.project == project)
-    };
-    let lists = |window: &&WindowHandle<Shell>| {
-        window
-            .read(cx)
-            .is_ok_and(|shell| shell.workspace.projects.iter().any(|p| p == project))
-    };
-    let found = shells
-        .iter()
-        .find(shows)
-        .or_else(|| shells.iter().find(lists));
-    found.copied()
+        .find(|window| {
+            window
+                .read(cx)
+                .is_ok_and(|shell| shell.workspace.project == project)
+        })
 }
 
 impl Shell {
@@ -237,6 +243,91 @@ mod tests {
                 let dock = &shell.workspace.docks[PROJECT];
                 assert!(dock.open);
                 assert_eq!(dock.active, 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_run_for_a_project_no_window_is_showing_opens_no_tab(cx: &mut TestAppContext) {
+        // The window lists this project in its rail but shows another.
+        const BACKGROUND: &str = "/work/another-project";
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.workspace.projects.iter().any(|p| p == BACKGROUND));
+                assert_ne!(shell.workspace.project, BACKGROUND);
+            })
+            .unwrap();
+        let mut runs = Tabs::default();
+        cx.update(|cx| {
+            runs.apply(started("r1", BACKGROUND, "test"), cx);
+            runs.apply(output("r1", "PASS\n"), cx);
+            runs.apply(finished("r1", Status::Exited, Some(0)), cx);
+        });
+        assert!(runs.0.is_empty());
+        window
+            .update(cx, |shell, _, _| {
+                // Neither a tab nor its dock's restored shells appear.
+                assert!(shell.terminals.values().all(Vec::is_empty));
+                assert!(!shell.workspace.docks.contains_key(BACKGROUND));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_burst_shows_at_most_a_bounded_amount_of_output() {
+        let (sender, events) = async_channel::unbounded();
+        let chunk = "x".repeat(100 * 1024);
+        for _ in 0..4 {
+            sender.try_send(output("r1", &chunk)).unwrap();
+        }
+        sender
+            .try_send(finished("r1", Status::Exited, Some(0)))
+            .unwrap();
+        // 100 KB + 100 KB + 100 KB reaches the cap; the rest waits.
+        let first = burst(started("r1", PROJECT, "test"), &events);
+        assert_eq!(first.len(), 4);
+        let rest = burst(events.try_recv().unwrap(), &events);
+        assert_eq!(rest.len(), 2);
+        assert!(matches!(rest[1], RunEvent::Finished { .. }));
+        // A single event larger than the cap still goes through on its own.
+        sender
+            .try_send(output("r2", &"y".repeat(BURST_BYTES)))
+            .unwrap();
+        sender.try_send(output("r2", "z")).unwrap();
+        assert_eq!(burst(events.try_recv().unwrap(), &events).len(), 1);
+    }
+
+    #[gpui::test]
+    fn the_panel_terminal_is_a_shell_even_when_the_dock_holds_only_a_mirror(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let mut runs = Tabs::default();
+        cx.update(|cx| runs.apply(started("r1", PROJECT, "test"), cx));
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = true;
+                shell.layout_changed(cx);
+                shell.workspace.preferences.terminal_in_panel = true;
+                assert!(shell.terminal_in_panel(cx));
+                shell.toggle_terminal(window, cx);
+                assert_eq!(
+                    tabs(shell, cx),
+                    [
+                        ("test (agent)".to_string(), true),
+                        ("gespan".to_string(), false),
+                    ]
+                );
+                let dock = &shell.workspace.docks[PROJECT];
+                assert_eq!(dock.active, 1);
+                assert!(!dock.open);
+                // With a shell there already, no second one starts.
+                shell.toggle_terminal(window, cx);
+                shell.toggle_terminal(window, cx);
+                assert_eq!(tabs(shell, cx).len(), 2);
             })
             .unwrap();
     }

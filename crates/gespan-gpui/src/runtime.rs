@@ -799,16 +799,12 @@ fn run_turn_using(
         {
             toolkits.insert(toolkit.to_owned());
         }
-        let mut mount = gespan_core::tool_servers::Mount {
-            session: summary.id,
-            worktree: settings
-                .worktree_cwd
-                .as_deref()
-                .unwrap_or(&summary.cwd)
-                .into(),
+        let mut mount = turn_mount(
+            summary.id,
+            &summary.cwd,
+            settings.worktree_cwd.as_deref(),
             toolkits,
-            ..Default::default()
-        };
+        );
         if !mount.toolkits.is_empty() {
             gespan_core::tool_servers::sync_servers();
             (mount.servers, mount.exclusive) =
@@ -1798,6 +1794,23 @@ fn shlex_quote(text: &str) -> String {
     )
 }
 
+/// A turn's tool mount: it works in its worktree, if it has one, and belongs
+/// to the session's project, the key the app's windows and docks use.
+fn turn_mount(
+    session: i64,
+    project: &str,
+    worktree: Option<&str>,
+    toolkits: std::collections::BTreeSet<String>,
+) -> gespan_core::tool_servers::Mount {
+    gespan_core::tool_servers::Mount {
+        session,
+        worktree: worktree.unwrap_or(project).into(),
+        project: project.to_owned(),
+        toolkits,
+        ..Default::default()
+    }
+}
+
 /// The one actions toolkit a turn mounts: list-only when it may not change
 /// anything. Remote projects have no local checkout to run in, and
 /// orchestration workers keep their scoped `control` workflow.
@@ -1811,6 +1824,18 @@ fn actions_toolkit(read_only: bool, remote: bool, worker: bool) -> Option<&'stat
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_worktree_turn_mounts_its_worktree_under_its_project() {
+        use super::turn_mount;
+        let mount = turn_mount(7, "/work/gespan", Some("/work/gespan-wt/fix"), [].into());
+        assert_eq!(mount.session, 7);
+        assert_eq!(mount.worktree, std::path::Path::new("/work/gespan-wt/fix"));
+        assert_eq!(mount.project, "/work/gespan");
+        let mount = turn_mount(8, "/work/gespan", None, [].into());
+        assert_eq!(mount.worktree, std::path::Path::new("/work/gespan"));
+        assert_eq!(mount.project, "/work/gespan");
+    }
+
     #[test]
     fn a_plan_turn_mounts_actions_read_and_a_normal_turn_mounts_actions() {
         use super::actions_toolkit;

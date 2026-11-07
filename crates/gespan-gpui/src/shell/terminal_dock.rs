@@ -203,7 +203,8 @@ impl Shell {
             .workspace
             .docks
             .get(&project)
-            .is_some_and(|d| !d.terminals.is_empty())
+            // A read-only mirror can't be the panel's terminal.
+            .is_some_and(|d| (0..d.terminals.len()).any(|ix| !d.is_mirror(ix)))
         {
             return;
         }

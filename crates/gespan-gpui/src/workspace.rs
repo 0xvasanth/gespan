@@ -337,7 +337,8 @@ impl Serialize for TerminalDock {
             .filter(|(ix, _)| !self.is_mirror(*ix))
             .map(|(_, cwd)| cwd)
             .collect();
-        // An active mirror leaves the shell before it active.
+        // An active mirror saves the next shell as active, or the last one
+        // when no shell follows it.
         let before = (0..self.active).filter(|ix| !self.is_mirror(*ix)).count();
         Saved {
             side: self.side,

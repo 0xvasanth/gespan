@@ -422,6 +422,12 @@ impl Terminal {
     }
 
     fn on_event(&mut self, event: TermEvent, cx: &mut Context<Self>) {
+        // A run's output can't reach the clipboard, title or anything else;
+        // it only repaints.
+        if self.read_only() {
+            cx.notify();
+            return;
+        }
         match event {
             TermEvent::Wakeup | TermEvent::MouseCursorDirty | TermEvent::CursorBlinkingChange => {
                 cx.notify()
@@ -1653,6 +1659,26 @@ mod tests {
             assert!(terminal.read_only());
             assert!(!terminal.exited);
         });
+    }
+
+    #[gpui::test]
+    fn a_mirrors_output_cannot_write_the_clipboard(cx: &mut gpui::TestAppContext) {
+        // OSC 52 setting the clipboard to "pwned".
+        let osc52 = b"\x1b]52;c;cHduZWQ=\x07";
+        cx.write_to_clipboard(ClipboardItem::new_string("mine".into()));
+        let view = cx.new(|cx| Terminal::mirror("test (agent)".into(), "/w".into(), cx));
+        view.update(cx, |terminal, cx| terminal.feed(osc52, cx));
+        cx.run_until_parked();
+        let clipboard =
+            |cx: &mut gpui::TestAppContext| cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(clipboard(cx).as_deref(), Some("mine"));
+        // The same bytes in a shell's terminal do reach it.
+        let shell = cx.new(|cx| Terminal::new("/w".into(), &[], cx));
+        shell.update(cx, |terminal, _| {
+            write_note(&terminal.term, std::str::from_utf8(osc52).unwrap())
+        });
+        cx.run_until_parked();
+        assert_eq!(clipboard(cx).as_deref(), Some("pwned"));
     }
 
     #[gpui::test]
