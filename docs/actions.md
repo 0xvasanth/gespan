@@ -41,7 +41,7 @@ Gespan reads these fields of each task and ignores the rest.
 | `type` | `shell` (the default) runs `command` as a shell line. `process` quotes `command` and `args` as one program. `npm` runs `script` with the project's package manager. |
 | `command`, `args` | What to run. An arg can be a string or `{ "value": "..." }`. Args with spaces are quoted for you. |
 | `options.cwd` | The folder to run in, relative to the project. Default: the project root. |
-| `options.env` | Environment variables, as `{ "NAME": "value" }`. |
+| `options.env` | Environment variables, as `{ "NAME": "value" }`. A name a shell or the loader reads at startup is refused: see [Blocked actions](#blocked-actions). |
 | `detail` | A short line shown under the name. |
 | `isBackground` | The action keeps running, like a dev server. |
 | `icon` | `{ "id": "..." }`: `play`, `test-tube`, `hammer`, `rocket`, `bug` or `package`. Anything else shows `play`. |
@@ -63,6 +63,7 @@ An action that can't run is still listed, greyed out, with the reason. The reaso
 - "Runs outside the project": `options.cwd` leaves the project folder.
 - "Has no command Gespan can run", such as a `gulp` or `typescript` task that only VS Code can run.
 - "Only runs other tasks, which Gespan doesn't do yet": it has `dependsOn` and no command.
+- "Sets NAME, which could run code before the command": its environment sets `ZDOTDIR`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS4`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` or any `DYLD_` name. A shell or the loader reads these before the command runs. The check applies to every source, in the menu, the palette and for agents.
 
 A file that can't be parsed, such as one you are halfway through editing, shows as one "Couldn't read" row. The other sources still list.
 
@@ -96,19 +97,19 @@ The same command often appears in several files, so Gespan drops repeats:
 
 ## Running actions
 
-**Footer.** The Actions button in the footer opens a menu with a section per source: Project, Personal, then each detected file. A long section is collapsed until you open it. Choosing an action runs it in its own terminal in the dock, in the action's folder with its environment. Running it again reuses that terminal while it sits idle at a prompt.
+**Footer.** The Actions button in the footer opens a menu with a section per source: Project, Personal, then each detected file. A long section is collapsed until you open it. Each row shows the command that clicking it runs, after the action's detail when it has one, such as "Ships it — echo ship". An action that sets environment variables adds their names, such as "· +env PORT,MODE". Values are never shown. A blocked row shows its reason instead. Choosing an action runs it in its own terminal in the dock, in the action's folder with its environment. `${env:NAME}` in an environment value is filled in from that terminal's environment, so `${env:PATH}` is your login shell's `PATH`. Running it again reuses that terminal while it sits idle at a prompt.
 
-The Actions button is split in two. The chevron always opens the menu. The main part runs the action you last ran, and shows its name. That holds only while the action is unchanged: if its command, folder or environment changed, or any file Gespan reads actions from changed, such as a `package.json` script body, the main part opens the menu instead. A fresh clone's button always opens the menu.
+The Actions button is split in two. The chevron always opens the menu. The main part runs the action you last ran, and shows its name. That holds only while the action is unchanged: if its command, folder or environment changed, or any file Gespan reads actions from changed, such as a `package.json` script body, the main part opens the menu instead. That includes those files in the action's own folder, such as `web/package.json` for a `bun run dev` with `options.cwd` set to `web`. A fresh clone's button always opens the menu.
 
-**Command palette.** Press ⌘P (Ctrl+P), type `>`, then "Run action:" and the action's name. This runs the action from the menu as it is now.
+**Command palette.** Press ⌘P (Ctrl+P), type `>`, then "Run action:" and the action's name. Each row shows the command it runs. This runs the action from the menu as it is now.
 
 Actions are not available in remote projects.
 
 ## Adding, sharing and saving
 
 - **Add action** in the menu opens a dialog with a name, a command and an icon. **Share with the project** is on by default and adds the action to `.gespan/tasks.json`. Turn it off to keep the action personal: it is stored in Gespan, outside the repository, and only you see it. A shared add shows "Added to .gespan/tasks.json. Commit it to share it."
-- **Edit action** changes a shared or personal action. The rest of the file, including fields Gespan doesn't read, stays as it was.
-- **Save to project** in the menu copies a detected action, such as a `package.json` script, into `.gespan/tasks.json`. It keeps the command, folder, environment, detail, icon and background flag.
+- **Edit action** changes a shared or personal action. The rest of the file, including fields Gespan doesn't read, stays as it was. When two tasks in the file share a name, the second is listed as `Build (2)`, and editing or deleting it changes that task.
+- **Save to project** in the menu copies a detected action, such as a `package.json` script, into `.gespan/tasks.json`. It keeps the command, folder, environment, detail, icon and background flag. Your checkout's own path, such as a worktree folder that `${workspaceFolder}` was filled in with, is saved as `${workspaceFolder}`, so the shared file works in everyone's clone.
 - **Comments.** Gespan edits the file as JSON and can't keep comments. If `tasks.json` has comments, Gespan won't rewrite it: the dialog says so and offers to open the file for a hand edit. Trailing commas are not comments: Gespan rewrites such a file without them. A task with `args`, per-OS overrides or workspace variables can still be renamed, or have its icon or detail changed, in Gespan; only changing its command is done by hand in `tasks.json`.
 
 ## Agents
