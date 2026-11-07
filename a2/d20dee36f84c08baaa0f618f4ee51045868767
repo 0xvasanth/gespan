@@ -1,0 +1,22 @@
+crates/mcp-hub/src/pool.rs
+  s_09a3ad63412304::t_f6388b4a4a4c61 328-338
+  s_09a3ad63412304::t_a8882a2a63b404 887,923-1082,1084-1140
+  s_09a3ad63412304::t_aa9efcc878beeb 1083
+  s_09a3ad63412304::t_6795e3c904934f 1141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2d20dee36f84c08baaa0f618f4ee51045868767",
+  "prompts": {},
+  "sessions": {
+    "s_09a3ad63412304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baeb77e2-420f-4bb8-9a1d-99cec2578267",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
