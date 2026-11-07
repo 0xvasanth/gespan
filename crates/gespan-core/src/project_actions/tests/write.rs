@@ -420,3 +420,215 @@ fn rewriting_keeps_the_file_mode() {
         assert_eq!(mode(&file(fresh.path())), 0o644);
     }
 }
+
+#[test]
+fn add_and_update_check_the_command_like_save_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // The shell's own reference is saved as `${env:…}` and reads back as typed.
+    let home = if cfg!(windows) {
+        "echo %HOME_DIR%"
+    } else {
+        "echo ${HOME_DIR}"
+    };
+    add(root, &draft("Home", home)).unwrap();
+    assert_eq!(read(root)["tasks"][0]["command"], "echo ${env:HOME_DIR}");
+    assert_eq!(detected(root, "Home").command, home);
+    update(root, "Home", &draft("Home", &format!("{home} again"))).unwrap();
+    assert_eq!(
+        read(root)["tasks"][0]["command"],
+        "echo ${env:HOME_DIR} again"
+    );
+
+    // Nothing Gespan can't fill in is ever written, by add or by update.
+    let before = std::fs::read(file(root)).unwrap();
+    for command in [
+        "echo ${a:-b}",
+        "echo ${input:target}",
+        "echo $ZED_WORKTREE_ROOT/x",
+        "echo ${a b}",
+    ] {
+        let added = add(root, &draft("Odd", command));
+        assert!(
+            matches!(&added, Err(WriteError::Invalid(why)) if why.contains("can't fill in")),
+            "{command}: {added:?}"
+        );
+        let updated = update(root, "Home", &draft("Home", command));
+        assert!(matches!(updated, Err(WriteError::Invalid(_))), "{command}");
+    }
+    assert_eq!(std::fs::read(file(root)).unwrap(), before);
+    // No folder is made for a command that can't be saved.
+    let fresh = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        add(fresh.path(), &draft("A", "echo ${a:-b}")),
+        Err(WriteError::Invalid(_))
+    ));
+    assert!(!fresh.path().join(".gespan").exists());
+}
+
+#[test]
+fn labels_are_trimmed_before_the_duplicate_check() {
+    let dir = tempfile::tempdir().unwrap();
+    add(dir.path(), &draft(" A ", "a")).unwrap();
+    assert_eq!(read(dir.path())["tasks"][0]["label"], "A");
+    assert_eq!(
+        add(dir.path(), &draft("A  ", "b")),
+        Err(WriteError::Duplicate("A".into()))
+    );
+    add(dir.path(), &draft("B", "b")).unwrap();
+    assert_eq!(
+        update(dir.path(), "B", &draft("\tA", "b")),
+        Err(WriteError::Duplicate("A".into()))
+    );
+    update(dir.path(), "B", &draft(" C ", "c")).unwrap();
+    assert_eq!(labels(dir.path()), ["A", "C"]);
+}
+
+#[test]
+fn rewriting_keeps_the_file_key_order_and_new_tasks_use_a_set_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Keys in no sorted order, nested ones included, as a person wrote them.
+    let lint = r#"    {
+      "label": "Lint",
+      "command": "eslint",
+      "group": "build",
+      "presentation": {
+        "reveal": "never",
+        "panel": 2,
+        "ratio": 1.5,
+        "focus": false,
+        "close": null
+      },
+      "options": {
+        "env": {
+          "Z": "1",
+          "A": "2"
+        }
+      },
+      "args": [
+        "."
+      ]
+    }"#;
+    put(
+        root,
+        &format!(
+            r#"{{
+  "tasks": [
+{lint},
+    {{
+      "command": "two",
+      "label": "B",
+      "type": "shell",
+      "group": "test"
+    }}
+  ],
+  "version": "2.0.0",
+  "inputs": []
+}}
+"#
+        ),
+    );
+    let mut b = draft("B", "three");
+    b.detail = Some("Third".into());
+    update(root, "B", &b).unwrap();
+    // Only the edited task changes; a key it gains goes last.
+    let edited = format!(
+        r#"{{
+  "tasks": [
+{lint},
+    {{
+      "command": "three",
+      "label": "B",
+      "type": "shell",
+      "group": "test",
+      "detail": "Third"
+    }}
+  ],
+  "version": "2.0.0",
+  "inputs": []
+}}
+"#
+    );
+    assert_eq!(std::fs::read_to_string(file(root)).unwrap(), edited);
+
+    // A new task's keys come in the set order.
+    let mut c = draft("C", "c");
+    c.icon = "rocket".into();
+    c.detail = Some("See".into());
+    add(root, &c).unwrap();
+    let c = r#"    {
+      "label": "C",
+      "type": "shell",
+      "command": "c",
+      "detail": "See",
+      "icon": {
+        "id": "rocket"
+      }
+    }"#;
+    let tail = "\n  ],\n  \"version\": \"2.0.0\",\n  \"inputs\": []\n}\n";
+    let with_c = format!("{},\n{c}{tail}", edited.strip_suffix(tail).unwrap());
+    assert_eq!(std::fs::read_to_string(file(root)).unwrap(), with_c);
+
+    // So does a detected one's, with its folder, environment and background.
+    let mut dev = action(root);
+    dev.cwd = root.join("web");
+    dev.env = vec![("Z".into(), "1".into()), ("A".into(), "2".into())];
+    dev.detail = Some("Vite".into());
+    dev.background = true;
+    dev.icon = "rocket";
+    save_detected(root, &dev).unwrap();
+    let text = std::fs::read_to_string(file(root)).unwrap();
+    let added = &text[text.find(r#""label": "dev""#).unwrap()..];
+    let order = [
+        "\"label\"",
+        "\"type\"",
+        "\"command\"",
+        "\"options\"",
+        "\"cwd\"",
+        "\"env\"",
+        "\"Z\"",
+        "\"A\"",
+        "\"detail\"",
+        "\"isBackground\"",
+        "\"icon\"",
+    ];
+    let keys: Vec<_> = order.iter().map(|key| added.find(key).unwrap()).collect();
+    assert!(keys.is_sorted(), "{added}");
+}
+
+#[test]
+fn a_new_file_starts_with_its_version() {
+    let dir = tempfile::tempdir().unwrap();
+    add(dir.path(), &draft("A", "a")).unwrap();
+    let text = std::fs::read_to_string(file(dir.path())).unwrap();
+    assert!(
+        text.starts_with("{\n  \"version\": \"2.0.0\",\n  \"tasks\": ["),
+        "{text}"
+    );
+    // A hand-written file without one gets it first, the rest kept in place.
+    put(dir.path(), "{\n  \"tasks\": []\n}\n");
+    add(dir.path(), &draft("A", "a")).unwrap();
+    let text = std::fs::read_to_string(file(dir.path())).unwrap();
+    assert!(
+        text.starts_with("{\n  \"version\": \"2.0.0\",\n  \"tasks\": ["),
+        "{text}"
+    );
+}
+
+#[test]
+fn errors_read_as_sentences() {
+    assert_eq!(
+        WriteError::HasComments.to_string(),
+        "This tasks.json has comments, so Gespan won't rewrite it."
+    );
+    assert_eq!(
+        WriteError::Duplicate("Test".into()).to_string(),
+        "An action named “Test” already exists."
+    );
+    assert_eq!(WriteError::Io("Disk full".into()).to_string(), "Disk full");
+    assert_eq!(
+        WriteError::Invalid("Give the action a name".into()).to_string(),
+        "Give the action a name"
+    );
+}

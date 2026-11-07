@@ -2,8 +2,8 @@
 //!
 //! The file is edited as JSON, so other tasks and fields stay. A file with
 //! comments is never rewritten, as saving would lose them.
+use super::ordered::{Json, Object};
 use super::{jsonc, tasks_json, Action};
-use serde_json::{json, Map, Value};
 use std::path::{Component, Path};
 
 const FOLDER: &str = ".gespan";
@@ -32,20 +32,39 @@ pub enum WriteError {
     Invalid(String),
 }
 
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, out: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            WriteError::HasComments => {
+                out.write_str("This tasks.json has comments, so Gespan won't rewrite it.")
+            }
+            WriteError::Duplicate(label) => {
+                write!(
+                    out,
+                    "An action named \u{201c}{label}\u{201d} already exists."
+                )
+            }
+            WriteError::Io(message) | WriteError::Invalid(message) => out.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for WriteError {}
+
 /// Adds `draft` as a new shared action.
 pub fn add(checkout: &Path, draft: &Draft) -> Result<(), WriteError> {
-    check(draft)?;
+    let draft = prepare(draft)?;
     edit(checkout, |tasks| {
         taken(tasks, &draft.label, None)?;
-        tasks.push(Value::Object(task(draft)));
+        tasks.push(task(&draft, None, false).into());
         Ok(())
     })
 }
 
 /// Replaces the shared action `label` with `draft`, in place. Fields Gespan
-/// doesn't edit, such as `group`, stay.
+/// doesn't edit, such as `group`, stay where they are.
 pub fn update(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteError> {
-    check(draft)?;
+    let draft = prepare(draft)?;
     edit(checkout, |tasks| {
         let at = position(tasks, label)?;
         taken(tasks, &draft.label, Some(at))?;
@@ -53,16 +72,25 @@ pub fn update(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteEr
             return Err(not_found(label));
         };
         // The command is now one shell line, whatever it was before.
-        for key in ["args", "script", "icon", "detail"] {
-            task.remove(key);
-        }
+        task.remove("args");
+        task.remove("script");
         for os in ["windows", "osx", "linux"] {
-            if let Some(over) = task.get_mut(os).and_then(Value::as_object_mut) {
+            if let Some(over) = task.get_mut(os).and_then(Json::as_object_mut) {
                 over.remove("command");
                 over.remove("args");
             }
         }
-        task.extend(task_fields(draft));
+        task.insert("label", draft.label.as_str());
+        task.insert("type", "shell");
+        task.insert("command", draft.command.as_str());
+        match detail(&draft) {
+            Some(detail) => task.insert("detail", detail),
+            None => task.remove("detail"),
+        }
+        match icon(&draft) {
+            Some(icon) => task.insert("icon", icon),
+            None => task.remove("icon"),
+        }
         Ok(())
     })
 }
@@ -85,20 +113,18 @@ pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError>
             action.label
         )));
     }
-    let draft = Draft {
+    let draft = prepare(&Draft {
         label: action.label.clone(),
-        command: file_refs(&action.command)?,
+        command: action.command.clone(),
         icon: action.icon.to_string(),
         detail: action.detail.clone(),
-    };
-    check(&draft)?;
+    })?;
     let root = tasks_json::normalize(checkout);
     let cwd = tasks_json::normalize(&action.cwd);
     let relative = cwd.strip_prefix(&root).map_err(|_| {
         WriteError::Invalid(format!("\"{}\" runs outside the project", action.label))
     })?;
-    let mut task = task(&draft);
-    let mut options = Map::new();
+    let mut options = Object::default();
     if !relative.as_os_str().is_empty() {
         let parts: Vec<_> = relative
             .components()
@@ -107,70 +133,87 @@ pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError>
                 _ => None,
             })
             .collect();
-        options.insert("cwd".into(), parts.join("/").into());
+        options.insert("cwd", parts.join("/"));
     }
     if !action.env.is_empty() {
-        let mut env = Map::new();
+        let mut env = Object::default();
         for (name, value) in &action.env {
-            env.insert(name.clone(), file_refs(value)?.into());
+            env.insert(name, file_refs(value)?);
         }
-        options.insert("env".into(), env.into());
+        options.insert("env", env);
     }
-    if !options.is_empty() {
-        task.insert("options".into(), options.into());
-    }
-    if action.background {
-        task.insert("isBackground".into(), true.into());
-    }
+    let task = task(&draft, Some(options), action.background);
     edit(checkout, |tasks| {
         taken(tasks, &draft.label, None)?;
-        tasks.push(Value::Object(task));
+        tasks.push(task.into());
         Ok(())
     })
 }
 
-fn check(draft: &Draft) -> Result<(), WriteError> {
+/// `draft` as it is saved: its label trimmed and its command spelled as the
+/// file spells it, or why it can't be.
+fn prepare(draft: &Draft) -> Result<Draft, WriteError> {
     if draft.label.trim().is_empty() {
         return Err(WriteError::Invalid("Give the action a name".into()));
     }
     if draft.command.trim().is_empty() {
         return Err(WriteError::Invalid("Give the action a command".into()));
     }
-    Ok(())
+    Ok(Draft {
+        label: draft.label.trim().to_string(),
+        command: file_refs(&draft.command)?,
+        ..draft.clone()
+    })
 }
 
-/// A new task for `draft`.
-fn task(draft: &Draft) -> Map<String, Value> {
-    let mut task = Map::new();
-    task.extend(task_fields(draft));
+/// A new task for `draft`, its keys in the order people write them.
+fn task(draft: &Draft, options: Option<Object>, background: bool) -> Object {
+    let mut task = Object::default();
+    task.insert("label", draft.label.as_str());
+    task.insert("type", "shell");
+    task.insert("command", draft.command.as_str());
+    if let Some(options) = options.filter(|options| !options.is_empty()) {
+        task.insert("options", options);
+    }
+    if let Some(detail) = detail(draft) {
+        task.insert("detail", detail);
+    }
+    if background {
+        task.insert("isBackground", true);
+    }
+    if let Some(icon) = icon(draft) {
+        task.insert("icon", icon);
+    }
     task
 }
 
-/// The fields a person edits. The default icon and no detail are left out.
-fn task_fields(draft: &Draft) -> Map<String, Value> {
-    let mut fields = Map::new();
-    fields.insert("label".into(), draft.label.clone().into());
-    fields.insert("type".into(), "shell".into());
-    fields.insert("command".into(), draft.command.clone().into());
-    if let Some(detail) = draft.detail.as_deref().filter(|d| !d.trim().is_empty()) {
-        fields.insert("detail".into(), detail.into());
-    }
+/// The detail to save, if it isn't blank.
+fn detail(draft: &Draft) -> Option<&str> {
+    draft.detail.as_deref().filter(|d| !d.trim().is_empty())
+}
+
+/// `{ "id": … }`, unless it is the default icon.
+fn icon(draft: &Draft) -> Option<Object> {
     let icon = tasks_json::icon(Some(&draft.icon));
-    if icon != "play" {
-        fields.insert("icon".into(), json!({ "id": icon }));
-    }
-    fields
+    (icon != "play").then(|| {
+        let mut object = Object::default();
+        object.insert("id", icon);
+        object
+    })
 }
 
 fn not_found(label: &str) -> WriteError {
     WriteError::Invalid(format!("There's no shared action named \"{label}\""))
 }
 
-fn label_of(task: &Value) -> Option<&str> {
-    task.get("label")?.as_str()
+fn label_of(task: &Json) -> Option<&str> {
+    match task {
+        Json::Object(task) => task.get("label")?.as_str(),
+        _ => None,
+    }
 }
 
-fn position(tasks: &[Value], label: &str) -> Result<usize, WriteError> {
+fn position(tasks: &[Json], label: &str) -> Result<usize, WriteError> {
     tasks
         .iter()
         .position(|task| label_of(task) == Some(label))
@@ -178,7 +221,7 @@ fn position(tasks: &[Value], label: &str) -> Result<usize, WriteError> {
 }
 
 /// Fails if a task other than `except` already has `label`.
-fn taken(tasks: &[Value], label: &str, except: Option<usize>) -> Result<(), WriteError> {
+fn taken(tasks: &[Json], label: &str, except: Option<usize>) -> Result<(), WriteError> {
     let clash = tasks
         .iter()
         .enumerate()
@@ -190,11 +233,12 @@ fn taken(tasks: &[Value], label: &str, except: Option<usize>) -> Result<(), Writ
     }
 }
 
-/// Reads the shared file, lets `change` edit its tasks and saves it.
-/// Nothing is written when anything fails.
+/// Reads the shared file, lets `change` edit its tasks and saves it. Keys
+/// keep their order, so only what changed shows in a diff. Nothing is
+/// written when anything fails.
 fn edit(
     checkout: &Path,
-    change: impl FnOnce(&mut Vec<Value>) -> Result<(), WriteError>,
+    change: impl FnOnce(&mut Vec<Json>) -> Result<(), WriteError>,
 ) -> Result<(), WriteError> {
     let folder = checkout.join(FOLDER);
     let path = checkout.join(FILE);
@@ -203,7 +247,7 @@ fn edit(
     let file_exists =
         folder_exists && exists(&path, "isn't a regular file", |meta| meta.is_file())?;
 
-    let mut root = Value::Object(Map::new());
+    let mut root = Json::Object(Object::default());
     if file_exists {
         let text = super::read_capped(&path).map_err(WriteError::Io)?;
         if !text.trim().is_empty() {
@@ -219,11 +263,11 @@ fn edit(
     let Some(object) = root.as_object_mut() else {
         return Err(WriteError::Invalid(format!("{FILE} isn't a JSON object")));
     };
-    object.entry("version").or_insert_with(|| VERSION.into());
-    let tasks = object
-        .entry("tasks")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let Some(tasks) = tasks.as_array_mut() else {
+    object.insert_first("version", VERSION);
+    if object.get("tasks").is_none() {
+        object.insert("tasks", Json::Array(Vec::new()));
+    }
+    let Some(tasks) = object.get_mut("tasks").and_then(Json::as_array_mut) else {
         return Err(WriteError::Invalid("\"tasks\" isn't a list".into()));
     };
     change(tasks)?;

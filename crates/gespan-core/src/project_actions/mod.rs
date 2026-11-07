@@ -18,6 +18,7 @@ use std::{
 };
 
 pub(crate) mod jsonc;
+mod ordered;
 pub mod runs;
 pub mod sources;
 pub(crate) mod tasks_json;
