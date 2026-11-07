@@ -108,6 +108,7 @@ async function notices(directory) {
     "NOTICE",
     "docs/desktop/LICENSE-GPUI-APACHE",
     "docs/desktop/LICENSE-MERMAID-MIT",
+    "docs/desktop/LICENSE-HERDR-APACHE",
     "crates/gespan-gpui/assets/hugeicons.LICENSE",
     "crates/gespan-gpui/assets/dark-plus.LICENSE",
     "crates/gespan-gpui/assets/native-editor.LICENSE.txt",

@@ -1,0 +1,26 @@
+id = "claude"
+version = 1
+min_engine_version = 1
+label = "Claude Code"
+binary = "claude"
+install_name = "Claude Code CLI"
+login_hint = "claude auth login"
+family = "claude"
+usage = "claude"
+discovery_timeout = 60
+
+[login]
+sign_in = ["auth", "login"]
+sign_out = ["auth", "logout"]
+
+[accounts.profile]
+vars = ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+default_dir = ".claude"
+clear = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]
+
+[features]
+side_threads = true
+rewind = false
+raw_slash_commands = false
+
+[features.steer]
