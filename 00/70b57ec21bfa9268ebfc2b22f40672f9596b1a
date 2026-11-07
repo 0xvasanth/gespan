@@ -1,0 +1,20 @@
+crates/gespan-core/src/catalog.rs
+  s_82da2cc04ddb44::t_ff1d24e2c00d49 944-1011
+  s_82da2cc04ddb44::t_0f8554c11ab5ba 204-243,259-262,295-296,299,403-406
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0070b57ec21bfa9268ebfc2b22f40672f9596b1a",
+  "prompts": {},
+  "sessions": {
+    "s_82da2cc04ddb44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f7c2c54-540f-4375-97ee-adeded70d8c4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
