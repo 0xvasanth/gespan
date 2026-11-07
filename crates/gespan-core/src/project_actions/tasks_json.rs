@@ -123,34 +123,62 @@ fn word(value: &Value) -> Option<String> {
 /// Fills in variables, quotes and joins the command, and settles `cwd`.
 pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found) -> Action {
     let mut blocked = found.blocked;
-    let mut fill = |text: &str| match variables(ctx, text) {
-        Ok(filled) => filled,
-        Err(variable) => {
-            blocked.get_or_insert(format!("Uses {variable}, which Gespan can't fill in"));
-            text.to_string()
+    let fill = |blocked: &mut Option<String>, text: &str| match variables(ctx, text) {
+        Ok(pieces) => Some(pieces),
+        Err(reason) => {
+            blocked.get_or_insert(reason);
+            None
         }
     };
-    let program = fill(&found.command);
-    let args: Vec<String> = found.args.iter().map(|arg| fill(arg)).collect();
+    let program = fill(&mut blocked, &found.command);
+    let args: Vec<_> = found
+        .args
+        .iter()
+        .map(|arg| fill(&mut blocked, arg))
+        .collect();
+    let command = match (program, args.into_iter().collect::<Option<Vec<_>>>()) {
+        (Some(program), Some(args)) => {
+            let mut words = vec![if found.shell {
+                Some(shell_line(&program))
+            } else {
+                quote(&program)
+            }];
+            words.extend(args.iter().map(|arg| quote(arg)));
+            match words.into_iter().collect::<Option<Vec<_>>>() {
+                Some(words) => words.join(" "),
+                None => {
+                    blocked.get_or_insert("Has an argument Gespan can't quote".into());
+                    found.command.clone()
+                }
+            }
+        }
+        // Already blocked by the variable.
+        _ => found.command.clone(),
+    };
     let env = found
         .env
         .iter()
-        .map(|(name, value)| (name.clone(), fill(value)))
+        .map(|(name, value)| {
+            let value = fill(&mut blocked, value)
+                .map_or_else(|| value.clone(), |pieces| shell_line(&pieces));
+            (name.clone(), value)
+        })
         .collect();
-    let cwd = found.cwd.as_deref().map(&mut fill);
-
-    let mut words = vec![if found.shell {
-        Some(program)
-    } else {
-        quote(&program)
-    }];
-    words.extend(args.iter().map(|arg| quote(arg)));
-    let command = match words.into_iter().collect::<Option<Vec<_>>>() {
-        Some(words) => words.join(" "),
-        None => {
-            blocked.get_or_insert("Has an argument Gespan can't quote".into());
-            found.command.clone()
-        }
+    let cwd = match found
+        .cwd
+        .as_deref()
+        .map(|cwd| (cwd, fill(&mut blocked, cwd)))
+    {
+        None => None,
+        Some((cwd, Some(pieces))) => match pieces.iter().find_map(Piece::env) {
+            // A folder isn't read by the shell, so nothing would fill it in.
+            Some(name) => {
+                blocked.get_or_insert(format!("Uses ${{env:{name}}}, which Gespan can't fill in"));
+                Some(cwd.to_string())
+            }
+            None => Some(shell_line(&pieces)),
+        },
+        Some((cwd, None)) => Some(cwd.to_string()),
     };
 
     let checkout = normalize(ctx.checkout);
@@ -186,52 +214,122 @@ pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found)
     }
 }
 
-/// `text` with the supported variables filled in, or the first `${…}` that
-/// isn't supported.
-fn variables(ctx: &Ctx, text: &str) -> Result<String, String> {
+/// A stretch of a word: plain text, or `${env:NAME}`, which the shell fills in
+/// when the action runs so listing it never reads the host's secrets.
+#[derive(Debug)]
+enum Piece {
+    Text(String),
+    Env(String),
+}
+
+impl Piece {
+    fn env(&self) -> Option<&str> {
+        match self {
+            Piece::Env(name) => Some(name),
+            Piece::Text(_) => None,
+        }
+    }
+}
+
+/// `text` with the workspace variables filled in, or why it can't be.
+fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
     let root = ctx.checkout.display().to_string();
-    let mut out = String::with_capacity(text.len());
+    let mut pieces = Vec::new();
+    let mut plain = String::new();
     let mut rest = text;
     while let Some(start) = rest.find("${") {
         let Some(len) = rest[start..].find('}') else {
             break;
         };
-        out.push_str(&rest[..start]);
+        plain.push_str(&rest[..start]);
         let variable = &rest[start..start + len + 1];
         let name = &variable[2..variable.len() - 1];
         match name {
-            "workspaceFolder" => out.push_str(&root),
-            "workspaceFolderBasename" => out.push_str(
+            "workspaceFolder" => plain.push_str(&root),
+            "workspaceFolderBasename" => plain.push_str(
                 &ctx.checkout
                     .file_name()
                     .map(|name| name.to_string_lossy())
                     .unwrap_or_default(),
             ),
             _ => match name.strip_prefix("env:") {
-                Some(var) => out.push_str(&std::env::var(var).unwrap_or_default()),
-                None => return Err(variable.to_string()),
+                Some(var) if is_env_name(var) => {
+                    pieces.push(Piece::Text(std::mem::take(&mut plain)));
+                    pieces.push(Piece::Env(var.to_string()));
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "Uses {variable} with a name Gespan can't pass to the shell"
+                    ))
+                }
+                None => return Err(format!("Uses {variable}, which Gespan can't fill in")),
             },
         }
         rest = &rest[start + len + 1..];
     }
-    out.push_str(rest);
-    Ok(out.replace("$ZED_WORKTREE_ROOT", &root))
+    plain.push_str(rest);
+    pieces.push(Piece::Text(plain));
+    for piece in &mut pieces {
+        if let Piece::Text(text) = piece {
+            *text = text.replace("$ZED_WORKTREE_ROOT", &root);
+        }
+    }
+    pieces.retain(|piece| !matches!(piece, Piece::Text(text) if text.is_empty()));
+    Ok(pieces)
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The shell's own reference to `name`: `${NAME}` for `sh`, `%NAME%` for `cmd`.
+fn env_ref(name: &str) -> String {
+    if cfg!(windows) {
+        format!("%{name}%")
+    } else {
+        format!("${{{name}}}")
+    }
+}
+
+/// `pieces` as written in a shell line, unquoted.
+fn shell_line(pieces: &[Piece]) -> String {
+    pieces
+        .iter()
+        .map(|piece| match piece {
+            Piece::Text(text) => text.clone(),
+            Piece::Env(name) => env_ref(name),
+        })
+        .collect()
 }
 
 /// One word for the shell that runs actions: `sh` on Unix, `cmd` on Windows.
-fn quote(word: &str) -> Option<String> {
+/// `cmd` fills in `%NAME%` inside quotes; `sh` needs it outside single quotes.
+fn quote(pieces: &[Piece]) -> Option<String> {
     if cfg!(windows) {
+        let word = shell_line(pieces);
         let plain = !word.is_empty()
             && word
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_./:\\@+".contains(c));
         Some(if plain {
-            word.to_string()
+            word
         } else {
             format!("\"{}\"", word.replace('"', "\"\""))
         })
+    } else if pieces.is_empty() {
+        Some("''".into())
     } else {
-        shlex::try_quote(word).ok().map(|word| word.into_owned())
+        pieces
+            .iter()
+            .map(|piece| match piece {
+                Piece::Text(text) => shlex::try_quote(text).ok().map(|text| text.into_owned()),
+                Piece::Env(name) => Some(format!("\"{}\"", env_ref(name))),
+            })
+            .collect()
     }
 }
 

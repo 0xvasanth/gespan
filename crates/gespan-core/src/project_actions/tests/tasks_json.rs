@@ -162,26 +162,72 @@ fn unsupported_variable_blocks_with_reason() {
 
 #[test]
 fn supported_variables_are_filled() {
-    let checkout = checkout();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let action = resolved(one(&task(
-        r#"{ "label": "Vars", "command": "echo",
-             "args": ["${workspaceFolder}/x", "${workspaceFolderBasename}", "$ZED_WORKTREE_ROOT"],
-             "options": { "env": { "H": "${env:HOME}", "MISSING": "${env:GESPAN_SURELY_UNSET_VAR}" } } }"#,
-    )));
-    assert_eq!(action.blocked, None);
-    let found = one(&task(
-        r#"{ "label": "Vars", "command": "${workspaceFolder}/x" }"#,
-    ));
-    let filled = resolved(found);
-    assert_eq!(filled.command, format!("{}/x", checkout.display()));
-    assert!(action.command.contains("gespan-actions-checkout"));
+    let root = if cfg!(windows) {
+        r"C:\work\app"
+    } else {
+        "/work/app"
+    };
+    let fixed = Ctx {
+        checkout: Path::new(root),
+        package_manager: "npm",
+    };
+    let resolve_fixed = |body: &str| {
+        let found = parse_for("linux", &fixed, &task(body)).unwrap().remove(0);
+        resolve(&fixed, "gespan", ".gespan/tasks.json", found)
+    };
+
+    let args = resolve_fixed(
+        r#"{ "label": "Args", "command": "echo",
+             "args": ["${workspaceFolder}/x", "${workspaceFolderBasename}", "$ZED_WORKTREE_ROOT",
+                      "${env:HOME}/bin", "${env:GESPAN_X}"],
+             "options": { "env": { "H": "${env:HOME}" } } }"#,
+    );
+    assert_eq!(args.blocked, None);
+    // `${env:…}` is left for the shell, so a listing never shows the host's values.
+    #[cfg(unix)]
+    {
+        assert_eq!(
+            args.command,
+            r#"echo /work/app/x app /work/app "${HOME}"/bin "${GESPAN_X}""#
+        );
+        assert_eq!(args.env, [("H".to_string(), "${HOME}".to_string())]);
+    }
+    #[cfg(windows)]
+    {
+        assert_eq!(
+            args.command,
+            r#"echo C:\work\app/x app C:\work\app "%HOME%/bin" "%GESPAN_X%""#
+        );
+        assert_eq!(args.env, [("H".to_string(), "%HOME%".to_string())]);
+    }
+
+    let line = resolve_fixed(
+        r#"{ "label": "Line", "command": "echo ${env:HOME} ${workspaceFolderBasename} $ZED_WORKTREE_ROOT" }"#,
+    );
+    #[cfg(unix)]
+    assert_eq!(line.command, "echo ${HOME} app /work/app");
+    #[cfg(windows)]
+    assert_eq!(line.command, r"echo %HOME% app C:\work\app");
+
+    for name in ["A-B", "", "1X", "PATH)"] {
+        let bad = resolve_fixed(&format!(
+            r#"{{ "label": "Bad", "command": "echo ${{env:{name}}}" }}"#
+        ));
+        assert_eq!(
+            bad.blocked,
+            Some(format!(
+                "Uses ${{env:{name}}} with a name Gespan can't pass to the shell"
+            ))
+        );
+    }
+
+    // A folder isn't read by the shell, so an env variable there can't be filled.
+    let cwd = resolve_fixed(
+        r#"{ "label": "Cwd", "command": "ls", "options": { "cwd": "${env:HOME}" } }"#,
+    );
     assert_eq!(
-        action.env,
-        [
-            ("H".to_string(), home),
-            ("MISSING".to_string(), String::new())
-        ]
+        cwd.blocked.as_deref(),
+        Some("Uses ${env:HOME}, which Gespan can't fill in")
     );
 }
 
