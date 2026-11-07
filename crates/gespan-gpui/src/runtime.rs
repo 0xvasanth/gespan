@@ -1,6 +1,6 @@
 use gespan_core::agent::{Approval, Control, Settings};
 use gespan_core::{
-    provider::{self, Event, Kind, Request},
+    provider::{self, Event, Kind, ProviderError, Request},
     store::{Session, Store},
     transcript::{Row, Transcript},
 };
@@ -89,7 +89,7 @@ pub(crate) fn ended_by_user<T>(cancel: &AtomicBool, result: &Result<T, String>) 
     cancel.load(Ordering::Relaxed)
         || result
             .as_ref()
-            .is_err_and(|error| error == "Stopped" || error == "Held")
+            .is_err_and(|error| ProviderError::ended_by_user(error))
 }
 fn publish(
     tx: &async_channel::Sender<Update>,
@@ -98,7 +98,7 @@ fn publish(
 ) -> Result<(), String> {
     loop {
         if cancel.load(Ordering::Relaxed) {
-            return Err("Stopped".into());
+            return Err(ProviderError::Stopped.into());
         }
         match tx.try_send(update) {
             Ok(()) => return Ok(()),
@@ -849,7 +849,7 @@ fn run_turn_using(
                 // Cancellation freezes the transcript, even while the native
                 // provider drains its interrupt acknowledgement.
                 if cancel.load(Ordering::Relaxed) {
-                    return Err("Stopped".into());
+                    return Err(ProviderError::Stopped.into());
                 }
                 gespan_core::tool_servers::touch(summary.id);
                 let publications = visual_bridge
