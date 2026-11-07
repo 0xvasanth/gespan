@@ -175,6 +175,7 @@ impl Drop for Registration {
 /// Explicit native-app quit hook. Run off the UI thread and wait briefly for the
 /// workers to reap their children, rather than leaving isolated provider groups.
 pub fn shutdown_all() {
+    crate::project_actions::runs::stop_all();
     let pids: Vec<_> = active()
         .lock()
         .unwrap_or_else(|e| e.into_inner())

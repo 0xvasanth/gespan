@@ -1,0 +1,502 @@
+//! Actions an agent runs, captured so it can read their output and stop them.
+//!
+//! A run keeps its last [`MAX_LINES`] lines. [`output`] returns the lines since
+//! the last read; lines that scroll out before they are read are gone. Finished
+//! runs stay readable until [`MAX_FINISHED`] newer ones have finished.
+//!
+//! The app registers a [`Mirror`] to show runs in dock tabs. Without one, runs
+//! are only captured.
+use super::Action;
+use serde::Serialize;
+use std::{
+    collections::VecDeque,
+    io::Read,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc, Condvar, LazyLock, Mutex, MutexGuard,
+    },
+    time::{Duration, Instant},
+};
+
+const MAX_LINES: usize = 200;
+const MAX_LINE: usize = 2_000;
+const MAX_FINISHED: usize = 32;
+/// How often a run's exit is checked.
+const POLL: Duration = Duration::from_millis(20);
+/// Output after the exit is read for this long. Something the action left
+/// running can hold the pipes open forever.
+const DRAIN: Duration = Duration::from_millis(500);
+/// How long `stop` waits for the run to end.
+const STOP_WAIT: Duration = Duration::from_secs(5);
+/// Output bytes a slow mirror may fall behind by. Past it, chunks are dropped
+/// for the mirror only; the run and its captured lines are unaffected.
+const MIRROR_BACKLOG: usize = 4 * 1024 * 1024;
+
+/// A run as an agent sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Report {
+    pub run_id: String,
+    pub status: Status,
+    pub exit_code: Option<i32>,
+    /// Lines since the last read.
+    pub output: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Status {
+    Running,
+    Exited,
+    Stopped,
+}
+
+/// What a [`Mirror`] is told, in order: `Started`, `Output`s, `Finished`.
+pub enum RunEvent {
+    Started {
+        run_id: String,
+        project: String,
+        /// The checkout the action runs in: the nearest folder holding `.git`.
+        checkout: PathBuf,
+        label: String,
+        command: String,
+    },
+    /// Raw output, stdout and stderr as they arrive.
+    Output { run_id: String, bytes: Vec<u8> },
+    Finished {
+        run_id: String,
+        status: Status,
+        exit_code: Option<i32>,
+    },
+}
+
+/// Shows runs in the app. Events come on a thread of their own, so a slow
+/// mirror never holds up a run.
+pub trait Mirror: Send + Sync {
+    fn event(&self, event: RunEvent);
+}
+
+static MIRROR: Mutex<Option<mpsc::Sender<RunEvent>>> = Mutex::new(None);
+static BACKLOG: AtomicUsize = AtomicUsize::new(0);
+static RUNS: LazyLock<Mutex<Registry>> = LazyLock::new(Mutex::default);
+
+/// Sends every later run's events to `mirror`, in place of any earlier one.
+pub fn set_mirror(mirror: Arc<dyn Mirror>) {
+    let (sender, events) = mpsc::channel::<RunEvent>();
+    let spawned = std::thread::Builder::new()
+        .name("gespan-action-mirror".into())
+        .spawn(move || {
+            for event in events {
+                if let RunEvent::Output { bytes, .. } = &event {
+                    BACKLOG.fetch_sub(bytes.len(), Ordering::Relaxed);
+                }
+                mirror.event(event);
+            }
+        });
+    if spawned.is_ok() {
+        *lock(&MIRROR) = Some(sender);
+    }
+}
+
+fn emit(event: RunEvent) {
+    let mirror = lock(&MIRROR);
+    let Some(sender) = mirror.as_ref() else {
+        return;
+    };
+    if let RunEvent::Output { bytes, .. } = &event {
+        if BACKLOG.fetch_add(bytes.len(), Ordering::Relaxed) > MIRROR_BACKLOG {
+            BACKLOG.fetch_sub(bytes.len(), Ordering::Relaxed);
+            return;
+        }
+    }
+    let _ = sender.send(event);
+}
+
+#[derive(Default)]
+struct Registry {
+    next: u64,
+    /// Oldest first.
+    runs: Vec<Arc<Run>>,
+}
+
+impl Registry {
+    fn find(&self, run_id: &str) -> Result<Arc<Run>, String> {
+        self.runs
+            .iter()
+            .find(|run| run.id == run_id)
+            .cloned()
+            .ok_or_else(|| format!("No run {run_id}. Finished runs are kept only for a while."))
+    }
+
+    /// Forgets the oldest finished runs past [`MAX_FINISHED`].
+    fn evict(&mut self) {
+        let finished = self.runs.iter().filter(|run| !run.running()).count();
+        let mut excess = finished.saturating_sub(MAX_FINISHED);
+        self.runs.retain(|run| {
+            if excess > 0 && !run.running() {
+                excess -= 1;
+                return false;
+            }
+            true
+        });
+    }
+}
+
+struct Run {
+    id: String,
+    action: String,
+    cwd: PathBuf,
+    state: Mutex<State>,
+    changed: Condvar,
+    child: Mutex<Option<Child>>,
+    stopping: AtomicBool,
+}
+
+struct State {
+    lines: VecDeque<String>,
+    /// Lines ever kept, so `pushed - lines.len()` numbers the oldest.
+    pushed: u64,
+    /// Lines handed out so far.
+    read: u64,
+    status: Status,
+    exit_code: Option<i32>,
+    open_pipes: usize,
+}
+
+impl Run {
+    fn new(id: String, action: &Action) -> Self {
+        Run {
+            id,
+            action: action.id.clone(),
+            cwd: action.cwd.clone(),
+            state: Mutex::new(State {
+                lines: VecDeque::new(),
+                pushed: 0,
+                read: 0,
+                status: Status::Running,
+                exit_code: None,
+                open_pipes: 0,
+            }),
+            changed: Condvar::new(),
+            child: Mutex::new(None),
+            stopping: AtomicBool::new(false),
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, State> {
+        lock(&self.state)
+    }
+
+    fn running(&self) -> bool {
+        self.state().status == Status::Running
+    }
+
+    fn push(&self, line: String) {
+        let line = match line.char_indices().nth(MAX_LINE) {
+            Some((end, _)) => line[..end].to_owned(),
+            None => line,
+        };
+        let mut state = self.state();
+        if state.lines.len() == MAX_LINES {
+            state.lines.pop_front();
+        }
+        state.lines.push_back(line);
+        state.pushed += 1;
+    }
+
+    /// Waits until the run ends or `wait` passes.
+    fn wait(&self, wait: Duration) {
+        let deadline = Instant::now() + wait;
+        let mut state = self.state();
+        while state.status == Status::Running {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            state = self
+                .changed
+                .wait_timeout(state, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+
+    /// The run with the lines since the last read, or with every kept line.
+    fn report(&self, every_line: bool) -> Report {
+        let mut state = self.state();
+        let oldest = state.pushed - state.lines.len() as u64;
+        let from = if every_line {
+            oldest
+        } else {
+            state.read.max(oldest)
+        };
+        let output = state
+            .lines
+            .iter()
+            .skip((from - oldest) as usize)
+            .cloned()
+            .collect();
+        state.read = state.pushed;
+        Report {
+            run_id: self.id.clone(),
+            status: state.status,
+            exit_code: state.exit_code,
+            output,
+        }
+    }
+
+    fn finish(&self, status: Status, exit_code: Option<i32>) {
+        let mut state = self.state();
+        state.status = status;
+        state.exit_code = exit_code;
+        drop(state);
+        emit(RunEvent::Finished {
+            run_id: self.id.clone(),
+            status,
+            exit_code,
+        });
+        self.changed.notify_all();
+    }
+
+    fn terminate(&self) {
+        if !self.running() {
+            return;
+        }
+        self.stopping.store(true, Ordering::SeqCst);
+        if let Some(child) = lock(&self.child).as_mut() {
+            crate::process::terminate(child);
+        }
+    }
+}
+
+/// Starts `action` and waits until it exits or `wait` passes. If the same
+/// action is already running in the same folder, that run is returned instead,
+/// with its kept lines.
+pub fn start(project: &str, action: &Action, wait: Duration) -> Report {
+    let run = {
+        let mut registry = lock(&RUNS);
+        let live = registry
+            .runs
+            .iter()
+            .find(|run| run.action == action.id && run.cwd == action.cwd && run.running())
+            .cloned();
+        if let Some(run) = live {
+            drop(registry);
+            return run.report(true);
+        }
+        registry.next += 1;
+        let run = Arc::new(Run::new(format!("run-{}", registry.next), action));
+        // Under the lock, so a second start of the same action finds this run.
+        launch(&run, project, action);
+        registry.runs.push(run.clone());
+        registry.evict();
+        run
+    };
+    run.wait(wait);
+    run.report(false)
+}
+
+/// The lines since the last read, once the run ends or `wait` passes.
+pub fn output(run_id: &str, wait: Duration) -> Result<Report, String> {
+    let run = lock(&RUNS).find(run_id)?;
+    run.wait(wait);
+    Ok(run.report(false))
+}
+
+/// Kills the run with everything it started, and reports how it ended.
+pub fn stop(run_id: &str) -> Result<Report, String> {
+    let run = lock(&RUNS).find(run_id)?;
+    run.terminate();
+    run.wait(STOP_WAIT);
+    Ok(run.report(false))
+}
+
+/// Kills every running action, for when Gespan quits.
+pub fn stop_all() {
+    let runs: Vec<_> = lock(&RUNS).runs.clone();
+    for run in runs {
+        run.terminate();
+    }
+}
+
+fn launch(run: &Arc<Run>, project: &str, action: &Action) {
+    emit(RunEvent::Started {
+        run_id: run.id.clone(),
+        project: project.to_owned(),
+        checkout: checkout(&action.cwd),
+        label: action.label.clone(),
+        command: action.command.clone(),
+    });
+    let mut command = shell(&action.command);
+    command
+        .current_dir(&action.cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::scm::shell::apply_gui_env(&mut command);
+    for (name, value) in &action.env {
+        command.env(
+            name,
+            expand_env(value, cfg!(windows), |name| std::env::var(name).ok()),
+        );
+    }
+    crate::process::isolate(&mut command);
+    let mut child = match crate::process::spawn(&mut command) {
+        Ok(child) => child,
+        Err(error) => {
+            let message = format!("Couldn't start it: {error}");
+            emit(RunEvent::Output {
+                run_id: run.id.clone(),
+                bytes: format!("{message}\r\n").into_bytes(),
+            });
+            run.push(message);
+            run.finish(Status::Exited, None);
+            return;
+        }
+    };
+    let pipes: Vec<Box<dyn Read + Send>> = [
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    run.state().open_pipes = pipes.len();
+    *lock(&run.child) = Some(child);
+    for pipe in pipes {
+        let run = run.clone();
+        std::thread::spawn(move || {
+            let tee = Tee {
+                pipe,
+                run_id: run.id.clone(),
+            };
+            crate::worktree_scripts::read_lines(tee, &mut |line| run.push(line));
+            run.state().open_pipes -= 1;
+            run.changed.notify_all();
+        });
+    }
+    let run = run.clone();
+    std::thread::spawn(move || {
+        let exit_code = loop {
+            if let Some(child) = lock(&run.child).as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.code(),
+                    Ok(None) => {}
+                    Err(_) => break None,
+                }
+            }
+            std::thread::sleep(POLL);
+        };
+        let deadline = Instant::now() + DRAIN;
+        let mut state = run.state();
+        while state.open_pipes > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            state = run
+                .changed
+                .wait_timeout(state, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        drop(state);
+        let status = if run.stopping.load(Ordering::SeqCst) {
+            Status::Stopped
+        } else {
+            Status::Exited
+        };
+        run.finish(status, exit_code);
+    });
+}
+
+/// Passes output through to the mirror as it is read.
+struct Tee {
+    pipe: Box<dyn Read + Send>,
+    run_id: String,
+}
+
+impl Read for Tee {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.pipe.read(buf)?;
+        if read > 0 {
+            emit(RunEvent::Output {
+                run_id: self.run_id.clone(),
+                bytes: buf[..read].to_vec(),
+            });
+        }
+        Ok(read)
+    }
+}
+
+/// The nearest folder at or above `cwd` holding `.git`, else `cwd`.
+fn checkout(cwd: &Path) -> PathBuf {
+    cwd.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(cwd)
+        .to_path_buf()
+}
+
+/// The command line runs as written, so the shell expands its own references.
+fn shell(line: &str) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let comspec = std::env::var("COMSPEC")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "cmd.exe".into());
+        let mut command = Command::new(comspec);
+        // Raw, so Rust's quoting doesn't change what cmd sees.
+        command.arg("/C").raw_arg(line);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(line);
+        command
+    }
+}
+
+/// Fills in the shell references in an `env` value: `${NAME}` for `sh`,
+/// `%NAME%` for `cmd`. A variable that isn't set is empty. Anything else stays.
+pub(crate) fn expand_env(
+    value: &str,
+    windows: bool,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> String {
+    let (open, close) = if windows { ("%", "%") } else { ("${", "}") };
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find(open) {
+        let after = &rest[start + open.len()..];
+        let Some(len) = after.find(close) else {
+            break;
+        };
+        let name = &after[..len];
+        out.push_str(&rest[..start]);
+        if super::tasks_json::is_env_name(name) {
+            out.push_str(&lookup(name).unwrap_or_default());
+            rest = &after[len + close.len()..];
+        } else {
+            // Not a reference: keep the opening and look again after it.
+            out.push_str(open);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
