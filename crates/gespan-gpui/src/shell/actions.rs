@@ -1989,10 +1989,15 @@ mod tests {
                 checkout(shell, active, root, cx);
                 shell.refresh_actions(cx);
                 shell.run_actions_menu("edit:gespan:Build", window, cx);
-                // The dialog shows what runs here, this checkout's path in it.
+                // The dialog shows what runs here: this checkout's path, or
+                // the Windows override on Windows.
                 let command = shell.action_dialog.as_ref().unwrap().command.clone();
                 let shown = command.read(cx).content.to_string();
-                assert!(shown.contains(&root.display().to_string()), "{shown}");
+                if cfg!(windows) {
+                    assert!(shown.starts_with("build.cmd"), "{shown}");
+                } else {
+                    assert!(shown.contains(&root.display().to_string()), "{shown}");
+                }
                 type_action(shell, "Build all", &shown, cx);
                 shell.action_dialog.as_mut().unwrap().icon = "hammer";
                 shell.save_action(window, cx);
