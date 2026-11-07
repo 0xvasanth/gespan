@@ -353,6 +353,26 @@ fn a_blocked_action_or_an_outside_cwd_is_not_saved() {
         save_detected(dir.path(), &odd),
         Err(WriteError::Invalid(_))
     ));
+    // None of these can be filled in on any OS.
+    for command in ["echo $ZED_WORKTREE_ROOT/x", "echo ${a:-b}", "echo ${a b}"] {
+        let mut odd = action(dir.path());
+        odd.command = command.into();
+        assert!(
+            matches!(save_detected(dir.path(), &odd), Err(WriteError::Invalid(_))),
+            "{command}"
+        );
+    }
+    // On Windows a `${NAME}` is no reference either; on Unix it is one.
+    let mut shell = action(dir.path());
+    shell.command = "echo ${HOME_DIR}".into();
+    assert_eq!(save_detected(dir.path(), &shell).is_ok(), !cfg!(windows));
+    let _ = std::fs::remove_dir_all(dir.path().join(".gespan"));
+    let mut env = action(dir.path());
+    env.env = vec![("X".into(), "$ZED_WORKTREE_ROOT".into())];
+    assert!(matches!(
+        save_detected(dir.path(), &env),
+        Err(WriteError::Invalid(_))
+    ));
     assert!(!file(dir.path()).exists());
 }
 

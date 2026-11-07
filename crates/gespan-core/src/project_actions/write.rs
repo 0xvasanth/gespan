@@ -289,6 +289,23 @@ fn io(error: std::io::Error) -> WriteError {
 /// `${NAME}` (`%NAME%` on Windows) becomes `${env:NAME}`, which reads back as
 /// the same line. Any other `${…}` can't be filled in, so it can't be saved.
 fn file_refs(line: &str) -> Result<String, WriteError> {
+    // Reading the file fills this in again, so the line would change.
+    if line.contains("$ZED_WORKTREE_ROOT") {
+        return Err(WriteError::Invalid(
+            "Uses $ZED_WORKTREE_ROOT, which Gespan can't fill in".into(),
+        ));
+    }
+    // Windows spells references `%NAME%`, so a `${…}` there is no reference.
+    if cfg!(windows) {
+        if let Some(start) = line.find("${") {
+            if let Some(len) = line[start..].find('}') {
+                return Err(WriteError::Invalid(format!(
+                    "Uses {}, which Gespan can't fill in",
+                    &line[start..start + len + 1]
+                )));
+            }
+        }
+    }
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     let (open, close) = if cfg!(windows) {
