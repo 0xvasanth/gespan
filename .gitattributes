@@ -6,3 +6,6 @@ crates/gespan-core/src/app_update/fixtures/package.txt text eol=lf
 
 # Real provider captures: parsed byte for byte on every platform.
 crates/gespan-core/src/usage/fixtures/* text eol=lf
+
+# Compared byte for byte against rendered launch commands on every platform.
+crates/gespan-core/src/provider/fixtures/launch_argv.txt text eol=lf
