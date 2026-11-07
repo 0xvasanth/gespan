@@ -26,9 +26,12 @@ const MAX_LINE: usize = 2_000;
 const MAX_FINISHED: usize = 32;
 /// How often a run's exit is checked.
 const POLL: Duration = Duration::from_millis(20);
-/// Output after the exit is read for this long. Something the action left
-/// running can hold the pipes open forever.
+/// Output after the exit is read for this long while something the action
+/// left running is still alive: it can hold the pipes open forever.
 const DRAIN: Duration = Duration::from_millis(500);
+/// With nothing left running, the pipes close once the readers catch up, which
+/// a busy machine can delay. This only bounds a pipe held outside the group.
+const CLOSED_DRAIN: Duration = Duration::from_secs(10);
 /// How long `stop` waits for the run to end.
 const STOP_WAIT: Duration = Duration::from_secs(5);
 /// Output bytes a slow mirror may fall behind by. Past it, chunks are dropped
@@ -435,7 +438,10 @@ fn launch(run: &Arc<Run>, project: &str, action: &Action, mut command: Command) 
             }
             std::thread::sleep(POLL);
         };
-        let deadline = Instant::now() + DRAIN;
+        let left_running = lock(&run.process)
+            .as_ref()
+            .is_some_and(|(_, group)| group.alive());
+        let deadline = Instant::now() + if left_running { DRAIN } else { CLOSED_DRAIN };
         let mut state = run.state();
         while state.open_pipes > 0 {
             let left = deadline.saturating_duration_since(Instant::now());

@@ -90,20 +90,21 @@ fn it_runs_in_cwd_with_env_expanded_from_gespans_own() {
 fn a_slow_action_returns_running_then_output_reports_the_exit() {
     let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
-    let command = format!("echo begin && {} && echo end", sleeper(1));
-    let begun = Instant::now();
+    // Waits for a file, not a clock, so a busy machine can't finish it early.
+    let gate = if cfg!(windows) {
+        "powershell -NoProfile -Command \"while (!(Test-Path go)) { Start-Sleep -Milliseconds 50 }\""
+    } else {
+        "while [ ! -e go ]; do sleep 0.05; done"
+    };
+    let command = format!("echo begin && {gate} && echo end");
     let first = start(
         "p",
         &action("test:slow", &command, dir.path()),
         Duration::from_millis(200),
     );
-    assert!(
-        begun.elapsed() < Duration::from_secs(1),
-        "{:?}",
-        begun.elapsed()
-    );
     assert_eq!(first.status, Status::Running, "{first:?}");
     assert_eq!(first.exit_code, None);
+    std::fs::write(dir.path().join("go"), "").unwrap();
 
     let last = output(&first.run_id, LONG).unwrap();
     assert_eq!(last.run_id, first.run_id);
@@ -140,10 +141,10 @@ fn starting_a_running_action_again_returns_the_same_run() {
         Duration::ZERO,
     );
     assert_ne!(elsewhere.run_id, first.run_id);
-    stop(&elsewhere.run_id).unwrap();
+    stop_and_wait(&elsewhere.run_id);
 
-    let stopped = stop(&first.run_id).unwrap();
-    assert_eq!(stopped.status, Status::Stopped);
+    let stopped = stop_and_wait(&first.run_id);
+    assert_eq!(stopped.status, Status::Stopped, "{stopped:?}");
     // Once it has stopped, starting it again is a new run.
     let quick = action("test:again", "echo fresh", dir.path());
     let fresh = start("p", &quick, LONG);
@@ -179,16 +180,38 @@ fn a_long_line_is_capped_at_2000_chars() {
     assert!(report.output[0].chars().all(|c| c == 'é'));
 }
 
-/// The pid printed by a run, read as it arrives.
-fn printed_pid(run_id: &str) -> u32 {
+/// The pid a run prints, from what `start` returned or, if it wasn't there
+/// yet, from its output as it arrives.
+fn printed_pid(started: &Report) -> u32 {
+    let parse = |report: &Report| report.output.iter().find_map(|l| l.trim().parse().ok());
+    if let Some(pid) = parse(started) {
+        return pid;
+    }
     let deadline = Instant::now() + LONG;
     while Instant::now() < deadline {
-        let report = output(run_id, Duration::from_millis(100)).unwrap();
-        if let Some(pid) = report.output.iter().find_map(|l| l.trim().parse().ok()) {
+        if let Some(pid) = parse(&output(&started.run_id, Duration::from_millis(100)).unwrap()) {
             return pid;
         }
     }
     panic!("no pid printed");
+}
+
+/// Stops a run and waits for it to end, however busy the machine is.
+fn stop_and_wait(run_id: &str) -> Report {
+    let mut report = stop(run_id).unwrap();
+    if report.status == Status::Running {
+        report = output(run_id, LONG).unwrap();
+    }
+    report
+}
+
+/// Waits for `pid` to be gone, as a killed process is reaped asynchronously.
+fn gone(pid: u32) -> bool {
+    let deadline = Instant::now() + LONG;
+    while alive(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    !alive(pid)
 }
 
 fn alive(pid: u32) -> bool {
@@ -226,16 +249,12 @@ fn stop_kills_children() {
         &action("test:stop", &command, dir.path()),
         Duration::ZERO,
     );
-    let child = printed_pid(&run.run_id);
+    let child = printed_pid(&run);
     assert!(alive(child));
 
-    let stopped = stop(&run.run_id).unwrap();
+    let stopped = stop_and_wait(&run.run_id);
     assert_eq!(stopped.status, Status::Stopped, "{stopped:?}");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while alive(child) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(!alive(child), "child {child} outlived stop");
+    assert!(gone(child), "child {child} outlived stop");
     // Stopping again reports the same end.
     assert_eq!(stop(&run.run_id).unwrap().status, Status::Stopped);
 }
@@ -257,6 +276,20 @@ fn recorder() -> &'static Recorder {
         recorder
     });
     &RECORDER
+}
+
+fn wait_for_finished(recorder: &Recorder, run_id: &str) {
+    let deadline = Instant::now() + LONG;
+    while !recorder
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| run_of(event) == run_id && matches!(event, RunEvent::Finished { .. }))
+    {
+        assert!(Instant::now() < deadline, "{run_id} never finished");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn run_of(event: &RunEvent) -> &str {
@@ -281,17 +314,7 @@ fn the_mirror_sees_started_output_finished() {
     assert_eq!(run.status, Status::Exited);
 
     // Events arrive off the run's threads, so the last may still be on its way.
-    let deadline = Instant::now() + LONG;
-    while Instant::now() < deadline
-        && !recorder
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|event| run_of(event) == run.run_id && matches!(event, RunEvent::Finished { .. }))
-    {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_finished(recorder, &run.run_id);
     let events = recorder.0.lock().unwrap();
     let ours: Vec<&RunEvent> = events.iter().filter(|e| run_of(e) == run.run_id).collect();
     let Some((
@@ -404,20 +427,12 @@ fn stop_kills_what_a_finished_action_left_running() {
             LONG,
         );
         assert_eq!(run.status, Status::Exited, "{run:?}");
-        let child: u32 = run
-            .output
-            .iter()
-            .find_map(|l| l.trim().parse().ok())
-            .expect("pid printed");
+        let child = printed_pid(&run);
         assert!(alive(child));
 
-        let stopped = stop(&run.run_id).unwrap();
+        let stopped = stop_and_wait(&run.run_id);
         assert_eq!(stopped.status, Status::Stopped, "{command}: {stopped:?}");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while alive(child) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert!(!alive(child), "{command}: {child} outlived stop");
+        assert!(gone(child), "{command}: {child} outlived stop");
     }
 }
 
@@ -457,7 +472,7 @@ fn concurrent_starts_of_one_action_share_a_run() {
         starts.into_iter().map(|s| s.join().unwrap()).collect()
     });
     assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
-    stop(&ids[0]).unwrap();
+    stop_and_wait(&ids[0]);
 }
 
 /// What a finished action left running may still print. The run keeps it, but
@@ -468,7 +483,7 @@ fn the_mirror_hears_nothing_after_finished() {
     let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
     let recorder = recorder();
     let dir = tempfile::tempdir().unwrap();
-    let command = "(sleep 1; echo late) & echo early";
+    let command = "(sleep 2; echo late) & echo early";
     let run = start("p", &action("test:late", command, dir.path()), LONG);
     assert_eq!(run.status, Status::Exited, "{run:?}");
     let deadline = Instant::now() + LONG;
@@ -482,8 +497,10 @@ fn the_mirror_hears_nothing_after_finished() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(lines, ["early", "late"]);
-    // Time for anything sent to reach the mirror.
-    std::thread::sleep(Duration::from_millis(300));
+    // Events reach the mirror in the order they were sent, so once a later
+    // run's `Finished` is in, anything this run sent is too.
+    let marker = start("p", &action("test:late-marker", "echo x", dir.path()), LONG);
+    wait_for_finished(recorder, &marker.run_id);
     let events = recorder.0.lock().unwrap();
     let kinds: Vec<&str> = events
         .iter()
