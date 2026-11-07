@@ -49,7 +49,7 @@ pub(super) struct ActionDialog {
     prefilled: Option<String>,
     /// Why the shared file must be edited by hand, such as its comments; the
     /// dialog then offers to open it instead of saving.
-    hand_edit: Option<SharedString>,
+    hand_edit: Option<WriteError>,
     error: Option<SharedString>,
     _events: Vec<Subscription>,
 }
@@ -669,6 +669,14 @@ impl Shell {
                 clear(this, cx)
             }),
             cx.subscribe(&command, move |this, _, _: &input::Changed, cx| {
+                // A command that can't be one line may be put back as it
+                // was, which saves as a rename; a commented file stays so.
+                if let Some(dialog) = &mut this.action_dialog
+                    && dialog.hand_edit == Some(WriteError::NeedsHandEdit)
+                {
+                    dialog.hand_edit = None;
+                    cx.notify();
+                }
                 clear(this, cx)
             }),
         ];
@@ -716,10 +724,9 @@ impl Shell {
     /// a hand edit will do.
     fn write_failed(&mut self, error: WriteError, cx: &mut Context<Self>) {
         if let Some(dialog) = &mut self.action_dialog {
-            let message: SharedString = error.to_string().into();
+            dialog.error = Some(error.to_string().into());
             let by_hand = matches!(error, WriteError::HasComments | WriteError::NeedsHandEdit);
-            dialog.hand_edit = by_hand.then(|| message.clone());
-            dialog.error = Some(message);
+            dialog.hand_edit = by_hand.then_some(error);
             cx.notify();
         }
     }
@@ -915,7 +922,10 @@ impl Shell {
             }));
         let title = if editing { "Edit action" } else { "Add action" };
         // Why the file needs a hand edit stays while typing.
-        let error = dialog.error.clone().or_else(|| dialog.hand_edit.clone());
+        let error = dialog
+            .error
+            .clone()
+            .or_else(|| dialog.hand_edit.as_ref().map(|e| e.to_string().into()));
         let share = dialog.share;
         let share_toggle =
             div()
@@ -972,6 +982,7 @@ impl Shell {
                 .on_click(cx.listener(|this, _, window, cx| this.open_tasks_json(window, cx)))
         } else {
             crate::modal::primary_button("action-save", if editing { "Save" } else { "Add action" })
+                .debug_selector(|| "action-save".into())
                 .w_full()
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| this.save_action(window, cx)))
@@ -1878,7 +1889,8 @@ mod tests {
                 write(root, ".gespan/tasks.json", &text.replace("  // Ours\n", ""));
                 shell.open_action_dialog(None, window, cx);
                 type_action(shell, "New", "echo new", cx);
-                shell.action_dialog.as_mut().unwrap().hand_edit = Some("stale".into());
+                shell.action_dialog.as_mut().unwrap().hand_edit =
+                    Some(super::WriteError::HasComments);
                 type_action(shell, "Ship", "echo new", cx);
                 shell.save_action(window, cx);
                 let dialog = shell.action_dialog.as_ref().unwrap();
@@ -1951,6 +1963,11 @@ mod tests {
                 shell.refresh_actions(cx);
                 shell.run_actions_menu("edit:gespan:Lint", window, cx);
                 type_action(shell, "Lint", "eslint src", cx);
+            })
+            .unwrap();
+        // Saved once the typing's events are in, as in the app.
+        window
+            .update(cx, |shell, window, cx| {
                 shell.save_action(window, cx);
                 let dialog = shell.action_dialog.as_ref().expect("the dialog stays open");
                 let message = "This action uses arguments, per-OS commands or workspace \
@@ -1972,6 +1989,58 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         assert!(visual.debug_bounds("action-open-tasks").is_some());
+        // Putting the command back as it was brings Save back: a rename.
+        window
+            .update(visual, |shell, _, cx| {
+                let command = shell.action_dialog.as_ref().unwrap().command.clone();
+                command.update(cx, |i, cx| i.set_text("eslint .".into(), cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("action-open-tasks").is_none());
+        assert!(visual.debug_bounds("action-save").is_some());
+        window
+            .update(visual, |shell, window, cx| {
+                assert!(shell.action_dialog.as_ref().unwrap().hand_edit.is_none());
+                let name = shell.action_dialog.as_ref().unwrap().name.clone();
+                name.update(cx, |i, cx| i.set_text("Lint all".into(), cx));
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                let task = &shared(root)["tasks"][0];
+                assert_eq!(task["label"], "Lint all");
+                assert_eq!(task["args"], serde_json::json!(["."]));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_comments_refusal_survives_editing_the_command(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let text = "{\n  // Ours\n  \"tasks\": [ { \"label\": \"Ship\", \"command\": \"echo ship\" } ]\n}\n";
+        write(root, ".gespan/tasks.json", text);
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Ship", window, cx);
+                type_action(shell, "Ship", "echo shipped", cx);
+                shell.save_action(window, cx);
+            })
+            .unwrap();
+        window
+            .update(cx, |shell, _, cx| {
+                let command = shell.action_dialog.as_ref().unwrap().command.clone();
+                command.update(cx, |i, cx| i.set_text("echo ship".into(), cx));
+            })
+            .unwrap();
+        window
+            .update(cx, |shell, _, _| {
+                let dialog = shell.action_dialog.as_ref().unwrap();
+                assert_eq!(dialog.hand_edit, Some(super::WriteError::HasComments));
+            })
+            .unwrap();
     }
 
     #[gpui::test]
