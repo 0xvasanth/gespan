@@ -1,4 +1,4 @@
-use super::super::write::{add, remove, save_detected, update, Draft, WriteError};
+use super::super::write::{add, relabel, remove, save_detected, update, Draft, WriteError};
 use super::super::{detect, Action};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -139,7 +139,7 @@ fn update_and_remove_by_label() {
     put(
         dir.path(),
         r#"{ "version": "2.0.0", "tasks": [
-  { "label": "A", "command": "one", "args": ["x"], "group": "test", "isBackground": true },
+  { "label": "A", "command": "one", "script": "old", "group": "test", "isBackground": true },
   { "label": "B", "command": "two" }
 ] }"#,
     );
@@ -147,7 +147,7 @@ fn update_and_remove_by_label() {
     next.icon = "rocket".into();
     update(dir.path(), "A", &next).unwrap();
     let value = read(dir.path());
-    // Edited in place: same slot, unknown fields kept, old args dropped.
+    // Edited in place: same slot, unknown fields kept, an old script dropped.
     assert_eq!(
         value["tasks"][0],
         json!({
@@ -442,12 +442,7 @@ fn add_and_update_check_the_command_like_save_detected() {
 
     // Nothing Gespan can't fill in is ever written, by add or by update.
     let before = std::fs::read(file(root)).unwrap();
-    for command in [
-        "echo ${a:-b}",
-        "echo ${input:target}",
-        "echo $ZED_WORKTREE_ROOT/x",
-        "echo ${a b}",
-    ] {
+    for command in ["echo ${a:-b}", "echo ${input:target}", "echo ${a b}"] {
         let added = add(root, &draft("Odd", command));
         assert!(
             matches!(&added, Err(WriteError::Invalid(why)) if why.contains("can't fill in")),
@@ -633,31 +628,140 @@ fn errors_read_as_sentences() {
     );
 }
 
-#[test]
-fn a_huge_object_is_rewritten_quickly_in_order() {
-    let dir = tempfile::tempdir().unwrap();
-    // 50k keys in reverse order, so a sorted or quadratic read shows.
-    let keys: Vec<String> = (0..50_000)
-        .rev()
-        .map(|n| format!("\"k{n}\": {n}"))
-        .collect();
+/// A tasks.json with `keys` keys in one object, in reverse order, and a
+/// repeated key at the end.
+fn huge(dir: &Path, keys: usize) {
+    let keys: Vec<String> = (0..keys).rev().map(|n| format!("\"k{n}\": {n}")).collect();
     put(
-        dir.path(),
+        dir,
         &format!(
             r#"{{ "big": {{ {}, "k7": "last" }}, "tasks": [] }}"#,
             keys.join(", ")
         ),
     );
-    let start = std::time::Instant::now();
+}
+
+#[test]
+fn a_huge_object_is_read_in_linear_time_and_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    huge(dir.path(), 40_000);
     add(dir.path(), &draft("A", "a")).unwrap();
-    assert!(start.elapsed() < std::time::Duration::from_secs(10));
     let text = std::fs::read_to_string(file(dir.path())).unwrap();
-    let first = text.find("\"k49999\"").unwrap();
-    assert!(first < text.find("\"k0\"").unwrap());
+    assert!(text.find("\"k39999\"").unwrap() < text.find("\"k0\"").unwrap());
     // A repeated key keeps its first place and its last value.
     assert_eq!(text.matches("\"k7\"").count(), 1);
     assert!(
         text.contains("\"k7\": \"last\",\n    \"k6\": 6"),
         "k7 moved"
+    );
+
+    // Four times the keys takes about four times as long; quadratic would be
+    // sixteen. Each size's best of three keeps noise out.
+    let time = |keys: usize| {
+        (0..3)
+            .map(|_| {
+                let dir = tempfile::tempdir().unwrap();
+                huge(dir.path(), keys);
+                let start = std::time::Instant::now();
+                add(dir.path(), &draft("A", "a")).unwrap();
+                start.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (time(10_000), time(40_000));
+    let floor = std::time::Duration::from_millis(5);
+    assert!(
+        large < small.max(floor) * 8,
+        "10k keys: {small:?}, 40k keys: {large:?}"
+    );
+}
+
+#[test]
+fn typed_workspace_variables_are_kept_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let line =
+        "echo ${workspaceFolder} ${workspaceFolderBasename} ${env:PATH} $ZED_WORKTREE_ROOT/x";
+    add(root, &draft("Vars", line)).unwrap();
+    assert_eq!(read(root)["tasks"][0]["command"], line);
+    // Typed into a plain task's new command, they are kept too.
+    add(root, &draft("Plain", "true")).unwrap();
+    update(root, "Plain", &draft("Plain", &format!("{line} again"))).unwrap();
+    assert_eq!(read(root)["tasks"][1]["command"], format!("{line} again"));
+    let back = detected(root, "Vars");
+    assert_eq!(back.blocked, None);
+    assert!(
+        back.command.contains(&root.display().to_string()),
+        "{}",
+        back.command
+    );
+    // A `${env:…}` with a name the shell can't take is still refused.
+    assert!(matches!(
+        add(root, &draft("Bad", "echo ${env:a b}")),
+        Err(WriteError::Invalid(_))
+    ));
+}
+
+#[test]
+fn relabel_changes_only_the_name_icon_and_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let before = r#"{ "version": "2.0.0", "tasks": [
+  { "label": "Build", "type": "process", "command": "${workspaceFolder}/build.sh",
+    "args": ["--fast", "a b"], "options": { "env": { "A": "1" } },
+    "windows": { "command": "build.cmd" }, "detail": "Old", "group": "build" }
+] }"#;
+    put(root, before);
+    // The command given is ignored: it is the resolved one, as listed.
+    let mut next = draft(" Build all ", "/abs/path/build.sh --fast 'a b'");
+    next.icon = "hammer".into();
+    next.detail = Some("New".into());
+    relabel(root, "Build", &next).unwrap();
+    assert_eq!(
+        read(root)["tasks"][0],
+        json!({
+            "label": "Build all", "type": "process", "command": "${workspaceFolder}/build.sh",
+            "args": ["--fast", "a b"], "options": { "env": { "A": "1" } },
+            "windows": { "command": "build.cmd" }, "detail": "New", "group": "build",
+            "icon": { "id": "hammer" },
+        })
+    );
+    // Clearing the detail and icon removes them; names still can't clash.
+    relabel(root, "Build all", &draft("Build all", "")).unwrap();
+    let task = &read(root)["tasks"][0];
+    assert!(task.get("detail").is_none() && task.get("icon").is_none());
+    add(root, &draft("Other", "true")).unwrap();
+    assert_eq!(
+        relabel(root, "Other", &draft("Build all", "")),
+        Err(WriteError::Duplicate("Build all".into()))
+    );
+    assert!(matches!(
+        relabel(root, "Other", &draft(" ", "")),
+        Err(WriteError::Invalid(_))
+    ));
+}
+
+#[test]
+fn a_new_command_for_a_task_gespan_cant_rewrite_is_refused() {
+    let tasks = [
+        r#"{ "label": "T", "command": "eslint", "args": ["."] }"#,
+        r#"{ "label": "T", "command": "make", "osx": { "command": "gmake" } }"#,
+        r#"{ "label": "T", "command": "make", "linux": { "args": ["-j"] } }"#,
+        r#"{ "label": "T", "command": "${workspaceFolder}/run.sh" }"#,
+        r#"{ "label": "T", "command": "echo ${workspaceFolderBasename}" }"#,
+        r#"{ "label": "T", "command": "$ZED_WORKTREE_ROOT/run.sh" }"#,
+    ];
+    for task in tasks {
+        let dir = tempfile::tempdir().unwrap();
+        let text = format!(r#"{{ "version": "2.0.0", "tasks": [ {task} ] }}"#);
+        put(dir.path(), &text);
+        let result = update(dir.path(), "T", &draft("T", "echo new"));
+        assert_eq!(result, Err(WriteError::NeedsHandEdit), "{task}");
+        assert_eq!(std::fs::read_to_string(file(dir.path())).unwrap(), text);
+    }
+    assert_eq!(
+        WriteError::NeedsHandEdit.to_string(),
+        "This action uses arguments, per-OS commands or workspace variables; edit it in tasks.json"
     );
 }
