@@ -140,6 +140,11 @@ pub(crate) enum SettingsEvent {
     MobilePair,
     MobileCancelInvite,
     MobileRevoke(String),
+    /// Run a herdr command in a new terminal tab titled `title`.
+    RunMachineCommand {
+        title: String,
+        command: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -273,6 +278,7 @@ pub(crate) struct SettingsView {
     /// By main checkout, so unsaved text survives picking another project.
     worktree_scripts: HashMap<String, pages::WorktreeScripts>,
     connections: pages::ConnectionsState,
+    herdr: pages::HerdrMachinesState,
     skill_preview: Option<std::path::PathBuf>,
     skill_preview_text: Option<Result<std::sync::Arc<skill_document::DocumentData>, String>>,
     skill_preview_generation: u64,
@@ -357,6 +363,11 @@ impl SettingsView {
         if let Some(center) = crate::accounts::get(cx) {
             subscriptions.push(cx.observe(&center, |_, _, cx| cx.notify()));
         }
+        if let Some(machines) = crate::machines::get(cx) {
+            subscriptions.push(cx.observe(&machines, |this, machines, cx| {
+                this.herdr_machines_changed(&machines, cx)
+            }));
+        }
         let recorder = cx.weak_entity();
         subscriptions.push(cx.intercept_keystrokes(move |event, window, cx| {
             let _ = recorder.update(cx, |this, cx| {
@@ -427,6 +438,7 @@ impl SettingsView {
             fields: HashMap::new(),
             worktree_scripts: HashMap::new(),
             connections: pages::ConnectionsState::default(),
+            herdr: pages::HerdrMachinesState::default(),
             skill_preview: None,
             skill_preview_text: None,
             skill_preview_generation: 0,
@@ -447,6 +459,7 @@ impl SettingsView {
         this.watch_mobile(cx);
         this.watch_dictation(cx);
         this.watch_connections(cx);
+        this.watch_herdr_machines(cx);
         if this.prefs.notifications {
             this.probe_notification_permission(false, cx);
         }
@@ -533,6 +546,7 @@ impl SettingsView {
             self.diagnostics.counters = None;
             self.watch_mobile(cx);
             self.watch_connections(cx);
+            self.watch_herdr_machines(cx);
             self.watch_dictation(cx);
             if section == Section::Mcp {
                 self.refresh_mcp_health(cx);

@@ -220,8 +220,6 @@ impl Shell {
     /// A new tab in the home folder that runs `command` through the system
     /// shell instead of the login shell, titled `title` and focused. It is
     /// shown in the right panel when the terminal lives there, else the dock.
-    // Unused until the herdr machine screens open their commands here.
-    #[allow(dead_code)]
     pub(crate) fn open_command_terminal(
         &mut self,
         title: SharedString,

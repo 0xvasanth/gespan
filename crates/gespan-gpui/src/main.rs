@@ -47,6 +47,7 @@ mod installed_providers;
 mod instance;
 #[cfg(test)]
 mod log_capture;
+mod machines;
 mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]
@@ -567,6 +568,7 @@ fn main() {
         board::bind(cx);
         worktree_setups::install(cx);
         shell::action_runs::install(cx);
+        machines::install(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

@@ -262,6 +262,9 @@ impl Shell {
                 SettingsEvent::MobilePair => this.pair_mobile(cx),
                 SettingsEvent::MobileCancelInvite => this.mobile_cancel_invite(cx),
                 SettingsEvent::MobileRevoke(id) => this.mobile_revoke(id, cx),
+                SettingsEvent::RunMachineCommand { title, command } => {
+                    this.run_machine_command(title.clone().into(), command.clone(), window, cx)
+                }
             },
         ));
         // This dialog is painted at the window root, like React's portal.
@@ -314,6 +317,20 @@ impl Shell {
                 v.set_preferences(&prefs, cx);
             });
         }
+    }
+    /// Settings covers the terminal, so it closes first. herdr may have
+    /// changed the machine list by the time the tab goes away.
+    fn run_machine_command(
+        &mut self,
+        title: gpui::SharedString,
+        command: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_settings(window, cx);
+        let terminal = self.open_command_terminal(title, command, window, cx);
+        cx.observe_release(&terminal, |_, _, cx| crate::machines::reload(cx))
+            .detach();
     }
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(inbox) = &self.inbox {
@@ -608,6 +625,61 @@ mod tests {
     use super::*;
     use crate::shell::tests::window;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn herdr_machines_command_runs_in_a_titled_terminal_and_reloads_when_it_closes(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        let machines = cx.update(|cx| crate::machines::install_for_test(Vec::new(), cx));
+        window
+            .update(cx, |shell, w, cx| {
+                cx.set_reduce_motion(true);
+                shell.open_settings(Section::General, w, cx)
+            })
+            .unwrap();
+        let settings = window
+            .update(cx, |shell, _, _| shell.settings.clone().unwrap())
+            .unwrap();
+        settings.update(cx, |_, cx| {
+            cx.emit(SettingsEvent::RunMachineCommand {
+                title: "Add me@box".into(),
+                command: "true".into(),
+            })
+        });
+        cx.run_until_parked();
+        let terminal = window
+            .update(cx, |shell, _, cx| {
+                // Settings covers the terminal, so it steps aside.
+                assert!(shell.settings.is_none());
+                let terminal = shell.terminals[&shell.workspace.project]
+                    .last()
+                    .unwrap()
+                    .clone();
+                assert_eq!(terminal.read(cx).title, "Add me@box");
+                terminal
+            })
+            .unwrap();
+        let reloads = |cx: &mut TestAppContext| machines.read_with(cx, |m, _| m.reloads);
+        let before = reloads(cx);
+        cx.run_until_parked();
+        assert_eq!(reloads(cx), before, "an open tab does not reload");
+        window
+            .update(cx, |shell, w, cx| {
+                let project = shell.workspace.project.clone();
+                let ix = shell.terminals[&project]
+                    .iter()
+                    .position(|t| *t == terminal)
+                    .unwrap();
+                shell.remove_terminal(&project, ix, w, cx);
+            })
+            .unwrap();
+        drop(terminal);
+        // Releases are handled when effects flush.
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert_eq!(reloads(cx), before + 1, "closing the tab reloads once");
+    }
 
     #[gpui::test]
     fn pairing_dialog_is_a_window_overlay_and_updates_from_settings_notifications(
