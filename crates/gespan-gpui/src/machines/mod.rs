@@ -137,6 +137,9 @@ pub(crate) struct Machines {
     attach: Attach,
     #[cfg(test)]
     pub(crate) reloads: usize,
+    /// The machines asked to retry, in order.
+    #[cfg(test)]
+    pub(crate) refreshes: Vec<String>,
 }
 
 impl gpui::EventEmitter<Notice> for Machines {}
@@ -312,6 +315,8 @@ pub(crate) fn install(cx: &mut App) {
         attach: Arc::new(gespan_core::machines::attach_command),
         #[cfg(test)]
         reloads: 0,
+        #[cfg(test)]
+        refreshes: Vec::new(),
     });
     cx.set_global(Shared(machines.clone()));
     let found = cx
@@ -362,6 +367,21 @@ pub(crate) fn reload(cx: &mut App) {
     }
 }
 
+/// Retries one machine's connection now, off the UI thread.
+pub(crate) fn refresh(machine_id: &str, cx: &mut App) {
+    let Some(machines) = get(cx) else {
+        return;
+    };
+    #[cfg(test)]
+    machines.update(cx, |m, _| m.refreshes.push(machine_id.to_owned()));
+    if let Some(registry) = machines.read(cx).registry.clone() {
+        let id = machine_id.to_owned();
+        cx.background_executor()
+            .spawn(async move { registry.refresh(&id) })
+            .detach();
+    }
+}
+
 /// A list with no registry behind it, for tests.
 #[cfg(test)]
 pub(crate) fn install_for_test(views: Vec<MachineView>, cx: &mut App) -> Entity<Machines> {
@@ -376,6 +396,7 @@ pub(crate) fn install_for_test(views: Vec<MachineView>, cx: &mut App) -> Entity<
         attaching: HashSet::new(),
         attach: Arc::new(|id, pane| Some(format!("herdr --machine '{id}' agent attach '{pane}'"))),
         reloads: 0,
+        refreshes: Vec::new(),
     });
     cx.set_global(Shared(machines.clone()));
     machines

@@ -326,6 +326,8 @@ impl SettingsView {
         let (row, upgrade_id, remove_id) = (id.clone(), id.clone(), id.clone());
         let machine = view.machine.clone();
         let online = view.machine.enabled && view.snapshot.online == Online::Online;
+        // Only an enabled machine has a connection to retry.
+        let retry = view.machine.enabled && !online;
         div()
             .border_b_1()
             .border_color(content(0.1))
@@ -363,6 +365,24 @@ impl SettingsView {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .when(retry, |d| {
+                                let (selector, retry_id) = (id.clone(), id.clone());
+                                d.child(
+                                    secondary_button(
+                                        SharedString::from(format!("herdr-retry-{id}")),
+                                        format!("Retry {label}"),
+                                        false,
+                                        false,
+                                    )
+                                    .debug_selector(move || format!("herdr-retry-{selector}"))
+                                    .child("Retry")
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            crate::machines::refresh(&retry_id, cx);
+                                        },
+                                    )),
+                                )
+                            })
                             .when(upgrade, |d| {
                                 let selector = upgrade_id.clone();
                                 d.child(
@@ -820,6 +840,45 @@ mod tests {
         // Every row can be turned off and removed.
         assert!(visual.debug_bounds("herdr-enabled-ok").is_some());
         assert!(visual.debug_bounds("herdr-remove-away").is_some());
+    }
+
+    #[gpui::test]
+    fn herdr_machines_retry_is_offered_only_while_a_machine_waits(cx: &mut TestAppContext) {
+        let views = vec![
+            machine("ok", Online::Online, Some(HERDR_VERSION), true),
+            machine(
+                "signin",
+                Online::NeedsSignIn {
+                    hint: "ssh me@signin".into(),
+                },
+                None,
+                true,
+            ),
+            machine(
+                "away",
+                Online::Offline {
+                    reason: "timed out".into(),
+                    retry_in: Duration::from_secs(8),
+                },
+                None,
+                true,
+            ),
+            machine("bare", Online::HerdrMissing, None, true),
+            // Off: there is no connection to retry.
+            machine("off", Online::Connecting, None, false),
+        ];
+        let (window, _) = window(views, true, cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        for retry in ["herdr-retry-signin", "herdr-retry-away", "herdr-retry-bare"] {
+            assert!(visual.debug_bounds(retry).is_some(), "{retry}");
+        }
+        assert!(visual.debug_bounds("herdr-retry-ok").is_none());
+        assert!(visual.debug_bounds("herdr-retry-off").is_none());
+        click(visual, "herdr-retry-signin");
+        let machines = visual.update(|_, cx| crate::machines::get(cx).unwrap());
+        let refreshed = machines.read_with(visual, |m, _| m.refreshes.clone());
+        assert_eq!(refreshed, ["signin"]);
     }
 
     #[gpui::test]
