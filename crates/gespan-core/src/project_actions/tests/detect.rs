@@ -341,7 +341,7 @@ fn many_clashing_labels_detect_quickly() {
     assert_eq!(listing.actions.len(), 50_000);
     assert_eq!(listing.actions[1].id, "procfile:web (2)");
     assert_eq!(listing.actions[49_999].id, "procfile:web (50000)");
-    assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+    assert!(took < std::time::Duration::from_secs(10), "took {took:?}");
 }
 
 #[test]

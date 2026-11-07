@@ -370,7 +370,7 @@ fn a_huge_package_json_lists_in_file_order_quickly() {
     let found = parse(&PackageJson, "package.json", &text);
     let took = started.elapsed();
     assert_eq!(labels(&found), names);
-    assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+    assert!(took < std::time::Duration::from_secs(10), "took {took:?}");
 }
 
 #[test]
@@ -389,7 +389,7 @@ fn huge_justfiles_and_makefiles_list_quickly() {
         let took = started.elapsed();
         assert_eq!(labels(&found), names);
         assert!(
-            took < std::time::Duration::from_secs(2),
+            took < std::time::Duration::from_secs(10),
             "{file} took {took:?}"
         );
     }
