@@ -434,3 +434,56 @@ fn workspace_variables_substitute_raw_like_vscode() {
         assert_eq!(arg, format!("ls '{root}/x'"));
     }
 }
+
+#[test]
+fn startup_and_loader_env_names_block_the_action() {
+    for name in [
+        "ZDOTDIR",
+        "BASH_ENV",
+        "ENV",
+        "PROMPT_COMMAND",
+        "PS4",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_ANYTHING",
+    ] {
+        let action = resolved(one(&task(&format!(
+            r#"{{ "label": "Dev", "command": "bun run dev",
+                 "options": {{ "env": {{ "PORT": "3000", "{name}": "/tmp/x" }} }} }}"#
+        ))));
+        assert_eq!(
+            action.blocked.as_deref(),
+            Some(format!("Sets {name}, which could run code before the command").as_str()),
+            "{name}"
+        );
+    }
+    // Ordinary names, and ones that only look alike, still run.
+    let fine = resolved(one(&task(
+        r#"{ "label": "Dev", "command": "bun run dev",
+             "options": { "env": { "PORT": "3000", "ENVIRONMENT": "dev", "MY_LD_PRELOAD": "x",
+                                   "PATH": "${env:PATH}:./bin" } } }"#,
+    )));
+    assert_eq!(fine.blocked, None);
+}
+
+#[test]
+fn zed_tasks_with_a_startup_env_name_are_blocked_too() {
+    use super::super::sources::{editors::Zed, Source};
+    let checkout = checkout();
+    let ctx = ctx(&checkout);
+    let found = Zed
+        .parse(
+            &ctx,
+            ".zed/tasks.json",
+            r#"[ { "label": "Run", "command": "make", "env": { "BASH_ENV": "./x.sh" } } ]"#,
+        )
+        .unwrap();
+    let action = resolve(&ctx, "zed", ".zed/tasks.json", found[0].clone());
+    assert_eq!(
+        action.blocked.as_deref(),
+        Some("Sets BASH_ENV, which could run code before the command")
+    );
+}

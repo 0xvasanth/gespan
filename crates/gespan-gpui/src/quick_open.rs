@@ -93,8 +93,9 @@ struct Row {
 pub(crate) struct QuickOpen {
     pub(crate) search: Entity<input::Input>,
     files: Vec<ProjectFile>,
-    /// The runnable project actions as `(id, label)`, for `>` queries.
-    actions: Vec<(String, String)>,
+    /// The runnable project actions as `(id, label, command)`, for `>`
+    /// queries. Each row shows the command a pick runs.
+    actions: Vec<(String, String, String)>,
     rows: Vec<Row>,
     active: usize,
     scroll: gpui::ScrollHandle,
@@ -118,7 +119,7 @@ impl QuickOpen {
     pub(crate) fn new(
         cwd: String,
         palette: bool,
-        actions: Vec<(String, String)>,
+        actions: Vec<(String, String, String)>,
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| {
@@ -206,14 +207,14 @@ impl QuickOpen {
             let mut actions: Vec<_> = self
                 .actions
                 .iter()
-                .filter_map(|(id, label)| {
+                .filter_map(|(id, label, command)| {
                     let label = format!("Run action: {label}");
                     composer::score(query.trim(), &label).map(|score| {
                         (
                             score,
                             Row {
                                 label,
-                                detail: String::new(),
+                                detail: command.clone(),
                                 path: None,
                                 command: None,
                                 action: Some(id.clone()),
@@ -254,6 +255,10 @@ impl QuickOpen {
     #[cfg(test)]
     pub(crate) fn labels(&self) -> Vec<String> {
         self.rows.iter().map(|row| row.label.clone()).collect()
+    }
+    #[cfg(test)]
+    pub(crate) fn details(&self) -> Vec<String> {
+        self.rows.iter().map(|row| row.detail.clone()).collect()
     }
     pub(crate) fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
         if self.search.read(cx).is_composing() {

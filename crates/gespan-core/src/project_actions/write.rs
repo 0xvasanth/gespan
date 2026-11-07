@@ -21,6 +21,30 @@ pub struct Draft {
     pub detail: Option<String>,
 }
 
+/// A shared action to edit: its label as listed and, when it came from the
+/// file, its place there. A repeated label is listed as `Build (2)`, which
+/// no task in the file is called, so the place finds it.
+#[derive(Clone, Copy, Debug)]
+pub struct Shared<'a> {
+    pub label: &'a str,
+    pub task: Option<usize>,
+}
+
+impl<'a> From<&'a str> for Shared<'a> {
+    fn from(label: &'a str) -> Self {
+        Shared { label, task: None }
+    }
+}
+
+impl<'a> From<&'a Action> for Shared<'a> {
+    fn from(action: &'a Action) -> Self {
+        Shared {
+            label: &action.label,
+            task: action.task,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum WriteError {
     /// Rewriting the file would lose its comments. It is left as it was.
@@ -71,13 +95,18 @@ pub fn add(checkout: &Path, draft: &Draft) -> Result<(), WriteError> {
 /// Replaces the shared action `label` with `draft`, in place. Fields Gespan
 /// doesn't edit, such as `group`, stay where they are. A task whose command
 /// one shell line can't stand for is left alone: see [`WriteError::NeedsHandEdit`].
-pub fn update(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteError> {
+pub fn update<'a>(
+    checkout: &Path,
+    shared: impl Into<Shared<'a>>,
+    draft: &Draft,
+) -> Result<(), WriteError> {
+    let shared = shared.into();
     let draft = prepare(draft, typed_refs)?;
     edit(checkout, |tasks| {
-        let at = position(tasks, label)?;
+        let at = position(tasks, shared)?;
         taken(tasks, &draft.label, Some(at))?;
         let Some(task) = tasks[at].as_object_mut() else {
-            return Err(not_found(label));
+            return Err(not_found(shared.label));
         };
         if needs_hand_edit(task) {
             return Err(WriteError::NeedsHandEdit);
@@ -95,16 +124,21 @@ pub fn update(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteEr
 /// Changes only the shared action `label`'s name, icon and detail. Its
 /// command, arguments, options and per-OS commands stay exactly as written;
 /// `draft.command` isn't used.
-pub fn relabel(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteError> {
+pub fn relabel<'a>(
+    checkout: &Path,
+    shared: impl Into<Shared<'a>>,
+    draft: &Draft,
+) -> Result<(), WriteError> {
+    let shared = shared.into();
     if draft.label.trim().is_empty() {
         return Err(WriteError::Invalid("Give the action a name".into()));
     }
     let name = draft.label.trim();
     edit(checkout, |tasks| {
-        let at = position(tasks, label)?;
+        let at = position(tasks, shared)?;
         taken(tasks, name, Some(at))?;
         let Some(task) = tasks[at].as_object_mut() else {
-            return Err(not_found(label));
+            return Err(not_found(shared.label));
         };
         task.insert("label", name);
         describe(task, draft);
@@ -138,9 +172,10 @@ fn needs_hand_edit(task: &Object) -> bool {
 }
 
 /// Removes the shared action `label`.
-pub fn remove(checkout: &Path, label: &str) -> Result<(), WriteError> {
+pub fn remove<'a>(checkout: &Path, shared: impl Into<Shared<'a>>) -> Result<(), WriteError> {
+    let shared = shared.into();
     edit(checkout, |tasks| {
-        let at = position(tasks, label)?;
+        let at = position(tasks, shared)?;
         tasks.remove(at);
         Ok(())
     })
@@ -148,6 +183,7 @@ pub fn remove(checkout: &Path, label: &str) -> Result<(), WriteError> {
 
 /// Saves a detected action to the shared file: its label, command, folder
 /// (relative to the checkout), environment, detail, background flag and icon.
+/// The checkout's own path is saved as `${workspaceFolder}`.
 pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError> {
     if let Some(reason) = &action.blocked {
         return Err(WriteError::Invalid(format!(
@@ -183,15 +219,52 @@ pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError>
     if !action.env.is_empty() {
         let mut env = Object::default();
         for (name, value) in &action.env {
-            env.insert(name, file_refs(value)?);
+            env.insert(name, workspace_folder(checkout, &file_refs(value)?));
         }
         options.insert("env", env);
     }
+    let draft = Draft {
+        command: workspace_folder(checkout, &draft.command),
+        ..draft
+    };
     let task = task(&draft, Some(options), action.background);
     edit(checkout, |tasks| {
         taken(tasks, &draft.label, None)?;
         tasks.push(task.into());
         Ok(())
+    })
+}
+
+/// `line` with this checkout's path written as `${workspaceFolder}`, so the
+/// shared file never holds one person's folder, such as their worktree. The
+/// path is matched as written and inside the quotes the resolver adds: `sh`'s
+/// single quotes and `cmd`'s double quotes keep it as is, and `sh`'s double
+/// quotes escape `\`, `"`, `$` and `` ` ``.
+fn workspace_folder(checkout: &Path, line: &str) -> String {
+    let mut roots: Vec<String> = Vec::new();
+    for root in [checkout.to_path_buf(), tasks_json::normalize(checkout)] {
+        // A drive or `/` alone would match every path.
+        if root.file_name().is_none() {
+            continue;
+        }
+        let root = root.display().to_string();
+        if cfg!(not(windows)) {
+            let mut escaped = String::with_capacity(root.len());
+            for c in root.chars() {
+                if matches!(c, '\\' | '"' | '$' | '`') {
+                    escaped.push('\\');
+                }
+                escaped.push(c);
+            }
+            roots.push(escaped);
+        }
+        roots.push(root);
+    }
+    // The longest first, so a shorter spelling never cuts into a longer one.
+    roots.sort_by_key(|root| std::cmp::Reverse(root.len()));
+    roots.dedup();
+    roots.iter().fold(line.to_string(), |line, root| {
+        line.replace(root.as_str(), "${workspaceFolder}")
     })
 }
 
@@ -261,10 +334,27 @@ fn label_of(task: &Json) -> Option<&str> {
     }
 }
 
-fn position(tasks: &[Json], label: &str) -> Result<usize, WriteError> {
-    tasks
-        .iter()
-        .position(|task| label_of(task) == Some(label))
+/// Where `shared` is in `tasks`: at its listed place while the task there
+/// still goes by that label, plain or numbered, else the task with exactly
+/// that label.
+fn position(tasks: &[Json], shared: Shared) -> Result<usize, WriteError> {
+    let label = shared.label;
+    let numbered = |name: &str| {
+        label
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(" ("))
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+    };
+    shared
+        .task
+        .filter(|&at| {
+            tasks
+                .get(at)
+                .and_then(label_of)
+                .is_some_and(|name| name == label || numbered(name))
+        })
+        .or_else(|| tasks.iter().position(|task| label_of(task) == Some(label)))
         .ok_or_else(|| not_found(label))
 }
 

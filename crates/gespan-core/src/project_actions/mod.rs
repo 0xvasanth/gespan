@@ -63,6 +63,10 @@ pub struct Action {
     /// `<source id>:<label>`, such as `gespan:Test` or `package.json:dev`.
     pub id: String,
     pub label: String,
+    /// Its place in its `tasks.json`'s `tasks` list, so a repeated label
+    /// that is listed as `Build (2)` is still found in the file.
+    #[serde(skip)]
+    pub task: Option<usize>,
     pub detail: Option<String>,
     pub source: &'static str,
     /// The file it came from, as shown, such as `.vscode/tasks.json`.
@@ -86,6 +90,8 @@ pub struct Action {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Found {
     pub label: String,
+    /// Its place in a `tasks.json`'s `tasks` list.
+    pub task: Option<usize>,
     pub command: String,
     pub args: Vec<String>,
     /// False for a `process` task, whose program is quoted like its args.
@@ -251,6 +257,7 @@ fn personal(project: &str, checkout: &Path) -> Vec<Action> {
         .map(|personal| Action {
             id: format!("{PERSONAL}:{}", personal.id),
             label: personal.name.clone(),
+            task: None,
             detail: None,
             source: PERSONAL,
             file: PERSONAL_FILE.to_string(),

@@ -253,6 +253,7 @@ fn add_then_detect_lists_it_even_within_the_same_second() {
 
 fn action(dir: &Path) -> Action {
     Action {
+        task: None,
         id: "package.json:dev".into(),
         label: "dev".into(),
         detail: None,
@@ -764,4 +765,111 @@ fn a_new_command_for_a_task_gespan_cant_rewrite_is_refused() {
         WriteError::NeedsHandEdit.to_string(),
         "This action uses arguments, per-OS commands or workspace variables; edit it in tasks.json"
     );
+}
+
+/// The detected action `label` from any source but Gespan's own file.
+fn found_in(dir: &Path, source: &str, label: &str) -> Action {
+    detect(&dir.display().to_string(), dir)
+        .actions
+        .into_iter()
+        .find(|action| action.source == source && action.label == label)
+        .unwrap()
+}
+
+#[test]
+fn save_detected_spells_the_checkout_as_workspace_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder that needs quoting, as a worktree under "My Projects" would.
+    for root in [dir.path().join("plain"), dir.path().join("my repo")] {
+        let root = root.as_path();
+        std::fs::create_dir_all(root.join(".vscode")).unwrap();
+        std::fs::write(
+            root.join(".vscode/tasks.json"),
+            r#"{ "version": "2.0.0", "tasks": [
+                 { "label": "Web", "command": "cd ${workspaceFolder}/web && make",
+                   "options": { "env": { "OUT": "${workspaceFolder}/dist" } } },
+                 { "label": "Make web", "command": "make",
+                   "args": ["-C", "${workspaceFolder}/web"] }
+               ] }"#,
+        )
+        .unwrap();
+        let checkout = root.display().to_string();
+        for label in ["Web", "Make web"] {
+            let from = found_in(root, "vscode", label);
+            assert!(from.command.contains(&checkout), "{}", from.command);
+            save_detected(root, &from).unwrap();
+
+            let text = std::fs::read_to_string(file(root)).unwrap();
+            assert!(text.contains("${workspaceFolder}/web"), "{text}");
+            assert!(!text.contains(&checkout), "{text}");
+            // It reads back as the very same command, env and folder.
+            let back = detected(root, label);
+            assert_eq!(back.blocked, None);
+            assert_eq!(back.command, from.command);
+            assert_eq!(back.env, from.env);
+            assert_eq!(back.cwd, from.cwd);
+        }
+        assert_eq!(
+            read(root)["tasks"][0]["options"]["env"]["OUT"],
+            "${workspaceFolder}/dist"
+        );
+    }
+}
+
+#[test]
+fn editing_a_renumbered_duplicate_changes_that_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [
+             { "label": "Build", "command": "make one" },
+             { "label": "Build", "command": "make two" },
+             { "label": "Other", "command": "make other" }
+           ] }"#,
+    );
+    let second = detected(root, "Build (2)");
+    assert_eq!(second.command, "make two");
+    update(root, &second, &draft("Build web", "make web")).unwrap();
+    let tasks = read(root)["tasks"].clone();
+    assert_eq!(tasks[0]["command"], "make one");
+    assert_eq!(tasks[0]["label"], "Build");
+    assert_eq!(tasks[1]["label"], "Build web");
+    assert_eq!(tasks[1]["command"], "make web");
+
+    // Renaming and removing find it the same way.
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [
+             { "label": "Build", "command": "make one" },
+             { "label": "Build", "command": "make two" }
+           ] }"#,
+    );
+    let second = detected(root, "Build (2)");
+    relabel(root, &second, &draft("Build two", "")).unwrap();
+    let tasks = read(root)["tasks"].clone();
+    assert_eq!(tasks[0]["label"], "Build");
+    assert_eq!(tasks[1]["label"], "Build two");
+    assert_eq!(tasks[1]["command"], "make two");
+    let second = detected(root, "Build two");
+    remove(root, &second).unwrap();
+    let tasks = read(root)["tasks"].clone();
+    assert_eq!(tasks.as_array().unwrap().len(), 1);
+    assert_eq!(tasks[0]["command"], "make one");
+
+    // A file that changed since it was listed isn't edited by a stale place.
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [
+             { "label": "Build", "command": "make one" },
+             { "label": "Build", "command": "make two" }
+           ] }"#,
+    );
+    let second = detected(root, "Build (2)");
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [ { "label": "Build", "command": "make one" } ] }"#,
+    );
+    assert!(matches!(remove(root, &second), Err(WriteError::Invalid(_))));
+    assert_eq!(read(root)["tasks"][0]["command"], "make one");
 }

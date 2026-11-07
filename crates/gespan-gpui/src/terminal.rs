@@ -177,17 +177,7 @@ fn spawn(cwd: &str, extra: &[(String, String)], size: GridSize, id: u64) -> Spaw
     let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
     let workdir = working_dir(cwd);
     let (program, args) = default_shell();
-    let mut env = HashMap::new();
-    for (key, value) in [
-        ("TERM", "xterm-256color".to_owned()),
-        ("COLORTERM", "truecolor".to_owned()),
-        ("COLORFGBG", "15;0".to_owned()),
-        ("TERM_PROGRAM", "Gespan".to_owned()),
-        ("PATH", gespan_core::scm::terminal_search_path()),
-        ("PWD", workdir.to_string_lossy().into_owned()),
-    ] {
-        env.insert(key.to_owned(), value);
-    }
+    let mut env = base_env(&workdir);
     env.extend(extra.iter().cloned());
     let options = tty::Options {
         shell: Some(tty::Shell::new(program, args)),
@@ -1469,6 +1459,24 @@ fn default_title(cwd: &str) -> String {
 }
 fn home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+/// What a terminal opened at `cwd` sets on top of Gespan's environment,
+/// before an action's own `env`.
+pub(crate) fn base_env_at(cwd: &str) -> HashMap<String, String> {
+    base_env(&working_dir(cwd))
+}
+fn base_env(workdir: &std::path::Path) -> HashMap<String, String> {
+    [
+        ("TERM", "xterm-256color".to_owned()),
+        ("COLORTERM", "truecolor".to_owned()),
+        ("COLORFGBG", "15;0".to_owned()),
+        ("TERM_PROGRAM", "Gespan".to_owned()),
+        ("PATH", gespan_core::scm::terminal_search_path()),
+        ("PWD", workdir.to_string_lossy().into_owned()),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), value))
+    .collect()
 }
 fn working_dir(cwd: &str) -> std::path::PathBuf {
     let path = match cwd.strip_prefix("~") {

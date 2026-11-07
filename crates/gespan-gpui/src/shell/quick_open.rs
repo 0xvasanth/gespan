@@ -441,6 +441,23 @@ mod tests {
             ["Run action: dev", "Run action: lint"],
             "blocked actions stay out"
         );
+        // Each row shows the command a pick runs.
+        let details = window
+            .update(cx, |shell, _, cx| {
+                shell.quick_open.as_ref().unwrap().picker.read(cx).details()
+            })
+            .unwrap();
+        let commands = window
+            .update(cx, |shell, _, cx| {
+                let listing = shell.listing(cx);
+                ["package.json:dev", "package.json:lint"].map(|id| {
+                    let action = listing.actions.iter().find(|a| a.id == id).unwrap();
+                    action.command.clone()
+                })
+            })
+            .unwrap();
+        assert_eq!(details, commands);
+        assert!(details[0].ends_with("run dev"), "{details:?}");
         // An ordinary command query still finds its command.
         assert!(query(">terminal", cx).contains(&"Toggle terminal".to_string()));
         query(">run action", cx);

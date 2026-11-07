@@ -8,6 +8,18 @@ const ONLY_DEPENDS_ON: &str = "Only runs other tasks, which Gespan doesn't do ye
 const DEPENDENCIES_NOT_RUN: &str = "Dependencies aren't run";
 const OUTSIDE: &str = "Runs outside the project";
 pub(crate) const NO_COMMAND: &str = "Has no command Gespan can run";
+/// Variables a shell or the loader reads at startup, so a value could run
+/// code before the command does. `DYLD_` covers every name it starts.
+const STARTUP_ENV: [&str; 8] = [
+    "ZDOTDIR",
+    "BASH_ENV",
+    "ENV",
+    "PROMPT_COMMAND",
+    "PS4",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+];
 
 /// The tasks in `text`, with this OS's `windows`/`osx`/`linux` overrides.
 pub(crate) fn parse(ctx: &Ctx, text: &str) -> Result<Vec<Found>, String> {
@@ -32,7 +44,14 @@ pub(crate) fn parse_for(os: &str, ctx: &Ctx, text: &str) -> Result<Vec<Found>, S
         None => Ok(Vec::new()),
         Some(Value::Array(tasks)) => Ok(tasks
             .iter()
-            .filter_map(|task| found(os, ctx, task.as_object()?))
+            .enumerate()
+            .filter_map(|(at, task)| {
+                let found = found(os, ctx, task.as_object()?)?;
+                Some(Found {
+                    task: Some(at),
+                    ..found
+                })
+            })
             .collect()),
         Some(_) => Err("\"tasks\" isn't a list".into()),
     }
@@ -123,6 +142,11 @@ fn word(value: &Value) -> Option<String> {
 /// Fills in variables, quotes and joins the command, and settles `cwd`.
 pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found) -> Action {
     let mut blocked = found.blocked;
+    if let Some((name, _)) = found.env.iter().find(|(name, _)| runs_at_startup(name)) {
+        blocked.get_or_insert(format!(
+            "Sets {name}, which could run code before the command"
+        ));
+    }
     let fill = |blocked: &mut Option<String>, text: &str| match variables(ctx, text) {
         Ok(pieces) => Some(pieces),
         Err(reason) => {
@@ -198,6 +222,7 @@ pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found)
     Action {
         id: format!("{source}:{}", found.label),
         label: found.label,
+        task: found.task,
         detail: found.detail,
         source,
         file: file.to_string(),
@@ -279,6 +304,17 @@ fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
     }
     pieces.retain(|piece| !matches!(piece, Piece::Text(text) if text.is_empty()));
     Ok(pieces)
+}
+
+/// Whether a shell or the loader reads `name` before running anything.
+/// Windows names ignore case, so these do too.
+fn runs_at_startup(name: &str) -> bool {
+    STARTUP_ENV
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(name))
+        || name
+            .get(..5)
+            .is_some_and(|start| start.eq_ignore_ascii_case("DYLD_"))
 }
 
 pub(crate) fn is_env_name(name: &str) -> bool {

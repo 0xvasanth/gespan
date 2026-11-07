@@ -16,6 +16,7 @@ static FINISHED: RwLock<()> = RwLock::new(());
 
 fn action(id: &str, command: &str, cwd: &Path) -> Action {
     Action {
+        task: None,
         id: id.into(),
         label: id.into(),
         detail: None,
