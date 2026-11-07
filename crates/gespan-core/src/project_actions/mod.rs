@@ -377,6 +377,18 @@ fn read_capped(path: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
+/// A SHA-256 of `file` in `checkout`, such as `package.json`, so a caller can
+/// tell when a source changed what an action runs, like a script's body
+/// behind `bun run dev`. A file that can't be read hashes as empty.
+pub fn source_digest(checkout: &Path, file: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let text = read_capped(&checkout.join(file)).unwrap_or_default();
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Drops the cached parse of `path`, such as a file that was just rewritten.
 pub(crate) fn forget(path: &Path) {
     let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());

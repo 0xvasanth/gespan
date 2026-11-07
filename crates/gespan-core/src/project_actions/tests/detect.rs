@@ -481,3 +481,35 @@ fn a_fifo_named_like_a_config_does_not_hang() {
     assert_eq!(listing.errors.len(), 1);
     assert_eq!(listing.errors[0].file, "Procfile");
 }
+
+#[test]
+fn a_source_digest_changes_with_any_byte_of_the_file() {
+    use super::super::source_digest;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "scripts": { "dev": "vite" } }"#,
+    )
+    .unwrap();
+    let first = source_digest(root, "package.json");
+    assert_eq!(first.len(), 64);
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "scripts": { "dev": "vite" } }"#,
+    )
+    .unwrap();
+    assert_eq!(source_digest(root, "package.json"), first);
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "scripts": { "dev": "vitE" } }"#,
+    )
+    .unwrap();
+    assert_ne!(source_digest(root, "package.json"), first);
+    // A file that isn't there has a digest of its own.
+    assert_ne!(source_digest(root, "Makefile"), first);
+    assert_eq!(
+        source_digest(root, "Makefile"),
+        source_digest(root, "justfile")
+    );
+}

@@ -713,6 +713,8 @@ pub(crate) struct Shell {
     /// New-session composers holding only the ticket key until its title arrives.
     ticket_drafts: HashMap<i64, String>,
     action_dialog: Option<actions::ActionDialog>,
+    /// A short note about an action, such as where it was saved.
+    action_notice: Option<SharedString>,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
     editor_menu: open_in_editor::EditorMenu,
@@ -1142,6 +1144,7 @@ impl Shell {
             ticket_sequence: 0,
             ticket_drafts: HashMap::new(),
             action_dialog: None,
+            action_notice: None,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
             editor_menu: Default::default(),
