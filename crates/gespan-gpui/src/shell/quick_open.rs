@@ -481,6 +481,54 @@ mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    fn palette_rows_show_env_names_but_never_values(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".gespan")).unwrap();
+        std::fs::write(
+            root.join(".gespan/tasks.json"),
+            r#"{ "version": "2.0.0", "tasks": [
+                 { "label": "Serve", "command": "bun run dev",
+                   "options": { "env": { "A_PORT": "3000", "B_TOKEN": "s3cret" } } },
+                 { "label": "Plain", "command": "echo plain" }
+               ] }"#,
+        )
+        .unwrap();
+        let (window, _, active) = crate::shell::tests::window(cx);
+        let project = root.to_string_lossy().into_owned();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.workspace.project = project.clone();
+                shell.workspace.active = Some(active);
+                shell.ensure_session(active, cx);
+                shell.sessions[&active].update(cx, |chat, _| {
+                    chat.settings.worktree_cwd = Some(project.clone())
+                });
+                shell.open_quick_open(true, w, cx);
+                let picker = shell.quick_open.as_ref().unwrap().picker.clone();
+                picker.update(cx, |p, cx| {
+                    p.search
+                        .update(cx, |i, cx| i.set_text(">run action".into(), cx))
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let (labels, details) = window
+            .update(cx, |shell, _, cx| {
+                let picker = shell.quick_open.as_ref().unwrap().picker.read(cx);
+                (picker.labels(), picker.details())
+            })
+            .unwrap();
+        let at = |label: &str| labels.iter().position(|l| l == label).unwrap();
+        assert_eq!(
+            details[at("Run action: Serve")],
+            "bun run dev \u{b7} +env A_PORT,B_TOKEN"
+        );
+        assert_eq!(details[at("Run action: Plain")], "echo plain");
+        assert!(!details.iter().any(|d| d.contains("s3cret")));
+    }
+
     fn palette_pick(
         cx: &mut TestAppContext,
         window: WindowHandle<Shell>,

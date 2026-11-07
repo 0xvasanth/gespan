@@ -584,3 +584,26 @@ fn the_mirror_hears_nothing_after_finished() {
     assert_eq!(kinds.last(), Some(&"finished"), "{kinds:?}");
     assert_eq!(kinds.iter().filter(|k| **k == "finished").count(), 1);
 }
+
+#[test]
+fn env_references_expand_from_the_environment_the_action_gets() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut run = action("test:path", "true", dir.path());
+    let (value, tail) = if cfg!(windows) {
+        ("%PATH%;bin", ";bin")
+    } else {
+        ("${PATH}:./bin", ":./bin")
+    };
+    run.env = vec![("P".into(), value.into())];
+    let command = super::super::runs::command(&run);
+    let env = |name: &str| {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == name)
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+    };
+    // The child's PATH, the login shell's, not Gespan's own.
+    let path = env("PATH").expect("the action gets a PATH");
+    assert_eq!(env("P"), Some(format!("{path}{tail}")));
+}

@@ -873,3 +873,61 @@ fn editing_a_renumbered_duplicate_changes_that_task() {
     assert!(matches!(remove(root, &second), Err(WriteError::Invalid(_))));
     assert_eq!(read(root)["tasks"][0]["command"], "make one");
 }
+
+#[test]
+fn a_checkout_path_inside_a_longer_name_is_not_rewritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let checkout = root.display().to_string();
+    let sep = std::path::MAIN_SEPARATOR;
+    let mut from = action(&root);
+    from.label = "copy".into();
+    // `repo-old` beside the checkout, then the checkout itself.
+    from.command = format!("cp {checkout}-old{sep}x '{checkout}{sep}y' {checkout}");
+    from.cwd = root.clone();
+    from.env = vec![("OLD".into(), format!("{checkout}old"))];
+    save_detected(&root, &from).unwrap();
+    let saved = read(&root);
+    assert_eq!(
+        saved["tasks"][0]["command"],
+        format!("cp {checkout}-old{sep}x '${{workspaceFolder}}{sep}y' ${{workspaceFolder}}")
+    );
+    assert_eq!(
+        saved["tasks"][0]["options"]["env"]["OLD"],
+        format!("{checkout}old")
+    );
+    let back = detected(&root, "copy");
+    assert_eq!(back.command, from.command);
+}
+
+#[test]
+fn a_numbered_label_edits_only_the_task_with_that_many_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [
+             { "label": "Build", "command": "make one" },
+             { "label": "Build", "command": "make two" }
+           ] }"#,
+    );
+    let second = detected(root, "Build (2)");
+    // Rewritten since: a "Build" sits at the same place, but it is now the
+    // first of its name, not the second.
+    put(
+        root,
+        r#"{ "version": "2.0.0", "tasks": [
+             { "label": "Other", "command": "make other" },
+             { "label": "Build", "command": "make one" },
+             { "label": "Build", "command": "make two" }
+           ] }"#,
+    );
+    assert!(matches!(
+        update(root, &second, &draft("Build", "make changed")),
+        Err(WriteError::Invalid(_))
+    ));
+    let tasks = read(root)["tasks"].clone();
+    assert_eq!(tasks[1]["command"], "make one");
+    assert_eq!(tasks[2]["command"], "make two");
+}

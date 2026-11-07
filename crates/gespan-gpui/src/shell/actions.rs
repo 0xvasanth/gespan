@@ -107,6 +107,16 @@ fn fingerprint(action: &Action, digest: &str) -> String {
     serde_json::to_string(&(&action.command, cwd, &action.env, digest)).unwrap_or_default()
 }
 
+/// ` · +env NAME,NAME` for an action that sets variables, else nothing.
+/// Values can be secrets, so only names show.
+fn env_names(action: &Action) -> String {
+    if action.env.is_empty() {
+        return String::new();
+    }
+    let names: Vec<_> = action.env.iter().map(|(name, _)| name.as_str()).collect();
+    format!(" \u{b7} +env {}", names.join(","))
+}
+
 /// The menu row for `action`: beneath it, why it can't run, or else the
 /// command a click runs, after its detail, and the names of the variables
 /// it sets. Values can be secrets, so they never show.
@@ -114,17 +124,13 @@ fn action_row(action: &Action) -> MenuItem {
     let description = match &action.blocked {
         Some(reason) => reason.clone(),
         None => {
-            let mut text = match action.detail.as_deref().map(str::trim) {
+            let command = match action.detail.as_deref().map(str::trim) {
                 Some(detail) if !detail.is_empty() => {
                     format!("{detail} \u{2014} {}", action.command)
                 }
                 _ => action.command.clone(),
             };
-            if !action.env.is_empty() {
-                let names: Vec<_> = action.env.iter().map(|(name, _)| name.as_str()).collect();
-                text.push_str(&format!(" \u{b7} +env {}", names.join(",")));
-            }
-            text
+            format!("{command}{}", env_names(action))
         }
     };
     MenuAction::new(
@@ -185,8 +191,9 @@ impl Shell {
         self.action_sections.clear();
         self.action_listing = Some(self.detect_actions(cx));
     }
-    /// The actions that can run now, as `(id, label, command)`, detected
-    /// afresh for a palette that is opening. Remote projects have none.
+    /// The actions that can run now, as `(id, label, command)`, the command
+    /// with the names of any env it sets, detected afresh for a palette that
+    /// is opening. Remote projects have none.
     pub(super) fn runnable_actions(&mut self, cx: &App) -> Vec<(String, String, String)> {
         if self.workspace.project.starts_with("remote://") {
             return Vec::new();
@@ -195,7 +202,10 @@ impl Shell {
         self.actions()
             .iter()
             .filter(|a| a.blocked.is_none())
-            .map(|a| (a.id.clone(), a.label.clone(), a.command.clone()))
+            .map(|a| {
+                let shown = format!("{}{}", a.command, env_names(a));
+                (a.id.clone(), a.label.clone(), shown)
+            })
             .collect()
     }
     /// Detects the actions again only when the project or checkout changed.

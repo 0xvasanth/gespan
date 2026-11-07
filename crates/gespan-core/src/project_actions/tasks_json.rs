@@ -8,18 +8,35 @@ const ONLY_DEPENDS_ON: &str = "Only runs other tasks, which Gespan doesn't do ye
 const DEPENDENCIES_NOT_RUN: &str = "Dependencies aren't run";
 const OUTSIDE: &str = "Runs outside the project";
 pub(crate) const NO_COMMAND: &str = "Has no command Gespan can run";
-/// Variables a shell or the loader reads at startup, so a value could run
-/// code before the command does. `DYLD_` covers every name it starts.
-const STARTUP_ENV: [&str; 8] = [
+/// Variables a shell, the loader, git or a language runtime reads before or
+/// while starting, so a value could run code before the command does.
+const STARTUP_ENV: [&str; 21] = [
     "ZDOTDIR",
     "BASH_ENV",
     "ENV",
     "PROMPT_COMMAND",
     "PS4",
-    "LD_PRELOAD",
-    "LD_LIBRARY_PATH",
-    "LD_AUDIT",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "IFS",
+    "HOME",
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "PERL5OPT",
+    "PERL5LIB",
+    "RUBYOPT",
+    "RUBYLIB",
+    "PYTHONSTARTUP",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
 ];
+/// Whole families of such variables: the loader's, exported bash functions
+/// and git's, which can name programs to run.
+const STARTUP_ENV_PREFIXES: [&str; 4] = ["LD_", "DYLD_", "BASH_FUNC_", "GIT_"];
+const UNSAFE_ENV_NAME: &str = "Sets an environment variable with a name Gespan can't pass safely";
 
 /// The tasks in `text`, with this OS's `windows`/`osx`/`linux` overrides.
 pub(crate) fn parse(ctx: &Ctx, text: &str) -> Result<Vec<Found>, String> {
@@ -142,10 +159,16 @@ fn word(value: &Value) -> Option<String> {
 /// Fills in variables, quotes and joins the command, and settles `cwd`.
 pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found) -> Action {
     let mut blocked = found.blocked;
-    if let Some((name, _)) = found.env.iter().find(|(name, _)| runs_at_startup(name)) {
-        blocked.get_or_insert(format!(
-            "Sets {name}, which could run code before the command"
-        ));
+    // Every name is shown beside the action, so one that isn't a plain name,
+    // such as `A,LD_PRELOAD`, could hide what it sets.
+    for (name, _) in &found.env {
+        if !is_env_name(name) {
+            blocked.get_or_insert(UNSAFE_ENV_NAME.into());
+        } else if runs_at_startup(name) {
+            blocked.get_or_insert(format!(
+                "Sets {name}, which could run code before the command"
+            ));
+        }
     }
     let fill = |blocked: &mut Option<String>, text: &str| match variables(ctx, text) {
         Ok(pieces) => Some(pieces),
@@ -306,15 +329,16 @@ fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
     Ok(pieces)
 }
 
-/// Whether a shell or the loader reads `name` before running anything.
-/// Windows names ignore case, so these do too.
+/// Whether something that starts before or with the command reads `name`
+/// to run code. Windows names ignore case, so these do too.
 fn runs_at_startup(name: &str) -> bool {
     STARTUP_ENV
         .iter()
         .any(|known| known.eq_ignore_ascii_case(name))
-        || name
-            .get(..5)
-            .is_some_and(|start| start.eq_ignore_ascii_case("DYLD_"))
+        || STARTUP_ENV_PREFIXES.iter().any(|prefix| {
+            name.get(..prefix.len())
+                .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+        })
 }
 
 pub(crate) fn is_env_name(name: &str) -> bool {

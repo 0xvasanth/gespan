@@ -263,9 +263,29 @@ fn workspace_folder(checkout: &Path, line: &str) -> String {
     // The longest first, so a shorter spelling never cuts into a longer one.
     roots.sort_by_key(|root| std::cmp::Reverse(root.len()));
     roots.dedup();
-    roots.iter().fold(line.to_string(), |line, root| {
-        line.replace(root.as_str(), "${workspaceFolder}")
-    })
+    roots
+        .iter()
+        .fold(line.to_string(), |line, root| replace_path(&line, root))
+}
+
+/// `line` with `root` written as `${workspaceFolder}` where it is a whole
+/// path or a path's start: followed by the end, a separator, a quote,
+/// whitespace or a list separator, never by more of a name like `repo-old`.
+fn replace_path(line: &str, root: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(root) {
+        let after = &rest[at + root.len()..];
+        let whole = after
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '/' | '\\' | '\'' | '"' | ':' | ';') || c.is_whitespace());
+        out.push_str(&rest[..at]);
+        out.push_str(if whole { "${workspaceFolder}" } else { root });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `draft` as it is saved: its label trimmed and its command spelled as the
@@ -335,25 +355,31 @@ fn label_of(task: &Json) -> Option<&str> {
 }
 
 /// Where `shared` is in `tasks`: at its listed place while the task there
-/// still goes by that label, plain or numbered, else the task with exactly
-/// that label.
+/// still goes by that label, or, for `Build (2)`, while it is still the
+/// second task called `Build`. Else the task with exactly that label.
 fn position(tasks: &[Json], shared: Shared) -> Result<usize, WriteError> {
     let label = shared.label;
-    let numbered = |name: &str| {
-        label
+    let still_there = |at: usize| {
+        let Some(name) = tasks.get(at).and_then(label_of) else {
+            return false;
+        };
+        if name == label {
+            return true;
+        }
+        let n = label
             .strip_prefix(name)
             .and_then(|rest| rest.strip_prefix(" ("))
             .and_then(|rest| rest.strip_suffix(')'))
-            .is_some_and(|n| n.parse::<usize>().is_ok())
+            .and_then(|n| n.parse::<usize>().ok());
+        let before = tasks[..at]
+            .iter()
+            .filter(|task| label_of(task) == Some(name))
+            .count();
+        n.is_some_and(|n| before + 1 == n)
     };
     shared
         .task
-        .filter(|&at| {
-            tasks
-                .get(at)
-                .and_then(label_of)
-                .is_some_and(|name| name == label || numbered(name))
-        })
+        .filter(|&at| still_there(at))
         .or_else(|| tasks.iter().position(|task| label_of(task) == Some(label)))
         .ok_or_else(|| not_found(label))
 }
