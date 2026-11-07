@@ -164,6 +164,8 @@ impl AssetSource for Assets {
    "check-hi"=>include_bytes!("../assets/hugeicons/check-hi.svg"),
    "gespan.png"=>include_bytes!("../assets/gespan.png"),
    "codex.svg"=>include_bytes!("../assets/codex.svg"),
+   "codex-glyph.svg"=>include_bytes!("../assets/codex-glyph.svg"),
+   "prompt.svg"=>include_bytes!("../assets/prompt.svg"),
    "claude.svg"=>include_bytes!("../assets/claude.svg"),
    "cursor.svg"=>include_bytes!("../assets/cursor.svg"),
    "grok.svg"=>include_bytes!("../assets/grok.svg"),

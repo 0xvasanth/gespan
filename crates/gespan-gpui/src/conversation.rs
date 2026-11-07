@@ -278,6 +278,8 @@ pub(crate) struct Conversation {
     preparing_worktree: bool,
     context: Option<gespan_core::context::Usage>,
     context_hovered: bool,
+    /// The submit button's morph between square and labelled pill.
+    send_morph: std::cell::RefCell<crate::send_morph::Morph>,
     menu: Option<OpenMenu>,
     add_anchor: AnchorSlot,
     model_anchor: AnchorSlot,
@@ -809,6 +811,7 @@ impl Conversation {
             preparing_worktree: false,
             context: None,
             context_hovered: false,
+            send_morph: Default::default(),
             menu: None,
             add_anchor: AnchorSlot::default(),
             model_anchor: AnchorSlot::default(),
@@ -3759,40 +3762,52 @@ impl Conversation {
             .flatten();
         let enabled = self.send_allowed(has_value, cx);
         let no_agent = (!busy).then(|| self.no_agent_hint(cx)).flatten();
-        send_button(
-            "send-or-stop",
-            if busy {
+        // Something to send grows the button into a pill naming the action;
+        // empty or stopping, it rests as a square.
+        let face = crate::send_morph::Face {
+            label: if busy {
                 "Stop"
             } else if draft {
                 "Save draft"
             } else {
                 follow_up.map_or("Send", |(label, _)| label)
             },
-            busy,
-            follow_up.map_or("send", |(_, glyph)| glyph),
-            enabled,
-        )
-        .debug_selector(|| "send-or-stop".into())
-        .when_some(no_agent, |d, hint| {
-            d.aria_description(hint)
-                .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
-        })
-        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-            if !enabled {
-                return;
-            }
-            if busy {
-                this.stop(cx);
-            } else {
-                let modifiers = event.modifiers();
-                let alternate = if cfg!(target_os = "macos") {
-                    modifiers.platform
+            glyph: follow_up.map_or("send", |(_, glyph)| glyph),
+            stop: busy,
+            expanded: !busy && has_value,
+        };
+        let frame = self.send_morph.borrow_mut().frame(
+            face,
+            crate::send_morph::expanded_width(face.label, window),
+            !cx.reduce_motion(),
+        );
+        if frame.moving {
+            window.request_animation_frame();
+        }
+        crate::send_morph::button("send-or-stop", face, &frame, enabled)
+            .when_some(no_agent, |d, hint| {
+                d.aria_description(hint)
+                    .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint)).into())
+            })
+            // Holding ⌘ (Ctrl elsewhere) flips Queue and Steer; redraw so the
+            // label rolls to it while the key is down.
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                if !enabled {
+                    return;
+                }
+                if busy {
+                    this.stop(cx);
                 } else {
-                    modifiers.control
-                };
-                this.send_follow_up(alternate, cx);
-            }
-        }))
+                    let modifiers = event.modifiers();
+                    let alternate = if cfg!(target_os = "macos") {
+                        modifiers.platform
+                    } else {
+                        modifiers.control
+                    };
+                    this.send_follow_up(alternate, cx);
+                }
+            }))
     }
     // An empty session: the composer centred under its question, or resting
     // where it will dock once a neighbouring pane squeezes it narrower than
