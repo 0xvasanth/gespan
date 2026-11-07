@@ -147,6 +147,9 @@ pub(crate) struct Workspace {
     pub actions: HashMap<String, Vec<ProjectAction>>,
     /// The id of the action each project last ran; the footer shows it.
     pub last_actions: HashMap<String, String>,
+    /// What each project's last action ran: its command, cwd and env. The
+    /// footer runs it with one click only while it still runs the same.
+    pub last_action_fingerprints: HashMap<String, String>,
     /// The editor the title bar's Open in editor last opened a folder in.
     pub last_external_editor: Option<String>,
     /// Original layout: separate project and session sidebars.
@@ -423,6 +426,7 @@ impl Default for Workspace {
             docks: Default::default(),
             actions: HashMap::new(),
             last_actions: HashMap::new(),
+            last_action_fingerprints: HashMap::new(),
             last_external_editor: None,
             classic_layout: false,
             // Fresh installs start on the boxy frame; saved choices are kept.
@@ -1332,6 +1336,7 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
         &["docks"],
         &["actions"],
         &["last_actions"],
+        &["last_action_fingerprints"],
         &["classic_sidebar_tabs"],
         &["project_appearance"],
         &["project_rail_assignments"],
