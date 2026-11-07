@@ -749,13 +749,15 @@ impl Shell {
         };
         cx.spawn_in(window, async move |this, cx| {
             let command = lookup.await;
+            // Outside the window update, which fails once the window is
+            // gone; the lookup must always be released.
+            let _ = machines.update(cx, |m, cx| {
+                m.end_attach(&machine, &terminal);
+                if command.is_none() {
+                    m.set_herdr_found(false, cx);
+                }
+            });
             let _ = this.update_in(cx, |this, window, cx| {
-                machines.update(cx, |m, cx| {
-                    m.end_attach(&machine, &terminal);
-                    if command.is_none() {
-                        m.set_herdr_found(false, cx);
-                    }
-                });
                 let Some(command) = command else {
                     return;
                 };
@@ -1977,6 +1979,29 @@ mod tests {
             // Known missing, the row stops offering the click at all.
             click_agent(&window, "a", cx);
             assert_eq!(terminal_count(&window, cx), before);
+        }
+
+        #[gpui::test]
+        fn machines_lookup_is_released_when_the_window_closes_meanwhile(cx: &mut TestAppContext) {
+            let (window, machines) = window(vec![two_agents(Online::Online)], true, cx);
+            window
+                .update(cx, |shell, window, cx| {
+                    shell.open_machine_agent("m1", "a", window, cx);
+                    // The lookup finishes only after the window is gone.
+                    window.remove_window();
+                })
+                .unwrap();
+            // While under way a second lookup for the agent is refused.
+            assert!(
+                cx.update(|cx| machines.update(cx, |m, _| m.begin_attach("m1", "a")))
+                    .is_none()
+            );
+            cx.run_until_parked();
+            assert!(
+                cx.update(|cx| machines.update(cx, |m, _| m.begin_attach("m1", "a")))
+                    .is_some(),
+                "a closed window left the agent stuck as attaching"
+            );
         }
     }
 }
