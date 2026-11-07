@@ -23,8 +23,13 @@ pub(crate) struct Preferences {
     pub close_to_tray: bool,
     /// Running an action shows the terminal it runs in.
     pub action_opens_terminal: bool,
-    /// The new layout opens the terminal as a right panel tab, not a dock.
+    /// Legacy: the new layout opens the terminal as a right panel tab, not a
+    /// dock. Read when `terminal_placement` is unset, and kept in step with it.
     pub terminal_in_panel: bool,
+    /// Where terminals open: "bottom" (the dock), "panel" (the right panel's
+    /// Terminal tab) or "title" (their own title bar tabs). Empty falls back
+    /// to `terminal_in_panel`.
+    pub terminal_placement: String,
     // Appearance
     pub theme: String,
     pub wayland_window_decorations: bool,
@@ -133,6 +138,7 @@ impl Default for Preferences {
             close_to_tray: true,
             action_opens_terminal: true,
             terminal_in_panel: false,
+            terminal_placement: String::new(),
             theme: "dark".into(),
             wayland_window_decorations: true,
             workspace_theme: "default".into(),
@@ -212,6 +218,20 @@ impl Preferences {
             .get(project)
             .and_then(|project| project.delete_sessions)
             .unwrap_or(self.worktree_delete_sessions)
+    }
+
+    /// "bottom", "panel" or "title".
+    pub(crate) fn terminal_placement(&self) -> &str {
+        match self.terminal_placement.as_str() {
+            placement @ ("bottom" | "panel" | "title") => placement,
+            _ if self.terminal_in_panel => "panel",
+            _ => "bottom",
+        }
+    }
+
+    pub(crate) fn set_terminal_placement(&mut self, placement: &str) {
+        self.terminal_placement = placement.to_owned();
+        self.terminal_in_panel = placement == "panel";
     }
     pub(crate) fn apply_workspace_theme(&mut self, id: String) {
         let color: gpui::Hsla = gpui::rgb(super::palette(&id, false).surface).into();
