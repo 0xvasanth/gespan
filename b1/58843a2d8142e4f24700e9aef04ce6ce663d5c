@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/tab_tile.rs
+  s_8175d8edb31008::t_740f12676e9ef4 57-60,65-91,113-123,130,140,150-192,194-199,202-253,261,265,272,275-284,298,319-322,324-328,332,351-356,359-367,369-370,372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b158843a2d8142e4f24700e9aef04ce6ce663d5c",
+  "prompts": {},
+  "sessions": {
+    "s_8175d8edb31008": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac8cbdbc-08b3-4df8-80eb-82983e5320da",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
