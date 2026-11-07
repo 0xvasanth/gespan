@@ -5,7 +5,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crate::transport::{Conn, Transport};
+use crate::transport::{Closer, Conn, Transport};
 use crate::Machine;
 
 /// Why a machine could not be reached over ssh.
@@ -275,6 +275,8 @@ impl Transport for SshBridge {
                 }
             }
         });
+        let child = Arc::new(Mutex::new(child));
+        let cut = child.clone();
         Ok(Conn {
             writer: Box::new(Stdin(stdin)),
             reader: Box::new(Stdout {
@@ -286,8 +288,19 @@ impl Transport for SshBridge {
                 finished: false,
             }),
             guard: None,
+            // Killing ssh ends its stdout, so a blocked read returns. If the
+            // reader holds the child it is already reaping it.
+            closer: Some(Closer::new(move || {
+                if let Ok(mut child) = cut.try_lock() {
+                    let _ = child.kill();
+                }
+            })),
         })
     }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// ssh's stdin. A dead ssh must be reported by the reader with its real
@@ -313,7 +326,7 @@ impl Write for Stdin {
 /// read errors with the mapped [`SshFailure`] instead of a bare EOF.
 struct Stdout {
     inner: BufReader<ChildStdout>,
-    child: Child,
+    child: Arc<Mutex<Child>>,
     target: String,
     stderr: Arc<Mutex<Vec<u8>>>,
     drain: Option<JoinHandle<()>>,
@@ -326,7 +339,7 @@ impl Stdout {
             return Ok(());
         }
         self.finished = true;
-        let status = self.child.wait()?;
+        let status = lock(&self.child).wait()?;
         if let Some(drain) = self.drain.take() {
             let _ = drain.join();
         }
@@ -363,8 +376,9 @@ impl Read for Stdout {
 impl Drop for Stdout {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            let mut child = lock(&self.child);
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -807,6 +821,26 @@ mod tests {
                 "read line\necho '{\"id\":\"ping-0\",\"result\":{\"version\":\"0.9.5\",\"protocol\":1}}'",
             );
             assert_eq!(Client::new(b).ping().unwrap().version, "0.9.5");
+        }
+
+        #[test]
+        fn closing_the_connection_kills_ssh_and_ends_a_blocked_read() {
+            let dir = tempfile::tempdir().unwrap();
+            let b = fake_ssh(dir.path(), "exec sleep 30");
+            let mut conn = b.open().unwrap();
+            let closer = conn.closer.clone().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let mut line = String::new();
+                let read = conn.reader.read_line(&mut line);
+                tx.send(read.map_err(Error::from)).unwrap();
+            });
+            closer.close();
+            let read = rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("read returned once ssh was killed");
+            // A killed ssh reads as a failed ssh, never as data.
+            assert!(!matches!(read, Ok(n) if n > 0), "{read:?}");
         }
 
         #[test]

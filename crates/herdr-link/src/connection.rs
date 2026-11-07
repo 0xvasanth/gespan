@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::client::{Client, Error, Events};
-use crate::transport::Transport;
+use crate::transport::{Closer, Transport};
 use crate::{Agent, Event, SshFailure, Workspace};
 
 /// Whether a machine's herdr can be reached right now.
@@ -51,6 +51,10 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Flags {
     stopped: bool,
     refresh: bool,
+    /// Threads inside `wait`.
+    waiting: usize,
+    /// Cuts the live event stream.
+    stream: Option<Closer>,
 }
 
 /// Wakes the connection thread for `stop` and `refresh`.
@@ -63,23 +67,62 @@ struct Signal {
 impl Signal {
     /// Block until stopped or asked to refresh, or until `limit` passes.
     fn wait(&self, limit: Option<Duration>) {
-        let flags = lock(&self.flags);
+        let mut flags = lock(&self.flags);
+        flags.waiting += 1;
         let idle = |f: &mut Flags| !f.stopped && !f.refresh;
-        // A poisoned lock only means another thread panicked; stop waiting.
-        match limit {
-            Some(d) => drop(self.wake.wait_timeout_while(flags, d, idle)),
-            None => drop(self.wake.wait_while(flags, idle)),
+        let mut flags = match limit {
+            Some(d) => {
+                self.wake
+                    .wait_timeout_while(flags, d, idle)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0
+            }
+            None => self
+                .wake
+                .wait_while(flags, idle)
+                .unwrap_or_else(PoisonError::into_inner),
+        };
+        flags.waiting -= 1;
+    }
+
+    /// Remember the stream being read. One opened after a stop or refresh
+    /// was asked for is cut right away, so the request is never missed.
+    fn track(&self, stream: Option<Closer>) {
+        let cut_now = {
+            let mut flags = lock(&self.flags);
+            flags.stream = stream.clone();
+            flags.stopped || flags.refresh
+        };
+        if let (true, Some(stream)) = (cut_now, stream) {
+            stream.close();
         }
     }
 
+    /// Stop the thread: wake any wait and cut the stream it may be reading.
     fn stop(&self) {
-        lock(&self.flags).stopped = true;
+        let stream = {
+            let mut flags = lock(&self.flags);
+            flags.stopped = true;
+            flags.stream.take()
+        };
         self.wake.notify_all();
+        if let Some(stream) = stream {
+            stream.close();
+        }
     }
 
+    /// Ask for a re-list: wake any wait and cut the stream, so the thread
+    /// re-subscribes at once.
     fn refresh(&self) {
-        lock(&self.flags).refresh = true;
+        let stream = {
+            let mut flags = lock(&self.flags);
+            flags.refresh = true;
+            flags.stream.clone()
+        };
         self.wake.notify_all();
+        if let Some(stream) = stream {
+            stream.close();
+        }
     }
 
     fn stopped(&self) -> bool {
@@ -112,12 +155,9 @@ struct Shared {
 }
 
 /// A live, cached view of one machine's herdr, kept current on its own
-/// thread. Dropping it stops the thread.
-///
-/// The thread blocks while reading the event stream, so `stop` and
-/// `refresh` reach it at once while it waits to retry, and otherwise when
-/// the stream next delivers a line or ends. Nothing is published after it
-/// sees the stop.
+/// thread. Dropping it stops the thread: any wait ends and the event stream
+/// is cut, so the thread exits promptly (an in-flight request still runs to
+/// its end). The thread is not joined.
 pub struct Connection {
     shared: Arc<Shared>,
 }
@@ -153,16 +193,20 @@ impl Connection {
         lock(&self.shared.snapshot).clone()
     }
 
-    /// Re-list now; also retries at once from any wait.
+    /// Re-list now: while online the stream is replaced without going
+    /// offline; from any wait it retries at once.
     pub fn refresh(&self) {
         self.shared.signal.refresh();
     }
 
+    /// Same as dropping. At most one `on_change` call can still follow, if
+    /// it was already under way.
     pub fn stop(self) {
         drop(self);
     }
 }
 
+/// See [`Connection::stop`].
 impl Drop for Connection {
     fn drop(&mut self) {
         self.shared.signal.stop();
@@ -256,65 +300,40 @@ impl<T: Transport> Worker<T> {
 
     /// Connect and follow events until something ends the session.
     fn session(&self, attempt: &mut u32) -> Error {
-        match self.connect() {
+        let err = match self.connect() {
+            Ok(_) if self.shared.signal.stopped() => Error::Closed,
             Ok(events) => {
                 *attempt = 0;
                 self.follow(events)
             }
             Err(e) => e,
-        }
+        };
+        self.shared.signal.track(None);
+        err
     }
 
     fn connect(&self) -> Result<Events, Error> {
         let pong = self.client.ping()?;
         self.publish(|s| s.version = Some(pong.version));
-        let agents = self.client.agents()?;
-        let workspaces = self.client.workspaces()?;
-        let events = self
-            .client
-            .subscribe(&subscriptions(agents.iter().map(|a| a.pane_id.as_str())))?;
-        self.publish(|s| {
-            s.online = Online::Online;
-            s.agents = agents;
-            s.workspaces = workspaces;
-        });
-        Ok(events)
+        self.open_stream()
     }
 
     fn follow(&self, mut events: Events) -> Error {
+        let signal = &self.shared.signal;
         loop {
-            let event = match events.next() {
-                Some(Ok(event)) => event,
-                Some(Err(e)) => return e,
-                None => return Error::Closed,
-            };
-            if self.shared.signal.stopped() {
+            let item = events.next().unwrap_or(Err(Error::Closed));
+            if signal.stopped() {
                 return Error::Closed;
             }
-            let panes_changed = match event {
-                Event::AgentStatusChanged {
-                    pane_id,
-                    agent_status,
-                    ..
-                } => {
-                    self.publish(|s| {
-                        if let Some(a) = s.agents.iter_mut().find(|a| a.pane_id == pane_id) {
-                            a.agent_status = agent_status;
-                        }
-                    });
-                    false
-                }
-                Event::PaneClosed { pane_id } => {
-                    self.publish(|s| s.agents.retain(|a| a.pane_id != pane_id));
-                    false
-                }
-                Event::PaneCreated { .. } | Event::AgentDetected => true,
-                Event::Other(_) => false,
-            };
-            // Not `||`: a pending refresh is consumed either way.
-            if panes_changed | self.shared.signal.take_refresh() {
+            // A refresh cuts the stream; whatever it ended with is moot.
+            let relist = signal.take_refresh()
+                || match item {
+                    Ok(event) => self.apply(event),
+                    Err(e) => return e,
+                };
+            if relist {
                 // The old stream is dropped only once the new one is up.
-                events = match self.resubscribe() {
+                events = match self.open_stream() {
                     Ok(new) => new,
                     Err(e) => return e,
                 };
@@ -322,25 +341,56 @@ impl<T: Transport> Worker<T> {
         }
     }
 
-    /// Open a stream for the current panes, then re-read the lists to cover
+    /// Update the cache for one event; true if the panes changed and the
+    /// stream must be replaced.
+    fn apply(&self, event: Event) -> bool {
+        match event {
+            Event::AgentStatusChanged {
+                pane_id,
+                agent_status,
+                ..
+            } => {
+                self.publish(|s| {
+                    if let Some(a) = s.agents.iter_mut().find(|a| a.pane_id == pane_id) {
+                        a.agent_status = agent_status;
+                    }
+                });
+                false
+            }
+            Event::PaneClosed { pane_id } => {
+                self.publish(|s| s.agents.retain(|a| a.pane_id != pane_id));
+                false
+            }
+            Event::PaneCreated { .. } | Event::AgentDetected => true,
+            Event::Other(_) => false,
+        }
+    }
+
+    /// List the panes, open a stream for them, then list again to cover
     /// whatever happened before it was acknowledged. An agent that turns up
-    /// in that re-read gets a stream that includes it.
-    fn resubscribe(&self) -> Result<Events, Error> {
+    /// in that re-read gets a stream that includes it, for a few rounds;
+    /// after that the latest stream is kept and its events catch up.
+    fn open_stream(&self) -> Result<Events, Error> {
+        const EXTRA_ROUNDS: usize = 3;
         let mut panes = pane_ids(&self.client.agents()?);
+        let mut round = 0;
         loop {
             let events = self
                 .client
                 .subscribe(&subscriptions(panes.iter().map(String::as_str)))?;
+            self.shared.signal.track(events.closer());
             let agents = self.client.agents()?;
             let now = pane_ids(&agents);
-            if now.is_subset(&panes) {
+            if now.is_subset(&panes) || round == EXTRA_ROUNDS {
                 let workspaces = self.client.workspaces()?;
                 self.publish(|s| {
+                    s.online = Online::Online;
                     s.agents = agents;
                     s.workspaces = workspaces;
                 });
                 return Ok(events);
             }
+            round += 1;
             panes = now;
         }
     }
@@ -499,8 +549,26 @@ mod tests {
         matches!(s.online, Online::Offline { .. })
     }
 
+    /// Scripts for one connect: ping, list, the stream, re-list, workspaces.
+    fn push_connect(fake: &FakeTransport, list: &str, stream: &str) {
+        for script in [PONG, list, stream, list, WORKSPACES] {
+            fake.push(script);
+        }
+    }
+
+    /// Same, with a stream that stays open until it is closed.
+    fn push_connect_endless(fake: &FakeTransport, list: &str, stream: &str) {
+        fake.push(PONG);
+        fake.push(list);
+        fake.push_endless(stream);
+        fake.push(list);
+        fake.push(WORKSPACES);
+    }
+
     fn connected(stream: &str) -> FakeTransport {
-        FakeTransport::new(&[PONG, &agents(&[("w1:p1", "idle")]), WORKSPACES, stream])
+        let fake = FakeTransport::default();
+        push_connect(&fake, &agents(&[("w1:p1", "idle")]), stream);
+        fake
     }
 
     fn panes(subscribe: &Value) -> Vec<&str> {
@@ -520,11 +588,19 @@ mod tests {
         let snap = h.wait_for("online", is_online);
         assert_eq!(snap.agents.len(), 1);
         assert_eq!(snap.workspaces[0].label, "main");
+        // Listing again after the subscribe is acknowledged closes the gap
+        // between the first list and the stream.
         assert_eq!(
             h.methods(),
-            ["ping", "agent.list", "workspace.list", "events.subscribe"]
+            [
+                "ping",
+                "agent.list",
+                "events.subscribe",
+                "agent.list",
+                "workspace.list"
+            ]
         );
-        let subs = h.fake.requests().last().unwrap()["params"]["subscriptions"].clone();
+        let subs = h.fake.requests()[2]["params"]["subscriptions"].clone();
         let subs = subs.as_array().unwrap();
         assert!(subs.contains(&json!({"type": "pane.agent_status_changed", "pane_id": "w1:p1"})));
         for t in ["pane.created", "pane.closed", "pane.agent_detected"] {
@@ -571,7 +647,7 @@ mod tests {
 
         let requests = h.fake.requests();
         assert_eq!(
-            h.methods()[4..],
+            h.methods()[5..],
             [
                 "agent.list",
                 "events.subscribe",
@@ -579,11 +655,11 @@ mod tests {
                 "workspace.list"
             ]
         );
-        assert_eq!(panes(&requests[5]), ["w1:p1", "w2:p1"]);
+        assert_eq!(panes(&requests[6]), ["w1:p1", "w2:p1"]);
         let log = h.fake.log();
         let at = |step| log.iter().position(|s| *s == step).unwrap();
         assert!(
-            at(Step::Closed(3)) > at(Step::Opened(7)),
+            at(Step::Closed(2)) > at(Step::Opened(8)),
             "old stream dropped only after the new one is up and the lists re-read: {log:?}"
         );
     }
@@ -599,17 +675,17 @@ mod tests {
         let h = start(&fake, 0);
         h.wait_for("three agents", |s| s.agents.len() == 3);
         let requests = h.fake.requests();
-        assert_eq!(panes(&requests[7]), ["w1:p1", "w2:p1", "w3:p1"]);
+        assert_eq!(panes(&requests[8]), ["w1:p1", "w2:p1", "w3:p1"]);
     }
 
     #[test]
     fn pane_closed_drops_the_agent() {
-        let fake = FakeTransport::new(&[
-            PONG,
+        let fake = FakeTransport::default();
+        push_connect(
+            &fake,
             &agents(&[("w1:p1", "idle"), ("w2:p1", "idle")]),
-            WORKSPACES,
             &format!("{ACK}{}", closed("w1:p1")),
-        ]);
+        );
         let h = start(&fake, 0);
         let snap = h.wait_for("one agent", |s| s.agents.len() == 1);
         assert_eq!(snap.agents[0].pane_id, "w2:p1");
@@ -618,9 +694,7 @@ mod tests {
     #[test]
     fn stream_end_goes_offline_keeps_cache_then_reconnects() {
         let fake = connected(ACK);
-        for script in [PONG, &agents(&[("w1:p1", "working")]), WORKSPACES, ACK] {
-            fake.push(script);
-        }
+        push_connect(&fake, &agents(&[("w1:p1", "working")]), ACK);
         let h = start(&fake, 1);
         h.wait_for("online", is_online);
         let offline = h.wait_for("offline", is_offline);
@@ -689,14 +763,14 @@ mod tests {
                 }
         });
         assert_eq!(h.fake.opens(), 1);
-        for script in [PONG, &agents(&[("w1:p1", "idle")]), WORKSPACES, ACK] {
-            fake.push(script);
-        }
+        push_connect(&fake, &agents(&[("w1:p1", "idle")]), ACK);
         h.conn.refresh();
         h.wait_for("connecting", |s| s.online == Online::Connecting);
         h.wait_for("online", is_online);
+        // The sleeper reports into the same ordered channel, so a back-off
+        // taken while waiting for the sign-in would show up before Online.
         assert!(h.slept().is_empty(), "never retried on its own");
-        assert_eq!(h.fake.opens(), 5);
+        assert_eq!(h.fake.opens(), 6);
     }
 
     #[test]
@@ -712,6 +786,8 @@ mod tests {
             h.wait_for("the herdr problem", |s| s.online == want);
             h.conn.refresh();
             h.wait_for("the retry", is_offline);
+            // Ordered with the snapshots: a back-off in the first wait would
+            // be reported before this Offline; the retry's own comes after.
             assert_eq!(h.slept().len(), 0, "the first wait is not a back-off");
             assert_eq!(h.fake.opens(), 2);
         }
@@ -766,6 +842,10 @@ mod tests {
                 WallClock.sleep(Duration::from_secs(60), &s);
                 tx.send(()).unwrap();
             });
+            // Only signal once the sleeper is inside its wait.
+            while lock(&signal.flags).waiting == 0 {
+                std::thread::yield_now();
+            }
             if refresh {
                 signal.refresh();
             } else {
@@ -811,9 +891,7 @@ mod tests {
         let (_, online) = rx.recv_timeout(LONG).unwrap();
         assert!(matches!(online, Online::NeedsSignIn { .. }));
         shared.set(conn.shared.clone()).ok().unwrap();
-        for script in [PONG, &agents(&[("w1:p1", "idle")]), WORKSPACES, ACK] {
-            fake.push(script);
-        }
+        push_connect(&fake, &agents(&[("w1:p1", "idle")]), ACK);
         conn.refresh();
         loop {
             let (free, online) = rx.recv_timeout(LONG).unwrap();
@@ -821,6 +899,153 @@ mod tests {
             if matches!(online, Online::Offline { .. }) {
                 break;
             }
+        }
+    }
+
+    #[test]
+    fn dropping_an_online_connection_ends_the_thread_and_the_stream() {
+        let fake = FakeTransport::default();
+        push_connect_endless(&fake, &agents(&[("w1:p1", "idle")]), ACK);
+        let h = start(&fake, 0);
+        h.wait_for("online", is_online);
+        let Harness { conn, fake, rx, .. } = h;
+        drop(conn);
+        let after = notes_until_exit(rx);
+        assert!(after.is_empty(), "nothing happens after stop: {after:?}");
+        assert!(fake.log().contains(&Step::Closed(2)), "{:?}", fake.log());
+        assert_eq!(fake.opens(), 5, "no reconnect after stop");
+    }
+
+    #[test]
+    fn refresh_while_online_relists_at_once() {
+        let fake = FakeTransport::default();
+        push_connect_endless(&fake, &agents(&[("w1:p1", "idle")]), ACK);
+        let working = agents(&[("w1:p1", "working")]);
+        fake.push(&working);
+        fake.push_endless(ACK);
+        fake.push(&working);
+        fake.push(WORKSPACES);
+        let h = start(&fake, 0);
+        h.wait_for("online", is_online);
+        h.conn.refresh();
+        let snap = h.wait_for("the re-list", |s| {
+            s.agents[0].agent_status == AgentStatus::Working
+        });
+        assert!(is_online(&snap));
+        let seen = h.seen.borrow();
+        assert!(
+            seen.iter()
+                .all(|s| is_online(s) || s.online == Online::Connecting),
+            "stays online through a refresh: {seen:?}"
+        );
+        assert!(h.slept().is_empty());
+        assert_eq!(
+            h.methods()[5..],
+            [
+                "agent.list",
+                "events.subscribe",
+                "agent.list",
+                "workspace.list"
+            ]
+        );
+        let log = h.fake.log();
+        assert!(log.contains(&Step::Closed(2)), "old stream closed: {log:?}");
+        assert!(!log.contains(&Step::Closed(6)), "new stream kept: {log:?}");
+    }
+
+    #[test]
+    fn stop_while_connecting_never_follows_the_stream() {
+        let shared: Arc<OnceLock<Arc<Shared>>> = Arc::default();
+        let (notes, rx) = mpsc::channel();
+        let cell = shared.clone();
+        let changes = notes.clone();
+        let fake = FakeTransport::default();
+        fake.push_failure(SshFailure::NeedsSignIn { hint: "h".into() });
+        let conn = Connection::spawn(
+            fake.clone(),
+            TestSleeper {
+                notes: Mutex::new(notes),
+                free: Mutex::new(0),
+            },
+            move |s: &Snapshot| {
+                // Stop as soon as ping answers, mid-connect.
+                if s.version.is_some() {
+                    if let Some(sh) = cell.get() {
+                        sh.signal.stop();
+                    }
+                }
+                let _ = changes.send(Note::Changed(s.clone()));
+            },
+        );
+        assert!(matches!(
+            rx.recv_timeout(LONG).unwrap(),
+            Note::Changed(Snapshot {
+                online: Online::NeedsSignIn { .. },
+                ..
+            })
+        ));
+        shared.set(conn.shared.clone()).ok().unwrap();
+        push_connect_endless(&fake, &agents(&[("w1:p1", "idle")]), ACK);
+        conn.refresh();
+        let notes = notes_until_exit(rx);
+        assert!(
+            notes
+                .iter()
+                .all(|n| matches!(n, Note::Changed(s) if !is_online(s))),
+            "{notes:?}"
+        );
+        assert!(fake.log().contains(&Step::Closed(2)), "{:?}", fake.log());
+    }
+
+    #[test]
+    fn chasing_new_panes_stops_after_three_extra_rounds() {
+        let fake = FakeTransport::default();
+        let lists: Vec<String> = (1..=5)
+            .map(|n| {
+                let panes: Vec<(String, &str)> =
+                    (1..=n).map(|i| (format!("w{i}:p1"), "idle")).collect();
+                let refs: Vec<(&str, &str)> =
+                    panes.iter().map(|(p, st)| (p.as_str(), *st)).collect();
+                agents(&refs)
+            })
+            .collect();
+        fake.push(PONG);
+        fake.push(&lists[0]);
+        for list in &lists[1..4] {
+            fake.push(ACK);
+            fake.push(list);
+        }
+        fake.push_endless(ACK);
+        fake.push(&lists[4]);
+        fake.push(WORKSPACES);
+        let h = start(&fake, 0);
+        let snap = h.wait_for("online", is_online);
+        assert_eq!(snap.agents.len(), 5, "the latest list is kept");
+        let subscribes = h
+            .methods()
+            .iter()
+            .filter(|m| *m == "events.subscribe")
+            .count();
+        assert_eq!(subscribes, 4);
+        assert_eq!(panes(&h.fake.requests()[8]).len(), 4);
+    }
+
+    #[test]
+    fn a_stream_tracked_after_stop_or_refresh_is_cut_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for refresh in [false, true] {
+            let signal = Signal::default();
+            if refresh {
+                signal.refresh();
+            } else {
+                signal.stop();
+            }
+            let cuts = Arc::new(AtomicUsize::new(0));
+            let c = cuts.clone();
+            signal.track(Some(Closer::new(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            })));
+            assert_eq!(cuts.load(Ordering::SeqCst), 1);
         }
     }
 }

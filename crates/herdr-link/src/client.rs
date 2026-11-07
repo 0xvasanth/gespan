@@ -134,6 +134,13 @@ pub struct Events {
     conn: Conn,
 }
 
+impl Events {
+    /// Cuts the stream from another thread; the reader then sees it end.
+    pub fn closer(&self) -> Option<crate::transport::Closer> {
+        self.conn.closer.clone()
+    }
+}
+
 impl Iterator for Events {
     type Item = Result<Event, Error>;
 
