@@ -417,6 +417,26 @@ impl Access {
         })
     }
 
+    /// A credential for OpenCode v2's service, which every conversation in the
+    /// folder can reach, so it serves calls from `conversation` only. It is
+    /// bound before it exists anywhere outside the hub.
+    pub fn open_opencode(mount: &Mount, conversation: &str) -> Option<Self> {
+        let hub = hub()
+            .inspect_err(|error| tracing::warn!(%error, "the tool endpoint isn't running"))
+            .ok()?;
+        Some(Self {
+            url: hub.url().to_owned(),
+            token: hub.mint_bound(mount.grant(), OPENCODE_CONVERSATION, json!(conversation)),
+        })
+    }
+
+    /// Ends this credential, when the provider never received it.
+    pub fn withdraw(&self, session: i64) {
+        if let Ok(hub) = hub() {
+            hub.withdraw(session, &self.token);
+        }
+    }
+
     /// Whether this credential is still the one its session can use.
     pub fn is_live(&self, session: i64) -> bool {
         hub().is_ok_and(|hub| hub.holds(session, &self.token))
@@ -458,15 +478,6 @@ impl Access {
             "url":self.url,
             "headers":{"Authorization":self.token.bearer()},
             "oauth":false,
-        })
-    }
-
-    /// Every conversation in the folder can reach a server on OpenCode v2's
-    /// service, so this credential then serves calls from `conversation` only.
-    pub fn bind_opencode(&self, session: i64, conversation: &str) -> bool {
-        hub().is_ok_and(|hub| {
-            hub.holds(session, &self.token)
-                && hub.bind(session, OPENCODE_CONVERSATION, json!(conversation))
         })
     }
 

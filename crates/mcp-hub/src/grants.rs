@@ -111,6 +111,21 @@ impl Grants {
     /// A new process gets a new token. The process it replaces, if any, loses
     /// its own.
     pub(crate) fn mint(&mut self, grant: Grant) -> Token {
+        self.issue(grant, None)
+    }
+
+    /// A token bound from its first moment, so no call is served unbound
+    /// between handing it over and binding it.
+    pub(crate) fn mint_bound(
+        &mut self,
+        grant: Grant,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Token {
+        self.issue(grant, Some((key.to_owned(), value)))
+    }
+
+    fn issue(&mut self, grant: Grant, bound: Option<(String, serde_json::Value)>) -> Token {
         self.revoke(grant.session, Refusal::Ended);
         let token = Token::mint();
         let key = hash(token.secret());
@@ -120,7 +135,7 @@ impl Grants {
             Live {
                 grant,
                 used: Instant::now(),
-                bound: None,
+                bound,
             },
         );
         token
@@ -155,6 +170,13 @@ impl Grants {
         self.live.remove(&key);
         self.remember(key, why);
         true
+    }
+
+    /// Ends this token if it is still its session's, and leaves a newer one
+    /// alone. Returns whether it ended.
+    pub(crate) fn withdraw(&mut self, session: i64, token: &Token) -> bool {
+        self.sessions.get(&session) == Some(&hash(token.secret()))
+            && self.revoke(session, Refusal::Ended)
     }
 
     fn remember(&mut self, key: [u8; 32], why: Refusal) {
@@ -382,6 +404,33 @@ mod tests {
         );
         assert!(grants.update(1, ticket, BTreeSet::from(["docs".to_owned()])));
         assert_eq!(grants.holders("docs"), [1]);
+    }
+
+    #[test]
+    fn a_token_minted_bound_is_bound_from_the_start() {
+        let mut grants = Grants::new(Duration::from_secs(60));
+        let key = "client.example/conversation";
+        grants.mint_bound(grant(1), key, serde_json::json!("mine"));
+        assert_eq!(
+            grants.bound(1),
+            Some((key.to_owned(), serde_json::json!("mine")))
+        );
+        let fresh = grants.mint(grant(1));
+        assert_eq!(grants.bound(1), None, "a plain mint starts unbound");
+        assert!(grants.holds(1, &fresh));
+    }
+
+    #[test]
+    fn withdrawing_ends_only_the_token_still_held() {
+        let mut grants = Grants::new(Duration::from_secs(60));
+        let old = grants.mint(grant(1));
+        let new = grants.mint(grant(1));
+        assert!(!grants.withdraw(1, &old), "already replaced");
+        assert!(grants.holds(1, &new), "the newer token is left alone");
+        assert!(!grants.withdraw(2, &new), "a token belongs to one session");
+        assert!(grants.withdraw(1, &new));
+        assert_eq!(grants.admit(new.secret()), Err(Refusal::Ended));
+        assert!(!grants.withdraw(1, &new));
     }
 
     #[test]

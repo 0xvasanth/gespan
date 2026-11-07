@@ -168,7 +168,12 @@ impl Inner {
         peers
     }
 
-    /// Turns away a tool call made for another caller of a bound credential.
+    /// Turns away a call made for another caller of a bound credential.
+    ///
+    /// This sorts calls that a shared client routes, and is no authentication:
+    /// `_meta` is the client's to set, so anyone holding the token can name any
+    /// caller. The token is the secret, and a credential that must serve one
+    /// caller should be minted for that caller alone with [`Hub::mint_bound`].
     pub(crate) fn check_caller(
         &self,
         session: i64,
@@ -522,6 +527,24 @@ impl Hub {
     /// stops working.
     pub fn mint(&self, grant: Grant) -> Token {
         relock(&self.inner.grants).mint(grant)
+    }
+
+    /// A credential for a new agent process that serves one caller of a client
+    /// sharing its connections, as [`Hub::bind`] would, but bound before
+    /// anyone can present it. Any earlier one for the session stops working.
+    pub fn mint_bound(&self, grant: Grant, key: &str, value: Value) -> Token {
+        relock(&self.inner.grants).mint_bound(grant, key, value)
+    }
+
+    /// Ends a credential handed to an agent that never took it, such as when
+    /// delivering it failed. A newer credential of the session is left alone.
+    /// Returns whether this one ended.
+    pub fn withdraw(&self, session: i64, token: &Token) -> bool {
+        let withdrawn = relock(&self.inner.grants).withdraw(session, token);
+        if withdrawn {
+            self.inner.pool.forget(session);
+        }
+        withdrawn
     }
 
     /// Binds a session's credential to one caller of a client that shares its
