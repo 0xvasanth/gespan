@@ -21,6 +21,7 @@ pub(crate) mod jsonc;
 pub mod runs;
 pub mod sources;
 pub(crate) mod tasks_json;
+pub(crate) mod toolkit;
 pub mod write;
 
 /// Every source, highest priority first. Gespan's own file leads, then agent

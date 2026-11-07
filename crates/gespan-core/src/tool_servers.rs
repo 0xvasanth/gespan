@@ -18,6 +18,8 @@ pub const VISUAL: &str = "visual";
 pub const TICKET: &str = "ticket";
 pub const APP: &str = "app";
 pub const CONTROL: &str = "control";
+pub const ACTIONS: &str = "actions";
+pub const ACTIONS_READ: &str = "actions_read";
 
 /// The name agents know the hub by. Tools appear to Claude as
 /// `mcp__gespan__<tool>`.
@@ -301,6 +303,12 @@ fn hub() -> Result<&'static Hub, String> {
         hub.register(Arc::new(crate::ticket_bridge::Toolkit));
         hub.register(Arc::new(crate::pilot::bridge::Toolkit::APP));
         hub.register(Arc::new(crate::pilot::bridge::Toolkit::CONTROL));
+        hub.register(Arc::new(crate::project_actions::toolkit::Toolkit {
+            may_run: true,
+        }));
+        hub.register(Arc::new(crate::project_actions::toolkit::Toolkit {
+            may_run: false,
+        }));
         Ok(hub)
     })
     .as_ref()
@@ -536,6 +544,26 @@ pub fn refresh(mount: &Mount) {
         .insert(mount.session, mount.clone());
     if let Some(Ok(hub)) = HUB.get() {
         hub.update(mount.session, mount.toolkits.clone(), mount.servers.clone());
+    }
+}
+
+/// The project of a session's latest turn, once Gespan has mounted it with one.
+pub(crate) fn project_of(session: i64) -> Option<String> {
+    LIVE.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&session)
+        .map(|mount| mount.project.clone())
+        .filter(|project| !project.is_empty())
+}
+
+/// A connection as `mount`'s agent, for tests that call through the hub.
+#[cfg(test)]
+pub(crate) fn test_connection(mount: &Mount) -> Connection {
+    refresh(mount);
+    let access = Access::open(mount).expect("the tool endpoint runs");
+    Connection {
+        url: access.url,
+        token: access.token.secret().to_owned(),
     }
 }
 
