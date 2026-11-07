@@ -620,20 +620,29 @@ fn refuse(message: &str) -> Response {
         .unwrap_or_default()
 }
 
+/// Reads the request body before answering. A connection closed with part of
+/// a request unread is reset, and on Windows the reset discards a refusal the
+/// agent hasn't read yet, so the agent would see an unreachable endpoint
+/// instead of the reason.
+async fn turn_away(request: Request, message: &str) -> Response {
+    let _ = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES).await;
+    refuse(message)
+}
+
 async fn admit(State(gate): State<Gate>, mut request: Request, next: Next) -> Response {
     let headers = request.headers();
     if !host_allowed(headers, gate.address) {
-        return refuse("Host not allowed");
+        return turn_away(request, "Host not allowed").await;
     }
     if !origin_allowed(headers, gate.address) {
-        return refuse("Origin not allowed");
+        return turn_away(request, "Origin not allowed").await;
     }
     let admitted = bearer(headers)
         .ok_or(Refusal::Invalid)
         .and_then(|secret| relock(&gate.inner.grants).admit(secret));
     let grant = match admitted {
         Ok(grant) => grant,
-        Err(refusal) => return refuse(&refusal.to_string()),
+        Err(refusal) => return turn_away(request, &refusal.to_string()).await,
     };
     request.extensions_mut().insert(grant);
     let request = request.map(|body| Body::new(http_body_util::Limited::new(body, MAX_BODY_BYTES)));
