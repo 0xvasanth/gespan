@@ -411,3 +411,17 @@ fn width_changes_emit_row_remeasure_events(cx: &mut TestAppContext) {
         "Responsive width changes must also remeasure the transcript row"
     );
 }
+
+#[test]
+fn label_y_is_the_text_baseline() {
+    let baseline = point(px(20.), px(40.));
+    let (ascent, descent) = (px(11.), px(3.));
+    let (top, height) = label_box(baseline, ascent, descent);
+    // gpui paints a shaped line with its baseline at
+    // top + (height - (ascent + descent)) / 2 + ascent.
+    let painted = top.y + (height - (ascent + descent)) / 2. + ascent;
+    assert_eq!(painted, baseline.y);
+    assert_eq!(top.x, baseline.x);
+    // Ascenders sit above y and descenders hang below it, as in SVG.
+    assert!(top.y < baseline.y && baseline.y < top.y + height);
+}
