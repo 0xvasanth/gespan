@@ -1,6 +1,6 @@
 //! Composer commands are handled before taking a draft or entering the turn queue.
 use super::*;
-use gespan_core::provider::{self, Event, Request};
+use gespan_core::provider::{self, Event, ProviderError, Request};
 use gespan_core::tool::{ToolCall, ToolState};
 use gespan_core::transcript::Row;
 
@@ -209,7 +209,7 @@ impl Conversation {
                         }
                         "Ready".into()
                     }
-                    Err(error) if error == "Stopped" => "Ready".into(),
+                    Err(error) if ProviderError::is_stopped(&error) => "Ready".into(),
                     Err(error) => error,
                 };
                 if this.status == "Ready" {

@@ -3,7 +3,7 @@
 use super::*;
 use crate::transcript::burst::{self as fx, Bubble, Halo};
 use gespan_core::{
-    provider::{self, Event, Request},
+    provider::{self, Event, ProviderError, Request},
     transcript::{Row, Transcript},
 };
 use gpui::{
@@ -756,7 +756,7 @@ impl Btw {
                                 this.cancel.remove(&id);
                                 match result {
                                     Ok(()) => thread.status = "completed".into(),
-                                    Err(error) if error == "Stopped" => {
+                                    Err(error) if ProviderError::is_stopped(&error) => {
                                         thread.status = "stopped".into()
                                     }
                                     Err(error) => {

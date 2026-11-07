@@ -378,7 +378,7 @@ impl Completion {
         let cancel = self.cancel.clone();
         let work = cx.background_executor().spawn(async move {
             if cancel.load(Ordering::Relaxed) {
-                return Err("Stopped".into());
+                return Err(gespan_core::provider::ProviderError::Stopped.into());
             }
             let Some(binary) = gespan_core::provider::resolve(provider) else {
                 return Ok(Vec::new());
