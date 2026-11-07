@@ -32,6 +32,8 @@ pub(crate) fn machine_status(view: &MachineView) -> (bool, Option<&'static str>)
         Online::Online => (false, None),
         Online::Offline { .. } => (true, Some("· offline")),
         Online::NeedsSignIn { .. } => (true, Some("· sign-in needed")),
+        Online::HerdrMissing => (true, Some("· needs herdr")),
+        Online::HerdrTooOld => (true, Some("· herdr too old")),
         _ => (true, None),
     }
 }
@@ -79,6 +81,8 @@ pub(crate) fn machine_row(view: &MachineView) -> Stateful<Div> {
     let id = view.machine.id.clone();
     let suffix_id = match view.snapshot.online {
         Online::Offline { .. } => "offline",
+        Online::HerdrMissing => "needs-herdr",
+        Online::HerdrTooOld => "herdr-too-old",
         _ => "sign-in",
     };
     let selector = format!("machine-{id}");
@@ -236,8 +240,8 @@ mod tests {
             }),
             (true, Some("· sign-in needed"))
         );
-        assert_eq!(status(Online::HerdrMissing), (true, None));
-        assert_eq!(status(Online::HerdrTooOld), (true, None));
+        assert_eq!(status(Online::HerdrMissing), (true, Some("· needs herdr")));
+        assert_eq!(status(Online::HerdrTooOld), (true, Some("· herdr too old")));
     }
 
     #[test]
