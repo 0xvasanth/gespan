@@ -212,7 +212,12 @@ impl Protocol {
                 if let Some(model) = &self.request.model {
                     params["model"] = model.clone().into();
                 }
-                write_json(stdin, json!({"id":3,"method":"turn/start","params":params}))?;
+                let frame = json!({"id":3,"method":"turn/start","params":params});
+                if self.baseline_pending() {
+                    self.held_prompt = Some(super::prompt_gate::HeldPrompt::Codex(frame));
+                } else {
+                    write_json(stdin, frame)?;
+                }
             }
             _ => {}
         }

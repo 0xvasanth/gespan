@@ -21,6 +21,8 @@ mod persistence;
 mod pilot_checkpoint_tests;
 pub(crate) mod remote;
 #[cfg(all(test, unix))]
+mod send_latency_bench;
+#[cfg(all(test, unix))]
 mod sign_in_tests;
 mod ticket_context;
 pub(crate) mod ticket_scope;
@@ -196,7 +198,7 @@ fn run_turn_using(
     let mut prepared_handoff = None;
     let mut handoff_accepted = false;
     // SessionReview's recorded turn: its project and id, once the baseline is taken.
-    let mut checkpoint: Option<(String, String)> = None;
+    let mut checkpoint: Option<(String, String, gespan_core::checkpoint::Baseline)> = None;
     let mut created_worktree = None;
     let mut context = locked(&store)
         .ok()
@@ -590,13 +592,21 @@ fn run_turn_using(
         {
             let id = gespan_core::checkpoint::new_turn_id();
             let session = summary.id.to_string();
-            // Capture errors are persisted and shown in the review.
-            let _ = store.exclusive(|store| {
-                // An interrupted turn continues with this session's edit evidence.
-                store.capture(&session, cwd, &edited_paths(&transcript.rows[..turn_start]))?;
-                store.begin_turn(&session, cwd, &id)
+            let (dir, turn) = (cwd.to_owned(), id.clone());
+            let edited = edited_paths(&transcript.rows[..turn_start]);
+            // Recorded while the provider starts; the provider holds the
+            // prompt until it is done. Capture errors are persisted and shown
+            // in the review.
+            let baseline = gespan_core::checkpoint::Baseline::record(move || {
+                let _ = store.exclusive(|store| {
+                    // An interrupted turn continues with this session's edit evidence.
+                    store.capture(&session, &dir, &edited)?;
+                    store.begin_turn(&session, &dir, &turn)
+                });
+                tracing::debug!(target: "gespan::send", stage = "checkpoint.recorded");
             });
-            checkpoint = Some((cwd.to_owned(), id));
+            settings.baseline = Some(baseline.clone());
+            checkpoint = Some((cwd.to_owned(), id, baseline));
         }
         let mut prompt = provider::prepare_prompt(kind, &prompt, cwd, &settings.attachments)?;
         if !raw_native_command && prompt.contains("@note:") {
@@ -979,7 +989,7 @@ fn run_turn_using(
                             }
                             // Saved rows leave live elapsed out; the view reads it here.
                             gespan_core::tool::live::record(&tool);
-                            if let Some((cwd, _)) = &checkpoint {
+                            if let Some((cwd, ..)) = &checkpoint {
                                 track_edit(summary.id, cwd, &tool);
                             }
                             let ix = *tool_rows
@@ -1289,9 +1299,12 @@ fn run_turn_using(
     {
         final_start = final_start.min(ix);
     }
-    if let Some((cwd, id)) = &checkpoint
+    if let Some((cwd, id, baseline)) = &checkpoint
         && let Some(store) = gespan_core::checkpoint::store()
     {
+        // A turn that failed or stopped before its prompt went out may end
+        // while its opening snapshot is still recording.
+        baseline.finish();
         // The provider has exited, so this snapshot is the turn's settled result.
         let session = summary.id.to_string();
         let _ = store.exclusive(|store| {
