@@ -190,6 +190,9 @@ impl Protocol {
         if matches!(self.claude.mcp, ClaudeMcp::Waiting(_)) {
             return Ok(());
         }
+        if self.hold_prompt(super::prompt_gate::HeldPrompt::Claude) {
+            return Ok(());
+        }
         let prompt = if self.request.settings.effort.as_deref() == Some("ultrathink") {
             if self.request.prompt.is_empty() {
                 "Ultrathink:".into()

@@ -45,6 +45,7 @@ mod limits;
 mod opencode;
 mod parked;
 mod pi;
+mod prompt_gate;
 mod spec;
 pub fn configure_idle_agents(limit: usize) {
     parked::configure(limit);
@@ -87,6 +88,7 @@ pub use spec::{Accounts, Family, Features, Login, ProfileHome, Spec};
 
 const BATCH_BYTES: usize = 64 * 1024;
 const TICK: Duration = Duration::from_millis(16);
+const HELD_POLL: Duration = Duration::from_millis(2);
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -353,6 +355,8 @@ struct Protocol {
     async_answers: HashMap<String, (Value, String, Value, crate::agent::Question)>,
     /// This new process's tool credential. A warm process already holds one.
     access: Option<crate::tool_servers::Access>,
+    /// The prompt step waiting for the turn's baseline (`prompt_gate`).
+    held_prompt: Option<prompt_gate::HeldPrompt>,
 }
 impl Protocol {
     fn new(request: Request) -> Self {
@@ -390,6 +394,7 @@ impl Protocol {
             async_question_items: Default::default(),
             async_answers: HashMap::new(),
             access: None,
+            held_prompt: None,
         }
     }
     fn text(&mut self, key: &str, text: &str, snapshot: bool, events: &mut Vec<Event>) {
@@ -854,8 +859,9 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
     .ok_or_else(|| format!("{} returned no model catalog", kind.label()))
 }
 
-/// Waits for the turn's workspace snapshot, which records while the provider
-/// starts. Nothing may reach the provider that lets it edit files before it.
+/// Waits for the turn's workspace snapshot before an OpenCode turn starts: its
+/// server takes the prompt with the session, so nothing can be held there.
+/// Other transports hold only their prompt step (`prompt_gate`).
 fn baseline_recorded(request: &Request, cancel: &AtomicBool) -> Result<(), String> {
     match &request.settings.baseline {
         Some(baseline) if !baseline.wait(cancel) => Err("Stopped".into()),
@@ -920,7 +926,6 @@ fn run_operation(
         return Err("Stopped".into());
     }
     if request.kind == Kind::OpenCode {
-        // OpenCode's server takes the prompt as soon as it starts.
         baseline_recorded(&request, &cancel)?;
         return opencode::run(request, cancel, controls, probe, compact, emit);
     }
@@ -1051,8 +1056,6 @@ fn launch(
         protocol.compact = compact;
         protocol.command_probe = command_probe;
         if warm {
-            // A kept process takes the prompt with its first frame.
-            baseline_recorded(&protocol.request, cancel)?;
             if protocol.request.kind.is_acp() {
                 protocol.acp_resume_warm(&mut stdin)?;
             } else if protocol.request.kind.is_pi() {
@@ -1082,9 +1085,6 @@ fn launch(
                 json!({"type":"control_request","request_id":"native-init","request":{"subtype":"initialize"}}),
             )?;
         }
-        // A new process has only its handshake so far; every prompt, steer
-        // or answer goes out from the loop below, after the turn's baseline.
-        baseline_recorded(&protocol.request, cancel)?;
         let mut text_seen = false;
         let mut batch = batch::Batch::new(Instant::now());
         let started = Instant::now();
@@ -1093,6 +1093,10 @@ fn launch(
         let mut gate = hold::Gate::default();
         loop {
             if cancel.load(Ordering::Relaxed) && !interrupted {
+                // The provider never got the prompt: there is no turn to stop.
+                if protocol.prompt_held() {
+                    return Err("Stopped".into());
+                }
                 interrupted = true;
                 if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
                     return Err("Stopped".into());
@@ -1102,7 +1106,13 @@ fn launch(
                 }
             }
             if !interrupted {
-                if let Some(controls) = &controls {
+                protocol.release_prompt(&mut stdin)?;
+                // Steers and other controls wait with the prompt for the
+                // turn's baseline, which nothing may get ahead of. A prompt
+                // still held (the baseline may have finished just now) goes
+                // out first, on the next pass.
+                let gated = protocol.baseline_pending() || protocol.prompt_held();
+                if let Some(controls) = controls.filter(|_| !gated) {
                     while let Ok(control) = controls.try_recv() {
                         match control.decision {
                             Decision::Steer(message) => {
@@ -1170,7 +1180,13 @@ fn launch(
             if protocol.request.settings.text_only && started.elapsed() >= Duration::from_secs(45) {
                 return Err("Background text request timed out".into());
             }
-            match rx.recv_timeout(TICK) {
+            // A held prompt goes out within a couple of milliseconds of the
+            // baseline being recorded.
+            match rx.recv_timeout(if protocol.prompt_held() {
+                HELD_POLL
+            } else {
+                TICK
+            }) {
                 Ok(Ok(line)) => {
                     let value: Value = match serde_json::from_slice(&line) {
                         Ok(value) => value,

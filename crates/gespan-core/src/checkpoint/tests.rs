@@ -1217,3 +1217,50 @@ fn a_turn_that_changes_nothing_shows_nothing_over_existing_work() {
     f.store.finish_turn("session", f.cwd(), "first").unwrap();
     assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
 }
+
+/// Git trusts a cached file stat unless the entry is "racily clean": not
+/// older than the index file itself. The snapshot's copy of the index must
+/// keep the original's modified time, or an edit made in the same instant as
+/// the index write, with the same size, slips past `add -A` and out of the
+/// baseline.
+#[test]
+fn an_edit_in_the_same_instant_as_the_index_write_is_in_the_baseline() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let f = Fixture::new();
+    // Compare only what most filesystems keep: whole-second times and size.
+    run_git(&f.repo, &["config", "core.checkStat", "minimal"]).unwrap();
+    run_git(&f.repo, &["config", "core.trustctime", "false"]).unwrap();
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 60;
+    let instant = UNIX_EPOCH + Duration::from_secs(seconds);
+    let stamp = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(instant)
+            .unwrap();
+    };
+    let file = f.repo.join("a.txt");
+    stamp(&file);
+    run_git(&f.repo, &["update-index", "--refresh"]).unwrap();
+    // Same size and modified time as the cached entry, and the index was
+    // written in that same instant.
+    assert_eq!("changed!\n".len(), "original\n".len());
+    f.write("a.txt", "changed!\n");
+    stamp(&file);
+    stamp(&f.repo.join(".git/index"));
+
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    f.write("a.txt", "the agent's edit\n");
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    let diff = f.store.file_diff("session", f.cwd(), "a.txt").unwrap();
+    assert_eq!(
+        diff.original, "changed!\n",
+        "the baseline missed the user's edit"
+    );
+    assert_eq!(diff.current, "the agent's edit\n");
+}

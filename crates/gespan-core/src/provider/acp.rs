@@ -248,8 +248,10 @@ impl Protocol {
     }
 
     /// Still starting: the prompt has not been sent yet.
+    /// Still starting up. A prompt held for the turn's baseline means the
+    /// session is already set up: only the send is waiting.
     pub(super) fn acp_starting(&self) -> bool {
-        !matches!(self.acp.stage, Stage::Prompt | Stage::Background)
+        !matches!(self.acp.stage, Stage::Prompt | Stage::Background) && self.held_prompt.is_none()
     }
 
     pub(super) fn acp_active_session(&self) -> Option<&str> {
@@ -358,6 +360,10 @@ impl Protocol {
         }
         self.acp_send(Stage::New, "session/new", params, stdin)
     }
+    /// Takes the held prompt step again once the baseline is recorded.
+    pub(super) fn acp_prompt_step(&mut self, stdin: &mut impl Write) -> Result<(), String> {
+        self.acp_next(stdin)
+    }
     fn acp_next(&mut self, stdin: &mut impl Write) -> Result<(), String> {
         if let Some((method, params)) = self.acp.options.pop_front() {
             if method == "session/set_config_option"
@@ -394,6 +400,8 @@ impl Protocol {
                 json!({"sessionId":self.acp.session,"modeId":mode}),
                 stdin,
             )
+        } else if self.hold_prompt(super::prompt_gate::HeldPrompt::Acp) {
+            Ok(())
         } else if self.compact && self.request.kind == Kind::Grok {
             self.acp_send(
                 Stage::Prompt,
