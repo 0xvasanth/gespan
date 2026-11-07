@@ -5,7 +5,7 @@
 //! Anything here that runs herdr or writes to disk blocks. Call it from a
 //! background task, never the UI thread.
 use crate::scm::shell::{dirs_home, gui_search_path, which_in_path};
-use herdr_link::{Agent, AgentStatus, Connection, Machine, Snapshot, SshBridge};
+use herdr_link::{Agent, AgentStatus, Connection, Machine, Online, Snapshot, SshBridge};
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -141,7 +141,8 @@ fn remove_with(herdr: &Path, id: &str) -> Result<(), String> {
     run_herdr(herdr, &["machine", "remove", id]).map(drop)
 }
 
-/// Quoted for a POSIX shell, always, so a terminal runs it word for word.
+/// Always quoted, so a terminal runs it word for word. POSIX shells only;
+/// the Machines UI is hidden on Windows.
 fn quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
@@ -183,18 +184,168 @@ pub(crate) fn attach_command_with(herdr: &Path, machine_id: &str, agent: &str) -
     command_line(herdr, ["--machine", &id, "agent", "attach", &agent])
 }
 
-/// The terminal command that brings a machine's herdr in line with this
-/// one, through herdr's own remote attach (it installs this herdr when the
-/// machine's cannot serve it, after asking). `machine add` is not used: it
-/// would save a second machine under a new id. `None` when no herdr is
-/// found; may block like [`herdr_binary`].
-pub fn upgrade_command(m: &Machine) -> Option<String> {
-    herdr_binary().map(|herdr| upgrade_command_with(&herdr, m))
+/// The terminal command that installs this herdr on a machine, through
+/// herdr's own remote attach. `remote_binary` comes from
+/// [`prepare_remote_binary`]; handing it over in `HERDR_REMOTE_BINARY`
+/// makes herdr install it, after asking, even over a working older herdr.
+/// `machine add` is not used: it would save a second machine under a new
+/// id. `None` when no herdr is found; may block like [`herdr_binary`].
+pub fn upgrade_command(m: &Machine, remote_binary: &Path) -> Option<String> {
+    herdr_binary().map(|herdr| upgrade_command_with(&herdr, m, remote_binary))
 }
 
-pub(crate) fn upgrade_command_with(herdr: &Path, m: &Machine) -> String {
+pub(crate) fn upgrade_command_with(herdr: &Path, m: &Machine, remote_binary: &Path) -> String {
+    // POSIX shells only; the Machines UI is hidden on Windows.
     let (target, session) = (quote(&m.target), quote(&m.session));
-    command_line(herdr, ["--remote", &target, "--session", &session])
+    format!(
+        "HERDR_REMOTE_BINARY={} {}",
+        quote(&remote_binary.to_string_lossy()),
+        command_line(herdr, ["--remote", &target, "--session", &session])
+    )
+}
+
+/// One herdr release build a machine can run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RemoteAsset {
+    pub name: &'static str,
+    pub url: &'static str,
+    pub sha256: &'static str,
+}
+
+/// The builds of [`HERDR_VERSION`], as pinned in `scripts/herdr-release.json`.
+pub(crate) const REMOTE_ASSETS: [RemoteAsset; 4] = [
+    RemoteAsset {
+        name: "linux-x86_64",
+        url: "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64",
+        sha256: "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d",
+    },
+    RemoteAsset {
+        name: "linux-aarch64",
+        url: "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64",
+        sha256: "17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c",
+    },
+    RemoteAsset {
+        name: "macos-x86_64",
+        url: "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-macos-x86_64",
+        sha256: "5fb0a908ec7f6745e3e245738b06bfad56c46391c391ab3c0955fbead01f1369",
+    },
+    RemoteAsset {
+        name: "macos-aarch64",
+        url: "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-macos-aarch64",
+        sha256: "fb77c2232a05a8035421382c894392f4174e4e38a18e48af3dd0290157c3a7e2",
+    },
+];
+
+const SSH_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+/// Far above any herdr build; stops a runaway download.
+const DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// The build for a machine, from its `uname -sm`.
+fn asset_for<'a>(uname: &str, assets: &'a [RemoteAsset]) -> Result<&'a RemoteAsset, String> {
+    let mut words = uname.split_whitespace();
+    let (os, arch) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
+    let name = match (os, arch) {
+        ("Linux", "x86_64" | "amd64") => "linux-x86_64",
+        ("Linux", "aarch64" | "arm64") => "linux-aarch64",
+        ("Darwin", "x86_64") => "macos-x86_64",
+        ("Darwin", "arm64") => "macos-aarch64",
+        _ => return Err(format!("herdr has no build for {os} {arch}")),
+    };
+    assets
+        .iter()
+        .find(|a| a.name == name)
+        .ok_or_else(|| format!("herdr has no build for {os} {arch}"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn download(url: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let response = ureq::get(url)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .call()
+        .map_err(|e| format!("could not download herdr: {e}"))?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(DOWNLOAD_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("could not download herdr: {e}"))?;
+    Ok(bytes)
+}
+
+/// The verified herdr build for this machine's platform, downloaded once
+/// into `<data dir>/herdr-assets`. Runs ssh and may download, so it blocks;
+/// call from a background task.
+pub fn prepare_remote_binary(m: &Machine) -> Result<PathBuf, String> {
+    let dir = data_dir()
+        .ok_or("Gespan has no data folder")?
+        .join("herdr-assets");
+    prepare_remote_binary_with(m, Path::new("ssh"), &dir, &REMOTE_ASSETS, &download)
+}
+
+fn prepare_remote_binary_with(
+    m: &Machine,
+    ssh: &Path,
+    dir: &Path,
+    assets: &[RemoteAsset],
+    fetch: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<PathBuf, String> {
+    let target = herdr_link::validate_target(&m.target).map_err(|e| e.to_string())?;
+    let args: Vec<String> = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "--",
+        target,
+        "uname",
+        "-sm",
+    ]
+    .map(String::from)
+    .to_vec();
+    let uname = crate::cli::output(ssh, &args, &home(), SSH_TIMEOUT)
+        .map_err(|e| format!("could not reach {target}: {e}"))?;
+    let asset = asset_for(&uname, assets)?;
+    let path = dir.join(format!("herdr-{HERDR_VERSION}-{}", asset.name));
+    if std::fs::read(&path).is_ok_and(|bytes| sha256_hex(&bytes) == asset.sha256) {
+        return Ok(path);
+    }
+    let bytes = fetch(asset.url)?;
+    if sha256_hex(&bytes) != asset.sha256 {
+        return Err(format!(
+            "the downloaded herdr for {} does not match its checksum",
+            asset.name
+        ));
+    }
+    store_executable(&path, &bytes).map_err(|e| format!("could not save herdr: {e}"))?;
+    Ok(path)
+}
+
+/// Written to a temporary file, made executable, then renamed into place.
+fn store_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
+    }
+    file.persist(path).map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// What a machine's agent row shows.
@@ -225,13 +376,17 @@ pub fn mark(agent: &Agent, seen_seq: Option<u64>) -> Option<Mark> {
 }
 
 /// One saved machine and what is known about it. A disabled machine has no
-/// connection, so its snapshot stays the default.
+/// connection, so its snapshot stays the default. Offer the upgrade when
+/// `version_mismatch.is_some() || needs_install`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachineView {
     pub machine: Machine,
     pub snapshot: Snapshot,
-    /// The machine's herdr version, when it differs from [`HERDR_VERSION`].
+    /// The machine's herdr version, when it answers and differs from
+    /// [`HERDR_VERSION`].
     pub version_mismatch: Option<String>,
+    /// The machine has no herdr, or one too old to answer at all.
+    pub needs_install: bool,
 }
 
 impl MachineView {
@@ -240,10 +395,12 @@ impl MachineView {
             .version
             .clone()
             .filter(|version| version != HERDR_VERSION);
+        let needs_install = matches!(snapshot.online, Online::HerdrMissing | Online::HerdrTooOld);
         Self {
             machine,
             snapshot,
             version_mismatch,
+            needs_install,
         }
     }
 }
@@ -272,16 +429,18 @@ impl SeenStore {
 
     /// Records the mark and saves it. A failed save is logged; the mark
     /// still holds until Gespan quits.
-    pub(crate) fn set(&mut self, machine_id: &str, terminal_id: &str, completion_seq: u64) {
+    /// Whether the mark changed.
+    pub(crate) fn set(&mut self, machine_id: &str, terminal_id: &str, completion_seq: u64) -> bool {
         let key = Self::key(machine_id, terminal_id);
         if self.seen.insert(key, completion_seq) == Some(completion_seq) {
-            return;
+            return false;
         }
         if let Some(path) = &self.path {
             if let Err(error) = write_seen(path, &self.seen) {
                 tracing::warn!(%error, path = %path.display(), "could not save seen herdr turns");
             }
         }
+        true
     }
 }
 
@@ -339,6 +498,9 @@ pub struct Registry {
     connect: Connect,
     on_change: Box<dyn Fn() + Send + Sync>,
     state: Mutex<State>,
+    /// Held across a whole reload, so two never apply out of order.
+    /// Callbacks never take it.
+    reloading: Mutex<()>,
     seen: Mutex<SeenStore>,
     generations: AtomicU64,
 }
@@ -378,6 +540,7 @@ impl Registry {
             connect,
             on_change: Box::new(on_change),
             state: Mutex::default(),
+            reloading: Mutex::default(),
             seen: Mutex::new(seen),
             generations: AtomicU64::new(0),
         })
@@ -411,6 +574,7 @@ impl Registry {
     /// target or session changed is reconnected. Runs herdr, so it blocks;
     /// call from a background task.
     pub fn reload(&self) {
+        let _reloading = lock(&self.reloading);
         let listed = (self.list)();
         let mut stale = Vec::new();
         {
@@ -494,8 +658,10 @@ impl Registry {
     /// The user saw this terminal's turn number `completion_seq`. Writes the
     /// seen store, so call from a background task.
     pub fn mark_seen(&self, machine_id: &str, terminal_id: &str, completion_seq: u64) {
-        lock(&self.seen).set(machine_id, terminal_id, completion_seq);
-        (self.on_change)();
+        let changed = lock(&self.seen).set(machine_id, terminal_id, completion_seq);
+        if changed {
+            (self.on_change)();
+        }
     }
 
     /// The last turn number the user saw for this terminal, for [`mark`].

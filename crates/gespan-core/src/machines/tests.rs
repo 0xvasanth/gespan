@@ -1,6 +1,7 @@
 use super::*;
 use herdr_link::AgentStatus::{Blocked, Done, Idle, Unknown, Working};
 use herdr_link::{AgentStatus, Conn, Online, Transport};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -128,6 +129,73 @@ fn version_mismatch_is_reported() {
     assert!(view_with_version(HERDR_VERSION).version_mismatch.is_none());
     let unknown = MachineView::new(machine("m1", "box", true), Snapshot::default());
     assert!(unknown.version_mismatch.is_none());
+    assert!(!unknown.needs_install);
+}
+
+#[test]
+fn missing_or_too_old_herdr_needs_install() {
+    let with = |online| {
+        MachineView::new(
+            machine("m1", "box", true),
+            Snapshot {
+                online,
+                ..Snapshot::default()
+            },
+        )
+    };
+    assert!(with(Online::HerdrMissing).needs_install);
+    assert!(with(Online::HerdrTooOld).needs_install);
+    assert!(!with(Online::Online).needs_install);
+    assert!(
+        !with(Online::NeedsSignIn {
+            hint: "ssh box".into()
+        })
+        .needs_install
+    );
+    assert!(
+        !with(Online::Offline {
+            reason: "down".into(),
+            retry_in: Duration::from_secs(1)
+        })
+        .needs_install
+    );
+    // An answering machine on the pinned version needs nothing.
+    let current = view_with_version(HERDR_VERSION);
+    assert!(current.version_mismatch.is_none() && !current.needs_install);
+}
+
+#[test]
+fn remote_assets_match_the_packaging_pin() {
+    let pin: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../scripts/herdr-release.json")).unwrap();
+    assert_eq!(pin["version"], HERDR_VERSION);
+    let pinned = pin["assets"].as_object().unwrap();
+    assert_eq!(pinned.len(), REMOTE_ASSETS.len());
+    for asset in &REMOTE_ASSETS {
+        let entry = &pinned[asset.name];
+        assert_eq!(entry["url"], asset.url, "{}", asset.name);
+        assert_eq!(entry["sha256"], asset.sha256, "{}", asset.name);
+    }
+}
+
+#[test]
+fn uname_picks_the_build() {
+    let name = |uname: &str| asset_for(uname, &REMOTE_ASSETS).map(|a| a.name);
+    assert_eq!(name("Linux x86_64\n"), Ok("linux-x86_64"));
+    assert_eq!(name("Linux amd64"), Ok("linux-x86_64"));
+    assert_eq!(name("Linux aarch64"), Ok("linux-aarch64"));
+    assert_eq!(name("Linux arm64"), Ok("linux-aarch64"));
+    assert_eq!(name("Darwin x86_64"), Ok("macos-x86_64"));
+    assert_eq!(name("Darwin arm64"), Ok("macos-aarch64"));
+    assert_eq!(
+        name("FreeBSD amd64"),
+        Err("herdr has no build for FreeBSD amd64".into())
+    );
+    assert_eq!(
+        name("Linux armv7l"),
+        Err("herdr has no build for Linux armv7l".into())
+    );
+    assert!(name("").is_err());
 }
 
 #[test]
@@ -152,8 +220,8 @@ fn commands_quote_paths_and_names() {
     let mut m = machine("id1", "me@box", true);
     m.session = "agents".into();
     assert_eq!(
-        upgrade_command_with(herdr, &m),
-        "'/A pp/herdr' --remote 'me@box' --session 'agents'"
+        upgrade_command_with(herdr, &m, Path::new("/data dir/herdr-0.9.5-linux-aarch64")),
+        "HERDR_REMOTE_BINARY='/data dir/herdr-0.9.5-linux-aarch64' '/A pp/herdr' --remote 'me@box' --session 'agents'"
     );
 }
 
@@ -267,11 +335,12 @@ fn enable_disable_and_remove_pass_the_id() {
     );
 }
 
-/// A machine that can never be reached.
-struct Unreachable;
+/// A machine that can never be reached. Counts the attempts.
+struct Unreachable(Arc<AtomicUsize>);
 
 impl Transport for Unreachable {
     fn open(&self) -> std::io::Result<Conn> {
+        self.0.fetch_add(1, Ordering::SeqCst);
         Err(std::io::Error::other("no route"))
     }
 }
@@ -280,7 +349,11 @@ struct Harness {
     registry: Arc<Registry>,
     list: Arc<Mutex<Result<Vec<Machine>, String>>>,
     started: Arc<Mutex<Vec<String>>>,
+    /// Connection attempts per machine id.
+    opens: Arc<Mutex<HashMap<String, Arc<AtomicUsize>>>>,
     changes: Arc<AtomicUsize>,
+    /// `on_change` calls made on the calling thread, not by a connection.
+    direct: Arc<AtomicUsize>,
     _dir: tempfile::TempDir,
 }
 
@@ -289,23 +362,38 @@ fn harness(machines: Vec<Machine>) -> Harness {
     let list = Arc::new(Mutex::new(Ok(machines)));
     let started = Arc::new(Mutex::new(Vec::new()));
     let changes = Arc::new(AtomicUsize::new(0));
-    let (l, s, c) = (list.clone(), started.clone(), changes.clone());
+    let direct = Arc::new(AtomicUsize::new(0));
+    let d = direct.clone();
+    let opens: Arc<Mutex<HashMap<String, Arc<AtomicUsize>>>> = Arc::default();
+    let (l, s, c, o) = (
+        list.clone(),
+        started.clone(),
+        changes.clone(),
+        opens.clone(),
+    );
     let registry = Registry::with(
         Box::new(move || l.lock().unwrap().clone()),
         Box::new(move |m: &Machine, on_change| {
             s.lock().unwrap().push(m.id.clone());
-            Connection::start(Unreachable, on_change)
+            let count = Arc::new(AtomicUsize::new(0));
+            o.lock().unwrap().insert(m.id.clone(), count.clone());
+            Connection::start(Unreachable(count), on_change)
         }),
         SeenStore::open(Some(dir.path())),
         move || {
             c.fetch_add(1, Ordering::SeqCst);
+            if std::thread::current().name() != Some("herdr-connection") {
+                d.fetch_add(1, Ordering::SeqCst);
+            }
         },
     );
     Harness {
         registry,
         list,
         started,
+        opens,
         changes,
+        direct,
         _dir: dir,
     }
 }
@@ -316,6 +404,10 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn opens_of(h: &Harness, id: &str) -> usize {
+    h.opens.lock().unwrap()[id].load(Ordering::SeqCst)
 }
 
 fn online_of(registry: &Registry, id: &str) -> Online {
@@ -345,7 +437,11 @@ fn reload_connects_enabled_machines_only() {
         matches!(online_of(&h.registry, "on"), Online::Offline { .. })
     });
     assert_eq!(online_of(&h.registry, "off"), Online::Connecting);
-    assert!(h.changes.load(Ordering::SeqCst) >= 2);
+    // The reload announced itself, and so did the connection.
+    wait_until("a change from the connection", || {
+        h.changes.load(Ordering::SeqCst) > h.direct.load(Ordering::SeqCst)
+    });
+    assert_eq!(h.direct.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -393,16 +489,16 @@ fn callbacks_from_stopped_connections_are_ignored() {
     h.registry.reload();
     let second = h.registry.generation("m1").unwrap();
     assert_ne!(first, second);
-    // Settle, then count only the late callbacks below.
+    // Count only the calls made here; the live connection keeps reporting.
     wait_until("the new connection to go offline", || {
         matches!(online_of(&h.registry, "m1"), Online::Offline { .. })
     });
-    let before = h.changes.load(Ordering::SeqCst);
+    let before = h.direct.load(Ordering::SeqCst);
     h.registry.changed("m1", first);
     h.registry.changed("gone", second);
-    assert_eq!(h.changes.load(Ordering::SeqCst), before);
+    assert_eq!(h.direct.load(Ordering::SeqCst), before);
     h.registry.changed("m1", second);
-    assert_eq!(h.changes.load(Ordering::SeqCst), before + 1);
+    assert_eq!(h.direct.load(Ordering::SeqCst), before + 1);
 }
 
 #[test]
@@ -412,6 +508,9 @@ fn mark_seen_is_kept_and_announced() {
     h.registry.mark_seen("m1", "t1", 5);
     assert_eq!(h.registry.seen_seq("m1", "t1"), Some(5));
     assert_eq!(h.registry.seen_seq("m1", "t2"), None);
+    assert_eq!(h.changes.load(Ordering::SeqCst), before + 1);
+    // Seeing the same turn again changes nothing.
+    h.registry.mark_seen("m1", "t1", 5);
     assert_eq!(h.changes.load(Ordering::SeqCst), before + 1);
     let agent = a(Idle, Some(5));
     assert_eq!(
@@ -424,6 +523,9 @@ fn mark_seen_is_kept_and_announced() {
 fn dropping_the_registry_ends_its_callbacks() {
     let h = harness(vec![machine("m1", "a", true)]);
     h.registry.reload();
+    wait_until("the machine to go offline", || {
+        matches!(online_of(&h.registry, "m1"), Online::Offline { .. })
+    });
     let weak = Arc::downgrade(&h.registry);
     let Harness { registry, .. } = h;
     drop(registry);
@@ -431,4 +533,226 @@ fn dropping_the_registry_ends_its_callbacks() {
         weak.upgrade().is_none(),
         "a connection kept the registry alive"
     );
+}
+
+#[test]
+fn removed_and_disabled_machines_stop_connecting() {
+    let h = harness(vec![
+        machine("kept", "a", true),
+        machine("removed", "b", true),
+        machine("disabled", "c", true),
+    ]);
+    h.registry.reload();
+    // Retries come after 1 s, then 2 s.
+    wait_until("two attempts each", || {
+        ["kept", "removed", "disabled"]
+            .iter()
+            .all(|id| opens_of(&h, id) >= 2)
+    });
+    *h.list.lock().unwrap() = Ok(vec![
+        machine("kept", "a", true),
+        machine("disabled", "c", false),
+    ]);
+    h.registry.reload();
+    let (removed, disabled, kept) = (
+        opens_of(&h, "removed"),
+        opens_of(&h, "disabled"),
+        opens_of(&h, "kept"),
+    );
+    std::thread::sleep(Duration::from_millis(3000));
+    assert_eq!(opens_of(&h, "removed"), removed);
+    assert_eq!(opens_of(&h, "disabled"), disabled);
+    // The kept machine went on retrying meanwhile.
+    assert!(opens_of(&h, "kept") > kept);
+}
+
+#[test]
+fn concurrent_reloads_apply_one_at_a_time() {
+    // The first reload's lister waits for a second reload to list too, then
+    // returns late. Unserialised, the older list would land last.
+    let dir = tempfile::tempdir().unwrap();
+    let gate = Arc::new((Mutex::new(0u32), std::sync::Condvar::new()));
+    let calls = gate.clone();
+    let registry = Registry::with(
+        Box::new(move || {
+            let (n, cv) = &*calls;
+            let mut count = n.lock().unwrap();
+            *count += 1;
+            let me = *count;
+            cv.notify_all();
+            if me == 1 {
+                let waited = cv
+                    .wait_timeout_while(count, Duration::from_millis(500), |n| *n < 2)
+                    .unwrap();
+                drop(waited);
+                std::thread::sleep(Duration::from_millis(200));
+                Ok(vec![machine("old", "a", true)])
+            } else {
+                Ok(vec![machine("new", "b", true)])
+            }
+        }),
+        Box::new(|_: &Machine, on_change| {
+            Connection::start(Unreachable(Arc::default()), on_change)
+        }),
+        SeenStore::open(Some(dir.path())),
+        || {},
+    );
+    let first = {
+        let r = registry.clone();
+        std::thread::spawn(move || r.reload())
+    };
+    {
+        let (n, cv) = &*gate;
+        let _listing = cv
+            .wait_timeout_while(n.lock().unwrap(), Duration::from_secs(5), |n| *n < 1)
+            .unwrap();
+    }
+    let second = {
+        let r = registry.clone();
+        std::thread::spawn(move || r.reload())
+    };
+    first.join().unwrap();
+    second.join().unwrap();
+    let ids: Vec<_> = registry
+        .machines()
+        .into_iter()
+        .map(|v| v.machine.id)
+        .collect();
+    assert_eq!(ids, vec!["new".to_string()]);
+}
+
+#[cfg(unix)]
+fn fake_ssh(dir: &Path, uname: &str) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join("ssh-args");
+    let path = dir.join("ssh");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\necho '{uname}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (path, log)
+}
+
+const BUILD: &[u8] = b"pretend herdr build";
+
+fn test_assets() -> [RemoteAsset; 1] {
+    [RemoteAsset {
+        name: "linux-aarch64",
+        url: "https://example.invalid/herdr-linux-aarch64",
+        sha256: "",
+    }]
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_binary_is_downloaded_verified_and_reused() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let (ssh, log) = fake_ssh(tmp.path(), "Linux aarch64");
+    let assets_dir = tmp.path().join("data/herdr-assets");
+    let sha = sha256_hex(BUILD);
+    let mut assets = test_assets();
+    assets[0].sha256 = Box::leak(sha.into_boxed_str());
+    let fetches = AtomicUsize::new(0);
+    let fetch = |url: &str| {
+        assert_eq!(url, "https://example.invalid/herdr-linux-aarch64");
+        fetches.fetch_add(1, Ordering::SeqCst);
+        Ok(BUILD.to_vec())
+    };
+    let m = machine("m1", "me@box", true);
+    let path = prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    assert_eq!(path, assets_dir.join("herdr-0.9.5-linux-aarch64"));
+    assert_eq!(std::fs::read(&path).unwrap(), BUILD);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -- me@box uname -sm\n"
+    );
+    // A verified copy is used again without downloading.
+    let again = prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    assert_eq!(again, path);
+    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    // A damaged copy is replaced.
+    std::fs::write(&path, b"damaged").unwrap();
+    prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    assert_eq!(std::fs::read(&path).unwrap(), BUILD);
+}
+
+#[cfg(unix)]
+#[test]
+fn checksum_mismatch_leaves_no_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ssh, _) = fake_ssh(tmp.path(), "Linux aarch64");
+    let assets_dir = tmp.path().join("herdr-assets");
+    let mut assets = test_assets();
+    assets[0].sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+    let error = prepare_remote_binary_with(
+        &machine("m1", "me@box", true),
+        &ssh,
+        &assets_dir,
+        &assets,
+        &|_| Ok(BUILD.to_vec()),
+    )
+    .unwrap_err();
+    assert!(error.contains("checksum"), "{error}");
+    let left = std::fs::read_dir(&assets_dir)
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(left, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn unknown_platform_errors_without_downloading() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ssh, _) = fake_ssh(tmp.path(), "SunOS i86pc");
+    let error = prepare_remote_binary_with(
+        &machine("m1", "me@box", true),
+        &ssh,
+        &tmp.path().join("herdr-assets"),
+        &REMOTE_ASSETS,
+        &|_| panic!("nothing to download"),
+    )
+    .unwrap_err();
+    assert_eq!(error, "herdr has no build for SunOS i86pc");
+}
+
+#[test]
+fn hostile_target_never_reaches_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let error = prepare_remote_binary_with(
+        &machine("m1", "-oProxyCommand=touch /tmp/x", true),
+        Path::new("/nonexistent/ssh"),
+        &tmp.path().join("herdr-assets"),
+        &REMOTE_ASSETS,
+        &|_| panic!("nothing to download"),
+    )
+    .unwrap_err();
+    assert!(error.contains("invalid SSH target"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn unreachable_machine_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ssh = fake_herdr(
+        tmp.path(),
+        "echo 'ssh: connect to host box: Connection refused' >&2; exit 255",
+    );
+    let error = prepare_remote_binary_with(
+        &machine("m1", "box", true),
+        &ssh,
+        &tmp.path().join("herdr-assets"),
+        &REMOTE_ASSETS,
+        &|_| panic!("nothing to download"),
+    )
+    .unwrap_err();
+    assert!(error.contains("Connection refused"), "{error}");
 }
