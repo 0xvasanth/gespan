@@ -396,52 +396,41 @@ fn a_task_without_a_command_is_blocked() {
 }
 
 #[test]
-fn a_workspace_path_with_spaces_stays_one_word() {
-    let checkout = std::env::temp_dir()
-        .join("Application Support")
-        .join("my app");
+fn workspace_variables_substitute_raw_like_vscode() {
+    let checkout = if cfg!(windows) {
+        PathBuf::from(r"C:\work\my app")
+    } else {
+        PathBuf::from("/work/my app")
+    };
     let ctx = ctx(&checkout);
-    let line = |command: &str| {
+    let root = checkout.display().to_string();
+    let action = |command: &str, args: &[&str]| {
         let found = Found {
             label: "Run".into(),
             command: command.into(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
             shell: true,
             ..Found::default()
         };
         resolve(&ctx, "gespan", ".gespan/tasks.json", found).command
     };
-    let root = checkout.display().to_string();
-    let quoted = line("${workspaceFolder}/bin/run --fast");
-    let zed = line("$ZED_WORKTREE_ROOT/bin/run");
-    let base = line("echo ${workspaceFolderBasename}");
-    #[cfg(not(windows))]
-    {
-        assert_eq!(quoted, format!("'{root}'/bin/run --fast"));
-        assert_eq!(zed, format!("'{root}'/bin/run"));
-        assert_eq!(base, "echo 'my app'");
-    }
-    #[cfg(windows)]
-    {
-        assert_eq!(quoted, format!("\"{root}\"/bin/run --fast"));
-        assert_eq!(zed, format!("\"{root}\"/bin/run"));
-        assert_eq!(base, "echo \"my app\"");
-    }
-    // A path with nothing to quote stays as written.
-    let plain = std::env::temp_dir().join("plain");
-    let found = Found {
-        label: "Run".into(),
-        command: "ls ${workspaceFolder}".into(),
-        shell: true,
-        ..Found::default()
-    };
-    let action = resolve(
-        &super::super::Ctx {
-            checkout: &plain,
-            package_manager: "npm",
-        },
-        "gespan",
-        "f",
-        found,
+    // The user's own quotes stay the only quotes around the path.
+    assert_eq!(
+        action(r#"cd "${workspaceFolder}/web" && make"#, &[]),
+        format!(r#"cd "{root}/web" && make"#)
     );
-    assert_eq!(action.command, format!("ls {}", plain.display()));
+    assert_eq!(
+        action(
+            r#"echo "$ZED_WORKTREE_ROOT" ${workspaceFolderBasename}"#,
+            &[]
+        ),
+        format!(r#"echo "{root}" my app"#)
+    );
+    // An arg is a word of its own, so it is quoted whole.
+    let arg = action("ls", &["${workspaceFolder}/x"]);
+    if cfg!(windows) {
+        assert_eq!(arg, format!(r#"ls "{root}/x""#));
+    } else {
+        assert_eq!(arg, format!("ls '{root}/x'"));
+    }
 }

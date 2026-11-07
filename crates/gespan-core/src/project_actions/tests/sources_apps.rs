@@ -1,6 +1,7 @@
 use super::super::sources::agent_apps::{ClaudeLaunch, Codex, Conductor, Cursor, Superset};
 use super::super::sources::editors::{Gespan, VsCode, Zed};
 use super::super::sources::Source;
+use super::super::tasks_json::NO_COMMAND;
 use super::super::{Ctx, Found};
 use std::path::Path;
 
@@ -80,14 +81,15 @@ args = ["x"]
 "#;
     let found = parse(&Conductor, ".conductor/settings.toml", text);
     let labels: Vec<_> = found.iter().map(|f| f.label.as_str()).collect();
-    // A script with no command isn't an action.
-    assert_eq!(labels, ["dev", "secret"]);
+    // A script with no command is listed, blocked.
+    assert_eq!(labels, ["dev", "empty", "secret"]);
+    assert_eq!(found[1].blocked.as_deref(), Some(NO_COMMAND));
     assert_eq!(found[0].command, "bun");
     assert_eq!(found[0].args, ["run", "dev"]);
     assert_eq!(found[0].cwd.as_deref(), Some("web"));
     assert!(found[0].shell);
     assert!(!found[0].hide);
-    assert!(found[1].hide);
+    assert!(found[2].hide);
 }
 
 #[test]
@@ -149,7 +151,10 @@ fn cursor_terminals_are_background_with_description_as_detail() {
         ]
     }"#;
     let found = parse(&Cursor, ".cursor/environment.json", text);
-    assert_eq!(found.len(), 2);
+    assert_eq!(found.len(), 3);
+    assert_eq!(found[1].label, "No command");
+    assert_eq!(found[1].blocked.as_deref(), Some(NO_COMMAND));
+    let found: Vec<_> = found.into_iter().filter(|f| f.blocked.is_none()).collect();
     assert_eq!(found[0].label, "Web");
     assert_eq!(found[0].command, "bun run web");
     assert_eq!(found[0].detail.as_deref(), Some("The web app"));
@@ -178,7 +183,9 @@ command = "bun test"
 name = "Broken"
 "#;
     let found = parse(&Codex, ".codex/environments/environment.toml", text);
-    assert_eq!(found.len(), 2);
+    assert_eq!(found.len(), 3);
+    assert_eq!(found[2].label, "Broken");
+    assert_eq!(found[2].blocked.as_deref(), Some(NO_COMMAND));
     assert_eq!(found[0].label, "Run");
     assert_eq!(found[0].command, "bun run dev");
     assert_eq!(found[0].icon.as_deref(), Some("play"));
@@ -199,7 +206,9 @@ fn claude_launch_configurations() {
         ]
     }"#;
     let found = parse(&ClaudeLaunch, ".claude/launch.json", text);
-    assert_eq!(found.len(), 1);
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[1].label, "no program");
+    assert_eq!(found[1].blocked.as_deref(), Some(NO_COMMAND));
     assert_eq!(found[0].label, "web");
     assert_eq!(found[0].command, "bun");
     assert_eq!(found[0].args, ["run", "dev"]);
@@ -223,8 +232,15 @@ fn zed_tasks() {
     let rows: Vec<_> = found.iter().map(|f| (f.label.as_str(), f.hide)).collect();
     assert_eq!(
         rows,
-        [("Test", false), ("Hidden", true), ("On success", false)]
+        [
+            ("Test", false),
+            ("Hidden", true),
+            ("On success", false),
+            ("No command", false)
+        ]
     );
+    assert_eq!(found[3].blocked.as_deref(), Some(NO_COMMAND));
+    assert!(found[..3].iter().all(|f| f.blocked.is_none()));
     assert_eq!(found[0].command, "cargo");
     assert_eq!(found[0].args, ["test", "-p", "app"]);
     assert_eq!(found[0].cwd.as_deref(), Some("$ZED_WORKTREE_ROOT/crates"));
@@ -302,4 +318,14 @@ fn a_half_saved_file_is_an_error_not_a_panic() {
             source.id()
         );
     }
+}
+
+#[test]
+fn entries_without_a_name_are_skipped() {
+    let toml = "[scripts.run.\" \"]\ncommand = \"make\"\n";
+    assert!(parse(&Conductor, ".conductor/settings.toml", toml).is_empty());
+    let zed = r#"[ { "command": "make" }, { "label": "  ", "command": "make" } ]"#;
+    assert!(parse(&Zed, ".zed/tasks.json", zed).is_empty());
+    let codex = "[[actions]]\ncommand = \"make\"\n";
+    assert!(parse(&Codex, ".codex/environments/environment.toml", codex).is_empty());
 }

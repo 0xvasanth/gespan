@@ -1,4 +1,5 @@
 //! Editors' task files: Gespan's own, VS Code's and Zed's.
+use super::agent_apps::entry;
 use super::{env, string, strings, Source};
 use crate::project_actions::{jsonc, tasks_json, Ctx, Found};
 use serde_json::Value;
@@ -53,17 +54,14 @@ impl Source for Zed {
             .filter(|task| task.is_object())
             .filter_map(|task| {
                 let label = string(task, "label")?;
-                let command = string(task, "command")?;
+                let found = entry(&label, string(task, "command"))?;
                 Some(Found {
-                    label,
-                    command,
                     args: strings(task, "args"),
-                    shell: true,
                     cwd: string(task, "cwd"),
                     env: env(task, "env"),
                     // Zed's other values show the task but keep it out of the spawn list.
                     hide: task.get("hide").and_then(Value::as_str) == Some("always"),
-                    ..Found::default()
+                    ..found
                 })
             })
             .collect())
