@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/runtime/persistence.rs
+  s_1e7a071f0947a7::t_229408e93d0ca1 326-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ac632e656537e91849a6e507c0cec362259e7ac",
+  "prompts": {},
+  "sessions": {
+    "s_1e7a071f0947a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db6880fc-a9ba-40cf-bd90-01b860fe61eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
