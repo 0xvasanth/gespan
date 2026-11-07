@@ -60,10 +60,14 @@ pub(super) fn host(client: &Client, name: &str, hub: mcp_hub::Connection) -> Opt
     ready.recv_timeout(LISTED_WAIT).ok().map(|()| hosted)
 }
 
-fn open(client: &Client, name: &str) -> Result<Socket, String> {
+pub(super) fn open(client: &Client, name: &str) -> Result<Socket, String> {
     let mut url = url::Url::parse(&client.url).map_err(|e| e.to_string())?;
-    let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
-    url.set_scheme(scheme)
+    // The socket is plain TCP and carries the service's password, so it goes
+    // only to a service on this machine.
+    if url.scheme() != "http" {
+        return Err("OpenCode's service isn't plain HTTP".into());
+    }
+    url.set_scheme("ws")
         .map_err(|()| "OpenCode's URL has no WebSocket form")?;
     url.set_path("/api/experimental/client-mcp");
     url.query_pairs_mut()
@@ -92,6 +96,9 @@ fn open(client: &Client, name: &str) -> Result<Socket, String> {
         .map_err(|e| e.to_string())?
         .next()
         .ok_or("OpenCode's host didn't resolve")?;
+    if !address.ip().is_loopback() {
+        return Err("OpenCode's service isn't on this machine".into());
+    }
     let stream =
         TcpStream::connect_timeout(&address, Duration::from_secs(3)).map_err(|e| e.to_string())?;
     stream

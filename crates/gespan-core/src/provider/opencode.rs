@@ -1559,6 +1559,16 @@ mod tool_tests {
     }
 
     #[test]
+    fn the_socket_and_its_password_go_only_to_a_plain_loopback_service() {
+        let elsewhere = |url: &str| {
+            let client = Client::new(url.into(), "/work".into(), true, Some("hunter2".into()));
+            client_mcp::open(&client, "gespan_s1").unwrap_err()
+        };
+        assert!(elsewhere("https://127.0.0.1:4096").contains("plain HTTP"));
+        assert!(elsewhere("http://192.0.2.1:4096").contains("this machine"));
+    }
+
+    #[test]
     fn a_2_2_service_that_wont_take_the_socket_gets_the_endpoint_instead() {
         let (client, heads, _taken) = hosting_opencode(false);
         let mounted = mount_tools_v2(&client, Some(&mount(5113)), "ses_a", true).unwrap();
