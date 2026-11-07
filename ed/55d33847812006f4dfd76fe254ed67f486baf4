@@ -1,0 +1,24 @@
+crates/gespan-gpui/src/settings/pages/herdr_machines.rs
+  s_9844206a362899::t_838799d543f186 846-872,875-883
+  s_9844206a362899::t_e9c47aad597545 329-330,368-385
+  s_9844206a362899::t_207074edda196c 873-874
+  s_9844206a362899::t_dfdbead8cbadac 845
+crates/gespan-gpui/src/machines/mod.rs
+  s_9844206a362899::t_207074edda196c 140-142,318-319,370-384,399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed55d33847812006f4dfd76fe254ed67f486baf4",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
