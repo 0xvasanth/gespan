@@ -348,35 +348,34 @@ impl Pool {
             Sharing::PerWorkspace => (Some(grant.workspace.clone()), Reach::Workspace),
             Sharing::PerSession => (Some(grant.workspace.clone()), Reach::Session),
         };
-        let pool = self.clone();
-        let (spec, session) = (spec.clone(), grant.session);
-        let upstream = tokio::task::spawn_blocking(move || {
-            let spawned = pool
-                .spawner
-                .spawn(&spec, workspace.as_deref())
-                .map_err(|error| format!("{} could not start: {error}", spec.id));
-            let started = spawned.and_then(|spawned| {
-                let events = Arc::new(PoolEvents {
-                    pool: Arc::downgrade(&pool),
-                    key: key.clone(),
-                });
-                Upstream::start(&spec, spawned, workspace.as_deref(), reach, events)
-            });
-            let upstream = started
-                .map_err(|error| without_secrets(error, &spec.env))
-                .inspect_err(|error| pool.record(&spec.id, error.clone()))?;
-            let mut running = relock(&pool.running);
-            if !pool.current(&key) || pool.restarts_of(&spec.id) != restarts {
-                drop(running);
-                upstream.shut();
-                return Err(changed(&spec.id));
+        // The host's spawner may block: it resolves secrets and starts a process.
+        let spawner = self.spawner.clone();
+        let (owned, folder) = (spec.clone(), workspace.clone());
+        let spawned = tokio::task::spawn_blocking(move || spawner.spawn(&owned, folder.as_deref()))
+            .await
+            .map_err(|_| "The server start was interrupted".to_owned())?
+            .map_err(|error| format!("{} could not start: {error}", spec.id));
+        let events = Arc::new(PoolEvents {
+            pool: Arc::downgrade(self),
+            key: key.clone(),
+        });
+        let started = match spawned {
+            Ok(spawned) => {
+                Upstream::start(spec, spawned, workspace.as_deref(), reach, events).await
             }
-            upstream.add_user(session);
-            running.insert(key, upstream.clone());
-            Ok::<_, String>(upstream)
-        })
-        .await
-        .map_err(|_| "The server start was interrupted".to_owned())??;
+            Err(error) => Err(error),
+        };
+        let upstream = started
+            .map_err(|error| without_secrets(error, &spec.env))
+            .inspect_err(|error| self.record(&spec.id, error.clone()))?;
+        let mut running = relock(&self.running);
+        if !self.current(&key) || self.restarts_of(&spec.id) != restarts {
+            drop(running);
+            upstream.shut();
+            return Err(changed(&spec.id));
+        }
+        upstream.add_user(grant.session);
+        running.insert(key, upstream.clone());
         Ok(upstream)
     }
 
@@ -525,23 +524,21 @@ impl Pool {
             Ok(upstream) => upstream,
             Err(_) => return Vec::new(),
         };
-        let fetched = tokio::task::spawn_blocking(move || upstream.list(list.0, list.1)).await;
-        match fetched {
-            Ok(Ok(items)) => {
+        match upstream.list(list.0, list.1).await {
+            Ok(items) => {
                 self.store(spec, list, items.clone(), restarts);
                 items
             }
             // A server without this list says so; it isn't a failure.
-            Ok(Err(error)) if error["code"] == -32601 => {
+            Err(error) if error["code"] == -32601 => {
                 self.store(spec, list, Vec::new(), restarts);
                 Vec::new()
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 let message = format!("{}: {error}", list.0);
                 self.record(&spec.id, without_secrets(message, &spec.env));
                 Vec::new()
             }
-            Err(_) => Vec::new(),
         }
     }
 
@@ -621,13 +618,10 @@ impl Pool {
         let spec = self.resolve(grant, server).ok_or("Unknown resource")?;
         let upstream = self.upstream(&spec, grant).await?;
         if !on {
-            upstream.unsubscribe(grant.session, uri);
+            upstream.unsubscribe(grant.session, uri).await;
             return Ok(());
         }
-        let (session, uri) = (grant.session, uri.to_owned());
-        tokio::task::spawn_blocking(move || upstream.subscribe(session, &uri))
-            .await
-            .map_err(|_| "The subscription was interrupted".to_owned())?
+        upstream.subscribe(grant.session, uri).await
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Running> {
@@ -673,8 +667,8 @@ impl Pool {
         let upstream = upstream.clone();
         let method = method.to_owned();
         let key = key.clone();
-        std::thread::spawn(move || {
-            match upstream.list(list.0, list.1) {
+        tokio::spawn(async move {
+            match upstream.list(list.0, list.1).await {
                 // Replaced while it was listing: this list is no one's.
                 Ok(_) if !pool.current(&key) => return,
                 Ok(items) => pool.store(&spec, list, items, restarts),
@@ -776,6 +770,10 @@ impl Events for PoolEvents {
             Some(hub) => hub.ask_agent(caller, method, params, answer),
             None => answer(Err("The hub has stopped".to_owned())),
         }
+    }
+
+    fn capabilities(&self, caller: Caller) -> Option<Value> {
+        self.pool.upgrade()?.hub()?.capabilities_of(caller)
     }
 
     fn exited(&self, upstream: &Arc<Upstream>) {
