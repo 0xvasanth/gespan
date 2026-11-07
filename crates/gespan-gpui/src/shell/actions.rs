@@ -156,6 +156,19 @@ impl Shell {
         self.action_sections.clear();
         self.action_listing = Some(self.detect_actions(cx));
     }
+    /// The actions that can run now, as `(id, label)`, detected afresh for a
+    /// palette that is opening. Remote projects have none.
+    pub(super) fn runnable_actions(&mut self, cx: &App) -> Vec<(String, String)> {
+        if self.workspace.project.starts_with("remote://") {
+            return Vec::new();
+        }
+        self.redetect(cx);
+        self.actions()
+            .iter()
+            .filter(|a| a.blocked.is_none())
+            .map(|a| (a.id.clone(), a.label.clone()))
+            .collect()
+    }
     /// Detects the actions again only when the project or checkout changed.
     pub(super) fn sync_actions(&mut self, cx: &App) {
         let fresh = self.action_listing.as_ref().is_some_and(|l| {

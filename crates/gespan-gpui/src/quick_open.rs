@@ -78,6 +78,8 @@ const COMMANDS: &[(Command, &str, &str)] = &[
 pub(crate) enum Picked {
     File(String),
     Command(Command),
+    /// A project action, by id.
+    RunAction(String),
     Dismiss,
 }
 #[derive(Clone)]
@@ -86,10 +88,13 @@ struct Row {
     detail: String,
     path: Option<String>,
     command: Option<Command>,
+    action: Option<String>,
 }
 pub(crate) struct QuickOpen {
     pub(crate) search: Entity<input::Input>,
     files: Vec<ProjectFile>,
+    /// The runnable project actions as `(id, label)`, for `>` queries.
+    actions: Vec<(String, String)>,
     rows: Vec<Row>,
     active: usize,
     scroll: gpui::ScrollHandle,
@@ -110,7 +115,12 @@ impl Drop for QuickOpen {
     }
 }
 impl QuickOpen {
-    pub(crate) fn new(cwd: String, palette: bool, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        cwd: String,
+        palette: bool,
+        actions: Vec<(String, String)>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let search = cx.new(|cx| {
             input::Input::field(
                 "Go to file or run a command",
@@ -148,6 +158,7 @@ impl QuickOpen {
         let mut this = Self {
             search,
             files: Vec::new(),
+            actions,
             rows: Vec::new(),
             active: 0,
             scroll: gpui::ScrollHandle::new(),
@@ -185,13 +196,38 @@ impl QuickOpen {
                                 },
                                 path: None,
                                 command: Some(command),
+                                action: None,
                             },
                         )
                     })
                 })
                 .collect();
             commands.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-            commands.into_iter().map(|(_, row)| row).collect()
+            let mut actions: Vec<_> = self
+                .actions
+                .iter()
+                .filter_map(|(id, label)| {
+                    let label = format!("Run action: {label}");
+                    composer::score(query.trim(), &label).map(|score| {
+                        (
+                            score,
+                            Row {
+                                label,
+                                detail: String::new(),
+                                path: None,
+                                command: None,
+                                action: Some(id.clone()),
+                            },
+                        )
+                    })
+                })
+                .collect();
+            actions.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+            commands
+                .into_iter()
+                .chain(actions)
+                .map(|(_, row)| row)
+                .collect()
         } else {
             composer::rank_files(&self.files, query, 80)
                 .into_iter()
@@ -200,6 +236,7 @@ impl QuickOpen {
                     detail: file.relative.clone(),
                     path: Some(file.path.clone()),
                     command: None,
+                    action: None,
                 })
                 .collect()
         };
@@ -227,6 +264,8 @@ impl QuickOpen {
                 cx.emit(Picked::File(path.clone()));
             } else if let Some(command) = row.command {
                 cx.emit(Picked::Command(command));
+            } else if let Some(id) = &row.action {
+                cx.emit(Picked::RunAction(id.clone()));
             }
         }
     }
