@@ -393,6 +393,50 @@ mod tests {
     }
 
     #[gpui::test]
+    fn remote_sessions_keep_their_placeholder_branch(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let summary = locked(&store).unwrap().create("codex", "/tmp").unwrap();
+        let view = cx.new(|cx| Conversation::new(summary, store.clone(), cx));
+        view.update(cx, |v, cx| {
+            v.summary.cwd = "remote://host-1/srv/app".into();
+            assert!(v.is_remote());
+            v.test_branch_name = Some("fix login".into());
+            v.branch_seed = Some("Fix the login flow".into());
+            v.name_worktree_branch(
+                "remote://host-1/srv/app-worktrees/gespan-k3j9x2a1".into(),
+                cx,
+            );
+            // Nothing was asked of the provider, and the message is spent so
+            // a later worktree event cannot name the branch from it.
+            assert!(v.branch_cancel.is_none(), "no naming request started");
+            assert_eq!(v.branch_seed, None);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn pilot_sessions_keep_their_placeholder_branch(cx: &mut gpui::TestAppContext) {
+        let (_temp, repo, tree, view) = worktree_session(cx);
+        let placeholder = branch(&repo, &tree);
+        view.update(cx, |v, cx| {
+            v.settings.pilot = Some(gespan_core::agent::PilotContext {
+                pilot: Default::default(),
+                root: repo.clone(),
+                executable: "/fixture/binary".into(),
+            });
+            v.test_branch_name = Some("fix login".into());
+            v.branch_seed = Some("Fix the login flow".into());
+            v.name_worktree_branch(tree.clone(), cx);
+            assert!(v.branch_cancel.is_none(), "no naming request started");
+            assert_eq!(v.branch_seed, None);
+        });
+        cx.run_until_parked();
+        assert_eq!(branch(&repo, &tree), placeholder);
+    }
+
+    #[gpui::test]
     fn closing_the_conversation_cancels_naming(cx: &mut gpui::TestAppContext) {
         let (_temp, _repo, tree, view) = worktree_session(cx);
         let cancel = view.update(cx, |v, cx| {
