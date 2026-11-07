@@ -1,0 +1,24 @@
+crates/herdr-link/src/lib.rs
+  s_9844206a362899::t_d2b4356414d7ab 4-5,8-9
+crates/herdr-link/src/transport.rs
+  s_9844206a362899::t_5d16d79cf5d089 1-107
+crates/herdr-link/src/client.rs
+  s_9844206a362899::t_d2b4356414d7ab 170-265,268-273,277-287,292-312,317-318
+  s_9844206a362899::t_5d16d79cf5d089 1-169,266-267,274-276,288-291,313-316
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cbf9f81d3780047b5a68693e3b685582061eb3d",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
