@@ -122,7 +122,10 @@ pub(crate) struct Terminal {
     pub foreground: Option<String>,
     pub exited: bool,
     /// The program the tab was started with in place of the login shell.
+    #[cfg_attr(not(test), allow(dead_code))]
     command: Option<(String, Vec<String>)>,
+    /// A tab label that the foreground command does not replace.
+    fixed_title: Option<String>,
     size: GridSize,
     geometry: Rc<Cell<Option<Geometry>>>,
     master_fd: i32,
@@ -268,9 +271,14 @@ impl Terminal {
     pub(crate) fn running(cwd: String, command: &str, cx: &mut Context<Self>) -> Self {
         Self::start(cwd, Some(command_program(command)), &[], cx)
     }
+    /// Labels the tab `title` whatever runs in it.
+    pub(crate) fn pin_title(&mut self, title: String) {
+        self.title.clone_from(&title);
+        self.fixed_title = Some(title);
+    }
     /// The program and arguments this terminal runs in place of the login
     /// shell, if any.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn command(&self) -> Option<(&str, &[String])> {
         self.command
             .as_ref()
@@ -363,6 +371,7 @@ impl Terminal {
             foreground: None,
             exited: false,
             command,
+            fixed_title: None,
             size,
             geometry: Rc::default(),
             master_fd,
@@ -504,7 +513,9 @@ impl Terminal {
         if label == self.foreground {
             return;
         }
-        self.title = label.clone().unwrap_or_else(|| default_title(&self.cwd));
+        if self.fixed_title.is_none() {
+            self.title = label.clone().unwrap_or_else(|| default_title(&self.cwd));
+        }
         self.foreground = label;
         cx.emit(TerminalEvent::Changed);
     }
@@ -1786,6 +1797,22 @@ mod tests {
     }
     fn bytes(spec: &str) -> Option<Vec<u8>> {
         key_bytes(&key(spec), TermMode::empty())
+    }
+
+    #[gpui::test]
+    fn a_pinned_title_survives_foreground_changes(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
+        view.update(cx, |terminal, cx| {
+            terminal.set_foreground(Some("vim".into()), cx);
+            assert_eq!(terminal.title, "vim");
+            terminal.pin_title("Add machine".into());
+            terminal.set_foreground(Some("ssh".into()), cx);
+            assert_eq!(terminal.title, "Add machine");
+            assert_eq!(terminal.foreground.as_deref(), Some("ssh"));
+            terminal.set_foreground(None, cx);
+            assert_eq!(terminal.title, "Add machine");
+            assert_eq!(terminal.foreground, None);
+        });
     }
 
     #[gpui::test]
