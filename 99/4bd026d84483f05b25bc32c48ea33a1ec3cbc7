@@ -1,0 +1,24 @@
+crates/gespan-core/src/provider.rs
+  s_353640b5854a00::t_b10239fb0a1e0b 20
+docs/desktop/migration.md
+  s_353640b5854a00::t_19aec4b83db645 30-37
+crates/gespan-core/src/provider/api.rs
+  s_353640b5854a00::t_d283a290d3788e 235-238,270-274,279-280,305-314,323-325,351-357
+  s_353640b5854a00::t_2f234382c679fa 1-234,239-269,275-278,281-304,315-322,326-350,358-359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "994bd026d84483f05b25bc32c48ea33a1ec3cbc7",
+  "prompts": {},
+  "sessions": {
+    "s_353640b5854a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fafb205-0362-4b25-8806-8b016ab8cdef",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
