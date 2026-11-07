@@ -632,3 +632,32 @@ fn errors_read_as_sentences() {
         "Give the action a name"
     );
 }
+
+#[test]
+fn a_huge_object_is_rewritten_quickly_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    // 50k keys in reverse order, so a sorted or quadratic read shows.
+    let keys: Vec<String> = (0..50_000)
+        .rev()
+        .map(|n| format!("\"k{n}\": {n}"))
+        .collect();
+    put(
+        dir.path(),
+        &format!(
+            r#"{{ "big": {{ {}, "k7": "last" }}, "tasks": [] }}"#,
+            keys.join(", ")
+        ),
+    );
+    let start = std::time::Instant::now();
+    add(dir.path(), &draft("A", "a")).unwrap();
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    let text = std::fs::read_to_string(file(dir.path())).unwrap();
+    let first = text.find("\"k49999\"").unwrap();
+    assert!(first < text.find("\"k0\"").unwrap());
+    // A repeated key keeps its first place and its last value.
+    assert_eq!(text.matches("\"k7\"").count(), 1);
+    assert!(
+        text.contains("\"k7\": \"last\",\n    \"k6\": 6"),
+        "k7 moved"
+    );
+}

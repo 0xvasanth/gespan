@@ -3,6 +3,7 @@
 use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// A JSON value whose objects keep their key order.
 #[derive(Clone, Debug, PartialEq)]
@@ -158,12 +159,19 @@ impl<'de> Visitor<'de> for JsonVisitor {
         Ok(Json::Array(items))
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Json, A::Error> {
-        let mut object = Object::default();
+        let mut entries: Vec<(String, Json)> = Vec::new();
         // A repeated key keeps its first place and its last value, as
-        // `serde_json` reads it.
+        // `serde_json` reads it. Indexed, so a huge object stays linear.
+        let mut at: HashMap<String, usize> = HashMap::new();
         while let Some((key, value)) = map.next_entry::<String, Json>()? {
-            object.insert(&key, value);
+            match at.get(&key) {
+                Some(&ix) => entries[ix].1 = value,
+                None => {
+                    at.insert(key.clone(), entries.len());
+                    entries.push((key, value));
+                }
+            }
         }
-        Ok(Json::Object(object))
+        Ok(Json::Object(Object(entries)))
     }
 }
