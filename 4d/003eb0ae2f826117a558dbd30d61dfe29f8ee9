@@ -1,0 +1,22 @@
+crates/gespan-core/src/provider/opencode/client_mcp.rs
+  s_8c1168c575dc00::t_a4cff9f6b38eaa 63,65-70,99-101
+crates/gespan-core/src/provider/opencode.rs
+  s_8c1168c575dc00::t_a4cff9f6b38eaa 1562-1570
+  s_8c1168c575dc00::t_143f8ed6a2289c 1561
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d003eb0ae2f826117a558dbd30d61dfe29f8ee9",
+  "prompts": {},
+  "sessions": {
+    "s_8c1168c575dc00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e73f50e9-28ae-4595-ae10-7726ec71608f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
