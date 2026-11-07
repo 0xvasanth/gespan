@@ -681,7 +681,7 @@ fn forward(pipe: impl Read + Send + 'static, sender: mpsc::Sender<String>) {
 
 /// Splits on line ends and carriage returns, so each frame of a progress bar is
 /// a line, and caps the length so output without line ends can't grow forever.
-fn read_lines(mut pipe: impl Read, emit: &mut dyn FnMut(String)) {
+pub(crate) fn read_lines(mut pipe: impl Read, emit: &mut dyn FnMut(String)) {
     let mut pending = Vec::new();
     let mut chunk = [0; 8192];
     let mut flush = |pending: &mut Vec<u8>| {
