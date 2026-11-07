@@ -5,6 +5,7 @@ use super::{Ctx, Found};
 
 pub(crate) mod agent_apps;
 pub(crate) mod editors;
+pub(crate) mod runners;
 
 /// A tool's config file that lists commands.
 pub trait Source: Sync {
