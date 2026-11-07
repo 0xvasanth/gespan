@@ -42,6 +42,8 @@ mod error;
 #[cfg(all(test, unix))]
 mod hold_tests;
 mod kind;
+#[cfg(test)]
+mod launch_argv_tests;
 mod lifecycle;
 mod limits;
 pub mod manifest;
@@ -964,6 +966,25 @@ fn run_operation(
     }
 }
 
+/// A family's launch arguments. `probe` asks Pi for a throwaway session,
+/// `fallback` is Kiro's retry without the V3 engine flag, and
+/// `claude_new_session` is the id a new Claude conversation starts with.
+pub(super) fn configure_by_family(
+    command: &mut Command,
+    request: &Request,
+    probe: bool,
+    fallback: bool,
+    claude_new_session: Option<&str>,
+) -> Result<(), String> {
+    match request.kind.family() {
+        Family::Codex => codex::configure(command, request)?,
+        Family::Claude => claude::configure(command, request, claude_new_session)?,
+        Family::Pi => pi::configure(command, request, probe),
+        Family::Acp | Family::OpenCode => acp::configure(command, request, fallback)?,
+    }
+    Ok(())
+}
+
 /// One provider process. `relaunch` is set, instead of reporting a failure,
 /// when Kiro exits before answering `initialize` and `fallback` was not tried.
 fn launch(
@@ -994,12 +1015,13 @@ fn launch(
     crate::scm::shell::apply_gui_env(&mut command);
     command.envs(&request.settings.environment);
     request.settings.account.apply(request.kind, &mut command)?;
-    match request.kind.family() {
-        Family::Codex => codex::configure(&mut command, &request)?,
-        Family::Claude => claude::configure(&mut command, &request, claude_new_session.as_deref())?,
-        Family::Pi => pi::configure(&mut command, &request, probe || command_probe),
-        Family::Acp | Family::OpenCode => acp::configure(&mut command, &request, fallback)?,
-    }
+    configure_by_family(
+        &mut command,
+        &request,
+        probe || command_probe,
+        fallback,
+        claude_new_session.as_deref(),
+    )?;
     command
         .current_dir(if request.kind == Kind::Antigravity {
             request.binary.parent().unwrap_or(&request.cwd)
