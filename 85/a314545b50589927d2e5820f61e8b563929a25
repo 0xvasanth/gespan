@@ -1,0 +1,28 @@
+crates/gespan-core/src/visual_bridge.rs
+  h_7bb0b8336911f0 61
+crates/gespan-gpui/src/accounts/signin.rs
+  h_7bb0b8336911f0 370-517
+crates/gespan-gpui/src/explorer.rs
+  h_7bb0b8336911f0 154,504-506,508-510,1775-1868
+crates/gespan-gpui/src/markdown.rs
+  h_7bb0b8336911f0 633-636,1106-1178
+crates/gespan-gpui/src/shell/notifications.rs
+  h_7bb0b8336911f0 1030,1431-1513
+crates/gespan-gpui/src/transcript/selection.rs
+  h_7bb0b8336911f0 374-376,384,390,707-730
+crates/gespan-gpui/src/visuals.rs
+  h_7bb0b8336911f0 1263-1270
+crates/gespan-gpui/src/visuals/tests.rs
+  h_7bb0b8336911f0 414-427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85a314545b50589927d2e5820f61e8b563929a25",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
