@@ -1568,6 +1568,59 @@ mod tool_tests {
         assert!(elsewhere("http://192.0.2.1:4096").contains("this machine"));
     }
 
+    /// The service of the OpenCode installed here, or of `GESPAN_OPENCODE`.
+    fn real_v2(folder: &Path) -> (Client, Generation) {
+        let request = Request {
+            kind: Kind::OpenCode,
+            binary: std::env::var_os("GESPAN_OPENCODE")
+                .map_or_else(|| "opencode".into(), PathBuf::from),
+            cwd: folder.to_owned(),
+            prompt: String::new(),
+            provider_id: None,
+            model: None,
+            settings: Default::default(),
+        };
+        let cancel = AtomicBool::new(false);
+        let generation = generation(&request, &cancel).unwrap();
+        assert!(generation.v2);
+        (connect(&request, &cancel, true).unwrap().0, generation)
+    }
+
+    /// No model is called.
+    #[test]
+    #[ignore = "needs OpenCode 2.2 or newer installed"]
+    fn a_real_2_2_service_takes_the_tools_over_the_socket_and_holds_no_token() {
+        let folder = tempfile::tempdir().unwrap();
+        let (client, generation) = real_v2(folder.path());
+        assert!(generation.hosts_tools);
+        // Hosting succeeds only once the service has initialized over the
+        // socket and listed the tools through it.
+        let mounted = mount_tools_v2(&client, Some(&mount(5120)), "ses_real", true).unwrap();
+        assert!(matches!(mounted.route, RouteV2::Hosted { .. }));
+        // The service lists only servers it was given, each with its headers;
+        // one it calls over a client's socket isn't among them.
+        let given = client.request("GET", &client.path("/mcp"), None).unwrap();
+        assert!(!given.to_string().contains("gespan_"), "{given}");
+    }
+
+    /// No model is called.
+    #[test]
+    #[ignore = "needs OpenCode v2 installed"]
+    fn a_real_v2_service_given_the_endpoint_drops_it_when_the_turn_ends() {
+        let folder = tempfile::tempdir().unwrap();
+        let (client, _) = real_v2(folder.path());
+        let given = || {
+            client
+                .request("GET", &client.path("/mcp"), None)
+                .unwrap()
+                .to_string()
+        };
+        let mounted = mount_tools_v2(&client, Some(&mount(5121)), "ses_real", false).unwrap();
+        assert!(given().contains("gespan_s5121"), "{}", given());
+        drop(mounted);
+        assert!(!given().contains("gespan_s5121"), "{}", given());
+    }
+
     #[test]
     fn a_2_2_service_that_wont_take_the_socket_gets_the_endpoint_instead() {
         let (client, heads, _taken) = hosting_opencode(false);
