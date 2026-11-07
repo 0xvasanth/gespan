@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use herdr_link::{Client, Connection, Event, LocalSocket, Online, Snapshot};
+use herdr_link::{AgentStatus, Client, Connection, Event, LocalSocket, Online, Snapshot};
 use serde_json::{json, Value};
 
 /// The herdr this crate is written against; keep in step with
@@ -285,4 +285,50 @@ fn ssh_bridge_against_local_sshd() {
     .expect("second ping");
     assert_eq!(second.version, PINNED_VERSION);
     assert!(control.join("cm").exists());
+}
+
+/// Reports the pane's agent state the way an agent hook does.
+fn report(server: &Server, pane: &str, state: &str, seq: u64) {
+    server
+        .client()
+        .call(
+            "pane.report_agent",
+            json!({ "pane_id": pane, "source": "herdr-link-test", "agent": "claude",
+                    "state": state, "seq": seq }),
+        )
+        .expect("pane.report_agent");
+}
+
+#[test]
+fn connection_sees_a_finished_turn() {
+    let Some(binary) = herdr_binary() else { return };
+    let server = Server::start(&binary);
+    let created = server.create_workspace();
+    let pane = created["root_pane"]["pane_id"]
+        .as_str()
+        .expect("workspace.create names its pane")
+        .to_owned();
+    report(&server, &pane, "working", 1);
+
+    let (tx, rx) = mpsc::channel();
+    let connection = Connection::start(LocalSocket(server.socket.clone()), move |s: &Snapshot| {
+        let _ = tx.send(s.clone());
+    });
+    let agent = |s: &Snapshot| s.agents.iter().find(|a| a.pane_id == pane).cloned();
+    let working = wait_for(&rx, |s| {
+        s.online == Online::Online
+            && agent(s).is_some_and(|a| a.agent_status == AgentStatus::Working)
+    });
+    let before = agent(&working).unwrap().completion_seq;
+    assert_eq!(before, None, "no turn has finished yet");
+
+    // The status event alone carries no `completion_seq`.
+    report(&server, &pane, "idle", 2);
+    let idle = wait_for(&rx, |s| {
+        agent(s).is_some_and(|a| a.completion_seq.is_some())
+    });
+    let idle = agent(&idle).unwrap();
+    assert_eq!(idle.agent_status, AgentStatus::Idle);
+    assert_eq!(connection.snapshot().online, Online::Online);
+    connection.stop();
 }

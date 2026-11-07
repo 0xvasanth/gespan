@@ -475,6 +475,12 @@ mod tests {
             transitions(&before, &after, |_| Some(1)),
             [("a".to_owned(), MachineNotice::Finished)]
         );
+        // A first turn: herdr reports no `completion_seq` while working.
+        let first = [agent("a", AgentStatus::Working, None)];
+        assert_eq!(
+            transitions(&first, &after, none_seen),
+            [("a".to_owned(), MachineNotice::Finished)]
+        );
         // Done counts the same as Idle.
         let done = [agent("a", AgentStatus::Done, Some(2))];
         assert_eq!(transitions(&before, &done, |_| Some(1)).len(), 1);

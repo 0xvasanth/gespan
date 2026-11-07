@@ -327,8 +327,8 @@ impl<T: Transport> Worker<T> {
             }
             // A refresh cuts the stream; whatever it ended with is moot.
             let relist = signal.take_refresh()
-                || match item {
-                    Ok(event) => self.apply(event),
+                || match item.and_then(|event| self.apply(event)) {
+                    Ok(relist) => relist,
                     Err(e) => return e,
                 };
             if relist {
@@ -343,26 +343,40 @@ impl<T: Transport> Worker<T> {
 
     /// Update the cache for one event; true if the panes changed and the
     /// stream must be replaced.
-    fn apply(&self, event: Event) -> bool {
+    fn apply(&self, event: Event) -> Result<bool, Error> {
         match event {
             Event::AgentStatusChanged {
                 pane_id,
                 agent_status,
                 ..
             } => {
-                self.publish(|s| {
-                    if let Some(a) = s.agents.iter_mut().find(|a| a.pane_id == pane_id) {
-                        a.agent_status = agent_status;
+                let known = lock(&self.shared.snapshot)
+                    .agents
+                    .iter()
+                    .any(|a| a.pane_id == pane_id);
+                if !known {
+                    return Ok(false);
+                }
+                // The event has no `completion_seq` (nor title); a finished
+                // turn only shows in the list. A failed list ends the
+                // session with the new status kept.
+                let agents = self.client.agents();
+                self.publish(|s| match &agents {
+                    Ok(agents) => s.agents = agents.clone(),
+                    Err(_) => {
+                        if let Some(a) = s.agents.iter_mut().find(|a| a.pane_id == pane_id) {
+                            a.agent_status = agent_status;
+                        }
                     }
                 });
-                false
+                agents.map(|_| false)
             }
             Event::PaneClosed { pane_id } => {
                 self.publish(|s| s.agents.retain(|a| a.pane_id != pane_id));
-                false
+                Ok(false)
             }
-            Event::PaneCreated { .. } | Event::AgentDetected => true,
-            Event::Other(_) => false,
+            Event::PaneCreated { .. } | Event::AgentDetected => Ok(true),
+            Event::Other(_) => Ok(false),
         }
     }
 
@@ -619,6 +633,8 @@ mod tests {
             status("w9:p9", "done"),
             status("w1:p1", "working")
         );
+        // No list is scripted after the event, so the re-list fails: the
+        // status from the event is kept as the session ends.
         let h = start(&connected(&stream), 0);
         let snap = h.wait_for("working", |s| {
             s.agents.first().map(|a| a.agent_status) == Some(AgentStatus::Working)
@@ -629,6 +645,43 @@ mod tests {
             h.conn.snapshot().agents[0].agent_status,
             AgentStatus::Working
         );
+    }
+
+    #[test]
+    fn status_event_relists_for_the_new_turn() {
+        // herdr's status event carries no `completion_seq`; only a re-list
+        // learns that the turn finished.
+        let fake = FakeTransport::default();
+        push_connect(
+            &fake,
+            &agents(&[("w1:p1", "working")]),
+            &format!("{ACK}{}", status("w1:p1", "idle")),
+        );
+        let finished = json!({"id": "x", "result": {"agents": [{
+            "terminal_id": "t-w1:p1", "pane_id": "w1:p1", "workspace_id": "w1",
+            "tab_id": "w1:t1", "agent_status": "idle", "completion_seq": 7,
+            "title": "fixed the bug"}]}});
+        fake.push(&format!("{finished}\n"));
+        let h = start(&fake, 0);
+        let snap = h.wait_for("the finished turn", |s| {
+            s.agents.first().and_then(|a| a.completion_seq) == Some(7)
+        });
+        assert!(is_online(&snap));
+        assert_eq!(snap.agents[0].agent_status, AgentStatus::Idle);
+        assert_eq!(snap.agents[0].title.as_deref(), Some("fixed the bug"));
+        assert_eq!(
+            h.methods()[5..],
+            ["agent.list"],
+            "one extra request, no re-subscribe"
+        );
+    }
+
+    #[test]
+    fn status_event_for_an_unknown_pane_does_not_relist() {
+        let fake = connected(&format!("{ACK}{}", status("w9:p9", "done")));
+        let h = start(&fake, 0);
+        h.wait_for("the stream to end", is_offline);
+        assert_eq!(h.methods().len(), 5, "{:?}", h.methods());
     }
 
     #[test]
