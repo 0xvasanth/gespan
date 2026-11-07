@@ -1821,26 +1821,22 @@ impl Changes {
 }
 
 /// pickTextHarness: `preferred` when installed (the user chose it), else the
-/// first installed of [`TEXT_FALLBACKS`]. Other providers are never picked
-/// silently: they are not vetted for one-shot text turns.
+/// first installed provider whose manifest allows `text_turns`. Other
+/// providers are never picked silently: they are not vetted for one-shot text
+/// turns.
 pub(crate) fn pick_text_harness(preferred: Kind) -> Option<(Kind, PathBuf)> {
     pick_text_harness_with(preferred, provider::resolve)
 }
-/// The desktop's vetted text harnesses, plus Kiro CLI.
-const TEXT_FALLBACKS: [Kind; 6] = [
-    Kind::Claude,
-    Kind::Codex,
-    Kind::Cursor,
-    Kind::Grok,
-    Kind::OpenCode,
-    Kind::Kiro,
-];
 fn pick_text_harness_with(
     preferred: Kind,
     resolve: impl Fn(Kind) -> Option<PathBuf>,
 ) -> Option<(Kind, PathBuf)> {
+    let fallbacks = provider::api::ProviderRegistry::builtin()
+        .iter()
+        .filter(|p| p.capabilities().text_turns)
+        .map(|p| p.kind());
     std::iter::once(preferred)
-        .chain(TEXT_FALLBACKS.into_iter().filter(|kind| *kind != preferred))
+        .chain(fallbacks.filter(|kind| *kind != preferred))
         .find_map(|kind| resolve(kind).map(|binary| (kind, binary)))
 }
 

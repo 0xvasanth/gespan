@@ -1,5 +1,5 @@
 id = "fx"
-version = 1
+version = 2
 min_engine_version = 1
 label = "fx"
 binary = "fx"
@@ -17,3 +17,5 @@ sign_in = ["login", "vercel"]
 side_threads = false
 rewind = false
 raw_slash_commands = false
+attachments = false
+text_turns = false

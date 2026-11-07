@@ -48,6 +48,11 @@ pub struct Capabilities {
     pub side_threads: bool,
     pub rewind: bool,
     pub raw_slash_commands: bool,
+    /// The composer can send images and files with a prompt.
+    pub attachments: bool,
+    /// Vetted for one-shot text work, so it may stand in for the preferred
+    /// provider.
+    pub text_turns: bool,
     /// Follow-ups reach a running turn; the value is how long Gespan waits
     /// for the CLI to acknowledge one, `None` waiting as long as the turn.
     pub steer: Option<Option<u64>>,
@@ -85,6 +90,8 @@ impl Descriptor {
                 side_threads: m.features.side_threads,
                 rewind: m.features.rewind,
                 raw_slash_commands: m.features.raw_slash_commands,
+                attachments: m.features.attachments,
+                text_turns: m.features.text_turns,
                 steer: m.features.steer.map(|s| s.ack_timeout),
             },
             id: m.id,
@@ -222,6 +229,13 @@ builtin! {
             RetryPolicy::FallbackOnce
         }
     },
+}
+
+impl Kind {
+    /// This kind's provider in the process-wide registry.
+    pub fn provider(self) -> &'static dyn Provider {
+        ProviderRegistry::builtin().get(self)
+    }
 }
 
 /// An id that names no provider. Callers decide what to do instead of
@@ -377,6 +391,9 @@ mod tests {
                     side_threads: f.side_threads,
                     rewind: f.rewind,
                     raw_slash_commands: f.raw_slash_commands,
+                    // No `Spec` field yet: these were lists in the UI.
+                    attachments: d.capabilities.attachments,
+                    text_turns: d.capabilities.text_turns,
                     steer: f.steer,
                 },
                 "{kind:?}"
@@ -520,5 +537,56 @@ mod tests {
         let mut text = request(Kind::Claude);
         text.settings.text_only = true;
         assert_eq!(claude.new_session_id(&text), None);
+    }
+
+    // The sets below are what the UI hard-coded before it read capabilities;
+    // each test pins one, so a manifest edit that changes it is deliberate.
+
+    #[test]
+    fn only_fx_cannot_take_attachments() {
+        assert_eq!(kinds_where(|p| !p.capabilities().attachments), [Kind::Fx]);
+    }
+
+    #[test]
+    fn the_vetted_text_providers_keep_their_fallback_order() {
+        assert_eq!(
+            kinds_where(|p| p.capabilities().text_turns),
+            [
+                Kind::Claude,
+                Kind::Codex,
+                Kind::Cursor,
+                Kind::Grok,
+                Kind::OpenCode,
+                Kind::Kiro
+            ]
+        );
+    }
+
+    #[test]
+    fn side_questions_are_off_for_fx_hermes_and_antigravity() {
+        assert_eq!(
+            kinds_where(|p| !p.capabilities().side_threads),
+            [Kind::Fx, Kind::Hermes, Kind::Antigravity]
+        );
+    }
+
+    #[test]
+    fn only_claude_and_codex_keep_accounts_in_their_own_config_homes() {
+        assert_eq!(
+            kinds_where(|p| p
+                .descriptor()
+                .accounts
+                .as_ref()
+                .is_some_and(|a| a.profile.is_some())),
+            [Kind::Claude, Kind::Codex]
+        );
+    }
+
+    #[test]
+    fn pi_and_omp_are_the_pi_family() {
+        assert_eq!(
+            kinds_where(|p| p.descriptor().family == Family::Pi),
+            [Kind::Pi, Kind::Omp]
+        );
     }
 }

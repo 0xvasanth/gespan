@@ -1,5 +1,5 @@
 id = "codex"
-version = 1
+version = 2
 min_engine_version = 1
 label = "Codex"
 binary = "codex"
@@ -22,5 +22,7 @@ clear = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
 side_threads = true
 rewind = true
 raw_slash_commands = false
+attachments = true
+text_turns = true
 
 [features.steer]
