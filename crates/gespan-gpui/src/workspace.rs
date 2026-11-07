@@ -95,6 +95,9 @@ pub(crate) struct Workspace {
     pub tabs: Vec<i64>,
     #[serde(serialize_with = "save_title_order")]
     pub title_order: Vec<TitleTab>,
+    /// Tabs pinned to the strip's left edge as icon cards, in pin order.
+    /// Each stays in `title_order` too; this only marks and orders them.
+    pub pinned_tabs: Vec<TitleTab>,
     #[serde(serialize_with = "save_scope_focus")]
     pub scope_focus: HashMap<String, TitleTab>,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
@@ -399,6 +402,7 @@ impl Default for Workspace {
             window: Default::default(),
             tabs: Vec::new(),
             title_order: Vec::new(),
+            pinned_tabs: Vec::new(),
             scope_focus: HashMap::new(),
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
@@ -607,6 +611,7 @@ impl Workspace {
                 .title_order
                 .iter_mut()
                 .chain(state.scope_focus.values_mut())
+                .chain(state.pinned_tabs.iter_mut())
             {
                 if *entry == TitleTab::Session(tab) {
                     *entry = TitleTab::Session(key);
@@ -953,6 +958,7 @@ impl Workspace {
             .title_order
             .iter_mut()
             .chain(self.scope_focus.values_mut())
+            .chain(self.pinned_tabs.iter_mut())
         {
             if *entry == TitleTab::Session(tab) {
                 *entry = TitleTab::Session(key);
@@ -1081,6 +1087,7 @@ impl Workspace {
             .title_order
             .iter_mut()
             .chain(self.scope_focus.values_mut())
+            .chain(self.pinned_tabs.iter_mut())
         {
             if *entry == pilot {
                 *entry = TitleTab::Session(pane);
@@ -1115,6 +1122,7 @@ impl Workspace {
                         .title_order
                         .iter_mut()
                         .chain(self.scope_focus.values_mut())
+                        .chain(self.pinned_tabs.iter_mut())
                     {
                         if *entry == TitleTab::Session(tab) {
                             *entry = pilot.clone();
@@ -1214,6 +1222,14 @@ impl Workspace {
                 self.title_order.push(tab);
             }
         }
+        self.prune_pinned_tabs();
+    }
+    /// Pins follow their tabs: a tab that left the strip is no longer pinned.
+    pub fn prune_pinned_tabs(&mut self) {
+        let mut seen = HashSet::new();
+        let order = &self.title_order;
+        self.pinned_tabs
+            .retain(|tab| order.contains(tab) && seen.insert(tab.clone()));
     }
 }
 
