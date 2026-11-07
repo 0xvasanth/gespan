@@ -23,6 +23,9 @@ pub use commands::{
     supports_compact, NativeCommand, NativeSubcommand,
 };
 mod attachments;
+#[cfg(all(test, unix))]
+mod baseline_tests;
+mod batch;
 mod compaction;
 mod cursor_live;
 mod cursor_store;
@@ -43,6 +46,7 @@ pub mod manifest;
 mod opencode;
 mod parked;
 mod pi;
+mod prompt_gate;
 mod spec;
 pub fn configure_idle_agents(limit: usize) {
     parked::configure(limit);
@@ -85,6 +89,7 @@ pub use spec::{Accounts, Family, Features, Login, ProfileHome, Spec};
 
 const BATCH_BYTES: usize = 64 * 1024;
 const TICK: Duration = Duration::from_millis(16);
+const HELD_POLL: Duration = Duration::from_millis(2);
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -358,6 +363,8 @@ struct Protocol {
     async_answers: HashMap<String, (Value, String, Value, crate::agent::Question)>,
     /// This new process's tool credential. A warm process already holds one.
     access: Option<crate::tool_servers::Access>,
+    /// The prompt step waiting for the turn's baseline (`prompt_gate`).
+    held_prompt: Option<prompt_gate::HeldPrompt>,
 }
 impl Protocol {
     fn new(request: Request) -> Self {
@@ -395,6 +402,7 @@ impl Protocol {
             async_question_items: Default::default(),
             async_answers: HashMap::new(),
             access: None,
+            held_prompt: None,
         }
     }
     fn text(&mut self, key: &str, text: &str, snapshot: bool, events: &mut Vec<Event>) {
@@ -859,6 +867,16 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
     .ok_or_else(|| format!("{} returned no model catalog", kind.label()))
 }
 
+/// Waits for the turn's workspace snapshot before an OpenCode turn starts: its
+/// server takes the prompt with the session, so nothing can be held there.
+/// Other transports hold only their prompt step (`prompt_gate`).
+fn baseline_recorded(request: &Request, cancel: &AtomicBool) -> Result<(), String> {
+    match &request.settings.baseline {
+        Some(baseline) if !baseline.wait(cancel) => Err("Stopped".into()),
+        _ => Ok(()),
+    }
+}
+
 fn kiro_auth_error(detail: &str) -> String {
     signed_out::message(Kind::Kiro, &format!("{detail} {}", acp::KIRO_AUTH_HELP))
 }
@@ -916,6 +934,7 @@ fn run_operation(
         return Err("Stopped".into());
     }
     if request.kind == Kind::OpenCode {
+        baseline_recorded(&request, &cancel)?;
         return opencode::run(request, cancel, controls, probe, compact, emit);
     }
     let controls = controls.as_ref();
@@ -1025,6 +1044,7 @@ fn launch(
             .and_then(crate::tool_servers::Access::open);
         (wire, protocol, false)
     };
+    tracing::debug!(target: "gespan::send", stage = "provider.spawned", warm);
     // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
     protocol.seed_agent_runs();
     protocol.seed_claude_tasks();
@@ -1073,14 +1093,18 @@ fn launch(
                 json!({"type":"control_request","request_id":"native-init","request":{"subtype":"initialize"}}),
             )?;
         }
-        let mut pending_bytes = 0;
-        let mut last_emit = Instant::now();
+        let mut text_seen = false;
+        let mut batch = batch::Batch::new(Instant::now());
         let started = Instant::now();
         let mut ready_emitted = false;
         let mut interrupted = false;
         let mut gate = hold::Gate::default();
         loop {
             if cancel.load(Ordering::Relaxed) && !interrupted {
+                // The provider never got the prompt: there is no turn to stop.
+                if protocol.prompt_held() {
+                    return Err("Stopped".into());
+                }
                 interrupted = true;
                 if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
                     return Err("Stopped".into());
@@ -1090,7 +1114,13 @@ fn launch(
                 }
             }
             if !interrupted {
-                if let Some(controls) = &controls {
+                protocol.release_prompt(&mut stdin)?;
+                // Steers and other controls wait with the prompt for the
+                // turn's baseline, which nothing may get ahead of. A prompt
+                // still held (the baseline may have finished just now) goes
+                // out first, on the next pass.
+                let gated = protocol.baseline_pending() || protocol.prompt_held();
+                if let Some(controls) = controls.filter(|_| !gated) {
                     while let Ok(control) = controls.try_recv() {
                         match control.decision {
                             Decision::Steer(message) => {
@@ -1158,7 +1188,13 @@ fn launch(
             if protocol.request.settings.text_only && started.elapsed() >= Duration::from_secs(45) {
                 return Err("Background text request timed out".into());
             }
-            match rx.recv_timeout(TICK) {
+            // A held prompt goes out within a couple of milliseconds of the
+            // baseline being recorded.
+            match rx.recv_timeout(if protocol.prompt_held() {
+                HELD_POLL
+            } else {
+                TICK
+            }) {
                 Ok(Ok(line)) => {
                     let value: Value = match serde_json::from_slice(&line) {
                         Ok(value) => value,
@@ -1250,19 +1286,13 @@ fn launch(
                         if interrupted {
                             continue;
                         }
-                        pending_bytes += match &event {
-                            Event::Text(text) | Event::Reasoning(text) | Event::Status(text) => {
-                                text.len()
-                            }
-                            Event::Tool(tool) => tool.input.len() + tool.output.len(),
-                            Event::Approval(approval) => approval.detail.len(),
-                            Event::Question(question) => {
-                                question.items.iter().map(|q| q.prompt.len()).sum()
-                            }
-                            _ => 64,
-                        };
+                        batch.add(&event);
                         if let Event::SessionId(id) = &event {
                             protocol.request.provider_id = Some(id.clone());
+                        }
+                        if !text_seen && matches!(event, Event::Text(_)) {
+                            text_seen = true;
+                            tracing::debug!(target: "gespan::send", stage = "provider.first_text");
                         }
                         pending.push(event);
                     }
@@ -1279,12 +1309,9 @@ fn launch(
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            if !pending.is_empty()
-                && (last_emit.elapsed() >= TICK || pending_bytes >= BATCH_BYTES || protocol.done)
-            {
+            if !pending.is_empty() && batch.due(Instant::now(), protocol.done) {
                 emit(std::mem::take(&mut pending))?;
-                pending_bytes = 0;
-                last_emit = Instant::now();
+                batch.emitted(Instant::now());
             }
             // A visual publication or ticket call may arrive while the provider
             // is waiting for its tool result and therefore emits no stream events.

@@ -424,7 +424,7 @@ impl Client {
         }
         Ok(())
     }
-    fn permissions(&self, request: &Request) -> Value {
+    pub(super) fn permissions(&self, request: &Request) -> Value {
         let mut rules = if request.settings.access == AccessMode::FullAccess {
             vec![("*", "allow")]
         } else {
@@ -439,7 +439,8 @@ impl Client {
         if request.settings.access == AccessMode::Auto {
             rules.push(("read", "allow"));
         }
-        let rows: Vec<_> = rules
+        let everything = rules[0].1;
+        let mut rows: Vec<_> = rules
             .into_iter()
             .map(|(permission, action)| {
                 if self.v2 {
@@ -450,6 +451,12 @@ impl Client {
             })
             .collect();
         if self.v2 {
+            // The service is shared, so other sessions' tool servers are there
+            // too; only this session's own stays in view.
+            let session = request.settings.mount.as_ref().map(|mount| mount.session);
+            rows.extend(crate::tool_servers::opencode_permissions(
+                session, everything,
+            ));
             json!({"permissions":rows})
         } else {
             json!({"permission":rows})
