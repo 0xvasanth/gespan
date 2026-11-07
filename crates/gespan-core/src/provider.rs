@@ -35,6 +35,7 @@ pub use hold::HoldPoint;
 use lifecycle::Interrupt;
 mod claude;
 mod codex;
+mod error;
 #[cfg(all(test, unix))]
 mod hold_tests;
 mod kind;
@@ -45,6 +46,7 @@ mod opencode;
 mod parked;
 mod pi;
 mod spec;
+pub use error::ProviderError;
 pub fn configure_idle_agents(limit: usize) {
     parked::configure(limit);
     opencode::configure(limit);
@@ -914,7 +916,7 @@ fn run_operation(
     mut emit: impl FnMut(Vec<Event>) -> Result<(), String>,
 ) -> Result<Option<Value>, String> {
     if cancel.load(Ordering::Relaxed) {
-        return Err("Stopped".into());
+        return Err(ProviderError::Stopped.into());
     }
     if request.kind == Kind::OpenCode {
         return opencode::run(request, cancel, controls, probe, compact, emit);
@@ -937,7 +939,7 @@ fn run_operation(
         }
         // Stop can arrive while waiting for the first attempt to exit.
         if cancel.load(Ordering::Relaxed) {
-            return Err("Stopped".into());
+            return Err(ProviderError::Stopped.into());
         }
         fallback = true;
     }
@@ -990,7 +992,7 @@ fn launch(
         .stderr(Stdio::piped());
     process::isolate(&mut command);
     if cancel.load(Ordering::Relaxed) {
-        return Err("Stopped".into());
+        return Err(ProviderError::Stopped.into());
     }
     let eligible = !probe && !command_probe && !request.settings.text_only;
     let cached = eligible
@@ -1084,10 +1086,10 @@ fn launch(
             if cancel.load(Ordering::Relaxed) && !interrupted {
                 interrupted = true;
                 if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
-                    return Err("Stopped".into());
+                    return Err(ProviderError::Stopped.into());
                 }
                 if protocol.request.kind == Kind::Claude {
-                    return Err("Stopped".into());
+                    return Err(ProviderError::Stopped.into());
                 }
             }
             if !interrupted {
@@ -1133,7 +1135,7 @@ fn launch(
                         held = true;
                         pending.push(Event::HoldSettled(HoldPoint::Interrupted));
                         if !protocol.interrupt(&mut stdin, Interrupt::Hold)? {
-                            return Err("Stopped".into());
+                            return Err(ProviderError::Stopped.into());
                         }
                     }
                     Some(hold::Action::Settle(point)) => pending.push(Event::HoldSettled(point)),
@@ -1154,7 +1156,7 @@ fn launch(
             }
             if interrupted && protocol.done {
                 stop_confirmed = true;
-                return Err("Stopped".into());
+                return Err(ProviderError::Stopped.into());
             }
             if protocol.request.settings.text_only && started.elapsed() >= Duration::from_secs(45) {
                 return Err("Background text request timed out".into());
@@ -1218,12 +1220,12 @@ fn launch(
                             if terminal || claude_end {
                                 protocol.done = true;
                             }
-                            return Err("Stopped".into());
+                            return Err(ProviderError::Stopped.into());
                         }
                     }
                     let events = match protocol.frame(value, &mut stdin) {
                         Ok(events) => events,
-                        Err(_) if interrupted => return Err("Stopped".into()),
+                        Err(_) if interrupted => return Err(ProviderError::Stopped.into()),
                         Err(error) => return Err(error),
                     };
                     for event in events {
@@ -1271,7 +1273,7 @@ fn launch(
                 Ok(Err(error)) => return Err(error),
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if interrupted {
-                        return Err("Stopped".into());
+                        return Err(ProviderError::Stopped.into());
                     }
                     return Err(format!(
                         "Provider exited before completing the turn. {}",
@@ -1295,7 +1297,7 @@ fn launch(
             if protocol.done {
                 if interrupted {
                     stop_confirmed = true;
-                    return Err("Stopped".into());
+                    return Err(ProviderError::Stopped.into());
                 }
                 return Ok(protocol.catalog_result.take());
             }
@@ -1313,7 +1315,7 @@ fn launch(
     })();
     // A Hold interrupt ends the turn like Stop, but the session is held, not stopped.
     let result = match result {
-        Err(error) if held && error == "Stopped" => Err("Held".to_owned()),
+        Err(error) if held && ProviderError::is_stopped(&error) => Err(ProviderError::Held.into()),
         result => result,
     };
     let stopped = held || cancel.load(Ordering::Relaxed);

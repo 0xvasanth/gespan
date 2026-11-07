@@ -200,7 +200,7 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
     let started = Instant::now();
     let result = loop {
         if cancel.load(Ordering::Relaxed) {
-            break Err("Stopped".into());
+            break Err(ProviderError::Stopped.into());
         }
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -386,7 +386,7 @@ fn connect(
     let started = Instant::now();
     loop {
         if cancel.load(Ordering::Relaxed) {
-            return Err("Stopped".into());
+            return Err(ProviderError::Stopped.into());
         }
         if !matches!(server.child.try_wait(), Ok(None)) {
             return Err("OpenCode server exited before it was ready".into());
@@ -428,7 +428,7 @@ pub(super) fn run(
     };
     let v2 = started.inspect_err(start_failed)?;
     if cancel.load(Ordering::Relaxed) {
-        return Err("Stopped".into());
+        return Err(ProviderError::Stopped.into());
     }
     request.prompt = commands::prepare_prompt(
         Kind::OpenCode,
@@ -475,7 +475,7 @@ pub(super) fn run(
             if cancel.load(Ordering::Relaxed) {
                 state.cancel(&client);
                 aborted = true;
-                return Err("Stopped".into());
+                return Err(ProviderError::Stopped.into());
             }
             if let Some(server) = server.as_mut() {
                 if !matches!(server.child.try_wait(), Ok(None)) {
@@ -582,7 +582,7 @@ pub(super) fn run(
                     state.cancel(&client);
                     aborted = true;
                     held = true;
-                    return Err("Held".into());
+                    return Err(ProviderError::Held.into());
                 }
                 Some(super::hold::Action::Settle(point)) => emit(vec![Event::HoldSettled(point)])?,
                 None => {}

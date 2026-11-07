@@ -169,7 +169,7 @@ impl Client {
             Some(socket.try_clone().map_err(|e| e.to_string())?);
         if stop.load(Ordering::Relaxed) {
             let _ = socket.shutdown(std::net::Shutdown::Both);
-            return Err("Stopped".into());
+            return Err(ProviderError::Stopped.into());
         }
         let mut socket = if url.scheme() == "https" {
             // Match ureq's default TLS backend and trust roots, keeping normal
