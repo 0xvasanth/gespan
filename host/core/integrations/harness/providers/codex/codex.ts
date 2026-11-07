@@ -39,7 +39,7 @@ import { JsonRpcClient, type JsonRpcId } from "../../core/jsonRpc";
 import {
   deleteGeneratedImages,
   saveGeneratedImage,
-} from "../../../../platform/tauri/fs";
+} from "../../../../platform/fs";
 import {
   codexAsyncQuestions,
   codexAsyncQuestionResponse,

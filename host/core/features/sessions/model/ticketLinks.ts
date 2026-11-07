@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 import { useEffect, useSyncExternalStore } from "react";
 import type {
   LinkedWorkItem,

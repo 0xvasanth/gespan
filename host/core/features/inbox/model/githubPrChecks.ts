@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../../platform/commands";
 
 export type GithubPrCheckState =
   "pass" | "fail" | "pending" | "skipping" | "cancel" | "unknown";

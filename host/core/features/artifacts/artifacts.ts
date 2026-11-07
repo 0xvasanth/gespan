@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "../../platform/commands";
 import type { Block, Session } from "../sessions/model/session";
 
 /** Extend this union when a renderer and storage support for a new kind exist. */

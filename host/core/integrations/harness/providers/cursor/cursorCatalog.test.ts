@@ -16,7 +16,7 @@ const sent: JsonRpcMessage[] = [];
 let onLine: ((line: string) => void) | undefined;
 let responses: Record<string, Pick<JsonRpcMessage, "result" | "error">>;
 
-vi.mock("../../../../platform/tauri/fs", () => ({
+vi.mock("../../../../platform/fs", () => ({
   homeDir: async () => "/home/test",
 }));
 vi.mock("../../../../features/sessions/model/models", () => ({

@@ -35,7 +35,12 @@ test("the crates other pieces read run every piece", () => {
 });
 
 test("files only people read run nothing", () => {
-  assert.deepEqual(affected("README.md", "docs/desktop/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
+  assert.deepEqual(affected("CONTRIBUTING.md", "docs/desktop/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
+});
+
+test("the README runs the release checks that keep its downloads current", async () => {
+  assert.deepEqual(affected("README.md"), ["release"]);
+  assert.match(await read("scripts/readme-release.test.mjs"), /README\.md/);
 });
 
 test("files Native compiles in are not documentation", async () => {

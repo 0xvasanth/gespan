@@ -7,10 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-11-06
+
+### Added
+
+- Signed out of Claude Code, Codex or Kiro, a message now shows a **Sign in**
+  card instead of the CLI's raw error. It runs the CLI's own login, then sends
+  the same message again in place, without adding the prompt a second time.
+- Kiro chats show usage: monthly credits, plan and reset date in the footer,
+  Kiro's own context percent, and the credits each turn spent.
+
 ### Changed
 
 - A Pilot's SOP Roadmap tab is back, so you can see the workflow your Pilot is
   following. The Flows page stays hidden from the sidebar.
+- Claude and Codex usage now updates during every turn instead of up to 15
+  minutes late. Claude's usage details also list a model's own weekly cap, the
+  extra-usage spend when it is on, and each turn's cost.
+
+### Fixed
+
+- Automations now run on their own. An issue or PR that matches an Inbox
+  automation runs once even if it appeared while Gespan was closed or asleep,
+  a schedule set to *Do not catch up* runs when it comes due, a long sleep
+  starts one catch-up run instead of one per missed time, and nothing starts
+  while Hold is on.
+- Usage no longer shows "usage unavailable" on networks where IPv6 hangs.
+  Gespan falls back to IPv4 within about a quarter of a second, as browsers do.
+
+### Security
+
+- Read-only Claude turns no longer auto-approve commands that can run programs
+  or write files, such as `rg --pre`, `git diff --ext-diff` or
+  `git -c core.pager=…`. Everyday `git status`, `git diff`, `git log`, `ls` and
+  `pwd` queries still run without asking.
 
 ## [0.0.6] - 2026-11-03
 
@@ -2015,7 +2045,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/0xvasanth/gespan/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/0xvasanth/gespan/compare/v0.0.5...v0.0.6
 [0.16.0]: https://github.com/0xvasanth/gespan/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/0xvasanth/gespan/compare/v0.14.0...v0.15.0

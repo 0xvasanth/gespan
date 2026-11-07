@@ -1,4 +1,4 @@
-import { homeDir } from "../../../../platform/tauri/fs";
+import { homeDir } from "../../../../platform/fs";
 import { setHarnessModels } from "../../../../features/sessions/model/models";
 import { execChild, resolveFxBinary } from "../../core/child";
 import {

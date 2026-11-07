@@ -46,6 +46,9 @@ for (const [label, eol] of [
       "crates/gespan-gpui/Cargo.toml",
       "crates/gespan-gpui/Cargo.lock",
       "scripts/bump-version.mjs",
+      "scripts/package.mjs",
+      "scripts/readme-release.mjs",
+      "README.md",
     ];
     for (const file of files) {
       await mkdir(dirname(join(checkout, file)), { recursive: true });
@@ -77,4 +80,21 @@ for (const [label, eol] of [
       "gespan-speech",
     ])
       assert.match(await read("crates/gespan-gpui/Cargo.lock"), locked(name));
+    // A prerelease keeps the README on the last stable release.
+    const readme = (await readFile(join(root, "README.md"), "utf8")).replaceAll(
+      "\r\n",
+      "\n",
+    );
+    assert.equal(await read("README.md"), readme);
+
+    const stable = spawnSync(
+      process.execPath,
+      [join(checkout, "scripts/bump-version.mjs"), "9.8.7"],
+      { encoding: "utf8" },
+    );
+    assert.equal(stable.status, 0, stable.stderr);
+    const bumped = await readFile(join(checkout, "README.md"), "utf8");
+    assert.match(bumped, /releases\/download\/v9\.8\.7\/Gespan_9\.8\.7_aarch64\.dmg/);
+    assert.equal(bumped.includes("\r\n"), eol === "\r\n");
+    assert.match(await read("package.json"), /"version": "9\.8\.7"/);
   });
