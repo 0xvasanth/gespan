@@ -281,7 +281,7 @@ fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
     Ok(pieces)
 }
 
-fn is_env_name(name: &str) -> bool {
+pub(crate) fn is_env_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()

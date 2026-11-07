@@ -20,6 +20,7 @@ use std::{
 pub(crate) mod jsonc;
 pub mod sources;
 pub(crate) mod tasks_json;
+pub mod write;
 
 /// Every source, highest priority first. Gespan's own file leads, then agent
 /// apps, editors and task runners. Personal actions list right after Gespan's.
@@ -371,6 +372,12 @@ fn read_capped(path: &Path) -> Result<String, String> {
         return Err(TOO_LARGE.into());
     }
     String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+/// Drops the cached parse of `path`, such as a file that was just rewritten.
+pub(crate) fn forget(path: &Path) {
+    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    cache().remove(&key);
 }
 
 fn cache() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Cached>> {
