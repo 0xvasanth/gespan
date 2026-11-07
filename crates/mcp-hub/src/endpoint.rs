@@ -6,7 +6,7 @@ use crate::{
     pool::Pool,
     router::{log_rank, Action},
     session::Session,
-    upstream::Upstream,
+    upstream::{Answer, Upstream},
     Grant, NoObserver, Observer, Running, ServerError, ServerSpec, Spawned, Spawner, Token,
     Toolkit,
 };
@@ -272,21 +272,29 @@ impl Inner {
                 method,
                 params,
             } => {
-                let call = self
-                    .call_of(caller)
-                    .map(|(peer, request)| (peer, Some(request)))
-                    .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
                 let upstream = upstream.clone();
-                self.runtime.spawn(async move {
-                    let outcome = match call {
-                        Some((peer, origin)) => ask(&peer, origin, &method, params).await,
-                        None => Err("The agent that made this call has gone".to_owned()),
-                    };
-                    upstream.respond(upstream_id, outcome);
-                });
+                let answer: Answer =
+                    Box::new(move |outcome| upstream.respond(upstream_id, outcome));
+                self.ask_agent(caller, method, params, answer);
             }
             _ => {}
         }
+    }
+
+    /// Puts a server's question to a session's agent, on the call it's
+    /// making if there is one.
+    pub(crate) fn ask_agent(&self, caller: i64, method: String, params: Value, answer: Answer) {
+        let call = self
+            .call_of(caller)
+            .map(|(peer, request)| (peer, Some(request)))
+            .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
+        self.runtime.spawn(async move {
+            let outcome = match call {
+                Some((peer, origin)) => ask(&peer, origin, &method, params).await,
+                None => Err("The agent that made this call has gone".to_owned()),
+            };
+            answer(outcome);
+        });
     }
 
     pub(crate) fn watch(&self, session: i64, peer: Peer<RoleServer>) {
