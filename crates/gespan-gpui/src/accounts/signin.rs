@@ -367,4 +367,152 @@ mod tests {
         cx.run_until_parked();
         view.update(cx, |accounts, _| assert!(accounts.signin.is_some()));
     }
+    /// A footer sign-in that opened the browser 30 seconds ago and is still
+    /// waiting on it.
+    fn stale_signin() -> SignIn {
+        SignIn {
+            kind: Kind::Claude,
+            profile: Profile::default(),
+            action: AuthAction::SignIn,
+            surface: Surface::Footer,
+            cancel: Arc::new(AtomicBool::new(false)),
+            complete: false,
+            error: None,
+            adding: None,
+            prompt: Default::default(),
+            codes: None,
+            started: std::time::Instant::now() - std::time::Duration::from_secs(30),
+        }
+    }
+    #[gpui::test]
+    fn the_reactivation_grace_spares_a_sign_in_that_moves_on(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let view =
+            cx.new(|cx| Accounts::new(PathBuf::from("/fixture"), Book::default(), store, cx));
+        let grace = |cx: &mut gpui::TestAppContext, secs| {
+            cx.executor()
+                .advance_clock(std::time::Duration::from_secs(secs));
+            cx.run_until_parked();
+        };
+
+        // The login lands while the grace runs: the success is kept.
+        view.update(cx, |accounts, cx| {
+            accounts.signin = Some(stale_signin());
+            accounts.app_reactivated(cx);
+        });
+        grace(cx, 2);
+        view.update(cx, |accounts, _| {
+            accounts.signin.as_mut().unwrap().complete = true
+        });
+        grace(cx, 6);
+        view.update(cx, |accounts, _| {
+            assert!(accounts.signin.as_ref().is_some_and(|s| s.complete))
+        });
+
+        // The CLI reports an error while the grace runs: the error stays shown.
+        view.update(cx, |accounts, cx| {
+            accounts.signin = Some(stale_signin());
+            accounts.app_reactivated(cx);
+            accounts.signin.as_mut().unwrap().error = Some("denied".into());
+        });
+        grace(cx, 6);
+        view.update(cx, |accounts, _| {
+            assert!(accounts.signin.as_ref().is_some_and(|s| s.error.is_some()))
+        });
+
+        // The user cancels and starts over before the grace ends: the old
+        // timer must not cancel the new attempt.
+        view.update(cx, |accounts, cx| {
+            accounts.signin = Some(stale_signin());
+            accounts.app_reactivated(cx);
+        });
+        grace(cx, 2);
+        let retry = view.update(cx, |accounts, cx| {
+            accounts.cancel_auth(cx);
+            let retry = stale_signin();
+            let flag = retry.cancel.clone();
+            accounts.signin = Some(retry);
+            flag
+        });
+        grace(cx, 6);
+        view.update(cx, |accounts, _| {
+            assert!(accounts.signin.is_some(), "the new attempt keeps running");
+            assert!(!retry.load(Ordering::Relaxed));
+        });
+
+        // Coming back twice schedules two checks; both stop the same attempt
+        // once, and the second finds nothing left to cancel.
+        let first = view.update(cx, |accounts, cx| {
+            let signin = stale_signin();
+            let flag = signin.cancel.clone();
+            accounts.signin = Some(signin);
+            accounts.app_reactivated(cx);
+            accounts.app_reactivated(cx);
+            flag
+        });
+        grace(cx, 6);
+        view.update(cx, |accounts, _| assert!(accounts.signin.is_none()));
+        assert!(first.load(Ordering::Relaxed), "the CLI is told to stop");
+
+        // A sign-out is not waiting on a browser, so it is never cancelled.
+        view.update(cx, |accounts, cx| {
+            accounts.signin = Some(SignIn {
+                action: AuthAction::SignOut,
+                ..stale_signin()
+            });
+            accounts.app_reactivated(cx);
+        });
+        grace(cx, 6);
+        view.update(cx, |accounts, _| assert!(accounts.signin.is_some()));
+    }
+    #[gpui::test]
+    fn cancelling_a_waiting_sign_in_frees_the_other_sign_in_buttons(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let view =
+            cx.new(|cx| Accounts::new(PathBuf::from("/fixture"), Book::default(), store, cx));
+        view.update(cx, |accounts, cx| {
+            let signin = stale_signin();
+            let flag = signin.cancel.clone();
+            accounts.signin = Some(signin);
+            accounts.working = true;
+            assert!(accounts.has_footer_auth(Kind::Claude, accounts::DEFAULT));
+
+            accounts.cancel_auth(cx);
+            assert!(flag.load(Ordering::Relaxed), "the CLI is told to stop");
+            assert!(accounts.signin.is_none());
+            assert!(!accounts.working, "other Sign in buttons are enabled again");
+            assert!(!accounts.has_footer_auth(Kind::Claude, accounts::DEFAULT));
+
+            // A second click (Cancel, then Back) is harmless.
+            accounts.cancel_auth(cx);
+            assert!(accounts.signin.is_none());
+            assert!(!accounts.working);
+        });
+    }
+    #[gpui::test]
+    fn cancelling_after_success_keeps_the_new_account(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let view =
+            cx.new(|cx| Accounts::new(PathBuf::from("/fixture"), Book::default(), store, cx));
+        view.update(cx, |accounts, cx| {
+            // `working` still covers the save that follows a finished login.
+            accounts.signin = Some(SignIn {
+                complete: true,
+                ..stale_signin()
+            });
+            accounts.working = true;
+            accounts.cancel_auth(cx);
+            assert!(accounts.signin.is_none(), "the finished panel closes");
+            assert!(
+                accounts.working,
+                "the save after the login is not abandoned"
+            );
+        });
+    }
 }
