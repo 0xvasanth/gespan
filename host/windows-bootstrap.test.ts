@@ -174,7 +174,10 @@ it.skipIf(!shell)(
 
 // Holds node.exe open the way a process that is still exiting, or a scanner,
 // does. Only a real handle shows what a blocked move leaves on disk, and only
-// Windows blocks the move for it. The install's waits stand in for time passing.
+// Windows blocks the move for it. The install's waits stand in for time passing
+// while the handle is held. Once it is released they sleep for real: Windows
+// (or a scanner looking at the node.exe the install just ran) can keep denying
+// the move a moment longer, and zero-length waits would use up every retry.
 const heldRuntime = (waits: number) => `
 $script:held = $null
 $script:waits = ${waits}
@@ -189,6 +192,10 @@ function Expand-Archive([string] $LiteralPath, [string] $DestinationPath) {
   $script:held = [IO.File]::Open((Join-Path $DestinationPath 'node.exe'), 'Open', 'Read', 'Read')
 }
 function Start-Sleep([int] $Milliseconds) {
+  if ($null -eq $script:held) {
+    Microsoft.PowerShell.Utility\\Start-Sleep -Milliseconds $Milliseconds
+    return
+  }
   $script:waits--
   if ($script:waits -eq 0) { Release-Runtime }
 }

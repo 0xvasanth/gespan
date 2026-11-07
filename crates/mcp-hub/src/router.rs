@@ -121,12 +121,6 @@ impl Router {
         self.next
     }
 
-    /// A request the hub makes for itself, such as refreshing a list.
-    pub(crate) fn own_request(&mut self, method: &str, params: Value) -> (u64, Value) {
-        let id = self.id();
-        (id, frame(id, method, params))
-    }
-
     /// An agent's request, rewritten so nothing of the agent's reaches the
     /// server. Returns the id the answer will carry.
     pub(crate) fn request(
@@ -148,6 +142,16 @@ impl Router {
         });
         self.pending.insert(id, Pending { caller, progress });
         (id, frame(id, method, params))
+    }
+
+    /// A request of an agent's is over, however it ended.
+    pub(crate) fn finish(&mut self, id: u64) {
+        self.settle(id);
+    }
+
+    /// The hub's progress token for a request, while it's in flight.
+    pub(crate) fn progress_of(&self, id: u64) -> Option<&str> {
+        self.pending.get(&id)?.progress.as_deref()
     }
 
     /// Tells the server an agent gave up on a request.

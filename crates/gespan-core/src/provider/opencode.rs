@@ -870,14 +870,27 @@ mod tool_tests {
     use crate::tool_servers::{Access, Mount, VISUAL};
     use std::io::{BufRead, BufReader, Read, Write};
 
+    /// The stand-in hands each request on from a thread of its own, so it can
+    /// land just after the call that made it returns.
+    const POSTED: Duration = Duration::from_secs(5);
+    /// Long enough for a request that was made to have landed.
+    const QUIET: Duration = Duration::from_millis(300);
+
     /// A `serve` stand-in: answers `POST /mcp` with this status, and counts them.
-    fn opencode(status: u16) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
-        opencode_seen(status, false)
+    fn opencode(status: u16) -> (Client, mpsc::Receiver<serde_json::Value>) {
+        let (client, seen) = opencode_seen(status, false);
+        let (posted, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for (_, body) in seen {
+                if posted.send(body).is_err() {
+                    return;
+                }
+            }
+        });
+        (client, received)
     }
 
-    /// The stand-in, keeping each request's first line with its body. It
-    /// records a request before answering it, so once the client has its
-    /// answer the request is already waiting here.
+    /// The stand-in, keeping each request's first line with its body.
     fn opencode_seen(
         status: u16,
         v2: bool,
@@ -928,14 +941,14 @@ mod tool_tests {
         let mount = mount(5101);
         let mut held = None;
         mount_tools(&client, &mut held, Some(&mount));
-        let (_, server) = posted.try_recv().unwrap();
+        let server = posted.recv_timeout(POSTED).unwrap();
         assert_eq!(server["name"], "gespan");
         let authorization = server["config"]["headers"]["Authorization"].clone();
         assert!(held.as_ref().unwrap().is_live(5101));
         // The next turn on this kept server.
         mount_tools(&client, &mut held, Some(&mount));
         assert!(
-            posted.try_recv().is_err(),
+            posted.recv_timeout(QUIET).is_err(),
             "a reused server isn't remounted"
         );
         assert!(
@@ -951,11 +964,11 @@ mod tool_tests {
         let mount = mount(5102);
         let mut held = None;
         mount_tools(&client, &mut held, Some(&mount));
-        let (_, first) = posted.try_recv().unwrap();
+        let first = posted.recv_timeout(POSTED).unwrap();
         // Another process of this session took over, then this server came back.
         let _other = Access::open(&mount).unwrap();
         mount_tools(&client, &mut held, Some(&mount));
-        let (_, second) = posted.try_recv().unwrap();
+        let second = posted.recv_timeout(POSTED).unwrap();
         assert_ne!(first["config"]["headers"], second["config"]["headers"]);
         assert!(held.as_ref().unwrap().is_live(5102));
     }
@@ -966,10 +979,10 @@ mod tool_tests {
         let mount = mount(5103);
         let mut held = None;
         mount_tools(&client, &mut held, Some(&mount));
-        assert!(posted.try_recv().is_ok());
+        assert!(posted.recv_timeout(POSTED).is_ok());
         assert!(held.is_none(), "the turn goes on without tools");
         mount_tools(&client, &mut held, Some(&mount));
-        assert!(posted.try_recv().is_ok());
+        assert!(posted.recv_timeout(POSTED).is_ok());
     }
 
     #[test]
@@ -977,7 +990,7 @@ mod tool_tests {
         let (client, posted) = opencode(200);
         let mut held = None;
         mount_tools(&client, &mut held, None);
-        assert!(posted.try_recv().is_err());
+        assert!(posted.recv_timeout(QUIET).is_err());
     }
 
     #[test]

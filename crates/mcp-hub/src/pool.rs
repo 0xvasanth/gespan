@@ -4,7 +4,7 @@
 use crate::{
     endpoint::Inner,
     router::{Action, Caller, Reach},
-    upstream::{Answer, Events, Upstream},
+    upstream::{Answer, Events, Listed, Upstream},
     Grant, Spawner,
 };
 use serde_json::{json, Value};
@@ -13,7 +13,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The separator between a server and its tool: `github__create_issue`.
@@ -154,8 +154,22 @@ fn relock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A list as the hub keeps it.
+struct Kept {
+    items: Vec<Value>,
+    /// When the server said it would be out of date.
+    fresh_until: Option<Instant>,
+}
+
+impl Kept {
+    fn stale(&self) -> bool {
+        self.fresh_until
+            .is_some_and(|until| Instant::now() >= until)
+    }
+}
+
 /// Lists by server and fingerprint, then by list name.
-type Lists = HashMap<(String, String), HashMap<&'static str, Vec<Value>>>;
+type Lists = HashMap<(String, String), HashMap<&'static str, Kept>>;
 
 pub(crate) struct Pool {
     spawner: Arc<dyn Spawner>,
@@ -348,35 +362,34 @@ impl Pool {
             Sharing::PerWorkspace => (Some(grant.workspace.clone()), Reach::Workspace),
             Sharing::PerSession => (Some(grant.workspace.clone()), Reach::Session),
         };
-        let pool = self.clone();
-        let (spec, session) = (spec.clone(), grant.session);
-        let upstream = tokio::task::spawn_blocking(move || {
-            let spawned = pool
-                .spawner
-                .spawn(&spec, workspace.as_deref())
-                .map_err(|error| format!("{} could not start: {error}", spec.id));
-            let started = spawned.and_then(|spawned| {
-                let events = Arc::new(PoolEvents {
-                    pool: Arc::downgrade(&pool),
-                    key: key.clone(),
-                });
-                Upstream::start(&spec, spawned, workspace.as_deref(), reach, events)
-            });
-            let upstream = started
-                .map_err(|error| without_secrets(error, &spec.env))
-                .inspect_err(|error| pool.record(&spec.id, error.clone()))?;
-            let mut running = relock(&pool.running);
-            if !pool.current(&key) || pool.restarts_of(&spec.id) != restarts {
-                drop(running);
-                upstream.shut();
-                return Err(changed(&spec.id));
+        // The host's spawner may block: it resolves secrets and starts a process.
+        let spawner = self.spawner.clone();
+        let (owned, folder) = (spec.clone(), workspace.clone());
+        let spawned = tokio::task::spawn_blocking(move || spawner.spawn(&owned, folder.as_deref()))
+            .await
+            .map_err(|_| "The server start was interrupted".to_owned())?
+            .map_err(|error| format!("{} could not start: {error}", spec.id));
+        let events = Arc::new(PoolEvents {
+            pool: Arc::downgrade(self),
+            key: key.clone(),
+        });
+        let started = match spawned {
+            Ok(spawned) => {
+                Upstream::start(spec, spawned, workspace.as_deref(), reach, events).await
             }
-            upstream.add_user(session);
-            running.insert(key, upstream.clone());
-            Ok::<_, String>(upstream)
-        })
-        .await
-        .map_err(|_| "The server start was interrupted".to_owned())??;
+            Err(error) => Err(error),
+        };
+        let upstream = started
+            .map_err(|error| without_secrets(error, &spec.env))
+            .inspect_err(|error| self.record(&spec.id, error.clone()))?;
+        let mut running = relock(&self.running);
+        if !self.current(&key) || self.restarts_of(&spec.id) != restarts {
+            drop(running);
+            upstream.shut();
+            return Err(changed(&spec.id));
+        }
+        upstream.add_user(grant.session);
+        running.insert(key, upstream.clone());
         Ok(upstream)
     }
 
@@ -479,15 +492,29 @@ impl Pool {
         }
     }
 
+    #[cfg(test)]
     fn cached(&self, spec: &ServerSpec, list: (&'static str, &'static str)) -> Option<Vec<Value>> {
+        self.kept(spec, list).map(|(items, _)| items)
+    }
+
+    /// A kept list, and whether the server said it's out of date by now.
+    fn kept(
+        &self,
+        spec: &ServerSpec,
+        list: (&'static str, &'static str),
+    ) -> Option<(Vec<Value>, bool)> {
+        // A restart, which a sign-in is, drops every list kept before it.
         let stored = relock(&self.lists)
             .get(&(spec.id.clone(), spec.fingerprint()))
             .and_then(|lists| lists.get(list.1))
-            .cloned();
-        stored.or_else(|| (list == TOOLS).then(|| spec.tools.clone()).flatten())
+            .map(|kept| (kept.items.clone(), kept.stale()));
+        stored.or_else(|| {
+            let tools = (list == TOOLS).then(|| spec.tools.clone()).flatten();
+            tools.map(|tools| (tools, false))
+        })
     }
 
-    /// Keeps a list, unless the server restarted since it was asked for.
+    /// Keeps a list the server said nothing about keeping.
     fn store(
         &self,
         spec: &ServerSpec,
@@ -495,53 +522,104 @@ impl Pool {
         items: Vec<Value>,
         restarts: u64,
     ) {
+        let listed = Listed {
+            items,
+            ..Listed::default()
+        };
+        self.keep(spec, list, listed, restarts);
+    }
+
+    /// Keeps a list, unless the server restarted since it was asked for.
+    fn keep(
+        &self,
+        spec: &ServerSpec,
+        list: (&'static str, &'static str),
+        listed: Listed,
+        restarts: u64,
+    ) {
+        let Listed {
+            items,
+            fresh_for,
+            private,
+        } = listed;
         {
             let mut lists = relock(&self.lists);
             if self.restarts_of(&spec.id) != restarts {
                 return;
             }
+            let kept = Kept {
+                items: items.clone(),
+                // Further off than an `Instant` reaches is never.
+                fresh_until: fresh_for.and_then(|fresh| Instant::now().checked_add(fresh)),
+            };
             lists
                 .entry((spec.id.clone(), spec.fingerprint()))
                 .or_default()
-                .insert(list.1, items.clone());
+                .insert(list.1, kept);
         }
-        if list == TOOLS {
+        // The host keeps tool lists past this run, and a private one mustn't
+        // outlive its sign-in.
+        if list == TOOLS && !private {
             self.observer.listed(&spec.id, &items);
         }
     }
 
-    /// A server's list, from the cache when it has one.
+    /// A server's list, from the cache when it has one. One the server said
+    /// is out of date is listed again, but only from a process already
+    /// running: listing never starts anything that has run once.
     async fn items(
         self: &Arc<Self>,
         spec: &ServerSpec,
         grant: &Grant,
         list: (&'static str, &'static str),
     ) -> Vec<Value> {
-        if let Some(items) = self.cached(spec, list) {
-            return items;
-        }
         let restarts = self.restarts_of(&spec.id);
-        let upstream = match self.upstream(spec, grant).await {
-            Ok(upstream) => upstream,
-            Err(_) => return Vec::new(),
+        let upstream = match self.kept(spec, list) {
+            Some((items, false)) => return items,
+            Some((items, true)) => {
+                let running = relock(&self.running).get(&key(spec, grant)).cloned();
+                let Some(upstream) = running else {
+                    return items;
+                };
+                return self
+                    .fetch(spec, &upstream, list, restarts)
+                    .await
+                    .unwrap_or(items);
+            }
+            None => match self.upstream(spec, grant).await {
+                Ok(upstream) => upstream,
+                Err(_) => return Vec::new(),
+            },
         };
-        let fetched = tokio::task::spawn_blocking(move || upstream.list(list.0, list.1)).await;
-        match fetched {
-            Ok(Ok(items)) => {
-                self.store(spec, list, items.clone(), restarts);
-                items
+        self.fetch(spec, &upstream, list, restarts)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Lists afresh and keeps what came back. `None` when listing failed.
+    async fn fetch(
+        &self,
+        spec: &ServerSpec,
+        upstream: &Upstream,
+        list: (&'static str, &'static str),
+        restarts: u64,
+    ) -> Option<Vec<Value>> {
+        match upstream.list(list.0, list.1).await {
+            Ok(listed) => {
+                let items = listed.items.clone();
+                self.keep(spec, list, listed, restarts);
+                Some(items)
             }
             // A server without this list says so; it isn't a failure.
-            Ok(Err(error)) if error["code"] == -32601 => {
+            Err(error) if error["code"] == -32601 => {
                 self.store(spec, list, Vec::new(), restarts);
-                Vec::new()
+                Some(Vec::new())
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 let message = format!("{}: {error}", list.0);
                 self.record(&spec.id, without_secrets(message, &spec.env));
-                Vec::new()
+                None
             }
-            Err(_) => Vec::new(),
         }
     }
 
@@ -621,13 +699,10 @@ impl Pool {
         let spec = self.resolve(grant, server).ok_or("Unknown resource")?;
         let upstream = self.upstream(&spec, grant).await?;
         if !on {
-            upstream.unsubscribe(grant.session, uri);
+            upstream.unsubscribe(grant.session, uri).await;
             return Ok(());
         }
-        let (session, uri) = (grant.session, uri.to_owned());
-        tokio::task::spawn_blocking(move || upstream.subscribe(session, &uri))
-            .await
-            .map_err(|_| "The subscription was interrupted".to_owned())?
+        upstream.subscribe(grant.session, uri).await
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Running> {
@@ -673,11 +748,11 @@ impl Pool {
         let upstream = upstream.clone();
         let method = method.to_owned();
         let key = key.clone();
-        std::thread::spawn(move || {
-            match upstream.list(list.0, list.1) {
+        tokio::spawn(async move {
+            match upstream.list(list.0, list.1).await {
                 // Replaced while it was listing: this list is no one's.
                 Ok(_) if !pool.current(&key) => return,
-                Ok(items) => pool.store(&spec, list, items, restarts),
+                Ok(listed) => pool.keep(&spec, list, listed, restarts),
                 Err(error) => {
                     let message = format!("{}: {error}", list.0);
                     pool.record(&spec.id, without_secrets(message, &spec.env));
@@ -776,6 +851,10 @@ impl Events for PoolEvents {
             Some(hub) => hub.ask_agent(caller, method, params, answer),
             None => answer(Err("The hub has stopped".to_owned())),
         }
+    }
+
+    fn capabilities(&self, caller: Caller) -> Option<Value> {
+        self.pool.upgrade()?.hub()?.capabilities_of(caller)
     }
 
     fn exited(&self, upstream: &Arc<Upstream>) {
