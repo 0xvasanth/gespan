@@ -4,6 +4,7 @@
 use crate::{
     endpoint::{Inner, Listing},
     pool::{split_resource_uri, PROMPTS, RESOURCES, SEPARATOR, TOOLS},
+    upstream::MALFORMED,
     Grant,
 };
 use rmcp::{
@@ -195,6 +196,13 @@ impl ServerHandler for Session {
                     Ok(result) => serde_json::from_value::<CallToolResult>(complete(result))
                         .map_err(internal)?,
 
+                    // An answer that isn't one fails the call, not the tool.
+                    Err(error) if error["code"] == MALFORMED => {
+                        return Err(ErrorData::internal_error(
+                            error["message"].as_str().unwrap_or("").to_owned(),
+                            None,
+                        ));
+                    }
                     Err(error) => CallToolResult::error(vec![ContentBlock::text(
                         error["message"]
                             .as_str()
