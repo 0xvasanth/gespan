@@ -133,6 +133,19 @@ fn version_mismatch_is_reported() {
 }
 
 #[test]
+fn versions_compare_by_number_not_text() {
+    for newer in ["0.9.6", "0.9.10", "0.10.0", "1.0.0", "0.9.5.1"] {
+        assert!(is_newer_than_pinned(newer), "{newer}");
+    }
+    for not_newer in ["0.9.5", "0.9.4", "0.8.99", "0.9", "", "nightly"] {
+        assert!(!is_newer_than_pinned(not_newer), "{not_newer}");
+    }
+    // A pre-release tag does not hide the number in front of it.
+    assert!(is_newer_than_pinned("0.9.6-rc.1"));
+    assert!(!is_newer_than_pinned("0.9.4-rc.1"));
+}
+
+#[test]
 fn missing_or_too_old_herdr_needs_install() {
     let with = |online| {
         MachineView::new(

@@ -376,6 +376,22 @@ pub fn mark(agent: &Agent, seen_seq: Option<u64>) -> Option<Mark> {
     })
 }
 
+/// The numbers of a version such as `0.9.5`, ignoring a `-rc.1` or `+build`
+/// tag. `None` when it is not all numbers.
+fn version_numbers(version: &str) -> Option<Vec<u64>> {
+    let core = version.split(['-', '+']).next()?;
+    core.split('.').map(|part| part.parse().ok()).collect()
+}
+
+/// Whether a machine's herdr is a later release than [`HERDR_VERSION`], so
+/// installing the pinned one would go back. An unreadable version is not.
+pub fn is_newer_than_pinned(version: &str) -> bool {
+    match (version_numbers(version), version_numbers(HERDR_VERSION)) {
+        (Some(theirs), Some(ours)) => theirs > ours,
+        _ => false,
+    }
+}
+
 /// One saved machine and what is known about it. A disabled machine has no
 /// connection, so its snapshot stays the default. Offer the upgrade when
 /// `version_mismatch.is_some() || needs_install`.

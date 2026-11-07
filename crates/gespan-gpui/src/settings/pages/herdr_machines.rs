@@ -63,6 +63,17 @@ pub(super) fn status_line(view: &MachineView) -> String {
     }
 }
 
+/// The upgrade button's text. A machine running a later herdr would go
+/// back to the pinned one, so the button says that rather than Upgrade.
+fn upgrade_label(view: &MachineView) -> String {
+    match &view.version_mismatch {
+        Some(version) if machines::is_newer_than_pinned(version) => {
+            format!("Install herdr {HERDR_VERSION}")
+        }
+        _ => "Upgrade".into(),
+    }
+}
+
 fn paragraph(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(12.))
@@ -385,15 +396,20 @@ impl SettingsView {
                             })
                             .when(upgrade, |d| {
                                 let selector = upgrade_id.clone();
+                                let text = upgrade_label(view);
+                                let aria = match text.as_str() {
+                                    "Upgrade" => format!("Upgrade herdr on {label}"),
+                                    install => format!("{install} on {label}"),
+                                };
                                 d.child(
                                     secondary_button(
                                         SharedString::from(format!("herdr-upgrade-{id}")),
-                                        format!("Upgrade herdr on {label}"),
+                                        aria,
                                         false,
                                         busy,
                                     )
                                     .debug_selector(move || format!("herdr-upgrade-{selector}"))
-                                    .child("Upgrade")
+                                    .child(text)
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
                                             if !this.herdr.busy.contains(&machine.id) {
@@ -787,6 +803,23 @@ mod tests {
             status_line(&machine("m", Online::Connecting, None, false)),
             "Off"
         );
+    }
+
+    #[test]
+    fn herdr_machines_upgrade_reads_install_when_the_machine_is_ahead() {
+        let label =
+            |version: Option<&str>, online| upgrade_label(&machine("m", online, version, true));
+        assert_eq!(label(Some("0.9.4"), Online::Online), "Upgrade");
+        assert_eq!(label(None, Online::HerdrMissing), "Upgrade");
+        assert_eq!(label(None, Online::HerdrTooOld), "Upgrade");
+        // Numbers, not text: 0.9.10 is ahead of 0.9.5.
+        for ahead in ["0.9.10", "0.10.0", "1.0.0"] {
+            assert_eq!(
+                label(Some(ahead), Online::Online),
+                format!("Install herdr {HERDR_VERSION}"),
+                "{ahead}"
+            );
+        }
     }
 
     #[gpui::test]
