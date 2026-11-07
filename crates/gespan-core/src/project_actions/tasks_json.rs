@@ -194,10 +194,7 @@ pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found)
             }
         }
     };
-    let icon = found
-        .icon
-        .and_then(|icon| ACTION_ICONS.into_iter().find(|known| *known == icon))
-        .unwrap_or("play");
+    let icon = icon(found.icon.as_deref());
     Action {
         id: format!("{source}:{}", found.label),
         label: found.label,
@@ -212,6 +209,12 @@ pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found)
         blocked,
         note: found.note,
     }
+}
+
+/// One of [`ACTION_ICONS`], else `play`.
+pub(crate) fn icon(name: Option<&str>) -> &'static str {
+    name.and_then(|name| ACTION_ICONS.into_iter().find(|known| *known == name))
+        .unwrap_or("play")
 }
 
 /// A stretch of a word: plain text, or `${env:NAME}`, which the shell fills in
@@ -334,7 +337,7 @@ fn quote(pieces: &[Piece]) -> Option<String> {
 }
 
 /// `path` with `.` and `..` worked out, without touching the disk.
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {

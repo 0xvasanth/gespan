@@ -4,6 +4,8 @@
 pub(crate) struct Stripped {
     pub json: String,
     /// Saving would lose them, so writers must edit the file in place instead.
+    // `write.rs`, which lands later, is its first reader outside the tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub had_comments: bool,
 }
 
