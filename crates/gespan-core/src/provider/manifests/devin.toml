@@ -1,0 +1,26 @@
+id = "devin"
+version = 1
+min_engine_version = 1
+label = "Devin"
+binary = "devin"
+install_name = "Devin CLI"
+login_hint = "devin auth login"
+family = "acp"
+usage = "devin"
+discovery_timeout = 60
+
+[install_command]
+default = "curl -fsSL https://cli.devin.ai/install.sh | bash"
+windows = "irm https://static.devin.ai/cli/setup.ps1 | iex"
+
+[login]
+sign_in = ["auth", "login"]
+sign_out = ["auth", "logout"]
+
+# Several accounts, told apart by label only: the CLI has no profile home.
+[accounts]
+
+[features]
+side_threads = true
+rewind = false
+raw_slash_commands = true

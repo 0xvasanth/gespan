@@ -39,6 +39,7 @@ mod hold_tests;
 mod kind;
 mod lifecycle;
 mod limits;
+pub mod manifest;
 mod opencode;
 mod parked;
 mod pi;

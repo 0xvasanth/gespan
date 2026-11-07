@@ -1,0 +1,19 @@
+id = "grok"
+version = 1
+min_engine_version = 1
+label = "Grok Build"
+binary = "grok"
+install_dirs = [".grok/bin"]
+install_name = "Grok Build CLI"
+install_command = "curl -fsSL https://x.ai/cli/install.sh | bash"
+login_hint = "grok login"
+family = "acp"
+discovery_timeout = 15
+
+[login]
+sign_in = ["login", "--oauth"]
+
+[features]
+side_threads = true
+rewind = false
+raw_slash_commands = false

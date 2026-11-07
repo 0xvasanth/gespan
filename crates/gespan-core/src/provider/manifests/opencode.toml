@@ -1,0 +1,19 @@
+id = "opencode"
+version = 1
+min_engine_version = 1
+label = "OpenCode"
+binary = "opencode"
+install_dirs = [".opencode/bin"]
+install_name = "OpenCode CLI"
+login_hint = "opencode auth login"
+family = "opencode"
+usage = "opencode"
+discovery_timeout = 60
+
+[features]
+side_threads = true
+rewind = true
+raw_slash_commands = false
+
+[features.steer]
+ack_timeout = 30

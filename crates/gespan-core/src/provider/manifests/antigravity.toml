@@ -1,0 +1,15 @@
+id = "antigravity"
+version = 1
+min_engine_version = 1
+label = "Antigravity"
+binary = "agy_acp_server.par"
+install_dirs = [".local/share/agy-acp"]
+install_name = "Antigravity ACP server (agy_acp_server.par)"
+login_hint = "agy"
+family = "acp"
+# No discovery_timeout: probes wait as long as they take.
+
+[features]
+side_threads = false
+rewind = false
+raw_slash_commands = false

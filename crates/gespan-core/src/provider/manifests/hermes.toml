@@ -1,0 +1,19 @@
+id = "hermes"
+version = 1
+min_engine_version = 1
+label = "Hermes Agent"
+binary = "hermes"
+install_dirs = [".hermes/hermes-agent/venv/bin", ".hermes/hermes-agent/.venv/bin"]
+install_name = "Hermes Agent CLI"
+install_command = "Install from hermes-agent.nousresearch.com, then run hermes model"
+login_hint = "hermes model"
+family = "acp"
+discovery_timeout = 30
+
+[features]
+side_threads = false
+rewind = false
+raw_slash_commands = false
+
+[features.steer]
+ack_timeout = 20

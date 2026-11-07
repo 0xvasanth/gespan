@@ -1,0 +1,19 @@
+id = "omp"
+version = 1
+min_engine_version = 1
+label = "omp"
+binary = "omp"
+install_name = "omp CLI"
+install_command = "curl -fsSL https://omp.sh/install | sh"
+login_hint = "omp"
+family = "pi"
+# omp keeps its own sign-ins, which Pi's usage reader does not know.
+discovery_timeout = 45
+
+[features]
+side_threads = true
+rewind = true
+raw_slash_commands = true
+
+[features.steer]
+ack_timeout = 15

@@ -1,0 +1,26 @@
+id = "codex"
+version = 1
+min_engine_version = 1
+label = "Codex"
+binary = "codex"
+install_name = "Codex CLI"
+login_hint = "codex login"
+family = "codex"
+usage = "codex"
+discovery_timeout = 60
+
+[login]
+sign_in = ["login"]
+sign_out = ["logout"]
+
+[accounts.profile]
+vars = ["CODEX_HOME"]
+default_dir = ".codex"
+clear = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
+
+[features]
+side_threads = true
+rewind = true
+raw_slash_commands = false
+
+[features.steer]
