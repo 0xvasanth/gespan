@@ -165,6 +165,36 @@ jobs:
         run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - if: env.RUN == 'true'
         run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
+      # herdr-link's real-server tests run the pinned herdr release. Windows has
+      # no herdr, and those tests are unix-only.
+      - if: env.RUN == 'true' && runner.os != 'Windows'
+        name: Fetch the pinned herdr
+        shell: bash
+        run: |
+          bun run scripts/fetch-herdr.mjs --asset host --out "$RUNNER_TEMP/herdr"
+          echo "HERDR_TEST_BINARY=$RUNNER_TEMP/herdr" >> "$GITHUB_ENV"
+      # A real sshd on this runner and a herdr server in the default session,
+      # for the SSH bridge test: key-only login, as Gespan does it.
+      - if: env.RUN == 'true' && runner.os == 'Linux'
+        name: Start a local sshd and herdr
+        run: |
+          sudo apt-get install --no-install-recommends -y openssh-server
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh ~/.local/bin
+          chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan localhost >> ~/.ssh/known_hosts
+          install -m 755 "$HERDR_TEST_BINARY" ~/.local/bin/herdr
+          nohup ~/.local/bin/herdr server > "$RUNNER_TEMP/herdr-server.log" 2>&1 &
+          # Wait through ssh for the server, the way Gespan will reach it.
+          for _ in $(seq 50); do
+            ssh -o BatchMode=yes localhost '"$HOME/.local/bin/herdr" --session default remote-api-bridge --check' && break
+            sleep 0.2
+          done
+          ssh -o BatchMode=yes localhost '"$HOME/.local/bin/herdr" --session default remote-api-bridge --check'
+          echo "HERDR_SSHD_TARGET=localhost" >> "$GITHUB_ENV"
       # The crates Native shares with the mobile link are root-workspace
       # members, so they run there.
       - if: env.RUN == 'true'

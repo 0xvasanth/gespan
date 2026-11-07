@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fetchHerdr } from "./fetch-herdr.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 // A stable X.Y.Z, or a prerelease: X.Y.Z-preview.N, X.Y.Z-beta or X.Y.Z-beta.N.
@@ -120,11 +121,22 @@ async function notices(directory) {
     join(directory, "material-icons.LICENSE"),
   );
 }
-export async function linuxTree(directory, binary, kind) {
+// The herdr that ships with Linux packages: GESPAN_HERDR_BINARY if set (an
+// offline or already-fetched copy), else the pinned release for `arch`.
+async function linuxHerdr(work, arch) {
+  if (process.env.GESPAN_HERDR_BINARY) return resolve(process.env.GESPAN_HERDR_BINARY);
+  return fetchHerdr({ asset: `linux-${arch}`, out: join(work, "herdr") });
+}
+
+export async function linuxTree(directory, binary, kind, herdr) {
   const app = join(directory, "usr/lib/gespan");
   await mkdir(app, { recursive: true });
   await cp(binary, join(app, "gespan-gpui"));
   await chmod(join(app, "gespan-gpui"), 0o755);
+  if (herdr) {
+    await cp(herdr, join(app, "herdr"));
+    await chmod(join(app, "herdr"), 0o755);
+  }
   await writeFile(
     join(app, "native-install.json"),
     JSON.stringify({ app_id: "dev.gespan.native", kind }),
@@ -285,8 +297,9 @@ export async function packageNative({
       await submit(dmg, dmg);
     }
   } else if (kind === "linux") {
+    const herdr = await linuxHerdr(work, arch);
     const debRoot = join(work, "deb");
-    await linuxTree(debRoot, binary, "deb");
+    await linuxTree(debRoot, binary, "deb", herdr);
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
@@ -299,7 +312,7 @@ export async function packageNative({
       add(`gespan_${version}_amd64.deb`, "linux-x86_64-deb"),
     ]);
     const appDir = join(work, "Gespan.AppDir");
-    const { desktop } = await linuxTree(appDir, binary, "appimage");
+    const { desktop } = await linuxTree(appDir, binary, "appimage", herdr);
     await writeFile(
       join(appDir, "dev.gespan.native.desktop"),
       desktop.replace("Exec=gespan %F", "Exec=gespan-gpui %F"),
@@ -328,7 +341,7 @@ export async function packageNative({
     for (const name of ["BUILD", "RPMS", "SOURCES", "SPECS", "SRPMS"])
       await mkdir(join(top, name), { recursive: true });
     const tree = join(top, "SOURCES/tree");
-    await linuxTree(tree, binary, "rpm");
+    await linuxTree(tree, binary, "rpm", await linuxHerdr(work, arch));
     const spec = join(top, "SPECS/gespan.spec");
     await writeFile(
       spec,
