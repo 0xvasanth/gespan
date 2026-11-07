@@ -1,0 +1,34 @@
+crates/mcp-hub/tests/servers.rs
+  s_a340aecf0ab4a8::t_9611a277fdc38a 1478-1513
+crates/mcp-hub/src/grants.rs
+  s_a340aecf0ab4a8::t_9f0593034d21d7 114-118,125-128,138,175-181,409-434
+  s_a340aecf0ab4a8::t_6c873a0421c23d 119-124
+  s_a340aecf0ab4a8::t_ff14a21d8cb54a 435
+crates/gespan-core/src/tool_servers.rs
+  s_a340aecf0ab4a8::t_5edd1891843bb1 420-439
+crates/gespan-core/src/provider/opencode.rs
+  s_a340aecf0ab4a8::t_5edd1891843bb1 244-246,253,258,262-265
+  s_a340aecf0ab4a8::t_6c873a0421c23d 1095-1098
+  s_a340aecf0ab4a8::t_a81998bc7e1c62 896-903,924,1062-1094,1099-1111,1113-1116,1122-1131
+  s_a340aecf0ab4a8::t_48365089e74ab8 1112,1117-1121
+  s_a340aecf0ab4a8::t_e1870bc6aaad9b 895,1132
+crates/mcp-hub/src/endpoint.rs
+  s_a340aecf0ab4a8::t_9f0593034d21d7 171-176,532-548
+  s_a340aecf0ab4a8::t_1d98c4c244c9ea 549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "502ddd4824e8b67aedddb6390d22b826f58b9e13",
+  "prompts": {},
+  "sessions": {
+    "s_a340aecf0ab4a8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cfab9018-48c5-4af0-a69e-f70135df052f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
