@@ -17,6 +17,52 @@ pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
     command.spawn()
 }
 
+/// What an `isolate`d command started: its process group on unix, a job of
+/// its own on Windows. It outlives the command, so what the command left
+/// running can still be stopped.
+pub struct Group {
+    #[cfg(unix)]
+    pgid: i32,
+    #[cfg(windows)]
+    job: std::os::windows::io::OwnedHandle,
+}
+
+/// [`spawn`], with the [`Group`] of everything the command starts.
+pub fn spawn_group(command: &mut Command) -> std::io::Result<(std::process::Child, Group)> {
+    #[cfg(windows)]
+    {
+        let (child, job) = job::spawn_group(command)?;
+        Ok((child, Group { job }))
+    }
+    #[cfg(not(windows))]
+    {
+        let child = command.spawn()?;
+        let pgid = child.id() as i32;
+        Ok((child, Group { pgid }))
+    }
+}
+
+impl Group {
+    /// Whether anything in the group still runs. A process group's id isn't
+    /// reused while it has members.
+    pub fn alive(&self) -> bool {
+        #[cfg(unix)]
+        return unsafe { libc::kill(-self.pgid, 0) } == 0;
+        #[cfg(windows)]
+        return job::job_alive(&self.job);
+    }
+
+    /// Kills everything in the group.
+    pub fn kill(&self) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-self.pgid, libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        job::kill_job(&self.job);
+    }
+}
+
 /// Apply scheduling hints before exec so descendants inherit them.
 /// Best effort: a refused hint must not prevent a provider from launching.
 pub fn configure_child(command: &mut Command) {

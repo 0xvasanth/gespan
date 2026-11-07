@@ -3,7 +3,7 @@ use super::super::runs::{
 };
 use super::super::Action;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Long enough for a loaded CI runner; every test returns well before it.
@@ -249,6 +249,16 @@ impl Mirror for Recorder {
     }
 }
 
+/// One mirror for every test, as setting one replaces the last.
+fn recorder() -> &'static Recorder {
+    static RECORDER: LazyLock<Arc<Recorder>> = LazyLock::new(|| {
+        let recorder = Arc::new(Recorder::default());
+        set_mirror(recorder.clone());
+        recorder
+    });
+    &RECORDER
+}
+
 fn run_of(event: &RunEvent) -> &str {
     match event {
         RunEvent::Started { run_id, .. }
@@ -259,8 +269,7 @@ fn run_of(event: &RunEvent) -> &str {
 
 #[test]
 fn the_mirror_sees_started_output_finished() {
-    let recorder = Arc::new(Recorder::default());
-    set_mirror(recorder.clone());
+    let recorder = recorder();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".git")).unwrap();
     std::fs::create_dir(dir.path().join("web")).unwrap();
@@ -370,4 +379,121 @@ fn env_references_expand_for_each_shell() {
     assert_eq!(expand_env("100% sure %", true, lookup), "100% sure %");
     assert_eq!(expand_env("50%%HOME%", true, lookup), "50%/home/me");
     assert_eq!(expand_env("${HOME}", true, lookup), "${HOME}");
+}
+
+#[test]
+fn stop_kills_what_a_finished_action_left_running() {
+    let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let commands = if cfg!(windows) {
+        vec![
+            "powershell -NoProfile -Command \"(Start-Process ping -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden).Id\"".to_owned(),
+        ]
+    } else {
+        vec![
+            // Holds nothing of the run's: only the process group finds it.
+            format!("{} >/dev/null 2>&1 & echo $!", sleeper(60)),
+            // Holds the run's output open.
+            format!("{} & echo $!", sleeper(60)),
+        ]
+    };
+    for (n, command) in commands.iter().enumerate() {
+        let run = start(
+            "p",
+            &action(&format!("test:left{n}"), command, dir.path()),
+            LONG,
+        );
+        assert_eq!(run.status, Status::Exited, "{run:?}");
+        let child: u32 = run
+            .output
+            .iter()
+            .find_map(|l| l.trim().parse().ok())
+            .expect("pid printed");
+        assert!(alive(child));
+
+        let stopped = stop(&run.run_id).unwrap();
+        assert_eq!(stopped.status, Status::Stopped, "{command}: {stopped:?}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(child) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(child), "{command}: {child} outlived stop");
+    }
+}
+
+#[test]
+fn a_quoted_program_path_with_spaces_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("with space");
+    std::fs::create_dir(&folder).unwrap();
+    let tool = if cfg!(windows) {
+        let tool = folder.join("tool.cmd");
+        std::fs::write(&tool, "@echo [%~1]\r\n").unwrap();
+        tool
+    } else {
+        let tool = folder.join("tool.sh");
+        std::fs::write(&tool, "#!/bin/sh\nprintf '[%s]\\n' \"$1\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        tool
+    };
+    let command = format!("\"{}\" \"a b\"", tool.display());
+    let report = start("p", &action("test:quoted", &command, dir.path()), LONG);
+    assert_eq!(report.exit_code, Some(0), "{report:?}");
+    assert_eq!(trimmed(&report), ["[a b]"]);
+}
+
+#[test]
+fn concurrent_starts_of_one_action_share_a_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = action("test:concurrent", &sleeper(30), dir.path());
+    let ids: Vec<String> = std::thread::scope(|scope| {
+        let starts: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| start("p", &run, Duration::ZERO).run_id))
+            .collect();
+        starts.into_iter().map(|s| s.join().unwrap()).collect()
+    });
+    assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
+    stop(&ids[0]).unwrap();
+}
+
+/// What a finished action left running may still print. The run keeps it, but
+/// the mirror has been told the run finished and hears nothing more.
+#[cfg(unix)]
+#[test]
+fn the_mirror_hears_nothing_after_finished() {
+    let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
+    let recorder = recorder();
+    let dir = tempfile::tempdir().unwrap();
+    let command = "(sleep 1; echo late) & echo early";
+    let run = start("p", &action("test:late", command, dir.path()), LONG);
+    assert_eq!(run.status, Status::Exited, "{run:?}");
+    let deadline = Instant::now() + LONG;
+    let mut lines = run.output.clone();
+    while !lines.iter().any(|l| l == "late") && Instant::now() < deadline {
+        lines.extend(
+            output(&run.run_id, Duration::from_millis(50))
+                .unwrap()
+                .output,
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(lines, ["early", "late"]);
+    // Time for anything sent to reach the mirror.
+    std::thread::sleep(Duration::from_millis(300));
+    let events = recorder.0.lock().unwrap();
+    let kinds: Vec<&str> = events
+        .iter()
+        .filter(|e| run_of(e) == run.run_id)
+        .map(|e| match e {
+            RunEvent::Started { .. } => "started",
+            RunEvent::Output { .. } => "output",
+            RunEvent::Finished { .. } => "finished",
+        })
+        .collect();
+    assert_eq!(kinds.last(), Some(&"finished"), "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| **k == "finished").count(), 1);
 }

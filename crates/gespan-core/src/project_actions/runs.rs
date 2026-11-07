@@ -7,6 +7,7 @@
 //! The app registers a [`Mirror`] to show runs in dock tabs. Without one, runs
 //! are only captured.
 use super::Action;
+use crate::process::Group;
 use serde::Serialize;
 use std::{
     collections::VecDeque,
@@ -150,8 +151,11 @@ struct Run {
     cwd: PathBuf,
     state: Mutex<State>,
     changed: Condvar,
-    child: Mutex<Option<Child>>,
+    /// Set once spawned. The group outlives the shell, for what it left running.
+    process: Mutex<Option<(Child, Group)>>,
     stopping: AtomicBool,
+    /// Cleared when the mirror is told the run finished; nothing follows it.
+    mirrored: Mutex<bool>,
 }
 
 struct State {
@@ -180,8 +184,9 @@ impl Run {
                 open_pipes: 0,
             }),
             changed: Condvar::new(),
-            child: Mutex::new(None),
+            process: Mutex::new(None),
             stopping: AtomicBool::new(false),
+            mirrored: Mutex::new(true),
         }
     }
 
@@ -204,6 +209,16 @@ impl Run {
         }
         state.lines.push_back(line);
         state.pushed += 1;
+    }
+
+    fn mirror_output(&self, bytes: &[u8]) {
+        let mirrored = lock(&self.mirrored);
+        if *mirrored {
+            emit(RunEvent::Output {
+                run_id: self.id.clone(),
+                bytes: bytes.to_vec(),
+            });
+        }
     }
 
     /// Waits until the run ends or `wait` passes.
@@ -252,29 +267,50 @@ impl Run {
         state.status = status;
         state.exit_code = exit_code;
         drop(state);
+        let mut mirrored = lock(&self.mirrored);
+        *mirrored = false;
         emit(RunEvent::Finished {
             run_id: self.id.clone(),
             status,
             exit_code,
         });
+        drop(mirrored);
         self.changed.notify_all();
     }
 
+    /// Kills the run's whole group, even after the shell itself has exited:
+    /// what it left running still belongs to the run. A run whose group is
+    /// gone is left as it ended. One stopped after it finished reports
+    /// `Stopped` from then on; the mirror has already been told it finished.
     fn terminate(&self) {
-        if !self.running() {
+        let mut process = lock(&self.process);
+        let Some((child, group)) = process.as_mut() else {
+            // Not spawned yet: `launch` stops it as soon as it is.
+            self.stopping.store(true, Ordering::SeqCst);
+            return;
+        };
+        let running = self.running();
+        if !running && !group.alive() {
             return;
         }
         self.stopping.store(true, Ordering::SeqCst);
-        if let Some(child) = lock(&self.child).as_mut() {
+        group.kill();
+        if running {
             crate::process::terminate(child);
+            return;
         }
+        drop(process);
+        self.state().status = Status::Stopped;
+        self.changed.notify_all();
     }
 }
 
 /// Starts `action` and waits until it exits or `wait` passes. If the same
-/// action is already running in the same folder, that run is returned instead,
-/// with its kept lines.
+/// action is already running in the same folder, that run is returned at once,
+/// ignoring `wait`, with every line it has kept.
 pub fn start(project: &str, action: &Action, wait: Duration) -> Report {
+    // Built before the lock: the first build reads the login shell's PATH.
+    let command = command(action);
     let run = {
         let mut registry = lock(&RUNS);
         let live = registry
@@ -286,14 +322,15 @@ pub fn start(project: &str, action: &Action, wait: Duration) -> Report {
             drop(registry);
             return run.report(true);
         }
+        // Reserved under the lock, so a second start of the same action finds
+        // this run; it is spawned after.
         registry.next += 1;
         let run = Arc::new(Run::new(format!("run-{}", registry.next), action));
-        // Under the lock, so a second start of the same action finds this run.
-        launch(&run, project, action);
         registry.runs.push(run.clone());
         registry.evict();
         run
     };
+    launch(&run, project, action, command);
     run.wait(wait);
     run.report(false)
 }
@@ -305,7 +342,8 @@ pub fn output(run_id: &str, wait: Duration) -> Result<Report, String> {
     Ok(run.report(false))
 }
 
-/// Kills the run with everything it started, and reports how it ended.
+/// Kills the run with everything it started, even what it left running after
+/// it exited, and reports how it ended.
 pub fn stop(run_id: &str) -> Result<Report, String> {
     let run = lock(&RUNS).find(run_id)?;
     run.terminate();
@@ -313,7 +351,7 @@ pub fn stop(run_id: &str) -> Result<Report, String> {
     Ok(run.report(false))
 }
 
-/// Kills every running action, for when Gespan quits.
+/// Kills every run and what it left running, for when Gespan quits.
 pub fn stop_all() {
     let runs: Vec<_> = lock(&RUNS).runs.clone();
     for run in runs {
@@ -321,14 +359,7 @@ pub fn stop_all() {
     }
 }
 
-fn launch(run: &Arc<Run>, project: &str, action: &Action) {
-    emit(RunEvent::Started {
-        run_id: run.id.clone(),
-        project: project.to_owned(),
-        checkout: checkout(&action.cwd),
-        label: action.label.clone(),
-        command: action.command.clone(),
-    });
+fn command(action: &Action) -> Command {
     let mut command = shell(&action.command);
     command
         .current_dir(&action.cwd)
@@ -343,14 +374,22 @@ fn launch(run: &Arc<Run>, project: &str, action: &Action) {
         );
     }
     crate::process::isolate(&mut command);
-    let mut child = match crate::process::spawn(&mut command) {
-        Ok(child) => child,
+    command
+}
+
+fn launch(run: &Arc<Run>, project: &str, action: &Action, mut command: Command) {
+    emit(RunEvent::Started {
+        run_id: run.id.clone(),
+        project: project.to_owned(),
+        checkout: checkout(&action.cwd),
+        label: action.label.clone(),
+        command: action.command.clone(),
+    });
+    let (mut child, group) = match crate::process::spawn_group(&mut command) {
+        Ok(spawned) => spawned,
         Err(error) => {
             let message = format!("Couldn't start it: {error}");
-            emit(RunEvent::Output {
-                run_id: run.id.clone(),
-                bytes: format!("{message}\r\n").into_bytes(),
-            });
+            run.mirror_output(format!("{message}\r\n").as_bytes());
             run.push(message);
             run.finish(Status::Exited, None);
             return;
@@ -370,23 +409,24 @@ fn launch(run: &Arc<Run>, project: &str, action: &Action) {
     .flatten()
     .collect();
     run.state().open_pipes = pipes.len();
-    *lock(&run.child) = Some(child);
+    *lock(&run.process) = Some((child, group));
     for pipe in pipes {
         let run = run.clone();
         std::thread::spawn(move || {
             let tee = Tee {
                 pipe,
-                run_id: run.id.clone(),
+                run: run.clone(),
             };
             crate::worktree_scripts::read_lines(tee, &mut |line| run.push(line));
             run.state().open_pipes -= 1;
             run.changed.notify_all();
         });
     }
-    let run = run.clone();
+    let waiter = run.clone();
     std::thread::spawn(move || {
+        let run = waiter;
         let exit_code = loop {
-            if let Some(child) = lock(&run.child).as_mut() {
+            if let Some((child, _)) = lock(&run.process).as_mut() {
                 match child.try_wait() {
                     Ok(Some(status)) => break status.code(),
                     Ok(None) => {}
@@ -416,22 +456,23 @@ fn launch(run: &Arc<Run>, project: &str, action: &Action) {
         };
         run.finish(status, exit_code);
     });
+    // Stopped while it was being spawned.
+    if run.stopping.load(Ordering::SeqCst) {
+        run.terminate();
+    }
 }
 
 /// Passes output through to the mirror as it is read.
 struct Tee {
     pipe: Box<dyn Read + Send>,
-    run_id: String,
+    run: Arc<Run>,
 }
 
 impl Read for Tee {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let read = self.pipe.read(buf)?;
         if read > 0 {
-            emit(RunEvent::Output {
-                run_id: self.run_id.clone(),
-                bytes: buf[..read].to_vec(),
-            });
+            self.run.mirror_output(&buf[..read]);
         }
         Ok(read)
     }
@@ -455,8 +496,11 @@ fn shell(line: &str) -> Command {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "cmd.exe".into());
         let mut command = Command::new(comspec);
-        // Raw, so Rust's quoting doesn't change what cmd sees.
-        command.arg("/C").raw_arg(line);
+        // `/S` with the line in quotes: cmd drops just those, so a quoted
+        // program path keeps its quotes. Raw, so Rust's quoting stays out.
+        command
+            .args(["/D", "/S", "/C"])
+            .raw_arg(format!("\"{line}\""));
         command
     }
     #[cfg(not(windows))]

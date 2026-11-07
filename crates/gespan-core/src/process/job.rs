@@ -70,6 +70,25 @@ fn assign(process: RawHandle) -> io::Result<()> {
 /// Start `command` suspended, enroll it in the job, then let it run, so not
 /// even a process it starts at once can escape. Keeps `isolate`'s flags.
 pub(super) fn spawn(command: &mut Command) -> io::Result<Child> {
+    spawn_in(command, None)
+}
+
+/// [`spawn`], also enrolled in a job of its own, so everything it starts can
+/// be found and stopped after it exits.
+pub(super) fn spawn_group(command: &mut Command) -> io::Result<(Child, OwnedHandle)> {
+    // SAFETY: an owned handle or an error.
+    let own = unsafe {
+        let raw = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        OwnedHandle::from_raw_handle(raw)
+    };
+    let child = spawn_in(command, Some(&own))?;
+    Ok((child, own))
+}
+
+fn spawn_in(command: &mut Command, own: Option<&OwnedHandle>) -> io::Result<Child> {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED,
@@ -77,12 +96,51 @@ pub(super) fn spawn(command: &mut Command) -> io::Result<Child> {
     job()?;
     command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
     let mut child = command.spawn()?;
-    if let Err(error) = assign(child.as_raw_handle()).and_then(|()| resume(child.id())) {
+    let enrolled = assign(child.as_raw_handle()).and_then(|()| match own {
+        // SAFETY: both handles are live for the call.
+        Some(own) => {
+            match unsafe { AssignProcessToJobObject(own.as_raw_handle(), child.as_raw_handle()) } {
+                0 => Err(io::Error::last_os_error()),
+                _ => Ok(()),
+            }
+        }
+        None => Ok(()),
+    });
+    if let Err(error) = enrolled.and_then(|()| resume(child.id())) {
         let _ = child.kill();
         let _ = child.wait();
         return Err(error);
     }
     Ok(child)
+}
+
+/// Whether anything in `job` still runs.
+pub(super) fn job_alive(job: &OwnedHandle) -> bool {
+    use windows_sys::Win32::System::JobObjects::{
+        JobObjectBasicAccountingInformation, QueryInformationJobObject,
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    };
+    // SAFETY: `info` is sized and the handle is live.
+    unsafe {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+        QueryInformationJobObject(
+            job.as_raw_handle(),
+            JobObjectBasicAccountingInformation,
+            &mut info as *mut _ as *mut _,
+            std::mem::size_of_val(&info) as u32,
+            std::ptr::null_mut(),
+        ) != 0
+            && info.ActiveProcesses > 0
+    }
+}
+
+/// Ends everything in `job`.
+pub(super) fn kill_job(job: &OwnedHandle) {
+    use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+    // SAFETY: the handle is live.
+    unsafe {
+        TerminateJobObject(job.as_raw_handle(), 1);
+    }
 }
 
 /// Stable Rust does not expose a child's primary thread handle. The suspended
