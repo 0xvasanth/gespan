@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -45,6 +46,9 @@ pub struct SshBridge {
     /// Where the shared control socket lives; `None` means no sharing.
     pub control_dir: Option<PathBuf>,
     pub ssh: PathBuf,
+    /// Set on `ssh`, over what it would inherit; for an app whose own
+    /// environment lacks what the user's shell has, such as `SSH_AUTH_SOCK`.
+    pub env: Vec<(OsString, OsString)>,
 }
 
 impl SshBridge {
@@ -54,6 +58,7 @@ impl SshBridge {
             session: m.session.clone(),
             control_dir: default_control_dir(m),
             ssh: PathBuf::from("ssh"),
+            env: Vec::new(),
         }
     }
 
@@ -70,6 +75,7 @@ impl SshBridge {
     pub fn command(&self) -> io::Result<Command> {
         let target = self.validated_target()?;
         let mut cmd = Command::new(&self.ssh);
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
         for opt in [
             "BatchMode=yes",
             "StrictHostKeyChecking=yes",
@@ -453,6 +459,26 @@ mod tests {
     }
 
     #[test]
+    fn command_carries_the_bridge_environment() {
+        let mut b = bridge();
+        assert_eq!(b.command().unwrap().get_envs().count(), 0);
+        b.env = vec![
+            ("SSH_AUTH_SOCK".into(), "/tmp/agent.sock".into()),
+            ("PATH".into(), "/opt/homebrew/bin:/usr/bin".into()),
+        ];
+        let cmd = b.command().unwrap();
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("SSH_AUTH_SOCK"),
+            Some(std::ffi::OsStr::new("/tmp/agent.sock"))
+        )));
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("PATH"),
+            Some(std::ffi::OsStr::new("/opt/homebrew/bin:/usr/bin"))
+        )));
+    }
+
+    #[test]
     fn command_runs_the_script_as_one_remote_argument() {
         let b = bridge();
         let a = args(&b.command().unwrap());
@@ -828,6 +854,18 @@ mod tests {
             let err = Client::new(b).ping().unwrap_err();
             assert!(
                 matches!(&err, Error::Ssh(SshFailure::NeedsSignIn { hint }) if hint == "ssh-add, then ssh box"),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn ssh_runs_with_the_bridge_environment() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut b = fake_ssh(dir.path(), "echo \"agent: $SSH_AUTH_SOCK\" >&2\nexit 255");
+            b.env = vec![("SSH_AUTH_SOCK".into(), "/tmp/from-the-shell".into())];
+            let err = Client::new(b).ping().unwrap_err();
+            assert!(
+                matches!(&err, Error::Ssh(SshFailure::Unreachable(why)) if why == "agent: /tmp/from-the-shell"),
                 "{err:?}"
             );
         }

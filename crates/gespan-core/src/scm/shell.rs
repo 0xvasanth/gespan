@@ -1,5 +1,6 @@
 //! GUI-launch environment for git and gh.
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -10,6 +11,9 @@ use std::{process::Stdio, sync::mpsc, time::Duration};
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 
 static LOGIN_SHELL_ENV: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+/// What is kept from the login shell's environment.
+#[cfg(not(windows))]
+const LOGIN_SHELL_KEYS: [&str; 2] = ["PATH", "SSH_AUTH_SOCK"];
 
 pub(crate) fn dirs_home() -> Option<String> {
     #[cfg(windows)]
@@ -184,32 +188,56 @@ fn gui_search_path_from(
 
 /// Login-shell PATH, HOME/USER/SHELL from passwd, and a UTF-8 locale.
 pub(crate) fn apply_gui_env(cmd: &mut Command) {
-    cmd.env("PATH", gui_search_path());
+    cmd.envs(gui_env());
+}
+
+/// What [`apply_gui_env`] sets, as data. May start the login shell once.
+pub(crate) fn gui_env() -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = vec![("PATH".into(), gui_search_path().into())];
+    let mut set = |key: &str, value: &str| env.push((key.into(), value.into()));
     if let Some(id) = passwd_identity() {
         if std::env::var_os("HOME").is_none() {
-            cmd.env("HOME", &id.home);
+            set("HOME", &id.home);
         }
         if std::env::var_os("USER").is_none() {
-            cmd.env("USER", &id.user);
-            cmd.env("LOGNAME", &id.user);
+            set("USER", &id.user);
+            set("LOGNAME", &id.user);
         }
         if std::env::var_os("SHELL").is_none() && !id.shell.is_empty() {
-            cmd.env("SHELL", &id.shell);
+            set("SHELL", &id.shell);
         }
     } else if let Some(home) = dirs_home() {
-        cmd.env("HOME", &home);
+        set("HOME", &home);
         if std::env::var_os("USERPROFILE").is_none() {
-            cmd.env("USERPROFILE", &home);
+            set("USERPROFILE", &home);
         }
         if std::env::var_os("USER").is_none() {
             if let Ok(username) = std::env::var("USERNAME") {
-                cmd.env("USER", username);
+                set("USER", &username);
             }
         }
     }
     if std::env::var_os("LANG").is_none() && std::env::var_os("LC_ALL").is_none() {
-        cmd.env("LANG", "en_US.UTF-8");
+        set("LANG", "en_US.UTF-8");
     }
+    env
+}
+
+/// The environment for `ssh` to a machine: [`gui_env`] plus the login
+/// shell's `SSH_AUTH_SOCK`, so an agent set up in the shell's rc (1Password,
+/// Secretive) answers as it does in a terminal. May start the login shell.
+pub(crate) fn ssh_env() -> Vec<(OsString, OsString)> {
+    ssh_env_from(gui_env(), login_shell_var("SSH_AUTH_SOCK"))
+}
+
+fn ssh_env_from(
+    mut env: Vec<(OsString, OsString)>,
+    agent: Option<String>,
+) -> Vec<(OsString, OsString)> {
+    if let Some(agent) = agent.filter(|a| !a.is_empty()) {
+        env.push(("SSH_AUTH_SOCK".into(), agent.into()));
+    }
+    env
 }
 
 pub(crate) fn which_in_path(path: &str, name: &str) -> Option<PathBuf> {
@@ -257,13 +285,17 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn login_shell_path() -> Option<String> {
+    login_shell_var("PATH")
+}
+
+fn login_shell_var(key: &str) -> Option<String> {
     let mut cache = LOGIN_SHELL_ENV.lock().ok()?;
     if cache.is_none() {
         *cache = Some(load_login_shell_env());
     }
     cache
         .as_ref()
-        .and_then(|map| map.get("PATH").cloned())
+        .and_then(|map| map.get(key).cloned())
         .filter(|value| !value.is_empty())
 }
 
@@ -330,7 +362,7 @@ fn load_unix_login_shell_env() -> HashMap<String, String> {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        if key == "PATH" && !value.is_empty() {
+        if LOGIN_SHELL_KEYS.contains(&key) && !value.is_empty() {
             map.insert(key.to_string(), value.to_string());
         }
     }
@@ -353,6 +385,39 @@ mod tests {
         assert_eq!(parts[1], PathBuf::from("/inherited/bin"));
         assert!(parts.contains(&PathBuf::from("/home/me/.local/bin")));
         assert!(parts.contains(&PathBuf::from("/opt/homebrew/bin")));
+    }
+
+    #[test]
+    fn ssh_env_adds_the_login_shell_agent_to_the_gui_env() {
+        let gui = vec![("PATH".into(), "/login/bin".into())];
+        let env = ssh_env_from(gui.clone(), Some("/Users/me/.1password/agent.sock".into()));
+        assert_eq!(env[0], gui[0], "the GUI env is kept as it is");
+        assert_eq!(
+            env[1],
+            (
+                OsString::from("SSH_AUTH_SOCK"),
+                OsString::from("/Users/me/.1password/agent.sock")
+            )
+        );
+        // Without one from the shell, ssh keeps whatever agent it inherits.
+        assert_eq!(ssh_env_from(gui.clone(), None), gui);
+        assert_eq!(ssh_env_from(gui.clone(), Some(String::new())), gui);
+    }
+
+    #[test]
+    fn gui_env_is_what_apply_gui_env_sets() {
+        let mut cmd = Command::new("true");
+        apply_gui_env(&mut cmd);
+        let applied: Vec<(OsString, OsString)> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_owned(), v?.to_owned())))
+            .collect();
+        let env = gui_env();
+        assert_eq!(applied.len(), env.len());
+        for pair in &env {
+            assert!(applied.contains(pair), "{pair:?}");
+        }
+        assert!(env.iter().any(|(k, _)| k == "PATH"));
     }
 
     #[cfg(unix)]

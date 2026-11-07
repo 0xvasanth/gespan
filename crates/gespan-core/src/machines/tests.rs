@@ -786,7 +786,7 @@ fn remote_binary_is_downloaded_verified_and_reused() {
         Ok(BUILD.to_vec())
     };
     let m = machine("m1", "me@box", true);
-    let path = prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    let path = prepare_remote_binary_with(&m, &ssh, &[], &assets_dir, &assets, &fetch).unwrap();
     assert_eq!(path, assets_dir.join("herdr-0.9.5-linux-aarch64"));
     assert_eq!(std::fs::read(&path).unwrap(), BUILD);
     let mode = std::fs::metadata(&path).unwrap().permissions().mode();
@@ -796,12 +796,12 @@ fn remote_binary_is_downloaded_verified_and_reused() {
         "-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -- me@box uname -sm\n"
     );
     // A verified copy is used again without downloading.
-    let again = prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    let again = prepare_remote_binary_with(&m, &ssh, &[], &assets_dir, &assets, &fetch).unwrap();
     assert_eq!(again, path);
     assert_eq!(fetches.load(Ordering::SeqCst), 1);
     // A damaged copy is replaced.
     std::fs::write(&path, b"damaged").unwrap();
-    prepare_remote_binary_with(&m, &ssh, &assets_dir, &assets, &fetch).unwrap();
+    prepare_remote_binary_with(&m, &ssh, &[], &assets_dir, &assets, &fetch).unwrap();
     assert_eq!(fetches.load(Ordering::SeqCst), 2);
     assert_eq!(std::fs::read(&path).unwrap(), BUILD);
 }
@@ -817,6 +817,7 @@ fn checksum_mismatch_leaves_no_file() {
     let error = prepare_remote_binary_with(
         &machine("m1", "me@box", true),
         &ssh,
+        &[],
         &assets_dir,
         &assets,
         &|_| Ok(BUILD.to_vec()),
@@ -837,6 +838,7 @@ fn unknown_platform_errors_without_downloading() {
     let error = prepare_remote_binary_with(
         &machine("m1", "me@box", true),
         &ssh,
+        &[],
         &tmp.path().join("herdr-assets"),
         &REMOTE_ASSETS,
         &|_| panic!("nothing to download"),
@@ -845,12 +847,51 @@ fn unknown_platform_errors_without_downloading() {
     assert_eq!(error, "herdr has no build for SunOS i86pc");
 }
 
+#[cfg(unix)]
+#[test]
+fn remote_binary_ssh_gets_the_given_environment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("agent");
+    let ssh = fake_herdr(
+        tmp.path(),
+        &format!(
+            "echo \"$SSH_AUTH_SOCK\" > '{}'\necho 'SunOS i86pc'",
+            log.display()
+        ),
+    );
+    let env = [(
+        OsString::from("SSH_AUTH_SOCK"),
+        OsString::from("/tmp/shell-agent"),
+    )];
+    let _ = prepare_remote_binary_with(
+        &machine("m1", "box", true),
+        &ssh,
+        &env,
+        &tmp.path().join("herdr-assets"),
+        &REMOTE_ASSETS,
+        &|_| panic!("nothing to download"),
+    );
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "/tmp/shell-agent\n");
+}
+
+#[test]
+fn machine_bridges_carry_the_gui_environment() {
+    let bridge = bridge_for(&machine("m1", "box", true));
+    assert_eq!(bridge.target, "box");
+    assert!(
+        bridge.env.iter().any(|(k, _)| k == "PATH"),
+        "{:?}",
+        bridge.env
+    );
+}
+
 #[test]
 fn hostile_target_never_reaches_ssh() {
     let tmp = tempfile::tempdir().unwrap();
     let error = prepare_remote_binary_with(
         &machine("m1", "-oProxyCommand=touch /tmp/x", true),
         Path::new("/nonexistent/ssh"),
+        &[],
         &tmp.path().join("herdr-assets"),
         &REMOTE_ASSETS,
         &|_| panic!("nothing to download"),
@@ -870,6 +911,7 @@ fn unreachable_machine_is_an_error() {
     let error = prepare_remote_binary_with(
         &machine("m1", "box", true),
         &ssh,
+        &[],
         &tmp.path().join("herdr-assets"),
         &REMOTE_ASSETS,
         &|_| panic!("nothing to download"),

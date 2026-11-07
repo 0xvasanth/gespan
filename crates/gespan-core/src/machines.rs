@@ -4,7 +4,7 @@
 //!
 //! Anything here that runs herdr or writes to disk blocks. Call it from a
 //! background task, never the UI thread.
-use crate::scm::shell::{dirs_home, gui_search_path, which_in_path};
+use crate::scm::shell::{dirs_home, gui_search_path, ssh_env, which_in_path};
 pub use herdr_link::{Agent, AgentStatus, Machine, Online, Snapshot, Workspace};
 use herdr_link::{Connection, SshBridge};
 use std::{
@@ -289,12 +289,20 @@ pub fn prepare_remote_binary(m: &Machine) -> Result<PathBuf, String> {
     let dir = data_dir()
         .ok_or("Gespan has no data folder")?
         .join("herdr-assets");
-    prepare_remote_binary_with(m, Path::new("ssh"), &dir, &REMOTE_ASSETS, &download)
+    prepare_remote_binary_with(
+        m,
+        Path::new("ssh"),
+        &ssh_env(),
+        &dir,
+        &REMOTE_ASSETS,
+        &download,
+    )
 }
 
 fn prepare_remote_binary_with(
     m: &Machine,
     ssh: &Path,
+    env: &[(OsString, OsString)],
     dir: &Path,
     assets: &[RemoteAsset],
     fetch: &dyn Fn(&str) -> Result<Vec<u8>, String>,
@@ -314,7 +322,7 @@ fn prepare_remote_binary_with(
     ]
     .map(String::from)
     .to_vec();
-    let uname = crate::cli::output(ssh, &args, &home(), SSH_TIMEOUT)
+    let uname = crate::cli::output_with_env(ssh, &args, &home(), SSH_TIMEOUT, env)
         .map_err(|e| format!("could not reach {target}: {e}"))?;
     let asset = asset_for(&uname, assets)?;
     let path = dir.join(format!("herdr-{HERDR_VERSION}-{}", asset.name));
@@ -488,6 +496,15 @@ fn write_seen(path: &Path, seen: &HashMap<String, u64>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// How Gespan reaches a machine's herdr: ssh with the user's shell
+/// environment. The login shell has already run for the machine list, so
+/// this does not wait on it again.
+fn bridge_for(m: &Machine) -> SshBridge {
+    let mut bridge = SshBridge::for_machine(m);
+    bridge.env = ssh_env();
+    bridge
+}
+
 type ListMachines = Box<dyn Fn() -> Result<Vec<Machine>, String> + Send + Sync>;
 type OnSnapshot = Box<dyn Fn(&Snapshot) + Send>;
 type Connect = Box<dyn Fn(&Machine, OnSnapshot) -> Connection + Send + Sync>;
@@ -527,7 +544,7 @@ impl Registry {
     pub fn start(on_change: impl Fn() + Send + Sync + 'static) -> Arc<Registry> {
         let registry = Self::with(
             Box::new(list_machines),
-            Box::new(|m, on_snapshot| Connection::start(SshBridge::for_machine(m), on_snapshot)),
+            Box::new(|m, on_snapshot| Connection::start(bridge_for(m), on_snapshot)),
             SeenStore::open(data_dir().as_deref()),
             on_change,
         );
