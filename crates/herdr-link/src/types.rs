@@ -84,20 +84,21 @@ pub fn parse_event(line: &str) -> Option<Event> {
     let name = value.get("event")?.as_str()?;
     let data = value.get("data").unwrap_or(&Value::Null);
     let text = |v: &Value, key: &str| Some(v.get(key)?.as_str()?.to_owned());
-    // herdr names events both `pane.agent_status_changed` and `pane_created`.
+    // Subscription events are dotted (`pane.agent_status_changed`); the other
+    // events use snake_case (`pane_created`).
     Some(match name {
         "pane.agent_status_changed" => Event::AgentStatusChanged {
             pane_id: text(data, "pane_id")?,
             workspace_id: text(data, "workspace_id")?,
             agent_status: serde_json::from_value(data.get("agent_status")?.clone()).ok()?,
         },
-        "pane_created" | "pane.created" => Event::PaneCreated {
+        "pane_created" => Event::PaneCreated {
             pane_id: text(data.get("pane")?, "pane_id")?,
         },
-        "pane_closed" | "pane.closed" => Event::PaneClosed {
+        "pane_closed" => Event::PaneClosed {
             pane_id: text(data, "pane_id")?,
         },
-        "pane.agent_detected" | "agent_detected" => Event::AgentDetected,
+        "pane_agent_detected" => Event::AgentDetected,
         other => Event::Other(other.to_owned()),
     })
 }
@@ -141,6 +142,31 @@ mod tests {
                 pane_id: "w2:p1".into()
             })
         );
+    }
+
+    #[test]
+    fn pane_closed_parses() {
+        let line = r#"{"data":{"pane_id":"w1:p1","workspace_id":"w1","type":"pane_closed"},"event":"pane_closed"}"#;
+        assert_eq!(
+            parse_event(line),
+            Some(Event::PaneClosed {
+                pane_id: "w1:p1".into()
+            })
+        );
+    }
+
+    #[test]
+    fn agent_detected_uses_snake_case_name() {
+        let line = r#"{"data":{"pane_id":"w1:p1","workspace_id":"w1","agent":"claude"},"event":"pane_agent_detected"}"#;
+        assert_eq!(parse_event(line), Some(Event::AgentDetected));
+    }
+
+    #[test]
+    fn dotted_request_tags_are_not_pane_events() {
+        for name in ["pane.created", "pane.closed", "pane.agent_detected"] {
+            let line = format!(r#"{{"data":{{"pane_id":"w1:p1"}},"event":"{name}"}}"#);
+            assert_eq!(parse_event(&line), Some(Event::Other(name.into())));
+        }
     }
 
     #[test]
