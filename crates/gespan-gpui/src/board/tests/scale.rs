@@ -1,7 +1,7 @@
 //! Windowed board columns at 1,000 cards (C6-5): only the cards in or near a
 //! column's view mount, and drops, reloads and density changes still land
 //! where the user sees them. The timing tests run with one test thread, as
-//! `test:rust` does.
+//! `test:rust` does, and alone in CI (see [`TIMED`]).
 use super::*;
 use gespan_core::board::extras::{SortKey, SortSpec};
 use gpui::{ScrollDelta, ScrollWheelEvent, TouchPhase};
@@ -496,6 +496,44 @@ fn density_toggle_remeasures_without_overlap(cx: &mut TestAppContext) {
         assert!(pair[0].bottom() <= pair[1].top());
     }
     assert_eq!(bounds[1].size.height, compact_height);
+}
+
+/// The tests here that hold work to a wall-clock budget. CI's nextest runs
+/// them with nothing else in parallel (see `.config/nextest.toml`): with every
+/// core busy, contention alone more than doubles their times.
+const TIMED: [&str; 4] = [
+    "native_load_of_1000_cards_meets_the_budget",
+    "native_open_and_filter_meet_the_budget",
+    "sync_handles_on_1000_cards_is_linear",
+    "lookup_requests_on_300_links_groups_by_card",
+];
+
+#[test]
+fn timing_tests_run_alone() {
+    let source = include_str!("scale.rs");
+    let timed: Vec<&str> = source
+        .split("\nfn ")
+        .skip(1)
+        // Spelled in two parts so this test does not match itself.
+        .filter(|body| body.contains(concat!("Instant", "::now()")))
+        .map(|body| body.split('(').next().unwrap())
+        .collect();
+    assert_eq!(
+        timed, TIMED,
+        "a test with a time budget is missing from TIMED"
+    );
+    let config = include_str!("../../../.config/nextest.toml");
+    let alone = config
+        .split("[[profile.ci.overrides]]")
+        .find(|section| section.contains("native_load_of_1000_cards_meets_the_budget"))
+        .expect("an override for the timing tests");
+    assert!(alone.contains(r#"threads-required = "num-test-threads""#));
+    for name in TIMED {
+        assert!(
+            alone.contains(&format!("test(=board::tests::scale::{name})")),
+            "{name} is not run alone in CI"
+        );
+    }
 }
 
 #[gpui::test]
