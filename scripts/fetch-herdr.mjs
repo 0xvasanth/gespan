@@ -1,6 +1,8 @@
 // Download the pinned herdr release asset and check its SHA-256.
 //   bun run scripts/fetch-herdr.mjs --asset <asset|host> --out <file>
-// `--release <file>` reads a different release list (the tests serve a local file).
+// `--reuse` keeps an existing <file> whose SHA-256 already matches.
+// `--release <file>` reads a different release list and `--timeout <ms>` shortens
+// the download limit (the tests use both).
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -17,19 +19,36 @@ export function assetForHost(platform = process.platform, arch = process.arch) {
   return `${os}-${cpu}`;
 }
 
-export async function fetchHerdr({ asset, out, release = pinned }) {
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+export async function fetchHerdr({ asset, out, release = pinned, reuse = false, timeoutMs = 120_000 }) {
   const name = asset === "host" ? assetForHost() : asset;
   const { assets } = JSON.parse(await readFile(release, "utf8"));
   const entry = assets[name];
   if (!entry)
     throw new Error(`no herdr asset named ${name}; choose one of ${Object.keys(assets).join(", ")}`);
-  const response = await fetch(entry.url);
-  if (!response.ok) throw new Error(`downloading ${entry.url} failed: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  const actual = createHash("sha256").update(bytes).digest("hex");
+  const target = resolve(out);
+  if (reuse) {
+    const existing = await readFile(target).catch(() => null);
+    if (existing && sha256(existing) === entry.sha256.toLowerCase()) {
+      await chmod(target, 0o755);
+      return target;
+    }
+  }
+  let bytes;
+  try {
+    // The signal covers the body too, so a stalled transfer is cut as well.
+    const signal = AbortSignal.timeout(timeoutMs);
+    const response = await fetch(entry.url, { signal });
+    if (!response.ok) throw new Error(`downloading ${entry.url} failed: HTTP ${response.status}`);
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    if (error.name === "TimeoutError") throw new Error(`downloading ${entry.url} timed out after ${timeoutMs} ms`);
+    throw error;
+  }
+  const actual = sha256(bytes);
   if (actual !== entry.sha256.toLowerCase())
     throw new Error(`checksum mismatch for ${name}: expected ${entry.sha256}, got ${actual}`);
-  const target = resolve(out);
   await mkdir(dirname(target), { recursive: true });
   // Write beside the target and rename, so a failed run never leaves a
   // half-written binary where a later step would pick it up.
@@ -61,7 +80,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     if (!asset || !out)
       throw new Error("usage: fetch-herdr.mjs --asset <asset|host> --out <file> [--release <file>]");
     const release = option(args, "--release");
-    console.log(await fetchHerdr({ asset, out, ...(release && { release }) }));
+    const timeout = option(args, "--timeout");
+    console.log(
+      await fetchHerdr({
+        asset,
+        out,
+        reuse: args.includes("--reuse"),
+        ...(release && { release }),
+        ...(timeout && { timeoutMs: Number(timeout) }),
+      }),
+    );
   } catch (error) {
     console.error(`fetch-herdr: ${error.message}`);
     process.exit(1);

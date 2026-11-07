@@ -78,7 +78,7 @@ test("Finder launches use development data for dev bundles and installed data fo
   }
 });
 
-test("herdr is in the bundle before the app is signed, so the signature covers it", {
+test("herdr is in the bundle and signed on its own before the bundle is", {
   skip: process.platform === "win32",
 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "gespan-bundle-herdr-"));
@@ -93,11 +93,11 @@ test("herdr is in the bundle before the app is signed, so the signature covers i
   const herdr = join(directory, "herdr-fixture");
   await writeFile(herdr, "herdr fixture");
   await chmod(herdr, 0o644);
-  // codesign records whether herdr already existed when it ran.
-  const seen = join(directory, "seen");
+  // codesign logs its arguments and whether herdr existed when it ran.
+  const log = join(directory, "codesign.log");
   for (const [name, script] of [
     ["uname", "#!/bin/sh\nprintf 'Darwin\\n'\n"],
-    ["codesign", `#!/bin/sh\nfor last do :; done\nif [ -x "$last/Contents/MacOS/herdr" ]; then echo present > ${JSON.stringify(seen)}; else echo missing > ${JSON.stringify(seen)}; fi\n`],
+    ["codesign", `#!/bin/sh\nfor last do :; done\nif [ -f "$last/Contents/MacOS/herdr" ] || [ "\${last##*/}" = herdr ]; then s=present; else s=missing; fi\necho "$s $*" >> ${JSON.stringify(log)}\n`],
   ]) {
     await writeFile(join(bin, name), script);
     await chmod(join(bin, name), 0o755);
@@ -108,17 +108,26 @@ test("herdr is in the bundle before the app is signed, so the signature covers i
       env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, ...extra },
       encoding: "utf8",
     });
-  const packaged = bundle({ GESPAN_HERDR_BINARY: herdr });
-  assert.equal(packaged.status, 0, packaged.stdout + packaged.stderr);
   const copy = join(output, "Gespan.app/Contents/MacOS/herdr");
-  assert.equal(await readFile(copy, "utf8"), "herdr fixture");
-  assert.equal(await readFile(seen, "utf8"), "present\n");
-  assert.equal((await stat(copy)).mode & 0o777, 0o755);
+  for (const [identity, flags] of [["", "--sign -"], ["Developer ID Application: Fixture", "--sign Developer ID Application: Fixture --options runtime --timestamp"]]) {
+    await writeFile(log, "");
+    const packaged = bundle({ GESPAN_HERDR_BINARY: herdr, GESPAN_NATIVE_SIGNING_IDENTITY: identity });
+    assert.equal(packaged.status, 0, packaged.stdout + packaged.stderr);
+    assert.equal(await readFile(copy, "utf8"), "herdr fixture");
+    assert.equal((await stat(copy)).mode & 0o777, 0o755);
+    const calls = (await readFile(log, "utf8")).trim().split("\n");
+    assert.equal(calls.length, 2, calls.join("\n"));
+    // herdr is signed alone, with the app's identity, then the bundle.
+    assert.equal(calls[0], `present --force ${flags} ${copy}`);
+    assert.match(calls[1], new RegExp(`^present --force ${flags.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.* ${join(output, "Gespan.app").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  }
 
-  // A development bundle needs no herdr and does not fetch one.
+  // A development bundle needs no herdr, does not fetch one and signs only the app.
   await mkdir(join(target, "native-dev"));
   await writeFile(join(target, "native-dev/gespan-gpui"), "#!/bin/sh\n");
+  await writeFile(log, "");
   const dev = bundle({ GESPAN_HERDR_BINARY: "" }, "native-dev");
   assert.equal(dev.status, 0, dev.stdout + dev.stderr);
   await assert.rejects(access(join(target, "native-dev/Gespan Dev.app/Contents/MacOS/herdr")));
+  assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 1);
 });

@@ -52,7 +52,7 @@ if [ -z "$herdr_source" ] && [ "$native_profile" = release ]; then
     *) echo "No herdr asset for this executable's architecture." >&2; exit 1 ;;
   esac
   herdr_source="$native_target/herdr-$herdr_asset"
-  node scripts/fetch-herdr.mjs --asset "$herdr_asset" --out "$herdr_source" >/dev/null
+  node scripts/fetch-herdr.mjs --reuse --asset "$herdr_asset" --out "$herdr_source" >/dev/null
 fi
 if [ -n "$herdr_source" ]; then
   cp "$herdr_source" "$native_bundle/Contents/MacOS/herdr.next"
@@ -100,9 +100,14 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 native_identity="${GESPAN_NATIVE_SIGNING_IDENTITY:--}"
+# codesign does not descend into a nested executable, so herdr is signed first
+# with the app's identity; the bundle signature then seals it.
+herdr_bundled="$native_bundle/Contents/MacOS/herdr"
 if [ "$native_identity" = - ]; then
+  [ ! -f "$herdr_bundled" ] || codesign --force --sign - "$herdr_bundled"
   codesign --force --sign - "$native_bundle"
 else
+  [ ! -f "$herdr_bundled" ] || codesign --force --sign "$native_identity" --options runtime --timestamp "$herdr_bundled"
   codesign --force --sign "$native_identity" --options runtime --timestamp \
     --entitlements crates/gespan-gpui/packaging/Entitlements.plist "$native_bundle"
 fi

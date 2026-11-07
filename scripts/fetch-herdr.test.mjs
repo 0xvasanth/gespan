@@ -123,3 +123,63 @@ test("hosts herdr does not ship for are refused by name", () => {
   assert.throws(() => assetForHost("linux", "ia32"), /no herdr asset for linux\/ia32/);
   assert.throws(() => assetForHost("freebsd", "x64"), /no herdr asset for freebsd\/x64/);
 });
+
+test("a server that never answers is cut off by the timeout", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "fetch-herdr-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sockets = new Set();
+  const server = createServer(() => {});
+  server.on("connection", (socket) => sockets.add(socket));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  });
+  const release = join(directory, "release.json");
+  await writeFile(
+    release,
+    JSON.stringify({ assets: { fake: { url: `http://127.0.0.1:${server.address().port}/herdr`, sha256: sha256("x") } } }),
+  );
+  const target = join(directory, "herdr");
+  const started = Date.now();
+  const ran = await run(["--release", release, "--asset", "fake", "--out", target, "--timeout", "300"]);
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr, /timed out after 300 ms/);
+  assert.ok(Date.now() - started < 10_000);
+  await assert.rejects(() => stat(target), { code: "ENOENT" });
+});
+
+test("--reuse keeps a matching file without downloading and replaces a stale one", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "fetch-herdr-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const body = Buffer.from("the real herdr");
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests += 1;
+    response.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const release = join(directory, "release.json");
+  await writeFile(
+    release,
+    JSON.stringify({ assets: { fake: { url: `http://127.0.0.1:${server.address().port}/herdr`, sha256: sha256(body) } } }),
+  );
+  const target = join(directory, "herdr");
+  const args = ["--release", release, "--asset", "fake", "--out", target, "--reuse"];
+
+  await writeFile(target, "stale or tampered");
+  let ran = await run(args);
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(requests, 1, "a file that does not match is downloaded again");
+  assert.deepEqual(await readFile(target), body);
+
+  ran = await run(args);
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(requests, 1, "a matching file is not downloaded again");
+
+  // Without --reuse the download always happens.
+  ran = await run(args.slice(0, -1));
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(requests, 2);
+});
