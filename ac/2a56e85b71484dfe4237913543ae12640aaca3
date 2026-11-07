@@ -1,0 +1,23 @@
+crates/mcp-hub/tests/endpoint.rs
+  s_1a076e5efe2755::t_b829236d680200 295-328
+crates/mcp-hub/src/endpoint.rs
+  s_1a076e5efe2755::t_cbd4acf646f982 623-631,635,638,645
+crates/mcp-hub/src/relay.rs
+  s_1a076e5efe2755::t_1ebe700b92de28 644-652
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac2a56e85b71484dfe4237913543ae12640aaca3",
+  "prompts": {},
+  "sessions": {
+    "s_1a076e5efe2755": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f33ae86a-a067-45f5-933e-e624baff0810",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
