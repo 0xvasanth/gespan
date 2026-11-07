@@ -285,19 +285,14 @@ impl Inner {
                     }
                 }
             }
-            Action::Ask {
-                caller,
-                upstream_id,
-                method,
-                params,
-            } => {
-                let upstream = upstream.clone();
-                let answer: Answer =
-                    Box::new(move |outcome| upstream.respond(upstream_id, outcome));
-                self.ask_agent(caller, method, params, answer);
-            }
             _ => {}
         }
+    }
+
+    /// What a session's agent said it can do when it connected.
+    pub(crate) fn capabilities_of(&self, session: i64) -> Option<Value> {
+        let info = self.peer_of(session)?.peer_info()?;
+        serde_json::to_value(&info.capabilities).ok()
     }
 
     /// Puts a server's question to a session's agent, on the call it's

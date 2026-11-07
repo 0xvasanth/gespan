@@ -157,7 +157,9 @@ fn fixture_server() {
 /// Runs as a server that speaks only protocol 2026-07-28 when the test binary
 /// is re-executed: it refuses `initialize`, wants who's asking on every
 /// request, sends notifications only on a `subscriptions/listen` stream, and
-/// asks for input by answering `input_required`.
+/// asks for input by answering `input_required`. It turns down any resource
+/// with `refused` in its URI, and keeps tool lists for `FIXTURE_TTL_MS`
+/// (none by default) in `FIXTURE_SCOPE` (`private` by default).
 #[test]
 fn sessionless_fixture_server() {
     let Some(name) = std::env::var_os(FIXTURE) else {
@@ -170,7 +172,9 @@ fn sessionless_fixture_server() {
         output.flush().unwrap();
     };
     let mut version = 1;
-    // The open stream and what it asked for.
+    let ttl: u64 = std::env::var("FIXTURE_TTL_MS").map_or(0, |ttl| ttl.parse().unwrap());
+    let scope = std::env::var("FIXTURE_SCOPE").unwrap_or_else(|_| "private".into());
+    // The open stream and what it took.
     let mut listen: Option<(Value, Value)> = None;
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
@@ -214,7 +218,10 @@ fn sessionless_fixture_server() {
                 "_meta":{"io.modelcontextprotocol/serverInfo":{"name":name,"version":"1"}},
             }),
             "subscriptions/listen" => {
-                let wanted = params["notifications"].clone();
+                let mut wanted = params["notifications"].clone();
+                if let Some(uris) = wanted["resourceSubscriptions"].as_array_mut() {
+                    uris.retain(|uri| !uri.as_str().unwrap_or("").contains("refused"));
+                }
                 send(
                     json!({"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{
                         "_meta":{"io.modelcontextprotocol/subscriptionId":id},
@@ -236,7 +243,7 @@ fn sessionless_fixture_server() {
                         |n| json!({"name":format!("extra{n}"),"inputSchema":{"type":"object"}}),
                     ),
                 );
-                json!({"resultType":"complete","tools":tools,"ttlMs":0,"cacheScope":"private"})
+                json!({"resultType":"complete","tools":tools,"ttlMs":ttl,"cacheScope":scope})
             }
             "resources/list" => {
                 json!({"resultType":"complete","resources":[{"uri":"file:///r","name":"r"}]})
@@ -245,6 +252,9 @@ fn sessionless_fixture_server() {
                 let arguments = &params["arguments"];
                 let responses = &params["inputResponses"];
                 let state = params["requestState"].as_str().unwrap_or("");
+                if arguments["quietChange"] == true {
+                    version += 1;
+                }
                 if arguments["change"] == true {
                     version += 1;
                     if let Some((open, wanted)) = &listen {
@@ -293,6 +303,7 @@ fn sessionless_fixture_server() {
                     "server":name,
                     "pid":std::process::id(),
                     "version":meta["io.modelcontextprotocol/protocolVersion"],
+                    "capabilities":meta["io.modelcontextprotocol/clientCapabilities"],
                     "listening":listen.as_ref().map(|(_, wanted)| wanted.clone()),
                 }))
             }
@@ -498,6 +509,11 @@ fn reply_of(body: &str) -> Value {
 
 impl Agent {
     fn connect(hub: &Hub, token: &Token) -> Self {
+        Self::connect_with(hub, token, json!({}))
+    }
+
+    /// An agent that says it can do `capabilities`.
+    fn connect_with(hub: &Hub, token: &Token, capabilities: Value) -> Self {
         let authority = hub.url()["http://".len()..]
             .split('/')
             .next()
@@ -508,7 +524,7 @@ impl Agent {
             bearer: token.bearer(),
             session: String::new(),
         };
-        let init = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}});
+        let init = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":capabilities,"clientInfo":{"name":"t","version":"1"}}});
         let (headers, _) = exchange(&agent, None, &init.to_string());
         agent.session = headers
             .lines()
@@ -1510,4 +1526,116 @@ fn a_credential_minted_bound_serves_only_its_caller_until_withdrawn() {
     assert!(rig.hub.holds(1, &newer), "and its successor is left alone");
     assert!(rig.hub.withdraw(1, &newer));
     assert!(!rig.hub.has_grant(1));
+}
+
+/// On this protocol a subscription is taken or turned down in the stream's
+/// acknowledgement, and one turned down fails like a refused subscribe.
+#[test]
+fn a_subscription_a_sessionless_server_turns_down_fails_for_the_agent() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    let refused = a.request(
+        "resources/subscribe",
+        json!({"uri":"hub+new:file:///refused"}),
+    );
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("turned down"), "{refused}");
+    assert!(message.contains("file:///refused"), "{refused}");
+    assert!(
+        rig.hub.running()[0].idle.is_some(),
+        "nothing holds the process open"
+    );
+    let taken = a.request("resources/subscribe", json!({"uri":"hub+new:file:///r"}));
+    assert!(taken["error"].is_null(), "{taken}");
+    let listening = a.call("new__who", json!({}))["listening"].clone();
+    assert_eq!(
+        listening["resourceSubscriptions"],
+        json!(["file:///r"]),
+        "the one turned down is asked for no more"
+    );
+    assert!(rig.hub.running()[0].idle.is_none());
+}
+
+/// A list the server says to keep a while is served from the cache until
+/// then, and asked for again after.
+#[test]
+fn a_list_is_asked_for_again_once_the_server_says_it_is_out_of_date() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut new = sessionless("new", Sharing::Shared);
+    new.env.insert("FIXTURE_TTL_MS".into(), "400".into());
+    let rig = rig(vec![new], |_| {});
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    assert_eq!(a.tools(), ["new__who"]);
+    // Changed without a word, so only the list's age can tell.
+    a.call("new__who", json!({"quietChange":true}));
+    assert_eq!(a.tools(), ["new__who"], "still fresh");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(a.tools(), ["new__extra1", "new__who"]);
+}
+
+#[test]
+fn a_list_out_of_date_starts_nothing_that_isnt_running() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut new = sessionless("new", Sharing::Shared);
+    new.env.insert("FIXTURE_TTL_MS".into(), "50".into());
+    let rig = rig(vec![new], |config| {
+        config.server_idle = Duration::from_millis(150);
+    });
+    let a = Agent::connect(&rig.hub, &rig.hub.mint(grant(1, folder.path(), &["new"])));
+    assert_eq!(a.tools(), ["new__who"]);
+    wait_until("the idle server to stop", || rig.processes.alive() == 0);
+    assert_eq!(a.tools(), ["new__who"], "the stale list is all there is");
+    assert_eq!(rig.processes.started.load(Ordering::SeqCst), 1);
+    assert_eq!(rig.processes.alive(), 0);
+}
+
+/// The host keeps tool lists past a run, and so past a sign-in: a list the
+/// server marks private is never handed to it.
+#[test]
+fn a_private_list_never_outlives_its_sign_in() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut public = sessionless("public", Sharing::Shared);
+    public.env.insert("FIXTURE_SCOPE".into(), "public".into());
+    let rig = rig(
+        vec![sessionless("private", Sharing::Shared), public],
+        |_| {},
+    );
+    let a = Agent::connect(
+        &rig.hub,
+        &rig.hub
+            .mint(grant(1, folder.path(), &["private", "public"])),
+    );
+    assert_eq!(a.tools(), ["private__who", "public__who"]);
+    assert_eq!(rig.notes.listed.load(Ordering::SeqCst), 1, "the public one");
+    rig.hub.restart("private");
+    assert_eq!(a.tools(), ["private__who", "public__who"]);
+    assert_eq!(
+        rig.processes.started.load(Ordering::SeqCst),
+        3,
+        "after a sign-in the private list is asked for again"
+    );
+}
+
+/// Each request says who's asking, so it says what that agent can do.
+#[test]
+fn a_sessionless_server_hears_what_each_agent_can_do() {
+    let folder = tempfile::tempdir().unwrap();
+    let rig = rig(vec![sessionless("new", Sharing::Shared)], |_| {});
+    let asks = Agent::connect_with(
+        &rig.hub,
+        &rig.hub.mint(grant(1, folder.path(), &["new"])),
+        json!({"elicitation":{},"sampling":{}}),
+    );
+    let plain = Agent::connect(&rig.hub, &rig.hub.mint(grant(2, folder.path(), &["new"])));
+    let told = asks.call("new__who", json!({}))["capabilities"].clone();
+    assert!(told["elicitation"].is_object(), "{told}");
+    assert!(told["sampling"].is_object(), "{told}");
+    let told = plain.call("new__who", json!({}))["capabilities"].clone();
+    assert_eq!(told, json!({}), "nothing the other agent can do");
+    assert_eq!(
+        asks.call("new__who", json!({}))["pid"],
+        plain.call("new__who", json!({}))["pid"],
+        "one process for both"
+    );
 }
