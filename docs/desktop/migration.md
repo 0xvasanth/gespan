@@ -35,6 +35,9 @@ you change a `Spec` row, change its manifest and bump the manifest's `version`.
 registry (`get(kind)`, `parse(id)`, `iter()`) rather than match on `Kind`. The
 trait's default methods still forward to the `Kind` helpers, and callers move
 over in later changes.
+provider's `Spec` row field for field, a test keeps the two in step, and
+nothing reads the manifests yet. When you change a `Spec` row, change its
+manifest and bump the manifest's `version`.
 
 ## Rendering and responsiveness
 

@@ -789,6 +789,16 @@ fn run_turn_using(
                 toolkits.insert(toolkit.to_owned());
             }
         }
+        // Exactly one of the two: both would list `actions_list` twice.
+        if tool_servers
+            && let Some(toolkit) = actions_toolkit(
+                read_only,
+                summary.cwd.starts_with("remote://"),
+                settings.orchestration_worker,
+            )
+        {
+            toolkits.insert(toolkit.to_owned());
+        }
         let mut mount = gespan_core::tool_servers::Mount {
             session: summary.id,
             worktree: settings
@@ -1788,8 +1798,36 @@ fn shlex_quote(text: &str) -> String {
     )
 }
 
+/// The one actions toolkit a turn mounts: list-only when it may not change
+/// anything. Remote projects have no local checkout to run in, and
+/// orchestration workers keep their scoped `control` workflow.
+fn actions_toolkit(read_only: bool, remote: bool, worker: bool) -> Option<&'static str> {
+    use gespan_core::tool_servers::{ACTIONS, ACTIONS_READ};
+    if remote || worker {
+        return None;
+    }
+    Some(if read_only { ACTIONS_READ } else { ACTIONS })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_plan_turn_mounts_actions_read_and_a_normal_turn_mounts_actions() {
+        use super::actions_toolkit;
+        use gespan_core::tool_servers::{ACTIONS, ACTIONS_READ};
+        assert_eq!(actions_toolkit(false, false, false), Some(ACTIONS));
+        assert_eq!(actions_toolkit(true, false, false), Some(ACTIONS_READ));
+    }
+
+    #[test]
+    fn remote_projects_and_workers_get_no_actions() {
+        use super::actions_toolkit;
+        for read_only in [false, true] {
+            assert_eq!(actions_toolkit(read_only, true, false), None);
+            assert_eq!(actions_toolkit(read_only, false, true), None);
+        }
+    }
+
     #[test]
     fn only_a_prompt_ended_by_one_error_can_be_replayed() {
         use super::{FailedTurn, failed_turn};
