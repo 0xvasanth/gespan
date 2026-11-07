@@ -57,17 +57,8 @@ impl SshBridge {
         }
     }
 
-    /// The target, if it cannot be mistaken for an ssh option or carry
-    /// control characters (same rule as herdr's own ssh commands).
     fn validated_target(&self) -> io::Result<&str> {
-        let t = self.target.as_str();
-        if t.is_empty() || t.starts_with('-') || t.chars().any(char::is_control) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid SSH target",
-            ));
-        }
-        Ok(t)
+        validate_target(&self.target)
     }
 
     /// The socket to share, if the control directory is safe to use.
@@ -153,6 +144,18 @@ fn fnv1a(parts: &[&str]) -> u64 {
         }
     }
     h
+}
+
+/// The target, if it cannot be mistaken for an ssh option or carry
+/// control characters (same rule as herdr's own ssh commands).
+pub fn validate_target(target: &str) -> io::Result<&str> {
+    if target.is_empty() || target.starts_with('-') || target.chars().any(char::is_control) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid SSH target",
+        ));
+    }
+    Ok(target)
 }
 
 /// The control directory for a machine under `base`. Named from the machine
@@ -585,6 +588,15 @@ mod tests {
             let err = b.open().err().expect("open refuses");
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{target:?}");
         }
+    }
+
+    #[test]
+    fn validate_target_is_the_bridge_rule() {
+        for target in ["-oProxyCommand=x", "", "a\nb", "a\tb"] {
+            assert!(validate_target(target).is_err(), "{target:?}");
+        }
+        assert_eq!(validate_target("me@host").unwrap(), "me@host");
+        assert_eq!(validate_target("ssh://h:22").unwrap(), "ssh://h:22");
     }
 
     #[test]
