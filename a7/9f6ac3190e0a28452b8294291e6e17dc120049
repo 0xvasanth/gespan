@@ -1,0 +1,40 @@
+crates/gespan-core/src/provider/opencode.rs
+  s_8c1168c575dc00::t_9ebe322649c550 8,242-243,246-250,253-271,275-277,282-283,286-288,290-292,295-297,301,303-307,343-354,357,364,366-373,513,522-523,547-555,558,716,903
+  s_8c1168c575dc00::t_fa5f2bd1d70321 244,251-252,294
+  s_8c1168c575dc00::t_fe816377b5fdf1 1221-1226,1354-1358,1417-1419,1424
+  s_8c1168c575dc00::t_7fd9c196dd0b89 950,958-967,987
+  s_8c1168c575dc00::t_4405bbf5f0c722 1098,1106,1128-1129,1135,1141,1143,1194-1220,1227-1353,1359-1416,1420-1423,1425-1484
+  s_8c1168c575dc00::t_95296e8a8832c3 245,293,302
+crates/gespan-core/tests/real_agents.rs
+  s_8c1168c575dc00::t_70b3a10fb00fb9 556-617
+crates/gespan-core/src/tool_servers.rs
+  s_8c1168c575dc00::t_9ebe322649c550 464-471
+crates/mcp-hub/src/lib.rs
+  s_8c1168c575dc00::t_2251dab4f19c0b 26
+crates/gespan-core/Cargo.toml
+  s_8c1168c575dc00::t_8021a0a3d6a407 24-25
+crates/gespan-core/src/provider/opencode/client_mcp.rs
+  s_8c1168c575dc00::t_fe816377b5fdf1 88-90,124-128
+  s_8c1168c575dc00::t_be84600d116a88 1-87,91-123,129-246
+crates/mcp-hub/src/relay.rs
+  s_8c1168c575dc00::t_fe816377b5fdf1 425,437-438
+  s_8c1168c575dc00::t_2251dab4f19c0b 426-434
+crates/gespan-gpui/Cargo.lock
+  s_8c1168c575dc00::t_b7fef981a02fe9 2648,8741-8756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a79f6ac3190e0a28452b8294291e6e17dc120049",
+  "prompts": {},
+  "sessions": {
+    "s_8c1168c575dc00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e73f50e9-28ae-4595-ae10-7726ec71608f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
