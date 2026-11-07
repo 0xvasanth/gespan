@@ -553,3 +553,65 @@ fn kiro_reaches_the_tools_over_http_and_its_shell_cannot_find_the_token() {
     );
     check_reach(&seen);
 }
+
+/// What OpenCode v2's shared service has mounted for `folder` right now.
+fn opencode_servers(folder: &Path) -> String {
+    let service = |args: &[&str]| {
+        let output = std::process::Command::new(installed("opencode"))
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let status = service(&["service", "status"]);
+    let url = status
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("http://127.0.0.1:") || line.starts_with("http://localhost:"))
+        .unwrap_or_else(|| panic!("no service URL in {status:?}"))
+        .trim_end_matches('/')
+        .to_owned();
+    let password = service(&["service", "get", "password"]);
+    let auth = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        format!("opencode:{}", password.trim()),
+    );
+    ureq::get(&format!("{url}/api/mcp"))
+        .query("location[directory]", &folder.to_string_lossy())
+        .set("Authorization", &format!("Basic {auth}"))
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap()
+}
+
+#[test]
+#[ignore = "a real, billed OpenCode v2 turn"]
+fn opencode_v2_reaches_the_tools_and_takes_them_away_after_the_turn() {
+    let folder = tempfile::tempdir().unwrap();
+    let session = 900_014;
+    let seen = turn(
+        Kind::OpenCode,
+        &installed("opencode"),
+        folder.path(),
+        None,
+        None,
+        mount(session, folder.path(), &[VISUAL]),
+        "This is a test of your tools. Call the tool whose name ends in visual_docs, then reply with only the word DONE.",
+    );
+    assert!(
+        seen.tools.iter().any(|name| name.contains("visual_docs")),
+        "{:?}: {}",
+        seen.tools,
+        seen.text
+    );
+    assert!(seen.text.contains("DONE"), "{}", seen.text);
+    // On 2.2 and newer the tools came over Gespan's own socket, which closed
+    // with the turn; older services were handed the endpoint and had it
+    // removed. Either way none of this session's is left behind.
+    let servers = opencode_servers(folder.path());
+    assert!(
+        !servers.contains(&format!("gespan_s{session}")),
+        "{servers}"
+    );
+}

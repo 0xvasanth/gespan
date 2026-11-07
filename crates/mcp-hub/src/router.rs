@@ -291,6 +291,17 @@ impl Router {
                 return vec![Action::Reply(roots)];
             }
         }
+        // A workspace's sessions take turns with its process, so on old
+        // protocol versions a question could reach whichever one happens to
+        // have a call in flight. It isn't offered these, and gets neither.
+        if self.reach == Reach::Workspace && method != "roots/list" {
+            let refused = refusal(
+                &id,
+                -32601,
+                format!("{method} isn't offered to a server a workspace shares"),
+            );
+            return vec![Action::Reply(refused)];
+        }
         // Old protocol versions don't say which call a request belongs to, so
         // it's known only when exactly one session has anything in flight.
         let callers: BTreeSet<_> = self.pending.values().map(|call| call.caller).collect();
@@ -497,6 +508,26 @@ mod tests {
                 method: "sampling/createMessage".into(),
                 params: json!({"maxTokens":1}),
             }]
+        );
+    }
+
+    #[test]
+    fn a_workspace_server_never_puts_a_question_to_an_agent_on_old_protocols() {
+        let mut router = Router::new(Reach::Workspace, Some("file:///work/a".into()));
+        // One call in flight: the case that used to be guessed at.
+        router.request(5, "tools/call", json!({}));
+        for method in ["sampling/createMessage", "elicitation/create"] {
+            let actions = router.inbound(json!({"id":9,"method":method,"params":{}}));
+            let [Action::Reply(reply)] = actions.as_slice() else {
+                panic!("refused, not asked or demoted: {actions:?}");
+            };
+            assert_eq!(reply["id"], 9);
+            assert_eq!(reply["error"]["code"], -32601, "{reply}");
+        }
+        // Its folder is still its own to answer.
+        let actions = router.inbound(json!({"id":3,"method":"roots/list"}));
+        assert!(
+            matches!(actions.as_slice(), [Action::Reply(reply)] if reply["result"]["roots"][0]["uri"] == "file:///work/a")
         );
     }
 

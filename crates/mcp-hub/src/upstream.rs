@@ -1179,6 +1179,8 @@ mod tests {
         Anything,
         /// Refuses `initialize`.
         New,
+        /// Takes `initialize` too, but lists the new protocol as well.
+        Both,
     }
 
     async fn server_with(
@@ -1202,14 +1204,20 @@ mod tests {
                     continue;
                 }
                 let reply = match method {
-                    "server/discover" if speaks == Speaks::New => json!({"result":{
-                        "resultType":"complete",
-                        "supportedVersions":["2026-07-28"],
-                        "capabilities":{"tools":{}},
-                        "ttlMs":0,
-                        "cacheScope":"private",
-                        "_meta":{"io.modelcontextprotocol/serverInfo":{"name":"test","version":"1"}},
-                    }}),
+                    "server/discover" if matches!(speaks, Speaks::New | Speaks::Both) => {
+                        json!({"result":{
+                            "resultType":"complete",
+                            "supportedVersions":if speaks == Speaks::Both {
+                                json!(["2025-11-25", "2026-07-28"])
+                            } else {
+                                json!(["2026-07-28"])
+                            },
+                            "capabilities":{"tools":{}},
+                            "ttlMs":0,
+                            "cacheScope":"private",
+                            "_meta":{"io.modelcontextprotocol/serverInfo":{"name":"test","version":"1"}},
+                        }})
+                    }
                     "server/discover" if speaks == Speaks::Old => {
                         json!({"error":{"code":-32601,"message":"no"}})
                     }
@@ -1386,6 +1394,32 @@ mod tests {
         assert!(answer.unwrap().unwrap().is_err());
         wait_for("the cancel", || cancelled_ids(&server.frames).len() == 1).await;
         assert!(server.upstream.users().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_that_speaks_both_versions_is_spoken_to_on_the_new_one() {
+        let server = server_with(Speaks::Both, &[], Kept::default(), |_| {
+            (
+                Vec::new(),
+                json!({"result":{"resultType":"complete","tools":[]}}),
+            )
+        })
+        .await;
+        assert!(server.upstream.sessionless());
+        server.upstream.list("tools/list", "tools").await.unwrap();
+        let methods: Vec<_> = server
+            .frames
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|frame| frame["method"].clone())
+            .collect();
+        assert_eq!(methods[0], "server/discover");
+        assert!(
+            !methods.contains(&json!("initialize")),
+            "the old handshake is never tried: {methods:?}"
+        );
+        assert!(methods.contains(&json!("tools/list")));
     }
 
     #[tokio::test(flavor = "multi_thread")]

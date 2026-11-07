@@ -489,6 +489,14 @@ impl Access {
         })
     }
 
+    /// For a relay Gespan runs itself, so the token stays in this process.
+    pub fn connection(&self) -> Connection {
+        Connection {
+            url: self.url.clone(),
+            token: self.token.secret().to_owned(),
+        }
+    }
+
     /// ACP only promises stdio MCP. An agent that advertises HTTP gets the
     /// endpoint; any other runs the relay, which alone holds the token.
     pub fn acp_servers(&self, http: bool) -> Value {
