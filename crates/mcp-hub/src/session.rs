@@ -93,6 +93,18 @@ async fn announce(context: &SubscriptionContext, listing: Listing) -> bool {
 }
 
 impl Session {
+    /// The caller of anything that acts on a server or reads from one. A
+    /// bound credential serves only calls that name its own caller; lists
+    /// aren't held to it, since a client that shares its connections lists
+    /// for all of them at once.
+    fn acting(&self, context: &RequestContext<RoleServer>) -> Result<Grant, ErrorData> {
+        let grant = caller(context)?;
+        self.inner
+            .check_caller(grant.session, &context.meta.0 .0)
+            .map_err(|message| ErrorData::invalid_request(message, None))?;
+        Ok(grant)
+    }
+
     /// A request to the server behind a name. The caller giving up stops it.
     async fn forward(
         &self,
@@ -122,7 +134,7 @@ impl Session {
         on: bool,
         context: &RequestContext<RoleServer>,
     ) -> Result<(), ErrorData> {
-        let grant = caller(context)?;
+        let grant = self.acting(context)?;
         let (server, uri) = split_resource_uri(uri)
             .ok_or_else(|| ErrorData::invalid_params("Unknown resource", None))?;
         self.inner
@@ -170,10 +182,7 @@ impl ServerHandler for Session {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let grant = caller(&context)?;
-        self.inner
-            .check_caller(grant.session, &context.meta.0 .0)
-            .map_err(|message| ErrorData::invalid_request(message, None))?;
+        let grant = self.acting(&context)?;
         let name = request.name.to_string();
         if let Some((server, tool)) = name.split_once(SEPARATOR) {
             let mut params = serde_json::to_value(&request).map_err(internal)?;
@@ -229,7 +238,7 @@ impl ServerHandler for Session {
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, ErrorData> {
-        let grant = caller(&context)?;
+        let grant = self.acting(&context)?;
         let (server, prompt) = request
             .name
             .split_once(SEPARATOR)
@@ -259,7 +268,7 @@ impl ServerHandler for Session {
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let grant = caller(&context)?;
+        let grant = self.acting(&context)?;
         let (server, uri) = split_resource_uri(&request.uri)
             .ok_or_else(|| ErrorData::invalid_params("Unknown resource", None))?;
         let mut params = serde_json::to_value(&request).map_err(internal)?;

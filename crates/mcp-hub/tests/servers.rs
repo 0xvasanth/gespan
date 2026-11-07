@@ -1436,6 +1436,36 @@ fn a_bound_credential_serves_only_calls_from_its_own_caller() {
             "{refused}"
         );
     }
+    // Whatever reaches the server is held to it, not just tool calls.
+    let theirs = json!({"client.example/conversation":"theirs"});
+    for (method, params) in [
+        (
+            "prompts/get",
+            json!({"name":"docs__greet","arguments":{"who":"x"},"_meta":theirs}),
+        ),
+        (
+            "resources/read",
+            json!({"uri":"hub+docs:file:///r","_meta":theirs}),
+        ),
+        (
+            "resources/subscribe",
+            json!({"uri":"hub+docs:file:///r","_meta":theirs}),
+        ),
+    ] {
+        let refused = agent.request(method, params);
+        assert_eq!(
+            refused["error"]["message"], "This tool credential belongs to another conversation",
+            "{method}: {refused}"
+        );
+    }
+    let mine = json!({"client.example/conversation":"mine"});
+    let read = agent.request(
+        "resources/read",
+        json!({"uri":"hub+docs:file:///r","_meta":mine}),
+    );
+    assert!(read["error"].is_null(), "{read}");
+    // A client that shares its connections lists for all of them at once.
+    assert_eq!(agent.tools(), ["docs__who"]);
     let fresh = rig.hub.mint(grant(1, folder.path(), &["docs"]));
     let agent = Agent::connect(&rig.hub, &fresh);
     let reply = agent.request("tools/call", json!({"name":"docs__who","arguments":{}}));
