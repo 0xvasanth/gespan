@@ -1626,7 +1626,7 @@ impl Pilots {
                         })
                         .child(crate::tab_tile::mark_tile(
                             &crate::tab_tile::TAB_TILE,
-                            crate::tab_tile::Face::Glass,
+                            crate::tab_tile::Face::Neutral,
                             avatar::avatar(&pilot.mascot, pilot.color, "idle", 14., true),
                         ))
                         .child(

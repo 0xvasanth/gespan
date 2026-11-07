@@ -7684,14 +7684,14 @@ impl Shell {
         .into_any_element()
     }
     /// A pane's tile: a session on its provider's colour with a white mark,
-    /// or, while it works or waits to be seen, its live mark on glass; files
-    /// and Pilots on glass.
+    /// or, while it works or waits to be seen, its live mark on a neutral
+    /// tile; files and Pilots neutral.
     fn pane_tile(&self, mark: &PaneMark, live: bool) -> (Face, AnyElement) {
         match mark {
             PaneMark::Session(provider, lit) => {
                 match lit.filter(|_| live).and_then(|id| self.tab_marks.get(&id)) {
                     Some(view) => (
-                        Face::Glass,
+                        Face::Neutral,
                         view.clone()
                             .cached(StyleRefinement::default().size(px(14.)))
                             .into_any_element(),
@@ -7699,7 +7699,18 @@ impl Shell {
                     None => (Face::provider(provider), provider_glyph(provider, 14.)),
                 }
             }
-            mark => (Face::Glass, self.pane_mark(mark, true)),
+            PaneMark::File(Some(name)) => (
+                Face::Neutral,
+                crate::file_icons::file_type_glyph(name, 14., crate::tab_tile::tile_ink()),
+            ),
+            PaneMark::File(None) => (
+                Face::Neutral,
+                icon("git-compare", 14.)
+                    .text_color(crate::tab_tile::tile_ink())
+                    .into_any_element(),
+            ),
+            // A Pilot keeps its mascot's own colours.
+            mark => (Face::Neutral, self.pane_mark(mark, true)),
         }
     }
     /// The dragged session's title, following the pointer.
