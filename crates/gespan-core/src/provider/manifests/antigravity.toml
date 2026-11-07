@@ -1,5 +1,5 @@
 id = "antigravity"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Antigravity"
 binary = "agy_acp_server.par"
@@ -14,4 +14,5 @@ side_threads = false
 rewind = false
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = false

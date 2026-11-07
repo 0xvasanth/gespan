@@ -1,5 +1,5 @@
 id = "pi"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Pi"
 binary = "pi"
@@ -15,6 +15,7 @@ side_threads = true
 rewind = true
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = false
 
 [features.steer]

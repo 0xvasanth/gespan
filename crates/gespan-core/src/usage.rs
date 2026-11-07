@@ -197,6 +197,19 @@ pub trait Source: Sync {
             "This provider's usage report cannot be read offline.",
         ))
     }
+    /// The account can bank limit resets and spend them early.
+    fn banked_resets(&self) -> bool {
+        false
+    }
+    /// Spends one banked reset; `credit` picks which, else the provider's
+    /// next. Blocking.
+    fn consume_reset(
+        &self,
+        _profile: &crate::accounts::Profile,
+        _credit: Option<&str>,
+    ) -> Result<String, String> {
+        Err("This provider has no banked resets.".into())
+    }
 }
 
 /// Whether Gespan can read usage for `kind` at all.

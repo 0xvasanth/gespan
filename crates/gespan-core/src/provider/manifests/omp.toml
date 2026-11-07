@@ -1,5 +1,5 @@
 id = "omp"
-version = 2
+version = 3
 min_engine_version = 1
 label = "omp"
 binary = "omp"
@@ -15,6 +15,7 @@ side_threads = true
 rewind = true
 raw_slash_commands = true
 attachments = true
+permission_modes = true
 text_turns = false
 
 [features.steer]

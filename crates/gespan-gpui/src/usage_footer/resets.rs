@@ -13,7 +13,7 @@ enum Command {
 
 impl UsageFooter {
     pub(super) fn has_banked_resets(&self) -> bool {
-        self.kind == Kind::Codex
+        self.kind.provider().banked_resets()
             && self.cache[index(self.kind)]
                 .snapshot
                 .as_ref()
@@ -22,7 +22,7 @@ impl UsageFooter {
     }
 
     pub(super) fn banked_resets(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.kind != Kind::Codex {
+        if !self.kind.provider().banked_resets() {
             return None;
         }
         let snapshot = self.cache[index(self.kind)].snapshot.as_ref();
@@ -267,7 +267,7 @@ impl UsageFooter {
         let Some(center) = crate::accounts::get(cx) else {
             return;
         };
-        if self.kind != Kind::Codex
+        if !self.kind.provider().banked_resets()
             || center
                 .read(cx)
                 .reset_actions
