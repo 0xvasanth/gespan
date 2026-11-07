@@ -6,7 +6,7 @@ use crate::{
     pool::Pool,
     router::{log_rank, Action},
     session::Session,
-    upstream::Upstream,
+    upstream::{Answer, Upstream},
     Grant, NoObserver, Observer, Running, ServerError, ServerSpec, Spawned, Spawner, Token,
     Toolkit,
 };
@@ -168,6 +168,20 @@ impl Inner {
         peers
     }
 
+    /// Turns away a tool call made for another caller of a bound credential.
+    pub(crate) fn check_caller(
+        &self,
+        session: i64,
+        meta: &serde_json::Map<String, Value>,
+    ) -> Result<(), String> {
+        match relock(&self.grants).bound(session) {
+            Some((key, value)) if meta.get(&key) != Some(&value) => {
+                Err("This tool credential belongs to another conversation".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn peer_of(&self, session: i64) -> Option<Peer<RoleServer>> {
         self.call_of(session)
             .map(|(peer, _)| peer)
@@ -272,21 +286,29 @@ impl Inner {
                 method,
                 params,
             } => {
-                let call = self
-                    .call_of(caller)
-                    .map(|(peer, request)| (peer, Some(request)))
-                    .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
                 let upstream = upstream.clone();
-                self.runtime.spawn(async move {
-                    let outcome = match call {
-                        Some((peer, origin)) => ask(&peer, origin, &method, params).await,
-                        None => Err("The agent that made this call has gone".to_owned()),
-                    };
-                    upstream.respond(upstream_id, outcome);
-                });
+                let answer: Answer =
+                    Box::new(move |outcome| upstream.respond(upstream_id, outcome));
+                self.ask_agent(caller, method, params, answer);
             }
             _ => {}
         }
+    }
+
+    /// Puts a server's question to a session's agent, on the call it's
+    /// making if there is one.
+    pub(crate) fn ask_agent(&self, caller: i64, method: String, params: Value, answer: Answer) {
+        let call = self
+            .call_of(caller)
+            .map(|(peer, request)| (peer, Some(request)))
+            .or_else(|| self.peer_of(caller).map(|peer| (peer, None)));
+        self.runtime.spawn(async move {
+            let outcome = match call {
+                Some((peer, origin)) => ask(&peer, origin, &method, params).await,
+                None => Err("The agent that made this call has gone".to_owned()),
+            };
+            answer(outcome);
+        });
     }
 
     pub(crate) fn watch(&self, session: i64, peer: Peer<RoleServer>) {
@@ -500,6 +522,15 @@ impl Hub {
     /// stops working.
     pub fn mint(&self, grant: Grant) -> Token {
         relock(&self.inner.grants).mint(grant)
+    }
+
+    /// Binds a session's credential to one caller of a client that shares its
+    /// connections: from now on its tool calls must carry `value` under `key`
+    /// in their `_meta`, which that client sets and its model can't, and calls
+    /// without it are turned away. A new credential starts unbound. Returns
+    /// whether the session had a live credential to bind.
+    pub fn bind(&self, session: i64, key: &str, value: Value) -> bool {
+        relock(&self.inner.grants).bind(session, key, value)
     }
 
     /// Ends a session's access, for an archived, deleted or moved session.

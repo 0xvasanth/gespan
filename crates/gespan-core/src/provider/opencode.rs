@@ -9,7 +9,8 @@ mod events;
 use client::Client;
 
 const START: &str = "agent.start.opencode";
-/// The turn's prompt may name these, and only here is v2 told apart from v1.
+/// The turn's prompt may name these, so a turn that expected them and didn't
+/// get them is told.
 const NO_TOOLS: &str = "Gespan's own tools and CLIs (visual, ticket, card, app and control) aren't available in this OpenCode session, whatever follows says. Don't look for them; tell the user if the task needs one.";
 
 enum Wire {
@@ -231,9 +232,35 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
         }
     })
 }
-fn announce_missing_tools(request: &mut Request, v2: bool) {
-    if v2 && request.settings.mount.is_some() {
+fn announce_missing_tools(request: &mut Request, mounted: bool) {
+    if !mounted && request.settings.mount.is_some() {
         request.prompt = format!("{NO_TOOLS}\n\n{}", request.prompt);
+    }
+}
+
+/// v2's service is shared by every conversation in the folder, so this
+/// session's server gets a name of its own, the session's permissions hide
+/// everyone else's, and the credential serves calls from this conversation
+/// only. A server added there lasts only while the service keeps the folder
+/// open, so each turn adds it again with a fresh credential.
+fn mount_tools_v2(
+    client: &Client,
+    mount: Option<&crate::tool_servers::Mount>,
+    conversation: &str,
+) -> Option<crate::tool_servers::Access> {
+    let mount = mount?;
+    let access = crate::tool_servers::Access::open(mount)?;
+    let name = crate::tool_servers::opencode_name(mount.session);
+    let path = client.path(&format!("/experimental/mcp/{}", client::encode(&name)));
+    let body = json!({"config":access.opencode_config()});
+    match client.request("PUT", &path, Some(body)) {
+        Ok(_) if access.bind_opencode(mount.session, conversation) => Some(access),
+        Ok(_) => None,
+        // The error stays out of the log: it may quote the token back.
+        Err(_) => {
+            tracing::warn!("OpenCode refused the tool endpoint");
+            None
+        }
     }
 }
 
@@ -440,17 +467,27 @@ pub(super) fn run(
         &request.cwd.to_string_lossy(),
         &request.settings.attachments,
     )?;
-    announce_missing_tools(&mut request, v2);
     let (client, mut server) = connect(&request, &cancel, v2)
         .inspect(|_| metrics::success(START))
         .inspect_err(start_failed)?;
-    // v1's `serve` child belongs to this conversation. v2's managed service is
-    // shared, and a server added there would hand this session's token to
-    // every other session on it, so v2 turns run without the tools.
+    // v1's `serve` child belongs to this conversation, and gets the tools
+    // before its session. v2's service is shared, so they wait for the
+    // conversation they're bound to.
     if let Some(server) = server.as_mut() {
         mount_tools(&client, &mut server.access, request.settings.mount.as_ref());
     }
     let session = client.session(&request)?;
+    let v2_access = v2
+        .then(|| mount_tools_v2(&client, request.settings.mount.as_ref(), &session))
+        .flatten();
+    let mounted = if v2 {
+        v2_access.is_some()
+    } else {
+        server
+            .as_ref()
+            .is_some_and(|server| server.access.is_some())
+    };
+    announce_missing_tools(&mut request, mounted);
     if request.provider_id.is_some() {
         let _ = client.repair_unsupported_file_turn(&session);
     }
@@ -835,6 +872,23 @@ mod tool_tests {
 
     /// A `serve` stand-in: answers `POST /mcp` with this status, and counts them.
     fn opencode(status: u16) -> (Client, mpsc::Receiver<serde_json::Value>) {
+        let (client, seen) = opencode_seen(status, false);
+        let (posted, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for (_, body) in seen {
+                if posted.send(body).is_err() {
+                    return;
+                }
+            }
+        });
+        (client, received)
+    }
+
+    /// The stand-in, keeping each request's first line with its body.
+    fn opencode_seen(
+        status: u16,
+        v2: bool,
+    ) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (posted, received) = mpsc::channel();
@@ -842,6 +896,8 @@ mod tool_tests {
             for stream in listener.incoming().flatten() {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut length = 0;
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
                 let mut line = String::new();
                 while reader.read_line(&mut line).unwrap_or(0) > 0 && !line.trim().is_empty() {
                     if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
@@ -851,7 +907,8 @@ mod tool_tests {
                 }
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
-                posted.send(serde_json::from_slice(&body).unwrap()).unwrap();
+                let body = serde_json::from_slice(&body).unwrap_or_default();
+                posted.send((first.trim().to_owned(), body)).unwrap();
                 let mut stream = stream;
                 write!(
                     stream,
@@ -860,7 +917,7 @@ mod tool_tests {
                 .unwrap();
             }
         });
-        (Client::new(url, "/work".into(), false, None), received)
+        (Client::new(url, "/work".into(), v2, None), received)
     }
 
     fn mount(session: i64) -> Mount {
@@ -947,14 +1004,115 @@ mod tool_tests {
                 settings,
             }
         };
-        let told = |mounted, v2| {
-            let mut request = request(mounted);
-            announce_missing_tools(&mut request, v2);
+        let told = |expected, mounted| {
+            let mut request = request(expected);
+            announce_missing_tools(&mut request, mounted);
             request.prompt
         };
-        assert!(told(true, true).starts_with(NO_TOOLS));
-        assert!(told(true, true).ends_with("Hello"));
-        assert_eq!(told(true, false), "Hello");
-        assert_eq!(told(false, true), "Hello");
+        assert!(told(true, false).starts_with(NO_TOOLS));
+        assert!(told(true, false).ends_with("Hello"));
+        assert_eq!(told(true, true), "Hello");
+        assert_eq!(told(false, false), "Hello");
+    }
+
+    #[test]
+    fn a_v2_session_gets_a_server_of_its_own_that_serves_only_its_conversation() {
+        let (client, seen) = opencode_seen(204, true);
+        let mount = mount(5105);
+        let access = mount_tools_v2(&client, Some(&mount), "ses_mine").unwrap();
+        let (line, body) = seen.try_recv().unwrap();
+        assert!(
+            line.starts_with("PUT /api/experimental/mcp/gespan_s5105?"),
+            "{line}"
+        );
+        assert_eq!(body["config"]["type"], "remote");
+        assert_eq!(body["config"]["oauth"], false);
+        let config = access.opencode_config();
+        assert_eq!(body["config"], config);
+        let connection = |token: &str| mcp_hub::Connection {
+            url: config["url"].as_str().unwrap().to_owned(),
+            token: token.trim_start_matches("Bearer ").to_owned(),
+        };
+        let bearer = config["headers"]["Authorization"].as_str().unwrap();
+        // OpenCode names the conversation in `_meta`; a call without it is
+        // another conversation's, or the model's own doing.
+        let refused = mcp_hub::call_tool(connection(bearer), "visual_show", json!({}));
+        assert!(
+            refused
+                .unwrap_err()
+                .contains("belongs to another conversation"),
+            "a call from elsewhere is turned away"
+        );
+    }
+
+    #[test]
+    fn each_v2_turn_mounts_again_with_a_fresh_credential() {
+        let (client, seen) = opencode_seen(204, true);
+        let mount = mount(5106);
+        let first = mount_tools_v2(&client, Some(&mount), "ses_a").unwrap();
+        let second = mount_tools_v2(&client, Some(&mount), "ses_a").unwrap();
+        assert_eq!(
+            seen.try_iter().count(),
+            2,
+            "the service may have dropped it"
+        );
+        assert!(!first.is_live(5106) && second.is_live(5106));
+    }
+
+    #[test]
+    fn a_v2_service_that_refuses_the_server_leaves_the_turn_without_tools() {
+        let (client, _seen) = opencode_seen(500, true);
+        assert!(mount_tools_v2(&client, Some(&mount(5107)), "ses_a").is_none());
+        let (client, seen) = opencode_seen(204, true);
+        assert!(mount_tools_v2(&client, None, "ses_a").is_none());
+        assert!(
+            seen.try_recv().is_err(),
+            "a turn with no tools mounts nothing"
+        );
+    }
+
+    #[test]
+    fn a_v2_session_sees_only_its_own_gespan_server() {
+        let request = |access, mounted: bool| Request {
+            kind: Kind::OpenCode,
+            binary: "unused".into(),
+            cwd: "/tmp".into(),
+            prompt: String::new(),
+            provider_id: None,
+            model: None,
+            settings: crate::agent::Settings {
+                access,
+                mount: mounted.then(|| mount(12)),
+                ..Default::default()
+            },
+        };
+        let (v2, _) = opencode_seen(204, true);
+        let rows = v2.permissions(&request(AccessMode::FullAccess, true))["permissions"].clone();
+        let rows = rows.as_array().unwrap();
+        let tail: Vec<_> = rows[rows.len() - 2..]
+            .iter()
+            .map(|row| {
+                (
+                    row["action"].as_str().unwrap(),
+                    row["effect"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(tail, [("gespan_*", "deny"), ("gespan_s12_*", "allow")]);
+        // The last match wins, so a session that asks before acting asks for its own too.
+        let asking = v2.permissions(&request(AccessMode::ReadOnly, true))["permissions"].clone();
+        assert_eq!(asking.as_array().unwrap().last().unwrap()["effect"], "ask");
+        let bare = v2.permissions(&request(AccessMode::FullAccess, false))["permissions"].clone();
+        let last = bare.as_array().unwrap().last().unwrap().clone();
+        assert_eq!(
+            last["action"], "gespan_*",
+            "with no tools, every session's are hidden"
+        );
+        assert_eq!(last["effect"], "deny");
+        let (v1, _) = opencode_seen(204, false);
+        let rows = v1
+            .permissions(&request(AccessMode::FullAccess, true))
+            .to_string();
+        assert!(!rows.contains("gespan_"), "v1's server is its own: {rows}");
     }
 }

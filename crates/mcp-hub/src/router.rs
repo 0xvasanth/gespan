@@ -58,6 +58,18 @@ pub(crate) enum Action {
     Demote { method: String },
 }
 
+/// What to do with something a server needs for one agent's call, on the
+/// sessionless protocol. The call it belongs to is known there, so even a
+/// shared process can put it to that agent.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Input {
+    /// The hub has the answer.
+    Answer(Value),
+    /// Ask the agent that made the call.
+    Ask,
+    Refuse(String),
+}
+
 fn refusal(id: &Value, code: i64, message: String) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
@@ -172,6 +184,24 @@ impl Router {
         self.subscribers.remove(uri);
         let id = self.id();
         Some(frame(id, "resources/unsubscribe", json!({"uri":uri})))
+    }
+
+    /// Every resource someone is subscribed to.
+    pub(crate) fn subscribed(&self) -> Vec<String> {
+        let mut uris: Vec<_> = self.subscribers.keys().cloned().collect();
+        uris.sort();
+        uris
+    }
+
+    /// What to do with an input a server asked for in an `input_required`.
+    pub(crate) fn input(&self, method: &str) -> Input {
+        if !SERVER_REQUESTS.contains(&method) {
+            return Input::Refuse(format!("{method} isn't available here"));
+        }
+        match (&self.root, method) {
+            (Some(uri), "roots/list") => Input::Answer(json!({"roots":[{"uri":uri}]})),
+            _ => Input::Ask,
+        }
     }
 
     /// The server refused this subscription, so nobody holds it.
@@ -333,6 +363,20 @@ mod tests {
 
     fn shared() -> Router {
         Router::new(Reach::Shared, None)
+    }
+
+    #[test]
+    fn an_input_a_server_asks_for_is_answered_asked_or_refused() {
+        let folder = Router::new(Reach::Workspace, Some("file:///work".into()));
+        assert_eq!(
+            folder.input("roots/list"),
+            Input::Answer(json!({"roots":[{"uri":"file:///work"}]}))
+        );
+        assert_eq!(folder.input("elicitation/create"), Input::Ask);
+        // Only the agent knows the roots of a process with no folder of its own.
+        assert_eq!(shared().input("roots/list"), Input::Ask);
+        assert_eq!(shared().input("sampling/createMessage"), Input::Ask);
+        assert!(matches!(shared().input("tools/call"), Input::Refuse(_)));
     }
 
     #[test]

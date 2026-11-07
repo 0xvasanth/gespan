@@ -351,6 +351,32 @@ pub enum Delivery {
     Environment,
 }
 
+/// The `_meta` key OpenCode v2 stamps on every tool call with the conversation
+/// making it. Its model can't set it.
+const OPENCODE_CONVERSATION: &str = "ai.opencode/sessionID";
+
+/// OpenCode v2's service is shared by every conversation in a folder, so each
+/// session's server there has a name of its own. No name is a prefix of
+/// another's up to the `_` OpenCode puts before each tool name.
+pub fn opencode_name(session: i64) -> String {
+    format!("{SERVER_NAME}_s{session}")
+}
+
+/// Permission rows that hide every session's server on OpenCode v2's shared
+/// service but this one's, which keeps `effect`. The last matching row wins.
+pub fn opencode_permissions(session: Option<i64>, effect: &str) -> Vec<Value> {
+    let mut rows =
+        vec![json!({"action":format!("{SERVER_NAME}_*"),"resource":"*","effect":"deny"})];
+    if let Some(session) = session {
+        rows.push(json!({
+            "action":format!("{}_*", opencode_name(session)),
+            "resource":"*",
+            "effect":effect,
+        }));
+    }
+    rows
+}
+
 pub fn delivery(kind: Kind, provider_id: Option<&str>) -> Delivery {
     use crate::provider::Family;
     match kind.family() {
@@ -423,12 +449,25 @@ impl Access {
     }
 
     pub fn opencode_server(&self) -> Value {
-        json!({"name":SERVER_NAME,"config":{
+        json!({"name":SERVER_NAME,"config":self.opencode_config()})
+    }
+
+    pub fn opencode_config(&self) -> Value {
+        json!({
             "type":"remote",
             "url":self.url,
             "headers":{"Authorization":self.token.bearer()},
             "oauth":false,
-        }})
+        })
+    }
+
+    /// Every conversation in the folder can reach a server on OpenCode v2's
+    /// service, so this credential then serves calls from `conversation` only.
+    pub fn bind_opencode(&self, session: i64, conversation: &str) -> bool {
+        hub().is_ok_and(|hub| {
+            hub.holds(session, &self.token)
+                && hub.bind(session, OPENCODE_CONVERSATION, json!(conversation))
+        })
     }
 
     /// ACP only promises stdio MCP. An agent that advertises HTTP gets the
