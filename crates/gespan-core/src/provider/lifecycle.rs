@@ -199,6 +199,7 @@ impl Protocol {
         } else {
             self.request.prompt.clone()
         };
+        tracing::debug!(target: "gespan::send", stage = "claude.prompt_written");
         write_json(
             stdin,
             json!({"type":"user","session_id":"","parent_tool_use_id":null,
@@ -218,6 +219,7 @@ impl Protocol {
         if response["subtype"] != "success" {
             tracing::warn!("Claude refused the tool endpoint");
         }
+        tracing::debug!(target: "gespan::send", stage = "claude.mcp_answered");
         self.claude.mcp = ClaudeMcp::Settled;
         self.claude_prompt(stdin)
     }

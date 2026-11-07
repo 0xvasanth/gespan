@@ -23,6 +23,9 @@ pub use commands::{
     supports_compact, NativeCommand, NativeSubcommand,
 };
 mod attachments;
+#[cfg(all(test, unix))]
+mod baseline_tests;
+mod batch;
 mod compaction;
 mod cursor_live;
 mod cursor_store;
@@ -851,6 +854,15 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
     .ok_or_else(|| format!("{} returned no model catalog", kind.label()))
 }
 
+/// Waits for the turn's workspace snapshot, which records while the provider
+/// starts. Nothing may reach the provider that lets it edit files before it.
+fn baseline_recorded(request: &Request, cancel: &AtomicBool) -> Result<(), String> {
+    match &request.settings.baseline {
+        Some(baseline) if !baseline.wait(cancel) => Err("Stopped".into()),
+        _ => Ok(()),
+    }
+}
+
 fn kiro_auth_error(detail: &str) -> String {
     signed_out::message(Kind::Kiro, &format!("{detail} {}", acp::KIRO_AUTH_HELP))
 }
@@ -908,6 +920,8 @@ fn run_operation(
         return Err("Stopped".into());
     }
     if request.kind == Kind::OpenCode {
+        // OpenCode's server takes the prompt as soon as it starts.
+        baseline_recorded(&request, &cancel)?;
         return opencode::run(request, cancel, controls, probe, compact, emit);
     }
     let controls = controls.as_ref();
@@ -1017,6 +1031,7 @@ fn launch(
             .and_then(crate::tool_servers::Access::open);
         (wire, protocol, false)
     };
+    tracing::debug!(target: "gespan::send", stage = "provider.spawned", warm);
     // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
     protocol.seed_agent_runs();
     protocol.seed_claude_tasks();
@@ -1036,6 +1051,8 @@ fn launch(
         protocol.compact = compact;
         protocol.command_probe = command_probe;
         if warm {
+            // A kept process takes the prompt with its first frame.
+            baseline_recorded(&protocol.request, cancel)?;
             if protocol.request.kind.is_acp() {
                 protocol.acp_resume_warm(&mut stdin)?;
             } else if protocol.request.kind.is_pi() {
@@ -1065,8 +1082,11 @@ fn launch(
                 json!({"type":"control_request","request_id":"native-init","request":{"subtype":"initialize"}}),
             )?;
         }
-        let mut pending_bytes = 0;
-        let mut last_emit = Instant::now();
+        // A new process has only its handshake so far; every prompt, steer
+        // or answer goes out from the loop below, after the turn's baseline.
+        baseline_recorded(&protocol.request, cancel)?;
+        let mut text_seen = false;
+        let mut batch = batch::Batch::new(Instant::now());
         let started = Instant::now();
         let mut ready_emitted = false;
         let mut interrupted = false;
@@ -1242,19 +1262,13 @@ fn launch(
                         if interrupted {
                             continue;
                         }
-                        pending_bytes += match &event {
-                            Event::Text(text) | Event::Reasoning(text) | Event::Status(text) => {
-                                text.len()
-                            }
-                            Event::Tool(tool) => tool.input.len() + tool.output.len(),
-                            Event::Approval(approval) => approval.detail.len(),
-                            Event::Question(question) => {
-                                question.items.iter().map(|q| q.prompt.len()).sum()
-                            }
-                            _ => 64,
-                        };
+                        batch.add(&event);
                         if let Event::SessionId(id) = &event {
                             protocol.request.provider_id = Some(id.clone());
+                        }
+                        if !text_seen && matches!(event, Event::Text(_)) {
+                            text_seen = true;
+                            tracing::debug!(target: "gespan::send", stage = "provider.first_text");
                         }
                         pending.push(event);
                     }
@@ -1271,12 +1285,9 @@ fn launch(
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            if !pending.is_empty()
-                && (last_emit.elapsed() >= TICK || pending_bytes >= BATCH_BYTES || protocol.done)
-            {
+            if !pending.is_empty() && batch.due(Instant::now(), protocol.done) {
                 emit(std::mem::take(&mut pending))?;
-                pending_bytes = 0;
-                last_emit = Instant::now();
+                batch.emitted(Instant::now());
             }
             // A visual publication or ticket call may arrive while the provider
             // is waiting for its tool result and therefore emits no stream events.

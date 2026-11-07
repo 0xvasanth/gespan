@@ -625,6 +625,7 @@ mod startup_log_tests {
     fn no_new_eprintln_in_gespan_gpui() {
         let allowed = [
             ("main.rs", 6),
+            ("runtime/send_latency_bench.rs", 3),
             ("shell.rs", 1),
             ("shell/sidebar_list.rs", 1),
         ];

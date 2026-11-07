@@ -1170,3 +1170,50 @@ fn git_turns_ignore_folder_edit_events() {
         ["a.txt"]
     );
 }
+
+/// Snapshots start from a copy of the checkout's index so `add -A` only
+/// hashes changed files. Entries git was told to skip would hide an edit
+/// from that copy, so those checkouts are snapshotted from HEAD instead.
+#[test]
+fn edits_to_files_git_is_told_to_skip_are_still_recorded() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let f = Fixture::new();
+        run_git(&f.repo, &["update-index", flag, "a.txt"]).unwrap();
+        f.store.begin_turn("session", f.cwd(), "first").unwrap();
+        f.write("a.txt", "edited by the agent\n");
+        f.write("new.txt", "new\n");
+        f.store.finish_turn("session", f.cwd(), "first").unwrap();
+        let files: Vec<_> = f
+            .store
+            .status("session", f.cwd())
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| (file.relative, file.status))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("a.txt".to_string(), "modified".to_string()),
+                ("new.txt".to_string(), "added".to_string())
+            ],
+            "{flag}"
+        );
+    }
+}
+
+/// The seeded copy must not change what a snapshot holds: staged, unstaged,
+/// untracked and deleted work all land in the baseline, so a turn that
+/// changes nothing shows nothing.
+#[test]
+fn a_turn_that_changes_nothing_shows_nothing_over_existing_work() {
+    let f = Fixture::new();
+    f.write("a.txt", "staged\n");
+    run_git(&f.repo, &["add", "a.txt"]).unwrap();
+    f.write("a.txt", "staged then edited\n");
+    f.write("untracked.txt", "user work\n");
+    std::fs::remove_file(f.repo.join("delete.txt")).unwrap();
+    f.store.begin_turn("session", f.cwd(), "first").unwrap();
+    f.store.finish_turn("session", f.cwd(), "first").unwrap();
+    assert!(f.store.status("session", f.cwd()).unwrap().files.is_empty());
+}

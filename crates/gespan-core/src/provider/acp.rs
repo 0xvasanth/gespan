@@ -265,6 +265,7 @@ impl Protocol {
         params: Value,
         stdin: &mut impl Write,
     ) -> Result<(), String> {
+        tracing::debug!(target: "gespan::send", stage = "acp.send", method);
         self.acp.sequence += 1;
         self.acp.stage = stage;
         self.acp.pending_method = method;

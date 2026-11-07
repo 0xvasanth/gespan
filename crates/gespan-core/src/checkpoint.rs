@@ -14,9 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::scm::{expand_home, path_to_js, MAX_TEXT_FILE_BYTES};
 
+mod baseline;
 mod folder;
 #[cfg(test)]
 mod tests;
+pub use baseline::Baseline;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -903,6 +905,51 @@ impl Drop for PrivateIndex {
     }
 }
 
+/// Copies the checkout's index to `private`. `false` leaves `private` absent,
+/// for `read-tree` to build: with no index, a split index (its shared part
+/// lives beside the original), or entries `add -A` would pass over
+/// (assume-unchanged or skip-worktree), whose changes the snapshot must keep.
+fn seed_from_checkout_index(
+    root: &Path,
+    private: &Path,
+    run: &impl Fn(&[&str]) -> Result<Vec<u8>, String>,
+) -> bool {
+    let seeded = (|| {
+        if run_git(root, &["config", "--bool", "core.splitIndex"])
+            .is_ok_and(|bytes| bytes.starts_with(b"true"))
+        {
+            return None;
+        }
+        let path = run_git(root, &["rev-parse", "--git-path", "index"]).ok()?;
+        let path = PathBuf::from(String::from_utf8(path).ok()?.trim_end_matches(['\r', '\n']));
+        let path = if path.is_absolute() {
+            path
+        } else {
+            root.join(path)
+        };
+        let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+        std::fs::copy(&path, private).ok()?;
+        // Git's racy-entry check compares each entry to the index file's
+        // mtime; the copy must keep the original's or it trusts stale stats.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(private)
+            .ok()?
+            .set_modified(modified)
+            .ok()?;
+        let listing = run(&["ls-files", "-v"]).ok()?;
+        let hidden = listing.split(|byte| *byte == b'\n').any(|line| {
+            line.first()
+                .is_some_and(|tag| tag.is_ascii_lowercase() || *tag == b'S')
+        });
+        (!hidden).then_some(())
+    })();
+    if seeded.is_none() {
+        let _ = std::fs::remove_file(private);
+    }
+    seeded.is_some()
+}
+
 pub(crate) fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
     if run_git(root, &["config", "--bool", "core.sparseCheckout"])
         .ok()
@@ -922,10 +969,15 @@ pub(crate) fn capture_workspace(root: &Path, reference: &str) -> Result<String, 
                 .env("GIT_COMMITTER_EMAIL", "checkpoint@gespan.local"),
         )
     };
-    if run_git(root, &["rev-parse", "--verify", "HEAD"]).is_ok() {
-        run(&["read-tree", "HEAD"])?;
-    } else {
-        run(&["read-tree", "--empty"])?;
+    // Starting from the checkout's own index lets `add -A` trust its stat
+    // cache and hash only changed files; from `read-tree` it rehashes every
+    // file, which takes about a minute in a repository of 200k files.
+    if !seed_from_checkout_index(root, &index.0, &run) {
+        if run_git(root, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+            run(&["read-tree", "HEAD"])?;
+        } else {
+            run(&["read-tree", "--empty"])?;
+        }
     }
     let durable = [
         "-c",
