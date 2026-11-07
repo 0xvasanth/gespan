@@ -377,13 +377,24 @@ fn read_capped(path: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
-/// A SHA-256 of `file` in `checkout`, such as `package.json`, so a caller can
-/// tell when a source changed what an action runs, like a script's body
-/// behind `bun run dev`. A file that can't be read hashes as empty.
-pub fn source_digest(checkout: &Path, file: &str) -> String {
+/// A SHA-256 over every file any source lists that is in `checkout`, read
+/// or not, such as both a `Makefile` and the `GNUmakefile` make prefers, or
+/// the `package.json` behind a saved `bun run dev`. Any change to any of them
+/// changes it, so a caller can tell when what an action runs may have changed.
+pub fn sources_digest(checkout: &Path) -> String {
     use sha2::{Digest, Sha256};
-    let text = read_capped(&checkout.join(file)).unwrap_or_default();
-    Sha256::digest(text.as_bytes())
+    let mut hash = Sha256::new();
+    for file in SOURCES.iter().flat_map(|source| source.files()) {
+        hash.update(file.as_bytes());
+        match read_capped(&checkout.join(file)) {
+            Ok(text) => {
+                hash.update([1]);
+                hash.update(Sha256::digest(text.as_bytes()));
+            }
+            Err(_) => hash.update([0]),
+        }
+    }
+    hash.finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

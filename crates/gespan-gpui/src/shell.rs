@@ -715,6 +715,8 @@ pub(crate) struct Shell {
     action_dialog: Option<actions::ActionDialog>,
     /// A short note about an action, such as where it was saved.
     action_notice: Option<SharedString>,
+    /// Counts notes shown, so only the latest one's timer clears it.
+    action_notice_seq: u64,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
     editor_menu: open_in_editor::EditorMenu,
@@ -1145,6 +1147,7 @@ impl Shell {
             ticket_drafts: HashMap::new(),
             action_dialog: None,
             action_notice: None,
+            action_notice_seq: 0,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
             editor_menu: Default::default(),
