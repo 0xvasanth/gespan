@@ -325,9 +325,17 @@ impl Pool {
             .entry(key.clone())
             .or_default()
             .clone();
-        let found = self
-            .running_or_started(&gate, key.clone(), spec, grant)
-            .await;
+        // A task of its own, so a caller that gives up can't drop a start
+        // halfway: the process would run on outside the pool and its limit.
+        // The task holds the gate, so nobody starts a second one meanwhile.
+        let start = tokio::spawn({
+            let (pool, gate, key) = (self.clone(), gate.clone(), key.clone());
+            let (spec, grant) = (spec.clone(), grant.clone());
+            async move { pool.running_or_started(&gate, key, &spec, &grant).await }
+        });
+        let found = start
+            .await
+            .unwrap_or_else(|_| Err("The server start was interrupted".to_owned()));
         let mut gates = relock(&self.starting);
         // The map's and ours, so nobody else is waiting on it.
         if gates
@@ -876,6 +884,7 @@ impl Events for PoolEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn spec(id: &str, env: &[(&str, &str)]) -> ServerSpec {
         ServerSpec {
@@ -909,6 +918,225 @@ mod tests {
             Duration::from_secs(1),
             1,
         )
+    }
+
+    /// A closed door that blocks whoever waits on it until it's opened.
+    #[derive(Default)]
+    struct Door {
+        open: Mutex<bool>,
+        turned: std::sync::Condvar,
+    }
+
+    impl Door {
+        fn open(&self) {
+            *relock(&self.open) = true;
+            self.turned.notify_all();
+        }
+
+        fn wait(&self) {
+            let mut open = relock(&self.open);
+            while !*open {
+                open = self.turned.wait(open).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+    }
+
+    /// Starts an in-memory server that answers `initialize`. The start waits
+    /// at `spawning` and the server at `answering`, so a test can give up on
+    /// a start at either point.
+    #[derive(Default)]
+    struct Held {
+        spawning: Arc<Door>,
+        answering: Arc<Door>,
+        spawns: Arc<AtomicUsize>,
+        asked: Arc<AtomicUsize>,
+        stops: Arc<AtomicUsize>,
+    }
+
+    impl Spawner for Held {
+        fn spawn(
+            &self,
+            _: &ServerSpec,
+            _: Option<&std::path::Path>,
+        ) -> std::io::Result<crate::Spawned> {
+            self.spawns.fetch_add(1, Ordering::SeqCst);
+            self.spawning.wait();
+            let (out, lines) = std::sync::mpsc::channel();
+            let stops = self.stops.clone();
+            Ok(crate::Spawned {
+                pid: 1,
+                stdin: Box::new(FakeIn {
+                    line: Vec::new(),
+                    out,
+                    answering: self.answering.clone(),
+                    asked: self.asked.clone(),
+                }),
+                stdout: Box::new(FakeOut {
+                    lines,
+                    left: Vec::new(),
+                }),
+                stop: Box::new(move || {
+                    stops.fetch_add(1, Ordering::SeqCst);
+                }),
+            })
+        }
+    }
+
+    /// The server's stdin: answers each request once its door is open.
+    struct FakeIn {
+        line: Vec<u8>,
+        out: std::sync::mpsc::Sender<Vec<u8>>,
+        answering: Arc<Door>,
+        asked: Arc<AtomicUsize>,
+    }
+
+    impl std::io::Write for FakeIn {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            for &byte in bytes {
+                if byte != b'\n' {
+                    self.line.push(byte);
+                    continue;
+                }
+                let request: Value = serde_json::from_slice(&self.line).unwrap_or_default();
+                self.line.clear();
+                let Some(id) = request.get("id").cloned() else {
+                    continue;
+                };
+                self.asked.fetch_add(1, Ordering::SeqCst);
+                self.answering.wait();
+                let answer = match request["method"].as_str() {
+                    Some("initialize") => json!({"jsonrpc":"2.0","id":id,"result":{
+                        "protocolVersion":"2025-11-25",
+                        "capabilities":{},
+                        "serverInfo":{"name":"held","version":"1"},
+                    }}),
+                    _ => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"no"}}),
+                };
+                let _ = self.out.send(format!("{answer}\n").into_bytes());
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The server's stdout: what its stdin answered, and the end once that's
+    /// gone.
+    struct FakeOut {
+        lines: std::sync::mpsc::Receiver<Vec<u8>>,
+        left: Vec<u8>,
+    }
+
+    impl std::io::Read for FakeOut {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.left.is_empty() {
+                match self.lines.recv() {
+                    Ok(line) => self.left = line,
+                    Err(_) => return Ok(0),
+                }
+            }
+            let n = buf.len().min(self.left.len());
+            buf[..n].copy_from_slice(&self.left[..n]);
+            self.left.drain(..n);
+            Ok(n)
+        }
+    }
+
+    fn held_pool(held: Held) -> Arc<Pool> {
+        let pool = Arc::new(Pool::new(
+            Arc::new(held),
+            Arc::new(NoObserver),
+            Duration::from_secs(60),
+            1,
+        ));
+        pool.set(vec![spec("a", &[])]);
+        pool
+    }
+
+    fn grant() -> Grant {
+        Grant {
+            session: 1,
+            workspace: "/w".into(),
+            toolkits: BTreeSet::new(),
+            servers: BTreeSet::from(["a".to_owned()]),
+        }
+    }
+
+    async fn until(what: &str, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "never {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Starts server `a` for a caller that gives up once `begun` holds.
+    async fn give_up_once(pool: &Arc<Pool>, begun: impl Fn() -> bool) {
+        let caller = tokio::spawn({
+            let pool = pool.clone();
+            async move { pool.upstream(&spec("a", &[]), &grant()).await }
+        });
+        until("reached the point to give up at", begun).await;
+        caller.abort();
+        assert!(caller.await.is_err_and(|ended| ended.is_cancelled()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_start_given_up_while_spawning_still_lands_in_the_pool() {
+        let held = Held::default();
+        let (spawning, spawns, stops) = (
+            held.spawning.clone(),
+            held.spawns.clone(),
+            held.stops.clone(),
+        );
+        held.answering.open();
+        let pool = held_pool(held);
+        give_up_once(&pool, || spawns.load(Ordering::SeqCst) == 1).await;
+        spawning.open();
+        until("counted the process", || pool.snapshot().len() == 1).await;
+        assert_eq!(stops.load(Ordering::SeqCst), 0, "it's kept, not stopped");
+        // The next caller gets that process rather than a second one.
+        pool.upstream(&spec("a", &[]), &grant()).await.unwrap();
+        assert_eq!(spawns.load(Ordering::SeqCst), 1);
+        pool.shutdown();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_start_given_up_during_the_handshake_still_lands_in_the_pool() {
+        let held = Held::default();
+        let (answering, asked, stops) = (
+            held.answering.clone(),
+            held.asked.clone(),
+            held.stops.clone(),
+        );
+        held.spawning.open();
+        let pool = held_pool(held);
+        give_up_once(&pool, || asked.load(Ordering::SeqCst) >= 1).await;
+        answering.open();
+        until("counted the process", || pool.snapshot().len() == 1).await;
+        assert_eq!(stops.load(Ordering::SeqCst), 0, "it's kept, not stopped");
+        pool.shutdown();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_start_given_up_for_a_server_since_withdrawn_stops_its_process() {
+        let held = Held::default();
+        let (answering, asked, stops) = (
+            held.answering.clone(),
+            held.asked.clone(),
+            held.stops.clone(),
+        );
+        held.spawning.open();
+        let pool = held_pool(held);
+        give_up_once(&pool, || asked.load(Ordering::SeqCst) >= 1).await;
+        pool.set(Vec::new());
+        answering.open();
+        until("stopped the process", || stops.load(Ordering::SeqCst) == 1).await;
+        assert!(pool.snapshot().is_empty());
     }
 
     #[test]
