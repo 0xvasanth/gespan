@@ -641,11 +641,15 @@ mod tests {
     fn a_refused_token_reaches_the_agent_as_the_hubs_own_error() {
         let (_hub, mut connection) = hub();
         connection.token = "forged".to_owned();
-        let replies = run(Link::to_hub(connection), lines(&[call(7)]));
-        assert_eq!(
-            reply_to(&replies, 7)["error"]["message"],
-            "This tool credential is not valid"
-        );
+        // The refusal once raced the hub closing the connection, so one try
+        // could pass by luck.
+        for _ in 0..20 {
+            let replies = run(Link::to_hub(connection.clone()), lines(&[call(7)]));
+            assert_eq!(
+                reply_to(&replies, 7)["error"]["message"],
+                "This tool credential is not valid"
+            );
+        }
     }
 
     #[test]

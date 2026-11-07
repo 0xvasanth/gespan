@@ -292,6 +292,40 @@ fn a_bad_token_gets_403_and_never_invites_an_oauth_sign_in() {
     }
 }
 
+/// A refusal sent before the request body arrives must not end in a reset:
+/// on Windows a reset throws away the refusal the agent hasn't read yet, and
+/// the agent sees an unreachable endpoint instead of the hub's reason.
+#[test]
+fn a_refusal_waits_for_the_body_so_the_connection_ends_cleanly() {
+    let hub = hub();
+    let url = hub.url().strip_prefix("http://").unwrap();
+    let (authority, path) = url.split_once('/').unwrap();
+    for _ in 0..20 {
+        let mut stream = TcpStream::connect(authority).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let head = format!(
+            "POST /{path} HTTP/1.1\r\nConnection: close\r\nHost: {authority}\r\nAuthorization: Bearer forged\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            INITIALIZE.len()
+        );
+        stream.write_all(head.as_bytes()).unwrap();
+        // Long enough for a hub that answers from the headers alone to have
+        // answered and stopped reading.
+        std::thread::sleep(Duration::from_millis(50));
+        stream.write_all(INITIALIZE.as_bytes()).unwrap();
+        let mut response = Vec::new();
+        let ended = stream.read_to_end(&mut response);
+        let response = String::from_utf8_lossy(&response);
+        assert!(ended.is_ok(), "{ended:?} after {response:?}");
+        assert!(response.starts_with("HTTP/1.1 403"), "{response:?}");
+        assert!(
+            response.contains("This tool credential is not valid"),
+            "{response:?}"
+        );
+    }
+}
+
 #[test]
 fn a_revoked_session_gets_a_clear_error_at_once() {
     let hub = hub();
