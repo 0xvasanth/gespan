@@ -1,0 +1,19 @@
+crates/herdr-link/src/types.rs
+  s_9844206a362899::t_40eb6d55281e85 87-88,95,98,101,147-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71dbd8962697b7e0cfd3e721ea98fdb756a4e97d",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
