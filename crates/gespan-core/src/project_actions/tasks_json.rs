@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 const ONLY_DEPENDS_ON: &str = "Only runs other tasks, which Gespan doesn't do yet";
 const DEPENDENCIES_NOT_RUN: &str = "Dependencies aren't run";
 const OUTSIDE: &str = "Runs outside the project";
+const NO_COMMAND: &str = "Has no command Gespan can run";
 
 /// The tasks in `text`, with this OS's `windows`/`osx`/`linux` overrides.
 pub(crate) fn parse(ctx: &Ctx, text: &str) -> Result<Vec<Found>, String> {
@@ -98,6 +99,10 @@ fn found(os: &str, ctx: &Ctx, task: &Map<String, Value>) -> Option<Found> {
         } else {
             found.note = Some(DEPENDENCIES_NOT_RUN.into());
         }
+    }
+    // Such as a `gulp` or `typescript` task, which only VS Code knows how to run.
+    if found.command.trim().is_empty() && found.blocked.is_none() {
+        found.blocked = Some(NO_COMMAND.into());
     }
     Some(found)
 }

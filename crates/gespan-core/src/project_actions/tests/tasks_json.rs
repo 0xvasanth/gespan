@@ -317,3 +317,34 @@ fn unknown_icon_falls_back_to_play() {
     )));
     assert_eq!(known.icon, "bug");
 }
+
+#[test]
+fn a_task_without_a_command_is_blocked() {
+    for body in [
+        r#"{ "label": "Gulp", "type": "gulp", "task": "build" }"#,
+        r#"{ "label": "Tsc", "type": "typescript", "tsconfig": "tsconfig.json" }"#,
+        r#"{ "label": "Blank", "command": "  " }"#,
+    ] {
+        let found = one(&task(body));
+        assert_eq!(
+            found.blocked.as_deref(),
+            Some("Has no command Gespan can run")
+        );
+        let action = resolved(found);
+        assert_eq!(
+            action.blocked.as_deref(),
+            Some("Has no command Gespan can run")
+        );
+    }
+    // The dependsOn reason is the more useful one, so it isn't replaced.
+    let only = one(&task(r#"{ "label": "All", "dependsOn": ["Build"] }"#));
+    assert_eq!(
+        only.blocked.as_deref(),
+        Some("Only runs other tasks, which Gespan doesn't do yet")
+    );
+    // An npm task's command comes from its script.
+    assert_eq!(
+        one(&task(r#"{ "type": "npm", "script": "test" }"#)).blocked,
+        None
+    );
+}
