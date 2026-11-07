@@ -1,0 +1,19 @@
+crates/gespan-core/src/provider/opencode.rs
+  s_b07eb861a4f982::t_ac523d542e8240 874-875,878-880,931,954,958
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "884a7eb27f2bee66d941b367c4de71db602869bd",
+  "prompts": {},
+  "sessions": {
+    "s_b07eb861a4f982": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c84baefa-0488-4d98-8537-15b7abd5c8db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
