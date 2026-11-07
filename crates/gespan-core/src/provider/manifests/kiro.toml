@@ -1,0 +1,20 @@
+id = "kiro"
+version = 1
+min_engine_version = 1
+label = "Kiro CLI"
+binary = "kiro-cli"
+install_name = "Kiro CLI"
+install_command = "curl -fsSL https://cli.kiro.dev/install | bash, then kiro-cli login"
+login_hint = "kiro-cli login"
+family = "acp"
+usage = "kiro"
+discovery_timeout = 30
+
+[login]
+sign_in = ["login"]
+sign_out = ["logout"]
+
+[features]
+side_threads = true
+rewind = false
+raw_slash_commands = false

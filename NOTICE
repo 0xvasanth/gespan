@@ -26,6 +26,15 @@ Copyright (c) 2026 mermaid-rs-renderer contributors.
 Source: https://github.com/1jehuang/mermaid-rs-renderer
 License text: docs/desktop/LICENSE-MERMAID-MIT
 
+The provider manifest loader in crates/gespan-core/src/provider/manifest.rs
+adapts the bundled-manifest table, validation and override fallback from
+herdr's agent manifests (src/detect/manifest.rs at commit
+ee5bfb5041bb3e4a49d591c72308aae3c81ecdde), copyright the herdr contributors,
+licensed under Apache-2.0. Gespan's manifests describe provider launch
+settings rather than terminal-state rules, and add no remote updates.
+Source: https://github.com/herdrdev/herdr
+License text: docs/desktop/LICENSE-HERDR-APACHE
+
 Native window and sidebar glyphs reuse the Hugeicons Stroke Rounded set
 from @hugeicons/core-free-icons 4.3.0, copyright Hugeicons, licensed under MIT.
 Source: https://github.com/hugeicons/hugeicons

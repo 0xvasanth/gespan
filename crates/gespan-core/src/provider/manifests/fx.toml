@@ -1,0 +1,19 @@
+id = "fx"
+version = 1
+min_engine_version = 1
+label = "fx"
+binary = "fx"
+install_dirs = [".fx/bin"]
+install_name = "fx CLI"
+install_command = "curl -fsSL https://fx.sh/setup.sh | bash"
+login_hint = "fx login"
+family = "acp"
+discovery_timeout = 60
+
+[login]
+sign_in = ["login", "vercel"]
+
+[features]
+side_threads = false
+rewind = false
+raw_slash_commands = false

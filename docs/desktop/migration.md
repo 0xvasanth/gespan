@@ -25,6 +25,20 @@ Provider transports use Codex app-server, Claude stream-json, OpenCode HTTP/SSE,
 ACP for Cursor/Grok/Antigravity/fx/Hermes/Devin, and Pi/omp RPC. They reuse the
 providers' CLI authentication and conversation IDs.
 
+Each provider also has a bundled TOML manifest in
+`crates/gespan-core/src/provider/manifests/`. For now it mirrors that
+provider's `Spec` row field for field, and a test keeps the two in step. When
+you change a `Spec` row, change its manifest and bump the manifest's `version`.
+
+`provider::api` builds one `Provider` per manifest into
+`ProviderRegistry::builtin()`, built once per process. New code should ask the
+registry (`get(kind)`, `parse(id)`, `iter()`) rather than match on `Kind`. The
+trait's default methods still forward to the `Kind` helpers, and callers move
+over in later changes.
+provider's `Spec` row field for field, a test keeps the two in step, and
+nothing reads the manifests yet. When you change a `Spec` row, change its
+manifest and bump the manifest's `version`.
+
 ## Rendering and responsiveness
 
 Keep provider I/O, parsing, file access and persistence off the UI thread.
