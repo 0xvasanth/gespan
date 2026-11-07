@@ -37,7 +37,7 @@ Gespan reads these fields of each task and ignores the rest.
 
 | Field | Meaning |
 | --- | --- |
-| `label` | The action's name. Required. |
+| `label` | The action's name. Required, except for `npm` tasks, which default to `npm: <script>`. |
 | `type` | `shell` (the default) runs `command` as a shell line. `process` quotes `command` and `args` as one program. `npm` runs `script` with the project's package manager. |
 | `command`, `args` | What to run. An arg can be a string or `{ "value": "..." }`. Args with spaces are quoted for you. |
 | `options.cwd` | The folder to run in, relative to the project. Default: the project root. |
@@ -51,7 +51,7 @@ Gespan reads these fields of each task and ignores the rest.
 
 ### Variables
 
-`${workspaceFolder}`, `${workspaceFolderBasename}` and `$ZED_WORKTREE_ROOT` are filled in from the folder the action runs in. `${env:NAME}` is left for the shell, which fills it in when the action runs, so Gespan never reads your environment while listing. `${env:NAME}` can't be used in `cwd`.
+`${workspaceFolder}`, `${workspaceFolderBasename}` and `$ZED_WORKTREE_ROOT` are filled in from the checkout: the project folder, or the session's worktree when it has one. `${env:NAME}` is left for the shell, which fills it in when the action runs, so Gespan never reads your environment while listing. `${env:NAME}` can't be used in `cwd`.
 
 Any other `${...}` blocks the action with "Uses ${…}, which Gespan can't fill in".
 
@@ -98,7 +98,7 @@ The same command often appears in several files, so Gespan drops repeats:
 
 **Footer.** The Actions button in the footer opens a menu with a section per source: Project, Personal, then each detected file. A long section is collapsed until you open it. Choosing an action runs it in its own terminal in the dock, in the action's folder with its environment. Running it again reuses that terminal while it sits idle at a prompt.
 
-Once you have run an action, the button shows it and runs it again with one click. That holds only while the action is unchanged: if its command, folder or environment changed, or any file Gespan reads actions from changed, such as a `package.json` script body, the button opens the menu instead. A fresh clone's button always opens the menu.
+The Actions button is split in two. The chevron always opens the menu. The main part runs the action you last ran, and shows its name. That holds only while the action is unchanged: if its command, folder or environment changed, or any file Gespan reads actions from changed, such as a `package.json` script body, the main part opens the menu instead. A fresh clone's button always opens the menu.
 
 **Command palette.** Press ⌘P (Ctrl+P), type `>`, then "Run action:" and the action's name. This runs the action from the menu as it is now.
 
@@ -109,7 +109,7 @@ Actions are not available in remote projects.
 - **Add action** in the menu opens a dialog with a name, a command and an icon. **Share with the project** is on by default and adds the action to `.gespan/tasks.json`. Turn it off to keep the action personal: it is stored in Gespan, outside the repository, and only you see it. A shared add shows "Added to .gespan/tasks.json. Commit it to share it."
 - **Edit action** changes a shared or personal action. The rest of the file, including fields Gespan doesn't read, stays as it was.
 - **Save to project** in the menu copies a detected action, such as a `package.json` script, into `.gespan/tasks.json`. It keeps the command, folder, environment, detail, icon and background flag.
-- **Comments.** Gespan edits the file as JSON and can't keep comments. If `tasks.json` has comments, Gespan won't rewrite it: the dialog says so and offers to open the file for a hand edit. A task with `args`, per-OS overrides or workspace variables is also edited by hand.
+- **Comments.** Gespan edits the file as JSON and can't keep comments. If `tasks.json` has comments, Gespan won't rewrite it: the dialog says so and offers to open the file for a hand edit. Trailing commas are not comments: Gespan rewrites such a file without them. A task with `args`, per-OS overrides or workspace variables can still be renamed, or have its icon or detail changed, in Gespan; only changing its command is done by hand in `tasks.json`.
 
 ## Agents
 
@@ -125,6 +125,7 @@ An agent session can list and run actions through four tools of the `actions` to
 How it behaves:
 
 - **`{id, command}`.** `actions_run` needs the `command` that `actions_list` showed. If the project's files changed that action since, nothing runs and the agent is told to list again. A blocked action or an unknown `id` also runs nothing.
+- **Already running.** If the same action is already running in the same folder, `actions_run` returns that run, with its id and recent output, instead of starting another.
 - **Waiting.** A run returns when it ends. After about 50 seconds, or about 5 for a background action, it returns with status `running`, and the agent follows it with `actions_output` and ends it with `actions_stop`. A run keeps its last 200 lines, each cut at 2,000 characters.
 - **Read-only and plan sessions** get `actions_list` only. They never run actions.
 - **Scoped to the checkout.** An agent lists and runs actions in its own session's checkout, the worktree if it has one, and reads output only of runs started there.
