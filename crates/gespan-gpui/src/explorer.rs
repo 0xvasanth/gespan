@@ -151,7 +151,7 @@ enum NameMode {
         is_dir: bool,
     },
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum Line {
     Note {
         depth: usize,
@@ -501,9 +501,13 @@ impl Explorer {
         if self.available() && self.expanded.contains(&self.cwd) {
             self.push_children(&self.cwd.clone(), 0, &mut lines, cx);
         }
-        let old = self.lines.len();
+        // Splice only the rows that changed: replacing every row moves the
+        // list's scroll top back to the first row on each toggle or refresh.
+        let (start, old_end, new_end) = changed_range(&self.lines, &lines);
         self.lines = lines;
-        self.list.splice(0..old, self.lines.len());
+        if old_end > start || new_end > start {
+            self.list.splice(start..old_end, new_end - start);
+        }
         cx.notify();
     }
     fn push_children(&self, parent: &str, depth: usize, lines: &mut Vec<Line>, cx: &App) {
@@ -1766,5 +1770,99 @@ impl Render for Explorer {
             )
             .children(menu)
             .into_any_element()
+    }
+}
+
+/// The smallest `old[start..old_end]` -> `new[start..new_end]` replacement
+/// that turns `old` into `new`, leaving the common prefix and suffix alone.
+fn changed_range<T: PartialEq>(old: &[T], new: &[T]) -> (usize, usize, usize) {
+    let start = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old[start..]
+        .iter()
+        .rev()
+        .zip(new[start..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (start, old.len() - suffix, new.len() - suffix)
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    #[test]
+    fn changed_range_covers_only_the_rows_that_differ() {
+        // Expanding a folder inserts its children between unchanged rows.
+        assert_eq!(changed_range(&[1, 2, 3, 4], &[1, 2, 9, 9, 3, 4]), (2, 2, 4));
+        // Collapsing one folder while another row flips.
+        assert_eq!(changed_range(&[1, 2, 5, 6, 3], &[1, 7, 3]), (1, 4, 2));
+        // A refresh that finds nothing new changes nothing.
+        assert_eq!(changed_range(&[1, 2, 3], &[1, 2, 3]), (3, 3, 3));
+        // A repeated row is not counted twice by the prefix and suffix.
+        assert_eq!(changed_range(&[1, 1], &[1, 1, 1]), (2, 2, 3));
+        assert_eq!(changed_range::<i32>(&[], &[1]), (0, 0, 1));
+        assert_eq!(changed_range(&[1], &[]), (0, 1, 0));
+    }
+
+    fn folder(root: &str, ix: usize) -> DirEntry {
+        DirEntry {
+            name: format!("dir{ix:02}"),
+            path: format!("{root}/dir{ix:02}"),
+            is_dir: true,
+            ignored: false,
+        }
+    }
+
+    #[gpui::test]
+    fn toggling_or_refreshing_below_the_top_keeps_the_scroll_position(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                let git = cx.new(|cx| ProjectGit::new("~".into(), cx));
+                cx.new(|cx| Explorer::new(git, window, cx))
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |e, _, cx| {
+                let root = "/gespan-explorer-scroll".to_string();
+                let folders: Vec<_> = (0..60).map(|ix| folder(&root, ix)).collect();
+                let opened = folders[40].path.clone();
+                e.cwd = root.clone();
+                e.expanded = HashSet::from([root.clone()]);
+                e.dirs = HashMap::from([
+                    (root.clone(), Ok(folders)),
+                    (
+                        opened.clone(),
+                        Ok(vec![folder(&opened, 0), folder(&opened, 1)]),
+                    ),
+                ]);
+                e.rebuild(cx);
+                assert_eq!(e.lines.len(), 60);
+                let top = gpui::ListOffset {
+                    item_ix: 30,
+                    offset_in_item: px(4.),
+                };
+                e.list.scroll_to(top);
+
+                e.toggle(&opened, cx);
+                assert_eq!(e.lines.len(), 62);
+                assert_eq!(e.list.item_count(), 62);
+                let at = |e: &Explorer| {
+                    let top = e.list.logical_scroll_top();
+                    (top.item_ix, top.offset_in_item)
+                };
+                let want = (top.item_ix, top.offset_in_item);
+                assert_eq!(at(e), want, "after expanding");
+
+                e.rebuild(cx);
+                assert_eq!(at(e), want, "after a refresh");
+
+                e.toggle(&opened, cx);
+                assert_eq!(e.list.item_count(), 60);
+                assert_eq!(at(e), want, "after collapsing");
+            })
+            .unwrap();
     }
 }
