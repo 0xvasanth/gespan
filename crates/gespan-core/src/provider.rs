@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 mod acp;
 mod agent_registry;
+pub mod api;
 mod commands;
 pub use commands::{
     compact, discover_commands, is_raw_command, native_invocation, native_prompt, prepare_prompt,
