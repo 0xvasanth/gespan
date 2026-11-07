@@ -201,6 +201,46 @@ struct CatalogCache {
     entries: Vec<(Kind, crate::accounts::Profile, Vec<Model>, Instant)>,
     generation: std::collections::HashMap<(Kind, crate::accounts::Profile), u64>,
 }
+impl CatalogCache {
+    /// Start a fetch. The key is recorded so a later [`invalidate_all`] can
+    /// supersede even an account's first fetch.
+    fn begin_fetch(&mut self, kind: Kind, account: &crate::accounts::Profile) -> u64 {
+        *self.generation.entry((kind, account.clone())).or_default()
+    }
+    /// Keep a finished fetch unless an invalidation happened while it ran.
+    fn finish_fetch(
+        &mut self,
+        kind: Kind,
+        account: &crate::accounts::Profile,
+        generation: u64,
+        models: Vec<Model>,
+    ) {
+        if self.generation.get(&(kind, account.clone())).copied() != Some(generation) {
+            return;
+        }
+        self.entries
+            .retain(|(k, profile, _, _)| *k != kind || profile != account);
+        self.entries
+            .push((kind, account.clone(), models, Instant::now()));
+    }
+    fn invalidate_kind(&mut self, kind: Kind) {
+        // Bump fetches still in flight too, so none stores a pre-update catalog.
+        for ((k, _), generation) in self.generation.iter_mut() {
+            if *k == kind {
+                *generation += 1;
+            }
+        }
+        self.entries.retain(|(k, ..)| *k != kind);
+    }
+    fn fresh(&self, kind: Kind, account: &crate::accounts::Profile) -> Option<&Vec<Model>> {
+        self.entries
+            .iter()
+            .find(|(k, profile, _, at)| {
+                *k == kind && profile == account && at.elapsed() < fresh_for(kind)
+            })
+            .map(|(_, _, rows, _)| rows)
+    }
+}
 fn cache() -> &'static Mutex<CatalogCache> {
     static CACHE: OnceLock<Mutex<CatalogCache>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
@@ -216,20 +256,10 @@ fn fresh_for(kind: Kind) -> Duration {
 }
 /// A CLI update changes every account's catalog for that provider.
 pub fn invalidate_all(kind: Kind) {
-    let mut cache = cache().lock().unwrap_or_else(|e| e.into_inner());
-    // Bump fetches still in flight too, so none stores a pre-update catalog.
-    let accounts: Vec<_> = cache
-        .entries
-        .iter()
-        .map(|(k, profile, ..)| (*k, profile))
-        .chain(cache.generation.keys().map(|(k, profile)| (*k, profile)))
-        .filter(|(k, _)| *k == kind)
-        .map(|(_, profile)| profile.clone())
-        .collect();
-    for account in accounts {
-        *cache.generation.entry((kind, account)).or_default() += 1;
-    }
-    cache.entries.retain(|(k, ..)| *k != kind);
+    cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .invalidate_kind(kind);
 }
 pub fn invalidate(kind: Kind, account: &crate::accounts::Profile) {
     let mut cache = cache().lock().unwrap_or_else(|e| e.into_inner());
@@ -262,17 +292,11 @@ pub fn models(kind: Kind) -> Result<Vec<Model>, String> {
 }
 pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<Model>, String> {
     let cache = cache();
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, _, rows, _)) = guard.entries.iter().find(|(k, profile, _, at)| {
-        *k == kind && profile == account && at.elapsed() < fresh_for(kind)
-    }) {
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(rows) = guard.fresh(kind, account) {
         return Ok(rows.clone());
     }
-    let generation = guard
-        .generation
-        .get(&(kind, account.clone()))
-        .copied()
-        .unwrap_or(0);
+    let generation = guard.begin_fetch(kind, account);
     drop(guard);
     let value = if kind == Kind::Fx {
         cli_json(kind, &["models", "--json"])?
@@ -376,21 +400,10 @@ pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<
     if models.is_empty() {
         return Err(format!("{} returned an empty model catalog", kind.label()));
     }
-    let mut cache = cache.lock().unwrap();
-    if cache
-        .generation
-        .get(&(kind, account.clone()))
-        .copied()
-        .unwrap_or(0)
-        == generation
-    {
-        cache
-            .entries
-            .retain(|(k, profile, _, _)| *k != kind || profile != account);
-        cache
-            .entries
-            .push((kind, account.clone(), models.clone(), Instant::now()));
-    }
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .finish_fetch(kind, account, generation, models.clone());
     Ok(models)
 }
 
@@ -926,6 +939,74 @@ mod tests {
         assert!(cached_models_for(Kind::Codex, &account).is_none());
         invalidate(Kind::Claude, &account);
         assert!(cached_models_for(Kind::Claude, &account).is_none());
+    }
+
+    fn profile(id: &str) -> crate::accounts::Profile {
+        crate::accounts::Profile {
+            id: id.into(),
+            root: None,
+        }
+    }
+
+    #[test]
+    fn a_cli_update_supersedes_an_accounts_first_fetch_still_in_flight() {
+        let mut cache = CatalogCache::default();
+        let work = profile("work");
+        // The account has never been fetched: no entry and no generation yet.
+        let generation = cache.begin_fetch(Kind::Claude, &work);
+        cache.invalidate_kind(Kind::Claude);
+        cache.finish_fetch(Kind::Claude, &work, generation, vec![model("old", "Old")]);
+        assert!(cache.fresh(Kind::Claude, &work).is_none());
+        // The next fetch, after the update, is kept.
+        let generation = cache.begin_fetch(Kind::Claude, &work);
+        cache.finish_fetch(Kind::Claude, &work, generation, vec![model("new", "New")]);
+        assert_eq!(cache.fresh(Kind::Claude, &work).unwrap()[0].id, "new");
+    }
+
+    #[test]
+    fn a_cli_update_clears_every_account_of_that_provider_only() {
+        let mut cache = CatalogCache::default();
+        let (work, home) = (profile("work"), profile("home"));
+        for (kind, account) in [
+            (Kind::Claude, &work),
+            (Kind::Claude, &home),
+            (Kind::Codex, &work),
+        ] {
+            let generation = cache.begin_fetch(kind, account);
+            cache.finish_fetch(kind, account, generation, vec![model("m", "M")]);
+        }
+        let codex_in_flight = cache.begin_fetch(Kind::Codex, &home);
+        cache.invalidate_kind(Kind::Claude);
+        assert!(cache.fresh(Kind::Claude, &work).is_none());
+        assert!(cache.fresh(Kind::Claude, &home).is_none());
+        assert!(cache.fresh(Kind::Codex, &work).is_some());
+        // Another provider's fetch in flight is not superseded.
+        cache.finish_fetch(Kind::Codex, &home, codex_in_flight, vec![model("m", "M")]);
+        assert!(cache.fresh(Kind::Codex, &home).is_some());
+    }
+
+    #[test]
+    fn claude_catalogs_stay_fresh_for_hours_so_probes_rarely_restart_the_cli() {
+        let mut cache = CatalogCache::default();
+        let account = profile("work");
+        let aged = |hours: u64| Instant::now() - Duration::from_secs(hours * 60 * 60);
+        cache.entries.push((
+            Kind::Claude,
+            account.clone(),
+            vec![model("opus", "Opus")],
+            aged(5),
+        ));
+        cache.entries.push((
+            Kind::Codex,
+            account.clone(),
+            vec![model("gpt", "GPT")],
+            aged(1),
+        ));
+        assert!(cache.fresh(Kind::Claude, &account).is_some());
+        // Other providers still refresh every five minutes.
+        assert!(cache.fresh(Kind::Codex, &account).is_none());
+        cache.entries[0].3 = aged(7);
+        assert!(cache.fresh(Kind::Claude, &account).is_none());
     }
 
     #[test]
