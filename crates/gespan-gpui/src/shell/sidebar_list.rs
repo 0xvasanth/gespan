@@ -751,7 +751,7 @@ impl Shell {
             let command = lookup.await;
             // Outside the window update, which fails once the window is
             // gone; the lookup must always be released.
-            let _ = machines.update(cx, |m, cx| {
+            machines.update(cx, |m, cx| {
                 m.end_attach(&machine, &terminal);
                 if command.is_none() {
                     m.set_herdr_found(false, cx);
