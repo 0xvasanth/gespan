@@ -633,7 +633,15 @@ impl SettingsView {
                 )
                 .into_any_element(),
         );
-        if not_bundled {
+        if self.herdr.adding {
+            page.push(
+                paragraph(format!("Preparing herdr {HERDR_VERSION}…"))
+                    .mt_2()
+                    .id("herdr-add-preparing")
+                    .debug_selector(|| "herdr-add-preparing".into())
+                    .into_any_element(),
+            );
+        } else if not_bundled {
             page.push(
                 paragraph(NOT_BUNDLED)
                     .mt_2()
@@ -912,6 +920,31 @@ mod tests {
         let machines = visual.update(|_, cx| crate::machines::get(cx).unwrap());
         let refreshed = machines.read_with(visual, |m, _| m.refreshes.clone());
         assert_eq!(refreshed, ["signin"]);
+    }
+
+    #[gpui::test]
+    fn herdr_machines_add_says_it_is_preparing_until_the_command_is_ready(cx: &mut TestAppContext) {
+        let (window, _) = window(Vec::new(), true, cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("herdr-add-preparing").is_none());
+        // Fetching the machine's build can take minutes on a slow link.
+        window
+            .update(visual, |view, _, cx| {
+                view.herdr.adding = true;
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("herdr-add-preparing").is_some());
+        window
+            .update(visual, |view, _, cx| {
+                view.herdr.adding = false;
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("herdr-add-preparing").is_none());
     }
 
     #[gpui::test]

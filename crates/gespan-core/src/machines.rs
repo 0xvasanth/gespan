@@ -158,20 +158,52 @@ fn command_line<'a>(herdr: &Path, words: impl IntoIterator<Item = &'a str>) -> S
 }
 
 /// The terminal command that adds a machine. herdr asks its install
-/// question there. `None` when no herdr is found; may block like
-/// [`herdr_binary`].
+/// question there. When this machine's build can be fetched first, herdr
+/// is handed it in `HERDR_REMOTE_BINARY`, as [`upgrade_command`] does:
+/// herdr's own download gives up after 120 s, which a slow link can take.
+/// Otherwise, such as for a host not yet trusted, herdr downloads it
+/// itself. `None` when no herdr is found; runs ssh and may download, so
+/// call from a background task.
 pub fn add_command(target: &str, label: Option<&str>) -> Option<String> {
-    herdr_binary().map(|herdr| add_command_with(&herdr, target, label))
+    let herdr = herdr_binary()?;
+    let new = Machine {
+        id: String::new(),
+        label: String::new(),
+        target: target.to_owned(),
+        session: "default".into(),
+        enabled: true,
+    };
+    let remote_binary = prepare_remote_binary(&new)
+        .inspect_err(|error| tracing::info!(%error, "herdr will download its own build"))
+        .ok();
+    Some(add_command_with(
+        &herdr,
+        target,
+        label,
+        remote_binary.as_deref(),
+    ))
 }
 
-pub(crate) fn add_command_with(herdr: &Path, target: &str, label: Option<&str>) -> String {
+pub(crate) fn add_command_with(
+    herdr: &Path,
+    target: &str,
+    label: Option<&str>,
+    remote_binary: Option<&Path>,
+) -> String {
     let target = quote(target);
     let label = label.map(quote);
     let mut words = vec!["machine", "add", target.as_str()];
     if let Some(label) = &label {
         words.extend(["--label", label.as_str()]);
     }
-    command_line(herdr, words)
+    let line = command_line(herdr, words);
+    match remote_binary {
+        Some(binary) => format!(
+            "HERDR_REMOTE_BINARY={} {line}",
+            quote(&binary.to_string_lossy())
+        ),
+        None => line,
+    }
 }
 
 /// The terminal command that opens herdr's own client for agent `pane` on

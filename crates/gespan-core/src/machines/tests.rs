@@ -215,12 +215,22 @@ fn uname_picks_the_build() {
 fn commands_quote_paths_and_names() {
     let herdr = Path::new("/A pp/herdr");
     assert_eq!(
-        add_command_with(herdr, "me@box", None),
+        add_command_with(herdr, "me@box", None, None),
         "'/A pp/herdr' machine add 'me@box'"
     );
     assert_eq!(
-        add_command_with(herdr, "me@box", Some("work; rm -rf ~")),
+        add_command_with(herdr, "me@box", Some("work; rm -rf ~"), None),
         "'/A pp/herdr' machine add 'me@box' --label 'work; rm -rf ~'"
+    );
+    // A build fetched first is handed over, as for an upgrade.
+    assert_eq!(
+        add_command_with(
+            herdr,
+            "me@box",
+            None,
+            Some(Path::new("/data dir/herdr-0.9.5-linux-aarch64"))
+        ),
+        "HERDR_REMOTE_BINARY='/data dir/herdr-0.9.5-linux-aarch64' '/A pp/herdr' machine add 'me@box'"
     );
     let mut m = machine("id1", "me@box", true);
     m.session = "agents".into();
