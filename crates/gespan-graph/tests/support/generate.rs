@@ -44,7 +44,7 @@ const YEAR_MS: u64 = 31_536_000_000;
 
 /// Fills an empty store: node ids `1..=nodes` (1% projects, 30% sessions, the
 /// rest files) and exactly `edges` edges, 90% session→file `touched` and 10%
-/// session→project `in_project`, with endpoints drawn as `lo + floor(n·u³)` so
+/// session→project `in_project`, with endpoints drawn as `lo + floor(n·u⁴)` so
 /// a few files and projects become hubs. `valid_from` takes one of 1,000
 /// values in a year, so ties are common; `closed_pct`% of edges are closed.
 pub fn seeded_graph(
@@ -101,12 +101,12 @@ pub fn seeded_graph(
             let session = session_lo + rng.below(nsessions as u64) as usize;
             let (dst, kind) = if rng.below(10) < 9 {
                 (
-                    file_lo + ((nfiles as f64) * rng.unit().powi(3)) as usize,
+                    file_lo + ((nfiles as f64) * rng.unit().powi(4)) as usize,
                     "touched",
                 )
             } else {
                 (
-                    project_lo + ((nprojects as f64) * rng.unit().powi(3)) as usize,
+                    project_lo + ((nprojects as f64) * rng.unit().powi(4)) as usize,
                     "in_project",
                 )
             };
