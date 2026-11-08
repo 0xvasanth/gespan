@@ -134,7 +134,9 @@ impl Morph {
             width,
             open: ((width - SQUARE) / span).clamp(0., 1.),
             roll,
-            moving: grow < 1. || roll.is_some(),
+            // A width that starts at its goal (the first draw, or a jump
+            // without animation) has nothing to ease, so asks for no frames.
+            moving: (grow < 1. && (goal - from).abs() >= 0.5) || roll.is_some(),
         }
     }
 }
@@ -330,4 +332,77 @@ pub(crate) fn button(
             )
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PILL: f32 = 80.;
+
+    fn face(label: &'static str, expanded: bool) -> Face {
+        Face {
+            label,
+            glyph: "send",
+            stop: false,
+            expanded,
+        }
+    }
+
+    #[test]
+    fn a_fresh_button_draws_at_rest_and_asks_for_no_frames() {
+        // Every newly mounted composer starts here; a phantom morph would
+        // redraw its whole conversation for MORPH on each mount.
+        for expanded in [false, true] {
+            let mut morph = Morph::default();
+            let frame = morph.frame(face("Send", expanded), PILL, true);
+            assert!(!frame.moving, "expanded={expanded}");
+            assert_eq!(frame.width, if expanded { PILL } else { SQUARE });
+            assert!(frame.roll.is_none());
+        }
+    }
+
+    #[test]
+    fn growing_into_a_pill_moves_until_it_reaches_full_width() {
+        let mut morph = Morph::default();
+        assert!(!morph.frame(face("Send", false), PILL, true).moving);
+        let frame = morph.frame(face("Send", true), PILL, true);
+        assert!(frame.moving);
+        assert!(
+            frame.width < PILL,
+            "starts from the square: {}",
+            frame.width
+        );
+        // Once the morph's time is up it rests at the pill.
+        let (from, goal, start) = morph.width.unwrap();
+        morph.width = Some((from, goal, start - MORPH));
+        let frame = morph.frame(face("Send", true), PILL, true);
+        assert!(!frame.moving);
+        assert_eq!(frame.width, PILL);
+    }
+
+    #[test]
+    fn without_animation_a_change_jumps_and_asks_for_no_frames() {
+        let mut morph = Morph::default();
+        morph.frame(face("Send", false), PILL, false);
+        let frame = morph.frame(face("Send", true), PILL, false);
+        assert!(!frame.moving);
+        assert_eq!(frame.width, PILL);
+        let frame = morph.frame(face("Queue", true), PILL, false);
+        assert!(!frame.moving, "no roll without animation");
+    }
+
+    #[test]
+    fn a_new_action_at_the_same_width_still_rolls_its_line() {
+        let mut morph = Morph::default();
+        morph.frame(face("Send", true), PILL, true);
+        let frame = morph.frame(face("Queue", true), PILL, true);
+        assert!(frame.moving);
+        assert_eq!(frame.width, PILL);
+        assert!(
+            frame
+                .roll
+                .is_some_and(|(was, dir, _)| was.label == "Send" && dir > 0.)
+        );
+    }
 }

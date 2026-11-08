@@ -851,7 +851,7 @@ mod tests {
             .update(cx, |shell, w, cx| shell.focus_active(w, cx))
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.simulate_keystrokes("cmd-,");
+        visual.simulate_keystrokes("secondary-,");
         visual.run_until_parked();
         let back = visual.debug_bounds("settings-nav-back").unwrap();
         let search = visual.debug_bounds("settings-search").unwrap();
