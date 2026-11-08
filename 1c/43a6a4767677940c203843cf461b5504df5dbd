@@ -1,0 +1,22 @@
+crates/gespan-graph/src/store.rs
+  s_f94343c699ffd5::t_f69caf64b3f16a 146-147,217-222,227-228,237-238
+crates/gespan-graph/tests/store.rs
+  s_f94343c699ffd5::t_51b2e6a56f583b 435-478
+  s_f94343c699ffd5::t_8c5b5e8a272ca9 479-483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c43a6a4767677940c203843cf461b5504df5dbd",
+  "prompts": {},
+  "sessions": {
+    "s_f94343c699ffd5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "139ef088-d782-4bc4-910e-c575e3f85da0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
