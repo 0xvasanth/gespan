@@ -1001,7 +1001,13 @@ mod tests {
                 "workspace.list"
             ]
         );
-        let log = h.fake.log();
+        // The old stream's reader closes it on its own thread.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut log = h.fake.log();
+        while !log.contains(&Step::Closed(2)) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            log = h.fake.log();
+        }
         assert!(log.contains(&Step::Closed(2)), "old stream closed: {log:?}");
         assert!(!log.contains(&Step::Closed(6)), "new stream kept: {log:?}");
     }
