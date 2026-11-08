@@ -2450,6 +2450,16 @@ impl Shell {
         if let Some(pane) = retained {
             self.open_file_pane(pane, window, cx);
         }
+        // A terminal pane draws no files, so a file opened while it has focus
+        // goes beside its session, which comes forward in its own tab.
+        if let Some(owner) = self
+            .workspace
+            .active
+            .and_then(|id| self.workspace.terminal_panes.get(&id))
+            .map(|pane| pane.owner)
+        {
+            self.focus_pane(owner, window, cx);
+        }
         let Some(id) = self.workspace.active else {
             return;
         };
