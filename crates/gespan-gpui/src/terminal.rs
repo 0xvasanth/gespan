@@ -2057,11 +2057,22 @@ mod tests {
             }
         }
         assert_eq!(status.expect("the command exited").code(), Some(3));
-        let term = spawned.term.lock();
-        let grid = term.grid();
-        let first: String = (0..grid.columns())
-            .map(|c| grid[Line(0)][Column(c)].c)
-            .collect();
+        // The exit can be reported before the PTY's last output is parsed.
+        let first_line = || {
+            let term = spawned.term.lock();
+            let grid = term.grid();
+            (0..grid.columns())
+                .map(|c| grid[Line(0)][Column(c)].c)
+                .collect::<String>()
+        };
+        let mut first = first_line();
+        for _ in 0..100 {
+            if first.starts_with("a bc'd") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            first = first_line();
+        }
         assert!(first.starts_with("a bc'd"), "{first}");
     }
 }
