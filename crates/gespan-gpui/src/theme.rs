@@ -541,7 +541,8 @@ fn provider_mark(provider: &str) -> (&'static str, bool, f32) {
         "fx" => ("fx.svg", true, 1.),
         "hermes" => ("hermes.svg", true, 0.72),
         "devin" => ("devin.svg", true, 0.88),
-        "kiro" => ("kiro.svg", true, 0.72),
+        // Kiro's ghost on its purple tile, in colour like Claude and Codex.
+        "kiro" => ("kiro-color.svg", false, 1.),
         _ => ("codex.svg", false, 1.),
     }
 }
@@ -841,7 +842,7 @@ mod composer_tests {
     }
 
     #[test]
-    fn kiro_has_its_own_monochrome_icon() {
+    fn kiro_shows_its_ghost_on_its_own_purple_in_every_picker() {
         use gpui::AssetSource;
         let (path, monochrome, scale) = provider_mark("kiro");
         assert_ne!(
@@ -849,14 +850,36 @@ mod composer_tests {
             provider_mark("unknown").0,
             "kiro must not use the codex fallback"
         );
-        assert_eq!(path, "kiro.svg");
-        assert!(monochrome, "the ghost follows the theme colour");
-        assert!(scale > 0. && scale <= 1.);
-        let bytes = crate::assets::Assets
+        // Drawn as an image in its brand colours, like Claude and Codex,
+        // instead of a theme-ink mask that reads as a plain white ghost.
+        assert_eq!(path, "kiro-color.svg");
+        assert!(!monochrome, "the ghost keeps its brand colours");
+        assert_eq!(scale, 1.);
+        let svg = crate::assets::Assets
             .load(path)
             .unwrap()
-            .expect("embedded kiro.svg");
-        assert!(String::from_utf8_lossy(&bytes).contains("<svg"));
+            .expect("embedded kiro-color.svg");
+        let svg = String::from_utf8_lossy(&svg);
+        assert!(svg.contains("<svg"));
+        // The icon's purple is the tab tile's, so the two never drift apart.
+        let tile = |hsla: Hsla| {
+            let rgba = gpui::Rgba::from(hsla);
+            format!(
+                "#{:02X}{:02X}{:02X}",
+                (rgba.r * 255.).round() as u8,
+                (rgba.g * 255.).round() as u8,
+                (rgba.b * 255.).round() as u8
+            )
+        };
+        let (top, bottom) = provider_tile("kiro").expect("kiro has a tile");
+        assert!(svg.contains(&tile(top)), "{svg} uses the tile's top colour");
+        assert!(
+            svg.contains(&tile(bottom)),
+            "{svg} uses the tile's bottom colour"
+        );
+        assert!(svg.contains("fill=\"#fff\""), "a white ghost on the purple");
+        // On a coloured tab tile the plain ghost still sits in white.
+        assert!(crate::assets::Assets.load("kiro.svg").unwrap().is_some());
         // Every other provider keeps its own mark.
         assert_eq!(provider_mark("hermes").0, "hermes.svg");
         assert_eq!(provider_mark("devin").0, "devin.svg");
