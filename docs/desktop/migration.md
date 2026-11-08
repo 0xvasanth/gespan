@@ -44,6 +44,11 @@ launch difference in an override on its struct in `provider/api.rs`, not in a
 `provider/fixtures/launch_argv.txt`; after an intended change, re-record it
 with `GESPAN_BLESS_LAUNCH_ARGV=1` and review the diff.
 
+When no provider is named, or a stored id is one this build does not know, use
+`Kind::FALLBACK` (via `Kind::from_id`) rather than writing `Kind::Codex`.
+Commit messages and pull requests with no session to ask default to
+`changes::TEXT_HARNESS` on both the desktop panel and the phone.
+
 ## Rendering and responsiveness
 
 Keep provider I/O, parsing, file access and persistence off the UI thread.

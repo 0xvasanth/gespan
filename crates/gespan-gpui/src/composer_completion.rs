@@ -98,7 +98,7 @@ impl Completion {
             token: None,
             dismissed: None,
             skills: Vec::new(),
-            provider: gespan_core::provider::Kind::Codex,
+            provider: gespan_core::provider::Kind::FALLBACK,
             native_commands: Vec::new(),
             native_loading: false,
             native_revision: 0,

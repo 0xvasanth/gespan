@@ -30,6 +30,9 @@ impl Kind {
         Self::Antigravity,
         Self::Devin,
     ];
+    /// The provider assumed when none is named, or a stored id names one this
+    /// build does not know.
+    pub const FALLBACK: Kind = Kind::Codex;
     pub fn id(self) -> &'static str {
         self.spec().id
     }
@@ -40,7 +43,7 @@ impl Kind {
         Self::ALL.into_iter().find(|kind| kind.id() == id)
     }
     pub fn from_id(id: &str) -> Self {
-        Self::parse(id).unwrap_or(Self::Codex)
+        Self::parse(id).unwrap_or(Self::FALLBACK)
     }
     pub fn binary_name(self) -> &'static str {
         self.spec().binary
@@ -101,11 +104,11 @@ impl Kind {
 }
 
 /// The provider to start with: the preferred one if installed, else the first
-/// installed in `Kind::ALL` order, else the preferred one (or Codex), so the
+/// installed in `Kind::ALL` order, else the preferred one (or `Kind::FALLBACK`), so the
 /// existing "not found" guidance still shows. Mirrors the desktop app's
 /// `firstEnabledHarness`.
 pub fn pick_installed(preferred: Option<Kind>, installed: impl Fn(Kind) -> bool) -> Kind {
-    let preferred = preferred.unwrap_or(Kind::Codex);
+    let preferred = preferred.unwrap_or(Kind::FALLBACK);
     if installed(preferred) {
         return preferred;
     }
@@ -141,6 +144,16 @@ mod tests {
         // With no preference and everything installed (not probed yet), the
         // historic default holds rather than jumping to `Kind::ALL[0]`.
         assert_eq!(pick_installed(None, |_| true), Kind::Codex);
+    }
+    #[test]
+    fn an_id_this_build_does_not_know_opens_as_the_fallback() {
+        // Rows saved by a newer build, or edited by hand, still open.
+        for id in ["", "future-agent", "Claude", " codex"] {
+            assert_eq!(Kind::from_id(id), Kind::FALLBACK, "{id:?}");
+        }
+        for kind in Kind::ALL {
+            assert_eq!(Kind::from_id(kind.id()), kind);
+        }
     }
     #[test]
     fn registry_matches_the_react_harnesses() {

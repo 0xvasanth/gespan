@@ -369,13 +369,17 @@ pub(crate) fn git(root: &Path) -> Result<Value, String> {
 /// A Changes page action from the phone, as the desktop's Changes panel runs
 /// it: staging, then committing what is staged, pushing and pull requests.
 /// Replies `{}`, `{ message }` or `{ url }`.
-pub(crate) fn git_action(root: &Path, params: &Value) -> Result<Value, String> {
-    // The harness picked in the phone's composer writes the commit message and
-    // pull request, as the desktop's panel uses its session's.
-    let preferred = params["harness"]
+/// The harness picked in the phone's composer writes the commit message and
+/// pull request, as the desktop's panel uses its session's.
+pub(crate) fn preferred_harness(params: &Value) -> Kind {
+    params["harness"]
         .as_str()
         .and_then(Kind::parse)
-        .unwrap_or(Kind::Claude);
+        .unwrap_or(crate::changes::TEXT_HARNESS)
+}
+
+pub(crate) fn git_action(root: &Path, params: &Value) -> Result<Value, String> {
+    let preferred = preferred_harness(params);
     let harness = || crate::changes::pick_text_harness(preferred);
     let paths = params["paths"]
         .as_array()
@@ -834,6 +838,23 @@ mod tests {
             .map(|(text, _)| text.as_str())
             .collect::<String>()
             == line
+    }
+
+    #[test]
+    fn the_phones_harness_writes_the_commit_message_unless_it_is_unknown() {
+        assert_eq!(preferred_harness(&json!({ "harness": "kiro" })), Kind::Kiro);
+        for params in [
+            json!({}),
+            json!({ "harness": null }),
+            json!({ "harness": 7 }),
+            json!({ "harness": "future-agent" }),
+        ] {
+            assert_eq!(
+                preferred_harness(&params),
+                crate::changes::TEXT_HARNESS,
+                "{params}"
+            );
+        }
     }
 
     #[test]
