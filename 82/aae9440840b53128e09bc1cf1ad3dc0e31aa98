@@ -1,0 +1,32 @@
+crates/gespan-gpui/src/conversation/dictation.rs
+  s_1e1d27125e17d0::t_d08e3b39f6870d 1152-1187,1198,1212-1214,1220-1221,1229,1233-1234,1258,1260,1263,1266-1269
+  s_1e1d27125e17d0::t_e6dbee2bde1882 1135-1151,1188-1189,1193,1211,1215-1219,1222-1223,1226-1228,1230-1232
+  s_1e1d27125e17d0::t_6a102babda9c0b 1237-1247,1250-1256,1259,1262
+  s_1e1d27125e17d0::t_627981dfe7fb92 1224-1225
+crates/gespan-gpui/src/conversation.rs
+  s_1e1d27125e17d0::t_e6dbee2bde1882 3390-3395
+crates/gespan-gpui/src/conversation/pilot.rs
+  s_1e1d27125e17d0::t_e6dbee2bde1882 1209-1214
+crates/gespan-gpui/src/conversation/dictation/tests.rs
+  s_1e1d27125e17d0::t_ed3a60aae818c4 707-774
+crates/gespan-gpui/src/pilots/dictation_tests.rs
+  s_1e1d27125e17d0::t_17147ff3935ae0 201-208
+  s_1e1d27125e17d0::t_ed3a60aae818c4 184-200,209-217
+  s_1e1d27125e17d0::t_ff1ab8d0f10039 183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82aae9440840b53128e09bc1cf1ad3dc0e31aa98",
+  "prompts": {},
+  "sessions": {
+    "s_1e1d27125e17d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6dd61c59-0147-451d-abeb-4cede94aba5d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
