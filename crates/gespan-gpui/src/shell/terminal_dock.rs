@@ -164,6 +164,10 @@ impl Shell {
             .enumerate()
             .filter_map(|(ix, terminal)| {
                 let t = terminal.read(cx);
+                // An agent's run is not the user's running process.
+                if t.read_only() {
+                    return None;
+                }
                 let process = t.foreground.as_deref()?.trim();
                 (!process.is_empty()).then(|| Running {
                     ix,
@@ -213,7 +217,8 @@ impl Shell {
             .workspace
             .docks
             .get(&project)
-            .is_some_and(|d| !d.terminals.is_empty())
+            // A read-only mirror can't be the panel's terminal.
+            .is_some_and(|d| (0..d.terminals.len()).any(|ix| !d.is_mirror(ix)))
         {
             return;
         }
@@ -222,7 +227,7 @@ impl Shell {
         dock.add(cwd.clone());
         // The dock stays shut until the terminal moves back out of the panel.
         dock.open = false;
-        let terminal = self.spawn_terminal(cwd, cx);
+        let terminal = self.spawn_terminal(cwd, &[], cx);
         self.terminals.entry(project).or_default().push(terminal);
         self.persist(cx);
     }
@@ -259,6 +264,12 @@ impl Shell {
             .right_panel
             .as_ref()
             .map_or(0., |p| p.read(cx).top_inset());
+        // The panel's tab row stays above the shell, so the other tools are a
+        // click away.
+        let tabs = self
+            .right_panel
+            .clone()
+            .map(|p| p.update(cx, |p, cx| p.tab_strip(cx)));
         div()
             .id("panel-terminal")
             .debug_selector(|| "panel-terminal".into())
@@ -276,6 +287,7 @@ impl Shell {
                         .border_color(crate::right_panel::stroke()),
                 )
             })
+            .children(tabs)
             .child(self.dock_header(&dock, true, window, cx))
             .child(
                 div().flex_1().min_h_0().min_w_0().children(
@@ -662,8 +674,11 @@ impl Shell {
                                 let t = terminal.read(cx);
                                 let label: SharedString = t.title.clone().into();
                                 let agent = t.agent();
-                                let description =
-                                    SharedString::from(format!("{} — {}", t.title, t.cwd));
+                                let status = t.status().map(|s| SharedString::from(s.to_owned()));
+                                let description = SharedString::from(match &status {
+                                    Some(status) => format!("{} — {} — {status}", t.title, t.cwd),
+                                    None => format!("{} — {}", t.title, t.cwd),
+                                });
                                 let active = ix == dock.active;
                                 let held = dragged == Some(ix);
                                 let hovered = self.dock_hover == Some(ix) && dragged.is_none();
@@ -756,6 +771,12 @@ impl Shell {
                                                     .truncate()
                                                     .child(label.clone()),
                                             )
+                                            .children(status.map(|status| {
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_color(content(0.5))
+                                                    .child(status)
+                                            }))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 if std::mem::take(&mut this.dock_skip_click) {
                                                     return;
@@ -944,6 +965,7 @@ impl Shell {
         let running = self.running_terminals(cx);
         let open = self.dock_open(cx);
         let classic = self.workspace.boxy_layout();
+        self.sync_actions(cx);
         let actions = self.actions_button(cx);
         let has_actions = actions.is_some();
         // The classic footer's own `px-3` and border hold these in place.
@@ -1167,16 +1189,40 @@ mod tests {
                 assert_eq!(panel.read(cx).tab(), RightTab::Terminal);
                 assert_eq!(
                     panel.read(cx).tabs(),
-                    [RightTab::Files, RightTab::Terminal, RightTab::Graph]
+                    [
+                        RightTab::Files,
+                        RightTab::Terminal,
+                        RightTab::Changes,
+                        RightTab::Graph
+                    ]
                 );
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        // In the boxy frame the terminal starts below the title bar's tabs.
-        let tabs = visual.debug_bounds("right-panel-terminal").unwrap();
+        // In the boxy frame the terminal starts below the panel's own tab
+        // row, which keeps the other tools a click away.
+        let tabs = visual.debug_bounds("right-panel-tabs").unwrap();
+        assert!(
+            tabs.top() >= px(crate::theme::TITLE_BAR_HEIGHT) - px(0.5),
+            "{tabs:?}"
+        );
         let header = visual.debug_bounds("terminal-tab-0").unwrap();
         assert!(header.top() >= tabs.bottom(), "{header:?} under {tabs:?}");
+        let explorer = visual.debug_bounds("right-panel-tab-Explorer").unwrap();
+        visual.simulate_click(explorer.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                let panel = shell.right_panel.as_ref().unwrap().read(cx);
+                assert_eq!(panel.tab(), RightTab::Files);
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("explorer-header").is_some());
+        let terminal = visual.debug_bounds("right-panel-tab-Terminal").unwrap();
+        visual.simulate_click(terminal.center(), Default::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("terminal-tab-0").is_some());
         assert!(visual.debug_bounds("terminal-dock").is_none());
         assert!(visual.debug_bounds("footer-terminal").is_none());
         window

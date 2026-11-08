@@ -988,14 +988,35 @@ impl Changes {
             .is_some_and(|m| m.kind == MenuKind::Branch);
         let branch = index.as_ref().and_then(|i| i.branch.clone());
         let index = index.unwrap_or_default();
+        // GitChangesPanel: "Changes" and its status lead; the branch and its
+        // ahead/behind counts sit beside the branch menu.
         pane_header("changes-header", "Changes")
+            .child(div().flex_shrink_0().child("Changes"))
+            .when_some(self.status.clone(), |d, status| {
+                d.child(
+                    div()
+                        .id("changes-status")
+                        .role(Role::Status)
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(11.))
+                        .text_color(content(0.5))
+                        .child(status),
+                )
+            })
+            .child(div().ml_auto())
             .when_some(branch.clone(), |d, branch| {
                 d.child(
                     div()
+                        .id("changes-branch")
+                        .debug_selector(|| "changes-branch".into())
                         .min_w_0()
                         .flex()
                         .items_center()
                         .gap_1()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(content(0.5))
                         .child(icon("git-branch-hi", 12.).text_color(content(0.5)))
                         .child(div().min_w_0().truncate().child(branch))
                         .when(index.ahead > 0, |d| {
@@ -1020,22 +1041,6 @@ impl Changes {
                         }),
                 )
             })
-            .when(branch.is_none(), |d| {
-                d.child(div().flex_shrink_0().child("Changes"))
-            })
-            .when_some(self.status.clone(), |d, status| {
-                d.child(
-                    div()
-                        .id("changes-status")
-                        .role(Role::Status)
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(11.))
-                        .text_color(content(0.5))
-                        .child(status),
-                )
-            })
-            .child(div().ml_auto())
             .when(branch.is_some(), |d| {
                 d.child(
                     div()
@@ -1821,26 +1826,22 @@ impl Changes {
 }
 
 /// pickTextHarness: `preferred` when installed (the user chose it), else the
-/// first installed of [`TEXT_FALLBACKS`]. Other providers are never picked
-/// silently: they are not vetted for one-shot text turns.
+/// first installed provider whose manifest allows `text_turns`. Other
+/// providers are never picked silently: they are not vetted for one-shot text
+/// turns.
 pub(crate) fn pick_text_harness(preferred: Kind) -> Option<(Kind, PathBuf)> {
     pick_text_harness_with(preferred, provider::resolve)
 }
-/// The desktop's vetted text harnesses, plus Kiro CLI.
-const TEXT_FALLBACKS: [Kind; 6] = [
-    Kind::Claude,
-    Kind::Codex,
-    Kind::Cursor,
-    Kind::Grok,
-    Kind::OpenCode,
-    Kind::Kiro,
-];
 fn pick_text_harness_with(
     preferred: Kind,
     resolve: impl Fn(Kind) -> Option<PathBuf>,
 ) -> Option<(Kind, PathBuf)> {
+    let fallbacks = provider::api::ProviderRegistry::builtin()
+        .iter()
+        .filter(|p| p.capabilities().text_turns)
+        .map(|p| p.kind());
     std::iter::once(preferred)
-        .chain(TEXT_FALLBACKS.into_iter().filter(|kind| *kind != preferred))
+        .chain(fallbacks.filter(|kind| *kind != preferred))
         .find_map(|kind| resolve(kind).map(|binary| (kind, binary)))
 }
 

@@ -1,5 +1,5 @@
 id = "grok"
-version = 1
+version = 2
 min_engine_version = 1
 label = "Grok Build"
 binary = "grok"
@@ -17,3 +17,5 @@ sign_in = ["login", "--oauth"]
 side_threads = true
 rewind = false
 raw_slash_commands = false
+attachments = true
+text_turns = true

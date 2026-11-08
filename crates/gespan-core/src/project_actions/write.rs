@@ -2,8 +2,8 @@
 //!
 //! The file is edited as JSON, so other tasks and fields stay. A file with
 //! comments is never rewritten, as saving would lose them.
+use super::ordered::{Json, Object};
 use super::{jsonc, tasks_json, Action};
-use serde_json::{json, Map, Value};
 use std::path::{Component, Path};
 
 const FOLDER: &str = ".gespan";
@@ -21,6 +21,30 @@ pub struct Draft {
     pub detail: Option<String>,
 }
 
+/// A shared action to edit: its label as listed and, when it came from the
+/// file, its place there. A repeated label is listed as `Build (2)`, which
+/// no task in the file is called, so the place finds it.
+#[derive(Clone, Copy, Debug)]
+pub struct Shared<'a> {
+    pub label: &'a str,
+    pub task: Option<usize>,
+}
+
+impl<'a> From<&'a str> for Shared<'a> {
+    fn from(label: &'a str) -> Self {
+        Shared { label, task: None }
+    }
+}
+
+impl<'a> From<&'a Action> for Shared<'a> {
+    fn from(action: &'a Action) -> Self {
+        Shared {
+            label: &action.label,
+            task: action.task,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum WriteError {
     /// Rewriting the file would lose its comments. It is left as it was.
@@ -30,47 +54,128 @@ pub enum WriteError {
     Io(String),
     /// Something to fix before it can be saved, worded for a person.
     Invalid(String),
+    /// The task's command has arguments, per-OS commands or workspace
+    /// variables that one shell line can't keep, so it is edited by hand.
+    NeedsHandEdit,
 }
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, out: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            WriteError::HasComments => {
+                out.write_str("This tasks.json has comments, so Gespan won't rewrite it.")
+            }
+            WriteError::Duplicate(label) => {
+                write!(
+                    out,
+                    "An action named \u{201c}{label}\u{201d} already exists."
+                )
+            }
+            WriteError::NeedsHandEdit => out.write_str(
+                "This action uses arguments, per-OS commands or workspace variables; \
+                 edit it in tasks.json",
+            ),
+            WriteError::Io(message) | WriteError::Invalid(message) => out.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for WriteError {}
 
 /// Adds `draft` as a new shared action.
 pub fn add(checkout: &Path, draft: &Draft) -> Result<(), WriteError> {
-    check(draft)?;
+    let draft = prepare(draft, typed_refs)?;
     edit(checkout, |tasks| {
         taken(tasks, &draft.label, None)?;
-        tasks.push(Value::Object(task(draft)));
+        tasks.push(task(&draft, None, false).into());
         Ok(())
     })
 }
 
 /// Replaces the shared action `label` with `draft`, in place. Fields Gespan
-/// doesn't edit, such as `group`, stay.
-pub fn update(checkout: &Path, label: &str, draft: &Draft) -> Result<(), WriteError> {
-    check(draft)?;
+/// doesn't edit, such as `group`, stay where they are. A task whose command
+/// one shell line can't stand for is left alone: see [`WriteError::NeedsHandEdit`].
+pub fn update<'a>(
+    checkout: &Path,
+    shared: impl Into<Shared<'a>>,
+    draft: &Draft,
+) -> Result<(), WriteError> {
+    let shared = shared.into();
+    let draft = prepare(draft, typed_refs)?;
     edit(checkout, |tasks| {
-        let at = position(tasks, label)?;
+        let at = position(tasks, shared)?;
         taken(tasks, &draft.label, Some(at))?;
         let Some(task) = tasks[at].as_object_mut() else {
-            return Err(not_found(label));
+            return Err(not_found(shared.label));
         };
+        if needs_hand_edit(task) {
+            return Err(WriteError::NeedsHandEdit);
+        }
         // The command is now one shell line, whatever it was before.
-        for key in ["args", "script", "icon", "detail"] {
-            task.remove(key);
-        }
-        for os in ["windows", "osx", "linux"] {
-            if let Some(over) = task.get_mut(os).and_then(Value::as_object_mut) {
-                over.remove("command");
-                over.remove("args");
-            }
-        }
-        task.extend(task_fields(draft));
+        task.remove("script");
+        task.insert("label", draft.label.as_str());
+        task.insert("type", "shell");
+        task.insert("command", draft.command.as_str());
+        describe(task, &draft);
         Ok(())
     })
 }
 
-/// Removes the shared action `label`.
-pub fn remove(checkout: &Path, label: &str) -> Result<(), WriteError> {
+/// Changes only the shared action `label`'s name, icon and detail. Its
+/// command, arguments, options and per-OS commands stay exactly as written;
+/// `draft.command` isn't used.
+pub fn relabel<'a>(
+    checkout: &Path,
+    shared: impl Into<Shared<'a>>,
+    draft: &Draft,
+) -> Result<(), WriteError> {
+    let shared = shared.into();
+    if draft.label.trim().is_empty() {
+        return Err(WriteError::Invalid("Give the action a name".into()));
+    }
+    let name = draft.label.trim();
     edit(checkout, |tasks| {
-        let at = position(tasks, label)?;
+        let at = position(tasks, shared)?;
+        taken(tasks, name, Some(at))?;
+        let Some(task) = tasks[at].as_object_mut() else {
+            return Err(not_found(shared.label));
+        };
+        task.insert("label", name);
+        describe(task, draft);
+        Ok(())
+    })
+}
+
+/// Sets `task`'s detail and icon from `draft`, removing them when it has none.
+fn describe(task: &mut Object, draft: &Draft) {
+    match detail(draft) {
+        Some(detail) => task.insert("detail", detail),
+        None => task.remove("detail"),
+    }
+    match icon(draft) {
+        Some(icon) => task.insert("icon", icon),
+        None => task.remove("icon"),
+    }
+}
+
+/// Whether `task` has arguments, a per-OS override or a workspace variable in
+/// its command, which a new shell line would lose or bake in.
+fn needs_hand_edit(task: &Object) -> bool {
+    let command = task.get("command").and_then(Json::as_str).unwrap_or("");
+    task.get("args").is_some()
+        || ["windows", "osx", "linux"]
+            .iter()
+            .any(|os| task.get(os).is_some())
+        || command.contains("${workspaceFolder}")
+        || command.contains("${workspaceFolderBasename}")
+        || command.contains("$ZED_WORKTREE_ROOT")
+}
+
+/// Removes the shared action `label`.
+pub fn remove<'a>(checkout: &Path, shared: impl Into<Shared<'a>>) -> Result<(), WriteError> {
+    let shared = shared.into();
+    edit(checkout, |tasks| {
+        let at = position(tasks, shared)?;
         tasks.remove(at);
         Ok(())
     })
@@ -78,6 +183,7 @@ pub fn remove(checkout: &Path, label: &str) -> Result<(), WriteError> {
 
 /// Saves a detected action to the shared file: its label, command, folder
 /// (relative to the checkout), environment, detail, background flag and icon.
+/// The checkout's own path is saved as `${workspaceFolder}`.
 pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError> {
     if let Some(reason) = &action.blocked {
         return Err(WriteError::Invalid(format!(
@@ -85,20 +191,21 @@ pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError>
             action.label
         )));
     }
-    let draft = Draft {
-        label: action.label.clone(),
-        command: file_refs(&action.command)?,
-        icon: action.icon.to_string(),
-        detail: action.detail.clone(),
-    };
-    check(&draft)?;
+    let draft = prepare(
+        &Draft {
+            label: action.label.clone(),
+            command: action.command.clone(),
+            icon: action.icon.to_string(),
+            detail: action.detail.clone(),
+        },
+        file_refs,
+    )?;
     let root = tasks_json::normalize(checkout);
     let cwd = tasks_json::normalize(&action.cwd);
     let relative = cwd.strip_prefix(&root).map_err(|_| {
         WriteError::Invalid(format!("\"{}\" runs outside the project", action.label))
     })?;
-    let mut task = task(&draft);
-    let mut options = Map::new();
+    let mut options = Object::default();
     if !relative.as_os_str().is_empty() {
         let parts: Vec<_> = relative
             .components()
@@ -107,78 +214,178 @@ pub fn save_detected(checkout: &Path, action: &Action) -> Result<(), WriteError>
                 _ => None,
             })
             .collect();
-        options.insert("cwd".into(), parts.join("/").into());
+        options.insert("cwd", parts.join("/"));
     }
     if !action.env.is_empty() {
-        let mut env = Map::new();
+        let mut env = Object::default();
         for (name, value) in &action.env {
-            env.insert(name.clone(), file_refs(value)?.into());
+            env.insert(name, workspace_folder(checkout, &file_refs(value)?));
         }
-        options.insert("env".into(), env.into());
+        options.insert("env", env);
     }
-    if !options.is_empty() {
-        task.insert("options".into(), options.into());
-    }
-    if action.background {
-        task.insert("isBackground".into(), true.into());
-    }
+    let draft = Draft {
+        command: workspace_folder(checkout, &draft.command),
+        ..draft
+    };
+    let task = task(&draft, Some(options), action.background);
     edit(checkout, |tasks| {
         taken(tasks, &draft.label, None)?;
-        tasks.push(Value::Object(task));
+        tasks.push(task.into());
         Ok(())
     })
 }
 
-fn check(draft: &Draft) -> Result<(), WriteError> {
+/// `line` with this checkout's path written as `${workspaceFolder}`, so the
+/// shared file never holds one person's folder, such as their worktree. The
+/// path is matched as written and inside the quotes the resolver adds: `sh`'s
+/// single quotes and `cmd`'s double quotes keep it as is, and `sh`'s double
+/// quotes escape `\`, `"`, `$` and `` ` ``.
+fn workspace_folder(checkout: &Path, line: &str) -> String {
+    let mut roots: Vec<String> = Vec::new();
+    for root in [checkout.to_path_buf(), tasks_json::normalize(checkout)] {
+        // A drive or `/` alone would match every path.
+        if root.file_name().is_none() {
+            continue;
+        }
+        let root = root.display().to_string();
+        if cfg!(not(windows)) {
+            let mut escaped = String::with_capacity(root.len());
+            for c in root.chars() {
+                if matches!(c, '\\' | '"' | '$' | '`') {
+                    escaped.push('\\');
+                }
+                escaped.push(c);
+            }
+            roots.push(escaped);
+        }
+        roots.push(root);
+    }
+    // The longest first, so a shorter spelling never cuts into a longer one.
+    roots.sort_by_key(|root| std::cmp::Reverse(root.len()));
+    roots.dedup();
+    roots
+        .iter()
+        .fold(line.to_string(), |line, root| replace_path(&line, root))
+}
+
+/// `line` with `root` written as `${workspaceFolder}` where it is a whole
+/// path or a path's start: followed by the end, a separator, a quote,
+/// whitespace or a list separator, never by more of a name like `repo-old`.
+fn replace_path(line: &str, root: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(root) {
+        let after = &rest[at + root.len()..];
+        let whole = after
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '/' | '\\' | '\'' | '"' | ':' | ';') || c.is_whitespace());
+        out.push_str(&rest[..at]);
+        out.push_str(if whole { "${workspaceFolder}" } else { root });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `draft` as it is saved: its label trimmed and its command spelled as the
+/// file spells it by `refs`, or why it can't be.
+fn prepare(
+    draft: &Draft,
+    refs: fn(&str) -> Result<String, WriteError>,
+) -> Result<Draft, WriteError> {
     if draft.label.trim().is_empty() {
         return Err(WriteError::Invalid("Give the action a name".into()));
     }
     if draft.command.trim().is_empty() {
         return Err(WriteError::Invalid("Give the action a command".into()));
     }
-    Ok(())
+    Ok(Draft {
+        label: draft.label.trim().to_string(),
+        command: refs(&draft.command)?,
+        ..draft.clone()
+    })
 }
 
-/// A new task for `draft`.
-fn task(draft: &Draft) -> Map<String, Value> {
-    let mut task = Map::new();
-    task.extend(task_fields(draft));
+/// A new task for `draft`, its keys in the order people write them.
+fn task(draft: &Draft, options: Option<Object>, background: bool) -> Object {
+    let mut task = Object::default();
+    task.insert("label", draft.label.as_str());
+    task.insert("type", "shell");
+    task.insert("command", draft.command.as_str());
+    if let Some(options) = options.filter(|options| !options.is_empty()) {
+        task.insert("options", options);
+    }
+    if let Some(detail) = detail(draft) {
+        task.insert("detail", detail);
+    }
+    if background {
+        task.insert("isBackground", true);
+    }
+    if let Some(icon) = icon(draft) {
+        task.insert("icon", icon);
+    }
     task
 }
 
-/// The fields a person edits. The default icon and no detail are left out.
-fn task_fields(draft: &Draft) -> Map<String, Value> {
-    let mut fields = Map::new();
-    fields.insert("label".into(), draft.label.clone().into());
-    fields.insert("type".into(), "shell".into());
-    fields.insert("command".into(), draft.command.clone().into());
-    if let Some(detail) = draft.detail.as_deref().filter(|d| !d.trim().is_empty()) {
-        fields.insert("detail".into(), detail.into());
-    }
+/// The detail to save, if it isn't blank.
+fn detail(draft: &Draft) -> Option<&str> {
+    draft.detail.as_deref().filter(|d| !d.trim().is_empty())
+}
+
+/// `{ "id": … }`, unless it is the default icon.
+fn icon(draft: &Draft) -> Option<Object> {
     let icon = tasks_json::icon(Some(&draft.icon));
-    if icon != "play" {
-        fields.insert("icon".into(), json!({ "id": icon }));
-    }
-    fields
+    (icon != "play").then(|| {
+        let mut object = Object::default();
+        object.insert("id", icon);
+        object
+    })
 }
 
 fn not_found(label: &str) -> WriteError {
     WriteError::Invalid(format!("There's no shared action named \"{label}\""))
 }
 
-fn label_of(task: &Value) -> Option<&str> {
-    task.get("label")?.as_str()
+fn label_of(task: &Json) -> Option<&str> {
+    match task {
+        Json::Object(task) => task.get("label")?.as_str(),
+        _ => None,
+    }
 }
 
-fn position(tasks: &[Value], label: &str) -> Result<usize, WriteError> {
-    tasks
-        .iter()
-        .position(|task| label_of(task) == Some(label))
+/// Where `shared` is in `tasks`: at its listed place while the task there
+/// still goes by that label, or, for `Build (2)`, while it is still the
+/// second task called `Build`. Else the task with exactly that label.
+fn position(tasks: &[Json], shared: Shared) -> Result<usize, WriteError> {
+    let label = shared.label;
+    let still_there = |at: usize| {
+        let Some(name) = tasks.get(at).and_then(label_of) else {
+            return false;
+        };
+        if name == label {
+            return true;
+        }
+        let n = label
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(" ("))
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(|n| n.parse::<usize>().ok());
+        let before = tasks[..at]
+            .iter()
+            .filter(|task| label_of(task) == Some(name))
+            .count();
+        n.is_some_and(|n| before + 1 == n)
+    };
+    shared
+        .task
+        .filter(|&at| still_there(at))
+        .or_else(|| tasks.iter().position(|task| label_of(task) == Some(label)))
         .ok_or_else(|| not_found(label))
 }
 
 /// Fails if a task other than `except` already has `label`.
-fn taken(tasks: &[Value], label: &str, except: Option<usize>) -> Result<(), WriteError> {
+fn taken(tasks: &[Json], label: &str, except: Option<usize>) -> Result<(), WriteError> {
     let clash = tasks
         .iter()
         .enumerate()
@@ -190,11 +397,12 @@ fn taken(tasks: &[Value], label: &str, except: Option<usize>) -> Result<(), Writ
     }
 }
 
-/// Reads the shared file, lets `change` edit its tasks and saves it.
-/// Nothing is written when anything fails.
+/// Reads the shared file, lets `change` edit its tasks and saves it. Keys
+/// keep their order, so only what changed shows in a diff. Nothing is
+/// written when anything fails.
 fn edit(
     checkout: &Path,
-    change: impl FnOnce(&mut Vec<Value>) -> Result<(), WriteError>,
+    change: impl FnOnce(&mut Vec<Json>) -> Result<(), WriteError>,
 ) -> Result<(), WriteError> {
     let folder = checkout.join(FOLDER);
     let path = checkout.join(FILE);
@@ -203,7 +411,7 @@ fn edit(
     let file_exists =
         folder_exists && exists(&path, "isn't a regular file", |meta| meta.is_file())?;
 
-    let mut root = Value::Object(Map::new());
+    let mut root = Json::Object(Object::default());
     if file_exists {
         let text = super::read_capped(&path).map_err(WriteError::Io)?;
         if !text.trim().is_empty() {
@@ -219,11 +427,11 @@ fn edit(
     let Some(object) = root.as_object_mut() else {
         return Err(WriteError::Invalid(format!("{FILE} isn't a JSON object")));
     };
-    object.entry("version").or_insert_with(|| VERSION.into());
-    let tasks = object
-        .entry("tasks")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let Some(tasks) = tasks.as_array_mut() else {
+    object.insert_first("version", VERSION);
+    if object.get("tasks").is_none() {
+        object.insert("tasks", Json::Array(Vec::new()));
+    }
+    let Some(tasks) = object.get_mut("tasks").and_then(Json::as_array_mut) else {
         return Err(WriteError::Invalid("\"tasks\" isn't a list".into()));
     };
     change(tasks)?;
@@ -295,6 +503,40 @@ fn file_refs(line: &str) -> Result<String, WriteError> {
             "Uses $ZED_WORKTREE_ROOT, which Gespan can't fill in".into(),
         ));
     }
+    shell_refs(line)
+}
+
+/// A shell line a person typed, as the file spells it. The variables the
+/// file supports (`${workspaceFolder}`, `${workspaceFolderBasename}`,
+/// `${env:NAME}` and `$ZED_WORKTREE_ROOT`) are kept as written; the rest is
+/// read as [`file_refs`] reads a resolved line.
+fn typed_refs(line: &str) -> Result<String, WriteError> {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("${") {
+        let Some(len) = rest[start..].find('}') else {
+            break;
+        };
+        let variable = &rest[start..start + len + 1];
+        let name = &variable[2..variable.len() - 1];
+        out.push_str(&shell_refs(&rest[..start])?);
+        let supported = matches!(name, "workspaceFolder" | "workspaceFolderBasename")
+            || name
+                .strip_prefix("env:")
+                .is_some_and(tasks_json::is_env_name);
+        if supported {
+            out.push_str(variable);
+        } else {
+            out.push_str(&shell_refs(variable)?);
+        }
+        rest = &rest[start + len + 1..];
+    }
+    out.push_str(&shell_refs(rest)?);
+    Ok(out)
+}
+
+/// The shell's own references in `line` as `${env:NAME}`, or why one can't be.
+fn shell_refs(line: &str) -> Result<String, WriteError> {
     // Windows spells references `%NAME%`, so a `${…}` there is no reference.
     if cfg!(windows) {
         if let Some(start) = line.find("${") {

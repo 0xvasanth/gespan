@@ -5,6 +5,7 @@ use crate::diagnostics::metrics;
 use std::collections::VecDeque;
 use std::sync::{atomic::AtomicUsize, OnceLock};
 mod client;
+mod client_mcp;
 mod events;
 use client::Client;
 
@@ -238,24 +239,70 @@ fn announce_missing_tools(request: &mut Request, mounted: bool) {
     }
 }
 
+/// A v2 turn's tools, for as long as the turn runs.
+struct MountedV2 {
+    /// The turn's credential, held like v1's server holds its own.
+    _access: crate::tool_servers::Access,
+    route: RouteV2,
+}
+
+enum RouteV2 {
+    /// Gespan serves them over a socket of its own, and keeps the credential.
+    /// Dropping the socket takes them off the service.
+    Hosted { _socket: client_mcp::Hosted },
+    /// The service holds the credential and calls the hub itself.
+    Remote { client: Client, path: String },
+}
+
+impl Drop for MountedV2 {
+    /// The server would otherwise stay on the shared service after the turn,
+    /// with its token, for as long as the service keeps the folder open.
+    fn drop(&mut self) {
+        if let RouteV2::Remote { client, path } = &self.route {
+            if client
+                .request_timeout("DELETE", path, None, Duration::from_secs(5))
+                .is_err()
+            {
+                tracing::warn!("OpenCode kept the tool endpoint after the turn");
+            }
+        }
+    }
+}
+
 /// v2's service is shared by every conversation in the folder, so this
 /// session's server gets a name of its own, the session's permissions hide
 /// everyone else's, and the credential serves calls from this conversation
-/// only, from before the service ever sees it. A server added there lasts
-/// only while the service keeps the folder open, so each turn adds it again
-/// with a fresh credential.
+/// only, from before the service ever sees it. Each turn mounts it again with
+/// a fresh credential, and takes it away when it ends. From 2.2.0 the service
+/// can call a server its client hosts, so the token never leaves Gespan; older
+/// ones are handed the endpoint.
 fn mount_tools_v2(
     client: &Client,
     mount: Option<&crate::tool_servers::Mount>,
     conversation: &str,
-) -> Option<crate::tool_servers::Access> {
+    hosted: bool,
+) -> Option<MountedV2> {
     let mount = mount?;
     let access = crate::tool_servers::Access::open_opencode(mount, conversation)?;
     let name = crate::tool_servers::opencode_name(mount.session);
+    if hosted {
+        if let Some(socket) = client_mcp::host(client, &name, access.connection()) {
+            return Some(MountedV2 {
+                _access: access,
+                route: RouteV2::Hosted { _socket: socket },
+            });
+        }
+    }
     let path = client.path(&format!("/experimental/mcp/{}", client::encode(&name)));
     let body = json!({"config":access.opencode_config()});
     match client.request("PUT", &path, Some(body)) {
-        Ok(_) => Some(access),
+        Ok(_) => Some(MountedV2 {
+            _access: access,
+            route: RouteV2::Remote {
+                client: client.clone(),
+                path,
+            },
+        }),
         // The error stays out of the log: it may quote the token back.
         Err(_) => {
             tracing::warn!("OpenCode refused the tool endpoint");
@@ -295,20 +342,37 @@ fn mount_tools(
     }
 }
 
-fn generation(request: &Request, cancel: &AtomicBool) -> Result<bool, String> {
-    let output = exec(request, &["--version"], cancel)?;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Generation {
+    v2: bool,
+    /// The service can call an MCP server its client hosts over a WebSocket.
+    hosts_tools: bool,
+}
+
+fn generation(request: &Request, cancel: &AtomicBool) -> Result<Generation, String> {
+    parse_generation(&exec(request, &["--version"], cancel)?)
+}
+
+fn parse_generation(output: &str) -> Result<Generation, String> {
     // No word boundaries: `v1.14.20` and ANSI-colored output must still match.
     let re = regex::Regex::new(r"(\d+)\.(\d+)\.(\d+)").unwrap();
-    let version = re.captures(&output).ok_or_else(|| {
+    let version = re.captures(output).ok_or_else(|| {
         format!(
             "Unable to determine OpenCode version from {:?}. Gespan requires v1.14.19 or newer.",
             output.trim().chars().take(200).collect::<String>()
         )
     })?;
     let components: Vec<u64> = (1..=3).map(|ix| version[ix].parse().unwrap_or(0)).collect();
+    let at_least = |least: [u64; 3]| components.as_slice() >= least.as_slice();
     match components[0] {
-        1 if components.as_slice() >= [1, 14, 19].as_slice() => Ok(false),
-        2 if components.as_slice() >= [2, 0, 15].as_slice() => Ok(true),
+        1 if at_least([1, 14, 19]) => Ok(Generation {
+            v2: false,
+            hosts_tools: false,
+        }),
+        2 if at_least([2, 0, 15]) => Ok(Generation {
+            v2: true,
+            hosts_tools: at_least([2, 2, 0]),
+        }),
         1 => Err(format!(
             "OpenCode v{} is too old. Upgrade to v1.14.19 or newer.",
             &version[0]
@@ -448,7 +512,7 @@ pub(super) fn run(
 ) -> Result<Option<Value>, String> {
     let started = generation(&request, &cancel);
     if probe {
-        return catalog(&request, &cancel, started?).map(Some);
+        return catalog(&request, &cancel, started?.v2).map(Some);
     }
     // A start is the version check and the connection; it counts once. A
     // Stop is not a failed start.
@@ -457,7 +521,8 @@ pub(super) fn run(
             metrics::failure(START, metrics::ErrorKind::of_message(error));
         }
     };
-    let v2 = started.inspect_err(start_failed)?;
+    let started = started.inspect_err(start_failed)?;
+    let v2 = started.v2;
     if cancel.load(Ordering::Relaxed) {
         return Err(ProviderError::Stopped.into());
     }
@@ -481,11 +546,18 @@ pub(super) fn run(
         mount_tools(&client, &mut server.access, request.settings.mount.as_ref());
     }
     let session = client.session(&request)?;
-    let v2_access = v2
-        .then(|| mount_tools_v2(&client, request.settings.mount.as_ref(), &session))
+    let v2_tools = v2
+        .then(|| {
+            mount_tools_v2(
+                &client,
+                request.settings.mount.as_ref(),
+                &session,
+                started.hosts_tools,
+            )
+        })
         .flatten();
     let mounted = if v2 {
-        v2_access.is_some()
+        v2_tools.is_some()
     } else {
         server
             .as_ref()
@@ -643,6 +715,7 @@ pub(super) fn run(
         }
     })();
     drop(stop);
+    drop(v2_tools);
     if result.is_err() && !aborted {
         state.cancel(&client);
         aborted = true;
@@ -829,7 +902,7 @@ pub(super) fn rewind(
     // Retire every warm launch configuration for this binding before changing
     // durable history, including a process parked with an older model.
     forget_session(session, &request.settings.account.id, &request.cwd);
-    let v2 = generation(request, &cancel)?;
+    let v2 = generation(request, &cancel)?.v2;
     let (client, server) = connect(request, &cancel, v2)?;
     let messages = client.request(
         "GET",
@@ -882,16 +955,7 @@ mod tool_tests {
 
     /// A `serve` stand-in: answers `POST /mcp` with this status, and counts them.
     fn opencode(status: u16) -> (Client, mpsc::Receiver<serde_json::Value>) {
-        let (client, seen) = opencode_seen(status, false);
-        let (posted, received) = mpsc::channel();
-        std::thread::spawn(move || {
-            for (_, body) in seen {
-                if posted.send(body).is_err() {
-                    return;
-                }
-            }
-        });
-        (client, received)
+        opencode_with(status, false, |_, body| body)
     }
 
     /// The stand-in, keeping each request's first line with its body.
@@ -899,7 +963,7 @@ mod tool_tests {
         status: u16,
         v2: bool,
     ) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
-        opencode_probing(status, v2, |_| {})
+        opencode_with(status, v2, |line, body| (line, body))
     }
 
     /// The stand-in, running `probe` on each body before it answers.
@@ -908,6 +972,19 @@ mod tool_tests {
         v2: bool,
         probe: impl Fn(&serde_json::Value) + Send + 'static,
     ) -> (Client, mpsc::Receiver<(String, serde_json::Value)>) {
+        opencode_with(status, v2, move |line, body| {
+            probe(&body);
+            (line, body)
+        })
+    }
+
+    /// The stand-in, passing on what `seen` makes of each request before it
+    /// answers, so a request is there to see once the call returns.
+    fn opencode_with<T: Send + 'static>(
+        status: u16,
+        v2: bool,
+        seen: impl Fn(String, serde_json::Value) -> T + Send + 'static,
+    ) -> (Client, mpsc::Receiver<T>) {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (posted, received) = mpsc::channel();
@@ -927,8 +1004,7 @@ mod tool_tests {
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
                 let body = serde_json::from_slice(&body).unwrap_or_default();
-                probe(&body);
-                posted.send((first.trim().to_owned(), body)).unwrap();
+                posted.send(seen(first.trim().to_owned(), body)).unwrap();
                 let mut stream = stream;
                 write!(
                     stream,
@@ -1039,7 +1115,7 @@ mod tool_tests {
     fn a_v2_session_gets_a_server_of_its_own_that_serves_only_its_conversation() {
         let (client, seen) = opencode_seen(204, true);
         let mount = mount(5105);
-        let access = mount_tools_v2(&client, Some(&mount), "ses_mine").unwrap();
+        let mounted = mount_tools_v2(&client, Some(&mount), "ses_mine", false).unwrap();
         let (line, body) = seen.try_recv().unwrap();
         assert!(
             line.starts_with("PUT /api/experimental/mcp/gespan_s5105?"),
@@ -1047,7 +1123,7 @@ mod tool_tests {
         );
         assert_eq!(body["config"]["type"], "remote");
         assert_eq!(body["config"]["oauth"], false);
-        let config = access.opencode_config();
+        let config = mounted._access.opencode_config();
         assert_eq!(body["config"], config);
         let connection = |token: &str| mcp_hub::Connection {
             url: config["url"].as_str().unwrap().to_owned(),
@@ -1083,20 +1159,20 @@ mod tool_tests {
             // Called while the PUT is still unanswered.
             let _ = probed.send(call_as_anyone(&body["config"]));
         });
-        let access = mount_tools_v2(&client, Some(&mount(5108)), "ses_mine").unwrap();
+        let access = mount_tools_v2(&client, Some(&mount(5108)), "ses_mine", false).unwrap();
         let refused = probes.try_recv().unwrap().unwrap_err();
         assert!(
             refused.contains("belongs to another conversation"),
             "no other caller is served, even mid-mount: {refused}"
         );
-        assert!(access.is_live(5108));
+        assert!(access._access.is_live(5108));
     }
 
     #[test]
     fn a_refused_v2_mount_ends_its_credential_and_removes_the_server() {
         let (client, seen) = opencode_seen(500, true);
         let mount = mount(5109);
-        assert!(mount_tools_v2(&client, Some(&mount), "ses_mine").is_none());
+        assert!(mount_tools_v2(&client, Some(&mount), "ses_mine", false).is_none());
         let (put, body) = seen.try_recv().unwrap();
         assert!(
             put.starts_with("PUT /api/experimental/mcp/gespan_s5109?"),
@@ -1125,13 +1201,13 @@ mod tool_tests {
                 if body["config"].is_null() {
                     return;
                 }
-                let _ = newer.send(mount_tools_v2(&client_ok, Some(&mount), "ses_mine"));
+                let _ = newer.send(mount_tools_v2(&client_ok, Some(&mount), "ses_mine", false));
             }
         });
-        assert!(mount_tools_v2(&slow, Some(&mount), "ses_mine").is_none());
+        assert!(mount_tools_v2(&slow, Some(&mount), "ses_mine", false).is_none());
         let newer = took.try_recv().unwrap().unwrap();
         assert!(
-            newer.is_live(5110),
+            newer._access.is_live(5110),
             "only the refused mount's own credential ends"
         );
     }
@@ -1140,22 +1216,22 @@ mod tool_tests {
     fn each_v2_turn_mounts_again_with_a_fresh_credential() {
         let (client, seen) = opencode_seen(204, true);
         let mount = mount(5106);
-        let first = mount_tools_v2(&client, Some(&mount), "ses_a").unwrap();
-        let second = mount_tools_v2(&client, Some(&mount), "ses_a").unwrap();
+        let first = mount_tools_v2(&client, Some(&mount), "ses_a", false).unwrap();
+        let second = mount_tools_v2(&client, Some(&mount), "ses_a", false).unwrap();
         assert_eq!(
             seen.try_iter().count(),
             2,
             "the service may have dropped it"
         );
-        assert!(!first.is_live(5106) && second.is_live(5106));
+        assert!(!first._access.is_live(5106) && second._access.is_live(5106));
     }
 
     #[test]
     fn a_v2_service_that_refuses_the_server_leaves_the_turn_without_tools() {
         let (client, _seen) = opencode_seen(500, true);
-        assert!(mount_tools_v2(&client, Some(&mount(5107)), "ses_a").is_none());
+        assert!(mount_tools_v2(&client, Some(&mount(5107)), "ses_a", false).is_none());
         let (client, seen) = opencode_seen(204, true);
-        assert!(mount_tools_v2(&client, None, "ses_a").is_none());
+        assert!(mount_tools_v2(&client, None, "ses_a", true).is_none());
         assert!(
             seen.try_recv().is_err(),
             "a turn with no tools mounts nothing"
@@ -1205,5 +1281,359 @@ mod tool_tests {
             .permissions(&request(AccessMode::FullAccess, true))
             .to_string();
         assert!(!rows.contains("gespan_"), "v1's server is its own: {rows}");
+    }
+
+    #[test]
+    fn ending_a_v2_turn_takes_its_server_off_the_shared_service() {
+        let (client, seen) = opencode_seen(204, true);
+        let mounted = mount_tools_v2(&client, Some(&mount(5108)), "ses_a", false).unwrap();
+        let (put, _) = seen.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(put.starts_with("PUT "), "{put}");
+        assert!(
+            seen.try_recv().is_err(),
+            "nothing is removed while the turn runs"
+        );
+        drop(mounted);
+        let (removed, _) = seen.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            removed.starts_with("DELETE /api/experimental/mcp/gespan_s5108?"),
+            "{removed}"
+        );
+    }
+
+    #[test]
+    fn a_service_that_wont_remove_the_server_doesnt_hold_up_the_turn() {
+        let (client, _seen) = opencode_seen(204, true);
+        let mounted = mount_tools_v2(&client, Some(&mount(5109)), "ses_a", false).unwrap();
+        // The service has gone by the time the turn ends.
+        let RouteV2::Remote { client, path } = &mounted.route else {
+            panic!("mounted over the socket");
+        };
+        let gone = Client::new(
+            "http://127.0.0.1:9".into(),
+            client.directory.clone(),
+            true,
+            None,
+        );
+        let started = Instant::now();
+        drop(MountedV2 {
+            _access: Access::open(&mount(5109)).unwrap(),
+            route: RouteV2::Remote {
+                client: gone,
+                path: path.clone(),
+            },
+        });
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn only_opencode_2_2_and_newer_host_the_tools() {
+        let of = |output: &str| parse_generation(output).unwrap();
+        assert_eq!(
+            of("1.14.19"),
+            Generation {
+                v2: false,
+                hosts_tools: false
+            }
+        );
+        assert_eq!(
+            of("v2.1.9"),
+            Generation {
+                v2: true,
+                hosts_tools: false
+            }
+        );
+        assert!(of("2.2.0").hosts_tools);
+        assert!(of("\u{1b}[1mopencode 2.2.6\u{1b}[0m").hosts_tools);
+        assert!(of("2.10.0").hosts_tools);
+        assert!(parse_generation("2.0.14").is_err());
+        assert!(parse_generation("3.0.0").is_err());
+    }
+
+    type Hosting = tungstenite::WebSocket<std::net::TcpStream>;
+
+    /// What the stand-in saw of a request: its first line and its headers.
+    struct Head {
+        line: String,
+        headers: String,
+    }
+
+    fn send(socket: &mut Hosting, message: Value) {
+        socket
+            .send(tungstenite::Message::text(message.to_string()))
+            .unwrap();
+    }
+
+    /// The next answer to `id`, skipping anything else the server says.
+    fn answer(socket: &mut Hosting, id: i64) -> Value {
+        loop {
+            let message = socket.read().unwrap();
+            let Ok(text) = message.to_text() else {
+                continue;
+            };
+            let Ok(message) = serde_json::from_str::<Value>(text) else {
+                continue;
+            };
+            if message["id"] == id {
+                return message;
+            }
+        }
+    }
+
+    /// An OpenCode 2.2 stand-in. A socket it takes is initialized and its
+    /// tools listed the way OpenCode does, then handed over; with `sockets`
+    /// false it turns sockets away, and answers anything else with 204.
+    fn hosting_opencode(
+        sockets: bool,
+    ) -> (
+        Client,
+        mpsc::Receiver<Head>,
+        mpsc::Receiver<(Hosting, Value)>,
+    ) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (heads, seen) = mpsc::channel();
+        let (sockets_out, taken) = mpsc::channel();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut peeked = vec![0; 8192];
+                let head = loop {
+                    let read = stream.peek(&mut peeked).unwrap();
+                    let text = String::from_utf8_lossy(&peeked[..read]).into_owned();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        break text[..end].to_owned();
+                    }
+                };
+                let (line, headers) = head.split_once("\r\n").unwrap_or((&head, ""));
+                let upgrade = headers.to_lowercase().contains("upgrade: websocket");
+                let _ = heads.send(Head {
+                    line: line.to_owned(),
+                    headers: headers.to_owned(),
+                });
+                if upgrade && sockets {
+                    let mut socket = tungstenite::accept(stream).unwrap();
+                    send(
+                        &mut socket,
+                        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                            "protocolVersion":"2025-11-25","capabilities":{},
+                            "clientInfo":{"name":"opencode","version":"2.2.6"}}}),
+                    );
+                    let initialized = answer(&mut socket, 1);
+                    send(
+                        &mut socket,
+                        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                    );
+                    send(
+                        &mut socket,
+                        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+                    );
+                    let listed = answer(&mut socket, 2);
+                    let _ = sockets_out.send((socket, json!([initialized, listed])));
+                    continue;
+                }
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 && !line.trim().is_empty() {
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                    line.clear();
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let status = if upgrade {
+                    "404 Not Found"
+                } else {
+                    "204 No Content"
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+            }
+        });
+        let client = Client::new(url, "/work tree".into(), true, Some("hunter2".into()));
+        (client, seen, taken)
+    }
+
+    fn call(socket: &mut Hosting, id: i64, conversation: &str) -> Value {
+        send(
+            socket,
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+                "name":"visual_docs","arguments":{},
+                "_meta":{"ai.opencode/sessionID":conversation}}}),
+        );
+        answer(socket, id)
+    }
+
+    #[test]
+    fn on_2_2_the_service_calls_tools_gespan_hosts_and_never_sees_the_token() {
+        let (client, heads, taken) = hosting_opencode(true);
+        let mounted = mount_tools_v2(&client, Some(&mount(5110)), "ses_mine", true).unwrap();
+        assert!(matches!(mounted.route, RouteV2::Hosted { .. }));
+        let head = heads.recv_timeout(Duration::from_secs(5)).unwrap();
+        let url = url::Url::parse(&format!(
+            "http://x{}",
+            head.line.split_whitespace().nth(1).unwrap()
+        ))
+        .unwrap();
+        assert_eq!(url.path(), "/api/experimental/client-mcp");
+        let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(query["name"], "gespan_s5110");
+        assert_eq!(query["location[directory]"], "/work tree");
+        let auth = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "opencode:hunter2",
+        );
+        assert!(
+            head.headers.contains(&format!("Basic {auth}")),
+            "{}",
+            head.headers
+        );
+        let (mut socket, handshake) = taken.recv_timeout(Duration::from_secs(5)).unwrap();
+        let tools = handshake[1]["result"]["tools"].as_array().unwrap();
+        assert!(tools.iter().any(|tool| tool["name"] == "visual_docs"));
+
+        let own = call(&mut socket, 3, "ses_mine");
+        assert!(
+            own["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("documentation"),
+            "{own}"
+        );
+        let other = call(&mut socket, 4, "ses_other");
+        assert!(
+            other
+                .to_string()
+                .contains("belongs to another conversation"),
+            "another conversation on the service is turned away: {other}"
+        );
+        let secret = mounted._access.connection().token;
+        let spoken = format!("{}{}{handshake}{own}{other}", head.line, head.headers);
+        assert!(!spoken.contains(&secret), "the token reached the service");
+        assert!(heads.try_recv().is_err(), "no endpoint was handed over");
+    }
+
+    #[test]
+    fn ending_a_hosted_turn_closes_the_socket() {
+        let (client, _heads, taken) = hosting_opencode(true);
+        let mounted = mount_tools_v2(&client, Some(&mount(5111)), "ses_a", true).unwrap();
+        let (mut socket, _) = taken.recv_timeout(Duration::from_secs(5)).unwrap();
+        socket
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        drop(mounted);
+        let closed = loop {
+            match socket.read() {
+                Ok(tungstenite::Message::Close(frame)) => break frame,
+                Ok(_) => {}
+                Err(error) => panic!("the socket wasn't closed: {error}"),
+            }
+        };
+        assert_eq!(
+            closed.map(|frame| frame.code),
+            Some(tungstenite::protocol::frame::coding::CloseCode::Normal)
+        );
+    }
+
+    #[test]
+    fn a_hosted_socket_comes_back_after_the_service_reloads() {
+        let (client, heads, taken) = hosting_opencode(true);
+        let _mounted = mount_tools_v2(&client, Some(&mount(5112)), "ses_a", true).unwrap();
+        let (mut socket, _) = taken.recv_timeout(Duration::from_secs(5)).unwrap();
+        // OpenCode closes every client's socket with 1012 when it reloads.
+        socket
+            .close(Some(tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::Restart,
+                reason: "reload".into(),
+            }))
+            .unwrap();
+        let _ = socket.flush();
+        let (mut again, handshake) = taken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(handshake[1]["result"]["tools"].is_array());
+        assert_eq!(heads.try_iter().count(), 2);
+        assert!(call(&mut again, 3, "ses_a")["result"].is_object());
+    }
+
+    #[test]
+    fn the_socket_and_its_password_go_only_to_a_plain_loopback_service() {
+        let elsewhere = |url: &str| {
+            let client = Client::new(url.into(), "/work".into(), true, Some("hunter2".into()));
+            client_mcp::open(&client, "gespan_s1").unwrap_err()
+        };
+        assert!(elsewhere("https://127.0.0.1:4096").contains("plain HTTP"));
+        assert!(elsewhere("http://192.0.2.1:4096").contains("this machine"));
+    }
+
+    /// The service of the OpenCode installed here, or of `GESPAN_OPENCODE`.
+    fn real_v2(folder: &Path) -> (Client, Generation) {
+        let request = Request {
+            kind: Kind::OpenCode,
+            binary: std::env::var_os("GESPAN_OPENCODE")
+                .map_or_else(|| "opencode".into(), PathBuf::from),
+            cwd: folder.to_owned(),
+            prompt: String::new(),
+            provider_id: None,
+            model: None,
+            settings: Default::default(),
+        };
+        let cancel = AtomicBool::new(false);
+        let generation = generation(&request, &cancel).unwrap();
+        assert!(generation.v2);
+        (connect(&request, &cancel, true).unwrap().0, generation)
+    }
+
+    /// No model is called.
+    #[test]
+    #[ignore = "needs OpenCode 2.2 or newer installed"]
+    fn a_real_2_2_service_takes_the_tools_over_the_socket_and_holds_no_token() {
+        let folder = tempfile::tempdir().unwrap();
+        let (client, generation) = real_v2(folder.path());
+        assert!(generation.hosts_tools);
+        // Hosting succeeds only once the service has initialized over the
+        // socket and listed the tools through it.
+        let mounted = mount_tools_v2(&client, Some(&mount(5120)), "ses_real", true).unwrap();
+        assert!(matches!(mounted.route, RouteV2::Hosted { .. }));
+        // The service lists only servers it was given, each with its headers;
+        // one it calls over a client's socket isn't among them.
+        let given = client.request("GET", &client.path("/mcp"), None).unwrap();
+        assert!(!given.to_string().contains("gespan_"), "{given}");
+    }
+
+    /// No model is called.
+    #[test]
+    #[ignore = "needs OpenCode v2 installed"]
+    fn a_real_v2_service_given_the_endpoint_drops_it_when_the_turn_ends() {
+        let folder = tempfile::tempdir().unwrap();
+        let (client, _) = real_v2(folder.path());
+        let given = || {
+            client
+                .request("GET", &client.path("/mcp"), None)
+                .unwrap()
+                .to_string()
+        };
+        let mounted = mount_tools_v2(&client, Some(&mount(5121)), "ses_real", false).unwrap();
+        assert!(given().contains("gespan_s5121"), "{}", given());
+        drop(mounted);
+        assert!(!given().contains("gespan_s5121"), "{}", given());
+    }
+
+    #[test]
+    fn a_2_2_service_that_wont_take_the_socket_gets_the_endpoint_instead() {
+        let (client, heads, _taken) = hosting_opencode(false);
+        let mounted = mount_tools_v2(&client, Some(&mount(5113)), "ses_a", true).unwrap();
+        assert!(matches!(mounted.route, RouteV2::Remote { .. }));
+        let lines: Vec<_> = heads.try_iter().map(|head| head.line).collect();
+        assert!(
+            lines[0].starts_with("GET /api/experimental/client-mcp?"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("PUT /api/experimental/mcp/gespan_s5113?"),
+            "{lines:?}"
+        );
     }
 }

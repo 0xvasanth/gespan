@@ -400,7 +400,7 @@ impl QuickComposer {
         .detach();
     }
     fn attachments_supported(&self) -> bool {
-        self.kind != Kind::Fx
+        self.kind.provider().capabilities().attachments
     }
     fn prompt(&self, cx: &App) -> String {
         self.input.read(cx).content.trim().to_owned()

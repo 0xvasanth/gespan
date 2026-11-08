@@ -21,6 +21,8 @@ regex = "1"
 zstd = "0.14"
 toml = "1.1.8"
 ureq = "2.12"
+# Loopback only, so no TLS: OpenCode's client-hosted MCP socket.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 webpki-roots = "1.0.11"
 similar = "3"
 unicode-width = "0.2"

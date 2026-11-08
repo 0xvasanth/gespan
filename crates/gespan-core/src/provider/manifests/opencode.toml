@@ -1,5 +1,5 @@
 id = "opencode"
-version = 1
+version = 2
 min_engine_version = 1
 label = "OpenCode"
 binary = "opencode"
@@ -14,6 +14,8 @@ discovery_timeout = 60
 side_threads = true
 rewind = true
 raw_slash_commands = false
+attachments = true
+text_turns = true
 
 [features.steer]
 ack_timeout = 30

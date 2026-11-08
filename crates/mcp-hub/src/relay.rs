@@ -422,10 +422,20 @@ pub(crate) fn pump(
 /// Serves stdio until it closes. Runs before any GUI of the host's; stdout
 /// carries MCP frames only.
 pub fn relay(connection: Connection) -> Result<(), String> {
+    relay_lines(connection, std::io::stdin().lock(), std::io::stdout())
+}
+
+/// Serves any line-delimited stream until its input ends: one JSON-RPC
+/// message per line each way. The token stays on this side of it.
+pub fn relay_lines(
+    connection: Connection,
+    input: impl BufRead,
+    output: impl Write + Send + 'static,
+) -> Result<(), String> {
     pump(
         Link::to_hub(connection),
-        std::io::stdin().lock(),
-        Arc::new(Mutex::new(std::io::stdout())),
+        input,
+        Arc::new(Mutex::new(output)),
     )
 }
 

@@ -39,36 +39,17 @@ impl<T: Copy + PartialEq> TabReveal<T> {
 pub(crate) struct TabLabel {
     text: &'static str,
     count: usize,
-    max_width: Option<f32>,
 }
 impl From<&'static str> for TabLabel {
     fn from(text: &'static str) -> Self {
-        Self {
-            text,
-            count: 0,
-            max_width: None,
-        }
+        Self { text, count: 0 }
     }
 }
 impl From<(&'static str, usize)> for TabLabel {
     fn from((text, count): (&'static str, usize)) -> Self {
-        Self {
-            text,
-            count,
-            max_width: None,
-        }
+        Self { text, count }
     }
 }
-impl TabLabel {
-    /// Space for the label track, including its leading gap and optional badge.
-    /// Keep this separate from the selection animation so a narrow label uses
-    /// an ellipsis rather than exposing a clipped slice of its full text.
-    pub(crate) fn max_width(mut self, width: f32) -> Self {
-        self.max_width = Some(width.max(0.));
-        self
-    }
-}
-
 /// An icon whose label unfolds only while selected.
 pub(crate) fn tab_button(
     id: &'static str,
@@ -85,10 +66,7 @@ pub(crate) fn tab_button(
     } else {
         0.
     };
-    let natural_width = label_width(label.text, window) + 6. + count_width;
-    let width = label
-        .max_width
-        .map_or(natural_width, |max| max.min(natural_width));
+    let width = label_width(label.text, window) + 6. + count_width;
     let open = if width > 0. { open } else { 0. };
     let ink = content(if selected { 1. } else { 0.5 });
     div()

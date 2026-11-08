@@ -59,7 +59,9 @@ impl Shell {
             .or_else(|| window.focused(cx));
         self.close_menu(cx);
         self.close_preview(cx);
-        let picker = cx.new(|cx| QuickOpen::new(self.working_copy().to_owned(), palette, cx));
+        let actions = self.runnable_actions(cx);
+        let picker =
+            cx.new(|cx| QuickOpen::new(self.working_copy().to_owned(), palette, actions, cx));
         let events = cx.subscribe_in(&picker, window, |this, _, event: &Picked, window, cx| {
             this.close_quick_open(window, cx);
             match event {
@@ -143,6 +145,7 @@ impl Shell {
                         }
                     }
                 },
+                Picked::RunAction(id) => this.run_action(id, window, cx),
                 Picked::Dismiss => (),
             }
         });
@@ -206,7 +209,11 @@ mod tests {
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        for classic in [false, true] {
+        // The new layouts' corner is the panel toggle alone (search is ⌘P and
+        // the sidebar there); the original layout keeps the button.
+        assert!(visual.debug_bounds("titlebar-file-search").is_none());
+        {
+            let classic = true;
             window
                 .update(visual, |shell, _, cx| {
                     shell.workspace.classic_layout = classic;
@@ -392,6 +399,144 @@ mod tests {
                 assert!(error.contains("Diagnostics have not started"), "{error}");
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_lists_and_runs_actions(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "scripts": { "dev": "vite", "lint": "eslint ." } }"#,
+        )
+        .unwrap();
+        // One blocked action, which has to stay out of the palette.
+        std::fs::create_dir_all(root.join(".vscode")).unwrap();
+        std::fs::write(
+            root.join(".vscode/tasks.json"),
+            r#"{ "tasks": [ { "label": "Pick", "command": "echo ${input:x}" } ] }"#,
+        )
+        .unwrap();
+        let (window, _, active) = crate::shell::tests::window(cx);
+        let project = root.to_string_lossy().into_owned();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.workspace.project = project.clone();
+                shell.workspace.active = Some(active);
+                shell.ensure_session(active, cx);
+                shell.sessions[&active].update(cx, |chat, _| {
+                    chat.settings.worktree_cwd = Some(project.clone())
+                });
+                shell.open_quick_open(true, w, cx);
+            })
+            .unwrap();
+        let query = |text: &'static str, cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, cx| {
+                    let picker = shell.quick_open.as_ref().unwrap().picker.clone();
+                    picker.update(cx, |p, cx| {
+                        p.search.update(cx, |i, cx| i.set_text(text.into(), cx))
+                    });
+                })
+                .unwrap();
+            cx.run_until_parked();
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.quick_open.as_ref().unwrap().picker.read(cx).labels()
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            query(">run action", cx),
+            ["Run action: dev", "Run action: lint"],
+            "blocked actions stay out"
+        );
+        // Each row shows the command a pick runs.
+        let details = window
+            .update(cx, |shell, _, cx| {
+                shell.quick_open.as_ref().unwrap().picker.read(cx).details()
+            })
+            .unwrap();
+        let commands = window
+            .update(cx, |shell, _, cx| {
+                let listing = shell.listing(cx);
+                ["package.json:dev", "package.json:lint"].map(|id| {
+                    let action = listing.actions.iter().find(|a| a.id == id).unwrap();
+                    action.command.clone()
+                })
+            })
+            .unwrap();
+        assert_eq!(details, commands);
+        assert!(details[0].ends_with("run dev"), "{details:?}");
+        // An ordinary command query still finds its command.
+        assert!(query(">terminal", cx).contains(&"Toggle terminal".to_string()));
+        query(">run action", cx);
+        window
+            .update(cx, |shell, _, cx| {
+                assert!(shell.terminals.get(&project).is_none_or(Vec::is_empty));
+                let picker = shell.quick_open.as_ref().unwrap().picker.clone();
+                picker.update(cx, |p, cx| p.pick(0, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                assert!(shell.quick_open.is_none());
+                let terminals = &shell.terminals[&project];
+                assert_eq!(terminals.len(), 1);
+                assert_eq!(terminals[0].read(cx).cwd, project);
+                assert_eq!(shell.workspace.last_actions[&project], "package.json:dev");
+                assert!(shell.workspace.docks[&project].open);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_rows_show_env_names_but_never_values(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".gespan")).unwrap();
+        std::fs::write(
+            root.join(".gespan/tasks.json"),
+            r#"{ "version": "2.0.0", "tasks": [
+                 { "label": "Serve", "command": "bun run dev",
+                   "options": { "env": { "A_PORT": "3000", "B_TOKEN": "s3cret" } } },
+                 { "label": "Plain", "command": "echo plain" }
+               ] }"#,
+        )
+        .unwrap();
+        let (window, _, active) = crate::shell::tests::window(cx);
+        let project = root.to_string_lossy().into_owned();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.workspace.project = project.clone();
+                shell.workspace.active = Some(active);
+                shell.ensure_session(active, cx);
+                shell.sessions[&active].update(cx, |chat, _| {
+                    chat.settings.worktree_cwd = Some(project.clone())
+                });
+                shell.open_quick_open(true, w, cx);
+                let picker = shell.quick_open.as_ref().unwrap().picker.clone();
+                picker.update(cx, |p, cx| {
+                    p.search
+                        .update(cx, |i, cx| i.set_text(">run action".into(), cx))
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let (labels, details) = window
+            .update(cx, |shell, _, cx| {
+                let picker = shell.quick_open.as_ref().unwrap().picker.read(cx);
+                (picker.labels(), picker.details())
+            })
+            .unwrap();
+        let at = |label: &str| labels.iter().position(|l| l == label).unwrap();
+        assert_eq!(
+            details[at("Run action: Serve")],
+            "bun run dev \u{b7} +env A_PORT,B_TOKEN"
+        );
+        assert_eq!(details[at("Run action: Plain")], "echo plain");
+        assert!(!details.iter().any(|d| d.contains("s3cret")));
     }
 
     fn palette_pick(

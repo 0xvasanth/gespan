@@ -18,6 +18,7 @@ use std::{
 };
 
 pub(crate) mod jsonc;
+mod ordered;
 pub mod runs;
 pub mod sources;
 pub(crate) mod tasks_json;
@@ -62,6 +63,10 @@ pub struct Action {
     /// `<source id>:<label>`, such as `gespan:Test` or `package.json:dev`.
     pub id: String,
     pub label: String,
+    /// Its place in its `tasks.json`'s `tasks` list, so a repeated label
+    /// that is listed as `Build (2)` is still found in the file.
+    #[serde(skip)]
+    pub task: Option<usize>,
     pub detail: Option<String>,
     pub source: &'static str,
     /// The file it came from, as shown, such as `.vscode/tasks.json`.
@@ -85,6 +90,8 @@ pub struct Action {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Found {
     pub label: String,
+    /// Its place in a `tasks.json`'s `tasks` list.
+    pub task: Option<usize>,
     pub command: String,
     pub args: Vec<String>,
     /// False for a `process` task, whose program is quoted like its args.
@@ -250,6 +257,7 @@ fn personal(project: &str, checkout: &Path) -> Vec<Action> {
         .map(|personal| Action {
             id: format!("{PERSONAL}:{}", personal.id),
             label: personal.name.clone(),
+            task: None,
             detail: None,
             source: PERSONAL,
             file: PERSONAL_FILE.to_string(),
@@ -356,24 +364,59 @@ fn regular_file(root: &Path, path: &Path) -> Result<Option<(PathBuf, std::fs::Me
 /// `path` as text, never more than [`MAX_FILE`] of it, even if it grew or was
 /// swapped for a pipe since it was checked.
 fn read_capped(path: &Path) -> Result<String, String> {
+    let bytes = read_capped_bytes(path).map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+/// [`read_capped`] without decoding, keeping the error's kind, such as
+/// `NotFound`.
+fn read_capped_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     // Opening a pipe would wait for a writer.
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
-    let file = options.open(path).map_err(|error| error.to_string())?;
+    let file = options.open(path)?;
     if !file.metadata().is_ok_and(|meta| meta.is_file()) {
-        return Err(NOT_A_FILE.into());
+        return Err(std::io::Error::other(NOT_A_FILE));
     }
     let mut bytes = Vec::new();
-    file.take(MAX_FILE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+    file.take(MAX_FILE + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_FILE {
-        return Err(TOO_LARGE.into());
+        return Err(std::io::Error::other(TOO_LARGE));
     }
-    String::from_utf8(bytes).map_err(|error| error.to_string())
+    Ok(bytes)
+}
+
+/// A SHA-256 over every file any source lists that is in `checkout`, read
+/// or not, such as both a `Makefile` and the `GNUmakefile` make prefers, or
+/// the `package.json` behind a saved `bun run dev`. Any change to any of them
+/// changes it, so a caller can tell when what an action runs may have changed.
+/// A file that is there but can't be read makes a new digest every time.
+pub fn sources_digest(checkout: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for file in SOURCES.iter().flat_map(|source| source.files()) {
+        hash.update(file.as_bytes());
+        match read_capped_bytes(&checkout.join(file)) {
+            Ok(bytes) => {
+                hash.update([1]);
+                hash.update(Sha256::digest(&bytes));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
+            // Too large, not a regular file or unreadable: its edits can't be
+            // seen, so the digest never matches twice and trust never holds.
+            Err(_) => {
+                hash.update([2]);
+                hash.update(rand::random::<u128>().to_le_bytes());
+            }
+        }
+    }
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Drops the cached parse of `path`, such as a file that was just rewritten.

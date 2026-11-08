@@ -9,10 +9,38 @@
 //! methods, and one place that builds them all.
 use super::manifest::{self, Accounts, Login, Source};
 use super::spec::Family;
-use super::Kind;
+use super::{Kind, Request};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
+
+/// How Gespan talks to a provider's process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transport {
+    /// Frames over the child's stdin and stdout.
+    Stdio,
+    /// The CLI serves HTTP and an event stream (OpenCode).
+    Http,
+}
+
+/// What a launch that fails before the CLI answers may do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryPolicy {
+    Never,
+    /// Launch once more with the fallback arguments (Kiro without its V3
+    /// engine flag).
+    FallbackOnce,
+}
+
+/// One launch of a provider process.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Attempt {
+    /// A model or command probe, not a conversation turn.
+    pub probe: bool,
+    /// The retry that `RetryPolicy::FallbackOnce` allows.
+    pub fallback: bool,
+}
 
 /// What a provider can do, read as plain data. Grows as kind checks move here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +48,11 @@ pub struct Capabilities {
     pub side_threads: bool,
     pub rewind: bool,
     pub raw_slash_commands: bool,
+    /// The composer can send images and files with a prompt.
+    pub attachments: bool,
+    /// Vetted for one-shot text work, so it may stand in for the preferred
+    /// provider.
+    pub text_turns: bool,
     /// Follow-ups reach a running turn; the value is how long Gespan waits
     /// for the CLI to acknowledge one, `None` waiting as long as the turn.
     pub steer: Option<Option<u64>>,
@@ -57,6 +90,8 @@ impl Descriptor {
                 side_threads: m.features.side_threads,
                 rewind: m.features.rewind,
                 raw_slash_commands: m.features.raw_slash_commands,
+                attachments: m.features.attachments,
+                text_turns: m.features.text_turns,
                 steer: m.features.steer.map(|s| s.ack_timeout),
             },
             id: m.id,
@@ -103,10 +138,43 @@ pub trait Provider: Send + Sync + 'static {
     fn unavailable_hint(&self) -> String {
         self.kind().unavailable_hint()
     }
+
+    fn transport(&self) -> Transport {
+        Transport::Stdio
+    }
+    fn retry_policy(&self) -> RetryPolicy {
+        RetryPolicy::Never
+    }
+    /// The folder the CLI process starts in.
+    fn working_dir<'a>(&self, request: &'a Request) -> &'a Path {
+        &request.cwd
+    }
+    /// The id a new conversation starts with, when Gespan picks it rather
+    /// than the CLI.
+    fn new_session_id(&self, _request: &Request) -> Option<String> {
+        None
+    }
+    /// The CLI's launch arguments and environment. `new_session` is what
+    /// `new_session_id` returned for this turn.
+    fn configure(
+        &self,
+        command: &mut Command,
+        request: &Request,
+        attempt: Attempt,
+        new_session: Option<&str>,
+    ) -> Result<(), String> {
+        super::configure_by_family(
+            command,
+            request,
+            attempt.probe,
+            attempt.fallback,
+            new_session,
+        )
+    }
 }
 
 macro_rules! builtin {
-    ($($name:ident => $kind:ident),* $(,)?) => {
+    ($($name:ident => $kind:ident $({ $($method:item)* })?),* $(,)?) => {
         $(
             pub struct $name {
                 descriptor: Descriptor,
@@ -118,6 +186,7 @@ macro_rules! builtin {
                 fn descriptor(&self) -> &Descriptor {
                     &self.descriptor
                 }
+                $($($method)*)?
             }
         )*
         fn build(kind: Kind, descriptor: Descriptor) -> Box<dyn Provider> {
@@ -128,18 +197,45 @@ macro_rules! builtin {
     };
 }
 builtin! {
-    ClaudeProvider => Claude,
+    ClaudeProvider => Claude {
+        /// A new conversation starts with an id Gespan picks; resumes and
+        /// one-shot text turns get none.
+        fn new_session_id(&self, request: &Request) -> Option<String> {
+            (request.provider_id.is_none() && !request.settings.text_only)
+                .then(super::lifecycle::claude_session_id)
+        }
+    },
     CodexProvider => Codex,
     CursorProvider => Cursor,
     GrokProvider => Grok,
-    OpenCodeProvider => OpenCode,
-    AntigravityProvider => Antigravity,
+    OpenCodeProvider => OpenCode {
+        fn transport(&self) -> Transport {
+            Transport::Http
+        }
+    },
+    AntigravityProvider => Antigravity {
+        /// The ACP server starts in its own install folder, not the project.
+        fn working_dir<'a>(&self, request: &'a Request) -> &'a Path {
+            request.binary.parent().unwrap_or(&request.cwd)
+        }
+    },
     PiProvider => Pi,
     OmpProvider => Omp,
     FxProvider => Fx,
     HermesProvider => Hermes,
     DevinProvider => Devin,
-    KiroProvider => Kiro,
+    KiroProvider => Kiro {
+        fn retry_policy(&self) -> RetryPolicy {
+            RetryPolicy::FallbackOnce
+        }
+    },
+}
+
+impl Kind {
+    /// This kind's provider in the process-wide registry.
+    pub fn provider(self) -> &'static dyn Provider {
+        ProviderRegistry::builtin().get(self)
+    }
 }
 
 /// An id that names no provider. Callers decide what to do instead of
@@ -295,6 +391,9 @@ mod tests {
                     side_threads: f.side_threads,
                     rewind: f.rewind,
                     raw_slash_commands: f.raw_slash_commands,
+                    // No `Spec` field yet: these were lists in the UI.
+                    attachments: d.capabilities.attachments,
+                    text_turns: d.capabilities.text_turns,
                     steer: f.steer,
                 },
                 "{kind:?}"
@@ -354,6 +453,140 @@ mod tests {
                 .descriptor()
                 .binary,
             "grok"
+        );
+    }
+
+    fn request(kind: Kind) -> Request {
+        Request {
+            kind,
+            binary: PathBuf::from("/opt/agy-acp").join(kind.binary_name()),
+            cwd: PathBuf::from("/work/project"),
+            prompt: "hello".into(),
+            provider_id: None,
+            model: None,
+            settings: Default::default(),
+        }
+    }
+
+    fn kinds_where(pick: impl Fn(&dyn Provider) -> bool) -> Vec<Kind> {
+        ProviderRegistry::builtin()
+            .iter()
+            .filter(|p| pick(*p))
+            .map(|p| p.kind())
+            .collect()
+    }
+
+    #[test]
+    fn only_opencode_is_reached_over_http() {
+        assert_eq!(
+            kinds_where(|p| p.transport() == Transport::Http),
+            [Kind::OpenCode]
+        );
+    }
+
+    #[test]
+    fn only_kiro_retries_a_launch_with_its_fallback_arguments() {
+        assert_eq!(
+            kinds_where(|p| p.retry_policy() == RetryPolicy::FallbackOnce),
+            [Kind::Kiro]
+        );
+    }
+
+    #[test]
+    fn only_antigravity_starts_outside_the_project_folder() {
+        let registry = ProviderRegistry::builtin();
+        for provider in registry.iter() {
+            let request = request(provider.kind());
+            let expected = if provider.kind() == Kind::Antigravity {
+                Path::new("/opt/agy-acp")
+            } else {
+                Path::new("/work/project")
+            };
+            assert_eq!(
+                provider.working_dir(&request),
+                expected,
+                "{:?}",
+                provider.kind()
+            );
+        }
+        // A binary path with no parent keeps the project folder.
+        let mut bare = request(Kind::Antigravity);
+        bare.binary = PathBuf::from("/");
+        assert_eq!(
+            registry.get(Kind::Antigravity).working_dir(&bare),
+            Path::new("/work/project")
+        );
+    }
+
+    #[test]
+    fn only_a_new_claude_conversation_gets_an_id_from_gespan() {
+        let registry = ProviderRegistry::builtin();
+        assert_eq!(
+            kinds_where(|p| p.new_session_id(&request(p.kind())).is_some()),
+            [Kind::Claude]
+        );
+        let claude = registry.get(Kind::Claude);
+        let id = claude.new_session_id(&request(Kind::Claude)).unwrap();
+        assert_eq!(id.len(), 36, "{id}");
+        assert_eq!(id.chars().nth(14), Some('4'), "a v4 UUID: {id}");
+        assert_ne!(claude.new_session_id(&request(Kind::Claude)), Some(id));
+
+        let mut resume = request(Kind::Claude);
+        resume.provider_id = Some("previous-session".into());
+        assert_eq!(claude.new_session_id(&resume), None);
+        let mut text = request(Kind::Claude);
+        text.settings.text_only = true;
+        assert_eq!(claude.new_session_id(&text), None);
+    }
+
+    // The sets below are what the UI hard-coded before it read capabilities;
+    // each test pins one, so a manifest edit that changes it is deliberate.
+
+    #[test]
+    fn only_fx_cannot_take_attachments() {
+        assert_eq!(kinds_where(|p| !p.capabilities().attachments), [Kind::Fx]);
+    }
+
+    #[test]
+    fn the_vetted_text_providers_keep_their_fallback_order() {
+        assert_eq!(
+            kinds_where(|p| p.capabilities().text_turns),
+            [
+                Kind::Claude,
+                Kind::Codex,
+                Kind::Cursor,
+                Kind::Grok,
+                Kind::OpenCode,
+                Kind::Kiro
+            ]
+        );
+    }
+
+    #[test]
+    fn side_questions_are_off_for_fx_hermes_and_antigravity() {
+        assert_eq!(
+            kinds_where(|p| !p.capabilities().side_threads),
+            [Kind::Fx, Kind::Hermes, Kind::Antigravity]
+        );
+    }
+
+    #[test]
+    fn only_claude_and_codex_keep_accounts_in_their_own_config_homes() {
+        assert_eq!(
+            kinds_where(|p| p
+                .descriptor()
+                .accounts
+                .as_ref()
+                .is_some_and(|a| a.profile.is_some())),
+            [Kind::Claude, Kind::Codex]
+        );
+    }
+
+    #[test]
+    fn pi_and_omp_are_the_pi_family() {
+        assert_eq!(
+            kinds_where(|p| p.descriptor().family == Family::Pi),
+            [Kind::Pi, Kind::Omp]
         );
     }
 }

@@ -85,7 +85,7 @@ impl Shell {
             return Some(view.clone());
         }
         let cwd = self.workspace.terminal_panes.get(&pane)?.cwd.clone();
-        let view = self.spawn_terminal(cwd, cx);
+        let view = self.spawn_terminal(cwd, &[], cx);
         self.terminal_pane_views.insert(pane, view.clone());
         Some(view)
     }
@@ -198,7 +198,7 @@ impl Shell {
             return;
         };
         let cwd = self.terminal_cwd(cx);
-        let terminal = self.spawn_terminal(cwd.clone(), cx);
+        let terminal = self.spawn_terminal(cwd.clone(), &[], cx);
         let pane = self.workspace.next_pane_id();
         self.workspace
             .terminal_panes
@@ -236,7 +236,7 @@ impl Shell {
             return;
         };
         let cwd = self.terminal_cwd(cx);
-        let terminal = self.spawn_terminal(cwd.clone(), cx);
+        let terminal = self.spawn_terminal(cwd.clone(), &[], cx);
         let pane = self.workspace.next_pane_id();
         self.workspace
             .terminal_panes
