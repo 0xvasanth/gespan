@@ -12,7 +12,7 @@ pub(crate) const NO_COMMAND: &str = "Has no command Gespan can run";
 /// while starting, so a value could run code before the command does. An
 /// action's terminal starts the user's interactive shell with them, so its
 /// prompts, line editor, history and function path count too.
-const STARTUP_ENV: [&str; 63] = [
+const STARTUP_ENV: [&str; 67] = [
     // Shell startup and interactive shells.
     "ZDOTDIR",
     "BASH_ENV",
@@ -70,6 +70,11 @@ const STARTUP_ENV: [&str; 63] = [
     "R_ENVIRON",
     "R_ENVIRON_USER",
     "CLASSPATH",
+    "JAVA_OPTS",
+    "SBT_OPTS",
+    "ANT_OPTS",
+    // RubyGems loads the Gemfile it names whenever Ruby starts.
+    "RUBYGEMS_GEMDEPS",
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "JDK_JAVA_OPTIONS",
@@ -104,7 +109,7 @@ const STARTUP_ENV_PREFIXES: [&str; 11] = [
 /// place of the one it asks for: a compiler, linker or wrapper and the flags
 /// that load compiler plugins, `make`'s own variables, an editor or pager,
 /// `less`'s input filters and startup keys, and Windows' runnable extensions.
-const PROGRAM_ENV: [&str; 38] = [
+const PROGRAM_ENV: [&str; 40] = [
     "SHELL",
     "RUSTC",
     "RUSTC_WRAPPER",
@@ -126,9 +131,11 @@ const PROGRAM_ENV: [&str; 38] = [
     "MAKE",
     "MAKEFLAGS",
     "MFLAGS",
+    "GNUMAKEFLAGS",
+    "MAKEFILES",
     "JAVA_HOME",
     "MAVEN_OPTS",
-    "BUNDLE_GEMFILE",
+    "MAVEN_ARGS",
     "PATHEXT",
     "EDITOR",
     "VISUAL",
@@ -145,8 +152,9 @@ const PROGRAM_ENV: [&str; 38] = [
     "SUDO_ASKPASS",
 ];
 /// Package managers and toolchains read every variable of these as config,
-/// and some of their settings name programs or folders to run them from.
-const PROGRAM_ENV_PREFIXES: [&str; 13] = [
+/// and some of their settings name programs or folders to run them from, or
+/// the index packages are installed from.
+const PROGRAM_ENV_PREFIXES: [&str; 20] = [
     "CARGO_",
     "RUSTUP_",
     "NPM_CONFIG_",
@@ -160,6 +168,13 @@ const PROGRAM_ENV_PREFIXES: [&str; 13] = [
     "GEM_",
     "ASDF_",
     "MISE_",
+    "CCACHE_",
+    "BUNDLE_",
+    "PIP_",
+    "UV_",
+    "POETRY_",
+    "PIPENV_",
+    "CONDA_",
 ];
 const UNSAFE_ENV_NAME: &str = "Sets an environment variable with a name Gespan can't pass safely";
 
