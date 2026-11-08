@@ -1,0 +1,19 @@
+crates/gespan-browser/src/launch.rs
+  s_35022df10dc1c3::t_b2c9b695efca48 224-225,239-242,256-260,271-272,279,352,569-571,576,578-584,586-604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1cc9c42e154d5eda65f43ac153087069bbf26b41",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
