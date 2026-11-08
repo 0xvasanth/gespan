@@ -143,8 +143,8 @@ impl GraphStore {
     ///   except that a structural edge takes an earlier `valid_from` (and its
     ///   basis), since many owners assert it and the earliest is the truth;
     /// - closed fact, open row: the row is closed at `max(valid_to, valid_from)`;
-    /// - closed fact, no open row: inserted closed unless the same closed row
-    ///   already exists.
+    /// - closed fact, no open row: inserted closed unless a closed row with
+    ///   the key already covers it (starts no later, ends at the same time).
     ///
     /// The endpoints must exist; nothing is written on error.
     pub fn upsert_edge(&mut self, fact: &EdgeFact) -> Result<EdgeId, GraphError> {
@@ -214,13 +214,18 @@ impl GraphStore {
                 id
             }
             (Some(to), None) => {
-                // Clamped like close_edge, so an inverted fact still converges.
-                let to = to.as_millis().max(from);
+                // Already recorded when a closed row with this key covers the
+                // fact: it starts no later and ends where closing an open row
+                // with this fact would have ended it (`max(to, valid_from)`).
+                // That is the row an earlier write of the fact closed or
+                // inserted, even when the open row kept an earlier start.
+                let to = to.as_millis();
                 let existing: Option<i64> = tx
                     .prepare_cached(
                         "SELECT id FROM graph_edges
                          WHERE kind = ?1 AND src = ?2 AND dst = ?3 AND source = ?4 AND scope = ?5
-                           AND valid_from = ?6 AND valid_to = ?7
+                           AND valid_to IS NOT NULL
+                           AND valid_from <= ?6 AND valid_to = max(?7, valid_from)
                          ORDER BY id LIMIT 1",
                     )?
                     .query_row(params![kind, src, dst, source, scope, from, to], |r| {
@@ -229,7 +234,8 @@ impl GraphStore {
                     .optional()?;
                 match existing {
                     Some(id) => id,
-                    None => insert(Some(to))?,
+                    // Clamped like close_edge, so an inverted fact still converges.
+                    None => insert(Some(to.max(from)))?,
                 }
             }
         };

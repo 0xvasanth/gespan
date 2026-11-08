@@ -432,3 +432,52 @@ fn keys_and_labels_round_trip_verbatim() {
     assert_eq!(find(key)[3], Value::String(long));
     assert_eq!(find("tricky")[3], Value::String(tricky.into()));
 }
+
+#[test]
+fn closed_fact_reruns_converge_when_its_start_differs_from_the_open_row() {
+    // Structural: the open row took the earliest start (+20); the closed fact
+    // carries a later one (+50).
+    let (_d1, mut store, _p1) = temp_store();
+    add_node(&mut store, NodeKind::Worktree, "w", 0);
+    add_node(&mut store, NodeKind::Project, "p", 0);
+    let (w, p) = (nref(NodeKind::Worktree, "w"), nref(NodeKind::Project, "p"));
+    for from in [50, 20] {
+        let mut f = fact(EdgeKind::InProject, &w, &p, from);
+        f.scope = Scope::Structural;
+        store.upsert_edge(&f).unwrap();
+    }
+    let mut closed = fact(EdgeKind::InProject, &w, &p, 50);
+    closed.scope = Scope::Structural;
+    closed.valid_to = Some(ts(100));
+    let id = store.upsert_edge(&closed).unwrap();
+    let dump = store.canonical_dump().unwrap();
+    assert_eq!(store.upsert_edge(&closed).unwrap(), id);
+    assert_eq!(count(&store, "graph_edges"), 1);
+    assert_eq!(store.canonical_dump().unwrap(), dump);
+    assert_eq!(
+        edge_row(&store, id).0..edge_row(&store, id).1.unwrap(),
+        BASE + 20..BASE + 100
+    );
+
+    // Owner scope: open row at +10, closed fact {+20, +30}.
+    let (_d2, mut store, _p2) = temp_store();
+    add_node(&mut store, NodeKind::Session, "s", 0);
+    add_node(&mut store, NodeKind::Worktree, "w", 0);
+    let s = nref(NodeKind::Session, "s");
+    store
+        .upsert_edge(&fact(EdgeKind::RanIn, &s, &w, 10))
+        .unwrap();
+    let mut closed = fact(EdgeKind::RanIn, &s, &w, 20);
+    closed.valid_to = Some(ts(30));
+    let id = store.upsert_edge(&closed).unwrap();
+    let dump = store.canonical_dump().unwrap();
+    assert_eq!(store.upsert_edge(&closed).unwrap(), id);
+    assert_eq!(count(&store, "graph_edges"), 1);
+    assert_eq!(store.canonical_dump().unwrap(), dump);
+
+    // A closed fact for an interval no row covers is still new history.
+    let mut other = fact(EdgeKind::RanIn, &s, &w, 40);
+    other.valid_to = Some(ts(50));
+    assert_ne!(store.upsert_edge(&other).unwrap(), id);
+    assert_eq!(count(&store, "graph_edges"), 2);
+}
