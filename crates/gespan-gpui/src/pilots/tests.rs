@@ -994,8 +994,8 @@ fn details_tabs_head_the_panel_and_the_corner_keeps_only_the_toggle(cx: &mut Tes
         let tabs = visual.debug_bounds("pilot-overview-tabs").unwrap();
         let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
         let title_tabs = visual.debug_bounds("title-tab-strip").unwrap();
-        // The Pilot's tabs head its panel, as a project's do. In both
-        // frames the panel starts below the title bar.
+        // The Pilot's tabs head its panel, as a project's do, under the
+        // title bar, which runs over the panel in both layouts.
         assert_eq!(header.top(), panel.top(), "boxy {boxy}");
         assert!(header.top() >= px(TITLE_BAR_HEIGHT) - px(0.5));
         assert_eq!(header.size.height, px(crate::theme::PANE_HEADER_HEIGHT));
