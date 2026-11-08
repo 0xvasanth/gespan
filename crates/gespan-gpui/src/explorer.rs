@@ -1393,6 +1393,10 @@ impl Explorer {
                 let is_dir = entry.is_dir;
                 div()
                     .id(("explorer-row", ix))
+                    .debug_selector({
+                        let path = entry.path.clone();
+                        move || format!("explorer-row-{path}")
+                    })
                     .role(Role::TreeItem)
                     .aria_label(SharedString::from(entry.path.clone()))
                     .when(is_dir, |d| d.aria_expanded(open))

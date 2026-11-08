@@ -926,4 +926,204 @@ mod tests {
         assert_eq!(restored.tabs, [1]);
         assert_eq!(restored.next_pane_id(), -2);
     }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Frame {
+        Rounded,
+        Boxy,
+        Classic,
+    }
+
+    /// Moves `owner` onto a real project folder holding `README.md`,
+    /// `src/main.rs` and `src/nested/deep.rs`, and shows its Explorer in
+    /// `frame` with `src/nested` expanded. Returns the project root.
+    fn show_explorer(
+        window: WindowHandle<Shell>,
+        owner: i64,
+        frame: Frame,
+        visual: &mut VisualTestContext,
+    ) -> String {
+        use crate::right_panel::RightTab;
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "gespan-explorer-open-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(dir.join("src/nested")).unwrap();
+        std::fs::write(dir.join("README.md"), "# Demo\n").unwrap();
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.join("src/nested/deep.rs"), "pub fn deep() {}\n").unwrap();
+        let root = dir.to_string_lossy().replace('\\', "/");
+        window
+            .update(visual, |shell, w, cx| {
+                shell.sessions[&owner].update(cx, |chat, _| chat.summary.cwd = root.clone());
+                shell.workspace.add_project(&root);
+                shell.workspace.project = root.clone();
+                shell
+                    .git
+                    .update(cx, |git, cx| git.set_project(root.clone(), cx));
+                shell.workspace.classic_layout = matches!(frame, Frame::Classic);
+                shell.workspace.new_layout_boxy = matches!(frame, Frame::Boxy);
+                shell.layout_changed(cx);
+                if matches!(frame, Frame::Classic) {
+                    shell.select_classic_sidebar_tab(
+                        super::classic_sidebar::ClassicSidebarTab::Files,
+                        w,
+                        cx,
+                    );
+                } else {
+                    shell.set_right_panel_open(true, w, cx);
+                    let panel = shell.right_panel.clone().unwrap();
+                    panel.update(cx, |p, cx| p.select(RightTab::Files, cx));
+                }
+            })
+            .unwrap();
+        visual.run_until_parked();
+        click_explorer_row(visual, &format!("{root}/src"));
+        click_explorer_row(visual, &format!("{root}/src/nested"));
+        root
+    }
+
+    fn click_explorer_row(visual: &mut VisualTestContext, path: &str) {
+        let selector = Box::leak(format!("explorer-row-{path}").into_boxed_str());
+        visual.refresh().unwrap();
+        let row = visual.debug_bounds(selector).unwrap_or_else(|| {
+            panic!(
+                "no Explorer row for {path}; header {:?} frame {:?}",
+                visual.debug_bounds("explorer-header"),
+                visual.debug_bounds("right-panel-frame")
+            )
+        });
+        visual.simulate_click(row.center(), Modifiers::default());
+        visual.run_until_parked();
+    }
+
+    /// The file is the selected tab of `owner`'s file pane, which is the
+    /// active pane and is drawn.
+    fn assert_file_open(
+        window: WindowHandle<Shell>,
+        visual: &mut VisualTestContext,
+        owner: i64,
+        path: &str,
+    ) {
+        window
+            .update(visual, |shell, _, cx| {
+                assert_eq!(shell.workspace.active, Some(owner));
+                let review = shell.reviews.get(&owner).expect("the chat has a file pane");
+                let state = &review.read(cx).state;
+                let crate::review::ReviewTab::File { path: shown, .. } = &state.tabs[state.active]
+                else {
+                    panic!("the selected tab is not a file: {:?}", state.tabs);
+                };
+                assert_eq!(shown, path);
+                let opened = state
+                    .tabs
+                    .iter()
+                    .filter(|t| matches!(t, crate::review::ReviewTab::File { path: p, .. } if p == path))
+                    .count();
+                assert_eq!(opened, 1, "{path} has one tab");
+            })
+            .unwrap();
+        assert!(
+            visual.debug_bounds("review-frame").is_some(),
+            "the file pane is drawn"
+        );
+    }
+
+    #[gpui::test]
+    fn explorer_opens_files_beside_the_chat_while_its_split_terminal_has_focus(
+        cx: &mut TestAppContext,
+    ) {
+        for frame in [Frame::Rounded, Frame::Boxy, Frame::Classic] {
+            let (window, mut visual, owner, pane) = title_terminal(cx, true);
+            let root = show_explorer(window, owner, frame, &mut visual);
+            window
+                .update(&mut visual, |shell, _, _| {
+                    assert_eq!(shell.workspace.active, Some(pane), "{frame:?}");
+                })
+                .unwrap();
+            let deep = format!("{root}/src/nested/deep.rs");
+            click_explorer_row(&mut visual, &deep);
+            assert_file_open(window, &mut visual, owner, &deep);
+            window
+                .update(&mut visual, |shell, _, _| {
+                    // The terminal keeps its place in the split.
+                    let tab = shell.workspace.tab_of(owner).unwrap();
+                    assert_eq!(shell.workspace.tab_of(pane), Some(tab), "{frame:?}");
+                    assert!(shell.workspace.terminal_panes.contains_key(&pane));
+                    assert!(!shell.reviews.contains_key(&pane), "{frame:?}");
+                })
+                .unwrap();
+            let selector = Box::leak(format!("terminal-pane-{pane}").into_boxed_str());
+            assert!(visual.debug_bounds(selector).is_some(), "{frame:?}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn explorer_opens_files_from_a_terminal_in_its_own_title_tab(cx: &mut TestAppContext) {
+        let (window, mut visual, owner, pane) = title_terminal(cx, false);
+        let root = show_explorer(window, owner, Frame::Rounded, &mut visual);
+        window
+            .update(&mut visual, |shell, _, _| {
+                assert_eq!(shell.workspace.active, Some(pane));
+                assert_ne!(shell.workspace.tab_of(pane), shell.workspace.tab_of(owner));
+            })
+            .unwrap();
+        let readme = format!("{root}/README.md");
+        click_explorer_row(&mut visual, &readme);
+        // The chat's own tab comes forward with the file beside it.
+        assert_file_open(window, &mut visual, owner, &readme);
+        window
+            .update(&mut visual, |shell, _, _| {
+                assert_eq!(
+                    shell.workspace.tab_of(pane),
+                    Some(pane),
+                    "the terminal keeps its tab"
+                );
+            })
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn explorer_reselects_an_open_file_instead_of_opening_it_twice(cx: &mut TestAppContext) {
+        let (window, mut visual, owner, pane) = title_terminal(cx, true);
+        let root = show_explorer(window, owner, Frame::Rounded, &mut visual);
+        let (main, readme) = (format!("{root}/src/main.rs"), format!("{root}/README.md"));
+        click_explorer_row(&mut visual, &main);
+        click_explorer_row(&mut visual, &readme);
+        assert_file_open(window, &mut visual, owner, &readme);
+        // Back on the terminal, the already open file is selected again.
+        window
+            .update(&mut visual, |shell, w, cx| shell.focus_pane(pane, w, cx))
+            .unwrap();
+        visual.run_until_parked();
+        click_explorer_row(&mut visual, &main);
+        assert_file_open(window, &mut visual, owner, &main);
+        window
+            .update(&mut visual, |shell, _, cx| {
+                assert_eq!(shell.reviews[&owner].read(cx).state.tabs.len(), 2);
+            })
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn explorer_opens_files_beside_the_focused_chat(cx: &mut TestAppContext) {
+        for frame in [Frame::Rounded, Frame::Boxy, Frame::Classic] {
+            let (window, _, owner) = window(cx);
+            cx.update(|cx| cx.set_reduce_motion(true));
+            window
+                .update(cx, |shell, w, cx| shell.open(owner, w, cx))
+                .unwrap();
+            let mut visual = VisualTestContext::from_window(window.into(), cx);
+            let root = show_explorer(window, owner, frame, &mut visual);
+            let deep = format!("{root}/src/nested/deep.rs");
+            click_explorer_row(&mut visual, &deep);
+            assert_file_open(window, &mut visual, owner, &deep);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
 }
