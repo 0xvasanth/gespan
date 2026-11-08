@@ -1,0 +1,113 @@
+claude supervised: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude read-only: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode plan --tools Read,Glob,Grep,Bash --allowedTools Read,Glob,Grep --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude auto-accept-edits: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode acceptEdits --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude full-access: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode bypassPermissions --allow-dangerously-skip-permissions --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude plan: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode plan --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude model+effort: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --effort high --settings {} --setting-sources=user,project,local --session-id new-session-id --model model-x
+claude resume: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --settings {} --setting-sources=user,project,local --resume previous-session
+claude text-only: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --tools  --max-turns 1 --no-session-persistence --strict-mcp-config --mcp-config {"mcpServers":{}} --settings {"disableAllHooks":true}
+claude probe: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --settings {} --setting-sources=user,project,local --session-id new-session-id
+claude fallback: --verbose --input-format stream-json --output-format stream-json --include-partial-messages --permission-prompt-tool stdio --permission-mode default --settings {} --setting-sources=user,project,local --session-id new-session-id
+codex supervised: app-server
+codex read-only: app-server
+codex auto-accept-edits: app-server
+codex full-access: app-server
+codex plan: app-server
+codex model+effort: app-server
+codex resume: app-server
+codex text-only: app-server
+codex probe: app-server
+codex fallback: app-server
+cursor supervised: acp
+cursor read-only: acp
+cursor auto-accept-edits: acp
+cursor full-access: acp
+cursor plan: acp
+cursor model+effort: acp
+cursor resume: acp
+cursor text-only: acp
+cursor probe: acp
+cursor fallback: acp
+grok supervised: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok read-only: --no-auto-update --permission-mode plan agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok auto-accept-edits: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok full-access: --no-auto-update agent --no-leader --always-approve stdio | env GROK_NO_AUTO_UPDATE=1
+grok plan: --no-auto-update --permission-mode plan agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok model+effort: --no-auto-update agent --no-leader --model model-x --reasoning-effort high stdio | env GROK_NO_AUTO_UPDATE=1
+grok resume: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok text-only: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok probe: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+grok fallback: --no-auto-update agent --no-leader stdio | env GROK_NO_AUTO_UPDATE=1
+opencode supervised: acp
+opencode read-only: acp
+opencode auto-accept-edits: acp
+opencode full-access: acp
+opencode plan: acp
+opencode model+effort: acp
+opencode resume: acp
+opencode text-only: acp
+opencode probe: acp
+opencode fallback: acp
+pi supervised: --mode rpc
+pi read-only: --mode rpc --tools read,grep,find,ls
+pi auto-accept-edits: --mode rpc
+pi full-access: --mode rpc
+pi plan: --mode rpc --tools read,grep,find,ls
+pi model+effort: --mode rpc
+pi resume: --mode rpc --session previous-session
+pi text-only: --mode rpc --no-session --no-extensions --no-tools --no-skills --no-context-files
+pi probe: --mode rpc --no-session
+pi fallback: --mode rpc
+omp supervised: --mode rpc
+omp read-only: --mode rpc --tools read,grep,glob,lsp
+omp auto-accept-edits: --mode rpc
+omp full-access: --mode rpc
+omp plan: --mode rpc --tools read,grep,glob,lsp
+omp model+effort: --mode rpc
+omp resume: --mode rpc --resume previous-session
+omp text-only: --mode rpc --no-session --no-extensions --no-tools --no-skills --no-rules
+omp probe: --mode rpc --no-session
+omp fallback: --mode rpc
+fx supervised: acp
+fx read-only: acp
+fx auto-accept-edits: acp
+fx full-access: acp
+fx plan: acp
+fx model+effort: acp --model model-x
+fx resume: acp
+fx text-only: acp
+fx probe: acp
+fx fallback: acp
+hermes supervised: acp
+hermes read-only: acp
+hermes auto-accept-edits: acp
+hermes full-access: acp
+hermes plan: acp
+hermes model+effort: acp
+hermes resume: acp
+hermes text-only: acp
+hermes probe: acp
+hermes fallback: acp
+kiro supervised: acp --agent-engine=v3
+kiro read-only: acp --agent-engine=v3
+kiro auto-accept-edits: acp --agent-engine=v3
+kiro full-access: acp --agent-engine=v3
+kiro plan: acp --agent-engine=v3
+kiro model+effort: acp --agent-engine=v3
+kiro resume: acp --agent-engine=v3
+kiro text-only: acp --agent-engine=v3
+kiro probe: acp --agent-engine=v3
+kiro fallback: acp
+antigravity supervised: 
+antigravity read-only: 
+antigravity auto-accept-edits: 
+antigravity full-access: 
+antigravity plan: 
+antigravity model+effort: 
+antigravity resume: 
+antigravity text-only: 
+antigravity probe: 
+antigravity fallback: 
+devin read-only: acp
+devin auto-accept-edits: acp
+devin full-access: acp

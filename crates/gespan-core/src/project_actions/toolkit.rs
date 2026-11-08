@@ -189,6 +189,8 @@ fn row(action: &Action) -> Value {
         "cwd": action.cwd.display().to_string(),
         "background": action.background,
         "blocked": action.blocked,
+        // Names only: values can be secrets.
+        "env": action.env.iter().map(|(name, _)| name).collect::<Vec<_>>(),
     })
 }
 

@@ -565,6 +565,7 @@ fn main() {
         popover::bind(cx);
         board::bind(cx);
         worktree_setups::install(cx);
+        shell::action_runs::install(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);
