@@ -1,11 +1,11 @@
 //! `GraphStore`: one connection to `graph.db`.
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::error::GraphError;
-use crate::key::{EdgeId, NodeId, NodeRef, Props, Scope, Source, TimeBasis};
-use crate::kind::EdgeKind;
+use crate::key::{scope_of, EdgeId, NodeId, NodeRef, Props, Scope, SessionId, Source, TimeBasis};
+use crate::kind::{EdgeKind, NodeKind};
 use crate::time::Timestamp;
 use crate::{migrate, schema};
 
@@ -52,6 +52,13 @@ pub enum CloseOutcome {
     Closed(EdgeId),
     /// No open row had that key; nothing changed.
     NotOpen,
+}
+
+/// What a delete removed, orphans included.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeleteReport {
+    pub nodes_removed: u64,
+    pub edges_removed: u64,
 }
 
 /// The knowledge graph store. Every call blocks: use it from a background
@@ -320,11 +327,148 @@ impl GraphStore {
         Ok(lines.join("\n"))
     }
 
+    /// Deletes an anchor (a session, pilot, automation run, card, note or
+    /// memory) in one transaction:
+    /// 1. every edge it asserted (`scope = "<kind>:<key>"`), open or closed,
+    ///    even where it is not an endpoint and even if the node itself is not
+    ///    in the graph;
+    /// 2. the node, and with it every edge touching it;
+    /// 3. its `graph_scopes` rows;
+    /// 4. the orphans this leaves (see [`GraphStore::gc_orphans`]).
+    ///
+    /// An unknown anchor with no scoped edges is `Ok` with zero counts.
+    pub fn delete_anchor(&mut self, node: &NodeRef) -> Result<DeleteReport, GraphError> {
+        if !node.kind.is_anchor() {
+            return Err(GraphError::NotAnchor(node.kind));
+        }
+        let scope = scope_of(node);
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // The cascade doesn't report its changes, so the report is the
+        // difference of the totals.
+        let before = totals(&tx)?;
+        tx.prepare_cached("DELETE FROM graph_edges WHERE scope = ?1")?
+            .execute([&scope])?;
+        tx.prepare_cached("DELETE FROM graph_nodes WHERE kind = ?1 AND key = ?2")?
+            .execute(params![node.kind.as_str(), node.key.as_str()])?;
+        tx.prepare_cached("DELETE FROM graph_scopes WHERE scope = ?1")?
+            .execute([&scope])?;
+        gc_in(&tx)?;
+        let after = totals(&tx)?;
+        tx.commit()?;
+        Ok(DeleteReport {
+            nodes_removed: before.0.saturating_sub(after.0),
+            edges_removed: before.1.saturating_sub(after.1),
+        })
+    }
+
+    /// `delete_anchor` for a persisted session.
+    pub fn delete_session(&mut self, id: &SessionId) -> Result<DeleteReport, GraphError> {
+        self.delete_anchor(&NodeRef::session(id)?)
+    }
+
+    /// Removes derived nodes no anchor reaches, and returns how many went:
+    /// 1. derived nodes (other than repos) with no edge, open or closed, to an
+    ///    anchor node;
+    /// 2. then repos with no `of_repo` edge from a surviving PR or ticket.
+    ///
+    /// So a file only one session touched goes with that session even though
+    /// it is still `in_project`, while a shared file and its project stay.
+    /// Running it twice removes nothing the second time.
+    ///
+    /// Known limit: people only join derived nodes (`authored`/`assigned` to
+    /// PRs and tickets), so pass 1 always collects them. Stage 1 writes none;
+    /// whoever first writes people must give them a pass like repos'.
+    pub fn gc_orphans(&mut self) -> Result<u64, GraphError> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let removed = gc_in(&tx)?;
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Closes the connection and removes `graph.db` with its `-wal` and
+    /// `-shm` files. If closing fails nothing is deleted.
+    pub fn wipe(self) -> Result<(), GraphError> {
+        let GraphStore { conn, path } = self;
+        conn.close().map_err(|(_, e)| e)?;
+        GraphStore::wipe_files(&path)
+    }
+
+    /// Removes the database at `path` with its `-wal` and `-shm` files,
+    /// without opening it. Files that are already absent are fine; any other
+    /// failure (such as a file still open elsewhere on Windows) is an error.
+    pub fn wipe_files(path: &Path) -> Result<(), GraphError> {
+        for suffix in ["", "-wal", "-shm"] {
+            let mut file = path.as_os_str().to_owned();
+            file.push(suffix);
+            match std::fs::remove_file(&file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
     /// The raw connection, for tests and the seeded generator only.
     #[doc(hidden)]
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
+}
+
+/// `(nodes, edges)` row counts.
+fn totals(tx: &Transaction<'_>) -> rusqlite::Result<(u64, u64)> {
+    tx.query_row(
+        "SELECT (SELECT count(*) FROM graph_nodes), (SELECT count(*) FROM graph_edges)",
+        [],
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?.unsigned_abs(),
+                r.get::<_, i64>(1)?.unsigned_abs(),
+            ))
+        },
+    )
+}
+
+fn kind_list(keep: impl Fn(NodeKind) -> bool) -> String {
+    NodeKind::ALL
+        .into_iter()
+        .filter(|k| keep(*k))
+        .map(|k| format!("'{}'", k.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `gc_orphans`' two passes inside the caller's transaction. The `OR` of
+/// "edge out to an anchor / edge in from an anchor" is two `EXISTS` clauses
+/// so each probes its own index.
+fn gc_in(tx: &Transaction<'_>) -> rusqlite::Result<u64> {
+    let anchors = kind_list(NodeKind::is_anchor);
+    let derived = kind_list(|k| !k.is_anchor() && k != NodeKind::Repo);
+    let first = tx
+        .prepare_cached(&format!(
+            "DELETE FROM graph_nodes
+             WHERE kind IN ({derived})
+               AND NOT EXISTS (SELECT 1 FROM graph_edges e JOIN graph_nodes a ON a.id = e.dst
+                               WHERE e.src = graph_nodes.id AND a.kind IN ({anchors}))
+               AND NOT EXISTS (SELECT 1 FROM graph_edges e JOIN graph_nodes a ON a.id = e.src
+                               WHERE e.dst = graph_nodes.id AND a.kind IN ({anchors}))"
+        ))?
+        .execute([])?;
+    let repos = tx
+        .prepare_cached(
+            "DELETE FROM graph_nodes
+             WHERE kind = 'repo'
+               AND NOT EXISTS (SELECT 1 FROM graph_edges e JOIN graph_nodes p ON p.id = e.src
+                               WHERE e.dst = graph_nodes.id AND e.kind = 'of_repo'
+                                 AND p.kind IN ('pr', 'ticket'))",
+        )?
+        .execute([])?;
+    Ok((first + repos) as u64)
 }
 
 fn node_id(conn: &Connection, node: &NodeRef) -> rusqlite::Result<Option<NodeId>> {
