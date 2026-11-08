@@ -404,10 +404,7 @@ fn agent(
     .filter(|part| !part.is_empty())
     .collect::<Vec<_>>()
     .join(" · ");
-    let model = run.model_name(
-        gespan_core::provider::Kind::parse(&view.provider)
-            .unwrap_or(gespan_core::provider::Kind::Codex),
-    );
+    let model = run.model_name(gespan_core::provider::Kind::from_id(&view.provider));
     let header = div()
         .id(SharedString::from(key.clone()))
         .debug_selector(move || format!("subagent-{start}"))
