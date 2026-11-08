@@ -943,8 +943,14 @@ mod nav_tint_tests {
                     assert_ne!(a, b, "{theme}: tints differ from each other");
                 }
                 // Selection and hover never wash the tint back to ink.
-                assert_eq!(nav_icon_color(["Search", "Automations", "Board"][i], true), *a);
-                assert_eq!(nav_icon_color(["Search", "Automations", "Board"][i], false), *a);
+                assert_eq!(
+                    nav_icon_color(["Search", "Automations", "Board"][i], true),
+                    *a
+                );
+                assert_eq!(
+                    nav_icon_color(["Search", "Automations", "Board"][i], false),
+                    *a
+                );
             }
         }
     }

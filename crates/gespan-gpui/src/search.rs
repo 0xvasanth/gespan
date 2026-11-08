@@ -1184,7 +1184,7 @@ impl SearchView {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .children(list)
-                    .when(self.hits.is_empty() && !(loading && !suggesting), |d| {
+                    .when(self.hits.is_empty() && (suggesting || !loading), |d| {
                         d.child(empty_message(if suggesting {
                             match self.scope {
                                 Scope::Projects => "No projects yet".into(),

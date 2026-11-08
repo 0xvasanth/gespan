@@ -693,9 +693,7 @@ impl Shell {
                         .items_center()
                         .gap_2()
                         .text_size(px(14.))
-                        .child(
-                            icon("search", 16.).text_color(nav_icon_color("Search", false)),
-                        )
+                        .child(icon("search", 16.).text_color(nav_icon_color("Search", false)))
                         .child(div().flex_1().min_w_0().h(px(20.)).child("Search"))
                         .child(
                             // The shortcut span sits outside the label's `font-medium`.

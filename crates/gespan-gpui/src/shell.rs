@@ -36,6 +36,7 @@ mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;
 pub(crate) mod pilots;
+mod pinned_tabs;
 mod project_rail;
 mod project_removal;
 mod project_settings;
@@ -60,7 +61,6 @@ mod sidebar_peek;
 mod space_reorder;
 mod terminal_dock;
 mod terminal_panes;
-mod pinned_tabs;
 use terminal_panes::terminal_drag_ghost;
 mod title_tabs;
 #[cfg(test)]
@@ -2637,45 +2637,47 @@ impl Shell {
                     .text_color(content(1.))
                     .child(title),
             )
-            .children([
-                (SplitDir::Right, "split-right", "Split right"),
-                (SplitDir::Down, "split-down", "Split down"),
-            ]
-            .map(|(dir, glyph, label)| {
-                let key = format!("split-pane-{glyph}-{id}");
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .debug_selector(move || key.clone())
-                    .role(Role::Button)
-                    .aria_label(label)
-                    .group(glyph)
-                    .size(px(20.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(content(0.1)))
-                    .child(
-                        icon(glyph, 13.)
-                            .text_color(content(0.5))
-                            .group_hover(glyph, |s| s.text_color(content(1.))),
-                    )
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.review_focused = false;
-                        this.focus_pane(id, window, cx);
-                        // A terminal splits off a fresh shell; a chat or a
-                        // Pilot, a new session with its provider.
-                        if this.workspace.terminal_panes.contains_key(&id) {
-                            this.split_title_terminal_toward(dir, window, cx);
-                        } else {
-                            this.split_session(dir, cx);
-                        }
-                    }))
-            }))
+            .children(
+                [
+                    (SplitDir::Right, "split-right", "Split right"),
+                    (SplitDir::Down, "split-down", "Split down"),
+                ]
+                .map(|(dir, glyph, label)| {
+                    let key = format!("split-pane-{glyph}-{id}");
+                    div()
+                        .id(SharedString::from(key.clone()))
+                        .debug_selector(move || key.clone())
+                        .role(Role::Button)
+                        .aria_label(label)
+                        .group(glyph)
+                        .size(px(20.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(content(0.1)))
+                        .child(
+                            icon(glyph, 13.)
+                                .text_color(content(0.5))
+                                .group_hover(glyph, |s| s.text_color(content(1.))),
+                        )
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.review_focused = false;
+                            this.focus_pane(id, window, cx);
+                            // A terminal splits off a fresh shell; a chat or a
+                            // Pilot, a new session with its provider.
+                            if this.workspace.terminal_panes.contains_key(&id) {
+                                this.split_title_terminal_toward(dir, window, cx);
+                            } else {
+                                this.split_session(dir, cx);
+                            }
+                        }))
+                }),
+            )
             .child(
                 div()
                     .id(("close-chat-pane", id as usize))
@@ -2933,7 +2935,8 @@ impl Shell {
                                     .sash_snaps(tab, &sash.path, sash.index)
                                     .first()
                                 {
-                                    this.workspace.place_sash(tab, &sash.path, sash.index, *middle);
+                                    this.workspace
+                                        .place_sash(tab, &sash.path, sash.index, *middle);
                                     this.persist(cx);
                                     cx.notify();
                                 }
@@ -7275,16 +7278,23 @@ impl Shell {
                                 )
                                 .when(self.workspace.sidebar_search_visible, |d| {
                                     d.child(
-                                        icon_button_tinted("sidebar-search", "Search", "search", nav_tint("Search"))
-                                            .debug_selector(|| "sidebar-search-button".into())
-                                            .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
-                                            .on_click(cx.listener(|this, _, window, cx| {
+                                        icon_button_tinted(
+                                            "sidebar-search",
+                                            "Search",
+                                            "search",
+                                            nav_tint("Search"),
+                                        )
+                                        .debug_selector(|| "sidebar-search-button".into())
+                                        .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
                                                 if this.app_search.is_some() {
                                                     this.close_app_search(window, cx)
                                                 } else {
                                                     this.focus_search(window, cx)
                                                 }
-                                            })),
+                                            }),
+                                        ),
                                     )
                                 })
                                 .child(
@@ -9295,9 +9305,7 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 // A pinned tab stays put: ⌘W only closes what sits inside
                 // it, a dock terminal, a review file or one pane of a split.
-                let pinned = this
-                    .active_title_tab(cx)
-                    .filter(|tab| this.tab_pinned(tab));
+                let pinned = this.active_title_tab(cx).filter(|tab| this.tab_pinned(tab));
                 if pinned
                     .as_ref()
                     .is_some_and(|tab| !matches!(tab, TitleTab::Session(_)))
