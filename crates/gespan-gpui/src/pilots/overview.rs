@@ -16,6 +16,8 @@ pub(crate) struct Overview {
     focus: gpui::FocusHandle,
     top_inset: f32,
     original_chrome: bool,
+    /// Whether the panel is wide enough to name the selected tab.
+    expand_labels: bool,
     stack: PanelStack,
     native_content: bool,
     _observation: Subscription,
@@ -28,6 +30,7 @@ impl Overview {
             focus: cx.focus_handle(),
             top_inset: 0.,
             original_chrome: false,
+            expand_labels: true,
             stack: PanelStack::default(),
             native_content: false,
             _observation: cx.observe(&manager, |_, _, cx| cx.notify()),
@@ -37,6 +40,13 @@ impl Overview {
     pub(crate) fn set_top_inset(&mut self, inset: f32, cx: &mut Context<Self>) {
         if self.top_inset != inset {
             self.top_inset = inset;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_expand_labels(&mut self, expand: bool, cx: &mut Context<Self>) {
+        if self.expand_labels != expand {
+            self.expand_labels = expand;
             cx.notify();
         }
     }
@@ -103,6 +113,7 @@ impl Render for Overview {
             .ok()
             .flatten();
         let mut layers = Vec::new();
+        let mut header = None;
         self.native_content = false;
         if let Some((pilot, route)) = state {
             let changed = self.stack.sync(&pilot.id, route, now, cx.reduce_motion());
@@ -117,6 +128,7 @@ impl Render for Overview {
                 matches!(&page.route, Route::Document(id) if pilot.documents.iter().any(|d| &d.id == id && d.kind == "html"))
             });
             let original = self.original_chrome;
+            let expand = self.expand_labels;
             let _ = self.manager.update(cx, |m, cx| {
                 let content = m.overview_panel(&pilot, window, cx);
                 let base = if original {
@@ -130,6 +142,9 @@ impl Render for Overview {
                         .child(div().flex_1().min_w_0().min_h_0().child(content))
                         .into_any_element()
                 } else {
+                    // The tab row stays above the stack, so opened pages
+                    // slide in beneath it and the tabs keep working.
+                    header = Some(m.panel_overview_header(expand, window, cx));
                     content
                 };
                 layers.push(layer(
@@ -165,6 +180,7 @@ impl Render for Overview {
                         .border_color(crate::right_panel::stroke()),
                 )
             })
+            .children(header)
             .child(
                 div()
                     .id("pilot-detail-stack")

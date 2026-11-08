@@ -791,7 +791,7 @@ impl Pilots {
             .flex()
             .items_center()
             .gap(px(2.))
-            .child(self.overview_controls(true, window, cx))
+            .child(self.overview_controls(true, true, window, cx))
             .child(
                 div()
                     .id("original-hide-pilot-overview")
@@ -821,9 +821,35 @@ impl Pilots {
             )
             .into_any_element()
     }
+    /// The new layouts' Pilot header: its tabs in a row at the top of the
+    /// panel, as a project's Explorer, Changes and History head its panel,
+    /// so the title bar keeps only the session tabs and the panel toggle.
+    pub(super) fn panel_overview_header(
+        &self,
+        expand_label: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("pilot-overview-header")
+            .debug_selector(|| "pilot-overview-header".into())
+            .h(px(crate::theme::PANE_HEADER_HEIGHT))
+            .flex_shrink_0()
+            .px_2()
+            .border_b_1()
+            .border_color(crate::right_panel::stroke())
+            .flex()
+            .items_center()
+            .child(self.overview_controls(expand_label, false, window, cx))
+            .into_any_element()
+    }
+    /// The Pilot's tabs. `expand_label` unfolds the selected tab's name when
+    /// there is room for it; `drag` lets the gaps move the window, for the
+    /// original layout where they sit in its top corner.
     pub(crate) fn overview_controls(
         &self,
         expand_label: bool,
+        drag: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -861,7 +887,7 @@ impl Pilots {
             .debug_selector(|| "pilot-overview-tabs".into())
             .role(Role::TabList)
             .aria_label("Pilot details")
-            .h(px(TITLE_BAR_HEIGHT))
+            .h_full()
             .flex_1()
             .min_w_0()
             .mr(px(2.))
@@ -895,7 +921,11 @@ impl Pilots {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.select_overview(tab, cx)))
             }))
-            .child(crate::shell::titlebar_drag_area().flex_1().min_w_0())
+            .child(if drag {
+                crate::shell::titlebar_drag_area().flex_1().min_w_0()
+            } else {
+                div().flex_1().min_w_0()
+            })
             .when(self.overview_tab == OverviewTab::Habits, |d| {
                 d.child(
                     icon_button("pilot-new-habit", "New habit", "plus")
