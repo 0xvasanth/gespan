@@ -939,6 +939,7 @@ pub fn handle_event(link: &Link, event: &CdpEvent, notify: &dyn Fn(TabEvent)) {
             let Some(parent) = &event.session else { return };
             on_attached(link, parent, &event.params, notify);
         }
+        "Target.targetCreated" => on_target_created(link, &event.params["targetInfo"], notify),
         "Target.detachedFromTarget" => {
             let Some(child) = string_field(&event.params, "sessionId") else {
                 return;
@@ -1132,6 +1133,53 @@ pub fn note_frame_navigated(link: &Link, event: &CdpEvent) -> Option<TabId> {
     }
 }
 
+/// A page opened by an agent tab (`window.open`, a `target=_blank` link).
+/// Chrome does not auto-attach such a popup to its opener's page session;
+/// the browser-wide `Target.targetCreated` (`Target.setDiscoverTargets`,
+/// sent on connect) names the opener instead. The popup is attached here and
+/// then handled as an auto-attached one would be. Pages of anyone else are
+/// left alone.
+fn on_target_created(link: &Link, info: &Value, notify: &dyn Fn(TabEvent)) {
+    if info["type"].as_str() != Some("page") {
+        return;
+    }
+    let (Some(target), Some(opener)) = (
+        string_field(info, "targetId"),
+        string_field(info, "openerId"),
+    ) else {
+        return;
+    };
+    let target = TargetId(target);
+    let opener_session = {
+        let state = link.policy().read();
+        if state.lease_for_target(&target).is_some_and(Lease::is_live) {
+            return;
+        }
+        state
+            .lease_for_target(&TargetId(opener))
+            .filter(|lease| lease.is_live())
+            .and_then(|lease| lease.cdp_session.clone())
+    };
+    let Some(opener_session) = opener_session else {
+        return;
+    };
+    let Ok(reply) = link.send_system(Command::browser(
+        Method::TargetAttachToTarget,
+        json!({ "targetId": target.0, "flatten": true }),
+    )) else {
+        return;
+    };
+    let Some(session) = reply["sessionId"].as_str() else {
+        return;
+    };
+    on_attached(
+        link,
+        &opener_session,
+        &json!({ "sessionId": session, "targetInfo": info, "waitingForDebugger": false }),
+        notify,
+    );
+}
+
 fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn Fn(TabEvent)) {
     let policy = link.policy();
     let Some(child) = string_field(params, "sessionId") else {
@@ -1194,6 +1242,19 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
             }
         }
         "page" => {
+            // Already a tab of ours, through the other way a popup can
+            // arrive ([`on_target_created`]): one lease per page.
+            if policy
+                .read()
+                .lease_for_target(&target)
+                .is_some_and(Lease::is_live)
+            {
+                if waiting {
+                    resume(&child);
+                }
+                detach_sessions(link, std::slice::from_ref(&child));
+                return;
+            }
             let owner = {
                 let state = policy.read();
                 state.lease(&parent_tab).map(|l| l.owner.clone())
@@ -1843,6 +1904,98 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         assert_eq!(policy.read().lease(&tab).unwrap().state, TabState::Crashed);
         assert!(server.received().len() > sent_before);
+        link.close(Vec::new(), Duration::from_millis(200));
+    }
+
+    /// Chrome reports a `window.open` popup only browser-wide, as
+    /// `Target.targetCreated` naming its opener: a popup of an agent tab is
+    /// attached and becomes a tab of the same owner, once, while pages
+    /// opened by anyone else are never attached.
+    #[test]
+    fn popups_named_by_target_created_become_tabs_once() {
+        let server = navigating_fake();
+        let policy = policy();
+        let link = Link::new(policy.clone());
+        link.open(&server.url, Duration::from_secs(5)).unwrap();
+        let _pump = spawn_pump(link.clone(), Arc::new(|_| {})).unwrap();
+        let ctx = admit(&policy, ActionKind::TabsOpen, None);
+        let opened = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
+        let tab = opened.handle.tab.clone();
+        let opener = opened.handle.target.0.clone();
+        let main = opened.handle.session.0.clone();
+        let created = |target: &str, opener: Option<&str>| {
+            let mut info = json!({ "targetId": target, "type": "page", "url": format!("https://{target}/"), "title": "", "attached": false });
+            if let Some(opener) = opener {
+                info["openerId"] = json!(opener);
+            }
+            server.emit("Target.targetCreated", json!({ "targetInfo": info }), None);
+        };
+        let attached_to = |target: &str| {
+            server.received().iter().any(|r| {
+                r.method == "Target.attachToTarget" && r.params["targetId"] == json!(target)
+            })
+        };
+        // The user's own new tab, and a page another page of theirs opened.
+        created("TUSER", None);
+        created("TOTHER", Some("TELSE"));
+        // A worker the agent tab started is no page.
+        server.emit(
+            "Target.targetCreated",
+            json!({ "targetInfo": { "targetId": "TW", "type": "worker", "url": "", "title": "", "attached": false, "openerId": opener } }),
+            None,
+        );
+        created("TPOP", Some(&opener));
+        assert!(server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Page.addScriptToEvaluateOnNewDocument"
+                    && r.session.is_some()
+                    && r.session.as_deref() != Some(main.as_str())),
+            Duration::from_secs(2)
+        ));
+        assert!(attached_to("TPOP"));
+        assert!(!attached_to("TUSER") && !attached_to("TOTHER") && !attached_to("TW"));
+        let popup = {
+            let state = policy.read();
+            let tabs = state.tabs_for("s1");
+            assert_eq!(tabs.len(), 2, "{tabs:?}");
+            tabs.into_iter().find(|t| t.tab != tab).unwrap()
+        };
+        assert_eq!(popup.opened_by.as_ref(), Some(&tab));
+        assert_eq!(popup.url, "https://TPOP/");
+
+        // Should Chrome also auto-attach it under the opener, that second
+        // session is resumed and dropped: still one tab for the page.
+        server.emit(
+            "Target.attachedToTarget",
+            json!({ "sessionId": "PDUP", "targetInfo": { "targetId": "TPOP", "type": "page", "url": "https://TPOP/", "title": "", "attached": true, "openerId": opener }, "waitingForDebugger": true }),
+            Some(&main),
+        );
+        assert!(server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Target.detachFromTarget"
+                    && r.params["sessionId"] == json!("PDUP")),
+            Duration::from_secs(2)
+        ));
+        assert!(server
+            .received()
+            .iter()
+            .any(|r| r.method == "Runtime.runIfWaitingForDebugger"
+                && r.session.as_deref() == Some("PDUP")));
+        assert_eq!(policy.read().tabs_for("s1").len(), 2);
+        // A repeat of the creation event attaches nothing new.
+        let attaches = || {
+            server
+                .received()
+                .iter()
+                .filter(|r| r.method == "Target.attachToTarget")
+                .count()
+        };
+        let before = attaches();
+        created("TPOP", Some(&opener));
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(attaches(), before);
         link.close(Vec::new(), Duration::from_millis(200));
     }
 

@@ -321,7 +321,7 @@ pub struct BrowserHost {
     /// main thread but must not interleave (a quick ON then OFF).
     commands: Mutex<()>,
     /// The browser executable the Gespan browser starts from, for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     test_executable: Mutex<Option<launch::Executable>>,
     db: Db,
     /// Key of the audit's text fingerprints ([`audit::install_secret`]).
@@ -417,7 +417,7 @@ impl BrowserHost {
             live: Mutex::new(Vec::new()),
             inflight: Mutex::new(HashMap::new()),
             commands: Mutex::new(()),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             test_executable: Mutex::new(None),
             db: Db(embedder.clone()),
             audit_secret: with_db(embedder.as_ref(), audit::install_secret)
@@ -441,6 +441,29 @@ impl BrowserHost {
     pub fn for_tests(settings: BrowserSettings) -> Arc<BrowserHost> {
         let embedder = Arc::new(embedder::MemoryEmbedder::new());
         BrowserHost::create(0x1234, settings, embedder)
+    }
+
+    /// Tests: start the Gespan browser from `path` rather than the first
+    /// browser installed (CI points it at the runner's Chrome).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_executable_for_tests(&self, path: PathBuf) {
+        *self
+            .test_executable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(launch::Executable {
+            kind: protocol::BrowserKind::Chrome,
+            path,
+        });
+    }
+
+    /// Tests: the process id of the Gespan browser this host started.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn managed_pid_for_tests(&self) -> Option<u32> {
+        self.managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|managed| managed.child.id())
     }
 
     pub fn policy(&self) -> &Arc<Policy> {
@@ -921,7 +944,7 @@ impl BrowserHost {
     }
 
     fn find_executable(&self, choice: &protocol::BrowserChoice) -> Option<launch::Executable> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         if let Some(exe) = self
             .test_executable
             .lock()
@@ -1472,6 +1495,12 @@ impl BrowserHost {
                 }
             }),
         );
+        // After the pump listens: popups of agent tabs are found through
+        // `Target.targetCreated` (see `targets::handle_event`).
+        let _ = self.link.send_system(Command::browser(
+            Method::TargetSetDiscoverTargets,
+            json!({ "discover": true }),
+        ));
         self.auto_dialog.store(true, Ordering::Release);
         self.event("connected", Actor::User, None, Some(&product));
         self.attempt_state(
@@ -3297,8 +3326,20 @@ mod tests {
         assert_eq!(info.major, 144);
         assert_eq!(info.channel, "custom");
         assert!(info.product.starts_with("Chrome/"));
-        let methods: Vec<String> = server.received().into_iter().map(|r| r.method).collect();
-        assert_eq!(methods, vec!["Browser.getVersion", "Target.getTargets"]);
+        let received = server.received();
+        let methods: Vec<&str> = received.iter().map(|r| r.method.as_str()).collect();
+        // Diagnostics, then browser-wide target events (popups of agent
+        // tabs are found through them): nothing attached, nothing adopted.
+        assert_eq!(
+            methods,
+            vec![
+                "Browser.getVersion",
+                "Target.getTargets",
+                "Target.setDiscoverTargets"
+            ]
+        );
+        assert_eq!(received[2].params, json!({ "discover": true }));
+        assert_eq!(received[2].session, None);
         let token = host.token_for("s1").unwrap();
         assert_eq!(token.len(), 64);
         assert_eq!(host.session_for_token(&token).as_deref(), Some("s1"));
@@ -5494,6 +5535,7 @@ mod tests {
     fn managed_mode_drives_a_real_browser() {
         let dir = std::env::temp_dir().join(format!("gespan-managed-{}", uuid::Uuid::new_v4()));
         let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
             access: AccessMode::Always,
             show_window: false,
             ..BrowserSettings::default()
@@ -5548,6 +5590,7 @@ mod tests {
     fn user_tabs_can_be_adopted_and_handed_over() {
         let dir = std::env::temp_dir().join(format!("gespan-adopt-{}", uuid::Uuid::new_v4()));
         let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
             access: AccessMode::Always,
             show_window: false,
             ..BrowserSettings::default()
@@ -5611,37 +5654,19 @@ mod tests {
     #[test]
     #[ignore = "starts the Chrome or Edge installed on this machine"]
     fn live_clicks_open_links() {
-        use std::io::{Read as _, Write as _};
-        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = server.local_addr().unwrap().port();
-        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
-        {
-            let asked = asked.clone();
-            thread::spawn(move || {
-                for mut stream in server.incoming().flatten() {
-                    let mut buf = [0u8; 2048];
-                    let n = stream.read(&mut buf).unwrap_or(0);
-                    let line = String::from_utf8_lossy(&buf[..n]);
-                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
-                    asked.lock().unwrap().push(path.clone());
-                    let body = if path == "/" {
-                        "<!doctype html><title>start</title><body style='margin:0'>\
-                         <a id=one href='/one' style='position:absolute;left:100px;top:100px;font:40px sans-serif'>One</a>\
-                         <a id=two href='/two' style='position:absolute;left:100px;top:300px;font:40px sans-serif'>Two</a>"
-                            .to_string()
-                    } else {
-                        format!("<!doctype html><title>{path}</title><a href='/'>back</a>")
-                    };
-                    let _ = write!(
-                        stream,
-                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                }
-            });
-        }
+        let server = testing::PageServer::start(|path| {
+            if path == "/" {
+                "<!doctype html><title>start</title><body style='margin:0'>\
+                 <a id=one href='/one' style='position:absolute;left:100px;top:100px;font:40px sans-serif'>One</a>\
+                 <a id=two href='/two' style='position:absolute;left:100px;top:300px;font:40px sans-serif'>Two</a>"
+                    .to_string()
+            } else {
+                format!("<!doctype html><title>{path}</title><a href='/'>back</a>")
+            }
+        });
         let dir = std::env::temp_dir().join(format!("gespan-click-{}", uuid::Uuid::new_v4()));
         let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
             access: AccessMode::Always,
             show_window: false,
             ..BrowserSettings::default()
@@ -5649,7 +5674,7 @@ mod tests {
         host.set_profile_dir(dir.clone());
         host.set_toggle(true);
         host.turn_started("s1", "main", "/repo", Some(true));
-        let start = format!("http://127.0.0.1:{port}/");
+        let start = server.url("/");
         let opened = host.handle_request("s1", request("c1", "tabs.open", json!({ "url": start })));
         assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
         let tab = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
@@ -5704,10 +5729,10 @@ mod tests {
             send(mouse(E::Released, x + shake, y + shake / 2.0, B::Left, 0));
             let deadline = Instant::now() + Duration::from_secs(3);
             let path = format!("/{name}");
-            while Instant::now() < deadline && !asked.lock().unwrap().contains(&path) {
+            while Instant::now() < deadline && !server.asked(&path) {
                 thread::sleep(Duration::from_millis(20));
             }
-            let opened = asked.lock().unwrap().contains(&path);
+            let opened = server.asked(&path);
             println!(
                 "[click] {name} (moved {shake} px while pressed): {}",
                 if opened { "opened" } else { "DID NOT open" }

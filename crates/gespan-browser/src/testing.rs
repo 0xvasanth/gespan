@@ -520,3 +520,54 @@ fn event_frame(event: &Event) -> String {
     }
     frame.to_string()
 }
+
+/// A tiny HTTP server on 127.0.0.1 for tests that drive a real browser:
+/// `page` turns each request path into the HTML served for it. Every path
+/// asked for is recorded. The server runs until the test process ends.
+pub struct PageServer {
+    port: u16,
+    asked: Arc<Mutex<Vec<String>>>,
+}
+
+impl PageServer {
+    pub fn start(page: impl Fn(&str) -> String + Send + 'static) -> PageServer {
+        let server = TcpListener::bind("127.0.0.1:0").expect("bind page server");
+        let port = server.local_addr().expect("page server address").port();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let recorded = asked.clone();
+        thread::spawn(move || {
+            for mut stream in server.incoming().flatten() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let line = String::from_utf8_lossy(&buf[..n]);
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                recorded
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(path.clone());
+                let body = page(&path);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        PageServer { port, asked }
+    }
+
+    /// `http://127.0.0.1:<port><path>`.
+    pub fn url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{path}", self.port)
+    }
+
+    /// Whether `path` was asked for.
+    pub fn asked(&self, path: &str) -> bool {
+        self.asked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|p| p == path)
+    }
+}

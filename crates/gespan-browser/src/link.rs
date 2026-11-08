@@ -90,6 +90,9 @@ pub enum Method {
     TargetDetachFromTarget,
     /// Only inside a page session (OOPIFs and popups of our tab).
     TargetSetAutoAttach,
+    /// Browser-wide `Target.targetCreated` events, which name a popup's
+    /// opener ([`super::targets`]); system only, never for an agent.
+    TargetSetDiscoverTargets,
     PageEnable,
     PageSetLifecycleEventsEnabled,
     PageNavigate,
@@ -162,6 +165,7 @@ impl Method {
             TargetAttachToTarget => "Target.attachToTarget",
             TargetDetachFromTarget => "Target.detachFromTarget",
             TargetSetAutoAttach => "Target.setAutoAttach",
+            TargetSetDiscoverTargets => "Target.setDiscoverTargets",
             PageEnable => "Page.enable",
             PageSetLifecycleEventsEnabled => "Page.setLifecycleEventsEnabled",
             PageNavigate => "Page.navigate",
@@ -234,7 +238,10 @@ impl Method {
         use Method::*;
         matches!(
             self,
-            BrowserGetWindowForTarget | BrowserGetWindowBounds | BrowserSetWindowBounds
+            BrowserGetWindowForTarget
+                | BrowserGetWindowBounds
+                | BrowserSetWindowBounds
+                | TargetSetDiscoverTargets
         )
     }
 
@@ -250,7 +257,8 @@ impl Method {
             | TargetCloseTarget
             | TargetAttachToTarget
             | TargetDetachFromTarget
-            | TargetSetAutoAttach => Duration::from_secs(5),
+            | TargetSetAutoAttach
+            | TargetSetDiscoverTargets => Duration::from_secs(5),
             _ => DEFAULT_COMMAND_TIMEOUT,
         }
     }
@@ -2038,6 +2046,8 @@ mod tests {
         // Window bounds are Gespan's own business, never an agent's.
         assert!(!Method::BrowserSetWindowBounds.browser_level_allowed());
         assert!(Method::BrowserSetWindowBounds.system_browser_level());
+        assert!(!Method::TargetSetDiscoverTargets.browser_level_allowed());
+        assert!(Method::TargetSetDiscoverTargets.system_browser_level());
         assert_eq!(Method::PageNavigate.timeout(), Duration::from_secs(30));
     }
 
