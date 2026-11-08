@@ -47,6 +47,7 @@ mod installed_providers;
 mod instance;
 #[cfg(test)]
 mod log_capture;
+mod machines;
 mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]
@@ -442,6 +443,7 @@ fn main() {
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
     gespan_core::tool_servers::configure(tool_data);
+    gespan_core::machines::configure(tool_data);
     gespan_core::checkpoint::init(
         database
             .parent()
@@ -568,6 +570,7 @@ fn main() {
         board::bind(cx);
         worktree_setups::install(cx);
         shell::action_runs::install(cx);
+        machines::install(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

@@ -32,9 +32,20 @@ pub fn output(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<String, String> {
+    output_with_env(binary, args, cwd, timeout, &[])
+}
+/// [`output`] with `env` set over the GUI environment.
+pub(crate) fn output_with_env(
+    binary: &Path,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<String, String> {
     let mut command = Command::new(binary);
     crate::scm::shell::apply_gui_env(&mut command);
     command
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())

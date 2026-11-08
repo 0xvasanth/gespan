@@ -316,6 +316,9 @@ impl DockSide {
         (min, (span * 0.7).floor().max(min))
     }
 }
+/// The dock entry of a tab that runs a command: it is not restored, since a
+/// reopened tab would be an empty shell.
+pub(crate) const COMMAND_TAB: &str = "";
 /// A terminal living in the pane tree. Shells are not restored; the pane
 /// reopens a fresh shell in the same directory, as a dock tab does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -749,6 +752,9 @@ impl Workspace {
         state
             .reviews
             .retain(|id, review| known.contains(id) && !review.tabs.is_empty());
+        for dock in state.docks.values_mut() {
+            dock.terminals.retain(|cwd| cwd != COMMAND_TAB);
+        }
         state.docks.retain(|_, dock| !dock.terminals.is_empty());
         for dock in state.docks.values_mut() {
             dock.active = dock.active.min(dock.terminals.len() - 1);
@@ -2179,5 +2185,32 @@ mod tests {
         assert_eq!(restored.docks["/work"].terminals, ["/work/sub"]);
         assert!(!restored.docks["/work"].open);
         assert_eq!(restored.desktop_workspace_snapshot.as_ref(), Some(&source));
+    }
+
+    #[test]
+    fn restore_drops_command_tabs_and_keeps_the_shells_around_them() {
+        let mut state = Workspace::restore(None, &[], "/work");
+        let dock = state.docks.entry("/work".into()).or_default();
+        dock.add("/work/a".into());
+        dock.add(COMMAND_TAB.into());
+        dock.add("/work/b".into());
+        dock.add(COMMAND_TAB.into());
+        let saved = serde_json::to_string(&state).unwrap();
+        let restored = Workspace::restore(Some(&saved), &[], "/work");
+        let dock = &restored.docks["/work"];
+        assert_eq!(dock.terminals, ["/work/a", "/work/b"]);
+        assert!(dock.active < dock.terminals.len());
+        // A dock holding only command tabs disappears.
+        let mut only = Workspace::restore(None, &[], "/work");
+        only.docks
+            .entry("/work".into())
+            .or_default()
+            .add(COMMAND_TAB.into());
+        let saved = serde_json::to_string(&only).unwrap();
+        assert!(
+            !Workspace::restore(Some(&saved), &[], "/work")
+                .docks
+                .contains_key("/work")
+        );
     }
 }

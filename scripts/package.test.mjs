@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,7 +57,12 @@ test("Linux desktop identity resolves the bundled application icon on Wayland", 
   const binary = join(directory, "gespan-gpui");
   await writeFile(binary, "native executable fixture");
   const tree = join(directory, "tree");
-  const { app } = await linuxTree(tree, binary, "deb");
+  const herdr = join(directory, "herdr");
+  await writeFile(herdr, "herdr fixture");
+  const { app } = await linuxTree(tree, binary, "deb", herdr);
+  // herdr ships beside the app, executable, where the app looks for it.
+  assert.equal(await readFile(join(app, "herdr"), "utf8"), "herdr fixture");
+  if (process.platform !== "win32") assert.equal((await stat(join(app, "herdr"))).mode & 0o777, 0o755);
   const { app_id } = JSON.parse(await readFile(join(app, "native-install.json"), "utf8"));
   const desktop = await readFile(join(tree, "usr/share/applications", `${app_id}.desktop`), "utf8");
   assert.ok(desktop.includes(`StartupWMClass=${app_id}\n`));
@@ -112,15 +118,24 @@ test("AppImage desktop registration is opt-in and launches the permanent image",
   const out = join(directory, "packages");
   const originalPath = process.env.PATH;
   const originalTool = process.env.APPIMAGETOOL;
+  const originalHerdr = process.env.GESPAN_HERDR_BINARY;
+  const herdr = join(directory, "herdr");
+  await writeFile(herdr, "herdr fixture");
   try {
     process.env.PATH = `${tools}${delimiter}${originalPath}`;
     process.env.APPIMAGETOOL = join(tools, "appimagetool");
+    process.env.GESPAN_HERDR_BINARY = herdr;
     await packageNative({ kind: "linux", binary, out, version: "0.16.0-preview.2" });
   } finally {
     process.env.PATH = originalPath;
     if (originalTool === undefined) delete process.env.APPIMAGETOOL;
     else process.env.APPIMAGETOOL = originalTool;
+    if (originalHerdr === undefined) delete process.env.GESPAN_HERDR_BINARY;
+    else process.env.GESPAN_HERDR_BINARY = originalHerdr;
   }
+  // Both the deb and the AppImage carry herdr next to the app.
+  for (const tree of ["work/deb", "work/Gespan.AppDir"])
+    assert.equal(await readFile(join(out, tree, "usr/lib/gespan/herdr"), "utf8"), "herdr fixture");
   const control = await readFile(join(out, "work/deb/DEBIAN/control"), "utf8");
   assert.match(control, /^Package: gespan$/m);
   assert.match(control, /^Replaces: gespan-native$/m);
@@ -271,7 +286,9 @@ if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER
       // A sparse executable exposes image estimates based on allocated blocks.
       NATIVE_TEST_SPARSE_DMG_BYTES: String(128 * 1024 * 1024),
       NATIVE_TEST_HDIUTIL_ARGS: join(directory, "hdiutil-args.json"),
+      GESPAN_HERDR_BINARY: join(directory, "herdr"),
     };
+    await writeFile(join(directory, "herdr"), "herdr fixture");
     const original = Object.fromEntries(
       Object.keys(overrides).map((key) => [key, process.env[key]]),
     );
@@ -455,7 +472,9 @@ if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
       PATH: `${bin}${delimiter}${process.env.PATH}`,
       APPLE_SIGNING_IDENTITY: "",
       GESPAN_ALLOW_UNSIGNED: "",
+      GESPAN_HERDR_BINARY: join(directory, "herdr"),
     };
+    await writeFile(join(directory, "herdr"), "herdr fixture");
     const original = Object.fromEntries(
       Object.keys(overrides).map((key) => [key, process.env[key]]),
     );
@@ -486,5 +505,6 @@ if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
     const plist = await readFile(join(release, "Gespan.app/Contents/Info.plist"), "utf8");
     assert.ok(plist.includes("<key>CFBundleShortVersionString</key><string>0.0.1</string>"));
     assert.ok(plist.includes("<key>GespanNativeVersion</key><string>0.0.1-beta</string>"));
+    assert.equal(await readFile(join(release, "Gespan.app/Contents/MacOS/herdr"), "utf8"), "herdr fixture");
   },
 );

@@ -24,6 +24,7 @@ pub mod hold;
 pub mod inbox;
 pub mod interrupted;
 pub mod link_preview;
+pub mod machines;
 pub mod mobile;
 pub mod net;
 pub mod notes;

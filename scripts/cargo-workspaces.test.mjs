@@ -47,6 +47,7 @@ for (const [label, eol] of [
       "crates/gespan-gpui/Cargo.lock",
       "scripts/bump-version.mjs",
       "scripts/package.mjs",
+      "scripts/fetch-herdr.mjs",
       "scripts/readme-release.mjs",
       "README.md",
     ];

@@ -121,6 +121,11 @@ pub(crate) struct Terminal {
     /// A command other than the shell holds the terminal.
     pub foreground: Option<String>,
     pub exited: bool,
+    /// The program the tab was started with in place of the login shell.
+    #[cfg_attr(not(test), allow(dead_code))]
+    command: Option<(String, Vec<String>)>,
+    /// A tab label that the foreground command does not replace.
+    fixed_title: Option<String>,
     size: GridSize,
     geometry: Rc<Cell<Option<Geometry>>>,
     master_fd: i32,
@@ -161,9 +166,16 @@ struct Spawned {
     shell_pid: u32,
     events: async_channel::Receiver<TermEvent>,
 }
-/// Start the login shell on a PTY with TerminalView's environment plus
-/// `extra`. A failure is written into the grid, as TerminalView prints it.
-fn spawn(cwd: &str, extra: &[(String, String)], size: GridSize, id: u64) -> Spawned {
+/// Start the login shell, or `command` when given, on a PTY with
+/// TerminalView's environment plus `extra`. A failure is written into the
+/// grid, as TerminalView prints it.
+fn spawn(
+    cwd: &str,
+    command: Option<&(String, Vec<String>)>,
+    extra: &[(String, String)],
+    size: GridSize,
+    id: u64,
+) -> Spawned {
     let (tx, rx) = async_channel::unbounded();
     let listener = Listener(tx);
     let config = Config {
@@ -176,7 +188,7 @@ fn spawn(cwd: &str, extra: &[(String, String)], size: GridSize, id: u64) -> Spaw
     };
     let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
     let workdir = working_dir(cwd);
-    let (program, args) = default_shell();
+    let (program, args) = command.cloned().unwrap_or_else(default_shell);
     let mut env = base_env(&workdir);
     env.extend(extra.iter().cloned());
     let options = tty::Options {
@@ -252,6 +264,32 @@ fn detached(size: GridSize) -> Spawned {
 
 impl Terminal {
     pub(crate) fn new(cwd: String, env: &[(String, String)], cx: &mut Context<Self>) -> Self {
+        Self::start(cwd, None, env, cx)
+    }
+    /// A terminal that runs `command` through the system shell, bypassing the
+    /// user's login shell, so POSIX quoting holds whatever that shell is.
+    pub(crate) fn running(cwd: String, command: &str, cx: &mut Context<Self>) -> Self {
+        Self::start(cwd, Some(command_program(command)), &[], cx)
+    }
+    /// Labels the tab `title` whatever runs in it.
+    pub(crate) fn pin_title(&mut self, title: String) {
+        self.title.clone_from(&title);
+        self.fixed_title = Some(title);
+    }
+    /// The program and arguments this terminal runs in place of the login
+    /// shell, if any.
+    #[cfg(test)]
+    pub(crate) fn command(&self) -> Option<(&str, &[String])> {
+        self.command
+            .as_ref()
+            .map(|(program, args)| (program.as_str(), args.as_slice()))
+    }
+    fn start(
+        cwd: String,
+        command: Option<(String, Vec<String>)>,
+        env: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) -> Self {
         let size = GridSize {
             columns: 80,
             lines: 24,
@@ -261,13 +299,14 @@ impl Terminal {
             // PTY thread; UI tests run the dock without a shell behind it.
             detached(size)
         } else {
-            spawn(&cwd, env, size, cx.entity_id().as_u64())
+            spawn(&cwd, command.as_ref(), env, size, cx.entity_id().as_u64())
         };
-        Self::with(cwd, env, size, spawned, cx)
+        Self::with(cwd, env, command, size, spawned, cx)
     }
     fn with(
         cwd: String,
         env: &[(String, String)],
+        command: Option<(String, Vec<String>)>,
         size: GridSize,
         spawned: Spawned,
         cx: &mut Context<Self>,
@@ -331,6 +370,8 @@ impl Terminal {
             env: env.to_vec(),
             foreground: None,
             exited: false,
+            command,
+            fixed_title: None,
             size,
             geometry: Rc::default(),
             master_fd,
@@ -356,7 +397,7 @@ impl Terminal {
             columns: 80,
             lines: 24,
         };
-        let mut this = Self::with(cwd, &[], size, detached(size), cx);
+        let mut this = Self::with(cwd, &[], None, size, detached(size), cx);
         // Nothing runs in it to poll for.
         this._poll = Task::ready(());
         this.title = title;
@@ -472,7 +513,9 @@ impl Terminal {
         if label == self.foreground {
             return;
         }
-        self.title = label.clone().unwrap_or_else(|| default_title(&self.cwd));
+        if self.fixed_title.is_none() {
+            self.title = label.clone().unwrap_or_else(|| default_title(&self.cwd));
+        }
         self.foreground = label;
         cx.emit(TerminalEvent::Changed);
     }
@@ -1489,6 +1532,14 @@ fn working_dir(cwd: &str) -> std::path::PathBuf {
         home().unwrap_or(path)
     }
 }
+/// `command` as a program for the system shell to run once.
+fn command_program(command: &str) -> (String, Vec<String>) {
+    if cfg!(windows) {
+        ("cmd".into(), vec!["/C".into(), command.into()])
+    } else {
+        ("/bin/sh".into(), vec!["-c".into(), command.into()])
+    }
+}
 fn default_shell() -> (String, Vec<String>) {
     // Windows has no SHELL; use the command processor.
     #[cfg(windows)]
@@ -1749,6 +1800,22 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_pinned_title_survives_foreground_changes(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
+        view.update(cx, |terminal, cx| {
+            terminal.set_foreground(Some("vim".into()), cx);
+            assert_eq!(terminal.title, "vim");
+            terminal.pin_title("Add machine".into());
+            terminal.set_foreground(Some("ssh".into()), cx);
+            assert_eq!(terminal.title, "Add machine");
+            assert_eq!(terminal.foreground.as_deref(), Some("ssh"));
+            terminal.set_foreground(None, cx);
+            assert_eq!(terminal.title, "Add machine");
+            assert_eq!(terminal.foreground, None);
+        });
+    }
+
+    #[gpui::test]
     fn links_cover_plain_urls_and_osc8_hyperlinks(cx: &mut gpui::TestAppContext) {
         let view = cx.new(|cx| Terminal::new("/tmp".into(), &[], cx));
         view.update(cx, |terminal, _| {
@@ -1923,7 +1990,7 @@ mod tests {
             columns: 60,
             lines: 10,
         };
-        let spawned = spawn(&dir, &[], size, 1);
+        let spawned = spawn(&dir, None, &[], size, 1);
         let sender = spawned.sender.expect("the shell started");
         assert!(spawned.shell_pid > 1);
         // The command line itself must not contain the text we wait for.
@@ -1967,5 +2034,45 @@ mod tests {
             }
         }
         assert!(exited);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_runs_through_sh_with_its_quoting_intact_and_exits_with_it() {
+        let dir = std::env::temp_dir().to_string_lossy().into_owned();
+        let size = GridSize {
+            columns: 60,
+            lines: 10,
+        };
+        // Single quotes, a space and an embedded quote: a POSIX-only command line.
+        let command = command_program("printf 'a b%s' \"c'd\"; exit 3");
+        let spawned = spawn(&dir, Some(&command), &[], size, 2);
+        assert!(spawned.sender.is_some());
+        let mut status = None;
+        for _ in 0..250 {
+            std::thread::sleep(Duration::from_millis(20));
+            if let Ok(TermEvent::ChildExit(s)) = spawned.events.try_recv() {
+                status = Some(s);
+                break;
+            }
+        }
+        assert_eq!(status.expect("the command exited").code(), Some(3));
+        // The exit can be reported before the PTY's last output is parsed.
+        let first_line = || {
+            let term = spawned.term.lock();
+            let grid = term.grid();
+            (0..grid.columns())
+                .map(|c| grid[Line(0)][Column(c)].c)
+                .collect::<String>()
+        };
+        let mut first = first_line();
+        for _ in 0..100 {
+            if first.starts_with("a bc'd") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            first = first_line();
+        }
+        assert!(first.starts_with("a bc'd"), "{first}");
     }
 }

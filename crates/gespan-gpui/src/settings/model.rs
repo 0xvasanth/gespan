@@ -143,7 +143,9 @@ impl Section {
             Section::Diagnostics => {
                 "diagnostics crash report issue bug email github logs folder copy failures counters errors"
             }
-            Section::Connections => "ssh remote host machine server environment always on",
+            Section::Connections => {
+                "ssh remote host machine server environment always on herdr machines remote agents"
+            }
             Section::Appearance => {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
             }
@@ -194,6 +196,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Connections,
         "Your machines",
         "ssh remote connect host server environment",
+    ),
+    (
+        "herdr-machines",
+        Section::Connections,
+        "herdr machines",
+        "herdr remote agents machines ssh multiplexer upgrade",
     ),
     (
         "mobile-access",
@@ -596,6 +604,9 @@ pub(crate) fn search(query: &str, compositor: &str) -> Vec<SearchResult> {
             continue;
         }
         if id == "blur" && !crate::window_blur::BLUR_ADJUSTABLE {
+            continue;
+        }
+        if id == "herdr-machines" && !crate::machines::MACHINES_VISIBLE {
             continue;
         }
         if let Some(s) = score(&needle, label, keywords) {

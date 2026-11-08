@@ -6,6 +6,7 @@ mod connections;
 mod diagnostics;
 mod dictation;
 mod general;
+mod herdr_machines;
 mod inbox;
 mod keybindings;
 mod mcp;
@@ -21,6 +22,7 @@ pub(crate) use appearance::{ACCENTS, swatch};
 pub(super) use connections::ConnectionsState;
 pub(super) use diagnostics::DiagnosticsState;
 pub(super) use dictation::DictationState;
+pub(super) use herdr_machines::HerdrMachinesState;
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
 pub(super) use worktrees::WorktreeScripts;
@@ -37,6 +39,7 @@ impl SettingsView {
                 // As on the earlier desktop and in the phone app's copy:
                 // Settings → Connections holds both machines and phones.
                 let mut page = self.connections_page(cx);
+                page.extend(self.herdr_machines_page(cx));
                 page.extend(self.mobile_page(cx));
                 page
             }

@@ -177,7 +177,7 @@ impl Shell {
             })
             .collect()
     }
-    fn dock_open(&self, cx: &App) -> bool {
+    pub(super) fn dock_open(&self, cx: &App) -> bool {
         if self.terminal_in_panel(cx) {
             return self.panel_terminal_shown(cx);
         }
@@ -230,6 +230,48 @@ impl Shell {
         let terminal = self.spawn_terminal(cwd, &[], cx);
         self.terminals.entry(project).or_default().push(terminal);
         self.persist(cx);
+    }
+    /// A new tab in the home folder that runs `command` through the system
+    /// shell instead of the login shell, titled `title` and focused. It is
+    /// shown in the right panel when the terminal lives there, else the dock.
+    pub(crate) fn open_command_terminal(
+        &mut self,
+        title: SharedString,
+        command: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let project = self.workspace.project.clone();
+        let in_panel = self.terminal_in_panel(cx);
+        let was_open = self.dock_open(cx);
+        self.ensure_terminals(&project, cx);
+        let viewport = self.viewport();
+        let dock = self.workspace.docks.entry(project.clone()).or_default();
+        dock.size = dock.side.clamp(dock.size, viewport);
+        // Marked so the tab is not restored as an empty shell.
+        let added = dock.add(crate::workspace::COMMAND_TAB.into());
+        self.dock_tab_scroll.scroll_to_item(added);
+        let terminal = self.spawn_command_terminal("~".into(), &command, cx);
+        terminal.update(cx, |t, _| t.pin_title(title.to_string()));
+        self.terminals
+            .entry(project)
+            .or_default()
+            .push(terminal.clone());
+        if in_panel {
+            if let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project) {
+                dock.open = false;
+            }
+            self.show_panel_terminal(window, cx);
+        } else {
+            if !was_open {
+                self.slide_dock(true, cx);
+            }
+            self.focus_terminal(window, cx);
+            self.fit_sidebar(cx);
+        }
+        self.persist(cx);
+        cx.notify();
+        terminal
     }
     /// Opens the right panel on its Terminal tab and focuses the shell.
     pub(super) fn show_panel_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1169,6 +1211,7 @@ const HIDE_TERMINAL_LABEL: &str = if cfg!(target_os = "macos") {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::Focusable;
 
     #[gpui::test]
     fn the_new_layout_can_host_the_terminal_as_a_right_panel_tab(cx: &mut gpui::TestAppContext) {
@@ -1260,6 +1303,83 @@ mod tests {
         assert_eq!(chip_label(["vite"]), "vite");
         assert_eq!(chip_label(["vite", "jest"]), "vite · jest");
         assert_eq!(chip_label(["vite", "jest", "vite"]), "vite ×2 · jest");
+    }
+
+    #[gpui::test]
+    fn open_command_terminal_adds_a_titled_tab_that_spawns_the_command_directly(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                let project = shell.workspace.project.clone();
+                let before = shell.terminals.get(&project).map_or(0, Vec::len);
+                let command = "herdr machine add 'my box' --ssh \"o'brien@host\"".to_owned();
+                let terminal =
+                    shell.open_command_terminal("Add machine".into(), command.clone(), window, cx);
+                let tabs = &shell.terminals[&project];
+                assert_eq!(tabs.len(), before + 1);
+                assert_eq!(tabs.last(), Some(&terminal));
+                let dock = &shell.workspace.docks[&project];
+                assert_eq!(dock.terminals.len(), before + 1);
+                assert_eq!(dock.active, before);
+                assert!(dock.open);
+                let t = terminal.read(cx);
+                assert_eq!(t.title, "Add machine");
+                assert_eq!(
+                    dock.terminals.last().unwrap(),
+                    crate::workspace::COMMAND_TAB
+                );
+                assert!(t.focus_handle(cx).is_focused(window));
+                // The shell never sees the text, so fish and nushell cannot misread it.
+                #[cfg(unix)]
+                assert_eq!(
+                    t.command(),
+                    Some(("/bin/sh", ["-c".to_owned(), command].as_slice()))
+                );
+                #[cfg(windows)]
+                assert_eq!(
+                    t.command(),
+                    Some(("cmd", ["/C".to_owned(), command].as_slice()))
+                );
+                // A second call opens a second tab rather than reusing the first.
+                let again = shell.open_command_terminal("Again".into(), "true".into(), window, cx);
+                assert_ne!(again, terminal);
+                assert_eq!(shell.terminals[&project].len(), before + 2);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn open_command_terminal_selects_the_new_tab_in_the_right_panel(cx: &mut gpui::TestAppContext) {
+        use crate::right_panel::RightTab;
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = true;
+                shell.layout_changed(cx);
+                shell.workspace.preferences.terminal_in_panel = true;
+                shell.toggle_terminal(window, cx);
+                shell.toggle_terminal(window, cx);
+                assert!(!shell.workspace.right_panel_open);
+                let project = shell.workspace.project.clone();
+                let terminal =
+                    shell.open_command_terminal("Upgrade".into(), "true".into(), window, cx);
+                assert_eq!(shell.terminals[&project].len(), 2);
+                let dock = &shell.workspace.docks[&project];
+                assert_eq!(dock.active, 1);
+                // The panel shows it; the bottom dock stays shut.
+                assert!(!dock.open);
+                assert!(shell.workspace.right_panel_open);
+                let panel = shell.right_panel.clone().unwrap();
+                assert_eq!(panel.read(cx).tab(), RightTab::Terminal);
+                assert!(terminal.focus_handle(cx).is_focused(window));
+                assert_eq!(terminal.read(cx).title, "Upgrade");
+            })
+            .unwrap();
     }
 
     #[gpui::test]

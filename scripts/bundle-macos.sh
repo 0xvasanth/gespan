@@ -41,6 +41,24 @@ mkdir -p "$native_bundle/Contents/MacOS" "$native_bundle/Contents/Resources"
 # Replace the inode atomically so macOS does not reuse an older signature cache.
 cp "$native_binary" "$native_bundle/Contents/MacOS/gespan-gpui.next"
 mv -f "$native_bundle/Contents/MacOS/gespan-gpui.next" "$native_bundle/Contents/MacOS/gespan-gpui"
+# Ship the pinned herdr beside the app, before signing, so the signature covers
+# it. GESPAN_HERDR_BINARY names a ready copy; release bundles otherwise fetch
+# the asset for the executable's architecture. Dev bundles go without one.
+herdr_source="${GESPAN_HERDR_BINARY:-}"
+if [ -z "$herdr_source" ] && [ "$native_profile" = release ]; then
+  case "$(lipo -archs "$native_binary" 2>/dev/null || uname -m)" in
+    arm64|aarch64) herdr_asset=macos-aarch64 ;;
+    x86_64) herdr_asset=macos-x86_64 ;;
+    *) echo "No herdr asset for this executable's architecture." >&2; exit 1 ;;
+  esac
+  herdr_source="$native_target/herdr-$herdr_asset"
+  node scripts/fetch-herdr.mjs --reuse --asset "$herdr_asset" --out "$herdr_source" >/dev/null
+fi
+if [ -n "$herdr_source" ]; then
+  cp "$herdr_source" "$native_bundle/Contents/MacOS/herdr.next"
+  chmod 755 "$native_bundle/Contents/MacOS/herdr.next"
+  mv -f "$native_bundle/Contents/MacOS/herdr.next" "$native_bundle/Contents/MacOS/herdr"
+fi
 cp crates/gespan-gpui/packaging/icon.icns "$native_bundle/Contents/Resources/gespan.icns"
 # Ship the app's attribution and the license texts for GPUI and embedded assets.
 # Add these before signing so the signature covers the notices too.
@@ -82,9 +100,14 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 native_identity="${GESPAN_NATIVE_SIGNING_IDENTITY:--}"
+# codesign does not descend into a nested executable, so herdr is signed first
+# with the app's identity; the bundle signature then seals it.
+herdr_bundled="$native_bundle/Contents/MacOS/herdr"
 if [ "$native_identity" = - ]; then
+  [ ! -f "$herdr_bundled" ] || codesign --force --sign - "$herdr_bundled"
   codesign --force --sign - "$native_bundle"
 else
+  [ ! -f "$herdr_bundled" ] || codesign --force --sign "$native_identity" --options runtime --timestamp "$herdr_bundled"
   codesign --force --sign "$native_identity" --options runtime --timestamp \
     --entitlements crates/gespan-gpui/packaging/Entitlements.plist "$native_bundle"
 fi

@@ -701,6 +701,8 @@ pub(crate) struct Shell {
     history_clock: u64,
     session_marks: HashMap<i64, Entity<SessionMark>>,
     tab_marks: HashMap<i64, Entity<SessionMark>>,
+    /// The Machines section's agent marks, by machine id and terminal id.
+    machine_marks: HashMap<(String, String), Entity<SessionMark>>,
     /// The live agents card's spinners, apart from the sidebar rows' marks.
     live_marks: HashMap<i64, Entity<SessionMark>>,
     live_agents_expanded: bool,
@@ -1152,6 +1154,7 @@ impl Shell {
             history_clock: 0,
             session_marks: HashMap::new(),
             tab_marks: HashMap::new(),
+            machine_marks: HashMap::new(),
             live_marks: HashMap::new(),
             live_agents_expanded: false,
             live_tick: None,
@@ -1463,6 +1466,26 @@ impl Shell {
             this.observations.push(
                 cx.observe_global::<crate::hold::Hold>(|this, cx| this.hold_changed_elsewhere(cx)),
             );
+        }
+        if let Some(machines) = crate::machines::get(cx) {
+            this.observations
+                .push(cx.observe(&machines, |this, _, cx| this.machines_changed(cx)));
+            // One window tells the user; the others would repeat it.
+            if !secondary {
+                this.observations.push(cx.subscribe(
+                    &machines,
+                    |_, _, notice: &crate::machines::Notice, cx| {
+                        let notice = notice.clone();
+                        cx.spawn(async move |this, cx| {
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                this.deliver_machine_notice(&notice, window, cx)
+                            });
+                        })
+                        .detach();
+                    },
+                ));
+            }
+            this.sync_machine_marks(cx);
         }
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {
@@ -3342,9 +3365,23 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Entity<Terminal> {
         let terminal = cx.new(|cx| Terminal::new(cwd, env, cx));
-        self.observations
-            .push(cx.subscribe(&terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
+        self.observe_terminal(&terminal, cx);
         terminal
+    }
+    /// A terminal running `command` instead of the login shell.
+    fn spawn_command_terminal(
+        &mut self,
+        cwd: String,
+        command: &str,
+        cx: &mut Context<Self>,
+    ) -> Entity<Terminal> {
+        let terminal = cx.new(|cx| Terminal::running(cwd, command, cx));
+        self.observe_terminal(&terminal, cx);
+        terminal
+    }
+    fn observe_terminal(&mut self, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
+        self.observations
+            .push(cx.subscribe(terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
     }
     /// A restored dock reopens its tabs as fresh shells once it is shown.
     fn ensure_terminals(&mut self, project: &str, cx: &mut Context<Self>) {
