@@ -2046,10 +2046,29 @@ mod tests {
             columns: 60,
             lines: 10,
         };
-        // Single quotes, a space and an embedded quote: a POSIX-only command line.
-        let command = command_program("printf 'a b%s' \"c'd\"; exit 3");
+        // Single quotes, a space and an embedded quote: a POSIX-only command
+        // line. It waits for Return before exiting: on Linux a PTY whose
+        // child has just exited can fail reads before its last bytes arrive.
+        let command = command_program("printf 'a b%s' \"c'd\"; read _; exit 3");
         let spawned = spawn(&dir, Some(&command), &[], size, 2);
-        assert!(spawned.sender.is_some());
+        let sender = spawned.sender.clone().expect("the command started");
+        let first_line = || {
+            let term = spawned.term.lock();
+            let grid = term.grid();
+            (0..grid.columns())
+                .map(|c| grid[Line(0)][Column(c)].c)
+                .collect::<String>()
+        };
+        let mut first = first_line();
+        for _ in 0..250 {
+            if first.starts_with("a bc'd") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            first = first_line();
+        }
+        assert!(first.starts_with("a bc'd"), "{first}");
+        let _ = sender.send(Msg::Input(Cow::Borrowed(b"\r")));
         let mut status = None;
         for _ in 0..250 {
             std::thread::sleep(Duration::from_millis(20));
@@ -2059,22 +2078,5 @@ mod tests {
             }
         }
         assert_eq!(status.expect("the command exited").code(), Some(3));
-        // The exit can be reported before the PTY's last output is parsed.
-        let first_line = || {
-            let term = spawned.term.lock();
-            let grid = term.grid();
-            (0..grid.columns())
-                .map(|c| grid[Line(0)][Column(c)].c)
-                .collect::<String>()
-        };
-        let mut first = first_line();
-        for _ in 0..100 {
-            if first.starts_with("a bc'd") {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-            first = first_line();
-        }
-        assert!(first.starts_with("a bc'd"), "{first}");
     }
 }
