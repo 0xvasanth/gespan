@@ -8,7 +8,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, ToSql};
 
 use crate::error::GraphError;
 use crate::key::{EdgeId, NodeId, NodeKey};
@@ -195,6 +195,62 @@ fn labels(
     Ok(out)
 }
 
+/// The ids of the `k` best qualifying edges incident to `node` (a column or
+/// parameter), as a subquery: the same ranking as [`expand`].
+fn top_k(node: &str, k: &str, at: bool, only: bool) -> String {
+    let valid = if at {
+        "valid_from <= :t AND (valid_to IS NULL OR valid_to > :t)"
+    } else {
+        "valid_to IS NULL"
+    };
+    let kinds = if only {
+        " AND kind IN (SELECT value FROM json_each(:kinds))"
+    } else {
+        ""
+    };
+    format!(
+        "SELECT id FROM (
+           SELECT * FROM (SELECT id, dst AS nb, valid_from, valid_to FROM graph_edges
+                          WHERE src = {node} AND {valid}{kinds}
+                          ORDER BY valid_from DESC, dst, valid_to, id LIMIT {k})
+           UNION ALL
+           SELECT * FROM (SELECT id, src AS nb, valid_from, valid_to FROM graph_edges
+                          WHERE dst = {node} AND {valid}{kinds}
+                          ORDER BY valid_from DESC, src, valid_to, id LIMIT {k}))
+         ORDER BY valid_from DESC, nb, valid_to, id LIMIT {k}"
+    )
+}
+
+/// One of the four fixed `reachable` statements (`{Now, At} × {All, Only}`).
+///
+/// Hop 1 is seeded in a non-recursive term with `:per_start`; the recursive
+/// term expands only depths `1..hops` with `:per_hop`. Each `LIMIT` is one
+/// bound parameter because SQLite does not resolve `walk` columns in a
+/// `LIMIT`. The start is never expanded again (`walk.node <> :start`):
+/// otherwise a hop-1 node's edge back to it would put it at depth 2 and
+/// expand it with `per_hop`, reporting direct neighbours at hops 3.
+fn reachable_sql(at: bool, only: bool) -> String {
+    let seed = top_k(":start", ":per_start", at, only);
+    let step = top_k("walk.node", ":per_hop", at, only);
+    format!(
+        "WITH RECURSIVE walk(node, depth) AS (
+           SELECT :start, 0
+           UNION
+           SELECT CASE WHEN e.src = :start THEN e.dst ELSE e.src END, 1
+             FROM graph_edges e WHERE e.id IN ({seed})
+           UNION
+           SELECT CASE WHEN e.src = walk.node THEN e.dst ELSE e.src END, walk.depth + 1
+             FROM walk JOIN graph_edges e ON e.id IN ({step})
+            WHERE walk.depth >= 1 AND walk.depth < :hops AND walk.node <> :start)
+         SELECT w.node, MIN(w.depth) AS d, n.kind, n.key, n.label
+           FROM walk w JOIN graph_nodes n ON n.id = w.node
+          WHERE w.node <> :start
+          GROUP BY w.node
+          ORDER BY d, w.node
+          LIMIT :total"
+    )
+}
+
 impl GraphStore {
     /// The start's capped 2-hop neighbourhood (spec §6):
     /// 1. hop 1 expands the start with `per_start`;
@@ -258,5 +314,69 @@ impl GraphStore {
             }
         }
         Ok(hits)
+    }
+
+    /// Every node within `hops` of the start along capped expansions, at its
+    /// smallest hop, ordered by `(hops, node)` and cut to `total`. One
+    /// recursive CTE (spec §6): hop 1 takes the start's `per_start` best
+    /// edges, later hops each node's `per_hop` best, with the same ranking as
+    /// [`GraphStore::neighborhood`]. The start is never expanded after hop 1
+    /// and never returned. The shape was verified on the bundled SQLite
+    /// 3.53.2.
+    ///
+    /// Reads at most `2·per_start·per_hop^(hops−1)` index entries per depth:
+    /// 800k at `Hops 4` with [`Caps::DEFAULT`], so keep `hops` small on hubs.
+    pub fn reachable(
+        &self,
+        start: NodeId,
+        hops: Hops,
+        caps: Caps,
+        as_of: AsOf,
+        filter: &EdgeFilter,
+    ) -> Result<Vec<Reached>, GraphError> {
+        let (at, t) = match as_of {
+            AsOf::Now => (false, None),
+            AsOf::At(t) => (true, Some(t.as_millis())),
+        };
+        let kinds = match filter {
+            EdgeFilter::All => None,
+            EdgeFilter::Only(kinds) => Some(serde_json::to_string(
+                &kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
+            )?),
+        };
+        let mut stmt = self
+            .conn
+            .prepare_cached(&reachable_sql(at, kinds.is_some()))?;
+        let (per_start, per_hop, total) = (
+            limit(caps.per_start),
+            limit(caps.per_hop),
+            limit(caps.total),
+        );
+        let depth = i64::from(hops.get());
+        let mut args: Vec<(&str, &dyn ToSql)> = vec![
+            (":start", &start.0),
+            (":per_start", &per_start),
+            (":per_hop", &per_hop),
+            (":hops", &depth),
+            (":total", &total),
+        ];
+        if let Some(t) = &t {
+            args.push((":t", t));
+        }
+        if let Some(kinds) = &kinds {
+            args.push((":kinds", kinds));
+        }
+        let mut rows = stmt.query(args.as_slice())?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(Reached {
+                node: NodeId(r.get(0)?),
+                hops: u8::try_from(r.get::<_, i64>(1)?).unwrap_or(u8::MAX),
+                kind: r.get::<_, String>(2)?.parse()?,
+                key: NodeKey::new(r.get::<_, String>(3)?)?,
+                label: r.get(4)?,
+            });
+        }
+        Ok(out)
     }
 }

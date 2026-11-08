@@ -347,3 +347,255 @@ fn bad_inputs() {
     );
     let _ = Timestamp::from_millis(0);
 }
+
+fn reached(r: &[gespan_graph::Reached]) -> Vec<(i64, u8)> {
+    r.iter().map(|x| (x.node.0, x.hops)).collect()
+}
+
+fn hops(h: u8) -> Hops {
+    Hops::new(h).unwrap()
+}
+
+#[test]
+fn reachable_matches_oracle() {
+    use std::collections::BTreeSet;
+    let filters = [
+        EdgeFilter::All,
+        EdgeFilter::Only(BTreeSet::from([E::InProject])),
+        EdgeFilter::Only(BTreeSet::from([E::Touched, E::Read])),
+    ];
+    let mut compared = 0;
+    for seed in 1..=3 {
+        let (_dir, store, oracle, starts) = seeded(seed);
+        for (i, &start) in starts.iter().enumerate() {
+            for caps in [INERT, Caps::DEFAULT, SMALL] {
+                // Wide walks cover most of a 2k-node graph and dominate the
+                // run time, so they sample the starts: inert caps take a third
+                // of them up to Hops 2 (inert_reachable_equals_petgraph_k_hop
+                // covers inert Hops 3-4 against petgraph), and DEFAULT at
+                // Hops 4 takes every fifth, the top hub included.
+                if caps == INERT && i % 3 != 0 {
+                    continue;
+                }
+                let deepest = match caps {
+                    INERT => 2,
+                    Caps::DEFAULT if i % 5 != 0 => 3,
+                    _ => 4,
+                };
+                for h in 1..=deepest {
+                    for filter in &filters {
+                        for as_of in [AsOf::Now, AsOf::At(ts(YEAR / 2))] {
+                            let got = store
+                                .reachable(start, hops(h), caps, as_of, filter)
+                                .unwrap();
+                            let want = oracle.reachable(start.0, h, caps, as_of, filter);
+                            assert_eq!(reached(&got), want, "seed {seed} start {start:?} hops {h} {caps:?} {filter:?} {as_of:?}");
+                            compared += usize::from(!want.is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        compared > 2_000,
+        "most probes must return nodes to prove anything: {compared}"
+    );
+}
+
+#[test]
+fn inert_reachable_equals_petgraph_k_hop() {
+    for seed in [1, 2] {
+        let (_dir, store, oracle, starts) = seeded(seed);
+        for &start in starts.iter().take(10) {
+            for h in 1..=4 {
+                for as_of in [AsOf::Now, AsOf::At(ts(YEAR / 2))] {
+                    let got = store
+                        .reachable(start, hops(h), INERT, as_of, &EdgeFilter::All)
+                        .unwrap();
+                    let got: std::collections::BTreeMap<i64, u8> =
+                        reached(&got).into_iter().collect();
+                    assert_eq!(
+                        got,
+                        oracle.k_hop(start.0, h, as_of, &EdgeFilter::All),
+                        "seed {seed} start {start:?} hops {h}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Eight raw edges on nodes 1..=7 with known ids, from the CTE spike.
+/// From 1: 1-2 (100), 1-3 (90), 1-4 (80). From 2: 2-6 (50) and 2-5 (50), a
+/// tie the neighbour id breaks. From 3: 3-7 (40), and 3-5 (40) closed at 60.
+/// 6-4 (30).
+fn spike_store() -> (tempfile::TempDir, GraphStore) {
+    let (dir, store, _path) = temp_store();
+    let c = store.connection();
+    for i in 1..=7 {
+        c.execute(
+            "INSERT INTO graph_nodes (id, kind, key, label, created_at, updated_at) VALUES (?1, 'file', 'n' || ?1, 'n' || ?1, 0, 0)",
+            [i],
+        )
+        .unwrap();
+    }
+    for (id, s, d, from, to) in [
+        (1, 1, 2, 100, None),
+        (2, 1, 3, 90, None),
+        (3, 1, 4, 80, None),
+        (4, 2, 6, 50, None),
+        (5, 3, 7, 40, None),
+        (6, 3, 5, 40, Some(60)),
+        (7, 6, 4, 30, None),
+        (8, 2, 5, 50, None),
+    ] {
+        c.execute(
+            "INSERT INTO graph_edges (id, src, dst, kind, valid_from, valid_from_basis, valid_to, source, scope, created_at)
+             VALUES (?1, ?2, ?3, 'touched', ?4, 'native', ?5, 'backfill:blocks', 'structural', ?4)",
+            rusqlite::params![id, s, d, from, to],
+        )
+        .unwrap();
+    }
+    (dir, store)
+}
+
+#[test]
+fn reachable_caps_and_ties_on_a_hand_built_graph() {
+    let (_dir, store) = spike_store();
+    let run = |per_start, per_hop, h| {
+        let caps = Caps {
+            per_start,
+            per_hop,
+            total: 100,
+        };
+        reached(
+            &store
+                .reachable(NodeId(1), hops(h), caps, AsOf::Now, &EdgeFilter::All)
+                .unwrap(),
+        )
+    };
+    // Each hop-1 node's single slot is its edge back to the start.
+    assert_eq!(run(2, 1, 2), vec![(2, 1), (3, 1)]);
+    // 2's 50-tie goes to neighbour 5 over 6; 3's closed edge to 5 doesn't
+    // count; 5 and 7 only lead back to depth-1 nodes.
+    assert_eq!(run(2, 2, 3), vec![(2, 1), (3, 1), (5, 2), (7, 2)]);
+    assert_eq!(
+        run(2, 2, 1),
+        vec![(2, 1), (3, 1)],
+        "Hops 1 is the seed alone"
+    );
+    // total cuts by (hops, node).
+    let caps = Caps {
+        per_start: 2,
+        per_hop: 2,
+        total: 3,
+    };
+    let got = store
+        .reachable(NodeId(1), hops(3), caps, AsOf::Now, &EdgeFilter::All)
+        .unwrap();
+    assert_eq!(reached(&got), vec![(2, 1), (3, 1), (5, 2)]);
+    assert_eq!(
+        (got[2].kind, got[2].key.as_str(), got[2].label.as_str()),
+        (N::File, "n5", "n5")
+    );
+}
+
+#[test]
+fn reachable_never_reexpands_the_start() {
+    let (_dir, mut store, _path) = temp_store();
+    let h = add_node(&mut store, N::Session, "H", 0);
+    let mut files = Vec::new();
+    for (i, from) in [50, 40, 30, 20, 10].into_iter().enumerate() {
+        let key = format!("f{}", i + 1);
+        files.push(add_node(&mut store, N::File, &key, 0));
+        store
+            .upsert_edge(&fact(
+                E::Touched,
+                &nref(N::Session, "H"),
+                &nref(N::File, &key),
+                from,
+            ))
+            .unwrap();
+    }
+    let s2 = add_node(&mut store, N::Session, "S2", 0);
+    store
+        .upsert_edge(&fact(
+            E::Touched,
+            &nref(N::Session, "S2"),
+            &nref(N::File, "f2"),
+            5,
+        ))
+        .unwrap();
+
+    // Hop 1 keeps f1 and f2. Depth 2 reaches H again (and S2); H must not be
+    // expanded with per_hop 20, or f3..f5 would come back as hops 3.
+    let caps = Caps {
+        per_start: 2,
+        per_hop: 20,
+        total: 100,
+    };
+    let got = store
+        .reachable(h, hops(3), caps, AsOf::Now, &EdgeFilter::All)
+        .unwrap();
+    assert_eq!(
+        reached(&got),
+        vec![(files[0].0, 1), (files[1].0, 1), (s2.0, 2)]
+    );
+    let oracle = Oracle::load(store.connection());
+    assert_eq!(
+        oracle.reachable(h.0, 3, caps, AsOf::Now, &EdgeFilter::All),
+        reached(&got)
+    );
+}
+
+#[test]
+fn reachable_as_of_and_bad_inputs() {
+    let (_dir, mut store, _path) = temp_store();
+    let s = add_node(&mut store, N::Session, "S", 0);
+    let a = add_node(&mut store, N::Branch, "a", 0);
+    let b = add_node(&mut store, N::Branch, "b", 0);
+    let sr = nref(N::Session, "S");
+    let mut on_a = fact(E::OnBranch, &sr, &nref(N::Branch, "a"), 10);
+    on_a.valid_to = Some(ts(20));
+    store.upsert_edge(&on_a).unwrap();
+    store
+        .upsert_edge(&fact(E::OnBranch, &sr, &nref(N::Branch, "b"), 20))
+        .unwrap();
+    // Half-open, and the same answer neighborhood gives (as_of_is_half_open).
+    let at = |as_of| {
+        reached(
+            &store
+                .reachable(s, hops(2), Caps::DEFAULT, as_of, &EdgeFilter::All)
+                .unwrap(),
+        )
+    };
+    assert_eq!(at(AsOf::At(ts(9))), vec![]);
+    assert_eq!(at(AsOf::At(ts(19))), vec![(a.0, 1)]);
+    assert_eq!(at(AsOf::At(ts(20))), vec![(b.0, 1)]);
+    assert_eq!(at(AsOf::Now), vec![(b.0, 1)]);
+    let only = EdgeFilter::Only(std::collections::BTreeSet::from([E::Touched]));
+    assert!(store
+        .reachable(s, hops(2), Caps::DEFAULT, AsOf::Now, &only)
+        .unwrap()
+        .is_empty());
+    let zero = Caps {
+        per_start: 0,
+        ..Caps::DEFAULT
+    };
+    assert!(store
+        .reachable(s, hops(2), zero, AsOf::Now, &EdgeFilter::All)
+        .unwrap()
+        .is_empty());
+
+    let lonely = add_node(&mut store, N::Session, "lonely", 0);
+    assert!(store
+        .reachable(lonely, hops(4), Caps::DEFAULT, AsOf::Now, &EdgeFilter::All)
+        .unwrap()
+        .is_empty());
+    store.delete_session(&SessionId("S".into())).unwrap();
+    assert!(store
+        .reachable(s, hops(4), Caps::DEFAULT, AsOf::Now, &EdgeFilter::All)
+        .unwrap()
+        .is_empty());
+}
