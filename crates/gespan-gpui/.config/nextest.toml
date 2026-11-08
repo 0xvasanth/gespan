@@ -8,3 +8,11 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [[profile.ci.overrides]]
 filter = 'test(large_tsx_analysis)'
 threads-required = "num-test-threads"
+
+# Wall-clock budgets: measured with the runner to themselves, as test:rust's
+# one test thread does. Alone the board load takes about 19 ms on macOS, 29 ms
+# on Windows and 34 ms on Linux; with every core busy it reached 100 ms on
+# Windows. board::tests::scale::timing_tests_run_alone keeps this list in step.
+[[profile.ci.overrides]]
+filter = 'test(=board::tests::scale::native_load_of_1000_cards_meets_the_budget) | test(=board::tests::scale::native_open_and_filter_meet_the_budget) | test(=board::tests::scale::sync_handles_on_1000_cards_is_linear) | test(=board::tests::scale::lookup_requests_on_300_links_groups_by_card)'
+threads-required = "num-test-threads"
