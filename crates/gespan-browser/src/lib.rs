@@ -572,6 +572,9 @@ impl BrowserHost {
             }
         } else {
             self.event("toggle_off", Actor::User, None, None);
+            // A browser that stopped reading must not hold the switch: the
+            // page cleanup below would queue behind its stalled write.
+            self.link.abort_if_write_stalled(link::STALL_GRACE);
             self.close_managed_pages();
             if self.link.status() != LinkStatus::Closed {
                 self.link.close(detach, OFF_DETACH_BUDGET);
@@ -3189,6 +3192,64 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    /// The main switch acts at once even while a write is stuck on a browser
+    /// that stopped reading: OFF cuts the socket instead of queueing on the
+    /// writer, and the stuck action never ends as a success.
+    #[test]
+    fn off_does_not_wait_on_a_stalled_write() {
+        let (server, mut stall) = FakeCdp::start_stalling();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::Connected),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let (ctx, session) = {
+            let policy = host.policy().read();
+            let session = policy.lease(&tab).unwrap().cdp_session.clone().unwrap();
+            let ctx = policy
+                .admit(
+                    "s1",
+                    "r2",
+                    protocol::ActionKind::Click,
+                    Some(&tab),
+                    Duration::from_secs(30),
+                )
+                .unwrap();
+            (ctx, session)
+        };
+        let action = host.link().start_stalled_write(&stall, &ctx, &session);
+
+        let started = Instant::now();
+        host.set_toggle(false);
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(200),
+            "OFF waited {took:?} on a stalled write"
+        );
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        let result = action.join().unwrap();
+        assert!(
+            matches!(
+                result,
+                Err(link::CdpError::Revoked { .. }) | Err(link::CdpError::LinkDown { sent: false })
+            ),
+            "{result:?}"
+        );
+        stall.release();
+        // The cut-off frame never reached the browser.
+        assert!(!server
+            .received()
+            .iter()
+            .any(|r| r.method == "Input.dispatchMouseEvent"));
     }
 
     fn request(id: &str, action: &str, input: Value) -> ActionRequest {

@@ -51,6 +51,9 @@ pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the link thread blocks in one socket read before it looks for a
 /// close request, a failed write or an expired command.
 const READ_SLICE: Duration = Duration::from_millis(15);
+/// How long a close lets a frame finish going out before it decides the
+/// browser stopped reading and cuts the socket.
+pub const STALL_GRACE: Duration = Duration::from_millis(50);
 /// Per-subscription event queue (256, oldest dropped and counted).
 pub const EVENT_QUEUE: usize = 256;
 /// The live view's pictures; see [`EventFilter::matches`].
@@ -657,6 +660,10 @@ struct Wire {
     pending: Mutex<HashMap<u64, Pending>>,
     /// A write failed: the link thread closes the link as `Error`.
     failed: AtomicBool,
+    /// A frame's bytes are going to the socket right now (under the writer
+    /// lock). Set for long, the browser stopped reading: see
+    /// [`Link::abort_if_write_stalled`].
+    writing: AtomicBool,
 }
 
 impl Wire {
@@ -750,17 +757,28 @@ impl Wire {
         // that stops reading stalls this for up to the write timeout.
         let written = encoded.map_err(|e| e.to_string()).and_then(|()| {
             let stream = &mut writer.socket.get_mut().stream;
-            stream
+            self.writing.store(true, Ordering::Release);
+            let result = stream
                 .write_all(&bytes)
                 .and_then(|()| stream.flush())
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+            self.writing.store(false, Ordering::Release);
+            result
         });
         if let Err(error) = written {
             writer.open = false;
             self.failed.store(true, Ordering::Release);
             drop(writer);
+            // A frame cut off mid-write never runs: not sent. An agent whose
+            // access moved meanwhile (OFF aborts a stalled write) hears that.
+            let answer = match &ctx {
+                SendCtx::Agent(ctx) if !epochs_current(inner, ctx) => {
+                    CdpError::Revoked { sent: false }
+                }
+                _ => CdpError::LinkDown { sent: false },
+            };
             if let Some(pending) = self.lock_pending().remove(&id) {
-                let _ = pending.reply.send(Err(CdpError::LinkDown { sent: false }));
+                let _ = pending.reply.send(Err(answer));
             }
             log::debug!("browser-link write failed: {error}");
             return None;
@@ -779,12 +797,7 @@ impl Wire {
     /// answer. The frame did reach the socket and the browser may still run
     /// it; this cannot be undone, only reported honestly.
     fn confirm(&self, inner: &LinkInner, ctx: &RequestCtx, id: u64) {
-        let current = {
-            let state = inner.policy.read();
-            state.toggle_on
-                && state.global_epoch == ctx.global_epoch
-                && state.session_epoch(&ctx.session) == Some(ctx.session_epoch)
-        };
+        let current = epochs_current(inner, ctx);
         let mut pending = self.lock_pending();
         // Gone already: timed out or drained by a close, and answered there.
         let Some(entry) = pending.get_mut(&id) else {
@@ -805,6 +818,15 @@ impl Wire {
             None => entry.unconfirmed = false,
         }
     }
+}
+
+/// Whether the access `ctx` was admitted under still holds: switch ON and
+/// neither epoch moved. Takes the policy read lock briefly.
+fn epochs_current(inner: &LinkInner, ctx: &RequestCtx) -> bool {
+    let state = inner.policy.read();
+    state.toggle_on
+        && state.global_epoch == ctx.global_epoch
+        && state.session_epoch(&ctx.session) == Some(ctx.session_epoch)
 }
 
 type ClosedHook = Box<dyn Fn(ClosedBy) + Send + Sync>;
@@ -995,6 +1017,7 @@ impl Link {
             }),
             pending: Mutex::new(HashMap::new()),
             failed: AtomicBool::new(false),
+            writing: AtomicBool::new(false),
         });
         let read_half = ReadHalf {
             stream,
@@ -1145,6 +1168,11 @@ impl Link {
     /// the socket. Blocks until the link thread has finished or `budget`
     /// plus half a second has passed.
     pub fn close(&self, detach: Vec<CdpSessionId>, budget: Duration) {
+        // A write the browser is not reading holds the writer lock that the
+        // graceful close (and every detach) needs: cut the stream instead of
+        // queueing behind it. The detaches are best-effort; the browser drops
+        // every session of a closed connection anyway.
+        self.abort_if_write_stalled(STALL_GRACE);
         let tx = self
             .inner
             .tx
@@ -1176,6 +1204,32 @@ impl Link {
         }
     }
 
+    /// If a frame has been going to the socket for longer than `grace` (the
+    /// browser stopped reading), shut the stream down: the stalled write
+    /// fails at once and frees the writer lock. Returns whether it did.
+    /// For OFF and closes, which must not wait out the write timeout.
+    pub fn abort_if_write_stalled(&self, grace: Duration) -> bool {
+        let Some(wire) = self
+            .inner
+            .wire
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        else {
+            return false;
+        };
+        let deadline = Instant::now() + grace;
+        while wire.writing.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                log::debug!("browser-link: write stalled, closing the socket");
+                self.abort();
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
     /// Immediate shutdown of the TCP stream (also wakes a handshake waiting
     /// for consent). The link thread notices and exits.
     pub fn abort(&self) {
@@ -1198,6 +1252,75 @@ impl Link {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    /// Arrange a write the browser will not read: `stall` stops the fake
+    /// reading, then an agent click far larger than any loopback socket
+    /// buffering (48 MiB; Linux autotuning tops out near 10) is sent on its
+    /// own thread. Returns once that thread is in the socket write.
+    #[cfg(test)]
+    pub(crate) fn start_stalled_write(
+        &self,
+        stall: &super::testing::Stall,
+        ctx: &RequestCtx,
+        session: &CdpSessionId,
+    ) -> thread::JoinHandle<Result<Value, CdpError>> {
+        stall.arm();
+        let _version = self
+            .request_system(Command::browser(Method::BrowserGetVersion, json!({})))
+            .expect("link open");
+        stall.wait();
+        let (about_tx, about_rx) = mpsc::channel();
+        self.on_before_write(about_tx);
+        let link = self.clone();
+        let ctx = ctx.clone();
+        let session = session.clone();
+        let action = thread::spawn(move || {
+            link.send(
+                &ctx,
+                Command::in_session(
+                    &session,
+                    Method::InputDispatchMouseEvent,
+                    json!({
+                        "type": "mousePressed",
+                        "x": 1,
+                        "y": 1,
+                        "pad": "x".repeat(48 * 1024 * 1024),
+                    }),
+                ),
+            )
+        });
+        about_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the action reached its write");
+        *self
+            .inner
+            .before_write
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        // Confirm the stall instead of trusting the size: a frame the socket
+        // buffers could take would be out in a few ms. This fails loudly
+        // rather than letting a stall test pass without a stall.
+        let check = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < check {
+            assert!(
+                self.write_in_progress(),
+                "the write finished: the socket did not stall"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        action
+    }
+
+    /// Whether a frame's bytes are going to the socket right now.
+    #[cfg(test)]
+    pub(crate) fn write_in_progress(&self) -> bool {
+        self.inner
+            .wire
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|wire| wire.writing.load(Ordering::Acquire))
     }
 
     #[cfg(test)]
@@ -2046,57 +2169,11 @@ mod tests {
     /// reading: the policy lock is never held across the socket write.
     #[test]
     fn revoke_is_not_blocked_by_a_stalled_write() {
-        // The fake stops reading its socket while it "handles" the first
-        // `Browser.getVersion`, until the test lets it go on.
-        let (stalled_tx, stalled_rx) = mpsc::channel::<()>();
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let counter = AtomicU64::new(1);
-        let mut stall = Some((stalled_tx, release_rx));
-        let server = FakeCdp::start_with(move |received| {
-            if received.method == "Browser.getVersion" {
-                if let Some((stalled, release)) = stall.take() {
-                    let _ = stalled.send(());
-                    let _ = release.recv();
-                }
-            }
-            super::super::testing::default_response(received, &counter)
-        });
+        let (server, mut stall) = FakeCdp::start_stalling();
         let (policy, ctx) = policy_with_lease();
         let link = Link::new(policy.clone());
         link.open(&server.url, Duration::from_secs(5)).unwrap();
-        let _version = link
-            .request_system(Command::browser(Method::BrowserGetVersion, json!({})))
-            .unwrap();
-        stalled_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the fake stopped reading");
-
-        // Far more than any loopback socket buffers: this write stalls until
-        // the fake reads again.
-        let (about_tx, about_rx) = mpsc::channel();
-        link.on_before_write(about_tx);
-        let action = {
-            let link = link.clone();
-            let ctx = ctx.clone();
-            thread::spawn(move || {
-                link.send(
-                    &ctx,
-                    Command::in_session(
-                        &CdpSessionId("S1".into()),
-                        Method::InputDispatchMouseEvent,
-                        json!({
-                            "type": "mousePressed",
-                            "x": 1,
-                            "y": 1,
-                            "pad": "x".repeat(12 * 1024 * 1024),
-                        }),
-                    ),
-                )
-            })
-        };
-        about_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("the action reached its write");
+        let action = link.start_stalled_write(&stall, &ctx, &CdpSessionId("S1".into()));
 
         let started = Instant::now();
         policy.write().revoke_session("s1");
@@ -2106,10 +2183,12 @@ mod tests {
             "revoke waited {took:?} on a stalled write"
         );
 
+        // The write was still stuck when the revoke landed and returned.
+        assert!(link.write_in_progress(), "the write did not stall");
         // The browser reads again: the frame (committed before the revoke)
         // goes out, but the revoke landed before the write finished, so the
         // action is reported revoked, never as a success.
-        release_tx.send(()).unwrap();
+        stall.release();
         let result = action.join().unwrap();
         assert_eq!(result, Err(CdpError::Revoked { sent: true }));
         let reported = result.unwrap_err().into_result("r1", true, false);
@@ -2117,7 +2196,7 @@ mod tests {
         assert_eq!(reported.reason, Some(Reason::Revoked));
         assert!(server.wait_for(
             |log| log.iter().any(|r| r.method == "Input.dispatchMouseEvent"),
-            Duration::from_secs(5)
+            Duration::from_secs(10)
         ));
         // Nothing after the revoke passes the gate.
         assert_eq!(

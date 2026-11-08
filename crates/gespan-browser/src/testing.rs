@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -211,6 +211,60 @@ impl Drop for FakeCdp {
     }
 }
 
+/// Makes a [`FakeCdp::start_stalling`] fake stop reading its socket.
+pub struct Stall {
+    armed: Arc<AtomicBool>,
+    stalled: mpsc::Receiver<()>,
+    release: Option<mpsc::Sender<()>>,
+}
+
+impl Stall {
+    /// The next `Browser.getVersion` the fake reads makes it stop reading
+    /// (until [`Stall::release`]); send one, then call [`Stall::wait`].
+    pub fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    /// Block until the fake has stopped reading.
+    pub fn wait(&self) {
+        self.stalled
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the fake stopped reading");
+    }
+
+    /// Let the fake read again.
+    pub fn release(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+impl FakeCdp {
+    /// A [`FakeCdp::start`] fake that can be told to stop reading its
+    /// socket, so the client's writes fill the socket buffers and stall.
+    pub fn start_stalling() -> (FakeCdp, Stall) {
+        let armed = Arc::new(AtomicBool::new(false));
+        let (stalled_tx, stalled) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let counter = AtomicU64::new(1);
+        let trigger = armed.clone();
+        let server = FakeCdp::start_with(move |received| {
+            if received.method == "Browser.getVersion" && trigger.swap(false, Ordering::AcqRel) {
+                let _ = stalled_tx.send(());
+                let _ = release_rx.recv();
+            }
+            default_response(received, &counter)
+        });
+        let stall = Stall {
+            armed,
+            stalled,
+            release: Some(release),
+        };
+        (server, stall)
+    }
+}
+
 /// The stock Chrome-like answers used by [`FakeCdp::start`].
 pub fn default_response(received: &Received, counter: &AtomicU64) -> Response {
     match received.method.as_str() {
@@ -291,7 +345,12 @@ fn handle_connection(mut stream: TcpStream, shared: Arc<Shared>) {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
         Mode::Serve(responder) => {
-            let socket = match tungstenite::accept(stream) {
+            // Chrome takes messages as large as the link sends (the stall
+            // tests write tens of MiB); tungstenite's default stops at 16.
+            let config = tungstenite::protocol::WebSocketConfig::default()
+                .max_message_size(Some(crate::link::MAX_MESSAGE_BYTES))
+                .max_frame_size(Some(crate::link::MAX_MESSAGE_BYTES));
+            let socket = match tungstenite::accept_with_config(stream, Some(config)) {
                 Ok(socket) => socket,
                 Err(_) => return,
             };
