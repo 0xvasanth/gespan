@@ -3387,7 +3387,12 @@ impl Conversation {
                                             }),
                                     ),
                             )
-                            .child(dictation::mic_button(&self.dictation, &self.input, cx))
+                            .child(dictation::mic_button(
+                                &self.dictation,
+                                &self.input,
+                                dictation::MicStyle::Pill,
+                                cx,
+                            ))
                             .child(
                                 div()
                                     .flex_1()
