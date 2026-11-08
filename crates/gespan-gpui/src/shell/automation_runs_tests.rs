@@ -102,13 +102,11 @@ fn reschedule(db: &Path, id: &str, at: i64) {
 }
 
 fn scheduled_due(data: &Data, ago: i64) -> String {
-    let id = save(
-        &data.db,
-        draft(
-            &data.project,
-            vec![AutomationTrigger::new("time", "hourly")],
-        ),
-    );
+    // Hourly at half an hour from now, so a test that runs across the slot's
+    // minute on the real clock is not due a second time.
+    let mut hourly = AutomationTrigger::new("time", "hourly");
+    hourly.minute = (i64::from(chrono::Timelike::minute(&chrono::Local::now())) + 30) % 60;
+    let id = save(&data.db, draft(&data.project, vec![hourly]));
     reschedule(&data.db, &id, now_ms() - ago);
     id
 }

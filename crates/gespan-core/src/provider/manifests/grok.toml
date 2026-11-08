@@ -1,5 +1,5 @@
 id = "grok"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Grok Build"
 binary = "grok"
@@ -18,4 +18,5 @@ side_threads = true
 rewind = false
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = true

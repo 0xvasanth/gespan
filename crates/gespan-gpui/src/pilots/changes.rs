@@ -363,10 +363,9 @@ impl Pilots {
         }
         if !self.project_changes.surfaces.contains_key(&key) {
             let git = cx.new(|cx| crate::git_status::ProjectGit::new(root, cx));
-            let provider = self
-                .chat()
-                .map(|v| Kind::from_id(&v.read(cx).summary.provider))
-                .unwrap_or(Kind::Codex);
+            let provider = self.chat().map_or(Kind::FALLBACK, |v| {
+                Kind::from_id(&v.read(cx).summary.provider)
+            });
             let changes = cx.new(|cx| {
                 let mut view = crate::changes::Changes::new(git.clone(), window, cx);
                 view.text_provider = provider;

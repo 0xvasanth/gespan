@@ -257,7 +257,7 @@ impl Changes {
             git,
             cwd: String::new(),
             enabled: false,
-            text_provider: Kind::Claude,
+            text_provider: TEXT_HARNESS,
             message,
             amend: None,
             busy: None,
@@ -1829,6 +1829,9 @@ impl Changes {
 /// first installed provider whose manifest allows `text_turns`. Other
 /// providers are never picked silently: they are not vetted for one-shot text
 /// turns.
+/// The harness that writes commit messages and pull requests when no session
+/// names one.
+pub(crate) const TEXT_HARNESS: Kind = Kind::Claude;
 pub(crate) fn pick_text_harness(preferred: Kind) -> Option<(Kind, PathBuf)> {
     pick_text_harness_with(preferred, provider::resolve)
 }
@@ -2023,6 +2026,22 @@ impl Render for Changes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn without_a_session_the_panel_and_the_phone_pick_the_same_writer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                let git = cx.new(|cx| ProjectGit::new("~".into(), cx));
+                cx.new(|cx| Changes::new(git, window, cx))
+            })
+            .unwrap()
+        });
+        let phone = crate::mobile::project::preferred_harness(&serde_json::json!({}));
+        window
+            .update(cx, |changes, _, _| assert_eq!(changes.text_provider, phone))
+            .unwrap();
+    }
     #[gpui::test]
     fn enabling_an_enabled_changes_panel_does_not_reload(cx: &mut gpui::TestAppContext) {
         let window = cx.update(|cx| {

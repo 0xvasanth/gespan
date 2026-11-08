@@ -1,5 +1,5 @@
 id = "hermes"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Hermes Agent"
 binary = "hermes"
@@ -15,6 +15,7 @@ side_threads = false
 rewind = false
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = false
 
 [features.steer]

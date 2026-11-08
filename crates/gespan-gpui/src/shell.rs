@@ -1035,8 +1035,7 @@ impl Shell {
         let active_kind = summaries
             .iter()
             .find(|s| Some(s.id) == workspace.active)
-            .map(|s| Kind::from_id(&s.provider))
-            .unwrap_or(Kind::Codex);
+            .map_or(Kind::FALLBACK, |s| Kind::from_id(&s.provider));
         let session_clock = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -3890,7 +3889,9 @@ impl Shell {
             .workspace
             .active
             .and_then(|id| self.sessions.get(&id))
-            .map_or(Kind::Codex, |s| Kind::from_id(&s.read(cx).summary.provider));
+            .map_or(Kind::FALLBACK, |s| {
+                Kind::from_id(&s.read(cx).summary.provider)
+            });
         let navigation_revision = self.navigation_revision;
         let target = self.workspace.active;
         let store = self.store.clone();
