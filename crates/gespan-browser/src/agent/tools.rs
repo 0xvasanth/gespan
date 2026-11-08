@@ -4,7 +4,7 @@
 //! Schemas are written by hand from the parameter records in `protocol.rs`;
 //! the tests prove that every schema accepts exactly the fields its record
 //! accepts and requires exactly the ones it requires. Descriptions are the
-//! tool sections of `docs/browser-instructions.md`, whose overview the MCP
+//! tool sections of `instructions.md`, whose overview the MCP
 //! server shares.
 
 use serde_json::{json, Map, Value};
