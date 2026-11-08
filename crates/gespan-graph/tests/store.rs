@@ -481,3 +481,38 @@ fn closed_fact_reruns_converge_when_its_start_differs_from_the_open_row() {
     assert_ne!(store.upsert_edge(&other).unwrap(), id);
     assert_eq!(count(&store, "graph_edges"), 2);
 }
+
+#[test]
+fn opening_a_current_file_does_not_wait_for_a_writer() {
+    let (_dir, store, path) = temp_store();
+    add_node(
+        &mut GraphStore::open(&path).unwrap(),
+        NodeKind::Project,
+        "p",
+        0,
+    );
+    let (locked, wait) = mpsc::channel();
+    let hold = thread::spawn(move || {
+        store.connection().execute_batch("BEGIN IMMEDIATE").unwrap();
+        locked.send(()).unwrap();
+        thread::sleep(Duration::from_millis(1_500));
+        store.connection().execute_batch("COMMIT").unwrap();
+        store
+    });
+    wait.recv_timeout(Duration::from_secs(5)).unwrap();
+    // WAL readers never need the write lock, so a store opened on a file
+    // that is already at this schema version reads straight away.
+    let started = Instant::now();
+    let reader = GraphStore::open(&path).unwrap();
+    let opened = started.elapsed();
+    assert!(reader
+        .node(&nref(NodeKind::Project, "p"))
+        .unwrap()
+        .is_some());
+    let store = hold.join().unwrap();
+    assert!(
+        opened < Duration::from_millis(750),
+        "open waited for the writer: {opened:?}"
+    );
+    drop((reader, store));
+}

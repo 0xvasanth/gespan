@@ -86,7 +86,12 @@ impl GraphStore {
         conn.execute_batch(
             "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;",
         )?;
-        migrate::run(&conn)?;
+        // A current file needs no write lock: WAL readers never wait for a
+        // writer, so only an older file takes the lock (and `run` re-reads
+        // the version once it holds it).
+        if found < schema::VERSION {
+            migrate::run(&conn)?;
+        }
         Ok(GraphStore {
             conn,
             path: path.to_path_buf(),
