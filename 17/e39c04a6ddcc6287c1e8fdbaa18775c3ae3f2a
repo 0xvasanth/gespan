@@ -1,0 +1,160 @@
+crates/gespan-core/src/provider/api.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 12,15,18-44,51-55,93-94,141-173,177,189,200-207,211-221,227-238,394-396,458-591
+crates/gespan-core/src/provider/manifests/hermes.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,17-18
+crates/gespan-core/src/provider/manifests/pi.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,17-18
+crates/gespan-gpui/.config/nextest.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 11-18
+crates/gespan-gpui/src/shell.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 2,738-741,748-751,1000-1002,1181-1182,1188-1189,3338-3345,3361,3435,5453,5459-5461,5473,5514-5522,5553-5568,5639-5647,5649,5683-5685,5707-5720,11161-11287,11323-11327,11330-11332,11359,11362,11368-11370,11372,11374,11376,11470,12011-12012,12026-12030,12032,12037-12039,12062,12064
+README.md
+  s_8175d8edb31008::t_3042d683a9ee2d 239
+crates/gespan-core/src/project_actions/toolkit.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 192-193
+crates/gespan-core/src/provider.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 45-46,941-945,973-991,1003-1004,1020-1028,1030,1371,2458-2520
+crates/gespan-core/src/tool_servers.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 492-499
+crates/gespan-gpui/src/quick_open.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 81-82,91,96-98,119-124,162,200,207-231,240,259-262,272-273
+crates/gespan-gpui/src/right_panel.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-3,14,62-64,66-69,73-82,176-195,206,248,261,268-269,431-435,447-451,453-476,481-482,484,489-519,525,535,540-543,561-562,600,610-613,616,618,620-635,640-667
+crates/gespan-gpui/src/shell/terminal_panes.rs
+  s_8175d8edb31008::t_bd31f55cc73924 88,201,239
+crates/gespan-gpui/src/shell/quick_open.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 62-64,148,212-216,404-540
+  s_8175d8edb31008::t_7164c4f2603820 541
+crates/gespan-core/src/project_actions/tests/runs.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 19,587-608
+  s_8175d8edb31008::t_494ec3b8afa00c 609
+crates/gespan-gpui/src/shell/terminal_dock.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 167-170,220-221,230,267-272,290,677-681,774-779,1192-1197,1203-1209,1212-1225
+  s_8175d8edb31008::t_67191134707bd3 968
+.gitattributes
+  s_8175d8edb31008::t_3042d683a9ee2d 9-11
+crates/gespan-gpui/src/terminal.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 20-23,117-118,138-139,143-149,164-166,180-181,254,259-274,281,331,346,352-413,415-420,456,458,462,499-501,514-516,1463-1480,1586-1602,1648-1746,1753,1795,1926
+crates/mcp-hub/src/relay.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 425-434,437-438
+crates/gespan-core/src/provider/manifests/claude.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,25-26
+crates/gespan-core/src/provider/opencode/client_mcp.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-253
+crates/gespan-gpui/src/workspace.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 159-161,265,274-282,329,338-368,378,383-401,404,416,434-436,452,506,509-510,1472,1994-2057,2098-2100
+crates/gespan-gpui/src/shell/layout.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 8,531-532,540-542,571,836,859,877-881,883,899-900,902-905,907-910,912-931
+crates/mcp-hub/src/lib.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 26
+crates/gespan-core/src/provider/manifests/omp.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,17-18
+crates/gespan-core/src/provider/fixtures/launch_argv.txt
+  s_8175d8edb31008::t_3042d683a9ee2d 1-113
+crates/mcp-hub/src/router.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 294-304,514-530
+  s_8175d8edb31008::t_0a820c7fdeb3c6 531-533
+docs/desktop/migration.md
+  s_8175d8edb31008::t_3042d683a9ee2d 38-45
+crates/gespan-core/src/project_actions/tests/tasks_json.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 437-551
+crates/gespan-gpui/src/quick_composer.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 403
+crates/gespan-core/tests/real_agents.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 556-617
+docs/agent-access.md
+  s_8175d8edb31008::t_3042d683a9ee2d 28-31
+crates/gespan-core/src/provider/manifests/codex.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,25-26
+crates/gespan-gpui/src/shell/actions.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-5,8-36,40,44-53,58-145,147,153-279,282-284,292-296,299-305,309-311,322-323,344,370-371,373-447,449,451-455,457-460,462,466-486,505-544,547-583,591,611-624,629,639,669-699,702-704,728-735,740-746,748-750,753-755,761-788,806-848,850,861-865,870,874-891,898-904,906,908-910,987-1052,1122,1128,1136,1143,1177-1232,1234-1245,1248,1250-1251,1256,1258-1324,1326-1345,1347-1348,1351-1353,1355-1372,1376-2453
+crates/gespan-gpui/src/shell/action_runs.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-415
+crates/gespan-gpui/src/project_tabs.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 45,50,69
+crates/gespan-core/src/project_actions/mod.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 21,66-69,93-94,260,367-373,380,382,385,387,389-419
+crates/gespan-core/src/provider/manifests/antigravity.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,16-17
+crates/gespan-gpui/src/popover.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 913-914,1584-1585,1758-1770
+  s_8175d8edb31008::t_431d16d9483fd5 1771
+crates/gespan-gpui/src/shell/notifications.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 933,974
+crates/gespan-core/src/provider/manifests/fx.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,20-21
+crates/gespan-gpui/src/runtime.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 802-805,807,1797-1813,1827-1838
+crates/gespan-core/src/provider/manifests/kiro.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,21-22
+crates/gespan-gpui/src/changes.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 991-992,994-1007,1011-1012,1017-1019,1829-1831,1839-1842,1844
+docs/actions.md
+  s_8175d8edb31008::t_3042d683a9ee2d 1-151
+crates/gespan-core/src/provider/manifests/devin.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,27-28
+crates/gespan-core/src/provider/manifest.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 135-139
+crates/gespan-core/src/provider/manifests/grok.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,20-21
+crates/gespan-gpui/src/board/tests/scale.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 4,501-536
+  s_8175d8edb31008::t_2ee221d731ffa9 537-538
+crates/gespan-gpui/src/pilots/tests.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1034,1036-1040
+crates/gespan-core/src/provider/manifests/cursor.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,19-20
+crates/gespan-core/src/project_actions/tests/toolkit.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 192,555-572
+  s_8175d8edb31008::t_ff2c3c6fb076ab 573
+crates/gespan-core/src/project_actions/tasks_json.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 11-39,64-71,162-172,248,332-341
+  s_8175d8edb31008::t_ddd5a3a0a3783b 342-343
+crates/gespan-core/src/provider/manifests/opencode.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 2,17-18
+.gespan/tasks.json
+  s_8175d8edb31008::t_3042d683a9ee2d 1-29
+crates/gespan-gpui/src/shell/open_in_editor.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 106-108,119,426-442,461-466,475-476,544-545,871,877,879-882,887-890
+crates/gespan-core/src/project_actions/tests/detect.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 484-543
+crates/gespan-core/src/project_actions/ordered.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-177
+crates/gespan-gpui/src/main.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 570
+crates/gespan-core/src/provider/opencode.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 8,242-271,275-278,283-284,288-295,299-305,345-356,359,366,368-375,515,524-525,549-557,560,718,905,958,966,975-987,1007,1118,1126,1162,1168,1175,1204,1207,1210,1219-1220,1226,1232,1234,1285-1638
+crates/gespan-core/src/provider/launch_argv_tests.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1-177
+crates/gespan-core/Cargo.toml
+  s_8175d8edb31008::t_3042d683a9ee2d 24-25
+crates/mcp-hub/src/upstream.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1182-1183,1207-1220,1399-1422
+  s_8175d8edb31008::t_65328f6d1cefa9 1423-1424
+crates/gespan-gpui/src/composer_completion.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 366,622
+crates/gespan-core/src/project_actions/write.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 5,24-47,57-80,83-84,87,90,96-104,106,109,111-112,114-144,149-173,175-176,178,186,194-202,208,217,220,222,224,226-230,233,238-296,303-307,310-327,331-337,339-343,350-354,357-383,388,400-402,405,414,430-434,506-539
+crates/gespan-core/src/project_actions/runs.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 398,406-423,567
+crates/gespan-core/src/project_actions/tests/write.rs
+  s_8175d8edb31008::t_3042d683a9ee2d 1,142,150,256,424-933
+crates/gespan-gpui/Cargo.lock
+  s_8175d8edb31008::t_8534baed625dc6 2648,8741-8756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17e39c04a6ddcc6287c1e8fdbaa18775c3ae3f2a",
+  "prompts": {},
+  "sessions": {
+    "s_8175d8edb31008": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac8cbdbc-08b3-4df8-80eb-82983e5320da",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
