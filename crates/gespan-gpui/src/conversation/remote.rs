@@ -196,7 +196,7 @@ impl Conversation {
                         this.finish_pending_reveals(cx);
                         if running && !this.busy && !this.stopping {
                             this.settings.remote_action = Some(json!({"type":"attach"}));
-                            this.launch_prompt(String::new(), cx);
+                            this.launch_prompt(String::new(), false, cx);
                         } else {
                             this.run_history_actions(cx);
                         }
@@ -272,7 +272,7 @@ impl Conversation {
         if text == "/compact" {
             self.input
                 .update(cx, |input, cx| input.set_text(String::new(), cx));
-            self.launch_prompt("/compact".into(), cx);
+            self.launch_prompt("/compact".into(), false, cx);
             return true;
         }
         if text.starts_with('/')
@@ -309,7 +309,7 @@ impl Conversation {
         } else {
             json!({"type":"removeDraft","draftBlockId":draft.id})
         });
-        self.launch_prompt(prompt, cx);
+        self.launch_prompt(prompt, false, cx);
     }
     pub(super) fn remote_save_draft(&mut self, cx: &mut Context<Self>) {
         if self.remote_send_guard(cx) {
@@ -326,7 +326,7 @@ impl Conversation {
             .update(cx, |input, cx| input.set_text(String::new(), cx));
         self.follow_ups.draft_selected = false;
         self.settings.remote_action = Some(json!({"type":"draft"}));
-        self.launch_prompt(prompt, cx);
+        self.launch_prompt(prompt, false, cx);
     }
     pub(super) fn remote_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.is_remote()
@@ -354,7 +354,7 @@ impl Conversation {
         }
         if self.remote_state.pending {
             self.settings.remote_action = Some(json!({"type": "retry"}));
-            self.launch_prompt(String::new(), cx);
+            self.launch_prompt(String::new(), false, cx);
         } else {
             self.refresh_remote_snapshot(cx);
         }

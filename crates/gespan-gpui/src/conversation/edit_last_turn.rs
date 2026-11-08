@@ -43,7 +43,7 @@ impl Conversation {
             if let Some(prompt) = prompt {
                 if this.preserve_new_composer(cx) {
                     this.install_transfer(settings, None, cx);
-                    this.enqueue_restored_prompt(prompt, cx);
+                    this.enqueue_restored_prompt(prompt, false, cx);
                 } else {
                     this.install_transfer(settings, Some(prompt), cx);
                 }
@@ -292,7 +292,8 @@ impl Conversation {
                         if this.input.read(cx).content.as_str() == prompt && this.attachments == attachments {
                             // Normal submit still owns mode commands, attachments,
                             // account checks, durable acceptance and failure recovery.
-                            this.send(cx);
+                            // The user resent their own edit.
+                            this.send_typed(cx);
                         } else {
                             // Programmatic composer updates can bypass read-only.
                             // Preserve both the new composer and the accepted edit.

@@ -19,6 +19,8 @@ mod hold;
 mod orchestration_card;
 pub(crate) use hold::HoldChanged;
 #[cfg(test)]
+mod browser_launch_tests;
+#[cfg(test)]
 mod composer_card_tests;
 mod mobile;
 #[cfg(test)]
@@ -649,12 +651,14 @@ impl Conversation {
             this.open_typed_btw(cx);
         });
         input.update(cx, |input, _| input.set_alternate_submit(true));
-        let submission = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| this.send(cx));
+        let submission = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
+            this.send_typed(cx)
+        });
         let dictation = cx.new(|cx| dictation::Dictation::new(input.downgrade(), cx));
         let dictation_observation = cx.observe(&dictation, |_, _, cx| cx.notify());
         let alternate_submission = cx
             .subscribe(&input, |this, _, _: &input::AlternateSubmitted, cx| {
-                this.send_follow_up(true, cx)
+                this.send_follow_up(true, true, cx)
             });
         let review =
             cx.new(|_| crate::session_review::SessionReview::new(summary.id, summary.cwd.clone()));
@@ -1029,10 +1033,31 @@ impl Conversation {
             self.add_attachments(paths, cx);
         }
     }
+    /// Sends `prompt` with `settings` for the app: an automation, a Flow, a
+    /// test. Nobody typed it, so it never carries the browser.
     pub(crate) fn quick_submit(
         &mut self,
         prompt: String,
         settings: Settings,
+        cx: &mut Context<Self>,
+    ) {
+        self.quick_submit_as(prompt, settings, false, cx);
+    }
+    /// [`Conversation::quick_submit`] for a send the user started themselves:
+    /// the quick composer, a card's Run, an Inbox repair.
+    pub(crate) fn user_quick_submit(
+        &mut self,
+        prompt: String,
+        settings: Settings,
+        cx: &mut Context<Self>,
+    ) {
+        self.quick_submit_as(prompt, settings, true, cx);
+    }
+    fn quick_submit_as(
+        &mut self,
+        prompt: String,
+        settings: Settings,
+        typed: bool,
         cx: &mut Context<Self>,
     ) {
         if self.editing_last_turn.pending() {
@@ -1044,9 +1069,9 @@ impl Conversation {
                 move |this, cx| {
                     if this.preserve_new_composer(cx) {
                         this.install_transfer(settings, None, cx);
-                        this.enqueue_restored_prompt(prompt, cx);
+                        this.enqueue_restored_prompt(prompt, typed, cx);
                     } else {
-                        this.quick_submit(prompt, settings, cx);
+                        this.quick_submit_as(prompt, settings, typed, cx);
                     }
                 },
                 cx,
@@ -1058,15 +1083,26 @@ impl Conversation {
         self.settings = settings;
         self.input
             .update(cx, |input, cx| input.set_text(prompt, cx));
-        self.send(cx);
+        self.send_follow_up(false, typed, cx);
     }
+    /// Sends the composer for the app (a transfer, a seeded prompt). The
+    /// user's own sends go through [`Conversation::send_typed`].
     pub(crate) fn send(&mut self, cx: &mut Context<Self>) {
-        self.send_follow_up(false, cx);
+        self.send_follow_up(false, false, cx);
+    }
+    /// The user sent the composer: Enter, the send button, a resent edit.
+    pub(crate) fn send_typed(&mut self, cx: &mut Context<Self>) {
+        self.send_follow_up(false, true, cx);
     }
     /// A send from a project whose folder is gone first looks for it under its
     /// new name (submitAfterProjectSync), then sends from there. The message
     /// stays in the composer until then, and when the folder cannot be found.
-    fn send_follows_moved_project(&mut self, invert: bool, cx: &mut Context<Self>) -> bool {
+    fn send_follows_moved_project(
+        &mut self,
+        invert: bool,
+        typed: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.locating_project {
             return true;
         }
@@ -1105,7 +1141,7 @@ impl Conversation {
                     Ok(Some(moved)) => {
                         this.project_moved(&moved, cx);
                         cx.emit(moved);
-                        this.send_follow_up(invert, cx);
+                        this.send_follow_up(invert, typed, cx);
                     }
                     Ok(None) => {
                         this.status = format!("Project folder not found: {project}");
@@ -1150,7 +1186,8 @@ impl Conversation {
     }
     /// `invert` sends a mid-turn message the opposite way from the follow-up
     /// preference: queued when it steers, steering when it queues.
-    fn send_follow_up(&mut self, invert: bool, cx: &mut Context<Self>) {
+    /// `typed`: the user sent this themselves, so its turn is user-typed.
+    fn send_follow_up(&mut self, invert: bool, typed: bool, cx: &mut Context<Self>) {
         if self.is_remote() && self.remote_send_guard(cx) {
             return;
         }
@@ -1158,7 +1195,7 @@ impl Conversation {
             return;
         }
         if self.needs_history_restore() {
-            self.defer_history_action(move |this, cx| this.send_follow_up(invert, cx), cx);
+            self.defer_history_action(move |this, cx| this.send_follow_up(invert, typed, cx), cx);
             return;
         }
         if self.submit_edited(cx) {
@@ -1211,7 +1248,7 @@ impl Conversation {
         if self.input.read(cx).is_composing() {
             return;
         }
-        if self.send_follows_moved_project(invert, cx) {
+        if self.send_follows_moved_project(invert, typed, cx) {
             return;
         }
         let raw = self
@@ -1244,7 +1281,7 @@ impl Conversation {
             self.stop(cx);
         }
         if self.sends_as_follow_up() {
-            self.enqueue_follow_up_inverted(prompt, mode.map(str::to_owned), invert, cx);
+            self.enqueue_follow_up_inverted(prompt, mode.map(str::to_owned), invert, typed, cx);
             if self.stopping || self.settings.pending_provider_switch.is_some() {
                 // A fresh Send continues the conversation, while older queued
                 // messages remain paused after Stop.
@@ -1272,7 +1309,7 @@ impl Conversation {
         if self.settings.orchestrator {
             self.settings.orchestration_profiles = self.orchestration_profiles(cx);
         }
-        self.launch_prompt(prompt, cx);
+        self.launch_prompt(prompt, typed, cx);
         self.settings.orchestration_profiles.clear();
         if self.busy && mode.is_some() {
             self.clear_submitted_mode(cx);
@@ -1309,18 +1346,21 @@ impl Conversation {
             },
         )
     }
-    fn launch_prompt(&mut self, prompt: String, cx: &mut Context<Self>) {
+    /// Starts a turn with `prompt`. `typed`: the user sent it themselves;
+    /// every other launch (continuations, resumes, the app's and agents'
+    /// sends) passes false and never carries the browser.
+    fn launch_prompt(&mut self, prompt: String, typed: bool, cx: &mut Context<Self>) {
         // While on hold nothing starts: the prompt waits in the queue for Resume.
         if crate::hold::active(cx) {
             let mode = self.submitted_mode();
-            self.enqueue_follow_up(prompt, mode, cx);
+            self.enqueue_follow_up_inverted(prompt, mode, false, typed, cx);
             cx.emit(SessionChanged);
             cx.notify();
             return;
         }
         if self.stopping {
             let mode = self.submitted_mode();
-            self.enqueue_follow_up(prompt, mode, cx);
+            self.enqueue_follow_up_inverted(prompt, mode, false, typed, cx);
             if let Some(id) = self
                 .follow_ups
                 .state
@@ -1336,7 +1376,7 @@ impl Conversation {
             return;
         }
         if !self.history_ready() {
-            self.defer_history_action(move |this, cx| this.launch_prompt(prompt, cx), cx);
+            self.defer_history_action(move |this, cx| this.launch_prompt(prompt, typed, cx), cx);
             return;
         }
         if self.account_switching {
@@ -1384,10 +1424,8 @@ impl Conversation {
             || self.settings.access == AccessMode::ReadOnly;
         let replay = replaying.is_some();
         let mut settings = replaying.unwrap_or_else(|| self.settings.clone());
-        // Who sent this turn is this turn's alone: the next one the user types
-        // is theirs.
-        self.settings.agent_sent = false;
-        self.settings.automation = false;
+        // This launch's own: never what the thread's settings say.
+        settings.user_typed = typed;
         if let Some(model) = self.model_info().filter(|_| !replay) {
             for control in &model.controls {
                 settings
@@ -1488,6 +1526,7 @@ impl Conversation {
         turn_capture::record(
             self.summary.id,
             settings.prepared_prompt.as_deref().unwrap_or(&prompt),
+            settings.user_typed,
         );
         if !self.is_remote() {
             self.remember_launch(&prompt, &settings);
@@ -1923,7 +1962,7 @@ impl Conversation {
                     match prompt {
                         Some(prompt) if this.preserve_new_composer(cx) => {
                             this.install_transfer(settings, None, cx);
-                            this.enqueue_restored_prompt(prompt, cx);
+                            this.enqueue_restored_prompt(prompt, false, cx);
                         }
                         prompt => this.install_transfer(settings, prompt, cx),
                     }
@@ -3816,7 +3855,7 @@ impl Conversation {
                     } else {
                         modifiers.control
                     };
-                    this.send_follow_up(alternate, cx);
+                    this.send_follow_up(alternate, true, cx);
                 }
             }))
     }
@@ -4223,12 +4262,20 @@ pub(crate) mod turn_capture {
     thread_local! {
         static TURNS: std::cell::RefCell<Vec<(i64, String)>> =
             const { std::cell::RefCell::new(Vec::new()) };
+        static TYPED: std::cell::RefCell<Vec<(String, bool)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
     }
     pub(crate) fn start() {
         TURNS.with(|turns| turns.borrow_mut().clear());
+        TYPED.with(|typed| typed.borrow_mut().clear());
     }
-    pub(super) fn record(id: i64, prompt: &str) {
+    pub(super) fn record(id: i64, prompt: &str, typed: bool) {
         TURNS.with(|turns| turns.borrow_mut().push((id, prompt.to_owned())));
+        TYPED.with(|turns| turns.borrow_mut().push((prompt.to_owned(), typed)));
+    }
+    /// Each launch's prompt and whether the user typed it.
+    pub(crate) fn typed() -> Vec<(String, bool)> {
+        TYPED.with(|turns| turns.borrow().clone())
     }
     pub(crate) fn last() -> Option<(i64, String)> {
         TURNS.with(|turns| turns.borrow().last().cloned())

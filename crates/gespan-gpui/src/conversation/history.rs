@@ -49,7 +49,13 @@ impl Conversation {
         self.settings.pilot.is_none()
             && (!self.input.read(cx).content.is_empty() || !self.attachments.is_empty())
     }
-    pub(super) fn enqueue_restored_prompt(&mut self, prompt: String, cx: &mut Context<Self>) {
+    /// `typed`: the user sent it, and it launches as theirs.
+    pub(super) fn enqueue_restored_prompt(
+        &mut self,
+        prompt: String,
+        typed: bool,
+        cx: &mut Context<Self>,
+    ) {
         // The accepted prompt predates this composer draft. Queue it without
         // taking any files the user attached while history was restoring.
         let attachments = std::mem::take(&mut self.attachments);
@@ -63,7 +69,7 @@ impl Conversation {
         } else {
             None
         };
-        self.enqueue_follow_up(prompt, mode.map(str::to_owned), cx);
+        self.enqueue_follow_up_inverted(prompt, mode.map(str::to_owned), false, typed, cx);
         self.attachments = attachments;
     }
     pub(crate) fn history_loaded(&self) -> bool {
@@ -332,7 +338,7 @@ mod tests {
             chat.follow_ups.state.paused = true;
             chat.attachments.push("/tmp/new-composer-image.png".into());
             assert!(chat.preserve_new_composer(cx));
-            chat.enqueue_restored_prompt("Accepted before restore".into(), cx);
+            chat.enqueue_restored_prompt("Accepted before restore".into(), false, cx);
             assert_eq!(chat.input.read(cx).content, "Unsent draft");
             assert_eq!(
                 chat.attachments,
@@ -362,7 +368,7 @@ mod tests {
             chat.settings
                 .attachments
                 .push("/tmp/accepted-prompt.png".into());
-            chat.enqueue_restored_prompt("Accepted prompt".into(), cx);
+            chat.enqueue_restored_prompt("Accepted prompt".into(), false, cx);
             assert_eq!(chat.input.read(cx).content, "New draft");
             assert_eq!(
                 chat.attachments,

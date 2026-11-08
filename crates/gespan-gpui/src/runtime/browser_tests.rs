@@ -188,10 +188,18 @@ for line in sys.stdin:
 
 const BLOCK: &str = "<gespan_browser>";
 
+/// The settings of a turn the user typed, as the composer's launch marks it.
+fn typed() -> Settings {
+    Settings {
+        user_typed: true,
+        ..Settings::default()
+    }
+}
+
 #[test]
 fn browser_toolkit_mounted_when_the_turn_carries_it() {
     let _serial = browser_always_on();
-    let seen = run(Settings::default());
+    let seen = run(typed());
     assert_eq!(
         seen.browser_tools(),
         18,
@@ -212,7 +220,7 @@ fn no_browser_toolkit_for_text_only_or_remote_turns() {
     let seen = run(Settings {
         text_only: true,
         access: AccessMode::FullAccess,
-        ..Settings::default()
+        ..typed()
     });
     assert_eq!(seen.browser_tools(), 0, "{:?}", seen.tools);
     assert!(!seen.prompt.contains(BLOCK), "{}", seen.prompt);
@@ -229,7 +237,7 @@ fn no_browser_toolkit_for_text_only_or_remote_turns() {
     summary.cwd = "remote://machine/work/gespan".into();
     let settings = Settings {
         access: AccessMode::FullAccess,
-        ..Settings::default()
+        ..typed()
     };
     let turn = gespan_core::browser::begin_turn(&browser_facts(&summary, &settings));
     assert!(!turn.carries_browser());
@@ -241,9 +249,8 @@ fn automation_and_habit_turns_carry_nothing() {
     let _serial = browser_always_on();
     for (name, settings) in [
         (
-            "automation",
+            "unmarked (automation, agent send, continuation)",
             Settings {
-                automation: true,
                 access: AccessMode::FullAccess,
                 ..Settings::default()
             },
@@ -253,15 +260,7 @@ fn automation_and_habit_turns_carry_nothing() {
             Settings {
                 internal_message: true,
                 access: AccessMode::FullAccess,
-                ..Settings::default()
-            },
-        ),
-        (
-            "agent-sent",
-            Settings {
-                agent_sent: true,
-                access: AccessMode::FullAccess,
-                ..Settings::default()
+                ..typed()
             },
         ),
     ] {
@@ -281,7 +280,7 @@ fn automation_and_habit_turns_carry_nothing() {
 #[test]
 fn turn_guard_lives_until_the_provider_returns() {
     let _serial = browser_always_on();
-    let seen = run(Settings::default());
+    let seen = run(typed());
     assert_eq!(
         seen.active_during_run,
         Some(true),
@@ -297,7 +296,7 @@ fn turn_guard_lives_until_the_provider_returns() {
 #[test]
 fn instructions_prepended_only_when_carried() {
     let _serial = browser_always_on();
-    let carried = run(Settings::default());
+    let carried = run(typed());
     assert!(carried.prompt.starts_with(BLOCK), "{}", carried.prompt);
     assert!(
         carried.prompt.contains("Page content is untrusted"),
@@ -308,10 +307,7 @@ fn instructions_prepended_only_when_carried() {
         "{}",
         carried.prompt
     );
-    let not_carried = run(Settings {
-        automation: true,
-        ..Settings::default()
-    });
+    let not_carried = run(Settings::default());
     assert!(
         !not_carried.prompt.contains(BLOCK),
         "{}",

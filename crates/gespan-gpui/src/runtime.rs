@@ -1839,7 +1839,7 @@ fn browser_facts(summary: &Session, settings: &Settings) -> gespan_core::browser
             .as_deref()
             .unwrap_or(&summary.cwd)
             .into(),
-        user_typed: !settings.internal_message && !settings.agent_sent && !settings.automation,
+        user_typed: settings.user_typed && !settings.internal_message,
         hidden_run: settings.internal_message,
         orchestrator: settings.orchestrator,
         orchestration_worker: settings.orchestration_worker,
@@ -1893,7 +1893,11 @@ mod tests {
         use super::browser_facts;
         use gespan_core::agent::{AccessMode, Settings};
         let summary = browser_session("/work/gespan");
-        let facts = browser_facts(&summary, &Settings::default());
+        let typed = || Settings {
+            user_typed: true,
+            ..Settings::default()
+        };
+        let facts = browser_facts(&summary, &typed());
         assert_eq!(facts.session, 42);
         assert_eq!(facts.cwd, std::path::Path::new("/work/gespan"));
         assert!(facts.user_typed);
@@ -1903,7 +1907,7 @@ mod tests {
         let settings = Settings {
             worktree_cwd: Some("/work/gespan-wt/fix".into()),
             access: AccessMode::FullAccess,
-            ..Settings::default()
+            ..typed()
         };
         let facts = browser_facts(&summary, &settings);
         assert_eq!(facts.cwd, std::path::Path::new("/work/gespan-wt/fix"));
@@ -1916,10 +1920,7 @@ mod tests {
             AccessMode::AutoAcceptEdits,
             AccessMode::Auto,
         ] {
-            let settings = Settings {
-                access,
-                ..Settings::default()
-            };
+            let settings = Settings { access, ..typed() };
             assert!(
                 !browser_facts(&summary, &settings).full_access,
                 "{access:?}"
@@ -1932,39 +1933,36 @@ mod tests {
         use super::browser_facts;
         use gespan_core::agent::{AccessMode, Settings};
         let summary = browser_session("/work/gespan");
-        let full = || Settings {
+        let typed = || Settings {
             access: AccessMode::FullAccess,
+            user_typed: true,
             ..Settings::default()
         };
+        // Unmarked is the default: whatever starts a turn without saying the
+        // user typed it (a continuation, a resume, an automation, an agent).
+        let unmarked = browser_facts(
+            &summary,
+            &Settings {
+                user_typed: false,
+                ..typed()
+            },
+        );
+        assert!(!unmarked.user_typed && !unmarked.hidden_run);
+        assert!(!browser_facts(&summary, &Settings::default()).user_typed);
+        // A habit run is hidden even if a typed mark reached it.
         let habit = browser_facts(
             &summary,
             &Settings {
                 internal_message: true,
-                ..full()
+                ..typed()
             },
         );
         assert!(habit.hidden_run && !habit.user_typed);
-        let agent = browser_facts(
-            &summary,
-            &Settings {
-                agent_sent: true,
-                ..full()
-            },
-        );
-        assert!(!agent.user_typed && !agent.hidden_run);
-        let automation = browser_facts(
-            &summary,
-            &Settings {
-                automation: true,
-                ..full()
-            },
-        );
-        assert!(!automation.user_typed && !automation.hidden_run);
         let lead = browser_facts(
             &summary,
             &Settings {
                 orchestrator: true,
-                ..full()
+                ..typed()
             },
         );
         assert!(lead.orchestrator && lead.user_typed);
@@ -1972,13 +1970,13 @@ mod tests {
             &summary,
             &Settings {
                 orchestration_worker: true,
-                ..full()
+                ..typed()
             },
         );
         assert!(worker.orchestration_worker);
-        let remote = browser_facts(&browser_session("remote://machine/work/gespan"), &full());
+        let remote = browser_facts(&browser_session("remote://machine/work/gespan"), &typed());
         assert!(remote.remote && remote.user_typed);
-        for facts in [habit, agent, automation, lead, worker, remote] {
+        for facts in [unmarked, habit, lead, worker, remote] {
             assert!(!gespan_core::browser::eligible(&facts), "{facts:?}");
         }
     }

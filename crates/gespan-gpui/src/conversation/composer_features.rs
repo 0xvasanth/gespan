@@ -474,7 +474,7 @@ impl Conversation {
         !self.follow_ups.state.messages.is_empty()
     }
     pub(crate) fn send_worker_turn(&mut self, prompt: String, cx: &mut Context<Self>) {
-        self.launch_prompt(prompt, cx);
+        self.launch_prompt(prompt, false, cx);
     }
     /// Guidance for the running turn, whatever the user's follow-up setting.
     pub(crate) fn steer_worker(&mut self, text: String, cx: &mut Context<Self>) {
@@ -591,7 +591,7 @@ impl Conversation {
         }
         let internal = self.settings.internal_message;
         self.settings.internal_message = true;
-        self.launch_prompt(prompt, cx);
+        self.launch_prompt(prompt, false, cx);
         self.settings.internal_message = internal;
     }
 }

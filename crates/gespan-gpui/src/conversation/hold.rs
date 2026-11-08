@@ -175,7 +175,7 @@ impl Conversation {
         }
         let sent = if let Some(prompt) = self.resume_prompt(reason) {
             if self.follow_ups.state.messages.is_empty() {
-                self.launch_prompt(prompt, cx);
+                self.launch_prompt(prompt, false, cx);
             } else {
                 // The paused-queue path sends the continuation, then releases the queue.
                 self.follow_ups.state.paused = true;

@@ -41,9 +41,6 @@ impl Conversation {
             );
             return;
         }
-        let mut settings = settings;
-        // A draft the agent left is the user's to send.
-        settings.agent_sent = send;
         self.install_transfer(settings, None, cx);
         if send {
             self.draft_action(true, cx);
@@ -123,9 +120,7 @@ impl Conversation {
             if draft {
                 self.input.update(cx, |i, cx| i.set_text(prompt, cx));
             } else {
-                let mut settings = self.settings.clone();
-                settings.agent_sent = true;
-                self.install_transfer(settings, Some(prompt), cx);
+                self.install_transfer(self.settings.clone(), Some(prompt), cx);
             }
         }
     }
@@ -243,7 +238,7 @@ impl Conversation {
         self.settings.pilot_sent_at = message.sent_at;
         self.settings.internal_message = message.internal;
         self.settings.attachments = message.attachments.iter().map(PathBuf::from).collect();
-        self.launch_prompt(message.text.clone(), cx);
+        self.launch_prompt(message.text.clone(), false, cx);
         true
     }
     pub(crate) fn pilot_rows<'a>(&self, cx: &'a App) -> &'a [gespan_core::transcript::Row] {
