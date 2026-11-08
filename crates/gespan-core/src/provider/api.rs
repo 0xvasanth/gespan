@@ -80,6 +80,8 @@ pub struct Descriptor {
     pub discovery_timeout: Option<u64>,
     /// What the composer calls the effort control.
     pub effort_label: String,
+    /// Model settings a saved choice keeps before the model catalog loads.
+    pub settings_before_catalog: Vec<String>,
     pub version: u32,
     /// Where the manifest came from, for diagnostics.
     pub source: Source,
@@ -110,6 +112,7 @@ impl Descriptor {
             usage: m.usage,
             discovery_timeout: m.discovery_timeout,
             effort_label: m.effort_label.unwrap_or_else(|| "Effort".into()),
+            settings_before_catalog: m.settings_before_catalog,
             version: m.version,
             source: loaded.source,
         }
@@ -160,6 +163,16 @@ pub trait Provider: Send + Sync + 'static {
             Some(usage) => usage.consume_reset(profile, credit),
             None => Err("This provider has no banked resets.".into()),
         }
+    }
+
+    /// This provider's CLI id for a model id the phone or the old desktop
+    /// app sent. Most providers use the same id.
+    fn native_model_id(&self, wire: &str) -> String {
+        wire.into()
+    }
+    /// The reverse: the id the phone expects for a CLI model id.
+    fn wire_model_id<'a>(&self, native: &'a str) -> &'a str {
+        native
     }
 
     fn transport(&self) -> Transport {
@@ -226,6 +239,24 @@ builtin! {
         fn new_session_id(&self, request: &Request) -> Option<String> {
             (request.provider_id.is_none() && !request.settings.text_only)
                 .then(super::lifecycle::claude_session_id)
+        }
+        /// The phone and the old desktop app wrote versioned models without
+        /// the `claude-` prefix, and some with dots (`opus-4.6`).
+        fn native_model_id(&self, wire: &str) -> String {
+            if !wire.starts_with("claude-") && wire.chars().any(|c| c.is_ascii_digit()) {
+                format!("claude-{}", wire.replace('.', "-"))
+            } else {
+                wire.into()
+            }
+        }
+        fn wire_model_id<'a>(&self, native: &'a str) -> &'a str {
+            match native {
+                "claude-opus-4-6" => "opus-4.6",
+                "claude-sonnet-4-6" => "sonnet-4.6",
+                "claude-opus-4-5" => "opus-4.5",
+                "claude-haiku-4-5" => "haiku-4.5",
+                _ => native.strip_prefix("claude-").unwrap_or(native),
+            }
         }
     },
     CodexProvider => Codex,
@@ -636,6 +667,60 @@ mod tests {
                 "{:?}",
                 provider.kind()
             );
+        }
+    }
+
+    #[test]
+    fn only_claude_and_codex_keep_saved_settings_before_their_catalog_loads() {
+        for provider in ProviderRegistry::builtin().iter() {
+            let want: &[&str] = match provider.kind() {
+                Kind::Claude => &["fast", "thinking", "context"],
+                Kind::Codex => &["serviceTier"],
+                _ => &[],
+            };
+            assert_eq!(
+                provider.descriptor().settings_before_catalog,
+                want,
+                "{:?}",
+                provider.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn claude_model_ids_cross_the_wire_without_their_prefix() {
+        let claude = Kind::Claude.provider();
+        for (wire, native) in [
+            ("opus-4.6", "claude-opus-4-6"),
+            ("sonnet-4.6", "claude-sonnet-4-6"),
+            ("opus-4.5", "claude-opus-4-5"),
+            ("haiku-4.5", "claude-haiku-4-5"),
+            ("opus-5-5", "claude-opus-5-5"),
+        ] {
+            assert_eq!(claude.native_model_id(wire), native);
+            assert_eq!(claude.wire_model_id(native), wire);
+        }
+        // Aliases have no version and stay as the CLI takes them.
+        assert_eq!(claude.native_model_id("opus"), "opus");
+        assert_eq!(claude.wire_model_id("opus"), "opus");
+        assert_eq!(claude.native_model_id("claude-opus-5-5"), "claude-opus-5-5");
+    }
+
+    #[test]
+    fn other_providers_send_model_ids_unchanged() {
+        for provider in ProviderRegistry::builtin().iter() {
+            if provider.kind() == Kind::Claude {
+                continue;
+            }
+            for id in [
+                "opus-4.6",
+                "gpt-6.1-sol",
+                "claude-opus-4-6",
+                "provider/model",
+            ] {
+                assert_eq!(provider.native_model_id(id), id, "{:?}", provider.kind());
+                assert_eq!(provider.wire_model_id(id), id, "{:?}", provider.kind());
+            }
         }
     }
 

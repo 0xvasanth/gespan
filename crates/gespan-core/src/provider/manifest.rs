@@ -63,6 +63,9 @@ pub struct Manifest {
     /// What the composer calls the effort control; absent is "Effort".
     #[serde(default)]
     pub effort_label: Option<String>,
+    /// Model settings a saved choice keeps before the model catalog loads.
+    #[serde(default)]
+    pub settings_before_catalog: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]

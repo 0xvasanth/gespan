@@ -1,5 +1,5 @@
 id = "codex"
-version = 3
+version = 4
 min_engine_version = 1
 label = "Codex"
 binary = "codex"
@@ -9,6 +9,7 @@ family = "codex"
 usage = "codex"
 discovery_timeout = 60
 effort_label = "Reasoning"
+settings_before_catalog = ["serviceTier"]
 
 [login]
 sign_in = ["login"]

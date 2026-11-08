@@ -246,15 +246,10 @@ pub fn native_model(model: &str, provider: &str) -> Option<String> {
     if model.is_empty() || model == "default" {
         return None;
     }
-    let model = if provider == "claude"
-        && !model.starts_with("claude-")
-        && model.chars().any(|c| c.is_ascii_digit())
-    {
-        format!("claude-{}", model.replace('.', "-"))
-    } else {
-        model.into()
-    };
-    Some(model)
+    Some(match crate::provider::Kind::parse(provider) {
+        Some(kind) => kind.provider().native_model_id(model),
+        None => model.into(),
+    })
 }
 
 fn transcript(blocks: &[Value]) -> rusqlite::Result<Transcript> {

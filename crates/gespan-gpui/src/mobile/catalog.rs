@@ -60,14 +60,9 @@ pub(crate) struct LiveSession {
 /// provider-qualified keys on the wire and native CLI IDs inside the desktop.
 pub(crate) fn model_id(kind: Kind, model: Option<&str>) -> String {
     let native = model.and_then(|id| gespan_core::store::native_model(id, kind.id()));
-    let id = match (kind, native.as_deref()) {
-        (Kind::Claude, Some("claude-opus-4-6")) => "opus-4.6",
-        (Kind::Claude, Some("claude-sonnet-4-6")) => "sonnet-4.6",
-        (Kind::Claude, Some("claude-opus-4-5")) => "opus-4.5",
-        (Kind::Claude, Some("claude-haiku-4-5")) => "haiku-4.5",
-        (Kind::Claude, Some(id)) => id.strip_prefix("claude-").unwrap_or(id),
-        (_, Some(id)) => id,
-        (_, None) => "default",
+    let id = match native.as_deref() {
+        Some(id) => kind.provider().wire_model_id(id),
+        None => "default",
     };
     format!("{}:{id}", kind.id())
 }
