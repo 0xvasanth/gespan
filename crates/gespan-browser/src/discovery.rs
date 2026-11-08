@@ -296,9 +296,31 @@ pub fn parse_active_port(text: &str) -> Option<ActivePort> {
     Some(ActivePort { port, path })
 }
 
+/// What reading `DevToolsActivePort` found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PortFile {
+    /// No file (or one that does not parse): remote debugging is off.
+    Missing,
+    /// The operating system refused the read (macOS app-data protection
+    /// answers EPERM for another app's folder). Whether remote debugging is
+    /// on is unknown, so this is never reported as "turn it on".
+    Unreadable,
+    Present(ActivePort),
+}
+
+pub fn read_port_file(user_data_dir: &Path) -> PortFile {
+    match std::fs::read_to_string(user_data_dir.join(ACTIVE_PORT_FILE)) {
+        Ok(text) => parse_active_port(&text).map_or(PortFile::Missing, PortFile::Present),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => PortFile::Unreadable,
+        Err(_) => PortFile::Missing,
+    }
+}
+
 pub fn read_active_port(user_data_dir: &Path) -> Option<ActivePort> {
-    let text = std::fs::read_to_string(user_data_dir.join(ACTIVE_PORT_FILE)).ok()?;
-    parse_active_port(&text)
+    match read_port_file(user_data_dir) {
+        PortFile::Present(active) => Some(active),
+        PortFile::Missing | PortFile::Unreadable => None,
+    }
 }
 
 /// `ws://127.0.0.1:<port><path>`: loopback literal so the `Host` header is
@@ -331,6 +353,9 @@ pub enum Located {
     /// The file exists but the port does not answer: browser closed or a
     /// stale file after a crash.
     StalePort { candidate: Candidate, port: u16 },
+    /// No readable file, and the system refused to let Gespan read this
+    /// profile's: remote debugging may well be on.
+    Unreadable { candidate: Candidate },
     /// Profiles exist but none has the file: remote debugging is off.
     NeedsToggle { candidates: Vec<Candidate> },
     /// No supported browser profile on this machine (or the chosen one is missing).
@@ -340,23 +365,29 @@ pub enum Located {
 /// Candidates, port file, TCP probe. Pure file and TCP work; the WebSocket
 /// is the link's job.
 pub fn locate(choice: &BrowserChoice) -> Located {
-    locate_with(candidates(choice), read_active_port, |port| {
+    locate_with(candidates(choice), read_port_file, |port| {
         port_accepts(port, PROBE_TIMEOUT)
     })
 }
 
 pub fn locate_with(
     candidates: Vec<Candidate>,
-    read: impl Fn(&Path) -> Option<ActivePort>,
+    read: impl Fn(&Path) -> PortFile,
     probe: impl Fn(u16) -> bool,
 ) -> Located {
     if candidates.is_empty() {
         return Located::NoBrowser;
     }
     let mut stale: Option<(Candidate, u16)> = None;
+    let mut unreadable: Option<Candidate> = None;
     for candidate in &candidates {
-        let Some(active) = read(&candidate.user_data_dir) else {
-            continue;
+        let active = match read(&candidate.user_data_dir) {
+            PortFile::Present(active) => active,
+            PortFile::Unreadable => {
+                unreadable.get_or_insert_with(|| candidate.clone());
+                continue;
+            }
+            PortFile::Missing => continue,
         };
         if probe(active.port) {
             let ws_url = ws_url(&active);
@@ -370,9 +401,10 @@ pub fn locate_with(
             stale = Some((candidate.clone(), active.port));
         }
     }
-    match stale {
-        Some((candidate, port)) => Located::StalePort { candidate, port },
-        None => Located::NeedsToggle { candidates },
+    match (stale, unreadable) {
+        (Some((candidate, port)), _) => Located::StalePort { candidate, port },
+        (None, Some(candidate)) => Located::Unreadable { candidate },
+        (None, None) => Located::NeedsToggle { candidates },
     }
 }
 
@@ -733,19 +765,19 @@ mod tests {
             user_data_dir: PathBuf::from(format!("/profiles/{channel}")),
         };
         assert_eq!(
-            locate_with(Vec::new(), |_| None, |_| true),
+            locate_with(Vec::new(), |_| PortFile::Missing, |_| true),
             Located::NoBrowser
         );
         let needs = locate_with(
             vec![candidate("chrome"), candidate("msedge")],
-            |_| None,
+            |_| PortFile::Missing,
             |_| true,
         );
         assert!(matches!(needs, Located::NeedsToggle { candidates } if candidates.len() == 2));
         let stale = locate_with(
             vec![candidate("chrome")],
             |_| {
-                Some(ActivePort {
+                PortFile::Present(ActivePort {
                     port: 1,
                     path: "/devtools/browser/x".into(),
                 })
@@ -764,7 +796,7 @@ mod tests {
             vec![candidate("chrome"), candidate("msedge")],
             |dir| {
                 let port = if dir.ends_with("chrome") { 1 } else { 2 };
-                Some(ActivePort {
+                PortFile::Present(ActivePort {
                     port,
                     path: format!("/devtools/browser/{port}"),
                 })
@@ -792,7 +824,7 @@ mod tests {
             format!("{port}\n/devtools/browser/live\n"),
         )
         .unwrap();
-        let located = locate_with(vec![candidate.clone()], read_active_port, |p| {
+        let located = locate_with(vec![candidate.clone()], read_port_file, |p| {
             port_accepts(p, PROBE_TIMEOUT)
         });
         assert!(
@@ -801,7 +833,7 @@ mod tests {
         drop(listener);
         // Port 1 is never listening on loopback.
         std::fs::write(dir.join(ACTIVE_PORT_FILE), "1\n/devtools/browser/dead\n").unwrap();
-        let located = locate_with(vec![candidate.clone()], read_active_port, |p| {
+        let located = locate_with(vec![candidate.clone()], read_port_file, |p| {
             port_accepts(p, PROBE_TIMEOUT)
         });
         assert_eq!(
@@ -812,8 +844,89 @@ mod tests {
             }
         );
         std::fs::remove_file(dir.join(ACTIVE_PORT_FILE)).unwrap();
-        let located = locate_with(vec![candidate], read_active_port, |_| true);
+        let located = locate_with(vec![candidate], read_port_file, |_| true);
         assert!(matches!(located, Located::NeedsToggle { .. }));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A refused read is "unreadable", never "remote debugging is off"; a
+    /// live or stale file elsewhere still wins, and a missing file next to
+    /// it does not hide it.
+    #[test]
+    fn locate_tells_an_unreadable_profile_from_a_missing_file() {
+        let candidate = |channel: &str| Candidate {
+            channel: channel.into(),
+            kind: channel_kind(channel),
+            user_data_dir: PathBuf::from(format!("/profiles/{channel}")),
+        };
+        let both = || vec![candidate("chrome"), candidate("brave")];
+        let read = |chrome: PortFile, brave: PortFile| {
+            move |dir: &Path| {
+                if dir.ends_with("chrome") {
+                    chrome.clone()
+                } else {
+                    brave.clone()
+                }
+            }
+        };
+        let live = PortFile::Present(ActivePort {
+            port: 2,
+            path: "/devtools/browser/2".into(),
+        });
+        assert_eq!(
+            locate_with(
+                both(),
+                read(PortFile::Unreadable, PortFile::Missing),
+                |_| true
+            ),
+            Located::Unreadable {
+                candidate: candidate("chrome")
+            }
+        );
+        assert_eq!(
+            locate_with(
+                both(),
+                read(PortFile::Missing, PortFile::Unreadable),
+                |_| true
+            ),
+            Located::Unreadable {
+                candidate: candidate("brave")
+            }
+        );
+        assert!(matches!(
+            locate_with(both(), read(PortFile::Unreadable, live.clone()), |_| true),
+            Located::Found { candidate, .. } if candidate.channel == "brave"
+        ));
+        assert!(matches!(
+            locate_with(both(), read(PortFile::Unreadable, live), |_| false),
+            Located::StalePort { candidate, .. } if candidate.channel == "brave"
+        ));
+        assert!(matches!(
+            locate_with(both(), read(PortFile::Missing, PortFile::Missing), |_| true),
+            Located::NeedsToggle { .. }
+        ));
+    }
+
+    /// The real read: permission denied is told apart from no file and
+    /// from a file that does not parse.
+    #[cfg(unix)]
+    #[test]
+    fn a_permission_error_reading_the_port_file_is_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("gespan-discovery-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_port_file(&dir), PortFile::Missing);
+        let file = dir.join(ACTIVE_PORT_FILE);
+        std::fs::write(&file, "not a port\n").unwrap();
+        assert_eq!(read_port_file(&dir), PortFile::Missing);
+        std::fs::write(&file, "4000\n/devtools/browser/x\n").unwrap();
+        assert!(matches!(read_port_file(&dir), PortFile::Present(a) if a.port == 4000));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&file).is_err() {
+            assert_eq!(read_port_file(&dir), PortFile::Unreadable);
+            assert_eq!(read_active_port(&dir), None);
+        }
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

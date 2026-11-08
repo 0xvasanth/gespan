@@ -148,6 +148,7 @@ pub enum Reason {
     // blocked: connection not usable
     BrowserConnecting,
     BrowserNeedsSetup,
+    BrowserProfileUnreadable,
     BrowserUnavailable,
     BrowserConsentPending,
     BrowserConsentDenied,
@@ -179,7 +180,7 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 39] = [
+    pub const ALL: [Reason; 40] = [
         Reason::Off,
         Reason::NotGranted,
         Reason::Revoked,
@@ -193,6 +194,7 @@ impl Reason {
         Reason::InvalidRequest,
         Reason::BrowserConnecting,
         Reason::BrowserNeedsSetup,
+        Reason::BrowserProfileUnreadable,
         Reason::BrowserUnavailable,
         Reason::BrowserConsentPending,
         Reason::BrowserConsentDenied,
@@ -238,6 +240,7 @@ impl Reason {
             | InvalidRequest
             | BrowserConnecting
             | BrowserNeedsSetup
+            | BrowserProfileUnreadable
             | BrowserUnavailable
             | BrowserConsentPending
             | BrowserConsentDenied
@@ -307,6 +310,7 @@ impl Reason {
             InvalidRequest => "The request is invalid.",
             BrowserConnecting => "Gespan is connecting to the browser; retry shortly.",
             BrowserNeedsSetup => "Remote debugging is not enabled in the browser; the user must enable it in chrome://inspect/#remote-debugging (or edge://inspect). Retrying will not help until then.",
+            BrowserProfileUnreadable => "Gespan is not permitted to read the browser's profile folder, so it cannot tell whether remote debugging is on; turning remote debugging on again will not help. The user must give Gespan access to that folder (on macOS: System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan), or choose the Gespan browser in Gespan's Settings → Browser, then ask you again.",
             BrowserUnavailable => "The browser is not running or left a stale debugging record; the user must start it with remote debugging on in chrome://inspect/#remote-debugging (or edge://inspect), then ask you again.",
             BrowserConsentPending => "The browser is showing its remote debugging consent dialog and nobody has accepted it yet; tell the user to accept it in the browser (remote debugging stays on in chrome://inspect/#remote-debugging), then ask you again. Do not retry in a loop.",
             BrowserConsentDenied => "The browser's consent dialog was declined or went unanswered; ask the user to click Connect in Gespan's Settings → Browser and accept the browser's dialog.",
@@ -352,6 +356,7 @@ impl Reason {
             InvalidRequest => "invalid_request",
             BrowserConnecting => "browser_connecting",
             BrowserNeedsSetup => "browser_needs_setup",
+            BrowserProfileUnreadable => "browser_profile_unreadable",
             BrowserUnavailable => "browser_unavailable",
             BrowserConsentPending => "browser_consent_pending",
             BrowserConsentDenied => "browser_consent_denied",
@@ -1201,6 +1206,9 @@ pub enum ConnectionState {
     Off,
     Discovering,
     NeedsToggle,
+    /// The system refused to let Gespan read the browser's profile folder
+    /// (macOS app-data protection): remote debugging may be on or off.
+    ProfileUnreadable,
     StalePort,
     AwaitingConsent,
     ConsentDenied,
@@ -1223,6 +1231,7 @@ impl ConnectionState {
             Off => Reason::Off,
             Discovering => Reason::BrowserConnecting,
             NeedsToggle => Reason::BrowserNeedsSetup,
+            ProfileUnreadable => Reason::BrowserProfileUnreadable,
             StalePort => Reason::BrowserUnavailable,
             AwaitingConsent => Reason::BrowserConsentPending,
             ConsentDenied | ConsentTimeout => Reason::BrowserConsentDenied,
@@ -1591,6 +1600,18 @@ mod tests {
             ConnectionState::NeedsToggle.agent_reason(),
             Some(Reason::BrowserNeedsSetup)
         );
+        assert_eq!(
+            ConnectionState::ProfileUnreadable.agent_reason(),
+            Some(Reason::BrowserProfileUnreadable)
+        );
+        assert_eq!(
+            serde_json::to_value(ConnectionState::ProfileUnreadable).unwrap(),
+            "profile_unreadable"
+        );
+        let unreadable = Reason::BrowserProfileUnreadable;
+        assert_eq!(unreadable.outcome(), Outcome::Blocked);
+        assert!(!unreadable.retryable());
+        assert!(!unreadable.message().contains("chrome://inspect"));
         let settings: BrowserSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.limits.tabs_per_session, 8);
         assert_eq!(Epoch { run: 7, seq: 1 }.next().seq, 2);

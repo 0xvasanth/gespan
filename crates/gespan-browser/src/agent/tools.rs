@@ -802,7 +802,16 @@ mod tests {
         ] {
             assert!(reason.message().contains("chrome://inspect"), "{reason:?}");
         }
-        for reason in [Reason::Off, Reason::BrowserConsentDenied] {
+        // An unreadable profile names the system setting and the other mode,
+        // never the chrome://inspect step that would not help.
+        let unreadable = Reason::BrowserProfileUnreadable.message();
+        assert!(unreadable.contains("Privacy & Security"), "{unreadable}");
+        assert!(!unreadable.contains("chrome://inspect"), "{unreadable}");
+        for reason in [
+            Reason::Off,
+            Reason::BrowserConsentDenied,
+            Reason::BrowserProfileUnreadable,
+        ] {
             assert!(
                 reason.message().contains("Settings → Browser"),
                 "{reason:?}"

@@ -274,6 +274,12 @@ fn attach_view(state: &BrowserState) -> ConnectionView {
             Some(Retry),
             true,
         ),
+        ConnectionState::ProfileUnreadable => view(
+            "Gespan is not permitted to read the browser's profile folder, so it cannot tell whether remote debugging is on.",
+            Warning,
+            Some(Retry),
+            false,
+        ),
         ConnectionState::StalePort => view(
             "The browser is not running, or it left an old debugging record behind.",
             Warning,
@@ -395,6 +401,27 @@ mod tests {
         let attach = connection_view(&state(BrowserMode::Attach, ConnectionState::ConsentDenied));
         assert!(attach.guide);
         assert_eq!(attach.action, Some(Action::Connect));
+    }
+
+    /// An unreadable profile is its own line, with Retry and without the
+    /// chrome://inspect guide; the detail carries the fix.
+    #[test]
+    fn an_unreadable_profile_is_not_shown_as_remote_debugging_off() {
+        let mut unreadable = state(BrowserMode::Attach, ConnectionState::ProfileUnreadable);
+        let view = connection_view(&unreadable);
+        assert!(
+            view.message.contains("not permitted to read"),
+            "{}",
+            view.message
+        );
+        assert!(!view.message.contains("Remote debugging is not turned on"));
+        assert!(!view.guide);
+        assert_eq!(view.action, Some(Action::Retry));
+        unreadable.connection.detail = Some("Full Disk Access".into());
+        assert_eq!(
+            connection_detail(&unreadable).as_deref(),
+            Some("Full Disk Access")
+        );
     }
 
     #[test]

@@ -1159,6 +1159,24 @@ impl BrowserHost {
                     ),
                 }
             }
+            Located::Unreadable { candidate } => {
+                self.event(
+                    "profile_unreadable",
+                    Actor::System,
+                    None,
+                    Some(&candidate.channel),
+                );
+                self.attempt_state(
+                    generation,
+                    ConnectionState::ProfileUnreadable,
+                    Some(profile_unreadable_detail(
+                        &candidate.user_data_dir,
+                        discovery::Os::current(),
+                    )),
+                    None,
+                    None,
+                )
+            }
             Located::StalePort { candidate, port } => self.attempt_state(
                 generation,
                 ConnectionState::StalePort,
@@ -3215,8 +3233,9 @@ fn blank_pages(reply: &Value) -> Vec<TargetId> {
 /// (re)connects and waits for the result: nothing connected yet (a
 /// remembered switch after a restart), a drop, a browser that was closed,
 /// remote debugging that may have been turned on since, an unanswered
-/// consent dialog, or an attempt already running. A declined dialog, an old
-/// browser and an administrator policy need the user first.
+/// consent dialog, a profile folder the system may since have opened to
+/// Gespan, or an attempt already running. A declined dialog, an old browser
+/// and an administrator policy need the user first.
 fn attach_retries(state: ConnectionState) -> bool {
     matches!(
         state,
@@ -3224,10 +3243,27 @@ fn attach_retries(state: ConnectionState) -> bool {
             | ConnectionState::Disconnected
             | ConnectionState::StalePort
             | ConnectionState::NeedsToggle
+            | ConnectionState::ProfileUnreadable
             | ConnectionState::ConsentTimeout
             | ConnectionState::Discovering
             | ConnectionState::AwaitingConsent
     )
+}
+
+/// What the user does when the system refuses Gespan the browser's profile
+/// folder, for Settings and the agent alike.
+fn profile_unreadable_detail(user_data_dir: &std::path::Path, os: discovery::Os) -> String {
+    let file = user_data_dir.join(discovery::ACTIVE_PORT_FILE);
+    match os {
+        discovery::Os::Mac => format!(
+            "macOS blocked Gespan from reading {}. Turn Gespan on in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan (if Gespan was started from a terminal, turn that terminal app on instead), or choose Gespan browser in Settings → Browser.",
+            file.display()
+        ),
+        discovery::Os::Windows | discovery::Os::Linux => format!(
+            "Permission denied reading {}. Give your user account read access to the browser's profile folder, or choose Gespan browser in Settings → Browser.",
+            file.display()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -3878,6 +3914,137 @@ mod tests {
         assert_eq!(server.connections(), 1);
         host.set_toggle(false);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The 2026-11-09 sequence: the switch goes on while remote debugging is
+    /// off, an agent gets the chrome://inspect instruction, then the user
+    /// turns remote debugging on. The next agent action looks again and
+    /// connects instead of repeating the instruction.
+    #[test]
+    fn turning_on_remote_debugging_later_lets_the_next_action_connect() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let port_file = dir.join(discovery::ACTIVE_PORT_FILE);
+        let written = std::fs::read_to_string(&port_file).unwrap();
+        std::fs::remove_file(&port_file).unwrap();
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::NeedsToggle),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let needs = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup), "{needs:?}");
+        assert!(
+            needs.message.contains("chrome://inspect"),
+            "{}",
+            needs.message
+        );
+        assert_eq!(server.connections(), 0);
+
+        // Chrome writes DevToolsActivePort once remote debugging is on.
+        std::fs::write(&port_file, written).unwrap();
+        let started = Instant::now();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A port file Gespan may not read (macOS app-data protection answers
+    /// EPERM) is not "remote debugging is off": the agent and Settings name
+    /// the real fix, and once the file is readable the next action connects.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_port_file_is_not_reported_as_remote_debugging_off() {
+        use std::os::unix::fs::PermissionsExt;
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let port_file = dir.join(discovery::ACTIVE_PORT_FILE);
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&port_file).is_ok() {
+            // Running as root: permissions are not enforced.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::ProfileUnreadable),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let blocked = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(blocked.outcome, Outcome::Blocked);
+        assert_eq!(
+            blocked.reason,
+            Some(Reason::BrowserProfileUnreadable),
+            "{blocked:?}"
+        );
+        assert!(
+            !blocked.message.contains("chrome://inspect"),
+            "{}",
+            blocked.message
+        );
+        assert!(
+            blocked.message.contains("Privacy & Security"),
+            "{}",
+            blocked.message
+        );
+        assert!(
+            blocked.message.contains(&dir.display().to_string()),
+            "names the folder: {}",
+            blocked.message
+        );
+        assert_eq!(server.connections(), 0);
+
+        // Access granted: the next action looks again and connects.
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each OS gets the fix it has: macOS names Full Disk Access (and the
+    /// terminal a dev build was started from), others the folder's
+    /// permissions; all name the file and the Gespan browser way out, and
+    /// none sends the user back to chrome://inspect.
+    #[test]
+    fn the_unreadable_profile_detail_names_each_systems_fix() {
+        let dir = std::path::Path::new("/profiles/chrome");
+        let mac = profile_unreadable_detail(dir, discovery::Os::Mac);
+        assert!(
+            mac.contains("Privacy & Security → Full Disk Access"),
+            "{mac}"
+        );
+        assert!(mac.contains("terminal"), "{mac}");
+        for os in [discovery::Os::Linux, discovery::Os::Windows] {
+            let other = profile_unreadable_detail(dir, os);
+            assert!(other.contains("Permission denied"), "{other}");
+            assert!(!other.contains("macOS"), "{other}");
+        }
+        for os in [
+            discovery::Os::Mac,
+            discovery::Os::Linux,
+            discovery::Os::Windows,
+        ] {
+            let text = profile_unreadable_detail(dir, os);
+            assert!(text.contains("DevToolsActivePort"), "{text}");
+            assert!(
+                text.contains("Gespan browser in Settings → Browser"),
+                "{text}"
+            );
+            assert!(!text.contains("chrome://inspect"), "{text}");
+            assert!(!text.contains("Allow"), "{text}");
+        }
     }
 
     /// A consent dialog nobody answers holds the action no longer than the

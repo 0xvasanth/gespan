@@ -858,6 +858,40 @@ mod tests {
         assert!(shown(&mut visual, "settings-browser-attach-steps"));
     }
 
+    /// A browser profile Gespan may not read (macOS app-data protection)
+    /// is shown as that, with the fix, not as remote debugging being off.
+    #[cfg(unix)]
+    #[gpui::test]
+    fn an_unreadable_profile_names_the_fix_not_chrome_inspect(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let host = host_on(dir.path());
+        let port_file = dir.path().join("no-browser").join("DevToolsActivePort");
+        std::fs::write(&port_file, "1\n/devtools/browser/x\n").unwrap();
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&port_file).is_ok() {
+            return; // root: permissions are not enforced
+        }
+        let (_, mut visual) = page(host.clone(), cx);
+        click(&mut visual, "settings-toggle-browser-toggle");
+        settle(&mut visual, &host, ConnectionState::ProfileUnreadable);
+        let line = status(&mut visual);
+        assert!(line.contains("not permitted to read"), "{line}");
+        assert!(line.contains("DevToolsActivePort"), "{line}");
+        assert!(line.contains("Gespan browser"), "{line}");
+        if cfg!(target_os = "macos") {
+            assert!(line.contains("Full Disk Access"), "{line}");
+        }
+        assert!(!line.contains("chrome://inspect"), "{line}");
+        assert!(
+            !line.contains("Remote debugging is not turned on"),
+            "{line}"
+        );
+        assert!(connect_enabled(&state(&mut visual)));
+        host.set_toggle(false);
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
     /// Wait for the host's connection thread, then show what it left.
     fn settle(visual: &mut VisualTestContext, host: &BrowserHost, want: ConnectionState) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
