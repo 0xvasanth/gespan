@@ -130,6 +130,12 @@ pub const HOST_WAIT: Duration = ASK_WAIT
     .saturating_add(MANAGED_START_WAIT)
     .saturating_add(BUSY_WAIT)
     .saturating_add(semantic::SNAPSHOT_BUDGET);
+/// How long an agent action waits for the user's own browser to connect,
+/// its consent dialog included. It takes the shares of [`HOST_WAIT`] an
+/// attach does not use: no access request is asked in this build, and no
+/// Gespan browser starts. Chrome's dialog may stay up longer; the action
+/// then reports it as pending.
+pub const ATTACH_WAIT: Duration = ASK_WAIT.saturating_add(MANAGED_START_WAIT);
 /// How long the Gespan browser may take to close before it is killed.
 const MANAGED_CLOSE_WAIT: Duration = Duration::from_secs(3);
 /// How long the Gespan browser stays up after an access request was
@@ -288,6 +294,8 @@ pub struct BrowserHost {
     consent_timeout_ms: AtomicU64,
     /// [`ASK_WAIT`]; shorter in tests.
     ask_wait_ms: AtomicU64,
+    /// [`ATTACH_WAIT`]; shorter in tests.
+    attach_wait_ms: AtomicU64,
     /// [`UNUSED_CLOSE_GRACE`]; shorter in tests.
     unused_grace_ms: AtomicU64,
     /// Bumped by every scheduled "close when unused"; only the latest fires.
@@ -403,6 +411,7 @@ impl BrowserHost {
             generation: AtomicU64::new(0),
             consent_timeout_ms: AtomicU64::new(CONSENT_TIMEOUT.as_millis() as u64),
             ask_wait_ms: AtomicU64::new(ASK_WAIT.as_millis() as u64),
+            attach_wait_ms: AtomicU64::new(ATTACH_WAIT.as_millis() as u64),
             unused_grace_ms: AtomicU64::new(UNUSED_CLOSE_GRACE.as_millis() as u64),
             unused_close: AtomicU64::new(0),
             closing: Mutex::new(None),
@@ -483,6 +492,13 @@ impl BrowserHost {
     pub(crate) fn set_consent_timeout(&self, timeout: Duration) {
         self.consent_timeout_ms
             .store(timeout.as_millis() as u64, Ordering::Release);
+    }
+
+    /// Shorter waits for the user's own browser to connect, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_attach_wait(&self, wait: Duration) {
+        self.attach_wait_ms
+            .store(wait.as_millis() as u64, Ordering::Release);
     }
 
     /// Shorter waits for an answer to an access request, for tests.
@@ -1116,7 +1132,7 @@ impl BrowserHost {
                 generation,
                 ConnectionState::NeedsToggle,
                 Some(format!(
-                    "No browser profile was found. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or choose the profile folder in Settings. {}",
+                    "No browser profile was found. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or choose its profile folder in Settings → Browser. {}",
                     discovery::setup_instruction(None)
                 )),
                 None,
@@ -1166,7 +1182,7 @@ impl BrowserHost {
                 self.attempt_state(
                     generation,
                     before.state,
-                    Some("The browser already asked for permission once since the connection ended; ask the user to click Connect in Gespan Settings.".into()),
+                    Some("The browser already showed its consent dialog once since the connection ended; ask the user to click Connect in Gespan's Settings → Browser.".into()),
                     None,
                     None,
                 );
@@ -1227,7 +1243,7 @@ impl BrowserHost {
                     self.attempt_state(
                         generation,
                         ConnectionState::StalePort,
-                        Some("No supported browser was found on this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or switch to your own browser in Settings.".into()),
+                        Some("No supported browser was found on this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or switch to your own browser in Settings → Browser.".into()),
                         None,
                         Some("no browser executable".into()),
                     );
@@ -1388,7 +1404,7 @@ impl BrowserHost {
                 self.attempt_state(
                     generation,
                     ConnectionState::ConsentTimeout,
-                    Some("The browser's permission dialog was not answered in time. Click Connect to try again.".into()),
+                    Some("The browser's consent dialog was not answered in time. Click Connect in Settings → Browser to try again.".into()),
                     None,
                     Some("consent timeout".into()),
                 );
@@ -1399,7 +1415,7 @@ impl BrowserHost {
                 self.attempt_state(
                     generation,
                     ConnectionState::ConsentDenied,
-                    Some("The browser refused the connection. Turn browser access on again when you are ready.".into()),
+                    Some("The browser refused the connection. Click Connect in Settings → Browser to try again.".into()),
                     None,
                     Some(message),
                 );
@@ -2578,10 +2594,23 @@ impl BrowserHost {
             }
         };
         let mut connection = self.connection();
-        if self.mode().launches() && connection.state != ConnectionState::Connected {
+        let budget = if self.mode().launches() {
             // The Gespan browser starts on demand; the action waits for it.
+            (connection.state != ConnectionState::Connected).then_some(MANAGED_START_WAIT)
+        } else {
+            // The user's own browser connects on demand too, after a restart
+            // or a drop: the action waits for discovery and Chrome's consent
+            // dialog rather than failing while they run in the background.
+            // What the user must fix (chrome://inspect, a declined dialog,
+            // an old browser) is reported at once.
+            attach_retries(connection.state).then(|| {
+                Duration::from_millis(self.attach_wait_ms.load(Ordering::Acquire))
+                    .saturating_sub(started.elapsed())
+            })
+        };
+        if let Some(budget) = budget {
             self.connect_automatically();
-            connection = self.wait_for_connection(MANAGED_START_WAIT);
+            connection = self.wait_for_connection(budget);
             if connection.state == ConnectionState::Connected {
                 // A fresh deadline and epochs for the action itself. Bound
                 // first, so the read guard is gone before `finish` locks.
@@ -2602,19 +2631,6 @@ impl BrowserHost {
             }
         }
         if let Some(reason) = connection.state.agent_reason() {
-            if self.mode() == BrowserMode::Attach
-                && matches!(
-                    connection.state,
-                    ConnectionState::Disconnected
-                        | ConnectionState::Idle
-                        | ConnectionState::StalePort
-                        | ConnectionState::NeedsToggle
-                        | ConnectionState::ConsentTimeout
-                )
-            {
-                // A new discovery starts on the next agent request.
-                self.connect_automatically();
-            }
             let mut result = ActionResult::from_reason(request_id, reason);
             if let Some(detail) = connection.detail {
                 result.message = format!("{} {detail}", result.message);
@@ -3193,6 +3209,25 @@ fn blank_pages(reply: &Value) -> Vec<TargetId> {
         .filter_map(|info| info["targetId"].as_str())
         .map(|id| TargetId(id.to_string()))
         .collect()
+}
+
+/// Connection states in which an agent action on the user's own browser
+/// (re)connects and waits for the result: nothing connected yet (a
+/// remembered switch after a restart), a drop, a browser that was closed,
+/// remote debugging that may have been turned on since, an unanswered
+/// consent dialog, or an attempt already running. A declined dialog, an old
+/// browser and an administrator policy need the user first.
+fn attach_retries(state: ConnectionState) -> bool {
+    matches!(
+        state,
+        ConnectionState::Idle
+            | ConnectionState::Disconnected
+            | ConnectionState::StalePort
+            | ConnectionState::NeedsToggle
+            | ConnectionState::ConsentTimeout
+            | ConnectionState::Discovering
+            | ConnectionState::AwaitingConsent
+    )
 }
 
 #[cfg(test)]
@@ -3792,19 +3827,154 @@ mod tests {
         );
         assert!(host.policy().read().tabs_for("s1").is_empty());
         assert_ne!(host.policy().read().global_epoch, epoch);
-        // The next request reports the state and starts a new discovery
-        // (which, with the fake still listening, reconnects).
+        // The next request reconnects (the fake still listens) and runs.
         let after = host.handle_request("s1", request("b", "tabs.list", json!({})));
-        assert_eq!(after.reason, Some(Reason::BrowserDisconnected));
-        assert_eq!(after.outcome, Outcome::Blocked);
+        assert_eq!(after.outcome, Outcome::Done, "{after:?}");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 2);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Your own browser, with the switch remembered from the last run.
+    fn remembered_attach_host(dir: &std::path::Path) -> Arc<BrowserHost> {
+        let host = BrowserHost::for_tests(BrowserSettings {
+            enabled: true,
+            ..settings_for(dir)
+        });
+        host.restore_toggle();
+        assert_eq!(host.connection().state, ConnectionState::Idle);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        host
+    }
+
+    /// After a restart the first action connects to the user's own browser
+    /// and waits for its consent dialog, instead of failing with
+    /// `browser_disconnected` while the connection starts in the background.
+    #[test]
+    fn a_remembered_switch_connects_your_own_browser_on_the_first_action() {
+        let delay = Duration::from_millis(400);
+        let server = FakeCdp::start_with_consent_delay(delay);
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        // The remembered switch alone reaches nothing.
+        assert!(server.received().is_empty());
+        assert_eq!(server.connections(), 0);
+
+        let started = Instant::now();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert!(opened.data.unwrap()["tab"].as_str().is_some());
+        assert!(started.elapsed() >= delay, "it waited for the consent");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 1);
+        assert!(host
+            .events_list(50)
+            .iter()
+            .any(|event| event.kind == "consent_pending"));
+        // The next action uses the same connection.
+        let listed = host.handle_request("s1", request("r2", "tabs.list", json!({})));
+        assert_eq!(listed.outcome, Outcome::Done, "{listed:?}");
+        assert_eq!(server.connections(), 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A consent dialog nobody answers holds the action no longer than the
+    /// attach wait, and the result names what the user must do.
+    #[test]
+    fn an_unanswered_consent_dialog_ends_within_the_wait_with_the_fix() {
+        let server = FakeCdp::start_silent();
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        let wait = Duration::from_millis(600);
+        host.set_attach_wait(wait);
+        let started = Instant::now();
+        let pending = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        let took = started.elapsed();
+        assert!(took >= wait, "it waited for the dialog: {took:?}");
+        assert!(took < wait + Duration::from_secs(2), "bounded: {took:?}");
+        assert_eq!(pending.outcome, Outcome::Blocked);
+        assert_eq!(pending.reason, Some(Reason::BrowserConsentPending));
         assert!(
-            wait_state(&host, ConnectionState::Connected),
-            "{:?}",
-            host.connection()
+            pending.message.contains("chrome://inspect"),
+            "{}",
+            pending.message
         );
-        // Blocked results are not cached: the same id now runs.
-        let again = host.handle_request("s1", request("b", "tabs.list", json!({})));
-        assert_eq!(again.outcome, Outcome::Done, "{again:?}");
+        assert!(pending.message.contains("consent"), "{}", pending.message);
+        // The dialog is still up: the next action waits on the same attempt
+        // instead of opening a second one.
+        let again = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(again.reason, Some(Reason::BrowserConsentPending));
+        let asked = host
+            .events_list(50)
+            .iter()
+            .filter(|event| event.kind == "consent_pending")
+            .count();
+        assert_eq!(asked, 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Chrome gives up on its dialog before the attach wait ends: the action
+    /// reports it at once and points at Settings → Browser → Connect.
+    #[test]
+    fn a_consent_dialog_that_times_out_points_at_connect() {
+        let server = FakeCdp::start_silent();
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        host.set_consent_timeout(Duration::from_millis(300));
+        let started = Instant::now();
+        let declined = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(declined.outcome, Outcome::Blocked);
+        assert_eq!(declined.reason, Some(Reason::BrowserConsentDenied));
+        assert!(
+            declined.message.contains("Settings → Browser"),
+            "{}",
+            declined.message
+        );
+        assert!(declined.message.contains("Connect"), "{}", declined.message);
+        assert_eq!(host.connection().state, ConnectionState::ConsentTimeout);
+        // One dialog per drop: the next action does not ask Chrome again.
+        let again = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(again.reason, Some(Reason::BrowserConsentDenied));
+        assert!(again.message.contains("Connect"), "{}", again.message);
+        // The user's Connect asks again (and the dialog is still unanswered).
+        host.connect();
+        assert!(wait_state(&host, ConnectionState::AwaitingConsent));
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No browser with remote debugging on: the first action says so at
+    /// once, naming chrome://inspect, rather than waiting out the bound.
+    #[test]
+    fn no_browser_to_attach_to_fails_at_once_naming_chrome_inspect() {
+        let dir = std::env::temp_dir().join(format!("gespan-host-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = remembered_attach_host(&dir);
+        let started = Instant::now();
+        let needs = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(needs.outcome, Outcome::Blocked);
+        assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup));
+        assert!(
+            needs.message.contains("chrome://inspect"),
+            "{}",
+            needs.message
+        );
+        // Turned on since: the next action finds it and connects.
+        let server = FakeCdp::start();
+        let rest = server.url.strip_prefix("ws://127.0.0.1:").unwrap();
+        let (port, path) = rest.split_once('/').unwrap();
+        std::fs::write(
+            dir.join(discovery::ACTIVE_PORT_FILE),
+            format!("{port}\n/{path}\n"),
+        )
+        .unwrap();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
         host.set_toggle(false);
         let _ = std::fs::remove_dir_all(&dir);
     }

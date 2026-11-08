@@ -1265,7 +1265,10 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
             };
             let allowed = policy.read().can_open_tab(&owner).is_ok();
             if !allowed {
-                // Over the limit: close it before its first script.
+                // Over the limit: close it. An auto-attached popup waits
+                // for the debugger, so it closes before its first script;
+                // one attached through `on_target_created` already runs
+                // (`waitingForDebugger: false`) and may have run some.
                 // Count it first, so whoever observes the `closeTarget` frame
                 // (the action layer, tests) already sees the counter moved.
                 if let Some(lease) = policy.write().lease_mut(&parent_tab) {

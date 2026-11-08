@@ -83,6 +83,9 @@ struct Shared {
     stop: AtomicBool,
     /// Streams held open in `Silent` mode so the client keeps waiting.
     held: Mutex<Vec<TcpStream>>,
+    /// How long a `Serve` fake holds the upgrade before answering it: the
+    /// user taking a while to accept Chrome's consent dialog.
+    consent_delay: Duration,
 }
 
 /// A fake browser endpoint on a loopback port.
@@ -113,7 +116,24 @@ impl FakeCdp {
         FakeCdp::launch(Mode::Silent)
     }
 
+    /// A [`FakeCdp::start`] fake that answers each WebSocket upgrade only
+    /// after `delay`, as Chrome does once the user accepts its consent
+    /// dialog.
+    pub fn start_with_consent_delay(delay: Duration) -> FakeCdp {
+        let counter = Arc::new(AtomicU64::new(1));
+        FakeCdp::launch_with(
+            Mode::Serve(Mutex::new(Box::new(move |received: &Received| {
+                default_response(received, &counter)
+            }))),
+            delay,
+        )
+    }
+
     fn launch(mode: Mode) -> FakeCdp {
+        FakeCdp::launch_with(mode, Duration::ZERO)
+    }
+
+    fn launch_with(mode: Mode, consent_delay: Duration) -> FakeCdp {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         listener
             .set_nonblocking(true)
@@ -128,6 +148,7 @@ impl FakeCdp {
             connections: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
             held: Mutex::new(Vec::new()),
+            consent_delay,
         });
         let acceptor = shared.clone();
         thread::Builder::new()
@@ -365,6 +386,9 @@ fn handle_connection(mut stream: TcpStream, shared: Arc<Shared>) {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
         Mode::Serve(responder) => {
+            if !shared.consent_delay.is_zero() {
+                thread::sleep(shared.consent_delay);
+            }
             // Chrome takes messages as large as the link sends (the stall
             // tests write tens of MiB); tungstenite's default stops at 16.
             let config = tungstenite::protocol::WebSocketConfig::default()

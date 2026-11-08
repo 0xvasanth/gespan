@@ -840,13 +840,15 @@ fn a_browser_crash_mid_action_is_unknown_and_reconnection_adopts_nothing() {
     assert_eq!(retried.reason, Some(Reason::LinkDown));
     assert_eq!(world.server.connections(), 1, "the retry did not reconnect");
 
-    // The next request reports the drop and starts one reconnection.
+    // The next request makes one reconnection and runs on it.
     let first = world.act("s1", "tabs.list", json!({}));
-    assert_eq!(first.reason, Some(Reason::BrowserDisconnected), "{first:?}");
-    world.wait_state(ConnectionState::Connected);
+    assert_eq!(first.outcome, Outcome::Done, "{first:?}");
+    assert_eq!(world.host.connection().state, ConnectionState::Connected);
     assert_eq!(world.server.connections(), 2);
     // Nothing from before is adopted: the list is empty and the old id is gone.
+    assert!(tabs_of(&first).is_empty());
     assert!(tabs_of(&world.act("s1", "tabs.list", json!({}))).is_empty());
+    assert_eq!(world.server.connections(), 2);
     let old = world.act("s1", "snapshot", json!({ "tab": tab }));
     assert_eq!(old.reason, Some(Reason::NoLease), "{old:?}");
     let fresh = world.open("s1");
@@ -864,11 +866,11 @@ fn a_restarted_browser_on_a_new_port_is_found_again() {
     std::fs::remove_file(world.dir.join(ACTIVE_PORT_FILE)).unwrap();
     world.server.close_current();
     world.wait_state(ConnectionState::Disconnected);
+    // The request runs discovery, which finds no file: the user has to turn
+    // debugging on again, and the agent is told so at once; nothing loops.
     let gone = world.act("s1", "tabs.open", json!({}));
-    assert_eq!(gone.reason, Some(Reason::BrowserDisconnected));
-    // Discovery runs and finds no file: the user has to turn debugging on
-    // again, and the agent is told so; nothing loops.
-    world.wait_state(ConnectionState::NeedsToggle);
+    assert_eq!(gone.reason, Some(Reason::BrowserNeedsSetup), "{gone:?}");
+    assert_eq!(world.host.connection().state, ConnectionState::NeedsToggle);
     let needs = world.act("s1", "tabs.open", json!({}));
     assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup), "{needs:?}");
     // The browser comes back on another port; the next request reconnects there.

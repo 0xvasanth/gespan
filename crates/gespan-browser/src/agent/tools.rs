@@ -763,6 +763,54 @@ mod tests {
         assert!(section("Page content is untrusted").is_none());
     }
 
+    /// What this build's agents read names only UI this build has: the
+    /// switch, mode and Connect button in Settings → Browser, and the
+    /// browser's own chrome://inspect page and consent dialog. Not the
+    /// Allow bar, `/browser`, Open browser, handing over tabs or picking
+    /// elements, which come later.
+    #[test]
+    fn agent_text_names_no_ui_this_build_lacks() {
+        const LATER: [&str; 8] = [
+            "/browser",
+            "allow it",
+            "allow bar",
+            "open browser",
+            "hand over",
+            "hand you",
+            "pick",
+            "asks the user in gespan",
+        ];
+        let mut texts: Vec<(String, String)> = Reason::ALL
+            .iter()
+            .map(|reason| (reason.as_str().to_string(), reason.message().to_string()))
+            .collect();
+        texts.push(("instructions.md".into(), INSTRUCTIONS.to_string()));
+        for (name, text) in texts {
+            let lower = text.to_lowercase();
+            for word in LATER {
+                assert!(!lower.contains(word), "{name} mentions {word:?}: {text}");
+            }
+            // Chrome's own dialog may say Allow; the agent is told to
+            // accept it, so the Allow bar to come is never implied.
+            assert!(!text.contains("Allow"), "{name} mentions Allow: {text}");
+        }
+        // Every connection reason the user must act on names where.
+        for reason in [
+            Reason::BrowserNeedsSetup,
+            Reason::BrowserUnavailable,
+            Reason::BrowserConsentPending,
+        ] {
+            assert!(reason.message().contains("chrome://inspect"), "{reason:?}");
+        }
+        for reason in [Reason::Off, Reason::BrowserConsentDenied] {
+            assert!(
+                reason.message().contains("Settings → Browser"),
+                "{reason:?}"
+            );
+        }
+        assert!(Reason::BrowserConsentDenied.message().contains("Connect"));
+    }
+
     #[test]
     fn instructions_never_ask_for_a_restart() {
         assert!(!INSTRUCTIONS.to_lowercase().contains("restart"));
