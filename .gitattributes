@@ -9,3 +9,6 @@ crates/gespan-core/src/usage/fixtures/* text eol=lf
 
 # Compared byte for byte against rendered launch commands on every platform.
 crates/gespan-core/src/provider/fixtures/launch_argv.txt text eol=lf
+
+# Compiled into the binary and compared against tool descriptions: identical bytes on every platform.
+crates/gespan-browser/instructions.md text eol=lf
