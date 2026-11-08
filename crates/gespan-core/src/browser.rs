@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use gespan_browser::protocol::{
-    AccessMode, BrowserChoice, BrowserMode, BrowserSettings, BrowserState, ConnectionState,
-    TabOverview,
+    AccessMode, BrowserChoice, BrowserKind, BrowserMode, BrowserSettings, BrowserState,
+    ConnectionState, TabOverview,
 };
+/// What the UI says about the connection and the browsers it offers.
+pub use gespan_browser::view;
 pub use gespan_browser::BrowserHost;
 use gespan_browser::Embedder;
 use rusqlite::Connection;
@@ -63,6 +65,20 @@ pub fn start(data_dir: Option<&Path>) -> Result<(), String> {
     if gespan_browser::host().is_some() {
         return Ok(());
     }
+    let (embedder, folder) = embedder(data_dir)?;
+    gespan_browser::init(embedder, folder.as_deref())
+}
+
+/// A host on `data_dir`'s database as [`start`] would open it, with the
+/// settings and switch the last run left, but not the process-wide one:
+/// what the next launch of the app sees. Its state changes reach
+/// [`subscribe`] like the running host's.
+pub fn open(data_dir: &Path) -> Result<Arc<BrowserHost>, String> {
+    let (embedder, folder) = embedder(Some(data_dir))?;
+    gespan_browser::open(embedder, folder.as_deref())
+}
+
+fn embedder(data_dir: Option<&Path>) -> Result<(Arc<GespanEmbedder>, Option<PathBuf>), String> {
     let folder = data_dir.map(|dir| dir.join(FOLDER));
     let db = match &folder {
         Some(folder) => {
@@ -72,8 +88,7 @@ pub fn start(data_dir: Option<&Path>) -> Result<(), String> {
         None => Connection::open_in_memory(),
     }
     .map_err(|e| e.to_string())?;
-    let embedder = Arc::new(GespanEmbedder { db: Mutex::new(db) });
-    gespan_browser::init(embedder, folder.as_deref())
+    Ok((Arc::new(GespanEmbedder { db: Mutex::new(db) }), folder))
 }
 
 /// App exit: the Gespan browser goes with the app.
@@ -321,6 +336,28 @@ pub(crate) mod tests {
         ] {
             assert!(!eligible(&f), "{f:?}");
         }
+    }
+
+    #[test]
+    fn a_reopened_data_dir_keeps_the_mode_and_the_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = open(dir.path()).unwrap();
+        assert!(!first.state().toggle_on);
+        assert_eq!(first.state().settings.mode, BrowserMode::Attach);
+        first.set_settings(BrowserSettings {
+            mode: BrowserMode::Private,
+            ..first.state().settings
+        });
+        first.set_toggle(true);
+        drop(first);
+        let next = open(dir.path()).unwrap();
+        let state = next.state();
+        assert!(state.toggle_on);
+        assert_eq!(state.settings.mode, BrowserMode::Private);
+        // The remembered switch starts nothing until an agent needs it.
+        assert_eq!(state.connection.state, ConnectionState::Idle);
+        // Not the process-wide host.
+        assert!(host().is_none_or(|running| !Arc::ptr_eq(&running, &next)));
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod arcade;
 mod assets;
 mod automations;
 mod board;
+mod browser;
 mod changes;
 mod composer_completion;
 mod composer_motion;
@@ -581,6 +582,7 @@ fn main() {
         worktree_setups::install(cx);
         shell::action_runs::install(cx);
         machines::install(cx);
+        browser::install(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

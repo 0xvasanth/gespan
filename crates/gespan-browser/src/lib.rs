@@ -337,6 +337,18 @@ pub struct BrowserHost {
 /// process-wide [`host`]. The app calls it once at startup, after its
 /// database is open; `app_data_dir` holds the Gespan browser's profiles.
 pub fn init(embedder: Arc<dyn Embedder>, app_data_dir: Option<&Path>) -> Result<(), String> {
+    let host = open(embedder, app_data_dir)?;
+    HOST.set(host)
+        .map_err(|_| "Browser module initialised twice".to_string())
+}
+
+/// What [`init`] does short of registering the host: the settings and the
+/// remembered switch the embedder's database holds, as the next start of
+/// the app would load them.
+pub fn open(
+    embedder: Arc<dyn Embedder>,
+    app_data_dir: Option<&Path>,
+) -> Result<Arc<BrowserHost>, String> {
     let (run_id, settings) = with_db(embedder.as_ref(), |conn| {
         audit::migrate(conn).map_err(|e| e.to_string())?;
         let _ = audit::prune(conn, now_ms());
@@ -359,8 +371,7 @@ pub fn init(embedder: Arc<dyn Embedder>, app_data_dir: Option<&Path>) -> Result<
     if enabled {
         host.restore_toggle();
     }
-    HOST.set(host)
-        .map_err(|_| "Browser module initialised twice".to_string())
+    Ok(host)
 }
 
 /// App exit: the Gespan browser goes with the app.
