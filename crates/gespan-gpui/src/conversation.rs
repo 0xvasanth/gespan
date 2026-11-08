@@ -1384,6 +1384,10 @@ impl Conversation {
             || self.settings.access == AccessMode::ReadOnly;
         let replay = replaying.is_some();
         let mut settings = replaying.unwrap_or_else(|| self.settings.clone());
+        // Who sent this turn is this turn's alone: the next one the user types
+        // is theirs.
+        self.settings.agent_sent = false;
+        self.settings.automation = false;
         if let Some(model) = self.model_info().filter(|_| !replay) {
             for control in &model.controls {
                 settings

@@ -41,6 +41,9 @@ impl Conversation {
             );
             return;
         }
+        let mut settings = settings;
+        // A draft the agent left is the user's to send.
+        settings.agent_sent = send;
         self.install_transfer(settings, None, cx);
         if send {
             self.draft_action(true, cx);
@@ -120,7 +123,9 @@ impl Conversation {
             if draft {
                 self.input.update(cx, |i, cx| i.set_text(prompt, cx));
             } else {
-                self.install_transfer(self.settings.clone(), Some(prompt), cx);
+                let mut settings = self.settings.clone();
+                settings.agent_sent = true;
+                self.install_transfer(settings, Some(prompt), cx);
             }
         }
     }

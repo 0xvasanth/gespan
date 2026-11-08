@@ -10,6 +10,8 @@ use std::sync::{
 };
 use std::time::Duration;
 #[cfg(all(test, unix))]
+mod browser_tests;
+#[cfg(all(test, unix))]
 mod follow_up_tests;
 mod handoff;
 #[cfg(all(test, unix))]
@@ -764,10 +766,24 @@ fn run_turn_using(
                 ));
             }
         }
+        // The browser's turn: it lists its tools only while this lives, so
+        // it is kept until the provider returns.
+        let browser = if tool_servers {
+            gespan_core::browser::begin_turn(&browser_facts(&summary, &settings))
+        } else {
+            gespan_core::browser::Turn::default()
+        };
+        if let Some(instructions) = browser.instructions() {
+            prompt = format!("{instructions}\n\n{prompt}");
+        }
         // Everything this turn may reach through the tool endpoint. A process
         // still running keeps its credential and sees its tool list change.
         let mut toolkits = std::collections::BTreeSet::new();
         for (held, toolkit) in [
+            (
+                browser.carries_browser(),
+                gespan_core::tool_servers::BROWSER,
+            ),
             (visual_bridge.is_some(), gespan_core::tool_servers::VISUAL),
             (ticket_tools.is_some(), gespan_core::tool_servers::TICKET),
             // Every session holds the marker; only these are told about it.
@@ -1238,6 +1254,8 @@ fn run_turn_using(
                 publication_result
             })
         });
+        // The provider returned: the turn's browser actions end with it.
+        drop(browser);
         if result.is_ok()
             && let Some(fingerprint) = &pilot_fingerprint
         {
@@ -1811,6 +1829,25 @@ fn turn_mount(
     }
 }
 
+/// What the browser module needs to know about a turn: whether the user
+/// typed it, and what kind of thread it runs in.
+fn browser_facts(summary: &Session, settings: &Settings) -> gespan_core::browser::TurnFacts {
+    gespan_core::browser::TurnFacts {
+        session: summary.id,
+        cwd: settings
+            .worktree_cwd
+            .as_deref()
+            .unwrap_or(&summary.cwd)
+            .into(),
+        user_typed: !settings.internal_message && !settings.agent_sent && !settings.automation,
+        hidden_run: settings.internal_message,
+        orchestrator: settings.orchestrator,
+        orchestration_worker: settings.orchestration_worker,
+        remote: summary.cwd.starts_with("remote://"),
+        full_access: settings.access == gespan_core::agent::AccessMode::FullAccess,
+    }
+}
+
 /// The one actions toolkit a turn mounts: list-only when it may not change
 /// anything. Remote projects have no local checkout to run in, and
 /// orchestration workers keep their scoped `control` workflow.
@@ -1834,6 +1871,116 @@ mod tests {
         let mount = turn_mount(8, "/work/gespan", None, [].into());
         assert_eq!(mount.worktree, std::path::Path::new("/work/gespan"));
         assert_eq!(mount.project, "/work/gespan");
+    }
+
+    fn browser_session(cwd: &str) -> gespan_core::store::Session {
+        gespan_core::store::Session {
+            id: 42,
+            title: String::new(),
+            provider: "codex".into(),
+            cwd: cwd.into(),
+            provider_id: None,
+            has_messages: false,
+            updated_at: 0,
+            archived: false,
+            pinned: false,
+            work_item: None,
+        }
+    }
+
+    #[test]
+    fn browser_facts_of_a_typed_turn_name_its_session_and_worktree() {
+        use super::browser_facts;
+        use gespan_core::agent::{AccessMode, Settings};
+        let summary = browser_session("/work/gespan");
+        let facts = browser_facts(&summary, &Settings::default());
+        assert_eq!(facts.session, 42);
+        assert_eq!(facts.cwd, std::path::Path::new("/work/gespan"));
+        assert!(facts.user_typed);
+        assert!(!facts.hidden_run && !facts.orchestrator && !facts.orchestration_worker);
+        assert!(!facts.remote && !facts.full_access);
+        assert!(gespan_core::browser::eligible(&facts));
+        let settings = Settings {
+            worktree_cwd: Some("/work/gespan-wt/fix".into()),
+            access: AccessMode::FullAccess,
+            ..Settings::default()
+        };
+        let facts = browser_facts(&summary, &settings);
+        assert_eq!(facts.cwd, std::path::Path::new("/work/gespan-wt/fix"));
+        assert!(facts.full_access);
+        assert!(gespan_core::browser::eligible(&facts));
+        // Only full access grants like "Always on".
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Auto,
+        ] {
+            let settings = Settings {
+                access,
+                ..Settings::default()
+            };
+            assert!(
+                !browser_facts(&summary, &settings).full_access,
+                "{access:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn browser_facts_keep_turns_nobody_typed_ineligible() {
+        use super::browser_facts;
+        use gespan_core::agent::{AccessMode, Settings};
+        let summary = browser_session("/work/gespan");
+        let full = || Settings {
+            access: AccessMode::FullAccess,
+            ..Settings::default()
+        };
+        let habit = browser_facts(
+            &summary,
+            &Settings {
+                internal_message: true,
+                ..full()
+            },
+        );
+        assert!(habit.hidden_run && !habit.user_typed);
+        let agent = browser_facts(
+            &summary,
+            &Settings {
+                agent_sent: true,
+                ..full()
+            },
+        );
+        assert!(!agent.user_typed && !agent.hidden_run);
+        let automation = browser_facts(
+            &summary,
+            &Settings {
+                automation: true,
+                ..full()
+            },
+        );
+        assert!(!automation.user_typed && !automation.hidden_run);
+        let lead = browser_facts(
+            &summary,
+            &Settings {
+                orchestrator: true,
+                ..full()
+            },
+        );
+        assert!(lead.orchestrator && lead.user_typed);
+        let worker = browser_facts(
+            &summary,
+            &Settings {
+                orchestration_worker: true,
+                ..full()
+            },
+        );
+        assert!(worker.orchestration_worker);
+        let remote = browser_facts(&browser_session("remote://machine/work/gespan"), &full());
+        assert!(remote.remote && remote.user_typed);
+        for facts in [habit, agent, automation, lead, worker, remote] {
+            assert!(!gespan_core::browser::eligible(&facts), "{facts:?}");
+        }
     }
 
     #[test]

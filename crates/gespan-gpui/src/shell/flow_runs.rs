@@ -62,7 +62,9 @@ impl SessionDriver for Driver<'_, '_> {
         let view = self.shell.sessions.get(&session)?.clone();
         let (before, settings) = {
             let view = view.read(self.cx);
-            (view.submission_generation, view.settings.clone())
+            let mut settings = view.settings.clone();
+            settings.automation = true;
+            (view.submission_generation, settings)
         };
         view.update(self.cx, |view, cx| view.quick_submit(prompt, settings, cx));
         Some(before)

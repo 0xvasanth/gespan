@@ -124,6 +124,14 @@ pub struct Settings {
     pub pilot_sent_at: Option<u64>,
     #[serde(skip)]
     pub internal_message: bool,
+    /// An agent sent this turn's message (`sessions.start`, `sessions.send`).
+    /// It belongs to one turn: the launch clears it on the thread.
+    #[serde(skip)]
+    pub agent_sent: bool,
+    /// An automation or a Flow started this turn, or sent it as a follow-up.
+    /// It belongs to one turn: the launch clears it on the thread.
+    #[serde(skip)]
+    pub automation: bool,
     /// Re-run the conversation's failed last turn in place: its saved prompt
     /// is sent again and the reply replaces its error row.
     #[serde(skip)]

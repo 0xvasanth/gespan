@@ -691,6 +691,8 @@ pub(super) fn managed_settings(
     settings.operator = false;
     settings.orchestrator = false;
     settings.prepared_prompt = None;
+    // Nobody typed it: the browser stays out of it.
+    settings.automation = true;
     settings
 }
 

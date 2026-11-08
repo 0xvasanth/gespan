@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use gespan_browser::protocol::{
-    AccessMode, BrowserMode, BrowserSettings, BrowserState, ConnectionState, TabOverview,
+    AccessMode, BrowserChoice, BrowserMode, BrowserSettings, BrowserState, ConnectionState,
+    TabOverview,
 };
 pub use gespan_browser::BrowserHost;
 use gespan_browser::Embedder;

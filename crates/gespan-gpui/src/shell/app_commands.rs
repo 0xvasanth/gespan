@@ -497,11 +497,9 @@ impl Shell {
                                             if action == "sessions.draft" {
                                                 v.save_app_draft(prompt, cx)
                                             } else {
-                                                v.install_transfer(
-                                                    v.settings.clone(),
-                                                    Some(prompt),
-                                                    cx,
-                                                )
+                                                let mut settings = v.settings.clone();
+                                                settings.agent_sent = true;
+                                                v.install_transfer(settings, Some(prompt), cx)
                                             }
                                         });
                                         Ok(
