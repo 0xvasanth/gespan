@@ -599,3 +599,42 @@ fn reachable_as_of_and_bad_inputs() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn expand_merges_both_directions_under_one_cap() {
+    // File f has in-edges from s1 (+30) and s2 (+10) and an out-edge to p
+    // (+20). Its two best edges are one of each direction.
+    let (_dir, mut store, _path) = temp_store();
+    let f = add_node(&mut store, N::File, "f", 0);
+    let s1 = add_node(&mut store, N::Session, "s1", 0);
+    add_node(&mut store, N::Session, "s2", 0);
+    let p = add_node(&mut store, N::Project, "p", 0);
+    let fr = nref(N::File, "f");
+    store
+        .upsert_edge(&fact(E::Touched, &nref(N::Session, "s1"), &fr, 30))
+        .unwrap();
+    store
+        .upsert_edge(&fact(E::Touched, &nref(N::Session, "s2"), &fr, 10))
+        .unwrap();
+    store
+        .upsert_edge(&fact(E::InProject, &fr, &nref(N::Project, "p"), 20))
+        .unwrap();
+
+    let caps = Caps {
+        per_start: 2,
+        per_hop: 0,
+        total: 10,
+    };
+    let hits = store.neighborhood(f, caps, AsOf::Now).unwrap();
+    assert_eq!(
+        tuples(&hits),
+        vec![
+            (s1.0, 1, E::Touched, BASE + 30),
+            (p.0, 1, E::InProject, BASE + 20)
+        ]
+    );
+    let walked = store
+        .reachable(f, hops(1), caps, AsOf::Now, &EdgeFilter::All)
+        .unwrap();
+    assert_eq!(reached(&walked), vec![(s1.0, 1), (p.0, 1)]);
+}

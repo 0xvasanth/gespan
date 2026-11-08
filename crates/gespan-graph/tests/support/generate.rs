@@ -43,8 +43,9 @@ pub struct GenInfo {
 const YEAR_MS: u64 = 31_536_000_000;
 
 /// Fills an empty store: node ids `1..=nodes` (1% projects, 30% sessions, the
-/// rest files) and exactly `edges` edges, 90% session→file `touched` and 10%
-/// session→project `in_project`, with endpoints drawn as `lo + floor(n·u⁴)` so
+/// rest files) and exactly `edges` edges: 80% session→file `touched`, 10%
+/// session→project and 10% file→project `in_project`, with file and project
+/// endpoints drawn as `lo + floor(n·u⁴)` so
 /// a few files and projects become hubs. `valid_from` takes one of 1,000
 /// values in a year, so ties are common; `closed_pct`% of edges are closed.
 pub fn seeded_graph(
@@ -99,29 +100,36 @@ pub fn seeded_graph(
         let mut written = 0;
         while written < edges {
             let session = session_lo + rng.below(nsessions as u64) as usize;
-            let (dst, kind) = if rng.below(10) < 9 {
-                (
-                    file_lo + ((nfiles as f64) * rng.unit().powi(4)) as usize,
+            let file = |rng: &mut Rng| file_lo + ((nfiles as f64) * rng.unit().powi(4)) as usize;
+            let project =
+                |rng: &mut Rng| project_lo + ((nprojects as f64) * rng.unit().powi(4)) as usize;
+            // Files get edges in both directions (in from sessions, out to
+            // projects), so expand's out/in merge is exercised.
+            let (src, dst, kind, scope) = match rng.below(10) {
+                0..=7 => (
+                    session,
+                    file(&mut rng),
                     "touched",
-                )
-            } else {
-                (
-                    project_lo + ((nprojects as f64) * rng.unit().powi(4)) as usize,
+                    format!("session:session-{session}"),
+                ),
+                8 => (
+                    session,
+                    project(&mut rng),
                     "in_project",
-                )
+                    format!("session:session-{session}"),
+                ),
+                _ => (
+                    file(&mut rng),
+                    project(&mut rng),
+                    "in_project",
+                    "structural".to_string(),
+                ),
             };
             let from = BASE + (rng.below(1000) * (YEAR_MS / 1000)) as i64;
             let to = (rng.below(100) < u64::from(closed_pct))
                 .then(|| from + 1 + rng.below(86_400_000) as i64);
             written += edge
-                .execute(params![
-                    session as i64,
-                    dst as i64,
-                    kind,
-                    from,
-                    to,
-                    format!("session:session-{session}")
-                ])
+                .execute(params![src as i64, dst as i64, kind, from, to, scope])
                 .unwrap();
         }
     }

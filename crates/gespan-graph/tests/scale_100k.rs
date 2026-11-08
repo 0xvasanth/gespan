@@ -11,7 +11,7 @@ use support::generate::{seeded_graph, Rng};
 use support::{count, temp_store, ts};
 
 const SEED: u64 = 0x6765_7370_616e;
-const PINNED: u64 = 0xd121_938b_281d_538b;
+const PINNED: u64 = 0x0eae_0b96_f8a7_72cd;
 const BUDGET: Duration = Duration::from_millis(50);
 
 fn ms(d: Duration) -> f64 {
