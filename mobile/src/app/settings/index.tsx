@@ -3,7 +3,7 @@ import { Fragment, useState } from "react";
 import { Alert, Linking, StyleSheet, Switch, Text, View } from "react-native";
 
 import { useConnection } from "@/features/connection/ConnectionProvider";
-import { MONOS_ENABLED } from "@/features/connection/selection";
+import { PILOTS_ENABLED } from "@/features/connection/selection";
 import { useNotificationsBlocked } from "@/features/notifications/SessionNotifications";
 import { useAppearancePreference } from "@/features/settings/appearance";
 import { accessMode } from "@/features/models/access";
@@ -188,7 +188,7 @@ export default function SettingsScreen() {
         Turn off to stay on the new session screen and start more sessions.
       </Text>
 
-      {MONOS_ENABLED ? (
+      {PILOTS_ENABLED ? (
         <>
           <Text style={styles.heading}>Layout</Text>
           <View style={styles.card}>
@@ -216,10 +216,10 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <SettingsRow
           icon="folder"
-          label={MONOS_ENABLED ? "Projects and pilots" : "Projects"}
+          label={PILOTS_ENABLED ? "Projects and pilots" : "Projects"}
           value={String(
             (selected?.projectIds.length ?? 0) +
-              (MONOS_ENABLED ? (selected?.pilotIds.length ?? 0) : 0),
+              (PILOTS_ENABLED ? (selected?.pilotIds.length ?? 0) : 0),
           )}
           onPress={() => router.push("/settings/workspace")}
         />

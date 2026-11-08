@@ -5,7 +5,7 @@ export type MobileSelection = { projectIds: string[]; pilotIds: string[] };
  * phone has no good way to talk to them yet; pilots picked before are kept in
  * the selection, so they come back when this is turned on.
  */
-export const MONOS_ENABLED = true;
+export const PILOTS_ENABLED = true;
 export function normalizeSelection(value: unknown): MobileSelection | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
@@ -26,7 +26,7 @@ export function selectedWorkspace<
   },
 >(catalog: T, selection: MobileSelection | null) {
   const projects = new Set(selection?.projectIds ?? []);
-  const pilots = new Set(MONOS_ENABLED ? (selection?.pilotIds ?? []) : []);
+  const pilots = new Set(PILOTS_ENABLED ? (selection?.pilotIds ?? []) : []);
   return {
     ...catalog,
     projects: catalog.projects.filter((project) => projects.has(project.id)),
