@@ -130,23 +130,29 @@ impl Inner {
     }
 
     /// Finds the tool in the caller's own list, so a tool it wasn't offered
-    /// can't be reached by name.
+    /// can't be reached by name. A tool no longer listed goes to the first
+    /// toolkit that claims it ([`Toolkit::routes`]), which explains the
+    /// refusal itself.
     pub(crate) fn call(
         &self,
         grant: &Grant,
         tool: &str,
         arguments: Value,
     ) -> Result<Value, String> {
-        let toolkit = self
+        let allowed: Vec<_> = self
             .toolkits()
             .into_iter()
             .filter(|toolkit| grant.allows(toolkit.name()))
+            .collect();
+        let toolkit = allowed
+            .iter()
             .find(|toolkit| {
                 toolkit
                     .tools(grant)
                     .iter()
                     .any(|listed| listed["name"] == tool)
             })
+            .or_else(|| allowed.iter().find(|toolkit| toolkit.routes(grant, tool)))
             .ok_or_else(|| format!("Tool {tool} isn't available in this session"))?;
         toolkit.call(grant, tool, arguments)
     }

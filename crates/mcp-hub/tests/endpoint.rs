@@ -549,3 +549,99 @@ fn a_content_value_that_is_not_an_array_is_wrapped_as_text() {
     let result = answer(value.clone());
     assert_eq!(result["content"][0]["text"], value.to_string());
 }
+
+/// A toolkit that lists its tool only while open, and claims it either way.
+struct Gated {
+    open: std::sync::atomic::AtomicBool,
+    claims: bool,
+}
+
+impl Toolkit for Gated {
+    fn name(&self) -> &'static str {
+        "gated"
+    }
+
+    fn tools(&self, _: &Grant) -> Vec<Value> {
+        if self.open.load(std::sync::atomic::Ordering::SeqCst) {
+            vec![json!({"name":"gated_go","description":"Go","inputSchema":{"type":"object"}})]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn call(&self, _: &Grant, tool: &str, _: Value) -> Result<Value, String> {
+        if self.open.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(json!({"ran":tool}))
+        } else {
+            Err("The gate is closed".into())
+        }
+    }
+
+    fn routes(&self, _: &Grant, tool: &str) -> bool {
+        self.claims && tool == "gated_go"
+    }
+}
+
+fn gated(claims: bool) -> Arc<Gated> {
+    Arc::new(Gated {
+        open: std::sync::atomic::AtomicBool::new(true),
+        claims,
+    })
+}
+
+#[test]
+fn a_toolkit_can_explain_a_tool_it_no_longer_lists() {
+    let hub = hub();
+    let kit = gated(true);
+    hub.register(kit.clone());
+    let token = hub.mint(grant(1, &["gated"]));
+    let client = Client::connect(&hub, &token);
+    assert_eq!(client.tools(), ["gated_go"]);
+    assert_eq!(
+        tool_output(&client.call("gated_go", json!({}))),
+        json!({"ran":"gated_go"})
+    );
+
+    kit.open.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(client.tools().is_empty());
+    let refused = client.call("gated_go", json!({}));
+    assert_eq!(refused["result"]["isError"], true);
+    assert_eq!(
+        refused["result"]["content"][0]["text"],
+        "The gate is closed"
+    );
+    // A tool nobody claims still gets the hub's own answer.
+    let unknown = client.call("gated_other", json!({}));
+    assert_eq!(
+        unknown["result"]["content"][0]["text"],
+        "Tool gated_other isn't available in this session"
+    );
+}
+
+#[test]
+fn unlisted_tools_stay_unreachable_without_a_claim_or_a_grant() {
+    let first = hub();
+    let quiet = gated(false);
+    quiet.open.store(false, std::sync::atomic::Ordering::SeqCst);
+    first.register(quiet);
+    let client = Client::connect(&first, &first.mint(grant(1, &["gated"])));
+    let refused = client.call("gated_go", json!({}));
+    assert_eq!(
+        refused["result"]["content"][0]["text"],
+        "Tool gated_go isn't available in this session"
+    );
+
+    // A claiming toolkit the grant doesn't name is never asked.
+    let other = hub();
+    let claiming = gated(true);
+    claiming
+        .open
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    other.register(claiming);
+    let client = Client::connect(&other, &other.mint(grant(2, &["visual"])));
+    let refused = client.call("gated_go", json!({}));
+    assert_eq!(
+        refused["result"]["content"][0]["text"],
+        "Tool gated_go isn't available in this session"
+    );
+}

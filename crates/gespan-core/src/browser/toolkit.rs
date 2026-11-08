@@ -55,15 +55,28 @@ impl mcp_hub::Toolkit for Toolkit {
         crate::tool_servers::BROWSER
     }
 
-    /// The tools, while the switch is on and the session has access.
+    /// The tools, while the switch is on, the session has access and one of
+    /// its turns that carries the browser runs: what the host admits, so
+    /// listing never promises a call it would refuse as `turn_inactive`.
     fn tools(&self, grant: &Grant) -> Vec<Value> {
         let Some(host) = self.host() else {
             return Vec::new();
         };
-        if !gespan_browser::turn::granted(&host.state(), &session_key(grant.session)) {
+        let state = host.state();
+        let key = session_key(grant.session);
+        let active = gespan_browser::turn::session(&state, &key).is_some_and(|s| s.turn_active);
+        if !(active && gespan_browser::turn::granted(&state, &key)) {
             return Vec::new();
         }
         tools::TOOLS.into_iter().map(tools::definition).collect()
+    }
+
+    /// The browser tools, listed or not: a call that arrives after the switch
+    /// went off, the grant went or the turn ended reaches the host, which
+    /// answers with the reason (`off`, `not_granted`, `turn_inactive`)
+    /// instead of the hub's "isn't available".
+    fn routes(&self, _grant: &Grant, tool: &str) -> bool {
+        tools::find(tool).is_some()
     }
 
     /// One action: always an MCP result, an error result naming the reason
@@ -90,7 +103,7 @@ mod tests {
     use super::*;
     use crate::browser::tests::{facts, host_on, unreachable_host, wait_for};
     use crate::browser::{
-        begin_turn_on, session_deleted_on, AccessMode, ConnectionState, TurnFacts,
+        begin_turn_on, session_deleted_on, session_key, AccessMode, ConnectionState, TurnFacts,
     };
     use gespan_browser::testing::FakeCdp;
     use mcp_hub::Toolkit as _;
@@ -239,23 +252,124 @@ mod tests {
         assert_eq!(text(&once), text(&twice));
     }
 
+    /// An agent's view of the real hub: one session of MCP over HTTP.
+    struct Agent {
+        connection: mcp_hub::Connection,
+    }
+
+    impl Agent {
+        fn connect(hub: &mcp_hub::Hub, session: i64) -> Agent {
+            Agent {
+                connection: mcp_hub::Connection {
+                    url: hub.url().to_owned(),
+                    token: hub.mint(grant(session)).secret().to_owned(),
+                },
+            }
+        }
+
+        /// `tools/list` then `tools/call`, as one client session.
+        fn list_and_call(&self, tool: &str, arguments: Value) -> (Vec<String>, Value) {
+            #[derive(Clone, Default)]
+            struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+            impl std::io::Write for Sink {
+                fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                    self.0.lock().unwrap().extend_from_slice(bytes);
+                    Ok(bytes.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let input = [
+                json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                    "protocolVersion":"2025-11-25","capabilities":{},
+                    "clientInfo":{"name":"test","version":"1"}}}),
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+                json!({"jsonrpc":"2.0","id":3,"method":"tools/call",
+                    "params":{"name":tool,"arguments":arguments}}),
+            ]
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+            let sink = Sink::default();
+            mcp_hub::relay_lines(self.connection.clone(), input.as_bytes(), sink.clone()).unwrap();
+            let output = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+            let replies: Vec<Value> = output
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect();
+            let reply = |id: i64| {
+                replies
+                    .iter()
+                    .find(|reply| reply["id"] == id)
+                    .unwrap_or_else(|| panic!("no reply {id} in {output}"))
+                    .clone()
+            };
+            let listed = reply(2)["result"]["tools"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{output}"))
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect();
+            (listed, reply(3)["result"].clone())
+        }
+    }
+
     #[test]
     fn switch_off_mid_turn_fails_fast_and_unlists() {
         let (_server, host) = connected();
         let _turn = begin_turn_on(Some(host.clone()), &typed(1));
-        let kit = Toolkit::with_host(host.clone());
-        let tab = open_tab(&kit, 1);
-        assert_eq!(kit.tools(&grant(1)).len(), 18);
+        let hub = mcp_hub::Hub::start(mcp_hub::Config::new("test-hub", "1")).unwrap();
+        hub.register(Arc::new(Toolkit::with_host(host.clone())));
+        let agent = Agent::connect(&hub, 1);
+
+        let (listed, opened) = agent.list_and_call("browser_tabs", json!({"action": "open"}));
+        assert_eq!(listed.len(), 18, "{listed:?}");
+        assert_eq!(opened["isError"], json!(false), "{opened}");
+        let tab = host.policy().read().tabs_for(&session_key(1))[0]
+            .tab
+            .clone();
 
         host.set_toggle(false);
-        assert!(kit.tools(&grant(1)).is_empty());
         let started = Instant::now();
-        let off = kit
-            .call(&grant(1), "browser_snapshot", json!({"tab": tab}))
-            .unwrap();
+        let (listed, off) = agent.list_and_call("browser_snapshot", json!({"tab": tab}));
         assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(listed.is_empty(), "{listed:?}");
         assert_eq!(off["isError"], json!(true), "{off}");
-        assert!(text(&off).contains("off"), "{off}");
+        let text = text(&off);
+        assert!(text.contains("reason: off"), "{text}");
+        assert!(!text.contains("isn't available"), "{text}");
+    }
+
+    #[test]
+    fn the_toolkit_claims_its_own_tools_only() {
+        let (host, _profile) = unreachable_host(AccessMode::Always);
+        let kit = Toolkit::with_host(host);
+        for tool in gespan_browser::agent::tools::TOOLS {
+            assert!(kit.routes(&grant(1), tool.name), "{}", tool.name);
+        }
+        assert!(!kit.routes(&grant(1), "visual_show"));
+        assert!(!kit.routes(&grant(1), "browser_evaluate"));
+        let unstarted = Toolkit {
+            host: Source::Fixed(None),
+        };
+        assert!(unstarted.routes(&grant(1), "browser_tabs"));
+    }
+
+    #[test]
+    fn no_tools_without_an_active_turn() {
+        let (host, _profile) = unreachable_host(AccessMode::Always);
+        host.set_toggle(true);
+        let kit = Toolkit::with_host(host.clone());
+        // Granted, but no turn of the session is running: calls would end
+        // as turn_inactive, so nothing is listed.
+        host.set_grant(&session_key(1), crate::browser::WINDOW, true);
+        assert!(kit.tools(&grant(1)).is_empty());
+        let turn = begin_turn_on(Some(host.clone()), &typed(1));
+        assert_eq!(kit.tools(&grant(1)).len(), 18);
+        drop(turn);
+        assert!(kit.tools(&grant(1)).is_empty());
     }
 
     #[test]
@@ -303,9 +417,9 @@ mod tests {
         let (host, _profile) = unreachable_host(AccessMode::Always);
         host.set_toggle(true);
         let kit = Toolkit::with_host(host.clone());
-        let turn = begin_turn_on(Some(host.clone()), &typed(1));
+        // The turn is still running when the session goes.
+        let _turn = begin_turn_on(Some(host.clone()), &typed(1));
         assert_eq!(kit.tools(&grant(1)).len(), 18);
-        drop(turn);
         session_deleted_on(&host, 1);
         assert!(kit.tools(&grant(1)).is_empty());
     }
