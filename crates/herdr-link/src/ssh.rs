@@ -193,16 +193,41 @@ pub fn default_control_dir(m: &Machine) -> Option<PathBuf> {
     first_fitting(&bases, m)
 }
 
+/// Where herdr is looked for after `command -v herdr`, as shell words.
+const CANDIDATES: &[&str] = &[
+    r#""$HOME/.local/bin/herdr""#,
+    "/opt/homebrew/bin/herdr",
+    "/usr/local/bin/herdr",
+];
+
 /// Finds herdr on the remote and execs its API bridge. Mirrors herdr's own
 /// discovery in src/remote/attach.rs (posix_remote_api_discovery_script).
 pub fn remote_script(session: &str) -> String {
-    script_with(
-        session,
-        &[
-            r#""$HOME/.local/bin/herdr""#,
-            "/opt/homebrew/bin/herdr",
-            "/usr/local/bin/herdr",
-        ],
+    script_with(session, CANDIDATES)
+}
+
+/// Finds herdr on the remote, as [`remote_script`] does, and execs its own
+/// client attached to agent `pane`. herdr's `--machine` refuses to attach a
+/// client, so this runs on the machine over an interactive `ssh -t`.
+pub fn attach_script(session: &str, pane: &str) -> String {
+    attach_script_with(session, pane, CANDIDATES)
+}
+
+fn attach_script_with(session: &str, pane: &str, candidates: &[&str]) -> String {
+    let (s, p) = (shell_quote(session), shell_quote(pane));
+    let candidates = candidates.join(" ");
+    format!(
+        r#"set -f
+for c in "$(command -v herdr)" {candidates}; do
+    case "$c" in
+        */mise/shims/herdr) continue ;;
+        /*) ;;
+        *) continue ;;
+    esac
+    [ -x "$c" ] && exec "$c" --session {s} agent attach {p}
+done
+printf '%s\n' 'herdr was not found on this machine' >&2
+exit 2"#
     )
 }
 
@@ -776,6 +801,44 @@ mod tests {
                 .env("PATH", path_env)
                 .output()
                 .unwrap()
+        }
+
+        fn run_attach(home: &Path, pane: &str) -> Output {
+            Command::new("sh")
+                .arg("-c")
+                .arg(attach_script_with(
+                    "my work",
+                    pane,
+                    &[r#""$HOME/.local/bin/herdr""#],
+                ))
+                .env_clear()
+                .env("HOME", home)
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap()
+        }
+
+        #[test]
+        fn attach_execs_the_found_herdr_with_session_and_pane_intact() {
+            let home = tempfile::tempdir().unwrap();
+            let herdr = home.path().join(".local/bin/herdr");
+            std::fs::create_dir_all(herdr.parent().unwrap()).unwrap();
+            std::fs::write(&herdr, "#!/bin/sh\nprintf '[%s]' \"$@\"\n").unwrap();
+            std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let out = run_attach(home.path(), "w2:p1 'x'; rm -rf ~");
+            assert!(out.status.success(), "{out:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                "[--session][my work][agent][attach][w2:p1 'x'; rm -rf ~]"
+            );
+        }
+
+        #[test]
+        fn attach_without_herdr_says_so_and_fails() {
+            let home = tempfile::tempdir().unwrap();
+            let out = run_attach(home.path(), "w1:p1");
+            assert_eq!(out.status.code(), Some(2));
+            assert!(String::from_utf8_lossy(&out.stderr).contains("herdr was not found"));
         }
 
         #[test]

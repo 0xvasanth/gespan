@@ -174,15 +174,15 @@ pub(crate) fn add_command_with(herdr: &Path, target: &str, label: Option<&str>) 
     command_line(herdr, words)
 }
 
-/// The terminal command that opens one agent's terminal. `None` when no
-/// herdr is found; may block like [`herdr_binary`].
-pub fn attach_command(machine_id: &str, agent: &str) -> Option<String> {
-    herdr_binary().map(|herdr| attach_command_with(&herdr, machine_id, agent))
-}
-
-pub(crate) fn attach_command_with(herdr: &Path, machine_id: &str, agent: &str) -> String {
-    let (id, agent) = (quote(machine_id), quote(agent));
-    command_line(herdr, ["--machine", &id, "agent", "attach", &agent])
+/// The terminal command that opens herdr's own client for agent `pane` on
+/// the machine. It runs herdr there over `ssh -t`, since herdr's
+/// `--machine` does not attach clients; ssh may ask to sign in.
+pub fn attach_command(m: &Machine, pane: &str) -> String {
+    let remote = format!(
+        "sh -c {}",
+        quote(&herdr_link::attach_script(&m.session, pane))
+    );
+    format!("ssh -t -- {} {}", quote(&m.target), quote(&remote))
 }
 
 /// The terminal command that installs this herdr on a machine, through

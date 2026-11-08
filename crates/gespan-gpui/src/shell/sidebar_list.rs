@@ -717,8 +717,9 @@ impl Shell {
         let Some((view, agent)) = machine_rows::find(m.views(), machine_id, terminal_id) else {
             return;
         };
-        let (title, pane, seq) = (
+        let (title, target, pane, seq) = (
             machine_rows::attach_title(view, agent),
+            view.machine.clone(),
             agent.pane_id.clone(),
             agent.completion_seq,
         );
@@ -748,11 +749,9 @@ impl Shell {
             return;
         };
         let (machine, terminal) = (machine_id.to_owned(), terminal_id.to_owned());
-        let lookup = {
-            let machine = machine.clone();
-            cx.background_executor()
-                .spawn(async move { attach(&machine, &pane) })
-        };
+        let lookup = cx
+            .background_executor()
+            .spawn(async move { attach(&target, &pane) });
         cx.spawn_in(window, async move |this, cx| {
             let command = lookup.await;
             // Outside the window update, which fails once the window is
@@ -1939,7 +1938,7 @@ mod tests {
                     #[cfg(unix)]
                     assert_eq!(
                         t.command().map(|(_, args)| args[1].clone()),
-                        Some("herdr --machine 'm1' agent attach 'w1:p-a'".to_owned())
+                        Some("ssh -t -- 'me@box' 'attach w1:p-a'".to_owned())
                     );
                     assert!(t.focus_handle(cx).is_focused(window));
                     terminal

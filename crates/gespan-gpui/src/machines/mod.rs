@@ -3,14 +3,14 @@
 pub(crate) mod sidebar;
 
 use crate::terminal::Terminal;
-use gespan_core::machines::{Agent, AgentStatus, MachineView, Mark, Online, Registry};
+use gespan_core::machines::{Agent, AgentStatus, Machine, MachineView, Mark, Online, Registry};
 use gpui::{App, AppContext, Entity, Global, WeakEntity};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Looks up the terminal command that opens one agent, given the machine id
 /// and the agent's pane. May block, so it runs off the UI thread.
-pub(crate) type Attach = Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
+pub(crate) type Attach = Arc<dyn Fn(&Machine, &str) -> Option<String> + Send + Sync>;
 
 /// A machine id and one of its agents' terminal id.
 type Key = (String, String);
@@ -312,7 +312,7 @@ pub(crate) fn install(cx: &mut App) {
         seen: HashMap::new(),
         attach_tabs: HashMap::new(),
         attaching: HashSet::new(),
-        attach: Arc::new(gespan_core::machines::attach_command),
+        attach: Arc::new(|m, pane| Some(gespan_core::machines::attach_command(m, pane))),
         #[cfg(test)]
         reloads: 0,
         #[cfg(test)]
@@ -394,7 +394,7 @@ pub(crate) fn install_for_test(views: Vec<MachineView>, cx: &mut App) -> Entity<
         seen: HashMap::new(),
         attach_tabs: HashMap::new(),
         attaching: HashSet::new(),
-        attach: Arc::new(|id, pane| Some(format!("herdr --machine '{id}' agent attach '{pane}'"))),
+        attach: Arc::new(|m, pane| Some(format!("ssh -t -- '{}' 'attach {pane}'", m.target))),
         reloads: 0,
         refreshes: Vec::new(),
     });
@@ -421,7 +421,7 @@ pub(crate) fn set_for_test(
 #[cfg(test)]
 pub(crate) fn set_attach_for_test(
     machines: &Entity<Machines>,
-    attach: impl Fn(&str, &str) -> Option<String> + Send + Sync + 'static,
+    attach: impl Fn(&Machine, &str) -> Option<String> + Send + Sync + 'static,
     cx: &mut App,
 ) {
     machines.update(cx, |m, _| m.attach = Arc::new(attach));
@@ -430,7 +430,7 @@ pub(crate) fn set_attach_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gespan_core::machines::{Machine, Snapshot};
+    use gespan_core::machines::Snapshot;
     use std::{cell::RefCell, rc::Rc};
 
     fn agent(terminal: &str, status: AgentStatus, seq: Option<u64>) -> Agent {

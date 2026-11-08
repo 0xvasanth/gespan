@@ -215,14 +215,6 @@ fn uname_picks_the_build() {
 fn commands_quote_paths_and_names() {
     let herdr = Path::new("/A pp/herdr");
     assert_eq!(
-        attach_command_with(herdr, "id1", "my agent"),
-        "'/A pp/herdr' --machine 'id1' agent attach 'my agent'"
-    );
-    assert_eq!(
-        attach_command_with(herdr, "id1", "it's"),
-        r"'/A pp/herdr' --machine 'id1' agent attach 'it'\''s'"
-    );
-    assert_eq!(
         add_command_with(herdr, "me@box", None),
         "'/A pp/herdr' machine add 'me@box'"
     );
@@ -918,4 +910,61 @@ fn unreachable_machine_is_an_error() {
     )
     .unwrap_err();
     assert!(error.contains("Connection refused"), "{error}");
+}
+
+/// Runs `command` with `ssh` replaced by a stub that runs the remote command
+/// as a login shell would, against a home holding a fake herdr that prints
+/// its arguments. Returns the stub's view of ssh's arguments and herdr's.
+#[cfg(unix)]
+fn run_attach(command: &str) -> (String, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    let herdr = home.path().join(".local/bin/herdr");
+    std::fs::create_dir_all(herdr.parent().unwrap()).unwrap();
+    std::fs::write(&herdr, "#!/bin/sh\nprintf '[%s]' \"$@\"\n").unwrap();
+    std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // The last argument is what ssh would hand the remote login shell.
+    let stub = r#"ssh() { printf '<%s>' "$@" >&2; eval "last=\${$#}"; sh -c "$last"; }"#;
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{stub}\n{command}"))
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    (
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn attach_runs_herdr_on_the_machine_over_an_interactive_ssh() {
+    let m = machine("id1", "me@box", true);
+    let (ssh_args, herdr_args) = run_attach(&attach_command(&m, "w2:p1"));
+    assert!(
+        ssh_args.starts_with("<-t><--><me@box><sh -c "),
+        "ssh got {ssh_args}"
+    );
+    assert_eq!(herdr_args, "[--session][default][agent][attach][w2:p1]");
+}
+
+#[cfg(unix)]
+#[test]
+fn attach_keeps_odd_targets_sessions_and_panes_as_single_words() {
+    let mut m = machine("id1", "-oProxyCommand=x", true);
+    m.session = "it's mine".into();
+    let (ssh_args, herdr_args) = run_attach(&attach_command(&m, "w1:p1'; rm -rf ~; '"));
+    // `--` keeps a target that looks like an option from reaching ssh as one.
+    assert!(
+        ssh_args.starts_with("<-t><--><-oProxyCommand=x><"),
+        "ssh got {ssh_args}"
+    );
+    assert_eq!(
+        herdr_args,
+        "[--session][it's mine][agent][attach][w1:p1'; rm -rf ~; ']"
+    );
 }
