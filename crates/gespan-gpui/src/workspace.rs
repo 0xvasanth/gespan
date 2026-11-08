@@ -95,6 +95,9 @@ pub(crate) struct Workspace {
     pub tabs: Vec<i64>,
     #[serde(serialize_with = "save_title_order")]
     pub title_order: Vec<TitleTab>,
+    /// Tabs pinned to the strip's left edge as icon cards, in pin order.
+    /// Each stays in `title_order` too; this only marks and orders them.
+    pub pinned_tabs: Vec<TitleTab>,
     #[serde(serialize_with = "save_scope_focus")]
     pub scope_focus: HashMap<String, TitleTab>,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
@@ -119,6 +122,8 @@ pub(crate) struct Workspace {
     pub sidebar_visible: bool,
     pub sidebar_width: f32,
     pub compact_session_cards: bool,
+    /// The Search field heading the sidebar; ⌘K opens search either way.
+    pub sidebar_search_visible: bool,
     pub sidebar_notes_visible: bool,
     pub sidebar_automations_visible: bool,
     pub sidebar_inbox_visible: bool,
@@ -137,6 +142,10 @@ pub(crate) struct Workspace {
     /// Pilots dragged into a split, by their negative pane IDs. Each keeps the
     /// Pilot tab it came from, which it becomes again once it stands alone.
     pub pilot_panes: HashMap<i64, TitleTab>,
+    /// Terminals pulled out of a dock into a split or onto the title strip,
+    /// by their negative pane IDs. Like file panes, each borrows its owner
+    /// session's project and worktree scope.
+    pub terminal_panes: HashMap<i64, TerminalPane>,
     /// Split trees of tabs with more than one pane, by tab key.
     pub layouts: HashMap<i64, PaneNode>,
     /// The pane each split tab returns to when it is activated.
@@ -310,6 +319,14 @@ impl DockSide {
 /// The dock entry of a tab that runs a command: it is not restored, since a
 /// reopened tab would be an empty shell.
 pub(crate) const COMMAND_TAB: &str = "";
+/// A terminal living in the pane tree. Shells are not restored; the pane
+/// reopens a fresh shell in the same directory, as a dock tab does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TerminalPane {
+    pub owner: i64,
+    pub cwd: String,
+}
+
 /// A project's dock: its place, size and the terminals it holds. Shells are
 /// not restored; the dock reopens the same tabs in their directories.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -456,6 +473,7 @@ impl Default for Workspace {
             window: Default::default(),
             tabs: Vec::new(),
             title_order: Vec::new(),
+            pinned_tabs: Vec::new(),
             scope_focus: HashMap::new(),
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
@@ -469,6 +487,7 @@ impl Default for Workspace {
             sidebar_visible: true,
             sidebar_width: 260.,
             compact_session_cards: true,
+            sidebar_search_visible: true,
             sidebar_notes_visible: true,
             sidebar_automations_visible: true,
             sidebar_inbox_visible: true,
@@ -480,6 +499,7 @@ impl Default for Workspace {
             changes_view: Default::default(),
             reviews: Default::default(),
             review_owners: Default::default(),
+            terminal_panes: Default::default(),
             pilot_panes: Default::default(),
             layouts: Default::default(),
             focused: Default::default(),
@@ -489,8 +509,8 @@ impl Default for Workspace {
             last_action_fingerprints: HashMap::new(),
             last_external_editor: None,
             classic_layout: false,
-            // Fresh installs start on the boxy frame; saved choices are kept.
-            new_layout_boxy: true,
+            // Fresh installs start on the rounded frame; saved choices are kept.
+            new_layout_boxy: false,
             project_rail_open: true,
             project_rail_pilots_pinned: false,
             project_rail_width: 220.,
@@ -636,6 +656,14 @@ impl Workspace {
             *id < 0 && !owners.contains_key(id) && matches!(pilot, TitleTab::Pilot { .. })
         });
         known.extend(state.pilot_panes.keys().copied());
+        let (owners, pilots) = (&state.review_owners, &state.pilot_panes);
+        state.terminal_panes.retain(|id, pane| {
+            *id < 0
+                && !owners.contains_key(id)
+                && !pilots.contains_key(id)
+                && sessions.iter().any(|(known, _)| *known == pane.owner)
+        });
+        known.extend(state.terminal_panes.keys().copied());
         let mut seen = HashSet::new();
         let mut layouts = std::mem::take(&mut state.layouts);
         let mut focused = std::mem::take(&mut state.focused);
@@ -655,6 +683,7 @@ impl Workspace {
                 .title_order
                 .iter_mut()
                 .chain(state.scope_focus.values_mut())
+                .chain(state.pinned_tabs.iter_mut())
             {
                 if *entry == TitleTab::Session(tab) {
                     *entry = TitleTab::Session(key);
@@ -668,6 +697,7 @@ impl Workspace {
             }
         }
         state.settle_pilot_panes();
+        state.prune_terminal_panes();
         state.normalize_title_order();
         if state
             .desktop_project_preferences
@@ -732,13 +762,18 @@ impl Workspace {
         }
         state.add_project(cwd);
         let open: HashSet<_> = state.open_sessions().into_iter().collect();
-        let review_owners = &state.review_owners;
-        state.project_focus.retain(|project, id| {
-            open.contains(id)
-                && sessions.iter().any(|(known, path)| {
-                    *known == review_owners.get(id).copied().unwrap_or(*id) && path == project
-                })
-        });
+        let focus = std::mem::take(&mut state.project_focus);
+        let owner = |id: i64| state.session_for_pane(id);
+        let focus: HashMap<_, _> = focus
+            .into_iter()
+            .filter(|(project, id)| {
+                open.contains(id)
+                    && sessions
+                        .iter()
+                        .any(|(known, path)| *known == owner(*id) && path == project)
+            })
+            .collect();
+        state.project_focus = focus;
         if let Some((_, project)) = sessions.iter().find(|(id, _)| {
             state
                 .active
@@ -855,13 +890,23 @@ impl Workspace {
         self.move_project(path, to)
     }
     pub fn session_for_pane(&self, id: i64) -> i64 {
-        self.review_owners.get(&id).copied().unwrap_or(id)
+        self.review_owners
+            .get(&id)
+            .copied()
+            .or_else(|| self.terminal_panes.get(&id).map(|t| t.owner))
+            .unwrap_or(id)
     }
-    /// File and Pilot panes share the negative IDs below every session.
+    /// A file or terminal pane standing in for its owner session.
+    pub fn is_detached_pane(&self, id: i64) -> bool {
+        self.review_owners.contains_key(&id) || self.terminal_panes.contains_key(&id)
+    }
+    /// File, Pilot and terminal panes share the negative IDs below every
+    /// session.
     pub fn next_pane_id(&self) -> i64 {
         self.review_owners
             .keys()
             .chain(self.pilot_panes.keys())
+            .chain(self.terminal_panes.keys())
             .copied()
             .min()
             .unwrap_or(0)
@@ -988,6 +1033,7 @@ impl Workspace {
             .title_order
             .iter_mut()
             .chain(self.scope_focus.values_mut())
+            .chain(self.pinned_tabs.iter_mut())
         {
             if *entry == TitleTab::Session(tab) {
                 *entry = TitleTab::Session(key);
@@ -1116,6 +1162,7 @@ impl Workspace {
             .title_order
             .iter_mut()
             .chain(self.scope_focus.values_mut())
+            .chain(self.pinned_tabs.iter_mut())
         {
             if *entry == pilot {
                 *entry = TitleTab::Session(pane);
@@ -1150,6 +1197,7 @@ impl Workspace {
                         .title_order
                         .iter_mut()
                         .chain(self.scope_focus.values_mut())
+                        .chain(self.pinned_tabs.iter_mut())
                     {
                         if *entry == TitleTab::Session(tab) {
                             *entry = pilot.clone();
@@ -1165,6 +1213,21 @@ impl Workspace {
             self.pilot_panes.remove(&pane);
         }
         focused
+    }
+    /// Terminal panes no tab holds any more, forgotten. Their shells stop
+    /// with them, so the caller drops their views.
+    pub fn prune_terminal_panes(&mut self) -> Vec<i64> {
+        let open: HashSet<_> = self.open_sessions().into_iter().collect();
+        let gone: Vec<_> = self
+            .terminal_panes
+            .keys()
+            .copied()
+            .filter(|id| !open.contains(id))
+            .collect();
+        for id in &gone {
+            self.terminal_panes.remove(id);
+        }
+        gone
     }
     /// A pane dragged onto the tab strip becomes its own tab at `to`.
     pub fn detach(&mut self, id: i64, to: usize) {
@@ -1219,6 +1282,11 @@ impl Workspace {
             layout.place_sash(path, index, boundary);
         }
     }
+    pub fn sash_snaps(&self, tab: i64, path: &[usize], index: usize) -> Vec<f32> {
+        self.layouts
+            .get(&tab)
+            .map_or_else(Vec::new, |layout| layout.sash_snaps(path, index))
+    }
     pub fn sash_range(&self, tab: i64, path: &[usize], index: usize) -> Option<(f32, f32, f32)> {
         self.layouts.get(&tab)?.sash_range(path, index)
     }
@@ -1234,6 +1302,14 @@ impl Workspace {
                 self.title_order.push(tab);
             }
         }
+        self.prune_pinned_tabs();
+    }
+    /// Pins follow their tabs: a tab that left the strip is no longer pinned.
+    pub fn prune_pinned_tabs(&mut self) {
+        let mut seen = HashSet::new();
+        let order = &self.title_order;
+        self.pinned_tabs
+            .retain(|tab| order.contains(tab) && seen.insert(tab.clone()));
     }
 }
 
@@ -2025,7 +2101,9 @@ mod tests {
         let fresh = Workspace::restore(None, &sessions, "/a");
         assert_eq!(fresh.active, Some(2));
         assert_eq!(fresh.project, "/a");
-        assert!(fresh.new_layout_boxy);
+        assert!(!fresh.new_layout_boxy, "fresh installs start rounded");
+        let boxy = Workspace::restore(Some(r#"{"new_layout_boxy":true}"#), &sessions, "/a");
+        assert!(boxy.new_layout_boxy, "a saved boxy choice is kept");
         let rounded = Workspace::restore(Some(r#"{"new_layout_boxy":false}"#), &sessions, "/a");
         assert!(!rounded.new_layout_boxy);
     }

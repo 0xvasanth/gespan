@@ -1,5 +1,5 @@
 id = "codex"
-version = 2
+version = 3
 min_engine_version = 1
 label = "Codex"
 binary = "codex"
@@ -8,6 +8,7 @@ login_hint = "codex login"
 family = "codex"
 usage = "codex"
 discovery_timeout = 60
+effort_label = "Reasoning"
 
 [login]
 sign_in = ["login"]
@@ -23,6 +24,7 @@ side_threads = true
 rewind = true
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = true
 
 [features.steer]

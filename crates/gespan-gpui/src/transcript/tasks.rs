@@ -328,7 +328,10 @@ fn panel_width(view: &TranscriptView, start: usize) -> Pixels {
         .map_or(0., |row| {
             (if row.work { 20. } else { 0. }) + if row.in_phase() { 20. } else { 0. }
         });
-    px((f32::from(view.viewport.size.width).min(COLUMN) - 32. - inset).max(1.))
+    px(
+        (f32::from(view.viewport.size.width).min(COLUMN) - 2. * crate::theme::COLUMN_PAD - inset)
+            .max(1.),
+    )
 }
 
 fn disclosure(
@@ -401,10 +404,7 @@ fn agent(
     .filter(|part| !part.is_empty())
     .collect::<Vec<_>>()
     .join(" · ");
-    let model = run.model_name(
-        gespan_core::provider::Kind::parse(&view.provider)
-            .unwrap_or(gespan_core::provider::Kind::Codex),
-    );
+    let model = run.model_name(gespan_core::provider::Kind::from_id(&view.provider));
     let header = div()
         .id(SharedString::from(key.clone()))
         .debug_selector(move || format!("subagent-{start}"))

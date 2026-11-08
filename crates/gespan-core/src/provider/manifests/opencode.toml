@@ -1,5 +1,5 @@
 id = "opencode"
-version = 2
+version = 3
 min_engine_version = 1
 label = "OpenCode"
 binary = "opencode"
@@ -15,6 +15,7 @@ side_threads = true
 rewind = true
 raw_slash_commands = false
 attachments = true
+permission_modes = true
 text_turns = true
 
 [features.steer]

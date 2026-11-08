@@ -1228,7 +1228,7 @@ impl QuickComposer {
                 .map(hint)
                 .on_click(cx.listener(|this, _, window, cx| this.open(Picker::Model, window, cx))),
             )
-            .when(self.kind != Kind::Fx, |d| {
+            .when(self.kind.provider().capabilities().permission_modes, |d| {
                 let permission = PERMISSIONS
                     .iter()
                     .find(|(mode, ..)| *mode == self.access)
@@ -1761,11 +1761,7 @@ impl QuickComposer {
                     div()
                         .id("quick-effort")
                         .role(Role::Slider)
-                        .aria_label(if self.kind == Kind::Codex {
-                            "Reasoning"
-                        } else {
-                            "Effort"
-                        })
+                        .aria_label(self.kind.provider().descriptor().effort_label.clone())
                         .aria_value(effort_label)
                         .relative()
                         .h(px(24.))

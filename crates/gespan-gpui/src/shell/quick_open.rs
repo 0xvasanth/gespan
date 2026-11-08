@@ -209,7 +209,11 @@ mod tests {
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        for classic in [false, true] {
+        // The new layouts' corner is the panel toggle alone (search is ⌘P and
+        // the sidebar there); the original layout keeps the button.
+        assert!(visual.debug_bounds("titlebar-file-search").is_none());
+        {
+            let classic = true;
             window
                 .update(visual, |shell, _, cx| {
                     shell.workspace.classic_layout = classic;
@@ -233,7 +237,13 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            let search = visual.debug_bounds("sidebar-search-field").unwrap();
+            let search = visual
+                .debug_bounds(if classic {
+                    "sidebar-search-field"
+                } else {
+                    "sidebar-search-button"
+                })
+                .unwrap();
             visual.simulate_click(search.center(), Default::default());
             visual.run_until_parked();
             window

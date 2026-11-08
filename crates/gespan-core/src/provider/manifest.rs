@@ -60,6 +60,9 @@ pub struct Manifest {
     /// Seconds a model or command probe may take; absent waits for it.
     #[serde(default)]
     pub discovery_timeout: Option<u64>,
+    /// What the composer calls the effort control; absent is "Effort".
+    #[serde(default)]
+    pub effort_label: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -134,6 +137,8 @@ pub struct Features {
     pub raw_slash_commands: bool,
     /// The composer can send images and files with a prompt.
     pub attachments: bool,
+    /// The composer offers Gespan's permission modes for this provider.
+    pub permission_modes: bool,
     /// Vetted for one-shot text work (titles, commit messages), so Gespan may
     /// pick it when the preferred provider is not installed.
     pub text_turns: bool,

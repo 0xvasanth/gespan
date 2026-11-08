@@ -593,6 +593,11 @@ pub(crate) struct TranscriptView {
     note_feedback: HashMap<usize, Result<(), String>>,
     action_anchors: HashMap<(usize, &'static str), AnchorSlot>,
     hovered_action: Option<(usize, &'static str)>,
+    /// Work phases whose tile is morphing into, or back from, the chevron:
+    /// whether the pointer is on it and when that changed.
+    phase_hover: HashMap<usize, (bool, Instant)>,
+    /// The work phase under the pointer.
+    phase_pointer: Option<usize>,
     pub(crate) target_action: Option<(usize, gespan_core::response::TransferKind)>,
     document: bool,
     /// A Pilot's Activity tab: every group starts open.
@@ -1851,7 +1856,7 @@ impl TranscriptView {
                     .relative()
                     .w_full()
                     .max_w(px(COLUMN))
-                    .px_4()
+                    .px(px(COLUMN_PAD))
                     .pt(px(if first { 4. } else { 0. }))
                     .pb(px(if card_after { 8. } else { 12. }))
                     .child(crate::pilots::cards::launch(id, view.as_ref(), cx)),
@@ -1959,7 +1964,7 @@ impl TranscriptView {
                     .max_w(px(COLUMN))
                     .min_w_0()
                     .pl(px(56.))
-                    .pr(px(16.))
+                    .pr(px(COLUMN_PAD))
                     .pt_1()
                     .pb(px(if stacked { 0. } else { 20. }))
                     .flex()
@@ -2070,7 +2075,7 @@ impl TranscriptView {
                         .w_full()
                         .max_w(px(COLUMN))
                         .min_w_0()
-                        .px_4()
+                        .px(px(COLUMN_PAD))
                         .child(self.pilot_header(self.source.len(), Some("Thinking…".into()), cx)),
                 )
             })
@@ -2474,6 +2479,8 @@ impl TranscriptView {
             note_feedback: HashMap::new(),
             action_anchors: HashMap::new(),
             hovered_action: None,
+            phase_hover: HashMap::new(),
+            phase_pointer: None,
             target_action: None,
             document: false,
             activity_list: false,
@@ -5046,47 +5053,44 @@ impl TranscriptView {
                     .group("activity-phase")
                     .flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap(px(8.))
                     .py_1()
                     .text_size(px(14.))
                     .line_height(px(20.))
                     .text_color(content(0.5))
-                    .child(
-                        div()
-                            .relative()
-                            .size(px(14.))
-                            .flex_shrink_0()
-                            .child(if active && !cx.reduce_motion() {
-                                // The compaction step's dots stand in for the
-                                // group's icon until its work settles.
-                                div()
-                                    .size_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(crate::session_mark::spinner(
-                                        ("phase-loader", group),
-                                        crate::pulse::Rate::Half,
-                                    ))
-                                    .group_hover("activity-phase", |s| s.opacity(0.))
-                                    .into_any_element()
-                            } else {
-                                crate::activity::glyph(glyph, 14.)
-                                    .group_hover("activity-phase", |s| s.opacity(0.))
-                                    .into_any_element()
-                            })
-                            .child(
-                                icon("chevron-right", 14.)
-                                    .with_transformation(Transformation::rotate(percentage(
-                                        rotation * 0.25,
-                                    )))
-                                    .absolute()
-                                    .top_0()
-                                    .left_0()
-                                    .opacity(0.)
-                                    .group_hover("activity-phase", |s| s.opacity(1.)),
-                            ),
-                    )
+                    .child({
+                        // Hovering turns the tile into the expand control:
+                        // the tile holds still while the chevron slides in
+                        // from the left and pushes the work's glyph out right.
+                        // A running phase keeps its spinner unless pointed at.
+                        let (morph, moving) = self.phase_morph(group, open && !active);
+                        if moving {
+                            window.request_animation_frame();
+                        }
+                        let tile = crate::tab_tile::ACTIVITY_TILE;
+                        // The compaction step's dots stand in for the group's
+                        // icon until its work settles.
+                        let (face, mark, ink) = if active && !cx.reduce_motion() {
+                            (
+                                crate::tab_tile::Face::Neutral,
+                                crate::session_mark::spinner(
+                                    ("phase-loader", group),
+                                    crate::pulse::Rate::Half,
+                                )
+                                .into_any_element(),
+                                content(0.9),
+                            )
+                        } else {
+                            crate::tab_tile::activity_face(glyph)
+                        };
+                        let chevron = icon("chevron-right", 14.)
+                            .text_color(ink)
+                            .with_transformation(Transformation::rotate(percentage(
+                                rotation * 0.25,
+                            )))
+                            .into_any_element();
+                        crate::tab_tile::push_tile(&tile, face, mark, chevron, morph)
+                    })
                     .child(div().min_w_0().flex_1().truncate().child(
                         if active && !cx.reduce_motion() {
                             crate::activity::shimmer(
@@ -5098,6 +5102,14 @@ impl TranscriptView {
                         },
                     ))
                     .hover(|s| s.text_color(content(0.8)))
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        if *hovered {
+                            this.phase_pointer = Some(group);
+                        } else if this.phase_pointer == Some(group) {
+                            this.phase_pointer = None;
+                        }
+                        cx.notify();
+                    }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_phase(group, !open, cx);
                     }))
@@ -5122,7 +5134,8 @@ impl TranscriptView {
                     .relative()
                     .w_full()
                     .when(group.is_some(), |d| {
-                        d.pl(px(20.)).child(crate::activity::rail(tail))
+                        d.pl(px(crate::activity::TILE_RAIL_INDENT))
+                            .child(crate::activity::tile_rail(tail))
                     })
                     .when(loading, |d| {
                         d.flex().items_start().gap_1p5().child(
@@ -5541,7 +5554,7 @@ impl TranscriptView {
                             .w_full()
                             .max_w(px(COLUMN))
                             .min_w_0()
-                            .px_4()
+                            .px(px(COLUMN_PAD))
                             .pt(px(if first && !is_tool && !prose {
                                 if user {
                                     4.
@@ -5570,7 +5583,7 @@ impl TranscriptView {
                             .when(user && self.chat_layout, |d| {
                                 d.pl(px(56.)).flex().justify_end()
                             })
-                            .when(user && self.pilot, |d| d.pr(px(16.)))
+                            .when(user && self.pilot, |d| d.pr(px(COLUMN_PAD)))
                             .child(
                                 div()
                                     .relative()
@@ -5761,12 +5774,13 @@ impl TranscriptView {
     /// Wrapped lines of a user message's text at the bubble's text width.
     fn prompt_lines(&self, text: &str, window: &Window) -> usize {
         let column = self.viewport.size.width.min(px(COLUMN));
-        // Row padding (`pl-14 pr-4` in the chat layout, `px-4` otherwise),
-        // the bubble's 36rem cap and its `px-3`.
+        // Row padding (`pl-14` and `COLUMN_PAD` in the chat layout,
+        // `COLUMN_PAD` both sides otherwise), the bubble's 36rem cap and its
+        // `px-3`.
         let bubble = if self.chat_layout {
-            (column - px(72.)).min(PROMPT_BUBBLE_MAX)
+            (column - px(56. + COLUMN_PAD)).min(PROMPT_BUBBLE_MAX)
         } else {
-            column - px(32.)
+            column - px(2. * COLUMN_PAD)
         };
         let text = SharedString::from(text.trim_end().to_owned());
         measurements::shape_prompt(text, Some(bubble - PROMPT_PAD_X), window)
@@ -5780,6 +5794,48 @@ impl TranscriptView {
             .copied()
             .unwrap_or(active || self.activity_list)
     }
+    /// How far phase `group`'s tile has morphed into its chevron, eased:
+    /// 0 is the tile, 1 the chevron.
+    /// How far phase `group`'s tile has turned into its chevron, eased:
+    /// 0 is the work's glyph, 1 the chevron. The chevron shows while the
+    /// pointer is on the phase or the phase is open.
+    /// Also whether it is still moving, so the caller keeps frames coming
+    /// even on the first frame, when the morph is still exactly 0.
+    fn phase_morph(&mut self, group: usize, open: bool) -> (f32, bool) {
+        let hovered = self.phase_pointer == Some(group);
+        let wanted = open || hovered;
+        let now = Instant::now();
+        let progress =
+            |at: Instant| (now.saturating_duration_since(at).as_secs_f32() / PHASE_MORPH).min(1.);
+        match self.phase_hover.get(&group).copied() {
+            // A phase that is already open when it first draws starts there;
+            // only the pointer arriving pushes the chevron in.
+            None if open && !hovered => {
+                self.phase_hover.insert(
+                    group,
+                    (true, now - std::time::Duration::from_secs_f32(PHASE_MORPH)),
+                );
+            }
+            None if wanted => {
+                self.phase_hover.insert(group, (true, now));
+            }
+            None => return (0., false),
+            // Changing course mid-way turns back from where it is.
+            Some((was, at)) if was != wanted => {
+                let t = progress(at);
+                let at = now - std::time::Duration::from_secs_f32((1. - t) * PHASE_MORPH);
+                self.phase_hover.insert(group, (wanted, at));
+            }
+            Some(_) => {}
+        }
+        let (on, at) = self.phase_hover[&group];
+        let t = progress(at);
+        if !on && t >= 1. {
+            self.phase_hover.remove(&group);
+        }
+        let eased = crate::reveal::bezier(t, 0.22, 1., 0.36, 1.);
+        (if on { eased } else { 1. - eased }, t < 1.)
+    }
     fn toggle_phase(&mut self, group: usize, open: bool, cx: &mut Context<Self>) {
         self.phase_toggle = Some(group);
         self.phases.insert(group, open);
@@ -5787,6 +5843,8 @@ impl TranscriptView {
         self.rebuild(group, cx);
     }
 }
+/// Seconds a work phase's tile takes to morph into its chevron.
+const PHASE_MORPH: f32 = 0.3;
 impl gpui::EventEmitter<ResponseRequest> for TranscriptView {}
 impl Render for TranscriptView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -5954,7 +6012,7 @@ impl Render for TranscriptView {
                             div()
                                 .w_full()
                                 .max_w(px(crate::theme::COLUMN))
-                                .px(px(16.))
+                                .px(px(COLUMN_PAD))
                                 .flex()
                                 .map(|d| {
                                     if beside_pill {

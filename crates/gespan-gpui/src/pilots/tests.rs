@@ -1031,13 +1031,13 @@ fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppConte
             toggle,
             "the toggle stays put when changing tab types"
         );
-        let selector = if classic {
-            "right-panel-explorer"
-        } else {
-            "project-tabs-separator"
-        };
+        // A project's corner is the toggle alone in both layouts.
         assert_eq!(
-            visual.debug_bounds(selector).unwrap().center().y,
+            visual
+                .debug_bounds("toggle-right-panel")
+                .unwrap()
+                .center()
+                .y,
             tabs.center().y
         );
         s.window

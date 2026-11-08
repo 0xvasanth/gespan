@@ -257,7 +257,7 @@ impl Changes {
             git,
             cwd: String::new(),
             enabled: false,
-            text_provider: Kind::Claude,
+            text_provider: TEXT_HARNESS,
             message,
             amend: None,
             busy: None,
@@ -988,14 +988,35 @@ impl Changes {
             .is_some_and(|m| m.kind == MenuKind::Branch);
         let branch = index.as_ref().and_then(|i| i.branch.clone());
         let index = index.unwrap_or_default();
+        // GitChangesPanel: "Changes" and its status lead; the branch and its
+        // ahead/behind counts sit beside the branch menu.
         pane_header("changes-header", "Changes")
+            .child(div().flex_shrink_0().child("Changes"))
+            .when_some(self.status.clone(), |d, status| {
+                d.child(
+                    div()
+                        .id("changes-status")
+                        .role(Role::Status)
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(11.))
+                        .text_color(content(0.5))
+                        .child(status),
+                )
+            })
+            .child(div().ml_auto())
             .when_some(branch.clone(), |d, branch| {
                 d.child(
                     div()
+                        .id("changes-branch")
+                        .debug_selector(|| "changes-branch".into())
                         .min_w_0()
                         .flex()
                         .items_center()
                         .gap_1()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(content(0.5))
                         .child(icon("git-branch-hi", 12.).text_color(content(0.5)))
                         .child(div().min_w_0().truncate().child(branch))
                         .when(index.ahead > 0, |d| {
@@ -1020,22 +1041,6 @@ impl Changes {
                         }),
                 )
             })
-            .when(branch.is_none(), |d| {
-                d.child(div().flex_shrink_0().child("Changes"))
-            })
-            .when_some(self.status.clone(), |d, status| {
-                d.child(
-                    div()
-                        .id("changes-status")
-                        .role(Role::Status)
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(11.))
-                        .text_color(content(0.5))
-                        .child(status),
-                )
-            })
-            .child(div().ml_auto())
             .when(branch.is_some(), |d| {
                 d.child(
                     div()
@@ -1824,6 +1829,9 @@ impl Changes {
 /// first installed provider whose manifest allows `text_turns`. Other
 /// providers are never picked silently: they are not vetted for one-shot text
 /// turns.
+/// The harness that writes commit messages and pull requests when no session
+/// names one.
+pub(crate) const TEXT_HARNESS: Kind = Kind::Claude;
 pub(crate) fn pick_text_harness(preferred: Kind) -> Option<(Kind, PathBuf)> {
     pick_text_harness_with(preferred, provider::resolve)
 }
@@ -2018,6 +2026,22 @@ impl Render for Changes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn without_a_session_the_panel_and_the_phone_pick_the_same_writer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                let git = cx.new(|cx| ProjectGit::new("~".into(), cx));
+                cx.new(|cx| Changes::new(git, window, cx))
+            })
+            .unwrap()
+        });
+        let phone = crate::mobile::project::preferred_harness(&serde_json::json!({}));
+        window
+            .update(cx, |changes, _, _| assert_eq!(changes.text_provider, phone))
+            .unwrap();
+    }
     #[gpui::test]
     fn enabling_an_enabled_changes_panel_does_not_reload(cx: &mut gpui::TestAppContext) {
         let window = cx.update(|cx| {
