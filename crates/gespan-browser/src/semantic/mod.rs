@@ -278,6 +278,17 @@ pub fn forget_refs(link: &Link, tab: &TabId) {
     });
 }
 
+/// Role of the element `raw` names in `tab`'s current ref table, if known.
+pub fn ref_role(link: &Link, tab: &TabId, raw: &str) -> Option<String> {
+    refs::role_of(
+        &refs::RefKey {
+            host: host_id(link),
+            tab: tab.clone(),
+        },
+        raw,
+    )
+}
+
 /// The user pointed at `backend` in `tab` ([`crate::pick`]): the
 /// tab's next snapshot marks it. Returns its ref when a snapshot of this
 /// document already gave it one.

@@ -294,6 +294,17 @@ pub fn lookup(tab: &RefKey, lease: &Lease, raw: &str) -> Result<NodeRef, Fail> {
     Ok(node)
 }
 
+/// Role of the node a ref names in the tab's current table, without the
+/// staleness checks of [`lookup`]: the audit asks before an action runs, to
+/// decide how much of its parameters may be stored.
+pub fn role_of(tab: &RefKey, raw: &str) -> Option<String> {
+    let (number, _) = parse(raw).ok()?;
+    store()
+        .get(tab)
+        .and_then(|t| t.refs.get(&number))
+        .map(|node| node.role.clone())
+}
+
 /// Latest snapshot version of the tab's current table, if any.
 #[cfg(test)]
 pub fn latest_version(tab: &RefKey) -> Option<u64> {
@@ -336,6 +347,24 @@ mod tests {
         });
         assert_eq!(set_picked(&key, Some("L3"), &main.session, 42), None);
         clear(&key);
+    }
+
+    #[test]
+    fn role_of_reads_the_role_before_an_action_clears_the_table() {
+        let key = RefKey {
+            host: 0x7011,
+            tab: TabId("t_role".into()),
+        };
+        let main = frame("S1");
+        with_snapshot_table(&key, Some("L1"), 1, |t| {
+            t.assign(&main, 5, "textbox", "Password");
+        });
+        assert_eq!(role_of(&key, "e1").as_deref(), Some("textbox"));
+        assert_eq!(role_of(&key, "e1@1").as_deref(), Some("textbox"));
+        assert_eq!(role_of(&key, "e9"), None);
+        assert_eq!(role_of(&key, "#id"), None);
+        clear(&key);
+        assert_eq!(role_of(&key, "e1"), None);
     }
 
     #[test]

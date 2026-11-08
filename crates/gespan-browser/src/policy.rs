@@ -1047,15 +1047,36 @@ pub fn check_url(raw: &str) -> Result<String, Reason> {
     Ok(parsed.to_string())
 }
 
-/// URL as stored in the audit: no query string, no fragment.
+/// URL as stored in the audit: no credentials, no query string, no fragment.
 pub fn audit_url(raw: &str) -> String {
     match url::Url::parse(raw) {
-        Ok(mut parsed) => {
+        // `user:pw@host/x` without a scheme parses as an opaque URL whose
+        // "scheme" is the user name: not a URL to keep, strip it by hand.
+        Ok(mut parsed) if !parsed.cannot_be_a_base() => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
             parsed.set_query(None);
             parsed.set_fragment(None);
             parsed.to_string()
         }
-        Err(_) => raw.split(['?', '#']).next().unwrap_or_default().to_string(),
+        _ => {
+            let bare = raw.split(['?', '#']).next().unwrap_or_default();
+            // Userinfo ends at the last `@` before the first `/` of the
+            // authority; a `@` further on belongs to the path.
+            let (scheme, rest) = match bare.split_once("://") {
+                Some((scheme, rest)) => (Some(scheme), rest),
+                None => (None, bare),
+            };
+            let authority_end = rest.find('/').unwrap_or(rest.len());
+            let rest = match rest[..authority_end].rfind('@') {
+                Some(at) => &rest[at + 1..],
+                None => rest,
+            };
+            match scheme {
+                Some(scheme) => format!("{scheme}://{rest}"),
+                None => rest.to_string(),
+            }
+        }
     }
 }
 

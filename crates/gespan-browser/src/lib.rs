@@ -322,6 +322,11 @@ pub struct BrowserHost {
     #[cfg(test)]
     test_executable: Mutex<Option<launch::Executable>>,
     db: Db,
+    /// Key of the audit's text fingerprints ([`audit::install_secret`]).
+    audit_secret: [u8; 32],
+    /// Role of the `ref` a running press/select aims at, read before the
+    /// action can change the page; the audit uses it to redact.
+    audit_targets: Mutex<HashMap<(String, String), String>>,
     embedder: Arc<dyn Embedder>,
     run_id: u64,
 }
@@ -402,6 +407,9 @@ impl BrowserHost {
             #[cfg(test)]
             test_executable: Mutex::new(None),
             db: Db(embedder.clone()),
+            audit_secret: with_db(embedder.as_ref(), audit::install_secret)
+                .unwrap_or_else(audit::random_secret),
+            audit_targets: Mutex::new(HashMap::new()),
             embedder,
             run_id,
         });
@@ -2423,7 +2431,23 @@ impl BrowserHost {
                 return self.finish(session, Some(kind), None, &request, started, 0, result);
             }
         };
+        let key = (session.to_string(), request_id.clone());
+        if matches!(kind, ActionKind::Press | ActionKind::Select) {
+            if let (Some(tab), Some(element)) = (common.tab.as_ref(), request.input["ref"].as_str())
+            {
+                if let Some(role) = semantic::ref_role(&self.link, tab, element) {
+                    self.audit_targets
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(key.clone(), role);
+                }
+            }
+        }
         let result = self.run_request(session, &request, kind, &common, started);
+        self.audit_targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key);
         guard.result = Some(Box::new(result.clone()));
         result
     }
@@ -2933,8 +2957,21 @@ impl BrowserHost {
                 )
             }
         };
+        let target_role = self
+            .audit_targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&(session.to_string(), request.request_id.clone()))
+            .cloned();
         let params = kind
-            .map(|k| audit::redact_params(k, &request.input))
+            .map(|k| {
+                audit::redact_params(
+                    k,
+                    &request.input,
+                    &self.audit_secret,
+                    target_role.as_deref(),
+                )
+            })
             .unwrap_or_else(|| json!({}));
         let action_name = kind
             .map(|k| k.name().to_string())
