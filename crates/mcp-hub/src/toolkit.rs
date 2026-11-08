@@ -17,6 +17,11 @@ pub trait Toolkit: Send + Sync + 'static {
 
     /// Runs on a blocking thread and may wait on the app. An `Err` reaches the
     /// agent as a tool error, so its turn carries on.
+    ///
+    /// An `Ok` value that is an object with a `content` array is passed on as
+    /// the MCP `CallToolResult` it describes, so a toolkit can return image
+    /// blocks and set `isError` itself. If it doesn't decode as a result, or
+    /// is any other value, it reaches the agent as one text block of its JSON.
     fn call(&self, grant: &Grant, tool: &str, arguments: Value) -> Result<Value, String>;
 }
 

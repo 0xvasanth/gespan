@@ -42,6 +42,9 @@ impl Toolkit for Fake {
         if arguments["fail"] == true {
             return Err("The work failed".into());
         }
+        if let Some(reply) = arguments.get("reply") {
+            return Ok(reply.clone());
+        }
         Ok(json!({"tool":tool,"session":grant.session,"workspace":grant.workspace}))
     }
 }
@@ -490,4 +493,59 @@ fn the_host_names_the_server() {
         INITIALIZE,
     );
     assert_eq!(message(&reply)["result"]["serverInfo"]["name"], "test-hub");
+}
+
+/// What a client gets back when the toolkit answers with `reply`.
+fn answer(reply: Value) -> Value {
+    let hub = hub();
+    hub.register(Fake::new("visual"));
+    let token = hub.mint(grant(1, &["visual"]));
+    let client = Client::connect(&hub, &token);
+    client.call("visual_who", json!({"reply":reply}))["result"].clone()
+}
+
+#[test]
+fn a_toolkit_result_with_content_passes_through() {
+    let result = answer(json!({"content":[
+        {"type":"text","text":"hi"},
+        {"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}
+    ],"isError":false}));
+    let blocks = result["content"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["text"], "hi");
+    assert_eq!(blocks[1]["type"], "image");
+    assert_eq!(blocks[1]["data"], "iVBORw0KGgo=");
+    assert_eq!(blocks[1]["mimeType"], "image/png");
+    assert_ne!(result["isError"], true);
+}
+
+#[test]
+fn a_toolkit_result_can_flag_an_error() {
+    let result = answer(json!({"content":[{"type":"text","text":"no"}],"isError":true}));
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["content"][0]["text"], "no");
+}
+
+#[test]
+fn plain_values_are_still_wrapped_as_text() {
+    let result = answer(json!({"ok":1}));
+    assert_eq!(result["content"].as_array().unwrap().len(), 1);
+    assert_eq!(result["content"][0]["text"], "{\"ok\":1}");
+    assert_ne!(result["isError"], true);
+}
+
+#[test]
+fn a_content_value_that_is_not_a_result_is_wrapped_as_text() {
+    let value = json!({"content":[{"type":"bogus"}]});
+    let result = answer(value.clone());
+    assert_eq!(result["content"].as_array().unwrap().len(), 1);
+    assert_eq!(result["content"][0]["text"], value.to_string());
+    assert_ne!(result["isError"], true);
+}
+
+#[test]
+fn a_content_value_that_is_not_an_array_is_wrapped_as_text() {
+    let value = json!({"content":"hi"});
+    let result = answer(value.clone());
+    assert_eq!(result["content"][0]["text"], value.to_string());
 }

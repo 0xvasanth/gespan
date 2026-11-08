@@ -223,7 +223,7 @@ impl ServerHandler for Session {
             () = context.ct.cancelled() => Err("The tool call was cancelled".to_owned()),
         };
         Ok(match value {
-            Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
+            Ok(value) => tool_result(value),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
         }
         .into())
@@ -356,4 +356,16 @@ impl ServerHandler for Session {
             }
         }
     }
+}
+
+/// A toolkit's value as a result. An object with a `content` array that
+/// decodes as a result is one already, so it keeps its blocks and `isError`;
+/// anything else, or a decode failure, is the value as one text block.
+fn tool_result(value: Value) -> CallToolResult {
+    if value["content"].is_array() {
+        if let Ok(result) = serde_json::from_value::<CallToolResult>(value.clone()) {
+            return result;
+        }
+    }
+    CallToolResult::success(vec![ContentBlock::text(value.to_string())])
 }
