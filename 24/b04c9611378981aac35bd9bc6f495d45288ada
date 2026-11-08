@@ -1,0 +1,21 @@
+crates/herdr-link/src/ssh.rs
+  s_9844206a362899::t_f0f71a523b1b85 61,149-158
+  s_9844206a362899::t_0b1017b8cb5f24 594-601
+  s_9844206a362899::t_f6d19d30046d2b 159-160,593
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24b04c9611378981aac35bd9bc6f495d45288ada",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

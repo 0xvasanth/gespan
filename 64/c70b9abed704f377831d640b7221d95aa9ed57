@@ -1,0 +1,24 @@
+crates/herdr-link/src/ssh.rs
+  s_9844206a362899::t_0ae9234ce41355 40-41,45-46,51,55,60-80,91-100,106,110-135,146-184,190-191,197-201,203,207,255
+  s_9844206a362899::t_e3980c3ef330d9 192-196,390-392,412,424-426,434,438-443,448,452-455,459-530,534-537,541-571,575-578,688,756-757,819,826-829
+crates/herdr-link/Cargo.toml
+  s_9844206a362899::t_0ae9234ce41355 12-14
+Cargo.lock
+  s_9844206a362899::t_931b1bb781bc15 1339
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64c70b9abed704f377831d640b7221d95aa9ed57",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
