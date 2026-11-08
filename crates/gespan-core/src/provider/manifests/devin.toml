@@ -1,5 +1,5 @@
 id = "devin"
-version = 1
+version = 2
 min_engine_version = 1
 label = "Devin"
 binary = "devin"
@@ -24,3 +24,5 @@ sign_out = ["auth", "logout"]
 side_threads = true
 rewind = false
 raw_slash_commands = true
+attachments = true
+text_turns = false

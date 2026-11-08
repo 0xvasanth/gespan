@@ -363,10 +363,7 @@ impl Completion {
     }
     fn load_native(&mut self, cx: &mut Context<Self>) {
         if self.native_loading
-            || !matches!(
-                self.provider,
-                gespan_core::provider::Kind::Pi | gespan_core::provider::Kind::Omp
-            )
+            || self.provider.provider().descriptor().family != gespan_core::provider::Family::Pi
         {
             return;
         }
@@ -622,14 +619,7 @@ impl Completion {
                 if matches!(id, "stage" | "commit") && self.has_user_command(id) {
                     continue;
                 }
-                if id == "btw"
-                    && matches!(
-                        self.provider,
-                        gespan_core::provider::Kind::Fx
-                            | gespan_core::provider::Kind::Hermes
-                            | gespan_core::provider::Kind::Antigravity
-                    )
-                {
+                if id == "btw" && !self.provider.provider().capabilities().side_threads {
                     continue;
                 }
                 if let Some(score) = composer::score(&token.query, &format!("{id} {label}")) {

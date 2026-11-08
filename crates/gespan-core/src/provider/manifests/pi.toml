@@ -1,5 +1,5 @@
 id = "pi"
-version = 1
+version = 2
 min_engine_version = 1
 label = "Pi"
 binary = "pi"
@@ -14,6 +14,8 @@ discovery_timeout = 45
 side_threads = true
 rewind = true
 raw_slash_commands = false
+attachments = true
+text_turns = false
 
 [features.steer]
 ack_timeout = 15

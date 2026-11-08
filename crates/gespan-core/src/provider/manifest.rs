@@ -132,6 +132,11 @@ pub struct Features {
     pub side_threads: bool,
     pub rewind: bool,
     pub raw_slash_commands: bool,
+    /// The composer can send images and files with a prompt.
+    pub attachments: bool,
+    /// Vetted for one-shot text work (titles, commit messages), so Gespan may
+    /// pick it when the preferred provider is not installed.
+    pub text_turns: bool,
     /// Present when follow-ups reach a running turn.
     #[serde(default)]
     pub steer: Option<Steer>,
