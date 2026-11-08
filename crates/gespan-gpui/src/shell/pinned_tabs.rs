@@ -123,9 +123,9 @@ impl Shell {
     /// `live` lets a working session's card borrow its live mark, which can
     /// only draw in one place a frame.
     fn pin_card(&self, tab: &TitleTab, live: bool, cx: &mut Context<Self>) -> PinCard {
-        let neutral = |name: &'static str| {
+        let neutral = |name: &'static str, label: &str| {
             icon(name, 14.)
-                .text_color(crate::tab_tile::tile_ink())
+                .text_color(crate::theme::nav_tile_ink(label))
                 .into_any_element()
         };
         let (face, mark, title): (Face, AnyElement, SharedString) = match tab {
@@ -158,8 +158,12 @@ impl Shell {
                     None => (Face::Neutral, div().into_any_element(), "Pilot".into()),
                 }
             }
-            TitleTab::Search => (Face::Neutral, neutral("search"), "Search".into()),
-            TitleTab::App(view) => (Face::Neutral, neutral(view.icon()), view.label().into()),
+            TitleTab::Search => (Face::Neutral, neutral("search", "Search"), "Search".into()),
+            TitleTab::App(view) => (
+                Face::Neutral,
+                neutral(view.icon(), view.label()),
+                view.label().into(),
+            ),
         };
         PinCard {
             tab: tab.clone(),

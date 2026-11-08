@@ -704,3 +704,71 @@ fn a_crash_is_reported_even_with_a_cancel_unanswered(cx: &mut TestAppContext) {
         Some("Dictation stopped unexpectedly.".into())
     );
 }
+
+#[test]
+fn an_idle_mic_matches_its_neighbours_and_never_looks_recording() {
+    crate::theme::configure(&Default::default(), false);
+    let idle_states = [
+        DictationState::Idle,
+        DictationState::NeedsModel,
+        DictationState::Error("no mic".into()),
+    ];
+    for state in &idle_states {
+        // Beside the Pilot composer's bare icons it is bare too, so it never
+        // reads as switched on before you click it.
+        let bare = MicLook::of(MicStyle::Bare, state);
+        assert_eq!(bare.fill, None, "{state:?}: a bare idle mic has no fill");
+        // Beside the session composer's pills it is a pill like them.
+        let pill = MicLook::of(MicStyle::Pill, state);
+        assert_eq!(pill.fill, Some(content(0.1)), "{state:?}");
+        for look in [bare, pill] {
+            assert_eq!(look.ring, None, "{state:?}: no recording ring");
+            assert_eq!(look.ink, content(0.5), "{state:?}: plain ink");
+            assert!(!look.pulse, "{state:?}: nothing breathes");
+        }
+    }
+}
+
+#[test]
+fn a_recording_mic_turns_red_and_only_breathes_while_listening() {
+    for light in [false, true] {
+        let preferences = crate::settings::Preferences {
+            theme: if light { "light" } else { "dark" }.into(),
+            ..Default::default()
+        };
+        crate::theme::configure(&preferences, light);
+        let red = recording_color();
+        // Red, not the accent a selected tool uses, so it reads as live.
+        assert!(red.h < 0.03 || red.h > 0.97, "{red:?} is red");
+        assert!(red.s > 0.6, "{red:?} is vivid");
+        assert_ne!(red, accent_color());
+        for style in [MicStyle::Bare, MicStyle::Pill] {
+            for state in [
+                DictationState::Starting,
+                DictationState::Listening,
+                DictationState::Finishing,
+            ] {
+                let look = MicLook::of(style, &state);
+                assert_eq!(look.ink, red, "{style:?} {state:?}");
+                assert_eq!(look.fill, Some(red.opacity(0.16)), "{style:?} {state:?}");
+                assert_eq!(look.ring, Some(red.opacity(0.45)), "{style:?} {state:?}");
+                assert_eq!(
+                    look.pulse,
+                    state == DictationState::Listening,
+                    "{style:?} {state:?}: only a live mic pulses"
+                );
+            }
+        }
+    }
+    // Light themes take the deeper red for contrast on white.
+    crate::theme::configure(&Default::default(), false);
+    let dark = recording_color();
+    crate::theme::configure(
+        &crate::settings::Preferences {
+            theme: "light".into(),
+            ..Default::default()
+        },
+        true,
+    );
+    assert!(recording_color().l < dark.l);
+}

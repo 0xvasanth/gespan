@@ -1206,7 +1206,12 @@ impl Conversation {
                         cx.notify();
                     })),
             )
-            .child(dictation::mic_button(&self.dictation, &self.input, cx))
+            .child(dictation::mic_button(
+                &self.dictation,
+                &self.input,
+                dictation::MicStyle::Bare,
+                cx,
+            ))
             .when(self.pilot_ui.emoji, |d| {
                 d.child(
                     div().flex().gap_1().children(

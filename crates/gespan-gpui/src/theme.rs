@@ -3,7 +3,6 @@ use gpui::{AnyElement, Div, Hsla, Role, Stateful, Svg, div, img, prelude::*, px,
 // rather than opaque replacement greys.
 pub(crate) const CHAT: u32 = 0x141414;
 pub(crate) const TEXT: u32 = 0xebebeb;
-pub(crate) const MUTED: u32 = 0x969696;
 pub(crate) const ACCENT: u32 = 0x4da3f5;
 pub(crate) const COLUMN: f32 = 832.;
 /// The transcript's side padding inside `COLUMN`: the docked composer's
@@ -448,14 +447,17 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
         .text_color(content(0.5))
         .flex_shrink_0()
 }
-/// The colour a sidebar navigation row tints its icon, so Search, Automations
-/// and Board read at a glance instead of in plain ink. Light themes take a
-/// deeper shade to keep the glyph's contrast on a white rail.
+/// The colour a navigation icon takes wherever it shows (sidebar rows, the
+/// rail and title tabs), so each page reads at a glance instead of in plain
+/// ink. Light themes take a deeper shade to keep the glyph's contrast on white.
 pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
     let (dark, light) = match label {
+        "New" => (0x3DD68C, 0x15874F),
+        "Inbox" => (0x8B95FF, 0x4F5BD5),
+        "Notes" => (0xFF7EA8, 0xCC2F66),
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
-        "Board" => (0xB48CFF, 0x7A4BE0),
+        "Board" => (0xD08CFF, 0xA13FD6),
         _ => return None,
     };
     Some(rgb(if is_light() { light } else { dark }).into())
@@ -464,6 +466,11 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
 /// that brightens when the row is selected.
 pub(crate) fn nav_icon_color(label: &str, selected: bool) -> Hsla {
     nav_tint(label).unwrap_or_else(|| content(if selected { 0.7 } else { 0.35 }))
+}
+/// A page's mark on a neutral title-tab tile: its navigation tint, so the tab
+/// matches its sidebar row, else the tile's usual ink.
+pub(crate) fn nav_tile_ink(label: &str) -> Hsla {
+    nav_tint(label).unwrap_or_else(crate::tab_tile::tile_ink)
 }
 /// A provider's brand fill for its icon tile, top and bottom of a gentle
 /// gradient. `None` for a multicolour logo that keeps a light tile.
@@ -533,7 +540,8 @@ fn provider_mark(provider: &str) -> (&'static str, bool, f32) {
         "fx" => ("fx.svg", true, 1.),
         "hermes" => ("hermes.svg", true, 0.72),
         "devin" => ("devin.svg", true, 0.88),
-        "kiro" => ("kiro.svg", true, 0.72),
+        // Kiro's ghost on its purple tile, in colour like Claude and Codex.
+        "kiro" => ("kiro-color.svg", false, 1.),
         _ => ("codex.svg", false, 1.),
     }
 }
@@ -833,7 +841,7 @@ mod composer_tests {
     }
 
     #[test]
-    fn kiro_has_its_own_monochrome_icon() {
+    fn kiro_shows_its_ghost_on_its_own_purple_in_every_picker() {
         use gpui::AssetSource;
         let (path, monochrome, scale) = provider_mark("kiro");
         assert_ne!(
@@ -841,14 +849,36 @@ mod composer_tests {
             provider_mark("unknown").0,
             "kiro must not use the codex fallback"
         );
-        assert_eq!(path, "kiro.svg");
-        assert!(monochrome, "the ghost follows the theme colour");
-        assert!(scale > 0. && scale <= 1.);
-        let bytes = crate::assets::Assets
+        // Drawn as an image in its brand colours, like Claude and Codex,
+        // instead of a theme-ink mask that reads as a plain white ghost.
+        assert_eq!(path, "kiro-color.svg");
+        assert!(!monochrome, "the ghost keeps its brand colours");
+        assert_eq!(scale, 1.);
+        let svg = crate::assets::Assets
             .load(path)
             .unwrap()
-            .expect("embedded kiro.svg");
-        assert!(String::from_utf8_lossy(&bytes).contains("<svg"));
+            .expect("embedded kiro-color.svg");
+        let svg = String::from_utf8_lossy(&svg);
+        assert!(svg.contains("<svg"));
+        // The icon's purple is the tab tile's, so the two never drift apart.
+        let tile = |hsla: Hsla| {
+            let rgba = gpui::Rgba::from(hsla);
+            format!(
+                "#{:02X}{:02X}{:02X}",
+                (rgba.r * 255.).round() as u8,
+                (rgba.g * 255.).round() as u8,
+                (rgba.b * 255.).round() as u8
+            )
+        };
+        let (top, bottom) = provider_tile("kiro").expect("kiro has a tile");
+        assert!(svg.contains(&tile(top)), "{svg} uses the tile's top colour");
+        assert!(
+            svg.contains(&tile(bottom)),
+            "{svg} uses the tile's bottom colour"
+        );
+        assert!(svg.contains("fill=\"#fff\""), "a white ghost on the purple");
+        // On a coloured tab tile the plain ghost still sits in white.
+        assert!(crate::assets::Assets.load("kiro.svg").unwrap().is_some());
         // Every other provider keeps its own mark.
         assert_eq!(provider_mark("hermes").0, "hermes.svg");
         assert_eq!(provider_mark("devin").0, "devin.svg");
@@ -927,31 +957,58 @@ mod nav_tint_tests {
         configure(&preferences, false);
     }
 
+    /// Every row the sidebar can list, plus Search. Flows is hidden from
+    /// the UI and keeps plain ink.
+    const TINTED: [&str; 6] = ["New", "Inbox", "Notes", "Search", "Automations", "Board"];
+
     #[test]
-    fn search_automations_and_board_each_get_their_own_colour() {
+    fn every_navigation_row_gets_its_own_colour() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
         for theme in ["dark", "light"] {
             with_theme(theme);
-            let tints: Vec<Hsla> = ["Search", "Automations", "Board"]
+            let tints: Vec<Hsla> = TINTED
                 .iter()
                 .map(|label| nav_tint(label).expect("tinted row"))
                 .collect();
             for (i, a) in tints.iter().enumerate() {
-                assert!(a.s > 0.5, "{theme}: tint {i} is saturated, not grey ink");
-                assert_eq!(a.a, 1., "{theme}: tint {i} is opaque");
-                for b in &tints[i + 1..] {
-                    assert_ne!(a, b, "{theme}: tints differ from each other");
+                let label = TINTED[i];
+                assert!(a.s > 0.5, "{theme}: {label} is saturated, not grey ink");
+                assert_eq!(a.a, 1., "{theme}: {label} is opaque");
+                for (j, b) in tints.iter().enumerate().skip(i + 1) {
+                    // Hues far enough apart that no two rows read as one colour.
+                    let gap = (a.h - b.h).abs().min(1. - (a.h - b.h).abs());
+                    assert!(gap > 0.04, "{theme}: {label} and {} share a hue", TINTED[j]);
                 }
                 // Selection and hover never wash the tint back to ink.
-                assert_eq!(
-                    nav_icon_color(["Search", "Automations", "Board"][i], true),
-                    *a
-                );
-                assert_eq!(
-                    nav_icon_color(["Search", "Automations", "Board"][i], false),
-                    *a
-                );
+                assert_eq!(nav_icon_color(label, true), *a);
+                assert_eq!(nav_icon_color(label, false), *a);
             }
+        }
+    }
+
+    #[test]
+    fn title_tabs_mark_each_page_in_its_sidebar_colour() {
+        use crate::workspace::AppView;
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        for theme in ["dark", "light"] {
+            with_theme(theme);
+            // Keyed by the label the tab draws, so a renamed page can't
+            // quietly fall back to plain ink.
+            for view in [
+                AppView::Inbox,
+                AppView::Notes,
+                AppView::Automations,
+                AppView::Board,
+            ] {
+                let tint = nav_tint(view.label()).expect("page has a tint");
+                assert_eq!(nav_tile_ink(view.label()), tint, "{theme}: {view:?}");
+            }
+            assert_eq!(nav_tile_ink("Search"), nav_tint("Search").unwrap());
+            // Pages without a tint keep the tile's own ink.
+            assert_eq!(
+                nav_tile_ink(AppView::Flows.label()),
+                crate::tab_tile::tile_ink()
+            );
         }
     }
 
@@ -959,7 +1016,7 @@ mod nav_tint_tests {
     fn other_rows_keep_content_ink_that_brightens_when_selected() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
         with_theme("dark");
-        for label in ["New", "Inbox", "Notes", "Flows", "search", ""] {
+        for label in ["Flows", "search", "inbox", ""] {
             assert_eq!(nav_tint(label), None, "{label:?} stays untinted");
             assert_eq!(nav_icon_color(label, false), content(0.35));
             assert_eq!(nav_icon_color(label, true), content(0.7));
@@ -969,7 +1026,7 @@ mod nav_tint_tests {
     #[test]
     fn light_themes_take_a_deeper_shade_than_dark_ones() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
-        for label in ["Search", "Automations", "Board"] {
+        for label in TINTED {
             with_theme("dark");
             let dark = nav_tint(label).unwrap();
             with_theme("light");

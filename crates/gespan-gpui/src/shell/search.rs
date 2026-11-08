@@ -94,7 +94,7 @@ impl Shell {
                     .child(mark_tile(
                         &TAB_TILE,
                         Face::Neutral,
-                        icon("search", 14.).text_color(crate::tab_tile::tile_ink()),
+                        icon("search", 14.).text_color(crate::theme::nav_tile_ink("Search")),
                     ))
                     .child(
                         div()
