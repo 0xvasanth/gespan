@@ -90,6 +90,21 @@ pub(super) fn parse(value: &Value) -> Result<Snapshot, FetchError> {
             )
         })
         .collect::<Vec<_>>();
+    let mut extra_usage = claude_spend(&value["spend"]);
+    // Enterprise seats have no plan windows: their monthly spend cap is the limit.
+    if windows.is_empty() {
+        if let Some(cap) = extra_usage.take_if(|spend| spend.limit.is_some_and(|l| l > 0.)) {
+            let limit = cap.limit.unwrap_or_default();
+            let percent = value["spend"]["percent"]
+                .as_f64()
+                .filter(|n| n.is_finite())
+                .unwrap_or(cap.used / limit * 100.)
+                .clamp(0., 100.);
+            let mut window = Window::new(percent, 43_200, None);
+            window.amount = Some(cap);
+            windows.push(window);
+        }
+    }
     if windows.is_empty() {
         return Err(FetchError::unavailable(
             "No Claude subscription usage available for this account.",
@@ -114,7 +129,7 @@ pub(super) fn parse(value: &Value) -> Result<Snapshot, FetchError> {
     Ok(Snapshot {
         windows,
         updated_at: now_ms(),
-        extra_usage: claude_spend(&value["spend"]),
+        extra_usage,
         ..Default::default()
     })
 }
@@ -364,5 +379,33 @@ mod tests {
         let named = sign_in(Some(dir.clone()), token()).unwrap();
         assert_eq!(named["claudeAiOauth"]["accessToken"], "stored");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_enterprise_spend_cap_without_plan_windows_is_its_usage() {
+        // Enterprise seats have no 5h or weekly windows; the monthly spend cap is
+        // the limit, so it must not read as signed out.
+        let value: Value =
+            serde_json::from_str(include_str!("fixtures/claude-enterprise-usage.json")).unwrap();
+        let snapshot = parse(&value).unwrap();
+        let [window] = snapshot.windows.as_slice() else {
+            panic!("one spend window: {:?}", snapshot.windows)
+        };
+        assert_eq!(window.label(), "mo");
+        assert_eq!(window.used_percent, 25.);
+        assert_eq!(
+            window.amount,
+            Some(Amount {
+                used: 25.,
+                limit: Some(100.),
+                unit: "USD".into()
+            })
+        );
+        assert!(snapshot.extra_usage.is_none(), "the cap is not shown twice");
+    }
+    #[test]
+    fn no_windows_and_no_spend_cap_is_still_unavailable() {
+        let value = serde_json::json!({"five_hour":null,"seven_day":null,"limits":[],"spend":{"enabled":false}});
+        assert!(parse(&value).unwrap_err().unavailable);
     }
 }

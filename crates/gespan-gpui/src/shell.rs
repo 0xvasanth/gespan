@@ -5627,6 +5627,9 @@ impl Shell {
     /// Classic: the strip's room after its tabs, wherever the toggle
     /// overhangs an open right panel.
     fn strip_trail(&self, cx: &App) -> f32 {
+        if self.titlebar_over_panel() {
+            return self.toggle_room(cx);
+        }
         (self.toggle_room(cx) - self.right_drawn).max(0.)
     }
     fn menu_open(&self, target: &MenuTarget) -> bool {
@@ -8206,7 +8209,9 @@ impl Shell {
     /// The tab strip's width: between the navigation and the right panel
     /// toggle, `pl-1.5 pr-3` clear of the edge.
     fn tabs_width(&self, window: &Window, cx: &App) -> f32 {
-        let trailing = if self.workspace.boxy_layout() {
+        let trailing = if self.titlebar_over_panel() {
+            self.strip_trail(cx)
+        } else if self.workspace.boxy_layout() {
             self.right_drawn + self.strip_trail(cx) + self.classic_editor_room(cx)
         } else {
             self.toggle_room(cx)
@@ -9114,7 +9119,8 @@ impl Render for Shell {
             git.set_polling(poll_git && git.available(), cx)
         });
         if let Some(panel) = &self.right_panel {
-            let classic = self.workspace.boxy_layout();
+            // Only the original layout's full-height panel clears a title bar.
+            let classic = self.workspace.classic_layout;
             panel.update(cx, |p, cx| {
                 p.set_top_inset(if classic { TITLE_BAR_HEIGHT } else { 0. }, cx);
                 p.set_show_excluded(self.workspace.preferences.show_excluded_files, cx);
@@ -9137,11 +9143,8 @@ impl Render for Shell {
                 pilots.set_original_chrome(self.workspace.classic_layout, cx)
             });
             let details = pilots.read(cx).details.clone();
-            let inset = if self.workspace.boxy_layout() && !self.workspace.classic_layout {
-                TITLE_BAR_HEIGHT
-            } else {
-                0.
-            };
+            // Boxy's Pilot panel starts below the title bar, as rounded's does.
+            let inset = 0.;
             // Narrow panels keep every tab an icon, as the title bar did.
             let expand = self.right_panel_width() >= PILOT_TAB_LABEL_MIN_WIDTH;
             details.update(cx, |view, cx| {

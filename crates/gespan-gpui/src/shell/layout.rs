@@ -384,6 +384,71 @@ impl Shell {
         let show_navigation = !spans_window;
         let navigation = show_navigation.then(|| self.navigation(cx));
         let corner = (self.settings.is_none() && !original).then(|| self.panel_toggle(cx));
+        // As in the rounded layout, boxy's title bar is its own row across the
+        // workspace and the right panel, and the panel starts below it. The
+        // original layout keeps its full-height panel under its own corner.
+        let over_panel = self.titlebar_over_panel();
+        let panel = panel.map(|panel| div().h_full().bg(pane_fill()).child(panel));
+        let (tab_bar, panel, head) = if over_panel {
+            (None, None, (tab_bar, panel))
+        } else {
+            (tab_bar, panel, (None, None))
+        };
+        let main = div()
+            .id("main-pane-frame")
+            .debug_selector(|| "main-pane-frame".into())
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .when(!compact_surface, |d| d.bg(pane_fill()))
+            .when(compact_surface, |d| {
+                // Keep one continuous shell tint behind all traffic
+                // lights; the content wash starts below the title bar.
+                d.relative().child(
+                    div()
+                        .debug_selector(|| "classic-surface-background".into())
+                        .absolute()
+                        .top(px(TITLE_BAR_HEIGHT))
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .bg(pane_fill()),
+                )
+            })
+            .children(tab_bar)
+            .child(card)
+            .children(footer.map(|footer| {
+                footer
+                    .h(px(28.))
+                    .px_3()
+                    .border_t_1()
+                    .border_color(crate::right_panel::stroke())
+            }));
+        let (head_bar, head_panel) = head;
+        let workspace = if over_panel {
+            div()
+                .id("boxy-workspace-column")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .flex_col()
+                .bg(pane_fill())
+                .children(head_bar)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(main)
+                        .children(head_panel),
+                )
+                .into_any_element()
+        } else {
+            main.into_any_element()
+        };
         let body = div()
             .flex_1()
             .min_h_0()
@@ -435,42 +500,9 @@ impl Shell {
                         ),
                 )
             })
-            .child(
-                div()
-                    .id("main-pane-frame")
-                    .debug_selector(|| "main-pane-frame".into())
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .when(!compact_surface, |d| d.bg(pane_fill()))
-                    .when(compact_surface, |d| {
-                        // Keep one continuous shell tint behind all traffic
-                        // lights; the content wash starts below the title bar.
-                        d.relative().child(
-                            div()
-                                .debug_selector(|| "classic-surface-background".into())
-                                .absolute()
-                                .top(px(TITLE_BAR_HEIGHT))
-                                .bottom_0()
-                                .left_0()
-                                .right_0()
-                                .bg(pane_fill()),
-                        )
-                    })
-                    .children(tab_bar)
-                    .child(card)
-                    .children(footer.map(|footer| {
-                        footer
-                            .h(px(28.))
-                            .px_3()
-                            .border_t_1()
-                            .border_color(crate::right_panel::stroke())
-                    })),
-            )
+            .child(workspace)
             .children(self.sidebar_resize(cx))
-            .children(panel.map(|panel| div().h_full().bg(pane_fill()).child(panel)))
+            .children(panel)
             .when(show_navigation, |d| {
                 d.child(
                     // The traffic lights, toggle and arrows ride above the sidebar's
@@ -519,6 +551,11 @@ impl Shell {
         // The toggle alone; the panel heads itself with its tabs.
         6. + 24. + 12. + controls
     }
+    /// Boxy: the title bar runs over the open right panel, which starts below
+    /// it. The original layout's panel stays full height under its corner.
+    pub(super) fn titlebar_over_panel(&self) -> bool {
+        self.workspace.boxy_layout() && !self.workspace.classic_layout
+    }
     fn corner_tabs_shown(&self) -> bool {
         self.workspace.right_panel_open
             && !self.app_view_open()
@@ -547,9 +584,11 @@ impl Shell {
         let panel_off = self.app_view_open();
         let changes = !panel_off && self.git.read(cx).has_changes();
         let open = self.corner_tabs_shown();
+        // Over the panel, the corner is the toggle alone at the strip's end.
+        let span = open && !self.titlebar_over_panel();
         row.pl_1p5()
             .pr(px(12. + self.window_controls))
-            .when(open, |d| {
+            .when(span, |d| {
                 // Follow the panel's leading edge, reserving enough room for
                 // the controls while the panel is still sliding open.
                 d.w(px(self.right_drawn.max(self.corner_room(cx))))
@@ -919,6 +958,38 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+
+    #[gpui::test]
+    fn boxy_title_bar_spans_the_open_panel_and_the_panel_starts_below_it(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = true;
+                shell.workspace.right_panel_width = 320.;
+                shell.toggle_right_panel(w, cx);
+                shell.invalidate_chrome(cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let frame = visual.debug_bounds("right-panel-frame").unwrap();
+        let strip = visual.debug_bounds("title-tab-strip").unwrap();
+        let tabs = visual.debug_bounds("right-panel-tabs").unwrap();
+        let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+        // The session tabs run over the open panel, as with it closed.
+        assert!(strip.right() > frame.left(), "{strip:?} vs {frame:?}");
+        assert!(toggle.left() >= strip.right(), "the toggle ends the strip");
+        // The panel sits under the title bar and heads itself with its tabs,
+        // with no empty band where the corner used to be.
+        assert!(frame.top() >= strip.bottom(), "{frame:?} vs {strip:?}");
+        assert!(toggle.bottom() <= frame.top());
+        assert!((tabs.top() - frame.top()).abs() <= px(1.), "{tabs:?} vs {frame:?}");
     }
 
     #[gpui::test]
