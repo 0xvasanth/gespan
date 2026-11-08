@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-11-08
+
+### Added
+
+- **Mobile app:** brought over the latest mobile app with Gespan branding,
+  including side drawer of projects and Pilots, agent question answering,
+  usage-limited continue, Pilot profiles, chats, reactions and documents,
+  native visuals, push alerts, and code fence copy controls with a
+  reconnect-safe composer.
+
+### Changed
+
+- **Explorer file opening:** clicking a file in the Explorer while a terminal
+  pane has focus now opens the file beside the terminal's owner session instead
+  of doing nothing visible.
+- **Mobile branding:** the iOS app icon, Android launcher, and splash screens
+  now use Gespan's purple icon. The drawer, Pilot home, and connect screen show
+  the purple mark untinted instead of the flat grey logo.
+
+### Fixed
+
+- **Layout tests:** updated boxy layout tests to match the title bar's new
+  position as its own row across the workspace and right panel.
+- **Boxy and rounded layouts:** applied layout fixes for both layout styles.
+
 ## [0.0.8] - 2026-11-08
 
 ### Added
