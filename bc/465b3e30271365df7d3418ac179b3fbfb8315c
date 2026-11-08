@@ -1,0 +1,47 @@
+crates/gespan-gpui/src/main.rs
+  s_35022df10dc1c3::t_4f2e1bc499c84c 13,585
+crates/gespan-browser/src/lib.rs
+  s_35022df10dc1c3::t_e11a767008733e 374
+  s_35022df10dc1c3::t_13ecc1026621e9 340-351
+crates/gespan-gpui/src/settings/mod.rs
+  s_35022df10dc1c3::t_57f79a4aa3f9fc 368-370
+crates/gespan-gpui/src/browser.rs
+  s_35022df10dc1c3::t_2c10d082c4aa72 30-33,35,37,50-65
+  s_35022df10dc1c3::t_5982165f25f3b6 1-29,34,36,38-49,66-93
+crates/gespan-gpui/src/shell/settings.rs
+  s_35022df10dc1c3::t_ab7d925f41de90 973
+crates/gespan-gpui/src/settings/pages/browser.rs
+  s_35022df10dc1c3::t_e6a24f2fd9f7cc 1-21,23,27-200,204-240,250,254-256,258-315,317-364,366-369,373,391-408,414-438,440-476,478-480,482-506,508-524,526-537,543-585,594-609,611-621,623
+  s_35022df10dc1c3::t_df9ad669fde778 370-372,374-385,387-390,409-413,538-542,586-593,718,799-803
+  s_35022df10dc1c3::t_b0a20b5da2e828 687,701-705,708
+  s_35022df10dc1c3::t_d387a01de30d62 316,365,386,439,477,481,507,525,610,812-817,827-830
+  s_35022df10dc1c3::t_e77093d84cfa4f 818-826
+  s_35022df10dc1c3::t_57f79a4aa3f9fc 22,24-26,201-203,257,622,624-686,688-700,706-707,709-717,719-798,804-811,831-862
+  s_35022df10dc1c3::t_ac5ccdf2bb4d5a 241-249,251-253
+crates/gespan-core/src/browser.rs
+  s_35022df10dc1c3::t_df9ad669fde778 12
+  s_35022df10dc1c3::t_b820c467c4589a 11
+  s_35022df10dc1c3::t_e8d30ef3bd4b6f 342-362
+  s_35022df10dc1c3::t_a3e42a4e67c5b6 14-15,68-81,91
+  s_35022df10dc1c3::t_73b50221c79301 341
+crates/gespan-gpui/src/settings/model.rs
+  s_35022df10dc1c3::t_946cfb3de2c755 18,44,56,66,84,103,134-136,171-173,194,236-253,686-687
+crates/gespan-gpui/src/settings/pages/mod.rs
+  s_35022df10dc1c3::t_57f79a4aa3f9fc 4,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc465b3e30271365df7d3418ac179b3fbfb8315c",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
