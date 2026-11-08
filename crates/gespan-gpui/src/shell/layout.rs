@@ -961,9 +961,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn boxy_title_bar_spans_the_open_panel_and_the_panel_starts_below_it(
-        cx: &mut TestAppContext,
-    ) {
+    fn boxy_title_bar_spans_the_open_panel_and_the_panel_starts_below_it(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         window
@@ -989,7 +987,10 @@ mod tests {
         // with no empty band where the corner used to be.
         assert!(frame.top() >= strip.bottom(), "{frame:?} vs {strip:?}");
         assert!(toggle.bottom() <= frame.top());
-        assert!((tabs.top() - frame.top()).abs() <= px(1.), "{tabs:?} vs {frame:?}");
+        assert!(
+            (tabs.top() - frame.top()).abs() <= px(1.),
+            "{tabs:?} vs {frame:?}"
+        );
     }
 
     #[gpui::test]

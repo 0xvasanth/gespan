@@ -1,11 +1,31 @@
 import { Redirect, router } from "expo-router";
+import { useConnection } from "@/features/connection/ConnectionProvider";
+import { readLastPlace } from "@/features/workspace/lastPlace";
 import { Pressable, Text, View } from "react-native";
 import { useWorkspace } from "@/features/workspace/WorkspaceProvider";
 import { SessionScreen } from "@/features/sessions/SessionScreen";
 import { useConnectionStyles } from "@/features/connection/ConnectScreen";
+import { usePilotOnlyLayout } from "@/features/settings/pilotOnly";
+import { PilotHome } from "@/features/workspace/PilotHome";
 export default function Index() {
+  const [pilotOnly] = usePilotOnlyLayout();
+  // Pilots only: the list of them, each chat pushed over it.
+  if (pilotOnly)
+    return <PilotHome />;
+  return <WorkspaceIndex />;
+}
+
+function WorkspaceIndex() {
   const styles = useConnectionStyles();
   const { projects, pilots } = useWorkspace();
+  // Back where the user last was, while it is still on the phone.
+  const last = readLastPlace(useConnection().pairing?.desktop.fingerprint);
+  if (last?.kind === "project" && projects.some((project) => project.id === last.id))
+    return (
+      <Redirect href={{ pathname: "/project/[projectId]", params: { projectId: last.id } }} />
+    );
+  if (last?.kind === "pilot" && pilots.some((pilot) => pilot.id === last.id))
+    return <Redirect href={{ pathname: "/pilot/[pilotId]", params: { pilotId: last.id } }} />;
   if (projects[0])
     return (
       <Redirect
