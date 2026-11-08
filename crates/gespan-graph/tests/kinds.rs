@@ -88,3 +88,38 @@ fn anchors_are_the_kinds_that_mirror_a_source_row() {
     .collect();
     assert_eq!(anchors, expected);
 }
+
+#[test]
+fn store_enforces_endpoints_and_self_loops() {
+    use gespan_graph::GraphError;
+    use support::*;
+    let (_dir, mut store, _path) = temp_store();
+    add_node(&mut store, N::Session, "s1", 0);
+    add_node(&mut store, N::File, "f", 0);
+    add_node(&mut store, N::Card, "c", 0);
+    let before = store.canonical_dump().unwrap();
+    let s = nref(N::Session, "s1");
+    let f = nref(N::File, "f");
+    let c = nref(N::Card, "c");
+
+    match store.upsert_edge(&fact(E::Touched, &f, &s, 0)) {
+        Err(GraphError::InvalidEndpoints {
+            edge: E::Touched,
+            src: N::File,
+            dst: N::Session,
+        }) => {}
+        other => panic!("expected InvalidEndpoints, got {other:?}"),
+    }
+    match store.upsert_edge(&fact(E::Blocks, &c, &c, 0)) {
+        Err(GraphError::SelfLoop(node)) => assert_eq!(node, c),
+        other => panic!("expected SelfLoop, got {other:?}"),
+    }
+    // Endpoint rules come before existence: a wrong pair of missing nodes is
+    // still InvalidEndpoints.
+    let ghost = nref(N::Pr, "ghost");
+    assert!(matches!(
+        store.upsert_edge(&fact(E::Blocks, &ghost, &c, 0)),
+        Err(GraphError::InvalidEndpoints { .. })
+    ));
+    assert_eq!(store.canonical_dump().unwrap(), before);
+}

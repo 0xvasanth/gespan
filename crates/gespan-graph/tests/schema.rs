@@ -379,3 +379,47 @@ fn graph_file_is_0600() {
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "graph.db mode {mode:o}");
 }
+
+#[test]
+fn timestamps_are_epoch_ms_and_never_rescaled() {
+    use gespan_graph::{EdgeKind as E, NodeKind as N, Timestamp};
+    use std::time::{Duration, UNIX_EPOCH};
+    use support::*;
+
+    assert_eq!(
+        Timestamp::from_system_time(UNIX_EPOCH + Duration::from_millis(1_500)),
+        Some(Timestamp::from_millis(1_500))
+    );
+    assert_eq!(
+        Timestamp::from_system_time(UNIX_EPOCH - Duration::from_millis(1)),
+        None
+    );
+    assert_eq!(Timestamp::from_millis(BASE).as_millis(), BASE);
+
+    let (_dir, mut store, _path) = temp_store();
+    add_node(&mut store, N::Session, "s1", 0);
+    add_node(&mut store, N::File, "ms", 0);
+    add_node(&mut store, N::File, "secs", 0);
+    let s = nref(N::Session, "s1");
+    store
+        .upsert_edge(&fact(E::Touched, &s, &nref(N::File, "ms"), 0))
+        .unwrap();
+    let mut secs = fact(E::Touched, &s, &nref(N::File, "secs"), 0);
+    secs.valid_from = Timestamp::from_millis(1_793_404_800);
+    store.upsert_edge(&secs).unwrap();
+
+    let dump = store.canonical_dump().unwrap();
+    let froms: Vec<(String, i64)> = dump
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .filter(|v| v[0] == "E")
+        .map(|v| (v[5].as_str().unwrap().to_string(), v[8].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        froms,
+        vec![
+            ("ms".to_string(), BASE),
+            ("secs".to_string(), 1_793_404_800)
+        ]
+    );
+}

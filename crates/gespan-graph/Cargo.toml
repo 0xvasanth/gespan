@@ -9,7 +9,9 @@ publish = false
 # workspace too once gespan-core depends on it, so nothing here inherits from
 # either workspace.
 [dependencies]
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
+# `cache` adds prepared-statement caching (hashlink only); the SQLite build is
+# the same bundled one board-store uses.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "hooks"] }
 serde_json = "1"
 thiserror = "2"
 

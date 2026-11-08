@@ -27,5 +27,5 @@ pub use key::{
     BackfillSource, EdgeId, NodeId, NodeKey, NodeRef, Props, Scope, SessionId, Source, TimeBasis,
 };
 pub use kind::{EdgeKind, NodeKind};
-pub use store::{GraphStore, FILE_NAME};
+pub use store::{CloseOutcome, EdgeFact, EdgeKey, GraphStore, NodeFact, FILE_NAME};
 pub use time::Timestamp;
