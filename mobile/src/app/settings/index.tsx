@@ -1,9 +1,9 @@
-import { router, useLocalSearchParams } from "expo-router";
-import { Fragment } from "react";
+import { router, useLocalSearchParams, useNavigationContainerRef } from "expo-router";
+import { Fragment, useState } from "react";
 import { Alert, Linking, StyleSheet, Switch, Text, View } from "react-native";
 
 import { useConnection } from "@/features/connection/ConnectionProvider";
-import { PILOTS_ENABLED } from "@/features/connection/selection";
+import { MONOS_ENABLED } from "@/features/connection/selection";
 import { useNotificationsBlocked } from "@/features/notifications/SessionNotifications";
 import { useAppearancePreference } from "@/features/settings/appearance";
 import { accessMode } from "@/features/models/access";
@@ -17,6 +17,7 @@ import {
   type NotificationCategory,
 } from "@/features/settings/notifications";
 import { useOpenSessionAfterStarting } from "@/features/settings/newSessions";
+import { useChangeLayout, usePilotOnlyLayout } from "@/features/settings/pilotOnly";
 import { SettingsPage, SettingsRow } from "@/features/settings/SettingsUI";
 import { projectForRoute } from "@/features/workspace/routing";
 import { useWorkspace } from "@/features/workspace/WorkspaceProvider";
@@ -26,6 +27,7 @@ import { radii, themedStyles, THEMES, useColors, useTheme } from "@/ui/theme";
 const CATEGORY_ICONS: Record<NotificationCategory, IconName> = {
   agentInput: "lock",
   agentFinished: "check",
+  pilotMessages: "chat",
 };
 
 export default function SettingsScreen() {
@@ -41,6 +43,21 @@ export default function SettingsScreen() {
   const notifications = useNotificationPreferences();
   const [openAfterStarting, setOpenAfterStarting] = useOpenSessionAfterStarting();
   const blocked = useNotificationsBlocked();
+  const [pilotOnly] = usePilotOnlyLayout();
+  const navigation = useNavigationContainerRef();
+  const switchLayout = useChangeLayout();
+  // The layouts go about the app differently, so settings closes, and the
+  // app starts again from the top in the new one under the loading cover:
+  // the list of Pilots, or back where the user last was.
+  // The switch shows the pick at once, as the sheet slides away with it.
+  const [picked, setPicked] = useState<boolean | null>(null);
+  const changeLayout = (next: boolean) => {
+    setPicked(next);
+    switchLayout(next, {
+      close: () => router.back(),
+      reset: () => navigation.reset({ index: 0, routes: [{ name: "index" }] }),
+    });
+  };
   // Both pages act on the project open under settings.
   const params = project ? { projectId: project.id } : {};
   const connection = useConnection();
@@ -171,14 +188,38 @@ export default function SettingsScreen() {
         Turn off to stay on the new session screen and start more sessions.
       </Text>
 
+      {MONOS_ENABLED ? (
+        <>
+          <Text style={styles.heading}>Layout</Text>
+          <View style={styles.card}>
+            <SettingsRow
+              icon="chat"
+              label="Pilots only"
+              onPress={() => changeLayout(!(picked ?? pilotOnly))}
+              accessory={
+                <Switch
+                  accessibilityLabel="Pilots only"
+                  value={picked ?? pilotOnly}
+                  onValueChange={changeLayout}
+                  trackColor={{ true: colors.accent }}
+                />
+              }
+            />
+          </View>
+          <Text style={styles.note}>
+            A list of your Pilots and their chats, with no sidebar or projects.
+          </Text>
+        </>
+      ) : null}
+
       <Text style={styles.heading}>Workspace</Text>
       <View style={styles.card}>
         <SettingsRow
           icon="folder"
-          label={PILOTS_ENABLED ? "Projects and pilots" : "Projects"}
+          label={MONOS_ENABLED ? "Projects and pilots" : "Projects"}
           value={String(
             (selected?.projectIds.length ?? 0) +
-              (PILOTS_ENABLED ? (selected?.pilotIds.length ?? 0) : 0),
+              (MONOS_ENABLED ? (selected?.pilotIds.length ?? 0) : 0),
           )}
           onPress={() => router.push("/settings/workspace")}
         />

@@ -25,14 +25,14 @@ import { LiquidView } from "@/ui/LiquidView";
 import { withAlpha, radii, themedStyles, useColors } from "@/ui/theme";
 import { useConnection } from "./ConnectionProvider";
 import { connectionStyleSheet } from "./ConnectScreen";
-import { PILOTS_ENABLED, type MobileSelection } from "./selection";
+import { MONOS_ENABLED, type MobileSelection } from "./selection";
 
 /** Room the blur takes past the edge it covers. */
 const FADE = 24;
 
 /**
  * The projects and pilots the phone shows, picked as cards; only projects
- * while pilots are off (see PILOTS_ENABLED). First run shows it
+ * while pilots are off (see MONOS_ENABLED). First run shows it
  * on its own; Settings shows it `editing`, in its sheet under a native header,
  * which the page scrolls under through iOS's automatic insets.
  */
@@ -57,7 +57,7 @@ export function WorkspacePicker({
   const [error, setError] = useState("");
   const [footer, setFooter] = useState(120);
   const background = editing ? colors.sheet : colors.background;
-  const pilots = PILOTS_ENABLED ? connection.catalog.pilots : [];
+  const pilots = MONOS_ENABLED ? connection.catalog.pilots : [];
   const toggle = (field: keyof MobileSelection, id: string) => {
     void Haptics.selectionAsync();
     setDraft((previous) => ({
@@ -106,7 +106,7 @@ export function WorkspacePicker({
           <>
             <Text style={styles.title}>Your mobile{"\n"}workspace</Text>
             <Text style={styles.subtitle}>
-              Pick the {PILOTS_ENABLED ? "projects and pilots" : "projects"} you
+              Pick the {MONOS_ENABLED ? "projects and pilots" : "projects"} you
               want here.{"\n"}You can change this anytime in Settings.
             </Text>
           </>

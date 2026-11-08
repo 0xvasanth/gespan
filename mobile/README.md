@@ -12,16 +12,20 @@ bun install --frozen-lockfile
 bun run ios
 ```
 
-`bun run ios` first builds the Rust connection library, then creates and installs the development build in an iOS simulator, then starts Metro. It requires Xcode and an installed iOS Simulator runtime (Xcode > Settings > Components). For Android, install Android Studio and start an emulator, install an Android NDK, set `ANDROID_NDK_HOME`, then use `bun run android`. Rust and rustup must be installed for both platforms. Use `bun run ios --device` or `bun run android --device` to build for a connected physical device. A physical iPhone needs Developer Mode enabled and a unique `ios.bundleIdentifier` in `app.json`.
+`bun run ios` first builds the Rust connection library, then creates and installs the development build in an iOS simulator, then starts Metro. It requires Xcode 27.1 or newer (including the iOS 27.1 SDK for hinge observation) and an installed iOS Simulator runtime (Xcode > Settings > Components). For Android, install Android Studio and start an emulator, install an Android NDK, set `ANDROID_NDK_HOME`, then use `bun run android`. Rust and rustup must be installed for both platforms. Use `bun run ios --device` or `bun run android --device` to build for a connected physical device. A physical iPhone needs Developer Mode enabled and a unique `ios.bundleIdentifier` in `app.json`.
 
 After the first build, use `bun run start` for everyday TypeScript and JavaScript changes. Press `i` or `a` in the Expo terminal to open the installed development build in a simulator or emulator. Rebuild after adding native modules, changing `app.json`, or upgrading Expo. Regenerate native folders with `bunx expo prebuild --clean` before rebuilding in those cases. The generated `ios/` and `android/` folders are ignored by Git.
 
 The routes are in `src/app/`:
 
-- `_layout.tsx` gates the workspace behind pairing and puts it inside `SimpleDrawer` (`src/ui/SimpleDrawer.tsx`), a gesture-driven side drawer. The drawer content is `src/features/workspace/WorkspaceDrawer.tsx`, which lists pilots, projects and recent sessions, with search.
+- `_layout.tsx` gates the workspace behind pairing and keeps one navigation stack inside `WorkspaceLayout`. A projects/recent-sessions sidebar appears when the container has at least 740 points of usable width; narrower containers keep compact navigation. This width-based behavior also applies to tablets and wide Android windows.
 - `project/[projectId]/index.tsx` is the new session screen for a project.
 - `project/[projectId]/session/[sessionId].tsx` is a session transcript.
 - `pilot/[pilotId].tsx` is a pilot's conversation.
+
+On iPhone Duo running iOS 27.1 or newer, folding in portrait to an opening of about 120° or less focuses the visible chat composer. A slight bend does not trigger it; opening past 150° rearms it. Dismissing the keyboard keeps it dismissed until you leave and re-enter that posture. Folding while the composer is unavailable or a sheet/menu is presented does not defer focus until later. Other devices keep manual keyboard focus. In Device Hub, disable **Device → Keyboard → Simulate Hardware Keyboard** to test the onscreen keyboard.
+
+The sidebar and pane resizing preserve the mounted conversation and draft. Native transcript scroll anchoring still needs simulator/device validation; mocked React tests establish component identity rather than native scroll offsets.
 
 ## Pair with desktop
 
@@ -43,7 +47,7 @@ The account card also shows the desktop footer's usage windows, percentages and 
 
 ## EAS development builds
 
-Run EAS commands from `mobile/`. The build input must include the root Cargo workspace and its path dependencies. The `eas-build-pre-install` hook installs the pinned Rust toolchain and builds the native transport before CocoaPods/Gradle runs.
+Run EAS commands from `mobile/`. The iOS development and production profiles pin the Xcode 27.1 build image in `eas.json`; the simulator profile inherits it. Changes to the native transcript or hinge observer require a new native build, rather than only an EAS Update. The build input must include the root Cargo workspace and its path dependencies. The `eas-build-pre-install` hook installs the pinned Rust toolchain and builds the native transport before CocoaPods/Gradle runs.
 
 The `development` profile builds for Android or physical iOS devices; `development-simulator` builds for the iOS simulator. EAS requires an Expo account, and physical iOS distribution requires Apple signing credentials.
 
@@ -55,8 +59,6 @@ bunx eas-cli@latest build --platform ios --profile development-simulator
 
 Install the completed development build, then run `bun run start` to connect it to Metro.
 
-The **Mobile development** GitHub workflow does the same from CI. Run it by hand to make a development build, and every push to `main` that changes `mobile/` publishes an update to the `development` and `development-simulator` channels, which installed development builds with a matching native fingerprint can open from the dev launcher. Store releases use the **Mobile release** workflow; see [Releases](../docs/building.md#releases). Both need the `EXPO_TOKEN` repository secret.
-
 ## Check the project
 
 ```bash
@@ -64,4 +66,4 @@ bunx tsc --noEmit
 bun run lint
 ```
 
-The desktop app at the repository root remains a separate Bun project.
+The desktop app at the repository root is a separate Bun project.

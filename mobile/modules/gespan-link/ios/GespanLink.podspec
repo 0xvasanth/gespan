@@ -5,9 +5,9 @@ Pod::Spec.new do |s|
   s.description = s.summary
   s.license = { :type => 'MIT' }
   s.author = 'Gespan'
-  s.homepage = 'https://github.com/0xvasanth/gespan'
+  s.homepage = 'https://usemono.dev'
   s.platforms = { :ios => '16.4' }
-  s.source = { :git => 'https://github.com/0xvasanth/gespan.git' }
+  s.source = { :git => 'https://github.com/hardbeat920/gespan.git' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
   s.source_files = '**/*.swift'

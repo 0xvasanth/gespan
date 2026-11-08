@@ -11,7 +11,6 @@ import {
   FlatList,
   ScrollView,
   Text,
-  useWindowDimensions,
   View,
 } from "react-native";
 import Animated, {
@@ -24,7 +23,9 @@ import Animated, {
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CODE_FONT } from "@/features/changes/diffTheme";
+import { useContentWidth } from "@/ui/ContentPane";
+
+import { MONO } from "@/features/changes/diffTheme";
 import { themedStyles, useScheme, withAlpha } from "@/ui/theme";
 
 /** A diff line's colours: its row, its gutter and its number and sign. */
@@ -156,7 +157,7 @@ function PannedList({
   resetKey,
 }: ListProps & { resetKey: string }) {
   const styles = useStyles();
-  const screen = useWindowDimensions().width;
+  const screen = useContentWidth();
   const gutterWidth = NUMBER_WIDTH + (signs ? SIGN_WIDTH : 0);
   // The code's width at its longest line, so every line scrolls as one page.
   const codeWidth = useMemo(
@@ -443,7 +444,7 @@ const useStyles = themedStyles((colors) => ({
     paddingRight: 8,
     textAlign: "right",
     color: withAlpha(colors.content, 0.35),
-    fontFamily: CODE_FONT,
+    fontFamily: MONO,
     fontSize: 11,
     lineHeight: ROW_HEIGHT,
   },
@@ -451,7 +452,7 @@ const useStyles = themedStyles((colors) => ({
     width: SIGN_WIDTH,
     textAlign: "center",
     color: "transparent",
-    fontFamily: CODE_FONT,
+    fontFamily: MONO,
     fontSize: 12,
     lineHeight: ROW_HEIGHT,
   },
@@ -459,7 +460,7 @@ const useStyles = themedStyles((colors) => ({
     paddingLeft: 4,
     paddingRight: 20,
     color: withAlpha(colors.content, 0.8),
-    fontFamily: CODE_FONT,
+    fontFamily: MONO,
     fontSize: 12,
     lineHeight: ROW_HEIGHT,
   },
@@ -480,7 +481,7 @@ const useStyles = themedStyles((colors) => ({
   },
   hunkText: {
     color: withAlpha(colors.content, 0.4),
-    fontFamily: CODE_FONT,
+    fontFamily: MONO,
     fontSize: 11,
   },
 }));

@@ -17,6 +17,8 @@ import type {
   Pilot,
   SessionSummary,
   Message,
+  QuestionPrompt,
+  UsageLimitState,
   Turn,
 } from "@/features/workspace/types";
 import {
@@ -34,6 +36,14 @@ export type Catalog = {
   pilots: Pilot[];
   sessions: SessionSummary[];
   addresses?: Desktop["addresses"];
+  /** The desktop answers Pilot profiles, editing, reset, delete and create;
+   *  the older desktop app sends no such flag. */
+  pilotTools?: boolean;
+  /** The desktop sends this phone push notifications once it registers;
+   *  the older desktop app doesn't, and the phone posts its own. */
+  push?: boolean;
+  /** The desktop reads and saves a Pilot's soul and memory for the phone. */
+  pilotFiles?: boolean;
 };
 const EMPTY: Catalog = { projects: [], pilots: [], sessions: [] };
 const PAIRING = "gespan.mobile.pairing";
@@ -320,6 +330,9 @@ export type Conversation = {
   /** Missing from desktops that predate turn-shaped transcripts. */
   turns?: Turn[];
   busy: boolean;
+  /** What the agent waits on the user to answer; absent from an older desktop. */
+  question?: QuestionPrompt | null;
+  usageLimit?: UsageLimitState | null;
 };
 
 /** What the desktop lists this phone as, e.g. "Nick's iPhone". */
@@ -327,4 +340,15 @@ function deviceName() {
   return (
     Constants.deviceName?.trim() || (Platform.OS === "ios" ? "iPhone" : "Phone")
   );
+}
+
+/** Whether the desktop can show and change a Pilot's profile, reset or delete
+ *  it, and make new ones; where it can't, the phone leaves them out. */
+export function usePilotTools() {
+  return useConnection().catalog.pilotTools === true;
+}
+
+/** Whether the desktop lets the phone edit a Pilot's soul and memory. */
+export function usePilotFiles() {
+  return useConnection().catalog.pilotFiles === true;
 }

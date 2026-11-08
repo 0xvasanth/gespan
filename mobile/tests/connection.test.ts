@@ -14,14 +14,15 @@ const catalog = {
   ],
 };
 describe("mobile workspace choices", () => {
-  it("keeps project selection isolated while pilot support is disabled", () => {
+  it("shows the picked projects and pilots, with their sessions", () => {
     const selected = selectedWorkspace(catalog, {
       projectIds: ["a"],
       pilotIds: ["m"],
     });
     expect(selected.projects).toEqual([{ id: "a" }]);
-    expect(selected.pilots).toEqual([]);
-    expect(selected.sessions.map((session) => session.id)).toEqual(["s1"]);
+    expect(selected.pilots).toEqual([{ id: "m" }]);
+    // A pilot's session counts even in a project left out.
+    expect(selected.sessions.map((session) => session.id)).toEqual(["s1", "s3"]);
   });
   it("preserves an explicit empty choice on restore", () => {
     const restored = normalizeSelection(
