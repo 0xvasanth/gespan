@@ -838,7 +838,7 @@ impl Shell {
                 }))
             }))
             .child(
-                icon_button("rail-global-search", "Search", "search")
+                icon_button_tinted("rail-global-search", "Search", "search", nav_tint("Search"))
                     .size(px(32.))
                     .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
                     .on_click(cx.listener(|this, _, w, cx| {
@@ -875,7 +875,7 @@ impl Shell {
                     } else {
                         view.icon()
                     };
-                    icon_button(
+                    icon_button_tinted(
                         match view {
                             workspace::AppView::Inbox => "rail-inbox",
                             workspace::AppView::Notes => "rail-notes",
@@ -885,6 +885,7 @@ impl Shell {
                         },
                         view.label(),
                         glyph,
+                        nav_tint(view.label()),
                     )
                     .debug_selector(move || format!("rail-navigation-{}", view.label()))
                     .size(px(32.))

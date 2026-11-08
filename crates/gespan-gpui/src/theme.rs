@@ -448,14 +448,17 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
         .text_color(content(0.5))
         .flex_shrink_0()
 }
-/// The colour a sidebar navigation row tints its icon, so Search, Automations
-/// and Board read at a glance instead of in plain ink. Light themes take a
-/// deeper shade to keep the glyph's contrast on a white rail.
+/// The colour a navigation icon takes wherever it shows (sidebar rows, the
+/// rail and title tabs), so each page reads at a glance instead of in plain
+/// ink. Light themes take a deeper shade to keep the glyph's contrast on white.
 pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
     let (dark, light) = match label {
+        "New" => (0x3DD68C, 0x15874F),
+        "Inbox" => (0x8B95FF, 0x4F5BD5),
+        "Notes" => (0xFF7EA8, 0xCC2F66),
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
-        "Board" => (0xB48CFF, 0x7A4BE0),
+        "Board" => (0xD08CFF, 0xA13FD6),
         _ => return None,
     };
     Some(rgb(if is_light() { light } else { dark }).into())
@@ -464,6 +467,11 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
 /// that brightens when the row is selected.
 pub(crate) fn nav_icon_color(label: &str, selected: bool) -> Hsla {
     nav_tint(label).unwrap_or_else(|| content(if selected { 0.7 } else { 0.35 }))
+}
+/// A page's mark on a neutral title-tab tile: its navigation tint, so the tab
+/// matches its sidebar row, else the tile's usual ink.
+pub(crate) fn nav_tile_ink(label: &str) -> Hsla {
+    nav_tint(label).unwrap_or_else(crate::tab_tile::tile_ink)
 }
 /// A provider's brand fill for its icon tile, top and bottom of a gentle
 /// gradient. `None` for a multicolour logo that keeps a light tile.
@@ -927,31 +935,58 @@ mod nav_tint_tests {
         configure(&preferences, false);
     }
 
+    /// Every row the sidebar can list, plus Search. Flows is hidden from
+    /// the UI and keeps plain ink.
+    const TINTED: [&str; 6] = ["New", "Inbox", "Notes", "Search", "Automations", "Board"];
+
     #[test]
-    fn search_automations_and_board_each_get_their_own_colour() {
+    fn every_navigation_row_gets_its_own_colour() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
         for theme in ["dark", "light"] {
             with_theme(theme);
-            let tints: Vec<Hsla> = ["Search", "Automations", "Board"]
+            let tints: Vec<Hsla> = TINTED
                 .iter()
                 .map(|label| nav_tint(label).expect("tinted row"))
                 .collect();
             for (i, a) in tints.iter().enumerate() {
-                assert!(a.s > 0.5, "{theme}: tint {i} is saturated, not grey ink");
-                assert_eq!(a.a, 1., "{theme}: tint {i} is opaque");
-                for b in &tints[i + 1..] {
-                    assert_ne!(a, b, "{theme}: tints differ from each other");
+                let label = TINTED[i];
+                assert!(a.s > 0.5, "{theme}: {label} is saturated, not grey ink");
+                assert_eq!(a.a, 1., "{theme}: {label} is opaque");
+                for (j, b) in tints.iter().enumerate().skip(i + 1) {
+                    // Hues far enough apart that no two rows read as one colour.
+                    let gap = (a.h - b.h).abs().min(1. - (a.h - b.h).abs());
+                    assert!(gap > 0.04, "{theme}: {label} and {} share a hue", TINTED[j]);
                 }
                 // Selection and hover never wash the tint back to ink.
-                assert_eq!(
-                    nav_icon_color(["Search", "Automations", "Board"][i], true),
-                    *a
-                );
-                assert_eq!(
-                    nav_icon_color(["Search", "Automations", "Board"][i], false),
-                    *a
-                );
+                assert_eq!(nav_icon_color(label, true), *a);
+                assert_eq!(nav_icon_color(label, false), *a);
             }
+        }
+    }
+
+    #[test]
+    fn title_tabs_mark_each_page_in_its_sidebar_colour() {
+        use crate::workspace::AppView;
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        for theme in ["dark", "light"] {
+            with_theme(theme);
+            // Keyed by the label the tab draws, so a renamed page can't
+            // quietly fall back to plain ink.
+            for view in [
+                AppView::Inbox,
+                AppView::Notes,
+                AppView::Automations,
+                AppView::Board,
+            ] {
+                let tint = nav_tint(view.label()).expect("page has a tint");
+                assert_eq!(nav_tile_ink(view.label()), tint, "{theme}: {view:?}");
+            }
+            assert_eq!(nav_tile_ink("Search"), nav_tint("Search").unwrap());
+            // Pages without a tint keep the tile's own ink.
+            assert_eq!(
+                nav_tile_ink(AppView::Flows.label()),
+                crate::tab_tile::tile_ink()
+            );
         }
     }
 
@@ -959,7 +994,7 @@ mod nav_tint_tests {
     fn other_rows_keep_content_ink_that_brightens_when_selected() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
         with_theme("dark");
-        for label in ["New", "Inbox", "Notes", "Flows", "search", ""] {
+        for label in ["Flows", "search", "inbox", ""] {
             assert_eq!(nav_tint(label), None, "{label:?} stays untinted");
             assert_eq!(nav_icon_color(label, false), content(0.35));
             assert_eq!(nav_icon_color(label, true), content(0.7));
@@ -969,7 +1004,7 @@ mod nav_tint_tests {
     #[test]
     fn light_themes_take_a_deeper_shade_than_dark_ones() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
-        for label in ["Search", "Automations", "Board"] {
+        for label in TINTED {
             with_theme("dark");
             let dark = nav_tint(label).unwrap();
             with_theme("light");
