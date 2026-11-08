@@ -761,8 +761,10 @@ fn fake_ssh(dir: &Path, uname: &str) -> (PathBuf, PathBuf) {
     (path, log)
 }
 
+#[cfg(unix)]
 const BUILD: &[u8] = b"pretend herdr build";
 
+#[cfg(unix)]
 fn test_assets() -> [RemoteAsset; 1] {
     [RemoteAsset {
         name: "linux-aarch64",
