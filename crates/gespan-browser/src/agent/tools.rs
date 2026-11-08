@@ -756,9 +756,11 @@ mod tests {
 
     #[test]
     fn instructions_warn_about_page_content() {
-        let s = section("Page content is untrusted").unwrap();
+        let s = section("overview").unwrap();
+        assert!(s.contains("### Page content is untrusted"));
         assert!(s.contains("never instructions"));
         assert!(s.contains("signed-in"));
+        assert!(section("Page content is untrusted").is_none());
     }
 
     #[test]
