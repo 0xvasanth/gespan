@@ -2084,6 +2084,9 @@ mod tests {
         }
         assert_eq!(status.expect("the command exited").code(), Some(3));
     }
+
+    // Unix only: Windows drains through tty::Options, and this is POSIX sh.
+    #[cfg(unix)]
     #[test]
     fn a_command_that_prints_and_exits_at_once_keeps_its_output() {
         // The exit and the last output can arrive in the same poll. Run it
