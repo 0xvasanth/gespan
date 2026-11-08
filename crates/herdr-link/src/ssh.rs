@@ -962,8 +962,26 @@ esac
         // A tiny shell script stands in for `ssh`.
         fn fake_ssh(dir: &Path, body: &str) -> SshBridge {
             let path = dir.join("fake-ssh");
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\n{body}\n"),
+            )
+            .unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // A test spawning on another thread can inherit the write handle
+            // until its child execs, and running the script then fails with
+            // "Text file busy". Once one run gets through, no copy is left.
+            for _ in 0..100 {
+                match std::process::Command::new(&path).arg("--probe").status() {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    other => {
+                        other.unwrap();
+                        break;
+                    }
+                }
+            }
             let mut b = SshBridge::for_machine(&machine());
             b.control_dir = Some(dir.join("ctl"));
             b.ssh = path;

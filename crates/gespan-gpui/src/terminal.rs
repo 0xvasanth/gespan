@@ -194,7 +194,9 @@ fn spawn(
     let options = tty::Options {
         shell: Some(tty::Shell::new(program, args)),
         working_directory: Some(workdir),
-        drain_on_exit: false,
+        // Read what the PTY still holds when the process exits: epoll can
+        // report the exit before the last output, which would drop it.
+        drain_on_exit: true,
         env,
         #[cfg(target_os = "windows")]
         escape_args: true,
