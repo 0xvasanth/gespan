@@ -181,6 +181,41 @@ fn pilot_mic_dictates_into_the_pilot_field(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn pilot_mic_glows_only_while_it_records(cx: &mut TestAppContext) {
+    let speech = Speech::new(true, cx);
+    let s = setup(cx);
+    let (mut visual, chat) = pilot_chat(&s, cx);
+    let visual = &mut visual;
+    // Opening the Pilot never starts the mic or shows it recording.
+    assert_eq!(state(&chat, visual), DictationState::Idle);
+    assert!(speech.take().is_empty(), "nothing asked the mic to start");
+    assert!(bounds(visual, "composer-mic-recording").is_none());
+
+    click(visual, "composer-mic");
+    // Starting: red, but nothing heard yet, so no pulse.
+    assert_eq!(state(&chat, visual), DictationState::Starting);
+    assert!(bounds(visual, "composer-mic-recording").is_none());
+    speech.emit(Event::Listening, visual);
+    let mic = bounds(visual, "composer-mic").unwrap();
+    let glow = bounds(visual, "composer-mic-recording").expect("a live mic glows");
+    // The glow fills the button just inside its red ring.
+    assert!(mic.contains(&glow.origin), "{glow:?} inside {mic:?}");
+    assert_eq!(glow.center(), mic.center());
+    assert!(
+        glow.size.width >= mic.size.width - px(2.),
+        "{glow:?} fills {mic:?}"
+    );
+    assert_eq!(mic.size, size(px(26.), px(26.)), "recording keeps its size");
+
+    click(visual, "composer-mic");
+    assert_eq!(state(&chat, visual), DictationState::Finishing);
+    assert!(bounds(visual, "composer-mic-recording").is_none());
+    speech.emit(final_text("done"), visual);
+    assert_eq!(state(&chat, visual), DictationState::Idle);
+    assert!(bounds(visual, "composer-mic-recording").is_none());
+}
+
+#[gpui::test]
 fn pilot_shortcut_tap_toggles_and_hold_stops(cx: &mut TestAppContext) {
     let speech = Speech::new(true, cx);
     let s = setup(cx);

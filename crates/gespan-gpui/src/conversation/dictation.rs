@@ -1132,14 +1132,70 @@ pub(crate) fn bar(
     }
 }
 
-/// The composer's mic button: toggles on click.
+/// The red a recording mic takes, so it reads as live rather than as a
+/// selected tool. Light themes take a deeper shade for contrast on white.
+pub(crate) fn recording_color() -> gpui::Hsla {
+    gpui::rgb(if is_light() { 0xD92D3A } else { 0xFF5A60 }).into()
+}
+
+/// How the mic sits among its neighbours: a filled pill beside the session
+/// composer's other pills, or a bare icon beside the Pilot composer's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MicStyle {
+    Pill,
+    Bare,
+}
+
+/// One pulse of the recording glow: how long it takes to fade out and back.
+const RECORDING_PULSE: Duration = Duration::from_millis(1400);
+
+/// What the mic button paints for one dictation state.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct MicLook {
+    /// The button's resting fill; `None` leaves it bare until hovered.
+    pub fill: Option<gpui::Hsla>,
+    /// A ring around the button, drawn only while recording.
+    pub ring: Option<gpui::Hsla>,
+    pub ink: gpui::Hsla,
+    /// Whether the glow behind the mic breathes: only while it hears you.
+    pub pulse: bool,
+}
+
+impl MicLook {
+    pub(crate) fn of(style: MicStyle, state: &DictationState) -> Self {
+        let red = recording_color();
+        let recording = matches!(
+            state,
+            DictationState::Starting | DictationState::Listening | DictationState::Finishing
+        );
+        if recording {
+            return Self {
+                fill: Some(red.opacity(0.16)),
+                ring: Some(red.opacity(0.45)),
+                ink: red,
+                pulse: *state == DictationState::Listening,
+            };
+        }
+        Self {
+            fill: (style == MicStyle::Pill).then(|| content(0.1)),
+            ring: None,
+            ink: content(0.5),
+            pulse: false,
+        }
+    }
+}
+
+/// The composer's mic button: toggles on click. Idle it matches the tools
+/// around it; while it records it turns red, and pulses while listening.
 pub(crate) fn mic_button(
     dictation: &Entity<Dictation>,
     input: &Entity<Input>,
+    style: MicStyle,
     cx: &App,
 ) -> AnyElement {
     let d = dictation.read(cx);
     let dictating = d.dictating();
+    let look = MicLook::of(style, &d.state);
     let disabled = d.disabled(cx) && !dictating;
     let shortcut = cx.try_global::<crate::settings::Preferences>().map_or_else(
         || crate::settings::command_shortcut(&Default::default(), DICTATE_COMMAND),
@@ -1152,19 +1208,65 @@ pub(crate) fn mic_button(
     } else {
         "Dictate".into()
     };
+    let red = recording_color();
+    // A soft glow behind the mic that breathes while it hears you; held still
+    // when the system asks for reduced motion.
+    let glow = look.pulse.then(|| {
+        let glow = div()
+            .debug_selector(|| "composer-mic-recording".into())
+            .absolute()
+            .inset_0()
+            .rounded_md()
+            .bg(red.opacity(0.3));
+        if cx.reduce_motion() {
+            glow.opacity(0.5).into_any_element()
+        } else {
+            gpui::AnimationExt::with_animation(
+                glow,
+                "composer-mic-pulse",
+                gpui::Animation::new(RECORDING_PULSE)
+                    .repeat()
+                    .with_easing(gpui::pulsating_between(0.1, 0.8)),
+                |d, t| d.opacity(t),
+            )
+            .into_any_element()
+        }
+    });
     let dictation = dictation.clone();
     let input = input.clone();
-    super::tool_pill("composer-mic", "Dictate")
+    let hover = if dictating {
+        red.opacity(0.24)
+    } else if look.fill.is_some() {
+        content(0.15)
+    } else {
+        content(0.08)
+    };
+    div()
+        .id("composer-mic")
+        .role(Role::Button)
+        .group("composer-mic")
         .debug_selector(|| "composer-mic".into())
         .aria_label(label)
-        .w(px(26.))
+        .cursor_pointer()
+        .relative()
+        .flex_shrink_0()
+        .size(px(26.))
+        .rounded_md()
+        .flex()
+        .items_center()
         .justify_center()
-        .when(dictating, |d| d.bg(accent_color().opacity(0.25)))
+        .bg(look.fill.unwrap_or(gpui::transparent_black()))
+        .hover(move |s| s.bg(hover))
+        .when_some(look.ring, |d, ring| d.border_1().border_color(ring))
         .when(disabled, |d| d.opacity(0.4).cursor_default())
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(glow)
         .child(
             icon("mic-01", 14.)
-                .text_color(if dictating { content(1.) } else { content(0.5) })
-                .group_hover("composer-mic", |s| s.text_color(content(1.))),
+                .text_color(look.ink)
+                .when(!dictating, |i| {
+                    i.group_hover("composer-mic", |s| s.text_color(content(1.)))
+                }),
         )
         .on_click(move |_, window, cx| {
             if disabled {
