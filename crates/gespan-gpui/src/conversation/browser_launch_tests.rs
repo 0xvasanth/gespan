@@ -221,3 +221,124 @@ fn browser_marks_survive_a_hold_but_never_a_restore_from_disk(cx: &mut TestAppCo
         })
         .unwrap();
 }
+
+/// A browser module of the test's own with the switch on, "Always on", and
+/// nothing to connect to.
+fn browser_on(dir: &Path, cx: &mut TestAppContext) -> Arc<gespan_core::browser::BrowserHost> {
+    use gespan_core::browser::{AccessMode, BrowserChoice, BrowserSettings};
+    let host = gespan_core::browser::open(dir).unwrap();
+    let nothing = dir.join("no-browser");
+    std::fs::create_dir_all(&nothing).unwrap();
+    host.set_settings(BrowserSettings {
+        browser: BrowserChoice::UserDataDir {
+            path: nothing.display().to_string(),
+        },
+        access: AccessMode::Always,
+        ..host.state().settings
+    });
+    host.set_toggle(true);
+    cx.update(|cx| {
+        crate::browser::install_host(host.clone(), cx);
+    });
+    host
+}
+
+/// The user's turn in `view` carries the browser, as `begin_turn` leaves it.
+fn carry_browser(host: &gespan_core::browser::BrowserHost, view: &Conversation) {
+    let key = gespan_core::browser::session_key(view.summary.id);
+    host.set_grant(&key, gespan_core::browser::WINDOW, true);
+    host.turn_started(&key, gespan_core::browser::WINDOW, "/repo", None);
+}
+
+#[gpui::test]
+fn browser_turns_take_steers_only_from_the_user(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let host = browser_on(dir.path(), cx);
+    cx.update(|cx| {
+        cx.set_global(crate::settings::Preferences {
+            follow_up: "steer".into(),
+            ..Default::default()
+        })
+    });
+    let (controls, received) = std::sync::mpsc::channel();
+    let steered = |received: &std::sync::mpsc::Receiver<Control>| {
+        received
+            .try_iter()
+            .filter_map(|control| match control.decision {
+                Decision::Steer(message) => Some(message.text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    window
+        .update(cx, |view, _, cx| {
+            view.summary.provider = "codex".into();
+            view.busy = true;
+            view.controls = Some(controls);
+            view.follow_ups.ready = true;
+            carry_browser(&host, view);
+            assert!(crate::browser::turn_carries(cx, view.summary.id));
+            // An automation or Flow sends into the busy thread.
+            view.quick_submit("Nightly triage".into(), view.settings.clone(), cx);
+            let queued = &view.follow_ups.state.messages[0];
+            assert_eq!(queued.text, "Nightly triage");
+            assert!(!queued.typed && !queued.steer, "{queued:?}");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(steered(&received).is_empty(), "the app's message waits");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.follow_ups.state.messages.len(), 1);
+            // A queue restored from disk keeps its steer flag but loses the
+            // typed mark: it still waits.
+            let saved = serde_json::to_value(view.message(
+                "Restored from disk".into(),
+                Vec::new(),
+                None,
+                cx,
+            ))
+            .unwrap();
+            let mut restored: gespan_core::follow_up::Message =
+                serde_json::from_value(saved).unwrap();
+            restored.steer = true;
+            assert!(!restored.typed);
+            view.follow_ups.state.messages.push(restored);
+            view.pump_follow_ups(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(steered(&received).is_empty(), "the restored message waits");
+    window
+        .update(cx, |view, _, cx| {
+            // The user's own message steers as before, past the waiting ones.
+            view.input
+                .update(cx, |input, cx| input.set_text("Also check CI".into(), cx));
+            view.send_typed(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(steered(&received), ["Also check CI"]);
+    window
+        .update(cx, |view, _, cx| {
+            view.follow_up_delivered(&view.follow_ups.sending.clone().unwrap(), cx);
+            let waiting: Vec<_> = view
+                .follow_ups
+                .state
+                .messages
+                .iter()
+                .map(|message| message.text.clone())
+                .collect();
+            assert_eq!(waiting, ["Nightly triage", "Restored from disk"]);
+            // Once the turn no longer carries the browser, the app's
+            // steerable message joins it as before.
+            host.turn_finished(&gespan_core::browser::session_key(view.summary.id));
+            assert!(!crate::browser::turn_carries(cx, view.summary.id));
+            view.pump_follow_ups(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(steered(&received), ["Restored from disk"]);
+    host.set_toggle(false);
+}

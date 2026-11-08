@@ -124,6 +124,13 @@ impl Conversation {
         (prefers_steer != invert || !self.background.tasks.is_empty())
             && Kind::from_id(&self.summary.provider).can_steer()
     }
+    /// Whether `message` must wait for its own turn instead of steering the
+    /// one running: a message the user did not type (an automation's or a
+    /// Flow's send, a queue restored from disk) never joins a turn that
+    /// carries the browser, which only the user's own messages may drive.
+    pub(super) fn app_message_held_back(&self, message: &Message, cx: &gpui::App) -> bool {
+        !message.typed && self.busy && crate::browser::turn_carries(cx, self.summary.id)
+    }
     /// `invert` flips the follow-up preference for this message (Cmd+Enter);
     /// `typed`: the user sent it, and it launches as theirs.
     pub(super) fn enqueue_follow_up_inverted(
@@ -140,7 +147,8 @@ impl Conversation {
         message.steer = message.can_steer()
             && self.steers_follow_up(invert, cx)
             // Held messages wait for Resume instead of joining a settling turn.
-            && !crate::hold::active(cx);
+            && !crate::hold::active(cx)
+            && !self.app_message_held_back(&message, cx);
         if invert && self.busy && message.steer {
             self.follow_ups.requested = Some(message.id.clone());
         }
@@ -336,7 +344,13 @@ impl Conversation {
             .and_then(|id| self.follow_ups.state.messages.iter().find(|m| &m.id == id))
             .or_else(|| {
                 self.busy
-                    .then(|| self.follow_ups.state.messages.iter().find(|m| m.steer))
+                    .then(|| {
+                        self.follow_ups
+                            .state
+                            .messages
+                            .iter()
+                            .find(|m| m.steer && !self.app_message_held_back(m, cx))
+                    })
                     .flatten()
             })
             .or_else(|| self.follow_ups.state.messages.first());
@@ -362,6 +376,7 @@ impl Conversation {
                 return;
             }
             if !message.steer
+                || self.app_message_held_back(&message, cx)
                 || !Kind::from_id(&self.summary.provider).can_steer()
                 || !message.can_steer()
                 || !self.follow_ups.ready
