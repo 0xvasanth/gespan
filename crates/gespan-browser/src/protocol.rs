@@ -121,6 +121,12 @@ impl Outcome {
     }
 }
 
+/// Largest answer to a single command the link hands to the semantic layer
+/// (32 MiB). Below the socket's own limit (`link::MAX_MESSAGE_BYTES`, 64 MiB),
+/// whose breach tears the whole connection down: a bigger answer is refused
+/// for its one request, and every other session keeps its link.
+pub const MAX_REPLY_BYTES: usize = 32 * 1024 * 1024;
+
 /// Closed set of reasons: permission and state, connection states, element
 /// and page failures, snapshot and screenshot failures. A new reason needs
 /// its class, message and name below and a test in `protocol::tests`.
@@ -166,13 +172,14 @@ pub enum Reason {
     SnapshotTimeout,
     ScreenshotUnavailableBackground,
     UnsupportedFrame,
+    TooLarge,
     // unknown
     CdpTimeout,
     LinkDown,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 38] = [
+    pub const ALL: [Reason; 39] = [
         Reason::Off,
         Reason::NotGranted,
         Reason::Revoked,
@@ -209,6 +216,7 @@ impl Reason {
         Reason::SnapshotTimeout,
         Reason::ScreenshotUnavailableBackground,
         Reason::UnsupportedFrame,
+        Reason::TooLarge,
         Reason::CdpTimeout,
         Reason::LinkDown,
     ];
@@ -252,7 +260,8 @@ impl Reason {
             | NoDialog
             | SnapshotTimeout
             | ScreenshotUnavailableBackground
-            | UnsupportedFrame => Outcome::Failed,
+            | UnsupportedFrame
+            | TooLarge => Outcome::Failed,
             CdpTimeout | LinkDown => Outcome::Unknown,
         }
     }
@@ -321,6 +330,7 @@ impl Reason {
             SnapshotTimeout => "The snapshot took too long; use scope to narrow it.",
             ScreenshotUnavailableBackground => "The background tab did not render a screenshot; take a snapshot instead.",
             UnsupportedFrame => "This element lives in a frame the module cannot act in.",
+            TooLarge => "The browser's answer was too large to return; screenshot a smaller region or element (ref), use a smaller viewport, or read less of the page.",
             CdpTimeout => "Browser did not answer in time; take a snapshot before retrying, the action may have happened.",
             LinkDown => "Connection to the browser dropped during the action; take a snapshot before retrying.",
         }
@@ -365,6 +375,7 @@ impl Reason {
             SnapshotTimeout => "snapshot_timeout",
             ScreenshotUnavailableBackground => "screenshot_unavailable_background",
             UnsupportedFrame => "unsupported_frame",
+            TooLarge => "too_large",
             CdpTimeout => "cdp_timeout",
             LinkDown => "link_down",
         }

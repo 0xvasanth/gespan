@@ -35,7 +35,7 @@ use tungstenite::{Message, WebSocket};
 
 use super::diagnostics::Diagnostics;
 use super::policy::{GateError, Policy, RequestCtx};
-use super::protocol::{ActionResult, Outcome, Reason};
+use super::protocol::{ActionResult, Outcome, Reason, MAX_REPLY_BYTES};
 
 /// Largest CDP message we accept (screenshots and AX trees)
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
@@ -314,6 +314,8 @@ pub enum CdpError {
     NotConnected,
     /// No answer within the command timeout; the command may have run.
     Timeout,
+    /// The answer exceeded [`MAX_REPLY_BYTES`] and was dropped; the link is fine.
+    TooLarge,
     /// Socket closed while the command was pending (`sent`) or before it was written.
     LinkDown {
         sent: bool,
@@ -335,6 +337,7 @@ impl CdpError {
             CdpError::NotAllowed => Reason::InvalidRequest,
             CdpError::NotConnected => Reason::BrowserDisconnected,
             CdpError::Timeout => Reason::CdpTimeout,
+            CdpError::TooLarge => Reason::TooLarge,
             CdpError::LinkDown { .. } => Reason::LinkDown,
             CdpError::Protocol { .. } => Reason::InvalidRequest,
         }
@@ -1287,6 +1290,7 @@ impl Loop {
                         code: error.code,
                         message: error.message,
                     }),
+                    None if text.len() > MAX_REPLY_BYTES => Err(CdpError::TooLarge),
                     None => Ok(frame.result.map_or_else(null_reply, ToOwned::to_owned)),
                 };
                 let _ = pending.reply.send(result);

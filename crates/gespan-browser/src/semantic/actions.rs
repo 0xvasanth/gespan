@@ -26,8 +26,17 @@ const POLL: Duration = Duration::from_millis(100);
 const MAX_SLEEP: Duration = Duration::from_secs(10);
 /// `read` slice size (up to 50 KB per call).
 const READ_LIMIT: u64 = 50_000;
-/// Tallest full-page screenshot, in CSS pixels.
-const MAX_FULL_PAGE_HEIGHT: f64 = 16_384.0;
+/// Longest side a screenshot is rendered at, in pixels. Larger pages are
+/// scaled down to fit, not cropped.
+pub const MAX_SCREENSHOT_SIDE: u32 = 8000;
+
+/// Capture scale that keeps both sides of a `width` x `height` clip within
+/// [`MAX_SCREENSHOT_SIDE`]. Rounded down so the product never exceeds it.
+fn screenshot_scale(width: f64, height: f64) -> f64 {
+    let cap = f64::from(MAX_SCREENSHOT_SIDE);
+    let scale = (cap / width).min(cap / height).min(1.0);
+    (scale * 1_000_000.0).floor() / 1_000_000.0
+}
 
 fn tab_error(error: TabError) -> Fail {
     match error {
@@ -759,7 +768,8 @@ pub fn screenshot(run: &Run<'_>, p: ScreenshotParams) -> Result<ActionResult, Fa
         if width >= 1.0 && height >= 1.0 {
             params["captureBeyondViewport"] = json!(true);
             params["clip"] = json!({
-                "x": 0, "y": 0, "width": width, "height": height.min(MAX_FULL_PAGE_HEIGHT), "scale": 1,
+                "x": 0, "y": 0, "width": width, "height": height,
+                "scale": screenshot_scale(width, height),
             });
         }
     }

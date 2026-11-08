@@ -13,7 +13,7 @@ use super::super::link::{CdpSessionId, Link, TargetId};
 use super::super::policy::{FrameSession, Lease, Policy, PolicyState};
 use super::super::protocol::{
     ActionKind, ActionResult, BrowserSettings, CommonInput, DialogType, LoadState, Outcome, Reason,
-    TabId, TabState,
+    TabId, TabState, MAX_REPLY_BYTES,
 };
 use super::super::targets::{self, TabHandle};
 use super::super::testing::{default_response, Event, FakeCdp, Received, Response};
@@ -56,6 +56,10 @@ struct Model {
     /// The iframe is a same-process frame (`SUB1`) at (100, 200) instead of
     /// an OOPIF.
     same_process: bool,
+    /// Page content size (CSS px) `Page.getLayoutMetrics` reports.
+    content: (f64, f64),
+    /// `Page.captureScreenshot` answers with a frame this many bytes long.
+    shot_bytes: Option<usize>,
 }
 
 impl Default for Model {
@@ -75,6 +79,8 @@ impl Default for Model {
             status: None,
             checked: None,
             same_process: false,
+            content: (800.0, 3000.0),
+            shot_bytes: None,
         }
     }
 }
@@ -252,7 +258,7 @@ fn respond(
         }})),
         "Page.getLayoutMetrics" => Response::Result(json!({
             "cssLayoutViewport": { "pageX": 0, "pageY": 50, "clientWidth": 800, "clientHeight": 600 },
-            "cssContentSize": { "x": 0, "y": 0, "width": 800, "height": 3000 },
+            "cssContentSize": { "x": 0, "y": 0, "width": model.content.0, "height": model.content.1 },
         })),
         "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" && model.hold_release => {
             Response::Hold
@@ -264,7 +270,10 @@ fn respond(
             let events = std::mem::take(&mut model.on_release);
             Response::ResultThen(json!({}), events)
         }
-        "Page.captureScreenshot" => Response::Result(json!({ "data": "iVBORw0KGgoAAAANSUhEUg==" })),
+        "Page.captureScreenshot" => match model.shot_bytes {
+            Some(n) => Response::Result(json!({ "data": "A".repeat(n) })),
+            None => Response::Result(json!({ "data": "iVBORw0KGgoAAAANSUhEUg==" })),
+        },
         "Page.getNavigationHistory" => Response::Result(json!({
             "currentIndex": model.history_index,
             "entries": [
@@ -1596,4 +1605,79 @@ fn a_text_ref_focuses_the_element_that_takes_focus_for_it() {
     let focus = log.iter().find(|r| r.method == "DOM.focus").unwrap();
     assert_eq!(focus.params["backendNodeId"], json!(12));
     assert!(!log.iter().any(|r| r.method == "DOM.describeNode"));
+}
+
+/// Sides of the `Page.captureScreenshot` the full-page action sent, as the
+/// browser would render them (clip size times scale).
+fn full_page_capture_sides(width: f64, height: f64) -> (f64, f64, ActionResult) {
+    let h = Harness::new();
+    h.model.lock().unwrap().content = (width, height);
+    let mark = h.mark();
+    let shot = h.act(ActionKind::Screenshot, json!({ "full_page": true }));
+    let capture = h
+        .since(mark)
+        .into_iter()
+        .find(|r| r.method == "Page.captureScreenshot")
+        .expect("a capture was sent");
+    let clip = &capture.params["clip"];
+    let scale = clip["scale"].as_f64().unwrap();
+    (
+        clip["width"].as_f64().unwrap() * scale,
+        clip["height"].as_f64().unwrap() * scale,
+        shot,
+    )
+}
+
+#[test]
+fn full_page_screenshot_scales_to_cap() {
+    let (w, hgt, shot) = full_page_capture_sides(1280.0, 30_000.0);
+    assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+    assert!(w <= 8000.0 && hgt <= 8000.0, "{w}x{hgt}");
+    // The tall side is the one that sets the scale, and nothing is cropped.
+    assert!(hgt > 7990.0, "scaled no more than needed: {hgt}");
+}
+
+#[test]
+fn wide_page_screenshot_is_capped() {
+    let (w, hgt, shot) = full_page_capture_sides(12_000.0, 900.0);
+    assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+    assert!(w <= 8000.0 && hgt <= 8000.0, "{w}x{hgt}");
+    assert!(w > 7990.0, "scaled no more than needed: {w}");
+}
+
+#[test]
+fn page_under_the_cap_keeps_scale_one() {
+    let h = Harness::new();
+    h.model.lock().unwrap().content = (1280.0, 8000.0);
+    let mark = h.mark();
+    let shot = h.act(ActionKind::Screenshot, json!({ "full_page": true }));
+    assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+    let capture = h
+        .since(mark)
+        .into_iter()
+        .find(|r| r.method == "Page.captureScreenshot")
+        .unwrap();
+    assert_eq!(capture.params["clip"]["scale"], json!(1.0));
+    assert_eq!(capture.params["clip"]["height"], json!(8000.0));
+}
+
+#[test]
+fn oversized_reply_is_an_error_not_a_dropped_link() {
+    let h = Harness::new();
+    h.model.lock().unwrap().shot_bytes = Some(MAX_REPLY_BYTES + 1024);
+    let big = h.act(ActionKind::Screenshot, json!({}));
+    assert_eq!(big.reason, Some(Reason::TooLarge), "{big:?}");
+    assert_eq!(big.outcome, Outcome::Failed);
+    // The link survived: the same tab answers the next action.
+    h.model.lock().unwrap().shot_bytes = None;
+    let small = h.act(ActionKind::Screenshot, json!({}));
+    assert_eq!(small.outcome, Outcome::Done, "{small:?}");
+}
+
+#[test]
+fn reply_just_under_the_limit_still_arrives() {
+    let h = Harness::new();
+    h.model.lock().unwrap().shot_bytes = Some(MAX_REPLY_BYTES - 1024);
+    let shot = h.act(ActionKind::Screenshot, json!({}));
+    assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
 }
