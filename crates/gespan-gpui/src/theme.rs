@@ -44,14 +44,59 @@ struct Tokens {
     ink: Hsla,
     accent: Hsla,
     user_accent: Option<Hsla>,
-    shell: Hsla,
-    pane: Hsla,
-    inset_pane: Hsla,
+    /// Each layout's planes, kept side by side so windows in different
+    /// layouts read their own without changing what the other paints.
+    classic: Surfaces,
+    inset: Surfaces,
     syntax: [u32; 11],
     diff: [u32; 4],
     diff_strong: bool,
 }
+/// A layout's planes: the shell around content, a pane behind sessions and
+/// editors, and the inset layout's content card.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Surfaces {
+    shell: Hsla,
+    pane: Hsla,
+    card: Hsla,
+}
+impl Surfaces {
+    /// The classic planes: the theme base at the saved opacity, with a main
+    /// pane that lets the glass through when Main pane glass is on.
+    fn classic(base: Hsla, glass: bool, body_glass: bool, light: bool) -> Self {
+        let mut pane = base;
+        pane.a = if glass && body_glass { 0.28 } else { 1. };
+        // A glass card reveals the window's own tint; adding another would
+        // hide the desktop twice. Solid content keeps a deeper dark tone, or
+        // white in light mode.
+        let mut card = base;
+        card.l = if light { 1. } else { base.l * 0.45 };
+        card.a = if glass && body_glass { 0. } else { 1. };
+        Self {
+            shell: base,
+            pane,
+            card,
+        }
+    }
+    /// The dark inset planes after the desktop stylesheet: see [`inset_surfaces`].
+    fn inset(base: Hsla, glass: bool, body_glass: bool) -> Self {
+        let (shell, card) = inset_surfaces(base, glass, body_glass);
+        let mut pane = shell;
+        pane.a = if glass && body_glass { 0.28 } else { 1. };
+        Self { shell, pane, card }
+    }
+    fn mix(&self, to: &Self, color: impl Fn(Hsla, Hsla) -> Hsla) -> Self {
+        Self {
+            shell: color(self.shell, to.shell),
+            pane: color(self.pane, to.pane),
+            card: color(self.card, to.card),
+        }
+    }
+}
 thread_local! {
+    /// Whether the window rendering now uses the inset layout; set by each
+    /// window as it configures, so its views read that layout's planes.
+    static INSET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// What views paint with: the target, or a step of the tween toward it.
     static TOKENS: std::cell::RefCell<Option<Tokens>> = const { std::cell::RefCell::new(None) };
     static TARGET: std::cell::RefCell<Option<Tokens>> = const { std::cell::RefCell::new(None) };
@@ -93,30 +138,32 @@ pub(crate) fn configure_project(
         ),
     };
     let palette = crate::settings::palette(workspace_theme, light);
-    let glass = layout_glass(p, inset, system_light);
+    INSET.set(inset);
     // Both layouts derive their surface roles from the same saved settings.
-    let shell = gpui::hsla(
-        hue.min(360) as f32 / 360.,
-        saturation.min(100) as f32 / 100.,
-        if light {
-            0.97
-        } else {
-            dark_lightness.min(30) as f32 / 100.
-        },
-        if glass {
-            p.sidebar_opacity.clamp(15, 100) as f32 / 100.
-        } else {
-            1.
-        },
-    );
-    let mut pane = shell;
-    pane.a = if glass && p.body_glass { 0.28 } else { 1. };
-    // The window already paints its glass tint. A glass content card reveals
-    // that layer directly; adding another tint would hide the desktop twice.
-    // Solid content keeps its deeper dark tone or white light appearance.
-    let mut inset_pane = shell;
-    inset_pane.l = if light { 1. } else { shell.l * 0.45 };
-    inset_pane.a = if glass && p.body_glass { 0. } else { 1. };
+    let base = |glass: bool| {
+        gpui::hsla(
+            hue.min(360) as f32 / 360.,
+            saturation.min(100) as f32 / 100.,
+            if light {
+                0.97
+            } else {
+                dark_lightness.min(30) as f32 / 100.
+            },
+            if glass {
+                p.sidebar_opacity.clamp(15, 100) as f32 / 100.
+            } else {
+                1.
+            },
+        )
+    };
+    let classic_glass = layout_glass(p, false, system_light);
+    let inset_glass = layout_glass(p, true, system_light);
+    let classic = Surfaces::classic(base(classic_glass), classic_glass, p.body_glass, light);
+    let inset_planes = if light {
+        Surfaces::classic(base(inset_glass), inset_glass, p.body_glass, light)
+    } else {
+        Surfaces::inset(base(inset_glass), inset_glass, p.body_glass)
+    };
     let custom = accent_color
         .filter(|s| s.len() == 7)
         .and_then(|s| u32::from_str_radix(s.trim_start_matches('#'), 16).ok());
@@ -125,9 +172,8 @@ pub(crate) fn configure_project(
         ink: rgb(palette.content).into(),
         accent: rgb(custom.unwrap_or(palette.accent)).into(),
         user_accent: custom.map(|c| rgb(c).into()),
-        shell,
-        pane,
-        inset_pane,
+        classic,
+        inset: inset_planes,
         diff: diff_palette(&p.diff_palette, light),
         diff_strong: p.diff_palette == "high-contrast",
         syntax: syntax_palette(workspace_theme, light),
@@ -156,6 +202,34 @@ pub(crate) fn configure_project(
         None => tokens,
     };
     TOKENS.with(|current| current.replace(Some(painted)) != Some(painted))
+}
+/// The dark inset layout's two planes, after the desktop stylesheet: the
+/// frame around the card (sidebar, tabs, footer) is a near-black `#0d0d0d`
+/// at 80% over the window blur, and the card a deeper `#060606` at 40% on top
+/// of it, so content sits darker than the chrome and colour reads clearly.
+/// Without glass the card is a solid `#141414`. Both scale with the saved
+/// dark lightness and opacity, landing on those values at the defaults
+/// (9% lightness, 85% opacity).
+fn inset_surfaces(base: Hsla, glass: bool, body_glass: bool) -> (Hsla, Hsla) {
+    const DEFAULT_LIGHTNESS: f32 = 0.09;
+    const DEFAULT_OPACITY: f32 = 0.85;
+    let scale = base.l / DEFAULT_LIGHTNESS;
+    let mut frame = base;
+    frame.l = 0x0d as f32 / 255. * scale;
+    frame.a = if glass {
+        (base.a * 0.8 / DEFAULT_OPACITY).clamp(0.15, 1.)
+    } else {
+        1.
+    };
+    let mut card = base;
+    if glass && body_glass {
+        card.l = 0x06 as f32 / 255. * scale;
+        card.a = 0.4;
+    } else {
+        card.l = 0x14 as f32 / 255. * scale;
+        card.a = 1.;
+    }
+    (frame, card)
 }
 /// Whether colors are still blending toward a project's theme.
 pub(crate) fn tweening() -> bool {
@@ -190,9 +264,8 @@ impl Tokens {
                     to_accent.unwrap_or(to.accent),
                 )),
             },
-            shell: color(self.shell, to.shell),
-            pane: color(self.pane, to.pane),
-            inset_pane: color(self.inset_pane, to.inset_pane),
+            classic: self.classic.mix(&to.classic, color),
+            inset: self.inset.mix(&to.inset, color),
             syntax: std::array::from_fn(|i| hex(self.syntax[i], to.syntax[i])),
             diff: std::array::from_fn(|i| hex(self.diff[i], to.diff[i])),
             ..*to
@@ -376,8 +449,17 @@ pub(crate) fn title_tab_plate(selected: bool, hovered: bool) -> Div {
         .items_center()
         .bg(title_tab_fill(selected, hovered))
 }
+/// The planes of the layout the rendering window uses.
+fn surfaces() -> Option<Surfaces> {
+    let inset = INSET.get();
+    TOKENS.with(|t| {
+        t.borrow()
+            .as_ref()
+            .map(|t| if inset { t.inset } else { t.classic })
+    })
+}
 pub(crate) fn shell_fill() -> Hsla {
-    if let Some(fill) = TOKENS.with(|t| t.borrow().as_ref().map(|t| t.shell)) {
+    if let Some(fill) = surfaces().map(|s| s.shell) {
         return fill;
     }
     if GLASS_PLATFORM {
@@ -388,7 +470,7 @@ pub(crate) fn shell_fill() -> Hsla {
     }
 }
 pub(crate) fn pane_fill() -> Hsla {
-    if let Some(fill) = TOKENS.with(|t| t.borrow().as_ref().map(|t| t.pane)) {
+    if let Some(fill) = surfaces().map(|s| s.pane) {
         return fill;
     }
     if GLASS_PLATFORM {
@@ -423,9 +505,7 @@ pub(crate) fn inset_chrome_wash() -> Hsla {
     content(0.05)
 }
 pub(crate) fn inset_pane_fill() -> Hsla {
-    TOKENS
-        .with(|tokens| tokens.borrow().as_ref().map(|t| t.inset_pane))
-        .unwrap_or_else(pane_fill)
+    surfaces().map_or_else(pane_fill, |s| s.card)
 }
 pub(crate) fn section_label(label: &'static str) -> Div {
     div()
@@ -817,6 +897,82 @@ mod composer_tests {
         preferences.theme = "light".into();
         assert!(!layout_glass(&preferences, true, false));
         assert!(preferences.inset_glass, "light mode remembers the choice");
+    }
+
+    #[test]
+    fn the_dark_inset_layout_uses_the_desktop_apps_deep_frame_and_card() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        let hex = |c: Hsla| {
+            let c = gpui::Rgba::from(c);
+            ((c.r * 255.).round() as u32) << 16
+                | ((c.g * 255.).round() as u32) << 8
+                | (c.b * 255.).round() as u32
+        };
+        let mut preferences = crate::settings::Preferences {
+            theme: "dark".into(),
+            ..Default::default()
+        };
+        configure_project(&preferences, None, true, false, false);
+        if GLASS_PLATFORM {
+            // At the defaults: #0d0d0d at 80% around a #060606 card at 40%.
+            assert_eq!(hex(shell_fill()), 0x0d0d0d);
+            assert!((shell_fill().a - 0.8).abs() < 0.001, "{:?}", shell_fill());
+            assert_eq!(hex(inset_pane_fill()), 0x060606);
+            assert_eq!(inset_pane_fill().a, 0.4);
+        }
+        // Content sits darker than the chrome around it.
+        assert!(inset_pane_fill().l < shell_fill().l);
+
+        // Without main pane glass the card is the solid #141414.
+        preferences.body_glass = false;
+        configure_project(&preferences, None, true, false, false);
+        assert_eq!(hex(inset_pane_fill()), 0x141414);
+        assert_eq!(inset_pane_fill().a, 1.);
+
+        // The saved lightness and opacity still steer both planes.
+        preferences.body_glass = true;
+        preferences.theme_dark_lightness = 18;
+        preferences.sidebar_opacity = 40;
+        configure_project(&preferences, None, true, false, false);
+        assert_eq!(hex(shell_fill()), 0x1a1a1a, "twice the default lightness");
+        if GLASS_PLATFORM {
+            assert!(shell_fill().a < 0.8, "a lower opacity shows more desktop");
+        }
+        preferences.theme_dark_lightness = 0;
+        configure_project(&preferences, None, true, false, false);
+        assert_eq!(hex(shell_fill()), 0, "zero is true black");
+
+        // The classic layout keeps its own surfaces.
+        let preferences = crate::settings::Preferences {
+            theme: "dark".into(),
+            ..Default::default()
+        };
+        configure_project(&preferences, None, false, false, false);
+        assert_eq!(shell_fill().l, 0.09);
+        // Light mode keeps a white card.
+        let light = crate::settings::Preferences {
+            theme: "light".into(),
+            ..Default::default()
+        };
+        configure_project(&light, None, true, true, false);
+        assert_eq!(inset_pane_fill().l, 1.);
+    }
+
+    #[test]
+    fn windows_in_different_layouts_never_repaint_each_other() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        let preferences = crate::settings::Preferences {
+            theme: "dark".into(),
+            ..Default::default()
+        };
+        configure_project(&preferences, None, true, false, false);
+        let inset_shell = shell_fill();
+        // A second window in the original layout configures next: the shared
+        // colours stay put (no refresh), and it reads its own planes.
+        assert!(!configure_project(&preferences, None, false, false, false));
+        assert_eq!(shell_fill().l, 0.09);
+        assert!(!configure_project(&preferences, None, true, false, false));
+        assert_eq!(shell_fill(), inset_shell);
     }
 
     #[test]
