@@ -1,0 +1,29 @@
+mobile/src/features/connection/selection.ts
+  s_8175d8edb31008::t_5c3e1f74fafa5a 8,29
+mobile/modules/gespan-link/ios/GespanLink.podspec
+  s_8175d8edb31008::t_5c3e1f74fafa5a 8
+mobile/src/app/settings/index.tsx
+  s_8175d8edb31008::t_5c3e1f74fafa5a 6,191,219,222
+mobile/src/features/workspace/pilotLook.ts
+  s_8175d8edb31008::t_95cc8e11a5ded0 1
+mobile/src/features/connection/WorkspacePicker.tsx
+  s_8175d8edb31008::t_5c3e1f74fafa5a 28,35,60,109
+mobile/src/app/settings/_layout.tsx
+  s_8175d8edb31008::t_5c3e1f74fafa5a 8,51-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67387fb8a8f299f267527fde18d1e0cfdbafcd8e",
+  "prompts": {},
+  "sessions": {
+    "s_8175d8edb31008": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac8cbdbc-08b3-4df8-80eb-82983e5320da",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
