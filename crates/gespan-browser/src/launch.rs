@@ -221,31 +221,25 @@ pub fn known_paths(
                 .collect()
         }
         Os::Linux => {
-            // Distribution packages, then the Flatpak export wrappers.
+            // Distribution packages only: Flatpak and Snap browsers are sandboxed
+            // and cannot use the profile folder Gespan passes (`is_sandboxed`).
             let names: &[&str] = match kind {
                 BrowserKind::Edge => &[
                     "microsoft-edge",
                     "microsoft-edge-stable",
                     "microsoft-edge-beta",
                     "microsoft-edge-dev",
-                    "com.microsoft.Edge",
                 ],
                 BrowserKind::Chrome => &[
                     "google-chrome",
                     "google-chrome-stable",
                     "google-chrome-beta",
                     "google-chrome-unstable",
-                    "com.google.Chrome",
                 ],
-                BrowserKind::Chromium => &["chromium", "chromium-browser", "org.chromium.Chromium"],
-                BrowserKind::Brave => &[
-                    "brave-browser",
-                    "brave-browser-stable",
-                    "brave",
-                    "com.brave.Browser",
-                ],
-                BrowserKind::Vivaldi => &["vivaldi", "vivaldi-stable", "com.vivaldi.Vivaldi"],
-                BrowserKind::Opera => &["opera", "com.opera.Opera"],
+                BrowserKind::Chromium => &["chromium", "chromium-browser"],
+                BrowserKind::Brave => &["brave-browser", "brave-browser-stable", "brave"],
+                BrowserKind::Vivaldi => &["vivaldi", "vivaldi-stable"],
+                BrowserKind::Opera => &["opera"],
                 BrowserKind::Arc => &[],
             };
             let dirs: Vec<PathBuf> = env("PATH")
@@ -259,16 +253,11 @@ pub fn known_paths(
     }
 }
 
-/// Where a package manager puts the launchers of Snap and Flatpak browsers,
-/// which are often missing from a desktop app's `PATH`.
-fn linux_package_dirs(home: &Path) -> Vec<PathBuf> {
-    vec![
-        PathBuf::from("/usr/bin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/snap/bin"),
-        PathBuf::from("/var/lib/flatpak/exports/bin"),
-        home.join(".local/share/flatpak/exports/bin"),
-    ]
+/// Flatpak and Snap launchers run in a sandbox that cannot use the profile
+/// folder Gespan hands the browser, so starting one only times out. They are
+/// found for "Your own browser" (profile folders), never started.
+fn is_sandboxed(path: &Path) -> bool {
+    path.starts_with("/snap") || path.components().any(|part| part.as_os_str() == "flatpak")
 }
 
 /// Every well-known launcher of every supported browser for the user whose
@@ -279,14 +268,15 @@ fn linux_package_dirs(home: &Path) -> Vec<PathBuf> {
 /// Program Files folders as `C:\Program Files` and `C:\Program Files (x86)`
 /// (the usual values). [`find_executable`] additionally asks the real
 /// environment, so relocated folders are still found. Linux: the system
-/// `bin` folders plus the Snap and Flatpak ones, rather than the live `PATH`.
+/// `bin` folders rather than the live `PATH`; Snap and Flatpak launchers are
+/// left out on purpose (see `is_sandboxed`).
 pub fn install_paths(home: &Path, os: Os) -> Vec<(BrowserKind, PathBuf)> {
     let env = |var: &str| match var {
         "HOME" => Some(home.to_path_buf()),
         "LOCALAPPDATA" => Some(home.join("AppData").join("Local")),
         "ProgramFiles" => Some(PathBuf::from(r"C:\Program Files")),
         "ProgramFiles(x86)" => Some(PathBuf::from(r"C:\Program Files (x86)")),
-        "PATH" => std::env::join_paths(linux_package_dirs(home))
+        "PATH" => std::env::join_paths(["/usr/bin", "/usr/local/bin"])
             .ok()
             .map(PathBuf::from),
         _ => None,
@@ -359,7 +349,7 @@ pub fn find_executable(choice: &BrowserChoice) -> Option<Executable> {
                     .filter(|(extra_kind, _)| *extra_kind == kind)
                     .map(|(_, path)| path.clone()),
             )
-            .find(|path| path.is_file())
+            .find(|path| path.is_file() && !is_sandboxed(path))
             .map(|path| Executable { kind, path })
     })
 }
@@ -576,27 +566,42 @@ mod tests {
     }
 
     #[test]
-    fn linux_install_paths_include_flatpak_and_snap_wrappers() {
-        let paths = install_paths(Path::new("/home/o"), Os::Linux);
+    fn sandboxed_launchers_are_never_started() {
+        let home = Path::new("/home/o");
+        let paths = install_paths(home, Os::Linux);
         for (kind, path) in [
-            (BrowserKind::Chromium, "/snap/bin/chromium"),
             (BrowserKind::Chromium, "/usr/bin/chromium"),
-            (
-                BrowserKind::Chrome,
-                "/var/lib/flatpak/exports/bin/com.google.Chrome",
-            ),
-            (
-                BrowserKind::Chromium,
-                "/home/o/.local/share/flatpak/exports/bin/org.chromium.Chromium",
-            ),
             (BrowserKind::Chrome, "/usr/bin/google-chrome-beta"),
         ] {
-            assert!(
-                paths.contains(&(kind, PathBuf::from(path))),
-                "missing {kind:?} {path}"
-            );
+            assert!(paths.contains(&(kind, PathBuf::from(path))), "{path}");
         }
+        assert!(
+            !paths.iter().any(|(_, path)| {
+                let text = path.to_string_lossy();
+                text.contains("flatpak") || text.starts_with("/snap")
+            }),
+            "{paths:?}"
+        );
         assert!(!paths.iter().any(|(kind, _)| *kind == BrowserKind::Arc));
+        // Their profiles are still found for "Your own browser".
+        let profiles = discovery::profile_dirs(home, Os::Linux);
+        assert!(profiles.contains(&(
+            BrowserKind::Chrome,
+            PathBuf::from("/home/o/.var/app/com.google.Chrome/config/google-chrome")
+        )));
+        assert!(profiles.contains(&(
+            BrowserKind::Chromium,
+            PathBuf::from("/home/o/snap/chromium/common/chromium")
+        )));
+        // A snap or flatpak launcher on the user's PATH is not a start candidate.
+        assert!(is_sandboxed(Path::new("/snap/bin/chromium")));
+        assert!(is_sandboxed(Path::new(
+            "/var/lib/flatpak/exports/bin/com.google.Chrome"
+        )));
+        assert!(is_sandboxed(Path::new(
+            "/home/o/.local/share/flatpak/exports/bin/org.chromium.Chromium"
+        )));
+        assert!(!is_sandboxed(Path::new("/usr/bin/chromium")));
     }
 
     #[test]
