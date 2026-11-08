@@ -18,6 +18,7 @@ mod error;
 mod key;
 mod kind;
 pub mod migrate;
+pub mod query;
 pub mod schema;
 mod store;
 mod time;
@@ -27,5 +28,6 @@ pub use key::{
     BackfillSource, EdgeId, NodeId, NodeKey, NodeRef, Props, Scope, SessionId, Source, TimeBasis,
 };
 pub use kind::{EdgeKind, NodeKind};
+pub use query::{AsOf, Caps, EdgeFilter, Hit, Hops, Reached};
 pub use store::{CloseOutcome, DeleteReport, EdgeFact, EdgeKey, GraphStore, NodeFact, FILE_NAME};
 pub use time::Timestamp;

@@ -422,4 +422,19 @@ fn timestamps_are_epoch_ms_and_never_rescaled() {
             ("secs".to_string(), 1_793_404_800)
         ]
     );
+
+    // The seconds-sized time is a moment in January 1970 to the queries.
+    use gespan_graph::{AsOf, Caps};
+    let start = store.node(&s).unwrap().unwrap();
+    let at = |t: i64| -> Vec<String> {
+        store
+            .neighborhood(start, Caps::DEFAULT, AsOf::At(Timestamp::from_millis(t)))
+            .unwrap()
+            .into_iter()
+            .map(|h| h.key.as_str().to_string())
+            .collect()
+    };
+    assert_eq!(at(BASE), vec!["ms".to_string(), "secs".to_string()]);
+    assert_eq!(at(1_793_404_799), Vec::<String>::new());
+    assert_eq!(at(1_793_404_800), vec!["secs".to_string()]);
 }

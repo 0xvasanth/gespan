@@ -4,6 +4,9 @@
 
 use std::path::PathBuf;
 
+pub mod generate;
+pub mod oracle;
+
 use gespan_graph::{GraphStore, FILE_NAME};
 use tempfile::TempDir;
 
