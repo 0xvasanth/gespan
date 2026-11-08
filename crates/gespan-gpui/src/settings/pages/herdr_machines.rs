@@ -63,13 +63,16 @@ pub(super) fn status_line(view: &MachineView) -> String {
     }
 }
 
-/// The upgrade button's text. A machine running a later herdr would go
-/// back to the pinned one, so the button says that rather than Upgrade.
+/// The upgrade button's text. A machine without herdr has nothing to
+/// upgrade, and one running a later herdr would go back to the pinned one,
+/// so for both the button says what it installs rather than Upgrade.
 fn upgrade_label(view: &MachineView) -> String {
+    let missing = view.snapshot.online == Online::HerdrMissing;
     match &view.version_mismatch {
         Some(version) if machines::is_newer_than_pinned(version) => {
             format!("Install herdr {HERDR_VERSION}")
         }
+        _ if missing => format!("Install herdr {HERDR_VERSION}"),
         _ => "Upgrade".into(),
     }
 }
@@ -814,11 +817,14 @@ mod tests {
     }
 
     #[test]
-    fn herdr_machines_upgrade_reads_install_when_the_machine_is_ahead() {
+    fn herdr_machines_upgrade_reads_install_when_herdr_is_missing_or_ahead() {
         let label =
             |version: Option<&str>, online| upgrade_label(&machine("m", online, version, true));
         assert_eq!(label(Some("0.9.4"), Online::Online), "Upgrade");
-        assert_eq!(label(None, Online::HerdrMissing), "Upgrade");
+        assert_eq!(
+            label(None, Online::HerdrMissing),
+            format!("Install herdr {HERDR_VERSION}")
+        );
         assert_eq!(label(None, Online::HerdrTooOld), "Upgrade");
         // Numbers, not text: 0.9.10 is ahead of 0.9.5.
         for ahead in ["0.9.10", "0.10.0", "1.0.0"] {
