@@ -1,7 +1,7 @@
 // Navigation and frame style are independent. The original layout adds a
 // project rail beside the sessions sidebar. The new layout keeps one sidebar
 // and offers either an inset rounded card or the existing full-height boxy frame.
-use super::{CORNER_BUTTONS_WIDTH, CORNER_CONTROL_GAP, Shell, titlebar_drag_area};
+use super::{CORNER_CONTROL_GAP, Shell, titlebar_drag_area};
 use crate::{
     popover::{Anchor, popover},
     resource_pressure::SessionInfo,
@@ -383,7 +383,7 @@ impl Shell {
         };
         let show_navigation = !spans_window;
         let navigation = show_navigation.then(|| self.navigation(cx));
-        let corner = (self.settings.is_none() && !original).then(|| self.panel_toggle(window, cx));
+        let corner = (self.settings.is_none() && !original).then(|| self.panel_toggle(cx));
         let body = div()
             .flex_1()
             .min_h_0()
@@ -513,19 +513,7 @@ impl Shell {
         if self.workspace.classic_layout && !self.pilot_active(cx) {
             return controls;
         }
-        if self.pilot_active(cx) {
-            return if self.corner_tabs_shown() {
-                let minimum = if self.right_panel_width() >= 312. + controls {
-                    312.
-                } else {
-                    252.
-                };
-                self.right_drawn.max(minimum + controls)
-            } else {
-                6. + CORNER_BUTTONS_WIDTH + 12. + controls
-            };
-        }
-        if !self.git.read(cx).available() {
+        if !self.pilot_active(cx) && !self.git.read(cx).available() {
             return 6. + 24. + self.open_in_editor_room(cx) + 12. + controls;
         }
         // The toggle alone; the panel heads itself with its tabs.

@@ -438,8 +438,9 @@ const SELECTED_TAB_MIN_WIDTH: f32 = 112.;
 const TAB_CLOSE_MIN_WIDTH: f32 = 72.;
 /// The new-tab button and its leading margin.
 const STRIP_NEW_TAB: f32 = TAB_PLATE_HEIGHT + 2.;
-const CORNER_TABS_LEAD: f32 = 7.;
 const CORNER_CONTROL_GAP: f32 = 4.;
+/// The narrowest Pilot panel that names its selected tab beside the icon.
+const PILOT_TAB_LABEL_MIN_WIDTH: f32 = 312.;
 const CORNER_BUTTONS_WIDTH: f32 = 48. + 2. * CORNER_CONTROL_GAP;
 // The title bar's labels, with their shortcuts.
 const TOGGLE_SIDEBAR_LABEL: &str = if cfg!(target_os = "macos") {
@@ -5463,7 +5464,7 @@ impl Shell {
                     .flex_shrink_0()
                     .into_any_element()
             } else {
-                self.panel_toggle(window, cx)
+                self.panel_toggle(cx)
             })
             // The original layout has no corner, so the strip ends with it.
             .when(self.workspace.classic_layout, |d| {
@@ -5482,7 +5483,7 @@ impl Shell {
     }
 
     /// The right panel toggle, `pl-1.5 pr-3` clear of the edge.
-    fn panel_toggle(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn panel_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
         let pilot = self.pilot_active(cx);
         if self.workspace.classic_layout && !pilot {
             return div().into_any_element();
@@ -5494,23 +5495,8 @@ impl Shell {
         let panel_off = self.app_view_open();
         let dot = !pilot && !panel_off && self.git.read(cx).has_changes();
         let panel_active = self.workspace.right_panel_open && !panel_off;
-        // A Pilot's overview controls. A project's tools head the panel
-        // itself, so its corner is the toggle alone and the session tabs run
-        // over the open panel.
-        let tabs = if pilot && panel_active {
-            self.pilots.clone().map(|m| {
-                m.update(cx, |m, cx| {
-                    m.overview_controls(
-                        self.right_panel_width() >= 312. + self.window_controls,
-                        window,
-                        cx,
-                    )
-                })
-            })
-        } else {
-            None
-        };
-        let show_tabs = tabs.is_some();
+        // A project's and a Pilot's tools both head the panel itself, so the
+        // corner is the toggle alone and the session tabs run over the panel.
         div()
             .relative()
             .w(px(self.toggle_room(cx)))
@@ -5543,22 +5529,8 @@ impl Shell {
                         .flex_shrink_0()
                         .flex()
                         .items_center()
-                        .pl(px(if show_tabs && !self.workspace.boxy_layout() {
-                            CORNER_TABS_LEAD
-                        } else {
-                            6.
-                        }))
+                        .pl(px(6.))
                         .pr(px(12. + self.window_controls))
-                        .children(tabs)
-                        // A project's corner is the toggle alone; a Pilot keeps
-                        // Open in editor and search beside it.
-                        .when(pilot, |d| {
-                            d.children(
-                                self.open_in_editor_button(cx)
-                                    .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
-                            )
-                            .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
-                        })
                         .child(
                             div()
                                 .id("toggle-right-panel")
@@ -5624,34 +5596,6 @@ impl Shell {
                         ),
                 )
             })
-            .when(show_tabs && !self.workspace.boxy_layout(), |d| {
-                // The card has 6px of outer padding and a 1px right border.
-                // Keep the rule on its divider even during the opening slide.
-                let offset = self.toggle_room(cx) - (self.right_drawn + 7.);
-                d.child(
-                    self.right_panel_resize_handle("titlebar-right-panel-resize", cx)
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left(px(offset - 2.5))
-                        .child(
-                            div()
-                                .id("project-tabs-separator")
-                                .debug_selector(|| "project-tabs-separator".into())
-                                .absolute()
-                                .left(px(2.5))
-                                .top(px((TITLE_BAR_HEIGHT - 16.) / 2.))
-                                .w(px(1.))
-                                .h(px(16.))
-                                .bg(crate::right_panel::stroke())
-                                .when(
-                                    self.right_resize.is_some() || self.right_resize_hovered,
-                                    |d| d.bg(content(0.16)),
-                                )
-                                .group_hover("resize-handle", |s| s.bg(content(0.16))),
-                        ),
-                )
-            })
             .into_any()
     }
     fn file_search_button(&self, cx: &Context<Self>) -> gpui::Stateful<gpui::Div> {
@@ -5674,18 +5618,8 @@ impl Shell {
         // Client-drawn window controls hold the corner's right end.
         let controls = self.window_controls;
         if self.pilot_active(cx) || self.git.read(cx).available() {
-            if self.pilot_active(cx) && self.workspace.right_panel_open && !self.app_view_open() {
-                let minimum = if self.right_panel_width() >= 312. + controls {
-                    312.
-                } else {
-                    252.
-                };
-                (self.right_drawn + 7.).max(minimum + controls)
-            } else if self.pilot_active(cx) {
-                6. + self.corner_buttons_width(cx) + 12. + controls
-            } else {
-                6. + 24. + 12. + controls
-            }
+            // The toggle alone; the panel heads itself with its tabs.
+            6. + 24. + 12. + controls
         } else {
             6. + 24. + self.open_in_editor_room(cx) + 12. + controls
         }
@@ -9195,8 +9129,11 @@ impl Render for Shell {
             } else {
                 0.
             };
+            // Narrow panels keep every tab an icon, as the title bar did.
+            let expand = self.right_panel_width() >= PILOT_TAB_LABEL_MIN_WIDTH;
             details.update(cx, |view, cx| {
                 view.set_top_inset(inset, cx);
+                view.set_expand_labels(expand, cx);
             });
         }
         self.sync_notices(window, cx);
