@@ -22,6 +22,8 @@ const rules = [
   [/^crates\/gespan-gpui\/src\//, ["core", "desktop"]],
   [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch)\//, ["desktop"]],
   [/^crates\/(board-store|gespan-mcp-config|gespan-models|gespan-redact|gespan-speech|herdr-link|keep-awake|mcp-hub|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
+  // Only the root workspace builds it; once gespan-core depends on it (#386/#132) it joins the rule above.
+  [/^crates\/gespan-graph\//, ["core"]],
   [/^vendor\//, ["core", "desktop"]],
   // Core's shared_contracts test reads these.
   [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host"]],
