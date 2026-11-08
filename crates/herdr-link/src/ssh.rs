@@ -247,6 +247,19 @@ for c in "$(command -v herdr)" {candidates}; do
     [ -x "$c" ] || continue
     found=1
     if cap=$("$c" --session {s} remote-api-bridge --check </dev/null 2>/dev/null) && [ "$cap" = herdr-api-bridge-v1 ]; then
+        # Nothing restarts herdr's server after a reboot; start it headless.
+        if "$c" --session {s} status server </dev/null 2>/dev/null | grep -q 'status: not running'; then
+            if command -v setsid >/dev/null 2>&1; then
+                setsid nohup "$c" --session {s} server </dev/null >/dev/null 2>&1 &
+            else
+                nohup "$c" --session {s} server </dev/null >/dev/null 2>&1 &
+            fi
+            n=0
+            while [ $n -lt 25 ] && "$c" --session {s} status server </dev/null 2>/dev/null | grep -q 'status: not running'; do
+                sleep 0.2
+                n=$((n + 1))
+            done
+        fi
         exec "$c" --session {s} remote-api-bridge
     fi
 done
@@ -839,6 +852,47 @@ mod tests {
             let out = run_attach(home.path(), "w1:p1");
             assert_eq!(out.status.code(), Some(2));
             assert!(String::from_utf8_lossy(&out.stderr).contains("herdr was not found"));
+        }
+
+        /// A herdr whose server is down until `server` starts it, as after
+        /// a reboot. Each `server` start is logged to `$HOME/started`.
+        fn install_stopped(path: &Path) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let body = r#"#!/bin/sh
+case "$*" in
+    *--check*) echo herdr-api-bridge-v1 ;;
+    *"status server"*) if [ -e "$HOME/started" ]; then echo 'status: running'; else echo 'status: not running'; fi ;;
+    *" server") echo "$*" >> "$HOME/started" ;;
+    *) echo "bridged $*" ;;
+esac
+"#;
+            std::fs::write(path, body).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        #[test]
+        fn a_stopped_server_is_started_headless_before_the_bridge() {
+            let home = tempfile::tempdir().unwrap();
+            install_stopped(&home.path().join(".local/bin/herdr"));
+            let out = run(home.path(), "/usr/bin:/bin");
+            assert!(out.status.success(), "{out:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                "bridged --session work remote-api-bridge"
+            );
+            let started = std::fs::read_to_string(home.path().join("started")).unwrap();
+            assert_eq!(started, "--session work server\n");
+        }
+
+        #[test]
+        fn a_running_server_is_left_alone() {
+            let home = tempfile::tempdir().unwrap();
+            install_stopped(&home.path().join(".local/bin/herdr"));
+            std::fs::write(home.path().join("started"), "already\n").unwrap();
+            let out = run(home.path(), "/usr/bin:/bin");
+            assert!(out.status.success(), "{out:?}");
+            let started = std::fs::read_to_string(home.path().join("started")).unwrap();
+            assert_eq!(started, "already\n");
         }
 
         #[test]
