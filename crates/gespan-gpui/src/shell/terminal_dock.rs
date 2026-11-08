@@ -249,6 +249,12 @@ impl Shell {
             .right_panel
             .as_ref()
             .map_or(0., |p| p.read(cx).top_inset());
+        // The panel's tab row stays above the shell, so the other tools are a
+        // click away.
+        let tabs = self
+            .right_panel
+            .clone()
+            .map(|p| p.update(cx, |p, cx| p.tab_strip(cx)));
         div()
             .id("panel-terminal")
             .debug_selector(|| "panel-terminal".into())
@@ -266,6 +272,7 @@ impl Shell {
                         .border_color(crate::right_panel::stroke()),
                 )
             })
+            .children(tabs)
             .child(self.dock_header(&dock, true, window, cx))
             .child(
                 div().flex_1().min_h_0().min_w_0().children(
@@ -1152,16 +1159,40 @@ mod tests {
                 assert_eq!(panel.read(cx).tab(), RightTab::Terminal);
                 assert_eq!(
                     panel.read(cx).tabs(),
-                    [RightTab::Files, RightTab::Terminal, RightTab::Graph]
+                    [
+                        RightTab::Files,
+                        RightTab::Terminal,
+                        RightTab::Changes,
+                        RightTab::Graph
+                    ]
                 );
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        // In the boxy frame the terminal starts below the title bar's tabs.
-        let tabs = visual.debug_bounds("right-panel-terminal").unwrap();
+        // In the boxy frame the terminal starts below the panel's own tab
+        // row, which keeps the other tools a click away.
+        let tabs = visual.debug_bounds("right-panel-tabs").unwrap();
+        assert!(
+            tabs.top() >= px(crate::theme::TITLE_BAR_HEIGHT) - px(0.5),
+            "{tabs:?}"
+        );
         let header = visual.debug_bounds("terminal-tab-0").unwrap();
         assert!(header.top() >= tabs.bottom(), "{header:?} under {tabs:?}");
+        let explorer = visual.debug_bounds("right-panel-tab-Explorer").unwrap();
+        visual.simulate_click(explorer.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                let panel = shell.right_panel.as_ref().unwrap().read(cx);
+                assert_eq!(panel.tab(), RightTab::Files);
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("explorer-header").is_some());
+        let terminal = visual.debug_bounds("right-panel-tab-Terminal").unwrap();
+        visual.simulate_click(terminal.center(), Default::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("terminal-tab-0").is_some());
         assert!(visual.debug_bounds("terminal-dock").is_none());
         assert!(visual.debug_bounds("footer-terminal").is_none());
         window

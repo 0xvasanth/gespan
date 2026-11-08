@@ -857,7 +857,6 @@ pub(crate) struct Shell {
     /// The right panel's drawn width this frame, 0 while it is hidden.
     right_drawn: f32,
     /// Classic: the corner tab opening out and the one folding away.
-    corner_reveal: Option<crate::project_tabs::TabReveal>,
     dock_shifts: HashMap<gpui::EntityId, TabShift>,
     dock_skip_click: bool,
     dock_tab_scroll: ScrollHandle,
@@ -1264,7 +1263,6 @@ impl Shell {
             dock_tab_motion: Default::default(),
             dock_drag: None,
             right_drawn: 0.,
-            corner_reveal: None,
             dock_shifts: HashMap::new(),
             dock_skip_click: false,
             dock_tab_scroll: ScrollHandle::new(),
@@ -5275,12 +5273,15 @@ impl Shell {
             return div().into_any_element();
         }
         if self.workspace.boxy_layout() && !pilot {
-            return self.classic_corner(window, cx);
+            return self.classic_corner(cx);
         }
         let toggle = pilot || self.git.read(cx).available();
         let panel_off = self.app_view_open();
         let dot = !pilot && !panel_off && self.git.read(cx).has_changes();
         let panel_active = self.workspace.right_panel_open && !panel_off;
+        // A Pilot's overview controls. A project's tools head the panel
+        // itself, so its corner is the toggle alone and the session tabs run
+        // over the open panel.
         let tabs = if pilot && panel_active {
             self.pilots.clone().map(|m| {
                 m.update(cx, |m, cx| {
@@ -5292,21 +5293,7 @@ impl Shell {
                 })
             })
         } else {
-            self.right_panel
-                .as_ref()
-                .filter(|_| panel_active && !pilot)
-                .map(|panel| {
-                    panel
-                        .read(cx)
-                        .tabs
-                        .clone()
-                        .cached(
-                            StyleRefinement::default()
-                                .w(px(self.project_tabs_width(cx)))
-                                .h(px(TITLE_BAR_HEIGHT)),
-                        )
-                        .into_any_element()
-                })
+            None
         };
         let show_tabs = tabs.is_some();
         div()
@@ -5347,16 +5334,16 @@ impl Shell {
                             6.
                         }))
                         .pr(px(12. + self.window_controls))
-                        .when_some(tabs, |d, tabs| {
-                            d.child(tabs)
-                                .when(!pilot, |d| d.child(titlebar_drag_area().flex_1().min_w_0()))
+                        .children(tabs)
+                        // A project's corner is the toggle alone; a Pilot keeps
+                        // Open in editor and search beside it.
+                        .when(pilot, |d| {
+                            d.children(
+                                self.open_in_editor_button(cx)
+                                    .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
+                            )
+                            .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
                         })
-                        .children(self.project_diff_stat(cx))
-                        .children(
-                            self.open_in_editor_button(cx)
-                                .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
-                        )
-                        .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
                         .child(
                             div()
                                 .id("toggle-right-panel")
@@ -5386,14 +5373,22 @@ impl Shell {
                                     div()
                                         .relative()
                                         .size(px(14.))
-                                        .child(icon("sidebar-right", 14.).text_color(ink).when(
-                                            !panel_off,
-                                            |i| {
-                                                i.group_hover("toggle-right-panel", |s| {
-                                                    s.text_color(content(1.))
-                                                })
-                                            },
-                                        ))
+                                        // A project's toggle is the branch.
+                                        .child(
+                                            icon(
+                                                if pilot { "sidebar-right" } else { "git-branch" },
+                                                14.,
+                                            )
+                                            .text_color(ink)
+                                            .when(
+                                                !panel_off,
+                                                |i| {
+                                                    i.group_hover("toggle-right-panel", |s| {
+                                                        s.text_color(content(1.))
+                                                    })
+                                                },
+                                            ),
+                                        )
                                         .when(dot, |d| {
                                             d.child(
                                                 div()
@@ -5444,41 +5439,6 @@ impl Shell {
             })
             .into_any()
     }
-    fn project_diff_stat(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let width = self.diff_stat_room(cx);
-        // With no Changes tab, the stat marks the open Changes pane.
-        let selected = self.workspace.right_panel_open
-            && !self.app_view_open()
-            && self
-                .right_panel
-                .as_ref()
-                .is_some_and(|p| p.read(cx).tab() == crate::right_panel::RightTab::Changes);
-        (width > 0.).then(|| {
-            crate::right_panel::diff_stat(self.git.read(cx).stats.as_ref(), width)
-                .when(selected, |d| d.bg(content(0.1)))
-                .when(!self.app_view_open(), |d| {
-                    d.cursor_pointer()
-                        .hover(|s| s.bg(content(0.1)))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.ensure_right_panel(window, cx);
-                            let panel = this.right_panel.clone().unwrap();
-                            let previous = panel.read(cx).tab();
-                            let changes = crate::right_panel::RightTab::Changes;
-                            if previous != changes {
-                                this.corner_reveal =
-                                    Some(crate::project_tabs::TabReveal::new(changes, previous));
-                            }
-                            panel.update(cx, |panel, cx| panel.select(changes, cx));
-                            this.set_right_panel_open(true, window, cx);
-                            panel.update(cx, |panel, cx| panel.focus_pane(window, cx));
-                            this.invalidate_chrome(cx);
-                            cx.notify();
-                        }))
-                })
-                .into_any_element()
-        })
-    }
     fn file_search_button(&self, cx: &Context<Self>) -> gpui::Stateful<gpui::Div> {
         let label = if cfg!(target_os = "macos") {
             "Search files (⌘P)"
@@ -5491,42 +5451,6 @@ impl Shell {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, window, cx| this.open_quick_open(false, window, cx)))
     }
-    fn diff_stat_room(&self, cx: &App) -> f32 {
-        if self.pilot_active(cx) || !self.git.read(cx).available() {
-            return 0.;
-        }
-        let natural = crate::right_panel::diff_stat_width(self.git.read(cx).stats.as_ref());
-        if !self.workspace.right_panel_open || self.app_view_open() {
-            return natural;
-        }
-        let controls = crate::right_panel::tab_icons_width(self.right_tab_count(cx))
-            + 6.
-            + self.corner_buttons_width(cx)
-            + 12.
-            + self.window_controls;
-        natural.min((self.right_panel_width() - controls).max(48.))
-    }
-    fn project_tabs_width(&self, cx: &App) -> f32 {
-        let padding = if self.workspace.boxy_layout() {
-            24.
-        } else {
-            12.
-        };
-        (self.right_panel_width()
-            - self.diff_stat_room(cx)
-            - self.corner_buttons_width(cx)
-            - padding
-            - self.window_controls)
-            .clamp(
-                crate::right_panel::tab_icons_width(self.right_tab_count(cx)),
-                crate::right_panel::tabs_width(self.right_tab_count(cx)),
-            )
-    }
-    /// Explorer and History, and Terminal when it lives in the panel. Changes
-    /// opens from the diff stat instead.
-    fn right_tab_count(&self, cx: &App) -> usize {
-        2 + usize::from(self.terminal_in_panel(cx))
-    }
     /// The toggle's room at the end of the strip: `pl-1.5`, the button, `pr-3`.
     fn toggle_room(&self, cx: &App) -> f32 {
         if self.workspace.boxy_layout() {
@@ -5535,27 +5459,17 @@ impl Shell {
         // Client-drawn window controls hold the corner's right end.
         let controls = self.window_controls;
         if self.pilot_active(cx) || self.git.read(cx).available() {
-            if self.workspace.right_panel_open && !self.app_view_open() {
-                if self.pilot_active(cx) {
-                    let minimum = if self.right_panel_width() >= 312. + controls {
-                        312.
-                    } else {
-                        252.
-                    };
-                    return (self.right_drawn + 7.).max(minimum + controls);
-                }
-                // Follow the rounded panel's left edge, including the card's
-                // right inset, while keeping room for all controls when narrow.
-                (self.right_drawn + 7.).max(
-                    CORNER_TABS_LEAD
-                        + self.project_tabs_width(cx)
-                        + self.diff_stat_room(cx)
-                        + self.corner_buttons_width(cx)
-                        + 12.
-                        + controls,
-                )
+            if self.pilot_active(cx) && self.workspace.right_panel_open && !self.app_view_open() {
+                let minimum = if self.right_panel_width() >= 312. + controls {
+                    312.
+                } else {
+                    252.
+                };
+                (self.right_drawn + 7.).max(minimum + controls)
+            } else if self.pilot_active(cx) {
+                6. + self.corner_buttons_width(cx) + 12. + controls
             } else {
-                6. + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12. + controls
+                6. + 24. + 12. + controls
             }
         } else {
             6. + 24. + self.open_in_editor_room(cx) + 12. + controls
@@ -8799,10 +8713,8 @@ impl Render for Shell {
         });
         if let Some(panel) = &self.right_panel {
             let classic = self.workspace.boxy_layout();
-            let tab_width = self.project_tabs_width(cx);
             panel.update(cx, |p, cx| {
                 p.set_top_inset(if classic { TITLE_BAR_HEIGHT } else { 0. }, cx);
-                p.set_tab_width(tab_width, cx);
                 p.set_show_excluded(self.workspace.preferences.show_excluded_files, cx);
             });
         }
@@ -10792,6 +10704,133 @@ mod tests {
     }
 
     #[gpui::test]
+    fn panel_heads_itself_with_text_tabs_while_session_tabs_run_over_it(cx: &mut TestAppContext) {
+        for boxy in [false, true] {
+            let (window, _, _) = window(cx);
+            cx.update(|cx| cx.set_reduce_motion(true));
+            window
+                .update(cx, |shell, w, cx| {
+                    shell.workspace.new_layout_boxy = boxy;
+                    shell.layout_changed(cx);
+                    shell.git.update(cx, |git, _| {
+                        git.stats = Some(gespan_core::scm::DiffStats {
+                            files: 2,
+                            additions: 5,
+                            deletions: 0,
+                        });
+                    });
+                    shell.toggle_right_panel(w, cx);
+                })
+                .unwrap();
+            let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            let frame = cx.debug_bounds("right-panel-frame").unwrap();
+            let strip = cx.debug_bounds("right-panel-tabs").unwrap();
+            let toggle = cx.debug_bounds("toggle-right-panel").unwrap();
+            // The row heads the panel card, below the title bar.
+            assert_eq!(strip.size.height, px(PANE_HEADER_HEIGHT), "{boxy}");
+            assert!(
+                strip.top() >= px(TITLE_BAR_HEIGHT) - px(0.5),
+                "{boxy}: {strip:?}"
+            );
+            assert!(
+                strip.left() >= frame.left() && strip.right() <= frame.right(),
+                "{boxy}"
+            );
+            assert!(toggle.bottom() <= strip.top(), "{boxy}");
+            if !boxy {
+                // No title-bar room is set aside for the open
+                // panel; the session tabs may run over it up to the toggle.
+                let titles = cx.debug_bounds("title-tab-strip").unwrap();
+                assert!(titles.right() > frame.left(), "{titles:?} over {frame:?}");
+                assert!(titles.right() <= toggle.left());
+                assert!(cx.debug_bounds("project-tabs-separator").is_none());
+            }
+            let tabs = [
+                "right-panel-tab-Explorer",
+                "right-panel-tab-Changes",
+                "right-panel-tab-History",
+            ]
+            .map(|id| cx.debug_bounds(id).unwrap());
+            // Explorer, Changes, History, sharing the row evenly.
+            assert!(tabs[0].right() <= tabs[1].left() && tabs[1].right() <= tabs[2].left());
+            for tab in &tabs {
+                assert!(
+                    (tab.size.width - tabs[0].size.width).abs() <= px(1.),
+                    "{boxy}: equal tabs {tabs:?}"
+                );
+            }
+            assert!(
+                tabs[2].right() - tabs[0].left() > strip.size.width * 0.9,
+                "{boxy}: the tabs fill the row: {strip:?} {tabs:?}"
+            );
+            // The toggle is the corner's only control; the Changes tab
+            // carries the diff stat.
+            for control in [
+                "project-diff-stat",
+                "titlebar-file-search",
+                "titlebar-open-in-editor",
+            ] {
+                assert!(cx.debug_bounds(control).is_none(), "{boxy}: {control}");
+            }
+            for (selector, tab, header) in [
+                (
+                    "right-panel-tab-Changes",
+                    crate::right_panel::RightTab::Changes,
+                    "changes-header",
+                ),
+                (
+                    "right-panel-tab-History",
+                    crate::right_panel::RightTab::Graph,
+                    "history-toolbar",
+                ),
+                (
+                    "right-panel-tab-Explorer",
+                    crate::right_panel::RightTab::Files,
+                    "explorer-header",
+                ),
+            ] {
+                let bounds = cx.debug_bounds(selector).unwrap();
+                cx.simulate_click(bounds.center(), Default::default());
+                cx.run_until_parked();
+                window
+                    .update(cx, |shell, _, cx| {
+                        let panel = shell.right_panel.as_ref().unwrap().read(cx);
+                        assert_eq!(panel.tab(), tab);
+                    })
+                    .unwrap();
+                let header = cx.debug_bounds(header).unwrap();
+                assert_eq!(
+                    header.top(),
+                    strip.bottom(),
+                    "{boxy}: {selector} opens below the row"
+                );
+            }
+            // Closed, the corner is the toggle alone and the tabs go with
+            // the panel.
+            window
+                .update(cx, |shell, w, cx| shell.toggle_right_panel(w, cx))
+                .unwrap();
+            cx.run_until_parked();
+            assert!(cx.debug_bounds("toggle-right-panel").is_some());
+            assert!(
+                cx.debug_bounds("right-panel-tab-Changes").is_none(),
+                "{boxy}"
+            );
+            for control in [
+                "project-diff-stat",
+                "titlebar-file-search",
+                "titlebar-open-in-editor",
+            ] {
+                assert!(
+                    cx.debug_bounds(control).is_none(),
+                    "{boxy} closed: {control}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
     fn panel_tab_switches_and_animated_reversals_keep_shortcuts_live(cx: &mut TestAppContext) {
         let (window, _, _) = window(cx);
         cx.update(|cx| {
@@ -10826,13 +10865,16 @@ mod tests {
                 })
                 .unwrap();
             cx.run_until_parked();
-            assert_eq!(
-                cx.debug_bounds("project-tabs-separator").unwrap().left(),
-                cx.debug_bounds("right-panel-frame").unwrap().left(),
-                "the title-bar rule follows the panel's divider"
+            let frame = cx.debug_bounds("right-panel-frame").unwrap();
+            let strip = cx.debug_bounds("right-panel-tabs").unwrap();
+            assert!(
+                strip.left() >= frame.left() && strip.right() <= frame.right(),
+                "the panel's tab row follows its width: {strip:?} in {frame:?}"
             );
         }
-        let handle = cx.debug_bounds("titlebar-right-panel-resize").unwrap();
+        // The panel's own edge resizes it; the title bar keeps no grip.
+        assert!(cx.debug_bounds("titlebar-right-panel-resize").is_none());
+        let handle = cx.debug_bounds("right-panel-resize").unwrap();
         let start = handle.center();
         let end = start - gpui::point(px(40.), px(0.));
         cx.simulate_event(MouseDownEvent {
@@ -10859,23 +10901,24 @@ mod tests {
                 assert!(shell.right_resize.is_none());
             })
             .unwrap();
-        assert_eq!(
-            cx.debug_bounds("project-tabs-separator").unwrap().left(),
-            cx.debug_bounds("right-panel-frame").unwrap().left()
-        );
+        assert!(cx.debug_bounds("project-tabs-separator").is_none());
         for (selector, header) in [
             ("right-panel-tab-History", "history-toolbar"),
-            ("project-diff-stat", "changes-header"),
+            ("right-panel-tab-Changes", "changes-header"),
             ("right-panel-tab-Explorer", "explorer-header"),
         ] {
             let tab = cx.debug_bounds(selector).unwrap();
             cx.simulate_click(tab.center(), Default::default());
             cx.run_until_parked();
+            // The panel's tab row lines up with the open-file tabs, and
+            // each tool's header follows it.
+            let strip = cx.debug_bounds("right-panel-tabs").unwrap();
             assert_eq!(
-                cx.debug_bounds(header).unwrap().bottom(),
+                strip.bottom(),
                 cx.debug_bounds("review-tab-strip").unwrap().bottom(),
-                "tool headers align with the open-file tabs"
+                "the panel's tabs align with the open-file tabs"
             );
+            assert_eq!(cx.debug_bounds(header).unwrap().top(), strip.bottom());
             window
                 .update(cx, |shell, w, cx| {
                     assert!(
@@ -10969,10 +11012,7 @@ mod tests {
         settle(cx);
         settle(cx);
         let strip = cx.debug_bounds("title-tab-strip").unwrap();
-        let first_control = cx
-            .debug_bounds("project-diff-stat")
-            .or_else(|| cx.debug_bounds("titlebar-file-search"))
-            .unwrap();
+        let first_control = cx.debug_bounds("toggle-right-panel").unwrap();
         // Keep the strip's 6px gap before the trailing controls.
         assert_eq!(strip.right(), first_control.left() - px(6.));
         let settled = cx.debug_bounds("new-tab").unwrap();
@@ -11480,8 +11520,8 @@ mod tests {
         let (_, main_open, _) = frames(cx);
         assert_eq!(corner(cx), closed_corner);
         assert!(main_open.right() < main.right());
-        // Open, the tools start at the panel's left edge as it is resized;
-        // the toggle stays at the window's right edge.
+        // Open, the panel's tabs head it below the title bar as it is
+        // resized; the toggle stays at the window's right edge.
         for width in [
             crate::right_panel::WIDTH_MIN,
             420.,
@@ -11495,21 +11535,20 @@ mod tests {
                 .unwrap();
             let (_, main, tabs) = frames(cx);
             let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-            let explorer = visual.debug_bounds("right-panel-explorer").unwrap();
-            assert!(visual.debug_bounds("right-panel-changes").is_none());
-            let history = visual.debug_bounds("right-panel-history").unwrap();
-            assert_eq!(explorer.left(), main.right() + px(6.));
-            assert_eq!(explorer.center().y, closed_corner.center().y);
+            let explorer = visual.debug_bounds("right-panel-tab-Explorer").unwrap();
+            let changes = visual.debug_bounds("right-panel-tab-Changes").unwrap();
+            let history = visual.debug_bounds("right-panel-tab-History").unwrap();
+            assert!(explorer.left() > main.right());
+            assert!(explorer.top() >= closed_corner.bottom());
             assert_eq!(history.top(), explorer.top());
-            assert!(explorer.right() <= history.left());
-            assert!(history.right() <= closed_corner.left());
+            assert!(explorer.right() <= changes.left() && changes.right() <= history.left());
             assert!(tabs.right() <= explorer.left());
             assert_eq!(corner(cx), closed_corner);
         }
         let history = gpui::VisualTestContext::from_window(window.into(), cx)
-            .debug_bounds("right-panel-history")
-            .expect("the panel's pane buttons show beside the toggle");
-        assert!(history.right() <= closed_corner.left());
+            .debug_bounds("right-panel-tab-History")
+            .expect("the panel heads itself with its tabs");
+        assert!(history.top() >= closed_corner.bottom());
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.simulate_click(history.center(), Default::default());
         visual.run_until_parked();
@@ -11532,9 +11571,9 @@ mod tests {
         frames(cx);
         assert!(
             gpui::VisualTestContext::from_window(window.into(), cx)
-                .debug_bounds("right-panel-history")
+                .debug_bounds("right-panel-tab-History")
                 .is_none(),
-            "closed, the corner holds only the toggle"
+            "closed, the panel's tabs go with it"
         );
         // The visit arrows stay at the open sidebar's edge, not in the strip.
         let forward = gpui::VisualTestContext::from_window(window.into(), cx)
