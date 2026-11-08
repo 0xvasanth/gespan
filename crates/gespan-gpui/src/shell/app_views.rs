@@ -62,7 +62,7 @@ impl Shell {
                     .child(mark_tile(
                         &TAB_TILE,
                         Face::Neutral,
-                        icon(view.icon(), 14.).text_color(crate::tab_tile::tile_ink()),
+                        icon(view.icon(), 14.).text_color(crate::theme::nav_tile_ink(view.label())),
                     ))
                     .child(
                         div()
