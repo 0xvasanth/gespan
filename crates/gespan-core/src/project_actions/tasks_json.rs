@@ -9,33 +9,173 @@ const DEPENDENCIES_NOT_RUN: &str = "Dependencies aren't run";
 const OUTSIDE: &str = "Runs outside the project";
 pub(crate) const NO_COMMAND: &str = "Has no command Gespan can run";
 /// Variables a shell, the loader, git or a language runtime reads before or
-/// while starting, so a value could run code before the command does.
-const STARTUP_ENV: [&str; 21] = [
+/// while starting, so a value could run code before the command does. An
+/// action's terminal starts the user's interactive shell with them, so its
+/// prompts, line editor, history and function path count too.
+const STARTUP_ENV: [&str; 67] = [
+    // Shell startup and interactive shells.
     "ZDOTDIR",
     "BASH_ENV",
     "ENV",
     "PROMPT_COMMAND",
+    "PS0",
+    "PS1",
+    "PS2",
+    "PS3",
     "PS4",
+    "PROMPT",
+    "PROMPT2",
+    "PROMPT3",
+    "PROMPT4",
+    "RPROMPT",
+    "RPROMPT2",
+    "RPS1",
+    "RPS2",
+    "PROMPT_EOL_MARK",
+    "FPATH",
+    "INPUTRC",
+    // History is written to it, so it could append to a startup file.
+    "HISTFILE",
     "SHELLOPTS",
     "BASHOPTS",
     "IFS",
     "HOME",
+    "STARSHIP_CONFIG",
+    // oh-my-zsh sources its folder's and custom folder's scripts.
+    "ZSH",
+    // glibc loads converters from it.
+    "GCONV_PATH",
+    // Language runtimes.
     "NODE_OPTIONS",
     "NODE_PATH",
     "PERL5OPT",
     "PERL5LIB",
+    "PERLLIB",
+    "PERL5DB",
     "RUBYOPT",
     "RUBYLIB",
     "PYTHONSTARTUP",
     "PYTHONPATH",
     "PYTHONHOME",
+    "PYTHONUSERBASE",
+    "PYTHONPLATLIBDIR",
+    "PYTHONBREAKPOINT",
+    // A warning category is imported by name.
+    "PYTHONWARNINGS",
+    "NODE_REPL_EXTERNAL_MODULE",
+    "PHPRC",
+    "PHP_INI_SCAN_DIR",
+    "R_PROFILE",
+    "R_PROFILE_USER",
+    "R_ENVIRON",
+    "R_ENVIRON_USER",
+    "CLASSPATH",
+    "JAVA_OPTS",
+    "SBT_OPTS",
+    "ANT_OPTS",
+    // RubyGems loads the Gemfile it names whenever Ruby starts.
+    "RUBYGEMS_GEMDEPS",
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "JDK_JAVA_OPTIONS",
+    "DOTNET_STARTUP_HOOKS",
+    "DOTNET_ADDITIONAL_DEPS",
+    "DOTNET_SHARED_STORE",
+    "DOTNET_ROOT",
+    "GOFLAGS",
+    "GOENV",
+    "GOROOT",
+    "GOTOOLCHAIN",
+    "COMSPEC",
 ];
-/// Whole families of such variables: the loader's, exported bash functions
-/// and git's, which can name programs to run.
-const STARTUP_ENV_PREFIXES: [&str; 4] = ["LD_", "DYLD_", "BASH_FUNC_", "GIT_"];
+/// Whole families of such variables: the loader's, exported bash functions,
+/// git's, which can name programs to run, where XDG tools find their config
+/// and plugins, Lua's init code and paths, .NET's profilers, Erlang's flags
+/// and libraries, and zsh and bash plugin folders.
+const STARTUP_ENV_PREFIXES: [&str; 11] = [
+    "LD_",
+    "DYLD_",
+    "BASH_FUNC_",
+    "GIT_",
+    "XDG_",
+    "LUA_",
+    "CORECLR_",
+    "COMPLUS_",
+    "ERL_",
+    "ZSH_",
+    "BASH_COMPLETION_",
+];
+/// Variables that name a program the command, or a tool it starts, runs in
+/// place of the one it asks for: a compiler, linker or wrapper and the flags
+/// that load compiler plugins, `make`'s own variables, an editor or pager,
+/// `less`'s input filters and startup keys, and Windows' runnable extensions.
+const PROGRAM_ENV: [&str; 40] = [
+    "SHELL",
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTC_LINKER",
+    "RUSTDOC",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "CARGO",
+    "CC",
+    "CXX",
+    "CPP",
+    "LD",
+    "AR",
+    "CFLAGS",
+    "CXXFLAGS",
+    "CPPFLAGS",
+    "LDFLAGS",
+    "MAKE",
+    "MAKEFLAGS",
+    "MFLAGS",
+    "GNUMAKEFLAGS",
+    "MAKEFILES",
+    "JAVA_HOME",
+    "MAVEN_OPTS",
+    "MAVEN_ARGS",
+    "PATHEXT",
+    "EDITOR",
+    "VISUAL",
+    "PAGER",
+    "MANPAGER",
+    "LESS",
+    "LESSOPEN",
+    "LESSCLOSE",
+    "LESSKEY",
+    "LESSKEYIN",
+    "BROWSER",
+    "SUDO_EDITOR",
+    "SSH_ASKPASS",
+    "SUDO_ASKPASS",
+];
+/// Package managers and toolchains read every variable of these as config,
+/// and some of their settings name programs or folders to run them from, or
+/// the index packages are installed from.
+const PROGRAM_ENV_PREFIXES: [&str; 20] = [
+    "CARGO_",
+    "RUSTUP_",
+    "NPM_CONFIG_",
+    "BUN_",
+    "YARN_",
+    "PNPM_",
+    "COREPACK_",
+    "CMAKE_",
+    "CGO_",
+    "GRADLE_",
+    "GEM_",
+    "ASDF_",
+    "MISE_",
+    "CCACHE_",
+    "BUNDLE_",
+    "PIP_",
+    "UV_",
+    "POETRY_",
+    "PIPENV_",
+    "CONDA_",
+];
 const UNSAFE_ENV_NAME: &str = "Sets an environment variable with a name Gespan can't pass safely";
 
 /// The tasks in `text`, with this OS's `windows`/`osx`/`linux` overrides.
@@ -161,12 +301,16 @@ pub(crate) fn resolve(ctx: &Ctx, source: &'static str, file: &str, found: Found)
     let mut blocked = found.blocked;
     // Every name is shown beside the action, so one that isn't a plain name,
     // such as `A,LD_PRELOAD`, could hide what it sets.
-    for (name, _) in &found.env {
+    for (name, value) in &found.env {
         if !is_env_name(name) {
             blocked.get_or_insert(UNSAFE_ENV_NAME.into());
         } else if runs_at_startup(name) {
             blocked.get_or_insert(format!(
                 "Sets {name}, which could run code before the command"
+            ));
+        } else if names_programs(name, value) {
+            blocked.get_or_insert(format!(
+                "Sets {name}, which could change which programs the command runs"
             ));
         }
     }
@@ -332,10 +476,39 @@ fn variables(ctx: &Ctx, text: &str) -> Result<Vec<Piece>, String> {
 /// Whether something that starts before or with the command reads `name`
 /// to run code. Windows names ignore case, so these do too.
 fn runs_at_startup(name: &str) -> bool {
-    STARTUP_ENV
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(name))
-        || STARTUP_ENV_PREFIXES.iter().any(|prefix| {
+    matches_any(name, &STARTUP_ENV, &STARTUP_ENV_PREFIXES)
+}
+
+/// Whether `name`, set to `value`, could make the command or a tool it starts
+/// run a program other than the one it names. `PATH` may only add folders
+/// after the inherited ones, so it can't put a repo's `git` ahead of the real
+/// one. Only Windows names ignore case: on Unix `${env:path}` is another,
+/// usually unset, variable, so the value would replace `PATH`.
+fn names_programs(name: &str, value: &str) -> bool {
+    if name.eq_ignore_ascii_case("PATH") {
+        let (separator, inherited) = if cfg!(windows) {
+            let start = value.get(.."${env:PATH}".len());
+            (
+                ';',
+                start.is_some_and(|start| start.eq_ignore_ascii_case("${env:PATH}")),
+            )
+        } else {
+            (':', value.starts_with("${env:PATH}"))
+        };
+        return !(inherited
+            && value["${env:PATH}".len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| c == separator));
+    }
+    matches_any(name, &PROGRAM_ENV, &PROGRAM_ENV_PREFIXES)
+}
+
+/// Whether `name` is one of `names` or starts with one of `prefixes`,
+/// ignoring case.
+fn matches_any(name: &str, names: &[&str], prefixes: &[&str]) -> bool {
+    names.iter().any(|known| known.eq_ignore_ascii_case(name))
+        || prefixes.iter().any(|prefix| {
             name.get(..prefix.len())
                 .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
         })
