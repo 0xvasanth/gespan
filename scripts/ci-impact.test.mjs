@@ -63,6 +63,13 @@ test("shared crates and vendored GPUI run both Native jobs", () => {
   assert.deepEqual(affected("crates/board-store/src/ops.rs", "vendor/gpui-pre/src/lib.rs"), ["core", "desktop"]);
 });
 
+test("the graph crate runs only Core until gespan-core depends on it", async () => {
+  // Only the root workspace builds it, through Core's Shared crates step.
+  assert.deepEqual(affected("crates/gespan-graph/src/store.rs", "crates/gespan-graph/tests/scale.rs"), ["core"]);
+  const ci = await read(".github/workflows/ci.yml");
+  assert.match(ci, /SHARED=\([^)]*-p gespan-graph[ )]/);
+});
+
 test("every host file a Core contract test reads runs Core, the rest of the host does not", async () => {
   const source = await read("crates/gespan-core/tests/shared_contracts.rs");
   const hostFiles = [...source.matchAll(/"(host\/[^"\s]+)"/g)].map((match) => match[1]);

@@ -116,10 +116,6 @@ impl Shell {
         }
         Some(self.terminal_cwd(cx)).filter(|path| local_folder(path))
     }
-    /// The corner's file search and panel toggle, and the button when shown.
-    pub(super) fn corner_buttons_width(&self, cx: &App) -> f32 {
-        CORNER_BUTTONS_WIDTH + self.open_in_editor_room(cx)
-    }
     /// The width the button adds to the corner, or nothing without a folder
     /// or room for it.
     pub(super) fn open_in_editor_room(&self, cx: &App) -> f32 {

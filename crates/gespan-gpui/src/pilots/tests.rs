@@ -963,7 +963,7 @@ fn chat_composer_keeps_attach_under_the_box_and_opens_the_model_list(cx: &mut Te
 }
 
 #[gpui::test]
-fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppContext) {
+fn details_tabs_head_the_panel_and_the_corner_keeps_only_the_toggle(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| {
         cx.set_reduce_motion(true);
@@ -981,38 +981,48 @@ fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppConte
         })
         .unwrap();
     let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
-    for classic in [false, true] {
+    for boxy in [false, true] {
         s.window
             .update(visual, |shell, _, cx| {
-                shell.workspace.new_layout_boxy = classic;
+                shell.workspace.new_layout_boxy = boxy;
                 cx.notify();
             })
             .unwrap();
         visual.run_until_parked();
         let panel = visual.debug_bounds("right-panel-frame").unwrap();
+        let header = visual.debug_bounds("pilot-overview-header").unwrap();
         let tabs = visual.debug_bounds("pilot-overview-tabs").unwrap();
         let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
         let title_tabs = visual.debug_bounds("title-tab-strip").unwrap();
-        assert!((tabs.top() - title_tabs.top()).abs() <= px(0.5));
-        assert_eq!(tabs.size.height, px(TITLE_BAR_HEIGHT));
-        assert_eq!(
-            tabs.left(),
-            panel.left() + px(if classic { 6. } else { 7. })
-        );
+        // The Pilot's tabs head its panel, as a project's do, under the
+        // title bar (boxy's panel runs up beside the corner).
+        let inset = px(if boxy { TITLE_BAR_HEIGHT } else { 0. });
+        assert_eq!(header.top(), panel.top() + inset, "boxy {boxy}");
+        assert!(header.top() >= px(TITLE_BAR_HEIGHT) - px(0.5));
+        assert_eq!(header.size.height, px(crate::theme::PANE_HEADER_HEIGHT));
+        assert!(header.left() >= panel.left() && header.right() <= panel.right() + px(0.5));
+        assert!(header.contains(&tabs.center()), "{tabs:?} in {header:?}");
         let activity = visual.debug_bounds("pilot-activity").unwrap();
-        let search = visual.debug_bounds("titlebar-file-search").unwrap();
-        assert_eq!(search.left() - activity.right(), px(6.));
-        assert_eq!(toggle.left() - search.right(), px(4.));
-        assert!(tabs.bottom() <= panel.top() + px(if classic { TITLE_BAR_HEIGHT } else { 0. }));
+        assert!(header.contains(&activity.center()));
         assert_eq!(
             visual.debug_bounds("pilot-session-list").unwrap().top(),
-            panel.top() + px(if classic { TITLE_BAR_HEIGHT } else { 0. })
+            header.bottom()
         );
+        // The title bar keeps the session tabs and the toggle alone.
+        assert!(visual.debug_bounds("titlebar-file-search").is_none());
+        assert!(visual.debug_bounds("titlebar-open-in-editor").is_none());
+        assert!(visual.debug_bounds("project-tabs-separator").is_none());
+        assert!(toggle.top() < px(TITLE_BAR_HEIGHT));
+        if !boxy {
+            assert!(
+                title_tabs.right() > panel.left(),
+                "the session tabs run over the open panel"
+            );
+        }
         assert!(
             visual.debug_bounds("pilot-overview-toggle").is_none(),
             "only the shell owns the panel toggle"
         );
-        assert!(title_tabs.right() <= tabs.left());
         s.window
             .update(visual, |shell, w, cx| shell.open(session, w, cx))
             .unwrap();
@@ -1031,15 +1041,6 @@ fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppConte
             toggle,
             "the toggle stays put when changing tab types"
         );
-        // A project's corner is the toggle alone in both layouts.
-        assert_eq!(
-            visual
-                .debug_bounds("toggle-right-panel")
-                .unwrap()
-                .center()
-                .y,
-            tabs.center().y
-        );
         s.window
             .update(visual, |_, w, cx| {
                 s.manager.update(cx, |m, cx| m.open(&s.id, w, cx))
@@ -1050,7 +1051,7 @@ fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn titlebar_details_tabs_switch_pages_and_keep_activity_and_habit_actions(cx: &mut TestAppContext) {
+fn details_tabs_switch_pages_and_stay_usable_above_opened_pages(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     s.window
@@ -1099,14 +1100,11 @@ fn titlebar_details_tabs_switch_pages_and_keep_activity_and_habit_actions(cx: &m
 }
 
 #[gpui::test]
-fn titlebar_divider_resizes_pilot_details_and_closed_panels_keep_the_corner(
-    cx: &mut TestAppContext,
-) {
+fn pilot_details_resize_from_their_edge_and_closed_panels_keep_the_corner(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     s.window
         .update(cx, |shell, _, cx| {
-            // The titlebar divider belongs to the rounded frame.
             shell.workspace.new_layout_boxy = false;
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
@@ -1124,24 +1122,17 @@ fn titlebar_divider_resizes_pilot_details_and_closed_panels_keep_the_corner(
             })
             .unwrap();
         visual.run_until_parked();
-        assert_eq!(
-            visual
-                .debug_bounds("project-tabs-separator")
-                .unwrap()
-                .left(),
-            visual.debug_bounds("right-panel-frame").unwrap().left()
-        );
+        let panel = visual.debug_bounds("right-panel-frame").unwrap();
         let activity = visual.debug_bounds("pilot-activity").unwrap();
-        let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
         assert!(
-            activity.right() < toggle.left(),
-            "Pilot controls fit the session sidebar's minimum width"
+            activity.right() <= panel.right(),
+            "at {width}px every Pilot tab fits its panel: {activity:?} in {panel:?}"
         );
+        let roadmap = visual.debug_bounds("pilot-overview-roadmap").unwrap();
+        assert!(roadmap.right() <= activity.left());
     }
-    let start = visual
-        .debug_bounds("titlebar-right-panel-resize")
-        .unwrap()
-        .center();
+    // The panel's own edge resizes it; the title bar has no divider now.
+    let start = visual.debug_bounds("right-panel-resize").unwrap().center();
     let end = start - gpui::point(px(40.), px(0.));
     visual.simulate_mouse_down(start, MouseButton::Left, Default::default());
     visual.simulate_mouse_move(end, MouseButton::Left, Default::default());
@@ -1152,17 +1143,10 @@ fn titlebar_divider_resizes_pilot_details_and_closed_panels_keep_the_corner(
             assert_eq!(shell.workspace.right_panel_width, 540.);
         })
         .unwrap();
-    assert_eq!(
-        visual
-            .debug_bounds("project-tabs-separator")
-            .unwrap()
-            .left(),
-        visual.debug_bounds("right-panel-frame").unwrap().left()
-    );
-    for classic in [false, true] {
+    for boxy in [false, true] {
         s.window
             .update(visual, |shell, _, cx| {
-                shell.workspace.new_layout_boxy = classic;
+                shell.workspace.new_layout_boxy = boxy;
                 shell.git.update(cx, |g, cx| g.set_project("~".into(), cx));
                 cx.notify();
             })

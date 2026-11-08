@@ -58,6 +58,10 @@ fn open(data: &Data, cx: &mut TestAppContext) -> WindowHandle<Shell> {
     let store = Arc::new(Mutex::new(Store::open(&data.db).unwrap()));
     cx.update(crate::shell::bind_keys);
     let cwd = data.project.clone();
+    // The empty session's attract game repaints at 30Hz while motion is on;
+    // advancing the clock a minute would paint it ~1,900 times for nothing
+    // these tests check. Reduced motion keeps it on its resting frame.
+    cx.update(|cx| cx.set_reduce_motion(true));
     let window = cx.update(|cx| {
         cx.open_window(Default::default(), |_, cx| {
             cx.new(|cx| Shell::new(store, vec![], cwd, None, cx))
