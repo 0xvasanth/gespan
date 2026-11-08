@@ -2661,10 +2661,51 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_sessions_heading_plus_starts_a_session_in_this_project(cx: &mut TestAppContext) {
+    fn the_sessions_heading_leaves_new_sessions_to_the_new_row(cx: &mut TestAppContext) {
         let (window, _, _) = setup(cx);
         cx.refresh().unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        // The New row above already starts a session, so the heading keeps
+        // only its filter.
+        let new_row = visual
+            .debug_bounds("sidebar-navigation-New")
+            .expect("the New row starts sessions");
+        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
+        assert!(
+            new_row.bottom() <= filter.top(),
+            "{new_row:?} above {filter:?}"
+        );
+        assert!(visual.debug_bounds("sidebar-new-session").is_none());
+        // Boxy keeps the same rows.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.new_layout_boxy = true;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("sidebar-filter-button").is_some());
+        assert!(visual.debug_bounds("sidebar-navigation-New").is_some());
+        assert!(visual.debug_bounds("sidebar-new-session").is_none());
+    }
+
+    #[gpui::test]
+    fn the_original_layouts_sessions_plus_starts_a_session_in_this_project(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = setup(cx);
+        // The original layout has no New row, so its plus stays.
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
         let new = visual.debug_bounds("sidebar-new-session").unwrap();
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         // Just before the filter, on the same line.
@@ -2691,6 +2732,45 @@ mod tests {
                 assert_eq!(newest.cwd, project);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn an_empty_session_list_shows_a_card_that_says_how_to_start_one(cx: &mut TestAppContext) {
+        let (window, _, _) = setup(cx);
+        cx.refresh().unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("sidebar-sessions-empty").is_none());
+        window
+            .update(visual, |shell, _, cx| {
+                shell.query = "nothing matches this".into();
+                shell.notify_sidebar(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let card = visual
+            .debug_bounds("sidebar-sessions-empty")
+            .expect("an empty list shows its card");
+        let hint = visual
+            .debug_bounds("sidebar-sessions-empty-hint")
+            .expect("with a hint line");
+        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
+        let sidebar = visual.debug_bounds("sidebar-sessions").unwrap();
+        // Under the heading, inside the sidebar, the hint inside the card.
+        assert!(card.top() >= filter.bottom(), "{card:?} under {filter:?}");
+        assert!(sidebar.contains(&card.origin) && card.right() <= sidebar.right());
+        assert!(card.contains(&hint.center()), "{hint:?} in {card:?}");
+        assert!(card.size.height >= px(40.), "two lines, not a bare label");
+        // Clearing the search brings the sessions back.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.query.clear();
+                shell.notify_sidebar(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("sidebar-sessions-empty").is_none());
     }
 
     #[gpui::test]

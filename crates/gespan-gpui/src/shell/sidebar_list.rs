@@ -505,8 +505,12 @@ impl Shell {
             Row::Heading { label, first } => section_label(label)
                 .when(!first, |d| d.mt_3())
                 .when(first, |d| {
-                    d.child(self.sidebar_new_session_button(cx))
-                        .child(self.sidebar_filter_button(cx))
+                    // The New row above already starts a session; only the
+                    // original layout, which has no New row, keeps a plus.
+                    d.when(self.workspace.classic_layout, |d| {
+                        d.child(self.sidebar_new_session_button(cx))
+                    })
+                    .child(self.sidebar_filter_button(cx))
                 })
                 .into_any(),
             Row::Session(id) => self.session_card(id, cx),
@@ -539,17 +543,56 @@ impl Shell {
                     .into_any();
             }
             Row::ClassicGap(height) => return div().h(px(height as f32)).into_any(),
-            Row::Empty => div()
-                .px_2()
-                .py_2()
-                .text_size(px(12.))
-                .text_color(rgb(MUTED))
-                .child(if self.query.is_empty() {
-                    "No sessions yet"
-                } else {
-                    "No matching sessions"
-                })
-                .into_any(),
+            Row::Empty => {
+                let searching = !self.query.is_empty();
+                div()
+                    .debug_selector(|| "sidebar-sessions-empty".into())
+                    .mx_1()
+                    .mt_1()
+                    .px_3()
+                    .py(px(10.))
+                    .rounded_lg()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(content(0.1))
+                    .flex()
+                    .items_center()
+                    .gap_2p5()
+                    .child(
+                        icon(if searching { "search" } else { "chat" }, 14.)
+                            .text_color(content(0.35)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(content(0.6))
+                                    .child(if searching {
+                                        "No matching sessions"
+                                    } else {
+                                        "No sessions yet"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "sidebar-sessions-empty-hint".into())
+                                    .text_size(px(11.))
+                                    .text_color(content(0.35))
+                                    .child(if searching {
+                                        SharedString::from("Try a different search")
+                                    } else {
+                                        format!("Start one with {MOD}T").into()
+                                    }),
+                            ),
+                    )
+                    .into_any()
+            }
         };
         div()
             .when(self.workspace.classic_layout, |d| d.px(px(6.)))

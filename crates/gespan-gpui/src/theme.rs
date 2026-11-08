@@ -3,7 +3,6 @@ use gpui::{AnyElement, Div, Hsla, Role, Stateful, Svg, div, img, prelude::*, px,
 // rather than opaque replacement greys.
 pub(crate) const CHAT: u32 = 0x141414;
 pub(crate) const TEXT: u32 = 0xebebeb;
-pub(crate) const MUTED: u32 = 0x969696;
 pub(crate) const ACCENT: u32 = 0x4da3f5;
 pub(crate) const COLUMN: f32 = 832.;
 /// The transcript's side padding inside `COLUMN`: the docked composer's
