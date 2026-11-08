@@ -1,0 +1,24 @@
+Cargo.lock
+  h_7bb0b8336911f0 1260,1283
+Cargo.toml
+  h_7bb0b8336911f0 7
+README.md
+  h_7bb0b8336911f0 194,198-201
+crates/gespan-gpui/Cargo.lock
+  h_7bb0b8336911f0 2603,2663,2671,2779,2799
+crates/gespan-gpui/Cargo.toml
+  h_7bb0b8336911f0 118
+package.json
+  h_7bb0b8336911f0 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8148d95aacba22e03bbddae436f5f738080c4256",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
