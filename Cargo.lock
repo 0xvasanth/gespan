@@ -1190,6 +1190,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-graph"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gespan-keep-awake"
 version = "0.1.0"
 dependencies = [
