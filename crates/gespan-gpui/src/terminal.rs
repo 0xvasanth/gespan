@@ -194,8 +194,8 @@ fn spawn(
     let options = tty::Options {
         shell: Some(tty::Shell::new(program, args)),
         working_directory: Some(workdir),
-        // Read what the PTY still holds when the process exits: epoll can
-        // report the exit before the last output, which would drop it.
+        // Only Windows reads this; the event loop's own flag below drains
+        // the PTY on Unix.
         drain_on_exit: true,
         env,
         #[cfg(target_os = "windows")]
@@ -223,7 +223,12 @@ fn spawn(
             {
                 shell_pid = pty.child_watcher().pid().map_or(0, |pid| pid.get());
             }
-            match EventLoop::new(term.clone(), listener, pty, false, false) {
+            // Drain on exit: read what the PTY still holds when the process
+            // exits. A poll can report the exit and the last output together,
+            // and the loop handles the exit first, so a command that prints
+            // and quits at once would otherwise show nothing.
+            let drain_on_exit = true;
+            match EventLoop::new(term.clone(), listener, pty, drain_on_exit, false) {
                 Ok(event_loop) => {
                     let sender = event_loop.channel();
                     event_loop.spawn();
@@ -2078,5 +2083,46 @@ mod tests {
             }
         }
         assert_eq!(status.expect("the command exited").code(), Some(3));
+    }
+    #[test]
+    fn a_command_that_prints_and_exits_at_once_keeps_its_output() {
+        // The exit and the last output can arrive in the same poll. Run it
+        // several times so a dropped last write fails reliably on Linux.
+        let dir = std::env::temp_dir().to_string_lossy().into_owned();
+        let size = GridSize {
+            columns: 60,
+            lines: 10,
+        };
+        for run in 0..20 {
+            let command = command_program("printf 'done %s' 42; exit 0");
+            let spawned = spawn(&dir, Some(&command), &[], size, 100 + run);
+            assert!(spawned.sender.is_some());
+            let mut exited = false;
+            for _ in 0..250 {
+                std::thread::sleep(Duration::from_millis(20));
+                if let Ok(TermEvent::ChildExit(_)) = spawned.events.try_recv() {
+                    exited = true;
+                    break;
+                }
+            }
+            assert!(exited, "run {run}: the command exited");
+            // Parsing can trail the exit report by a moment.
+            let first_line = || {
+                let term = spawned.term.lock();
+                let grid = term.grid();
+                (0..grid.columns())
+                    .map(|c| grid[Line(0)][Column(c)].c)
+                    .collect::<String>()
+            };
+            let mut first = first_line();
+            for _ in 0..50 {
+                if first.starts_with("done 42") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+                first = first_line();
+            }
+            assert!(first.starts_with("done 42"), "run {run}: {first:?}");
+        }
     }
 }

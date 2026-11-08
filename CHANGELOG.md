@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result.
 - A sign-in left waiting on a closed browser can be cancelled, and resets on
   its own when you come back to Gespan.
+- A terminal command that prints and exits at once keeps its last output.
 - The explorer keeps its scroll position when folders open, close or refresh.
 - Read-only documents let you select and copy text.
 - The code block copy button stays readable over long lines.
