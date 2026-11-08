@@ -1,0 +1,292 @@
+mobile/src/app/pilot-profile/[pilotId]/model.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-34
+mobile/src/features/connection/selection.ts
+  s_8175d8edb31008::t_64dcce006f7078 8,29
+mobile/tests/MarkdownFence.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-120
+mobile/src/app/pilot/[pilotId].tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-11,16-21,23-30,32-38,50-68,71,75-109,115-144,147-187,189,192,194-197,199-206,208-247,251-288,290-317,321-341,354
+mobile/src/features/sessions/Composer.tsx
+  s_8175d8edb31008::t_64dcce006f7078 3,40,47,56-57,61-62,65-66,97-100,102-103,120-128,134-136,148-151,163-192,200-205,209,217,286-288,291,298-301,315-318,323-349,352,384,388,392-395,398,406,440-452,471,479-486,488,494-498,524-525,596,599,604,607,616-618,625,671-690,749-756,836-840
+mobile/src/app/pilot-profile/[pilotId]/model-options.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-10
+mobile/src/features/sessions/PilotMenu.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-67
+mobile/src/app/index.tsx
+  s_8175d8edb31008::t_64dcce006f7078 2-3,8-9,11-18,21-28
+mobile/src/app/pilot-profile/[pilotId]/subsessions.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-205
+mobile/src/features/sessions/SessionsPage.tsx
+  s_8175d8edb31008::t_64dcce006f7078 17,115,162,195-211,236-241
+mobile/src/features/visuals/dither.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-53
+mobile/src/app/pilot-profile/[pilotId]/projects.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-84
+mobile/src/features/workspace/pilotSeen.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-87
+mobile/src/ui/SceneFade.tsx
+  s_8175d8edb31008::t_64dcce006f7078 43-52
+mobile/tests/SessionToolbar.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 49,56
+mobile/tests/TypingPostureFocus.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-49
+mobile/src/features/mascots/useFrameToggle.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-3,8-12,14-22,24-30,32-35
+mobile/src/features/sessions/SessionFilterMenu.tsx
+  s_8175d8edb31008::t_64dcce006f7078 10,14,68-88
+mobile/src/features/sessions/TypingPostureFocus.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-25
+mobile/modules/gespan-link/expo-module.config.json
+  s_8175d8edb31008::t_64dcce006f7078 5
+mobile/src/features/workspace/lastPlace.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-32
+mobile/modules/gespan-link/ios/TranscriptArtwork.swift
+  s_8175d8edb31008::t_64dcce006f7078 61-70
+mobile/src/app/_layout.tsx
+  s_8175d8edb31008::t_64dcce006f7078 21,23-29,31-34,38,87-96,103-109,124-125,132-133,136,169-175,180-226
+mobile/src/features/settings/pilotOnly.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-84
+mobile/src/features/workspace/WorkspaceSidebar.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-135
+mobile/src/features/workspace/types.ts
+  s_8175d8edb31008::t_64dcce006f7078 43,106-114,140-164,209-229,252-262
+mobile/src/features/visuals/charts.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-748
+mobile/src/features/notifications/SessionNotifications.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,31-34,38-46,62-78,100,107-152,167-170,202,204,210,212-224
+mobile/src/ui/ModalSheet.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-116
+mobile/src/features/visuals/VisualTree.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-382
+mobile/src/app/pilot-profile/[pilotId]/file.tsx
+  s_8175d8edb31008::t_a995a8dc9b5a21 4-10,53
+  s_8175d8edb31008::t_64dcce006f7078 1-3,11-52,54-198
+mobile/src/app/pilot-profile/[pilotId]/documents.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-48
+mobile/src/features/visuals/scale.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-145
+mobile/src/features/workspace/pilotLook.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-4
+mobile/src/features/sessions/providerSvgs.ts
+  s_8175d8edb31008::t_64dcce006f7078 6
+mobile/src/features/mascots/PixelMascot.tsx
+  s_8175d8edb31008::t_64dcce006f7078 5,41,47-48,53,57-60
+mobile/src/ui/Timed.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-26
+mobile/src/features/workspace/WorkspaceProvider.tsx
+  s_8175d8edb31008::t_64dcce006f7078 28,39-53,67-75,92-98,124-126,152-156,210-249,265,291-292,301,339-340,415,479-489,562-597,606-640,701-702,713,725-733,742-744,751,759-760,768-770,785-788,827-828
+mobile/src/features/sessions/TurnMetricsSheet.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,12-13,16,50-60,125-201
+mobile/src/features/sessions/TerminalSpinner.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,4-5,34
+mobile/src/features/models/usePilotSubsessions.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-62
+mobile/src/ui/CircleButton.tsx
+  s_8175d8edb31008::t_64dcce006f7078 15,21-22,29-30
+mobile/src/app/session.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-29
+mobile/src/ui/ScenePager.tsx
+  s_8175d8edb31008::t_64dcce006f7078 2,6,9,14-23,26,32-36,39,50-69,92-157,218-237,250-259,263-264,266-276,278-392,396-401,409-411,420-427,429-435,438,441-446,457-458,463-477,480,485-487,489-507,510-522,524-568,576-595,597-601
+mobile/tests/connection.test.ts
+  s_8175d8edb31008::t_64dcce006f7078 17,23-25
+mobile/src/features/connection/ConnectionProvider.tsx
+  s_8175d8edb31008::t_64dcce006f7078 20-21,39-46,333-335,344-354
+mobile/tests/SessionNotifications.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 15,20,28-29,48,55-57,62-63,67,84,91-92,171-237
+mobile/src/features/models/ModelPicker.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,9,72-74,97,100-101,602-607,616-628,634,640
+mobile/src/features/sessions/EmptySession.tsx
+  s_8175d8edb31008::t_64dcce006f7078 13,19,36,39,45-46,78,100-115
+mobile/src/features/sessions/NativeTranscript.tsx
+  s_8175d8edb31008::t_64dcce006f7078 4,34-35,39-40,45,49,51-55,57-63,82,102-108,114-115,123-125,144-156,166-167,174-183,187,212,216-223,231,244-249,262,287-301,315-343
+mobile/src/features/connection/WorkspacePicker.tsx
+  s_8175d8edb31008::t_64dcce006f7078 28,35,60,109
+mobile/src/features/workspace/UnreadDot.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-34
+mobile/src/features/sessions/LaunchedSessionCard.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-152
+mobile/src/features/background/AsciiField.tsx
+  s_8175d8edb31008::t_64dcce006f7078 5,150
+mobile/modules/gespan-link/ios/TranscriptVisual.swift
+  s_8175d8edb31008::t_64dcce006f7078 1-837
+mobile/src/features/workspace/PilotHome.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-2,11-223,225-645
+  s_8175d8edb31008::t_a995a8dc9b5a21 3-10,224
+mobile/tests/ModelPicker.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 56
+mobile/modules/gespan-link/ios/GespanLink.podspec
+  s_8175d8edb31008::t_64dcce006f7078 8,10,18
+mobile/src/features/settings/notifications.ts
+  s_8175d8edb31008::t_64dcce006f7078 6-7,12
+mobile/tests/Composer.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-7,14,100-104,170-172,177-178,214-217,221,229,235-242,250,319,321,338-404
+mobile/src/features/mascots/pixelMascots.ts
+  s_8175d8edb31008::t_64dcce006f7078 266-289
+mobile/src/ui/ChoiceMenu.tsx
+  s_8175d8edb31008::t_64dcce006f7078 13-14,19,22-23,25-30,33,36,40,42,44-45,50,52,68,71,76,78-88,90-109,115-193
+  s_8175d8edb31008::t_412d6027fb05ca 12
+crates/mobile-link/src/transcript.rs
+  s_8175d8edb31008::t_64dcce006f7078 4,174-177,226-252,398-401,420-422,452-455,540-547,570-576,667-668,671-673,693-706,708,711-715,733-734,813-869,888-889,897-899,903-907,922-929,1015-1063,1067-1078,1159-1244,1255-1261,1313-1334,1340-1346,1459-1482,1499-1591
+mobile/modules/gespan-link/ios/TranscriptSession.swift
+  s_8175d8edb31008::t_64dcce006f7078 200-218,325,410
+mobile/src/features/sessions/ProviderLogo.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,8-17,31-37
+mobile/tests/WorkspaceLayout.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-167
+mobile/src/features/workspace/PilotDocuments.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-138
+mobile/src/app/pilot-profile/[pilotId]/edit.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-336
+mobile/README.md
+  s_8175d8edb31008::t_70f46e0602fff9 69
+  s_8175d8edb31008::t_1ca17592c18ab2 15
+  s_8175d8edb31008::t_64dcce006f7078 21,26-29,50
+mobile/src/app/pilot-new.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-281
+mobile/src/features/sessions/markdownParser.ts
+  s_8175d8edb31008::t_64dcce006f7078 324-347
+mobile/src/features/workspace/newPilot.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-16
+mobile/modules/gespan-link/ios/NativeTranscriptView.swift
+  s_8175d8edb31008::t_64dcce006f7078 9,55-78,97-99,141-217,224,246,252-259,266,281,301,328-337,343-347,352,390-393,403-410,412-413,441-446,459,461,469,476-478,482-633,640,671,728-757,761-766,772-779,795,809,811-816,824-830,834-867,870-878,896-899,910,912-913,916-917,939-948,952,969,996-1004,1007-1009,1011,1022,1033-1034,1036-1050
+mobile/src/app/project/[projectId]/index.tsx
+  s_8175d8edb31008::t_64dcce006f7078 4,6,9,29-34,37-41
+mobile/src/features/workspace/ProjectScreen.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,34,71,75-76,84-86,89-90,95-96,100-102,107-112,286,288-289,291-293,307,309,359-380,382-411,428,434,448-449,476-483,487-496
+crates/mobile-link/src/ffi.rs
+  s_8175d8edb31008::t_64dcce006f7078 230-241
+mobile/modules/gespan-link/ios/TranscriptPresentation.swift
+  s_8175d8edb31008::t_64dcce006f7078 15-16,24-27,71-72,77-90,113,119,125,209-212,224,226-228,234-238,287-299,307-324,327-340,342-343,352,356,367,386-390,396-402,404-413,415,425-428,459-460,462-465,468-470,472,565-738,740-741,785-792,799,801-802,807-831,876-915
+mobile/modules/gespan-link/ios/TranscriptRowView.swift
+  s_8175d8edb31008::t_64dcce006f7078 101-113,164,211-213,216-218,266-298,330-342,395,402-406,479-566,579,761-766,829-831
+mobile/src/app/pilot-profile/[pilotId]/document.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-9
+mobile/modules/gespan-link/ios/ScrollEdgeEffects.swift
+  s_8175d8edb31008::t_64dcce006f7078 1-31
+mobile/src/app/settings/appearance.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,15,37,40,44,46,48,55,75,90-115,182-246,281-283,329-338,350,459-491,499-515
+mobile/src/features/changes/diffTheme.ts
+  s_8175d8edb31008::t_64dcce006f7078 6
+mobile/src/app/settings/index.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-2,6,20,30,46-60,191-214,219,222
+mobile/src/features/sessions/PilotCards.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-190
+mobile/src/features/sessions/QuestionCard.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-475
+mobile/src/features/sessions/UsageLimitCard.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-104
+mobile/src/ui/ContentPane.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-28
+mobile/src/features/models/usePilotModel.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-23
+mobile/tests/WorkspaceProvider.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 255-441
+mobile/src/features/sessions/codeFence.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-12
+mobile/src/features/sessions/TranscriptTurn.tsx
+  s_8175d8edb31008::t_64dcce006f7078 19-20,80,107-112,259,262,270
+mobile/app.json
+  s_8175d8edb31008::t_18fa1ed1d3dcb1 19-20,38-42,50-55
+mobile/src/features/changes/ChangesView.tsx
+  s_8175d8edb31008::t_64dcce006f7078 17,590
+mobile/src/app/pilot-profile/[pilotId]/index.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-368
+mobile/src/features/sessions/Markdown.tsx
+  s_8175d8edb31008::t_64dcce006f7078 6,8,12-13,16,27,29,141,170-221,419,440-468,472
+mobile/src/features/workspace/pilotAccent.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-40
+mobile/src/features/connection/nativeLink.ts
+  s_8175d8edb31008::t_64dcce006f7078 6,8,15-17,87-95
+mobile/src/features/files/DocumentScreen.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-132
+mobile/tests/QuestionCard.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-280
+mobile/src/features/workspace/pilotProfile.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-75
+mobile/src/ui/theme.ts
+  s_8175d8edb31008::t_64dcce006f7078 2,14,18-22,44,46,48-49,138,180,182,209-269,283,285-293,296-302,318-319,322,329-340
+  s_8175d8edb31008::t_8ca4a60615d9c3 341
+mobile/tests/SessionScreen.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 11,15-20,45-50,59,65,78-95,107,217,221,225,232-329
+mobile/tests/UsageLimitCard.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-139
+crates/mobile-link/src/lib.rs
+  s_8175d8edb31008::t_64dcce006f7078 183-190,192,195-207
+  s_8175d8edb31008::t_26ba263477e98f 191,193-194
+  s_8175d8edb31008::t_ac65f883c03e86 182
+mobile/modules/gespan-link/ios/TypingPostureView.swift
+  s_8175d8edb31008::t_64dcce006f7078 1-78
+mobile/src/ui/GradualBlur.tsx
+  s_8175d8edb31008::t_64dcce006f7078 21-24
+mobile/modules/gespan-link/ios/TranscriptLayout.swift
+  s_8175d8edb31008::t_64dcce006f7078 38-57,72,86-154,159,163,170
+mobile/src/app/settings/_layout.tsx
+  s_8175d8edb31008::t_64dcce006f7078 8,51-52
+mobile/tests/AndroidWorkspaceLine.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 68
+mobile/src/ui/Icon.tsx
+  s_8175d8edb31008::t_64dcce006f7078 2,9,25-27,32,48,60-62,107-111
+mobile/src/ui/DitherLoading.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-216
+mobile/src/features/sessions/SessionToolbar.tsx
+  s_8175d8edb31008::t_64dcce006f7078 15,21,34-36,46,50-51,54-64,78-84,86,201-230,232
+mobile/vitest.config.ts
+  s_8175d8edb31008::t_64dcce006f7078 8-9
+mobile/src/features/workspace/WorkspaceLayout.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-46
+mobile/src/features/sessions/MessageActionsSheet.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-187
+mobile/src/features/workspace/ProjectPages.tsx
+  s_8175d8edb31008::t_64dcce006f7078 2,6,21,60
+mobile/tests/useFrameToggle.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-56
+mobile/src/ui/AnimationsPaused.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-7
+mobile/tests/ProjectScreen.test.tsx
+  s_8175d8edb31008::t_64dcce006f7078 6-7,15-16,18-21,33-56,118-119,140,181,185,188,243,251,253-254,284-301,339-342,393-394,396-398,404-442,446-447,459,477,549-550
+mobile/src/features/sessions/SessionScreen.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1,17-19,22,56-58,61-65,217,318,324-326,336-337,339-355,376-379,381-390,393,456-459,491,575-580,592-599,645-652,761-787,790,795-813,891-893
+  s_8175d8edb31008::t_6b24ae9fb6b40a 758
+mobile/src/features/visuals/types.ts
+  s_8175d8edb31008::t_64dcce006f7078 1-45
+mobile/src/app/pilot-profile/[pilotId]/_layout.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-78
+mobile/src/app/pilot-profile/[pilotId]/habit.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-177
+mobile/src/features/workspace/WorkspaceDrawer.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-620
+mobile/tests/watchUpdates.test.ts
+  s_8175d8edb31008::t_64dcce006f7078 52-67,73-82
+mobile/src/features/files/codeScreen.tsx
+  s_8175d8edb31008::t_64dcce006f7078 159,165-166,177,216-220
+  s_8175d8edb31008::t_d1b708f4b3c09b 221
+mobile/modules/gespan-link/ios/GespanLinkModule.swift
+  s_8175d8edb31008::t_64dcce006f7078 8,30-37,39-41
+crates/mobile-link/tests/fixtures/legacy-identity.json
+  s_8175d8edb31008::t_26ba263477e98f 2,5
+  s_8175d8edb31008::t_64dcce006f7078 1,3-4,6-7
+mobile/src/app/document.tsx
+  s_8175d8edb31008::t_64dcce006f7078 1-9
+mobile/src/features/files/CodeView.tsx
+  s_8175d8edb31008::t_64dcce006f7078 26-28,160,447,455,463,484
+mobile/src/features/workspace/watchUpdates.ts
+  s_8175d8edb31008::t_64dcce006f7078 1,11-13,80-88,91-92,101,104,131
+mobile/tests/nativePermissions.test.ts
+  s_8175d8edb31008::t_64dcce006f7078 55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28d23cbaecdf0ec9b7ee0651999e5d8f6a5138b1",
+  "prompts": {},
+  "sessions": {
+    "s_8175d8edb31008": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac8cbdbc-08b3-4df8-80eb-82983e5320da",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
