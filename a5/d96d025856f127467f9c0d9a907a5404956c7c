@@ -1,0 +1,19 @@
+crates/gespan-core/src/project_actions/tests/runs.rs
+  s_cab491e291074c::t_a667e8afd0b925 96-97,99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5d96d025856f127467f9c0d9a907a5404956c7c",
+  "prompts": {},
+  "sessions": {
+    "s_cab491e291074c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4c7c3e7e-783e-4740-8bc7-feec78a4dc84",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
