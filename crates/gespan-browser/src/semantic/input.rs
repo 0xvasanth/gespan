@@ -618,6 +618,20 @@ fn modifier(name: &str) -> Option<Modifier> {
     }
 }
 
+/// Whether pressing `raw` can put text in a field: the real parser's answer,
+/// so the audit redacts exactly what the press path would type. A key that
+/// does not parse counts as text (nothing is typed, but nothing is kept
+/// either). Enter and commands (any modifier but Shift) are not text.
+pub fn types_text(raw: &str) -> bool {
+    match parse_chord(raw) {
+        Err(_) => true,
+        Ok(chord) => {
+            chord.modifiers & !Modifier::Shift.bit() == 0
+                && chord.key.text.as_deref().is_some_and(|t| t != "\r")
+        }
+    }
+}
+
 /// Parse `Modifier+...+Key`. Unknown keys are an error, never a
 /// closest match.
 pub fn parse_chord(raw: &str) -> Result<Chord, String> {

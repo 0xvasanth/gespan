@@ -72,6 +72,7 @@ mod devtools;
 mod element;
 mod fill;
 mod input;
+pub use input::types_text as press_types_text;
 mod observe;
 mod refs;
 pub(crate) mod snapshot;

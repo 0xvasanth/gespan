@@ -462,11 +462,15 @@ pub fn text_fingerprint(secret: &[u8; 32], text: &str) -> String {
         .collect()
 }
 
-/// Roles whose content may be a secret. Chrome's accessibility tree reports
-/// `<input type=password>` as a plain `textbox`, so a text box counts.
-pub fn role_may_hold_secret(role: &str) -> bool {
-    let role = role.to_ascii_lowercase();
-    role.contains("password") || role == "textbox" || role == "searchbox"
+/// Roles a `select` is known to be harmless on: pickers of fixed options.
+/// Anything else, including a role that is unknown because the ref is stale
+/// or gone, has its values redacted. Chrome's accessibility tree reports
+/// `<input type=password>` as a plain `textbox`, so that cannot be on this list.
+pub fn role_is_benign_for_select(role: &str) -> bool {
+    matches!(
+        role.to_ascii_lowercase().as_str(),
+        "combobox" | "listbox" | "menu" | "menuitem" | "option"
+    )
 }
 
 /// Parameters as the audit stores them: `text` becomes `{len, fp}` (see
@@ -474,8 +478,8 @@ pub fn role_may_hold_secret(role: &str) -> bool {
 /// the `value` of `wait {for: text}` is fingerprinted the same way. `press`
 /// keeps a named key (`Enter`, `Control+A`) but only the length of a typed
 /// character or of any key aimed at a password field; `select` keeps only
-/// the lengths of its values when the target may hold a secret
-/// (`target_role`, the role of its `ref`). `ref`, `paths`, `tab` and
+/// the lengths of its values unless the target is positively known to be a
+/// picker of fixed options (`target_role`, the role of its `ref`). `ref`, `paths`, `tab` and
 /// everything else stay.
 pub fn redact_params(
     action: ActionKind,
@@ -487,7 +491,7 @@ pub fn redact_params(
         return Value::Object(Map::new());
     };
     let waits_for_text = object.get("for").and_then(Value::as_str) == Some("text");
-    let secret_target = target_role.is_some_and(role_may_hold_secret);
+    let select_is_benign = target_role.is_some_and(role_is_benign_for_select);
     let password_target = target_role.is_some_and(|r| r.to_ascii_lowercase().contains("password"));
     let mut out = Map::with_capacity(object.len());
     for (key, value) in object {
@@ -496,12 +500,14 @@ pub fn redact_params(
             (_, "text") => hash_text(value, secret),
             (ActionKind::Wait, "value") if waits_for_text => hash_text(value, secret),
             (ActionKind::Press, "key") => match value {
-                Value::String(keys) if password_target || types_a_character(keys) => {
+                Value::String(keys)
+                    if password_target || super::semantic::press_types_text(keys) =>
+                {
                     json!({ "len": keys.chars().count() })
                 }
                 other => other.clone(),
             },
-            (ActionKind::Select, "values") if secret_target => match value {
+            (ActionKind::Select, "values") if !select_is_benign => match value {
                 Value::Array(values) => Value::Array(
                     values
                         .iter()
@@ -532,21 +538,6 @@ pub fn redact_params(
         out.insert(key.clone(), redacted);
     }
     Value::Object(out)
-}
-
-/// `Modifier+...+Key` whose key is one printable character and whose
-/// modifiers are at most Shift: the text of a keystroke, not a command
-/// (`Control+A` is a command).
-fn types_a_character(keys: &str) -> bool {
-    // `Control++` presses "+": the last part is empty after the split.
-    let (modifiers, key) = if keys == "+" {
-        ("", "+")
-    } else if let Some(modifiers) = keys.strip_suffix("++") {
-        (modifiers, "+")
-    } else {
-        keys.rsplit_once('+').unwrap_or(("", keys))
-    };
-    key.chars().count() == 1 && modifiers.split('+').all(|m| m.is_empty() || m == "Shift")
 }
 
 fn hash_text(value: &Value, secret: &[u8; 32]) -> Value {
@@ -937,6 +928,27 @@ mod tests {
             None,
         );
         assert_eq!(shifted["key"], json!({ "len": 7 }));
+        for key in [
+            "shift+x",
+            " x",
+            "Space",
+            "Shift+Space",
+            "nonsense-key",
+            "Alt+Shift+q",
+        ] {
+            let press = redact_params(
+                ActionKind::Press,
+                &json!({ "tab": "t_1", "key": key }),
+                &secret,
+                None,
+            );
+            let expected = if key == "Alt+Shift+q" {
+                json!(key)
+            } else {
+                json!({ "len": key.chars().count() })
+            };
+            assert_eq!(press["key"], expected, "{key}");
+        }
         let plus = redact_params(
             ActionKind::Press,
             &json!({ "tab": "t_1", "key": "+" }),
@@ -976,12 +988,23 @@ mod tests {
     }
 
     #[test]
-    fn target_roles_that_can_hold_a_secret() {
-        for role in ["password", "Password", "textbox", "searchbox"] {
-            assert!(role_may_hold_secret(role), "{role}");
+    fn only_known_pickers_keep_their_select_values() {
+        for role in ["combobox", "ListBox", "menu", "option"] {
+            assert!(role_is_benign_for_select(role), "{role}");
         }
-        for role in ["button", "combobox", "listbox", "link", ""] {
-            assert!(!role_may_hold_secret(role), "{role}");
+        for role in ["password", "textbox", "searchbox", "button", ""] {
+            assert!(!role_is_benign_for_select(role), "{role}");
         }
+    }
+
+    #[test]
+    fn select_with_an_unknown_role_is_redacted() {
+        let select = redact_params(
+            ActionKind::Select,
+            &json!({ "tab": "t_1", "ref": "e9", "values": ["hunter2"] }),
+            &[3u8; 32],
+            None,
+        );
+        assert_eq!(select["values"], json!([{ "len": 7 }]));
     }
 }

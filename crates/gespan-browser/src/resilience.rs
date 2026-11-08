@@ -499,6 +499,56 @@ fn tabs_of(result: &ActionResult) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn press_and_select_on_a_text_box_reach_the_audit_without_their_values() {
+    let world = World::start(|_| {});
+    world.grant("s1");
+    let tab = world.open("s1");
+    let shot = world.act("s1", "snapshot", json!({ "tab": tab }));
+    let text = shot.data.unwrap()["snapshot"].as_str().unwrap().to_string();
+    // The fake page's text box (the role Chrome gives a password input).
+    let line = text
+        .lines()
+        .find(|l| l.contains("textbox"))
+        .unwrap_or_else(|| panic!("no textbox in {text}"));
+    let start = line.find("[ref=").unwrap() + 5;
+    let element = line[start..line[start..].find(']').unwrap() + start].to_string();
+
+    world.act_as(
+        "s1",
+        "press-1",
+        "press",
+        json!({ "tab": tab, "ref": element, "key": "x" }),
+    );
+    world.act_as(
+        "s1",
+        "select-1",
+        "select",
+        json!({ "tab": tab, "ref": element, "values": ["hunter2"] }),
+    );
+    // A ref nobody knows: the role is unknown, the values still stay out.
+    world.act_as(
+        "s1",
+        "select-2",
+        "select",
+        json!({ "tab": tab, "ref": "e999", "values": ["hunter2"] }),
+    );
+
+    let rows = world.host.audit_list(Some("s1"), 50);
+    let row = |id: &str| rows.iter().find(|r| r.request_id == id).unwrap();
+    assert_eq!(row("press-1").params["key"], json!({ "len": 1 }));
+    assert_eq!(row("select-1").params["values"], json!([{ "len": 7 }]));
+    assert_eq!(row("select-2").params["values"], json!([{ "len": 7 }]));
+    assert_eq!(row("press-1").params["ref"], json!(element));
+    let stored = serde_json::to_string(&rows).unwrap();
+    assert!(!stored.contains("hunter2"), "{stored}");
+    assert!(!stored.contains("\"key\":\"x\""), "{stored}");
+    assert!(
+        world.host.audit_targets.lock().unwrap().is_empty(),
+        "no role is left behind after the requests"
+    );
+}
+
+#[test]
 fn two_sessions_work_in_parallel_without_seeing_each_other() {
     let world = Arc::new(World::start(|_| {}));
     world.grant("s1");
