@@ -754,7 +754,7 @@ pub fn screenshot(run: &Run<'_>, p: ScreenshotParams) -> Result<ActionResult, Fa
             "y": top + dy + page_y,
             "width": right - left,
             "height": bottom - top,
-            "scale": 1,
+            "scale": screenshot_scale(right - left, bottom - top),
         });
     } else if p.full_page.unwrap_or(false) {
         let metrics = run.send(run.main(), Method::PageGetLayoutMetrics, json!({}))?;

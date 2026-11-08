@@ -60,6 +60,8 @@ struct Model {
     content: (f64, f64),
     /// `Page.captureScreenshot` answers with a frame this many bytes long.
     shot_bytes: Option<usize>,
+    /// Border box (width, height) `DOM.getBoxModel` reports, at (10, 10).
+    box_size: (f64, f64),
 }
 
 impl Default for Model {
@@ -81,6 +83,7 @@ impl Default for Model {
             same_process: false,
             content: (800.0, 3000.0),
             shot_bytes: None,
+            box_size: (100.0, 30.0),
         }
     }
 }
@@ -252,10 +255,13 @@ fn respond(
         "DOM.getContentQuads" => Response::Result(json!({
             "quads": [[10.0, 10.0, 110.0, 10.0, 110.0, 40.0, 10.0, 40.0]]
         })),
-        "DOM.getBoxModel" => Response::Result(json!({ "model": {
-            "content": [100.0, 200.0, 400.0, 200.0, 400.0, 500.0, 100.0, 500.0],
-            "border": [10.0, 10.0, 110.0, 10.0, 110.0, 40.0, 10.0, 40.0],
-        }})),
+        "DOM.getBoxModel" => {
+            let (w, h) = model.box_size;
+            Response::Result(json!({ "model": {
+                "content": [100.0, 200.0, 400.0, 200.0, 400.0, 500.0, 100.0, 500.0],
+                "border": [10.0, 10.0, 10.0 + w, 10.0, 10.0 + w, 10.0 + h, 10.0, 10.0 + h],
+            }}))
+        }
         "Page.getLayoutMetrics" => Response::Result(json!({
             "cssLayoutViewport": { "pageX": 0, "pageY": 50, "clientWidth": 800, "clientHeight": 600 },
             "cssContentSize": { "x": 0, "y": 0, "width": model.content.0, "height": model.content.1 },
@@ -388,8 +394,56 @@ impl Harness {
         &self.handle.tab
     }
 
-    fn act(&self, kind: ActionKind, mut input: Value) -> ActionResult {
-        input["tab"] = json!(self.tab());
+    fn act(&self, kind: ActionKind, input: Value) -> ActionResult {
+        self.act_as("s1", &self.handle, kind, input)
+    }
+
+    /// A second agent session with its own tab (target `T2`) on the same link.
+    fn add_session(&self, session: &str) -> TabHandle {
+        let tab = {
+            let mut state = self.policy.write();
+            state.turn_started(session, "main", self.cwd.to_str().unwrap(), Some(true));
+            let tab = state.new_tab_id();
+            state.insert_lease(Lease {
+                tab: tab.clone(),
+                target_id: TargetId("T2".into()),
+                cdp_session: Some(CdpSessionId(MAIN.into())),
+                owner: session.into(),
+                state: TabState::Open,
+                main_frame_id: Some("F2".into()),
+                main_loader_id: Some("L2".into()),
+                main_execution_context: None,
+                frames: HashMap::new(),
+                busy: false,
+                busy_action: 0,
+                from_user: false,
+                released: false,
+                snapshot_version: 0,
+                pending_dialog: None,
+                opened_by: None,
+                popups_blocked: 0,
+                url: "https://example.com/two".into(),
+                title: "Two".into(),
+                created_at_ms: 0,
+                last_action_at_ms: 0,
+            });
+            tab
+        };
+        TabHandle {
+            tab,
+            target: TargetId("T2".into()),
+            session: CdpSessionId(MAIN.into()),
+        }
+    }
+
+    fn act_as(
+        &self,
+        session: &str,
+        handle: &TabHandle,
+        kind: ActionKind,
+        mut input: Value,
+    ) -> ActionResult {
+        input["tab"] = json!(handle.tab);
         let id = {
             let mut next = self.next_id.lock().unwrap();
             *next += 1;
@@ -397,10 +451,10 @@ impl Harness {
         };
         let common: CommonInput = serde_json::from_value(input.clone()).unwrap_or_default();
         let admitted = self.policy.read().admit(
-            "s1",
+            session,
             &id,
             kind,
-            Some(self.tab()),
+            Some(&handle.tab),
             kind.effective_timeout(common.timeout_ms),
         );
         let ctx = match admitted {
@@ -412,7 +466,7 @@ impl Harness {
             ctx: &ctx,
             kind,
             input: &input,
-            handle: Some(&self.handle),
+            handle: Some(handle),
             settings: &self.settings,
         })
     }
@@ -1668,10 +1722,15 @@ fn oversized_reply_is_an_error_not_a_dropped_link() {
     let big = h.act(ActionKind::Screenshot, json!({}));
     assert_eq!(big.reason, Some(Reason::TooLarge), "{big:?}");
     assert_eq!(big.outcome, Outcome::Failed);
-    // The link survived: the same tab answers the next action.
+    // The link survived: another session, on its own tab, still gets a
+    // screenshot while the big reply is still pending on the first.
     h.model.lock().unwrap().shot_bytes = None;
-    let small = h.act(ActionKind::Screenshot, json!({}));
+    let other = h.add_session("s2");
+    let small = h.act_as("s2", &other, ActionKind::Screenshot, json!({}));
     assert_eq!(small.outcome, Outcome::Done, "{small:?}");
+    // And the first session's own tab is usable again too.
+    let again = h.act(ActionKind::Screenshot, json!({}));
+    assert_eq!(again.outcome, Outcome::Done, "{again:?}");
 }
 
 #[test]
@@ -1680,4 +1739,25 @@ fn reply_just_under_the_limit_still_arrives() {
     h.model.lock().unwrap().shot_bytes = Some(MAX_REPLY_BYTES - 1024);
     let shot = h.act(ActionKind::Screenshot, json!({}));
     assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+}
+
+#[test]
+fn tall_element_screenshot_is_capped() {
+    let h = Harness::new();
+    h.model.lock().unwrap().box_size = (900.0, 20_000.0);
+    let save = ref_of(&h.snapshot(), "button \"Save\"");
+    let mark = h.mark();
+    let shot = h.act(ActionKind::Screenshot, json!({ "ref": save }));
+    assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+    let capture = h
+        .since(mark)
+        .into_iter()
+        .find(|r| r.method == "Page.captureScreenshot")
+        .unwrap();
+    let clip = &capture.params["clip"];
+    let scale = clip["scale"].as_f64().unwrap();
+    assert_eq!(clip["height"], json!(20_000.0), "the clip is not cropped");
+    assert!(clip["width"].as_f64().unwrap() * scale <= 8000.0);
+    assert!(clip["height"].as_f64().unwrap() * scale <= 8000.0);
+    assert!(scale < 1.0);
 }
