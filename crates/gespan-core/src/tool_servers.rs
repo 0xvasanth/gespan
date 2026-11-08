@@ -471,6 +471,7 @@ impl Access {
             json!({
                 "url":self.url,
                 "http_headers":{"Authorization":self.token.bearer()},
+                "tool_timeout_sec":300,
             }),
         );
         json!({"mcp_servers":servers})
@@ -693,6 +694,13 @@ mod tests {
             server["http_headers"]["Authorization"],
             format!("Bearer {}", secret_of(&access))
         );
+    }
+
+    #[test]
+    fn codex_config_sets_a_long_tool_timeout() {
+        let access = Access::open(&mount(5002)).unwrap();
+        let config = access.codex_config(&mount(5002));
+        assert_eq!(config["mcp_servers"]["gespan"]["tool_timeout_sec"], 300);
     }
 
     #[test]
