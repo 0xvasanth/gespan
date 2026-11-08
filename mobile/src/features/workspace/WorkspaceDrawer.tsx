@@ -18,7 +18,7 @@ import { PixelMascot } from "@/features/mascots/PixelMascot";
 import { ProjectMascot } from "@/features/mascots/ProjectMascot";
 import { plainText } from "@/features/sessions/markdownParser";
 import { HEADER_GAP, HEADER_HEIGHT, useKeyboardLift } from "@/features/sessions/SessionScreen";
-import { GESPAN_MARK } from "@/ui/brand";
+import { GESPAN_MARK_COLOR } from "@/ui/brand";
 import { ChoiceMenu } from "@/ui/ChoiceMenu";
 import { CircleButton } from "@/ui/CircleButton";
 import { useWarmDitherLoading } from "@/ui/DitherLoading";
@@ -212,8 +212,8 @@ export function WorkspaceDrawer() {
 
         <View style={[styles.header, { top: headerTop }]}>
           <Image
-            source={GESPAN_MARK}
-            style={[styles.mark, { tintColor: colors.content }]}
+            source={GESPAN_MARK_COLOR}
+            style={styles.mark}
             accessibilityIgnoresInvertColors
           />
           <View style={styles.headerActions}>

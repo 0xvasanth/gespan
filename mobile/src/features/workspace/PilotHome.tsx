@@ -23,7 +23,7 @@ import { PixelMascot } from "@/features/mascots/PixelMascot";
 import { HeaderBlur } from "@/features/files/codeScreen";
 import { plainText } from "@/features/sessions/markdownParser";
 import { useKeyboardLift } from "@/features/sessions/SessionScreen";
-import { GESPAN_MARK } from "@/ui/brand";
+import { GESPAN_MARK_COLOR } from "@/ui/brand";
 import { CircleButton } from "@/ui/CircleButton";
 import { GradualBlur } from "@/ui/GradualBlur";
 import { Icon } from "@/ui/Icon";
@@ -284,8 +284,8 @@ export function PilotHome() {
         <Stack.Toolbar.View hidesSharedBackground>
           <View style={styles.markBox}>
             <Image
-              source={GESPAN_MARK}
-              style={[styles.mark, { tintColor: colors.content }]}
+              source={GESPAN_MARK_COLOR}
+              style={styles.mark}
               accessibilityLabel="Gespan"
               accessibilityIgnoresInvertColors
             />
