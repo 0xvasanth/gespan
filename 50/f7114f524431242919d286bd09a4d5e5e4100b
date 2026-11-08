@@ -1,0 +1,24 @@
+crates/gespan-gpui/assets/kiro-color.svg
+  s_1e1d27125e17d0::t_340ad24376a9ae 1-5
+crates/gespan-gpui/src/assets.rs
+  s_1e1d27125e17d0::t_703c4e39331c40 181
+crates/gespan-gpui/src/theme.rs
+  s_1e1d27125e17d0::t_2941eac1ed9a57 845,853-858,861-882
+  s_1e1d27125e17d0::t_703c4e39331c40 544-545
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50f7114f524431242919d286bd09a4d5e5e4100b",
+  "prompts": {},
+  "sessions": {
+    "s_1e1d27125e17d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6dd61c59-0147-451d-abeb-4cede94aba5d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
