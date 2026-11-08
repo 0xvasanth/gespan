@@ -694,9 +694,7 @@ impl Shell {
                         .gap_2()
                         .text_size(px(14.))
                         .child(
-                            icon("search", 16.)
-                                .text_color(content(0.35))
-                                .group_hover("rail-search", |s| s.text_color(content(0.7))),
+                            icon("search", 16.).text_color(nav_icon_color("Search", false)),
                         )
                         .child(div().flex_1().min_w_0().h(px(20.)).child("Search"))
                         .child(
@@ -774,11 +772,7 @@ impl Shell {
                         }))
                         .when(selected, |d| d.bg(content(0.1)))
                         .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                        .child(icon(glyph, 16.).text_color(content(if selected {
-                            0.7
-                        } else {
-                            0.35
-                        })))
+                        .child(icon(glyph, 16.).text_color(nav_icon_color(label, selected)))
                         .child(div().flex_1().child(label))
                         .when_some(
                             match label {

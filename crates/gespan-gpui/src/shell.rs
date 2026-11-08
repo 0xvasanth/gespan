@@ -7322,7 +7322,7 @@ impl Shell {
                                 )
                                 .when(self.workspace.sidebar_search_visible, |d| {
                                     d.child(
-                                        icon_button("sidebar-search", "Search", "search")
+                                        icon_button_tinted("sidebar-search", "Search", "search", nav_tint("Search"))
                                             .debug_selector(|| "sidebar-search-button".into())
                                             .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
                                             .on_click(cx.listener(|this, _, window, cx| {

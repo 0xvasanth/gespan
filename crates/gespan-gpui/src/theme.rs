@@ -448,6 +448,23 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
         .text_color(content(0.5))
         .flex_shrink_0()
 }
+/// The colour a sidebar navigation row tints its icon, so Search, Automations
+/// and Board read at a glance instead of in plain ink. Light themes take a
+/// deeper shade to keep the glyph's contrast on a white rail.
+pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
+    let (dark, light) = match label {
+        "Search" => (0x5AA9FF, 0x1F6FD6),
+        "Automations" => (0xF5B544, 0xC77C0A),
+        "Board" => (0xB48CFF, 0x7A4BE0),
+        _ => return None,
+    };
+    Some(rgb(if is_light() { light } else { dark }).into())
+}
+/// A navigation icon's colour: its tint when it has one, else content ink
+/// that brightens when the row is selected.
+pub(crate) fn nav_icon_color(label: &str, selected: bool) -> Hsla {
+    nav_tint(label).unwrap_or_else(|| content(if selected { 0.7 } else { 0.35 }))
+}
 /// A provider's brand fill for its icon tile, top and bottom of a gentle
 /// gradient. `None` for a multicolour logo that keeps a light tile.
 pub(crate) fn provider_tile(provider: &str) -> Option<(Hsla, Hsla)> {
@@ -555,7 +572,16 @@ pub(crate) fn icon_button_hover(
     path: &'static str,
     hover_alpha: f32,
 ) -> Stateful<Div> {
-    chrome_button(id, label, path, true, hover_alpha, 0.5)
+    chrome_button(id, label, path, true, hover_alpha, 0.5, None)
+}
+/// An icon button whose glyph keeps a navigation tint instead of content ink.
+pub(crate) fn icon_button_tinted(
+    id: &'static str,
+    label: &'static str,
+    path: &'static str,
+    tint: Option<Hsla>,
+) -> Stateful<Div> {
+    chrome_button(id, label, path, true, 0.1, 0.5, tint)
 }
 /// An icon button drawn over busy content, where the usual half ink fades out.
 pub(crate) fn icon_button_ink(
@@ -564,7 +590,7 @@ pub(crate) fn icon_button_ink(
     path: &'static str,
     ink: f32,
 ) -> Stateful<Div> {
-    chrome_button(id, label, path, true, 0.1, ink)
+    chrome_button(id, label, path, true, 0.1, ink, None)
 }
 pub(crate) fn icon_button_enabled(
     id: &'static str,
@@ -572,7 +598,7 @@ pub(crate) fn icon_button_enabled(
     path: &'static str,
     enabled: bool,
 ) -> Stateful<Div> {
-    chrome_button(id, label, path, enabled, 0.1, 0.5)
+    chrome_button(id, label, path, enabled, 0.1, 0.5, None)
 }
 fn chrome_button(
     id: &'static str,
@@ -581,6 +607,7 @@ fn chrome_button(
     enabled: bool,
     hover_alpha: f32,
     ink: f32,
+    tint: Option<Hsla>,
 ) -> Stateful<Div> {
     let ink = content(if enabled { ink } else { 0.25 });
     div()
@@ -599,9 +626,12 @@ fn chrome_button(
         .when(enabled, |d| {
             d.hover(|s| s.bg(content(hover_alpha)).text_color(content(1.)))
         })
-        .child(icon(path, 14.).text_color(ink).when(enabled, |i| {
-            i.group_hover("chrome-button", |s| s.text_color(content(1.)))
-        }))
+        .child(match tint {
+            Some(tint) => icon(path, 14.).text_color(tint),
+            None => icon(path, 14.).text_color(ink).when(enabled, |i| {
+                i.group_hover("chrome-button", |s| s.text_color(content(1.)))
+            }),
+        })
 }
 // `.primary-action` paints with literal white and black, not theme ink.
 pub(crate) fn white(alpha: f32) -> Hsla {
@@ -875,5 +905,73 @@ mod composer_tests {
         assert!(configure_project(&preferences, None, false, false, false));
         assert!(!tweening());
         assert_eq!(accent_color(), app_accent);
+    }
+}
+
+#[cfg(test)]
+mod nav_tint_tests {
+    use super::*;
+
+    struct Restore(Option<Tokens>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TOKENS.with(|tokens| *tokens.borrow_mut() = self.0);
+        }
+    }
+
+    fn with_theme(theme: &str) {
+        let preferences = crate::settings::Preferences {
+            theme: theme.into(),
+            ..Default::default()
+        };
+        configure(&preferences, false);
+    }
+
+    #[test]
+    fn search_automations_and_board_each_get_their_own_colour() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        for theme in ["dark", "light"] {
+            with_theme(theme);
+            let tints: Vec<Hsla> = ["Search", "Automations", "Board"]
+                .iter()
+                .map(|label| nav_tint(label).expect("tinted row"))
+                .collect();
+            for (i, a) in tints.iter().enumerate() {
+                assert!(a.s > 0.5, "{theme}: tint {i} is saturated, not grey ink");
+                assert_eq!(a.a, 1., "{theme}: tint {i} is opaque");
+                for b in &tints[i + 1..] {
+                    assert_ne!(a, b, "{theme}: tints differ from each other");
+                }
+                // Selection and hover never wash the tint back to ink.
+                assert_eq!(nav_icon_color(["Search", "Automations", "Board"][i], true), *a);
+                assert_eq!(nav_icon_color(["Search", "Automations", "Board"][i], false), *a);
+            }
+        }
+    }
+
+    #[test]
+    fn other_rows_keep_content_ink_that_brightens_when_selected() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        with_theme("dark");
+        for label in ["New", "Inbox", "Notes", "Flows", "search", ""] {
+            assert_eq!(nav_tint(label), None, "{label:?} stays untinted");
+            assert_eq!(nav_icon_color(label, false), content(0.35));
+            assert_eq!(nav_icon_color(label, true), content(0.7));
+        }
+    }
+
+    #[test]
+    fn light_themes_take_a_deeper_shade_than_dark_ones() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        for label in ["Search", "Automations", "Board"] {
+            with_theme("dark");
+            let dark = nav_tint(label).unwrap();
+            with_theme("light");
+            let light = nav_tint(label).unwrap();
+            assert!(
+                light.l < dark.l,
+                "{label}: light tint {light:?} is darker than dark tint {dark:?} for contrast on white"
+            );
+        }
     }
 }
