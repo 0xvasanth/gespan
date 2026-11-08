@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::discovery::{self, ActivePort, Candidate, Platform, ACTIVE_PORT_FILE};
-use super::protocol::{BrowserChoice, BrowserKind};
+use super::discovery::{self, ActivePort, Candidate, Os, ACTIVE_PORT_FILE};
+use super::protocol::{BrowserChoice, BrowserKind, BrowserMode};
 
 /// How long a freshly started browser may take to open its debugging port.
 pub const START_TIMEOUT: Duration = Duration::from_secs(20);
@@ -154,11 +154,11 @@ const AUTO: [BrowserKind; 6] = [
 /// variables (a seam for tests).
 pub fn known_paths(
     kind: BrowserKind,
-    os: Platform,
+    os: Os,
     env: impl Fn(&str) -> Option<PathBuf>,
 ) -> Vec<PathBuf> {
     match os {
-        Platform::Windows => {
+        Os::Windows => {
             let relatives: &[&[&str]] = match kind {
                 BrowserKind::Edge => &[&["Microsoft", "Edge", "Application", "msedge.exe"]],
                 BrowserKind::Chrome | BrowserKind::Chromium => {
@@ -188,31 +188,64 @@ pub fn known_paths(
                 })
                 .collect()
         }
-        Platform::MacOs => {
-            let app = match kind {
-                BrowserKind::Edge => "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                BrowserKind::Chrome | BrowserKind::Chromium => {
-                    "Google Chrome.app/Contents/MacOS/Google Chrome"
-                }
-                BrowserKind::Brave => "Brave Browser.app/Contents/MacOS/Brave Browser",
-                BrowserKind::Vivaldi => "Vivaldi.app/Contents/MacOS/Vivaldi",
-                BrowserKind::Opera => "Opera.app/Contents/MacOS/Opera",
-                BrowserKind::Arc => "Arc.app/Contents/MacOS/Arc",
+        Os::Mac => {
+            // Stable first, then the test builds.
+            let apps: &[&str] = match kind {
+                BrowserKind::Edge => &[
+                    "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                    "Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
+                    "Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+                    "Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
+                ],
+                BrowserKind::Chrome => &[
+                    "Google Chrome.app/Contents/MacOS/Google Chrome",
+                    "Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+                    "Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
+                    "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+                ],
+                BrowserKind::Chromium => &["Chromium.app/Contents/MacOS/Chromium"],
+                BrowserKind::Brave => &["Brave Browser.app/Contents/MacOS/Brave Browser"],
+                BrowserKind::Vivaldi => &["Vivaldi.app/Contents/MacOS/Vivaldi"],
+                BrowserKind::Opera => &["Opera.app/Contents/MacOS/Opera"],
+                BrowserKind::Arc => &["Arc.app/Contents/MacOS/Arc"],
             };
-            let mut paths = vec![Path::new("/Applications").join(app)];
-            if let Some(home) = env("HOME") {
-                paths.push(home.join("Applications").join(app));
-            }
-            paths
+            let home = env("HOME");
+            apps.iter()
+                .flat_map(|app| {
+                    let system = Path::new("/Applications").join(app);
+                    let user = home
+                        .as_ref()
+                        .map(|home| home.join("Applications").join(app));
+                    std::iter::once(system).chain(user)
+                })
+                .collect()
         }
-        Platform::Linux => {
+        Os::Linux => {
+            // Distribution packages, then the Flatpak export wrappers.
             let names: &[&str] = match kind {
-                BrowserKind::Edge => &["microsoft-edge", "microsoft-edge-stable"],
-                BrowserKind::Chrome => &["google-chrome", "google-chrome-stable"],
-                BrowserKind::Chromium => &["chromium", "chromium-browser"],
-                BrowserKind::Brave => &["brave-browser", "brave-browser-stable", "brave"],
-                BrowserKind::Vivaldi => &["vivaldi", "vivaldi-stable"],
-                BrowserKind::Opera => &["opera"],
+                BrowserKind::Edge => &[
+                    "microsoft-edge",
+                    "microsoft-edge-stable",
+                    "microsoft-edge-beta",
+                    "microsoft-edge-dev",
+                    "com.microsoft.Edge",
+                ],
+                BrowserKind::Chrome => &[
+                    "google-chrome",
+                    "google-chrome-stable",
+                    "google-chrome-beta",
+                    "google-chrome-unstable",
+                    "com.google.Chrome",
+                ],
+                BrowserKind::Chromium => &["chromium", "chromium-browser", "org.chromium.Chromium"],
+                BrowserKind::Brave => &[
+                    "brave-browser",
+                    "brave-browser-stable",
+                    "brave",
+                    "com.brave.Browser",
+                ],
+                BrowserKind::Vivaldi => &["vivaldi", "vivaldi-stable", "com.vivaldi.Vivaldi"],
+                BrowserKind::Opera => &["opera", "com.opera.Opera"],
                 BrowserKind::Arc => &[],
             };
             let dirs: Vec<PathBuf> = env("PATH")
@@ -226,13 +259,90 @@ pub fn known_paths(
     }
 }
 
+/// Where a package manager puts the launchers of Snap and Flatpak browsers,
+/// which are often missing from a desktop app's `PATH`.
+fn linux_package_dirs(home: &Path) -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/snap/bin"),
+        PathBuf::from("/var/lib/flatpak/exports/bin"),
+        home.join(".local/share/flatpak/exports/bin"),
+    ]
+}
+
+/// Every well-known launcher of every supported browser for the user whose
+/// home folder is `home`, in the order [`find_executable`] prefers them. Pure
+/// over `home` and `os`, so every layout is testable on any host.
+///
+/// Windows: `%LOCALAPPDATA%` is taken as `home\AppData\Local` and the
+/// Program Files folders as `C:\Program Files` and `C:\Program Files (x86)`
+/// (the usual values). [`find_executable`] additionally asks the real
+/// environment, so relocated folders are still found. Linux: the system
+/// `bin` folders plus the Snap and Flatpak ones, rather than the live `PATH`.
+pub fn install_paths(home: &Path, os: Os) -> Vec<(BrowserKind, PathBuf)> {
+    let env = |var: &str| match var {
+        "HOME" => Some(home.to_path_buf()),
+        "LOCALAPPDATA" => Some(home.join("AppData").join("Local")),
+        "ProgramFiles" => Some(PathBuf::from(r"C:\Program Files")),
+        "ProgramFiles(x86)" => Some(PathBuf::from(r"C:\Program Files (x86)")),
+        "PATH" => std::env::join_paths(linux_package_dirs(home))
+            .ok()
+            .map(PathBuf::from),
+        _ => None,
+    };
+    [AUTO.as_slice(), &[BrowserKind::Chromium]]
+        .concat()
+        .into_iter()
+        .flat_map(|kind| {
+            known_paths(kind, os, env)
+                .into_iter()
+                .map(move |path| (kind, path))
+        })
+        .collect()
+}
+
+/// The current user's home folder.
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var).map(PathBuf::from)
+}
+
+/// Command-line switches that depend on the operating system and on whether
+/// Gespan starts the browser. An agent drives tabs that are hidden, covered
+/// or in a background window, which Chromium would otherwise throttle, so the
+/// browsers Gespan starts (`Managed`, `Private`) run with throttling off; on
+/// Linux the OS keyring prompt is skipped (`--password-store=basic`) because
+/// the profile is Gespan's own. `Attach` starts nothing, so it has no
+/// switches: the user's own browser keeps its own settings.
+pub fn flags(mode: BrowserMode, os: Os) -> Vec<String> {
+    if !mode.launches() {
+        return Vec::new();
+    }
+    let mut flags: Vec<String> = [
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    if os == Os::Linux {
+        flags.push("--password-store=basic".into());
+    }
+    flags
+}
+
 /// The first installed browser for `choice`.
 pub fn find_executable(choice: &BrowserChoice) -> Option<Executable> {
-    let os = Platform::current();
+    let os = Os::current();
+    let extra = home_dir()
+        .map(|home| install_paths(&home, os))
+        .unwrap_or_default();
     let mut kinds = wanted(choice);
     // Linux distributions ship Chromium itself; it comes right after Chrome
     // and Edge.
-    if os == Platform::Linux {
+    if os == Os::Linux {
         if let Some(at) = kinds
             .iter()
             .rposition(|kind| matches!(kind, BrowserKind::Chrome | BrowserKind::Edge))
@@ -243,6 +353,12 @@ pub fn find_executable(choice: &BrowserChoice) -> Option<Executable> {
     kinds.into_iter().find_map(|kind| {
         known_paths(kind, os, |var| std::env::var_os(var).map(PathBuf::from))
             .into_iter()
+            .chain(
+                extra
+                    .iter()
+                    .filter(|(extra_kind, _)| *extra_kind == kind)
+                    .map(|(_, path)| path.clone()),
+            )
             .find(|path| path.is_file())
             .map(|path| Executable { kind, path })
     })
@@ -269,6 +385,9 @@ pub fn arguments(profile: &Path, show_window: bool, scale: Option<f64>) -> Vec<S
             args.push(format!("--force-device-scale-factor={scale}"));
         }
     }
+    // Both browsers Gespan starts get the same switches; `Managed` stands
+    // for either.
+    args.extend(flags(BrowserMode::Managed, Os::current()));
     args.push("about:blank".into());
     args
 }
@@ -355,7 +474,7 @@ mod tests {
             "LOCALAPPDATA" => Some(PathBuf::from(r"C:\Users\o\AppData\Local")),
             _ => None,
         };
-        let chrome = known_paths(BrowserKind::Chrome, Platform::Windows, env);
+        let chrome = known_paths(BrowserKind::Chrome, Os::Windows, env);
         assert_eq!(chrome.len(), 3);
         assert_eq!(
             chrome[0],
@@ -366,7 +485,7 @@ mod tests {
                 .join("chrome.exe")
         );
         assert!(chrome[2].starts_with(r"C:\Users\o\AppData\Local"));
-        let edge = known_paths(BrowserKind::Edge, Platform::Windows, env);
+        let edge = known_paths(BrowserKind::Edge, Os::Windows, env);
         assert!(edge[1].ends_with(
             PathBuf::from("Microsoft")
                 .join("Edge")
@@ -382,23 +501,28 @@ mod tests {
             "PATH" => Some(PathBuf::from("/usr/bin")),
             _ => None,
         };
-        let mac = known_paths(BrowserKind::Edge, Platform::MacOs, env);
+        let mac = known_paths(BrowserKind::Edge, Os::Mac, env);
         assert_eq!(
             mac[0],
             PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
         );
-        assert_eq!(mac.len(), 2);
-        let linux = known_paths(BrowserKind::Chrome, Platform::Linux, env);
+        // Stable, Beta, Dev and Canary, each in /Applications and ~/Applications.
+        assert_eq!(mac.len(), 8);
+        assert_eq!(
+            mac[1],
+            PathBuf::from("/Users/o/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+        );
+        let linux = known_paths(BrowserKind::Chrome, Os::Linux, env);
         assert_eq!(linux[0], PathBuf::from("/usr/bin/google-chrome"));
         assert_eq!(
-            known_paths(BrowserKind::Arc, Platform::MacOs, env)[0],
+            known_paths(BrowserKind::Arc, Os::Mac, env)[0],
             PathBuf::from("/Applications/Arc.app/Contents/MacOS/Arc")
         );
         assert_eq!(
-            known_paths(BrowserKind::Brave, Platform::Linux, env)[0],
+            known_paths(BrowserKind::Brave, Os::Linux, env)[0],
             PathBuf::from("/usr/bin/brave-browser")
         );
-        assert!(known_paths(BrowserKind::Arc, Platform::Linux, env).is_empty());
+        assert!(known_paths(BrowserKind::Arc, Os::Linux, env).is_empty());
     }
 
     #[test]
@@ -408,18 +532,131 @@ mod tests {
             "LOCALAPPDATA" => Some(PathBuf::from(r"C:\Users\o\AppData\Local")),
             _ => None,
         };
-        let opera = known_paths(BrowserKind::Opera, Platform::Windows, env);
+        let opera = known_paths(BrowserKind::Opera, Os::Windows, env);
         assert!(opera.contains(
             &PathBuf::from(r"C:\Users\o\AppData\Local")
                 .join("Programs")
                 .join("Opera")
                 .join("opera.exe")
         ));
-        let brave = known_paths(BrowserKind::Brave, Platform::Windows, env);
+        let brave = known_paths(BrowserKind::Brave, Os::Windows, env);
         assert!(brave[0].ends_with(PathBuf::from("Application").join("brave.exe")));
-        let vivaldi = known_paths(BrowserKind::Vivaldi, Platform::Windows, env);
+        let vivaldi = known_paths(BrowserKind::Vivaldi, Os::Windows, env);
         assert!(vivaldi[1].starts_with(r"C:\Users\o\AppData\Local"));
-        assert!(known_paths(BrowserKind::Arc, Platform::Windows, env).is_empty());
+        assert!(known_paths(BrowserKind::Arc, Os::Windows, env).is_empty());
+    }
+
+    #[test]
+    fn macos_finds_chrome_beta_and_canary() {
+        let paths = install_paths(Path::new("/Users/o"), Os::Mac);
+        for app in ["Google Chrome Beta", "Google Chrome Canary"] {
+            let rel = format!("{app}.app/Contents/MacOS/{app}");
+            for root in ["/Applications", "/Users/o/Applications"] {
+                assert!(
+                    paths.contains(&(BrowserKind::Chrome, Path::new(root).join(&rel))),
+                    "missing {root}/{rel}"
+                );
+            }
+        }
+        // Stable stays ahead of the test builds.
+        let chrome: Vec<&PathBuf> = paths
+            .iter()
+            .filter(|(kind, _)| *kind == BrowserKind::Chrome)
+            .map(|(_, path)| path)
+            .collect();
+        assert!(chrome[0].ends_with("Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert!(paths.contains(&(
+            BrowserKind::Chromium,
+            PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium")
+        )));
+        assert!(paths.contains(&(
+            BrowserKind::Arc,
+            PathBuf::from("/Applications/Arc.app/Contents/MacOS/Arc")
+        )));
+    }
+
+    #[test]
+    fn linux_install_paths_include_flatpak_and_snap_wrappers() {
+        let paths = install_paths(Path::new("/home/o"), Os::Linux);
+        for (kind, path) in [
+            (BrowserKind::Chromium, "/snap/bin/chromium"),
+            (BrowserKind::Chromium, "/usr/bin/chromium"),
+            (
+                BrowserKind::Chrome,
+                "/var/lib/flatpak/exports/bin/com.google.Chrome",
+            ),
+            (
+                BrowserKind::Chromium,
+                "/home/o/.local/share/flatpak/exports/bin/org.chromium.Chromium",
+            ),
+            (BrowserKind::Chrome, "/usr/bin/google-chrome-beta"),
+        ] {
+            assert!(
+                paths.contains(&(kind, PathBuf::from(path))),
+                "missing {kind:?} {path}"
+            );
+        }
+        assert!(!paths.iter().any(|(kind, _)| *kind == BrowserKind::Arc));
+    }
+
+    #[test]
+    fn windows_install_paths_derive_the_user_install_from_home() {
+        let paths = install_paths(Path::new("/h"), Os::Windows);
+        let local = PathBuf::from("/h").join("AppData").join("Local");
+        assert!(paths.contains(&(
+            BrowserKind::Opera,
+            local.join("Programs").join("Opera").join("opera.exe")
+        )));
+        assert!(paths.contains(&(
+            BrowserKind::Chrome,
+            PathBuf::from(r"C:\Program Files")
+                .join("Google")
+                .join("Chrome")
+                .join("Application")
+                .join("chrome.exe")
+        )));
+    }
+
+    #[test]
+    fn linux_launch_uses_basic_password_store() {
+        let f = flags(BrowserMode::Managed, Os::Linux);
+        assert!(f.contains(&"--password-store=basic".to_string()));
+        assert!(flags(BrowserMode::Private, Os::Linux).contains(&"--password-store=basic".into()));
+        for os in [Os::Mac, Os::Windows] {
+            assert!(!flags(BrowserMode::Managed, os)
+                .iter()
+                .any(|f| f.starts_with("--password-store")));
+        }
+    }
+
+    #[test]
+    fn agent_tabs_are_not_throttled() {
+        for mode in [BrowserMode::Managed, BrowserMode::Private] {
+            for os in [Os::Mac, Os::Windows, Os::Linux] {
+                let f = flags(mode, os);
+                for flag in [
+                    "--disable-background-timer-throttling",
+                    "--disable-renderer-backgrounding",
+                    "--disable-backgrounding-occluded-windows",
+                ] {
+                    assert!(f.contains(&flag.to_string()), "{mode:?} {os:?} {flag}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attach_mode_launches_nothing_so_it_has_no_flags() {
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            assert!(flags(BrowserMode::Attach, os).is_empty());
+        }
+    }
+
+    #[test]
+    fn started_browsers_get_the_unthrottling_flags() {
+        let args = arguments(Path::new("/data/p"), false, None);
+        assert!(args.contains(&"--disable-renderer-backgrounding".to_string()));
+        assert_eq!(args.last().unwrap(), "about:blank");
     }
 
     #[test]

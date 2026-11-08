@@ -37,24 +37,37 @@ pub const CHANNELS: [&str; 12] = [
     "arc",
 ];
 
+/// The operating system whose browser layout is wanted. Functions take it as
+/// data (with [`Os::current`] at the real call sites) so every layout is
+/// testable on any host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Platform {
+pub enum Os {
     Windows,
-    MacOs,
+    Mac,
     Linux,
 }
 
-impl Platform {
-    pub fn current() -> Platform {
+impl Os {
+    pub fn current() -> Os {
         if cfg!(target_os = "windows") {
-            Platform::Windows
+            Os::Windows
         } else if cfg!(target_os = "macos") {
-            Platform::MacOs
+            Os::Mac
         } else {
-            Platform::Linux
+            Os::Linux
         }
     }
 }
+
+/// Channels beyond [`CHANNELS`] that "Your own browser" also looks in:
+/// Chromium itself and the Flatpak and Snap packages. They have no entry in
+/// the settings picker; they are found by Automatic and by name.
+pub const EXTRA_CHANNELS: [&str; 4] = [
+    "chromium",
+    "chromium-snap",
+    "chrome-flatpak",
+    "chromium-flatpak",
+];
 
 /// A browser profile directory discovery may look at.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,40 +118,29 @@ fn path_kind(path: &str) -> BrowserKind {
 
 /// The user-data-dir of a channel under `base` (`%LOCALAPPDATA%` on Windows,
 /// the home directory elsewhere).
-pub fn user_data_dir_in(channel: &str, base: &Path, os: Platform) -> Option<PathBuf> {
+pub fn user_data_dir_in(channel: &str, base: &Path, os: Os) -> Option<PathBuf> {
     let path = match (os, channel) {
-        (Platform::Windows, "chrome") => base.join("Google").join("Chrome").join("User Data"),
-        (Platform::Windows, "chrome-beta") => {
-            base.join("Google").join("Chrome Beta").join("User Data")
-        }
-        (Platform::Windows, "chrome-dev") => {
-            base.join("Google").join("Chrome Dev").join("User Data")
-        }
-        (Platform::Windows, "chrome-canary") => {
-            base.join("Google").join("Chrome SxS").join("User Data")
-        }
-        (Platform::Windows, "msedge") => base.join("Microsoft").join("Edge").join("User Data"),
-        (Platform::Windows, "msedge-beta") => {
-            base.join("Microsoft").join("Edge Beta").join("User Data")
-        }
-        (Platform::Windows, "msedge-dev") => {
-            base.join("Microsoft").join("Edge Dev").join("User Data")
-        }
-        (Platform::Windows, "msedge-canary") => {
-            base.join("Microsoft").join("Edge SxS").join("User Data")
-        }
-        (Platform::Windows, "brave") => base
+        (Os::Windows, "chrome") => base.join("Google").join("Chrome").join("User Data"),
+        (Os::Windows, "chrome-beta") => base.join("Google").join("Chrome Beta").join("User Data"),
+        (Os::Windows, "chrome-dev") => base.join("Google").join("Chrome Dev").join("User Data"),
+        (Os::Windows, "chrome-canary") => base.join("Google").join("Chrome SxS").join("User Data"),
+        (Os::Windows, "msedge") => base.join("Microsoft").join("Edge").join("User Data"),
+        (Os::Windows, "msedge-beta") => base.join("Microsoft").join("Edge Beta").join("User Data"),
+        (Os::Windows, "msedge-dev") => base.join("Microsoft").join("Edge Dev").join("User Data"),
+        (Os::Windows, "msedge-canary") => base.join("Microsoft").join("Edge SxS").join("User Data"),
+        (Os::Windows, "brave") => base
             .join("BraveSoftware")
             .join("Brave-Browser")
             .join("User Data"),
-        (Platform::Windows, "vivaldi") => base.join("Vivaldi").join("User Data"),
+        (Os::Windows, "vivaldi") => base.join("Vivaldi").join("User Data"),
+        (Os::Windows, "chromium") => base.join("Chromium").join("User Data"),
         // Opera keeps its profile under Roaming, next to `base` (Local).
-        (Platform::Windows, "opera") => base
+        (Os::Windows, "opera") => base
             .parent()?
             .join("Roaming")
             .join("Opera Software")
             .join("Opera Stable"),
-        (Platform::MacOs, channel) => {
+        (Os::Mac, channel) => {
             let support = base.join("Library").join("Application Support");
             match channel {
                 "chrome" => support.join("Google").join("Chrome"),
@@ -151,12 +153,13 @@ pub fn user_data_dir_in(channel: &str, base: &Path, os: Platform) -> Option<Path
                 "msedge-canary" => support.join("Microsoft Edge Canary"),
                 "brave" => support.join("BraveSoftware").join("Brave-Browser"),
                 "vivaldi" => support.join("Vivaldi"),
+                "chromium" => support.join("Chromium"),
                 "opera" => support.join("com.operasoftware.Opera"),
                 "arc" => support.join("Arc").join("User Data"),
                 _ => return None,
             }
         }
-        (Platform::Linux, channel) => {
+        (Os::Linux, channel) => {
             let config = base.join(".config");
             match channel {
                 "chrome" => config.join("google-chrome"),
@@ -170,6 +173,20 @@ pub fn user_data_dir_in(channel: &str, base: &Path, os: Platform) -> Option<Path
                 "brave" => config.join("BraveSoftware").join("Brave-Browser"),
                 "vivaldi" => config.join("vivaldi"),
                 "opera" => config.join("opera"),
+                "chromium" => config.join("chromium"),
+                // Snap keeps the profile in the package's shared folder.
+                "chromium-snap" => base
+                    .join("snap")
+                    .join("chromium")
+                    .join("common")
+                    .join("chromium"),
+                // Flatpak sandboxes the profile under ~/.var/app/<app id>/config.
+                "chrome-flatpak" => base
+                    .join(".var/app/com.google.Chrome/config")
+                    .join("google-chrome"),
+                "chromium-flatpak" => base
+                    .join(".var/app/org.chromium.Chromium/config")
+                    .join("chromium"),
                 _ => return None,
             }
         }
@@ -178,17 +195,34 @@ pub fn user_data_dir_in(channel: &str, base: &Path, os: Platform) -> Option<Path
     Some(path)
 }
 
-fn base_dir(os: Platform) -> Option<PathBuf> {
+/// Every profile folder a supported browser may use on `os` for the user
+/// whose home folder is `home`, with the browser it belongs to (existing or
+/// not). On Windows `%LOCALAPPDATA%` is taken as `home\AppData\Local`.
+pub fn profile_dirs(home: &Path, os: Os) -> Vec<(BrowserKind, PathBuf)> {
+    let base = match os {
+        Os::Windows => home.join("AppData").join("Local"),
+        Os::Mac | Os::Linux => home.to_path_buf(),
+    };
+    CHANNELS
+        .iter()
+        .chain(EXTRA_CHANNELS.iter())
+        .filter_map(|channel| {
+            user_data_dir_in(channel, &base, os).map(|dir| (channel_kind(channel), dir))
+        })
+        .collect()
+}
+
+fn base_dir(os: Os) -> Option<PathBuf> {
     let var = match os {
-        Platform::Windows => "LOCALAPPDATA",
-        Platform::MacOs | Platform::Linux => "HOME",
+        Os::Windows => "LOCALAPPDATA",
+        Os::Mac | Os::Linux => "HOME",
     };
     std::env::var_os(var).map(PathBuf::from)
 }
 
 /// Candidates for `choice`, existing directories only.
 pub fn candidates(choice: &BrowserChoice) -> Vec<Candidate> {
-    let os = Platform::current();
+    let os = Os::current();
     let base = base_dir(os);
     candidates_in(choice, base.as_deref(), os, |path| path.is_dir())
 }
@@ -196,7 +230,7 @@ pub fn candidates(choice: &BrowserChoice) -> Vec<Candidate> {
 pub fn candidates_in(
     choice: &BrowserChoice,
     base: Option<&Path>,
-    os: Platform,
+    os: Os,
     exists: impl Fn(&Path) -> bool,
 ) -> Vec<Candidate> {
     match choice {
@@ -227,6 +261,7 @@ pub fn candidates_in(
             let Some(base) = base else { return Vec::new() };
             CHANNELS
                 .iter()
+                .chain(EXTRA_CHANNELS.iter())
                 .filter_map(|channel| {
                     let dir = user_data_dir_in(channel, base, os)?;
                     exists(&dir).then(|| Candidate {
@@ -379,8 +414,8 @@ pub fn version_supported(major: u32) -> bool {
 /// off (`RemoteDebuggingAllowed = false`). Only used for the message in
 /// `NeedsToggle`; nothing is ever bypassed.
 pub fn policy_blocks_debugging(kind: BrowserKind) -> Option<String> {
-    match Platform::current() {
-        Platform::Linux => {
+    match Os::current() {
+        Os::Linux => {
             let dir = match kind {
                 BrowserKind::Edge => "/etc/opt/edge/policies/managed",
                 BrowserKind::Chrome => "/etc/opt/chrome/policies/managed",
@@ -390,7 +425,7 @@ pub fn policy_blocks_debugging(kind: BrowserKind) -> Option<String> {
             };
             linux_policy_blocks(Path::new(dir))
         }
-        Platform::MacOs => {
+        Os::Mac => {
             let domain = match kind {
                 BrowserKind::Edge => "com.microsoft.Edge",
                 BrowserKind::Chrome | BrowserKind::Chromium => "com.google.Chrome",
@@ -409,7 +444,7 @@ pub fn policy_blocks_debugging(kind: BrowserKind) -> Option<String> {
             (output.status.success() && text.trim() == "0")
                 .then(|| format!("Managed preference {domain} RemoteDebuggingAllowed = 0"))
         }
-        Platform::Windows => {
+        Os::Windows => {
             let key = match kind {
                 BrowserKind::Edge => r"Software\Policies\Microsoft\Edge",
                 BrowserKind::Chrome | BrowserKind::Chromium => r"Software\Policies\Google\Chrome",
@@ -468,32 +503,32 @@ mod tests {
     fn user_data_dirs_follow_the_spec_table() {
         let win = Path::new(r"C:\Users\o\AppData\Local");
         assert_eq!(
-            user_data_dir_in("chrome", win, Platform::Windows).unwrap(),
+            user_data_dir_in("chrome", win, Os::Windows).unwrap(),
             win.join("Google").join("Chrome").join("User Data")
         );
         assert_eq!(
-            user_data_dir_in("msedge-canary", win, Platform::Windows).unwrap(),
+            user_data_dir_in("msedge-canary", win, Os::Windows).unwrap(),
             win.join("Microsoft").join("Edge SxS").join("User Data")
         );
         let home = Path::new("/Users/o");
         assert_eq!(
-            user_data_dir_in("chrome-canary", home, Platform::MacOs).unwrap(),
+            user_data_dir_in("chrome-canary", home, Os::Mac).unwrap(),
             PathBuf::from("/Users/o/Library/Application Support/Google/Chrome Canary")
         );
         assert_eq!(
-            user_data_dir_in("msedge", home, Platform::MacOs).unwrap(),
+            user_data_dir_in("msedge", home, Os::Mac).unwrap(),
             PathBuf::from("/Users/o/Library/Application Support/Microsoft Edge")
         );
         let home = Path::new("/home/o");
         assert_eq!(
-            user_data_dir_in("chrome-dev", home, Platform::Linux).unwrap(),
+            user_data_dir_in("chrome-dev", home, Os::Linux).unwrap(),
             PathBuf::from("/home/o/.config/google-chrome-unstable")
         );
         assert_eq!(
-            user_data_dir_in("msedge-beta", home, Platform::Linux).unwrap(),
+            user_data_dir_in("msedge-beta", home, Os::Linux).unwrap(),
             PathBuf::from("/home/o/.config/microsoft-edge-beta")
         );
-        assert!(user_data_dir_in("firefox", home, Platform::Linux).is_none());
+        assert!(user_data_dir_in("firefox", home, Os::Linux).is_none());
         assert_eq!(channel_kind("msedge-dev"), BrowserKind::Edge);
         assert_eq!(channel_kind("chrome"), BrowserKind::Chrome);
     }
@@ -502,7 +537,7 @@ mod tests {
     fn other_chromium_browsers_have_their_profile_folders() {
         let win = Path::new(r"C:\Users\o\AppData\Local");
         assert_eq!(
-            user_data_dir_in("brave", win, Platform::Windows).unwrap(),
+            user_data_dir_in("brave", win, Os::Windows).unwrap(),
             win.join("BraveSoftware")
                 .join("Brave-Browser")
                 .join("User Data")
@@ -510,32 +545,32 @@ mod tests {
         // Forward slashes, so the parent folder is found on every test host.
         let local = Path::new("C:/Users/o/AppData/Local");
         assert_eq!(
-            user_data_dir_in("opera", local, Platform::Windows).unwrap(),
+            user_data_dir_in("opera", local, Os::Windows).unwrap(),
             Path::new("C:/Users/o/AppData")
                 .join("Roaming")
                 .join("Opera Software")
                 .join("Opera Stable")
         );
-        assert!(user_data_dir_in("arc", win, Platform::Windows).is_none());
+        assert!(user_data_dir_in("arc", win, Os::Windows).is_none());
         let mac = Path::new("/Users/o");
         assert_eq!(
-            user_data_dir_in("arc", mac, Platform::MacOs).unwrap(),
+            user_data_dir_in("arc", mac, Os::Mac).unwrap(),
             PathBuf::from("/Users/o/Library/Application Support/Arc/User Data")
         );
         assert_eq!(
-            user_data_dir_in("vivaldi", mac, Platform::MacOs).unwrap(),
+            user_data_dir_in("vivaldi", mac, Os::Mac).unwrap(),
             PathBuf::from("/Users/o/Library/Application Support/Vivaldi")
         );
         let linux = Path::new("/home/o");
         assert_eq!(
-            user_data_dir_in("brave", linux, Platform::Linux).unwrap(),
+            user_data_dir_in("brave", linux, Os::Linux).unwrap(),
             PathBuf::from("/home/o/.config/BraveSoftware/Brave-Browser")
         );
         assert_eq!(
-            user_data_dir_in("opera", linux, Platform::Linux).unwrap(),
+            user_data_dir_in("opera", linux, Os::Linux).unwrap(),
             PathBuf::from("/home/o/.config/opera")
         );
-        assert!(user_data_dir_in("arc", linux, Platform::Linux).is_none());
+        assert!(user_data_dir_in("arc", linux, Os::Linux).is_none());
         for (channel, kind) in [
             ("brave", BrowserKind::Brave),
             ("vivaldi", BrowserKind::Vivaldi),
@@ -566,7 +601,7 @@ mod tests {
                 || p == Path::new("/home/o/.config/google-chrome-beta")
                 || p == Path::new("/snap/chromium/current")
         };
-        let auto = candidates_in(&BrowserChoice::Auto, Some(home), Platform::Linux, existing);
+        let auto = candidates_in(&BrowserChoice::Auto, Some(home), Os::Linux, existing);
         let channels: Vec<&str> = auto.iter().map(|c| c.channel.as_str()).collect();
         assert_eq!(channels, vec!["msedge", "chrome-beta"]);
         let one = candidates_in(
@@ -574,7 +609,7 @@ mod tests {
                 channel: "chrome".into(),
             },
             Some(home),
-            Platform::Linux,
+            Os::Linux,
             existing,
         );
         assert!(one.is_empty());
@@ -583,13 +618,93 @@ mod tests {
                 path: "/snap/chromium/current".into(),
             },
             Some(home),
-            Platform::Linux,
+            Os::Linux,
             existing,
         );
         assert_eq!(custom.len(), 1);
         assert_eq!(custom[0].channel, "custom");
         assert_eq!(custom[0].kind, BrowserKind::Chromium);
-        assert!(candidates_in(&BrowserChoice::Auto, None, Platform::Linux, existing).is_empty());
+        assert!(candidates_in(&BrowserChoice::Auto, None, Os::Linux, existing).is_empty());
+    }
+
+    #[test]
+    fn linux_finds_chromium_flatpak_and_snap() {
+        let home = Path::new("/home/o");
+        let dirs = profile_dirs(home, Os::Linux);
+        for (kind, dir) in [
+            (BrowserKind::Chromium, "/home/o/.config/chromium"),
+            (
+                BrowserKind::Chrome,
+                "/home/o/.var/app/com.google.Chrome/config/google-chrome",
+            ),
+            (
+                BrowserKind::Chromium,
+                "/home/o/.var/app/org.chromium.Chromium/config/chromium",
+            ),
+            (
+                BrowserKind::Chromium,
+                "/home/o/snap/chromium/common/chromium",
+            ),
+        ] {
+            assert!(
+                dirs.contains(&(kind, PathBuf::from(dir))),
+                "missing {kind:?} {dir}"
+            );
+        }
+        // The browsers found before stay found.
+        assert!(dirs.contains(&(
+            BrowserKind::Chrome,
+            PathBuf::from("/home/o/.config/google-chrome")
+        )));
+        assert!(dirs.contains(&(
+            BrowserKind::Brave,
+            PathBuf::from("/home/o/.config/BraveSoftware/Brave-Browser")
+        )));
+    }
+
+    #[test]
+    fn profile_dirs_follow_each_os_layout() {
+        let mac = profile_dirs(Path::new("/Users/o"), Os::Mac);
+        let support = PathBuf::from("/Users/o/Library/Application Support");
+        assert!(mac.contains(&(BrowserKind::Arc, support.join("Arc").join("User Data"))));
+        assert!(mac.contains(&(BrowserKind::Chromium, support.join("Chromium"))));
+        assert!(!mac
+            .iter()
+            .any(|(_, dir)| dir.to_string_lossy().contains(".config")));
+
+        // Windows derives %LOCALAPPDATA% from the home folder; Opera lives
+        // under Roaming next to it. Arc and the Linux-only packages are absent.
+        let win = profile_dirs(Path::new("/h"), Os::Windows);
+        let local = PathBuf::from("/h").join("AppData").join("Local");
+        assert!(win.contains(&(
+            BrowserKind::Chrome,
+            local.join("Google").join("Chrome").join("User Data")
+        )));
+        assert!(win.contains(&(
+            BrowserKind::Opera,
+            PathBuf::from("/h")
+                .join("AppData")
+                .join("Roaming")
+                .join("Opera Software")
+                .join("Opera Stable")
+        )));
+        assert!(!win.iter().any(|(kind, _)| *kind == BrowserKind::Arc));
+        assert!(!win
+            .iter()
+            .any(|(_, dir)| dir.to_string_lossy().contains("flatpak")
+                || dir.to_string_lossy().contains(".var")));
+        let linux = profile_dirs(Path::new("/home/o"), Os::Linux);
+        assert!(!linux.iter().any(|(kind, _)| *kind == BrowserKind::Arc));
+    }
+
+    #[test]
+    fn auto_discovery_looks_in_flatpak_and_snap_profiles() {
+        let home = Path::new("/home/o");
+        let snap = Path::new("/home/o/snap/chromium/common/chromium");
+        let found = candidates_in(&BrowserChoice::Auto, Some(home), Os::Linux, |p| p == snap);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, BrowserKind::Chromium);
+        assert_eq!(found[0].user_data_dir, snap);
     }
 
     #[test]
