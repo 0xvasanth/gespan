@@ -12,7 +12,7 @@ pub(crate) const NO_COMMAND: &str = "Has no command Gespan can run";
 /// while starting, so a value could run code before the command does. An
 /// action's terminal starts the user's interactive shell with them, so its
 /// prompts, line editor, history and function path count too.
-const STARTUP_ENV: [&str; 53] = [
+const STARTUP_ENV: [&str; 63] = [
     // Shell startup and interactive shells.
     "ZDOTDIR",
     "BASH_ENV",
@@ -41,6 +41,8 @@ const STARTUP_ENV: [&str; 53] = [
     "IFS",
     "HOME",
     "STARSHIP_CONFIG",
+    // oh-my-zsh sources its folder's and custom folder's scripts.
+    "ZSH",
     // glibc loads converters from it.
     "GCONV_PATH",
     // Language runtimes.
@@ -58,6 +60,16 @@ const STARTUP_ENV: [&str; 53] = [
     "PYTHONUSERBASE",
     "PYTHONPLATLIBDIR",
     "PYTHONBREAKPOINT",
+    // A warning category is imported by name.
+    "PYTHONWARNINGS",
+    "NODE_REPL_EXTERNAL_MODULE",
+    "PHPRC",
+    "PHP_INI_SCAN_DIR",
+    "R_PROFILE",
+    "R_PROFILE_USER",
+    "R_ENVIRON",
+    "R_ENVIRON_USER",
+    "CLASSPATH",
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "JDK_JAVA_OPTIONS",
@@ -73,8 +85,9 @@ const STARTUP_ENV: [&str; 53] = [
 ];
 /// Whole families of such variables: the loader's, exported bash functions,
 /// git's, which can name programs to run, where XDG tools find their config
-/// and plugins, Lua's init code and paths, and .NET's profilers.
-const STARTUP_ENV_PREFIXES: [&str; 8] = [
+/// and plugins, Lua's init code and paths, .NET's profilers, Erlang's flags
+/// and libraries, and zsh and bash plugin folders.
+const STARTUP_ENV_PREFIXES: [&str; 11] = [
     "LD_",
     "DYLD_",
     "BASH_FUNC_",
@@ -83,11 +96,15 @@ const STARTUP_ENV_PREFIXES: [&str; 8] = [
     "LUA_",
     "CORECLR_",
     "COMPLUS_",
+    "ERL_",
+    "ZSH_",
+    "BASH_COMPLETION_",
 ];
 /// Variables that name a program the command, or a tool it starts, runs in
-/// place of the one it asks for: a compiler wrapper, an editor or pager and
-/// `less`'s input filters and startup keys.
-const PROGRAM_ENV: [&str; 22] = [
+/// place of the one it asks for: a compiler, linker or wrapper and the flags
+/// that load compiler plugins, `make`'s own variables, an editor or pager,
+/// `less`'s input filters and startup keys, and Windows' runnable extensions.
+const PROGRAM_ENV: [&str; 38] = [
     "SHELL",
     "RUSTC",
     "RUSTC_WRAPPER",
@@ -97,6 +114,22 @@ const PROGRAM_ENV: [&str; 22] = [
     "RUSTFLAGS",
     "RUSTDOCFLAGS",
     "CARGO",
+    "CC",
+    "CXX",
+    "CPP",
+    "LD",
+    "AR",
+    "CFLAGS",
+    "CXXFLAGS",
+    "CPPFLAGS",
+    "LDFLAGS",
+    "MAKE",
+    "MAKEFLAGS",
+    "MFLAGS",
+    "JAVA_HOME",
+    "MAVEN_OPTS",
+    "BUNDLE_GEMFILE",
+    "PATHEXT",
     "EDITOR",
     "VISUAL",
     "PAGER",
@@ -113,7 +146,7 @@ const PROGRAM_ENV: [&str; 22] = [
 ];
 /// Package managers and toolchains read every variable of these as config,
 /// and some of their settings name programs or folders to run them from.
-const PROGRAM_ENV_PREFIXES: [&str; 7] = [
+const PROGRAM_ENV_PREFIXES: [&str; 13] = [
     "CARGO_",
     "RUSTUP_",
     "NPM_CONFIG_",
@@ -121,6 +154,12 @@ const PROGRAM_ENV_PREFIXES: [&str; 7] = [
     "YARN_",
     "PNPM_",
     "COREPACK_",
+    "CMAKE_",
+    "CGO_",
+    "GRADLE_",
+    "GEM_",
+    "ASDF_",
+    "MISE_",
 ];
 const UNSAFE_ENV_NAME: &str = "Sets an environment variable with a name Gespan can't pass safely";
 
@@ -428,13 +467,19 @@ fn runs_at_startup(name: &str) -> bool {
 /// Whether `name`, set to `value`, could make the command or a tool it starts
 /// run a program other than the one it names. `PATH` may only add folders
 /// after the inherited ones, so it can't put a repo's `git` ahead of the real
-/// one.
+/// one. Only Windows names ignore case: on Unix `${env:path}` is another,
+/// usually unset, variable, so the value would replace `PATH`.
 fn names_programs(name: &str, value: &str) -> bool {
     if name.eq_ignore_ascii_case("PATH") {
-        let separator = if cfg!(windows) { ';' } else { ':' };
-        let inherited = value
-            .get(.."${env:PATH}".len())
-            .is_some_and(|start| start.eq_ignore_ascii_case("${env:PATH}"));
+        let (separator, inherited) = if cfg!(windows) {
+            let start = value.get(.."${env:PATH}".len());
+            (
+                ';',
+                start.is_some_and(|start| start.eq_ignore_ascii_case("${env:PATH}")),
+            )
+        } else {
+            (':', value.starts_with("${env:PATH}"))
+        };
         return !(inherited
             && value["${env:PATH}".len()..]
                 .chars()

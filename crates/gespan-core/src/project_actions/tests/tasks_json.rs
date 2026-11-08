@@ -600,6 +600,9 @@ fn interactive_shell_startup_env_names_are_blocked() {
         "INPUTRC",
         "HISTFILE",
         "STARSHIP_CONFIG",
+        "ZSH",
+        "ZSH_CUSTOM",
+        "BASH_COMPLETION_USER_DIR",
     ]);
 }
 
@@ -630,6 +633,14 @@ fn language_runtime_env_names_are_blocked() {
         "CORECLR_PROFILER_PATH",
         "GOFLAGS",
         "GOTOOLCHAIN",
+        "PYTHONWARNINGS",
+        "NODE_REPL_EXTERNAL_MODULE",
+        "PHPRC",
+        "PHP_INI_SCAN_DIR",
+        "R_PROFILE_USER",
+        "ERL_FLAGS",
+        "ERL_LIBS",
+        "CLASSPATH",
     ]);
 }
 
@@ -646,6 +657,19 @@ fn compiler_and_toolchain_env_names_are_blocked() {
         "CARGO_HOME",
         "CARGO_BUILD_RUSTC_WRAPPER",
         "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+        "CC",
+        "CXX",
+        "LD",
+        "AR",
+        "CFLAGS",
+        "LDFLAGS",
+        "MAKE",
+        "MAKEFLAGS",
+        "CMAKE_C_COMPILER_LAUNCHER",
+        "CGO_CFLAGS",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME",
+        "MAVEN_OPTS",
     ]);
 }
 
@@ -676,6 +700,11 @@ fn package_manager_config_env_names_are_blocked() {
         "YARN_RC_FILENAME",
         "PNPM_HOME",
         "COREPACK_NPM_REGISTRY",
+        "GEM_HOME",
+        "BUNDLE_GEMFILE",
+        "ASDF_DATA_DIR",
+        "MISE_DATA_DIR",
+        "PATHEXT",
     ]);
 }
 
@@ -701,12 +730,19 @@ fn path_may_only_add_folders_after_the_inherited_ones() {
         env_blocked("Path", "./bin").as_deref(),
         Some("Sets Path, which could change which programs the command runs")
     );
+    // On Unix `${env:path}` is another, usually unset, variable, so it would
+    // replace PATH; Windows names ignore case.
+    let lower = env_blocked("PATH", &format!("${{env:path}}{sep}./bin"));
+    if cfg!(windows) {
+        assert_eq!(lower, None);
+    } else {
+        assert_eq!(lower, blocked);
+    }
     // After them it can only fill in programs that aren't installed.
     for value in [
         format!("${{env:PATH}}{sep}./bin"),
         format!("${{env:PATH}}{sep}${{workspaceFolder}}/node_modules/.bin"),
         "${env:PATH}".to_string(),
-        format!("${{env:path}}{sep}./bin"),
     ] {
         assert_eq!(env_blocked("PATH", &value), None, "{value:?}");
     }
@@ -748,6 +784,11 @@ fn ordinary_app_env_names_still_run() {
         "MY_XDG_DIR",
         "PATHS",
         "MY_PATH",
+        "CCACHE_DIR_NAME",
+        "LDAP_URL",
+        "MAKE_TARGET",
+        "JAVA_VERSION",
+        "CI_COMMIT",
     ] {
         assert_eq!(env_blocked(name, "1"), None, "{name}");
     }
