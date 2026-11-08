@@ -7,8 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-11-08
+
+### Added
+
+- **herdr machines:** add a machine by its ssh target in Settings →
+  Connections, and its agents show in the sidebar under Machines, marked
+  Working, Needs input or Done. Clicking one attaches a terminal to it, and
+  you're notified when a remote agent needs input or finishes. herdr 0.9.5
+  ships inside the app. Not on Windows yet.
+- **Project actions:** the footer menu groups actions as Project
+  (`.gespan/tasks.json`), Personal, and one section per file they were found
+  in (`package.json`, `.vscode/tasks.json`, `Makefile`…), each showing the
+  command it runs. Add action can share with the project, found actions can be
+  saved to it, and the one-click footer button reruns an action you already
+  ran while nothing about it has changed.
+- **Terminal dock:** terminals can be split, or dragged out into splits or
+  title tabs, and a title-bar option sets where new terminals go.
+- **Title tabs:** tabs can be pinned and fan out from a deck at the strip's
+  edge; closing all or others keeps pinned tabs.
+- **Search** can open as a floating command panel.
+- **Open in editor** is in the sidebar's project menu in the rounded and boxy
+  layouts, and opens the focused session's worktree.
+
+### Changed
+
+- **Right panel:** Explorer, Changes and History are a row of text tabs inside
+  the panel, and the title-bar corner is a single toggle. A Pilot's panel has
+  its own tab row the same way. New installs start on the rounded layout.
+- **Sidebar:** the Focused layout lists New, Inbox, Notes, Automations and
+  Board with a compact Search button, and every navigation icon has its own
+  color, carried into its page's title tab. The Notes row no longer shows a
+  count.
+- **Dark rounded layout:** a near-black frame with a deeper center card, in
+  place of the washed-out grey.
+- **Kiro** has its purple icon everywhere a provider icon shows. The Pilot mic
+  stays quiet until it records, then turns red.
+- **MCP tools:** servers on the 2026-07-28 protocol work like any other, and
+  OpenCode 2.2 and newer gets the session's tools over its own socket, so the
+  token never leaves Gespan.
+- **Action env names:** more names that could run code or change which
+  programs run are blocked, with the reason shown under the action.
+
 ### Fixed
 
+- Claude stays signed in when Gespan stops it in the middle of a token
+  refresh.
+- A resumed Claude chat keeps its reply after a replayed background-task
+  result.
+- A sign-in left waiting on a closed browser can be cancelled, and resets on
+  its own when you come back to Gespan.
+- A terminal command that prints and exits at once keeps its last output.
+- The explorer keeps its scroll position when folders open, close or refresh.
+- Read-only documents let you select and copy text.
+- The code block copy button stays readable over long lines.
+- The wheel no longer scrolls the session behind What's new.
+- Prose without spaces beside inline code wraps inside the column.
+- Canvas labels sit on their baseline, lined up with the shapes they annotate.
 - The first reply after Send starts sooner, by about 0.2 to 0.35 s on every
   message for Claude Code and Kiro. The turn's workspace snapshot used to run,
   with a dozen `git` calls, before the CLI was even launched. It now records
@@ -2055,7 +2110,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/0xvasanth/gespan/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/0xvasanth/gespan/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/0xvasanth/gespan/compare/v0.0.5...v0.0.6
 [0.16.0]: https://github.com/0xvasanth/gespan/compare/v0.15.0...v0.16.0

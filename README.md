@@ -191,14 +191,14 @@ in from your phone.
 
 <!-- release:start -->
 The current release is
-[**0.0.7**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.7).
+[**0.0.8**](https://github.com/0xvasanth/gespan/releases/tag/v0.0.8).
 
 | Platform | Download |
 | :-- | :-- |
-| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_aarch64.dmg) |
-| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_x64.dmg) |
-| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_x64-setup.exe) |
-| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/Gespan_0.0.7_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/gespan_0.0.7_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.7/gespan-0.0.7-1.el10.x86_64.rpm) |
+| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/Gespan_0.0.8_aarch64.dmg) |
+| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/Gespan_0.0.8_x64.dmg) |
+| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/Gespan_0.0.8_x64-setup.exe) |
+| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/Gespan_0.0.8_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/gespan_0.0.8_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.0.8/gespan-0.0.8-1.el10.x86_64.rpm) |
 <!-- release:end -->
 
 Gespan on Windows and Linux is less tested than on macOS.
