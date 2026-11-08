@@ -1,13 +1,18 @@
 //! BrowserLink: the one WebSocket to the browser.
 //!
 //! Callers write their own command frames, one at a time under the writer
-//! lock: each re-checks the policy under a read lock and writes the frame
-//! while still holding that lock, so a revocation (which takes the write
-//! lock) can never interleave between the check and the write. That is the
-//! whole OFF guarantee: after OFF or any epoch bump no new command reaches
-//! the socket, while a frame already written may still be executed by the
-//! browser. Writing on the caller's thread means a
-//! command goes out the moment it is sent, not when the reader next looks.
+//! lock: each re-checks the policy under a read lock and, still holding that
+//! lock, commits the frame (encodes it into the writer's buffer), so a
+//! revocation (which takes the write lock) can never interleave between the
+//! check and the commit. The bytes go to the socket only after the policy
+//! lock is dropped: a browser that stops reading stalls the writer, never a
+//! revocation or OFF. That is the whole OFF guarantee: after OFF or any epoch
+//! bump no new command is committed, while a frame committed before it may
+//! still reach and be executed by the browser. Such a frame, when the epoch
+//! moved before its write finished, is answered `Revoked { sent: true }`
+//! (`unknown`), never with the browser's success. Writing on the caller's
+//! thread means a command goes out the moment it is sent, not when the
+//! reader next looks.
 //!
 //! A single `browser-link` thread owns the read side: responses are routed
 //! back by `id`, events fan out to subscriptions by `sessionId` and method.
@@ -573,10 +578,20 @@ struct Pending {
     deadline: Instant,
     method: Method,
     agent: bool,
+    /// An agent frame whose write has not been checked against the policy
+    /// epochs yet: an answer that arrives meanwhile waits in `early`, so a
+    /// command revoked during its write is never answered with success.
+    unconfirmed: bool,
+    early: Option<Reply>,
 }
 
-/// The socket as the writer sees it: write-only.
-struct WriteHalf(TcpStream);
+/// The socket as the writer sees it: write-only. The WebSocket layer encodes
+/// frames into `buf` (under the policy lock); [`Wire::send`] moves the bytes
+/// to `stream` after that lock is dropped.
+struct WriteHalf {
+    stream: TcpStream,
+    buf: Vec<u8>,
+}
 
 impl Read for WriteHalf {
     fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
@@ -587,11 +602,12 @@ impl Read for WriteHalf {
 
 impl Write for WriteHalf {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write(buf)
+        self.buf.extend_from_slice(buf);
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
+        Ok(())
     }
 }
 
@@ -611,13 +627,15 @@ impl Read for ReadHalf {
 
 impl Write for ReadHalf {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // The writer's buffer is always empty here: `Wire::send` drains it
+        // before it lets the writer lock go.
         let mut writer = self.wire.lock_writer();
-        writer.socket.get_mut().0.write_all(buf)?;
+        writer.socket.get_mut().stream.write_all(buf)?;
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.wire.lock_writer().socket.get_mut().0.flush()
+        self.wire.lock_writer().socket.get_mut().stream.flush()
     }
 }
 
@@ -673,9 +691,11 @@ impl Wire {
             let _ = reply.send(Err(CdpError::Revoked { sent: false }));
             return None;
         }
-        // The read lock is held until the frame is written: OFF takes the
-        // write lock, bumps the epoch and only then closes the socket, so no
-        // send after that point passes.
+        // The read lock is held until the frame is committed to the writer's
+        // buffer: OFF takes the write lock, bumps the epoch and only then
+        // closes the socket, so no send after that point is committed. The
+        // socket write itself happens after the lock is dropped, so a stalled
+        // write never holds up a revocation.
         let policy = inner.policy.read();
         let verdict = match &ctx {
             SendCtx::Agent(ctx) => policy.gate(ctx, &target, browser_ok).map_err(map_gate),
@@ -710,9 +730,12 @@ impl Wire {
                 deadline: Instant::now() + timeout,
                 method: command.method,
                 agent,
+                unconfirmed: agent,
+                early: None,
             },
         );
-        let written = writer.socket.send(Message::text(frame.to_string()));
+        // Encodes into memory only (`WriteHalf` buffers); cannot block.
+        let encoded = writer.socket.send(Message::text(frame.to_string()));
         #[cfg(test)]
         inner
             .write_log
@@ -720,20 +743,66 @@ impl Wire {
             .unwrap_or_else(|e| e.into_inner())
             .push((id, Instant::now()));
         drop(policy);
-        match written {
-            Ok(()) => {
-                inner.commands_sent.fetch_add(1, Ordering::Relaxed);
-                Some(id)
+        let bytes = std::mem::take(&mut writer.socket.get_mut().buf);
+        #[cfg(test)]
+        inner.about_to_write(id);
+        // Still under the writer lock, so frames never interleave; a browser
+        // that stops reading stalls this for up to the write timeout.
+        let written = encoded.map_err(|e| e.to_string()).and_then(|()| {
+            let stream = &mut writer.socket.get_mut().stream;
+            stream
+                .write_all(&bytes)
+                .and_then(|()| stream.flush())
+                .map_err(|e| e.to_string())
+        });
+        if let Err(error) = written {
+            writer.open = false;
+            self.failed.store(true, Ordering::Release);
+            drop(writer);
+            if let Some(pending) = self.lock_pending().remove(&id) {
+                let _ = pending.reply.send(Err(CdpError::LinkDown { sent: false }));
             }
-            Err(error) => {
-                writer.open = false;
-                self.failed.store(true, Ordering::Release);
-                if let Some(pending) = self.lock_pending().remove(&id) {
-                    let _ = pending.reply.send(Err(CdpError::LinkDown { sent: false }));
+            log::debug!("browser-link write failed: {error}");
+            return None;
+        }
+        drop(writer);
+        inner.commands_sent.fetch_add(1, Ordering::Relaxed);
+        if let SendCtx::Agent(ctx) = &ctx {
+            self.confirm(inner, ctx, id);
+        }
+        Some(id)
+    }
+
+    /// After an agent frame's write: if a revocation, OFF or turn end moved
+    /// an epoch while the bytes were going out, the action is reported
+    /// revoked (`sent: true`, so `unknown`) instead of with the browser's
+    /// answer. The frame did reach the socket and the browser may still run
+    /// it; this cannot be undone, only reported honestly.
+    fn confirm(&self, inner: &LinkInner, ctx: &RequestCtx, id: u64) {
+        let current = {
+            let state = inner.policy.read();
+            state.toggle_on
+                && state.global_epoch == ctx.global_epoch
+                && state.session_epoch(&ctx.session) == Some(ctx.session_epoch)
+        };
+        let mut pending = self.lock_pending();
+        // Gone already: timed out or drained by a close, and answered there.
+        let Some(entry) = pending.get_mut(&id) else {
+            return;
+        };
+        if !current {
+            if let Some(entry) = pending.remove(&id) {
+                let _ = entry.reply.send(Err(CdpError::Revoked { sent: true }));
+            }
+            return;
+        }
+        match entry.early.take() {
+            Some(answer) => {
+                if let Some(entry) = pending.remove(&id) {
+                    let _ = entry.reply.send(answer);
                 }
-                log::debug!("browser-link write failed: {error}");
-                None
             }
+            None => entry.unconfirmed = false,
         }
     }
 }
@@ -758,6 +827,24 @@ struct LinkInner {
     aborted: AtomicBool,
     #[cfg(test)]
     write_log: Mutex<Vec<(u64, Instant)>>,
+    /// Told the id of every agent or system frame just before its bytes go
+    /// to the socket, so a test can act while a write is under way.
+    #[cfg(test)]
+    before_write: Mutex<Option<mpsc::Sender<u64>>>,
+}
+
+#[cfg(test)]
+impl LinkInner {
+    fn about_to_write(&self, id: u64) {
+        if let Some(tx) = self
+            .before_write
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            let _ = tx.send(id);
+        }
+    }
 }
 
 /// Handle to the link; cheap to clone.
@@ -783,6 +870,8 @@ impl Link {
                 aborted: AtomicBool::new(false),
                 #[cfg(test)]
                 write_log: Mutex::new(Vec::new()),
+                #[cfg(test)]
+                before_write: Mutex::new(None),
             }),
         }
     }
@@ -893,7 +982,10 @@ impl Link {
         let wire = Arc::new(Wire {
             writer: Mutex::new(Writer {
                 socket: WebSocket::from_raw_socket(
-                    WriteHalf(write_half),
+                    WriteHalf {
+                        stream: write_half,
+                        buf: Vec::new(),
+                    },
                     Role::Client,
                     Some(config),
                 ),
@@ -1109,6 +1201,15 @@ impl Link {
     }
 
     #[cfg(test)]
+    fn on_before_write(&self, tx: mpsc::Sender<u64>) {
+        *self
+            .inner
+            .before_write
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(tx);
+    }
+
+    #[cfg(test)]
     pub fn commands_refused(&self) -> u64 {
         self.inner.commands_refused.load(Ordering::Relaxed)
     }
@@ -1283,17 +1384,26 @@ impl Loop {
             if self.ping == Some(id) {
                 self.ping = None;
             }
-            let pending = self.wire.lock_pending().remove(&id);
-            if let Some(pending) = pending {
-                let result = match frame.error {
-                    Some(error) => Err(CdpError::Protocol {
-                        code: error.code,
-                        message: error.message,
-                    }),
-                    None if text.len() > MAX_REPLY_BYTES => Err(CdpError::TooLarge),
-                    None => Ok(frame.result.map_or_else(null_reply, ToOwned::to_owned)),
-                };
-                let _ = pending.reply.send(result);
+            let mut pending = self.wire.lock_pending();
+            let Some(entry) = pending.get_mut(&id) else {
+                return;
+            };
+            let result = match frame.error {
+                Some(error) => Err(CdpError::Protocol {
+                    code: error.code,
+                    message: error.message,
+                }),
+                None if text.len() > MAX_REPLY_BYTES => Err(CdpError::TooLarge),
+                None => Ok(frame.result.map_or_else(null_reply, ToOwned::to_owned)),
+            };
+            if entry.unconfirmed {
+                // The sender has not checked the epochs after its write yet;
+                // it delivers this, or a revocation, when it does.
+                entry.early = Some(result);
+                return;
+            }
+            if let Some(entry) = pending.remove(&id) {
+                let _ = entry.reply.send(result);
             }
             return;
         }
@@ -1809,8 +1919,10 @@ mod tests {
     }
 
     /// Spec 16.3: thread A sends in a loop, thread B revokes after a random
-    /// delay. No frame may be written after the revocation took effect, and
-    /// every request gets exactly one outcome.
+    /// delay. No frame may be committed after the revocation took effect, and
+    /// every request gets exactly one outcome. A frame committed just before
+    /// it, whose write finished after it, ends the loop as
+    /// `Revoked { sent: true }`: it reached the browser but is not a success.
     #[test]
     fn revocation_race_never_writes_after_the_epoch_moves() {
         let server = FakeCdp::start();
@@ -1850,15 +1962,24 @@ mod tests {
                 thread::spawn(move || {
                     let mut ok = 0usize;
                     let mut refused = 0usize;
+                    let mut written = 0usize;
                     let mut outcomes = 0usize;
                     loop {
                         let result = link.send(&ctx, click("S1"));
                         outcomes += 1;
                         match result {
-                            Ok(_) => ok += 1,
+                            Ok(_) => {
+                                ok += 1;
+                                written += 1;
+                            }
                             Err(CdpError::Revoked { sent: false })
                             | Err(CdpError::TurnInactive) => {
                                 refused += 1;
+                                break;
+                            }
+                            Err(CdpError::Revoked { sent: true }) => {
+                                refused += 1;
+                                written += 1;
                                 break;
                             }
                             Err(other) => panic!("unexpected error {other:?}"),
@@ -1867,7 +1988,7 @@ mod tests {
                             break;
                         }
                     }
-                    (ok, refused, outcomes)
+                    (ok, refused, written, outcomes)
                 })
             };
             seed ^= seed << 13;
@@ -1884,7 +2005,7 @@ mod tests {
                 }
                 state.last_revocation.unwrap()
             };
-            let (ok, refused, outcomes) = sender.join().unwrap();
+            let (ok, refused, written, outcomes) = sender.join().unwrap();
             assert_eq!(
                 refused, 1,
                 "iteration {iteration}: sender must stop on the first refusal"
@@ -1894,7 +2015,7 @@ mod tests {
                 ok + refused,
                 "every request gets exactly one outcome"
             );
-            // No frame was written after the revocation took the write lock.
+            // No frame was committed after the revocation took the write lock.
             let late: Vec<_> = link
                 .write_log()
                 .into_iter()
@@ -1906,7 +2027,7 @@ mod tests {
                 late.len(),
                 before
             );
-            total_sent += ok;
+            total_sent += written;
             assert_eq!(link.commands_sent() as usize, total_sent);
             // The fake server saw exactly the frames the link wrote.
             assert!(server.wait_for(|log| log.len() == total_sent, Duration::from_secs(2)));
@@ -1919,5 +2040,96 @@ mod tests {
             }
         }
         link.close(Vec::new(), Duration::from_millis(200));
+    }
+
+    /// A revocation (or OFF) must not wait for a write the browser is not
+    /// reading: the policy lock is never held across the socket write.
+    #[test]
+    fn revoke_is_not_blocked_by_a_stalled_write() {
+        // The fake stops reading its socket while it "handles" the first
+        // `Browser.getVersion`, until the test lets it go on.
+        let (stalled_tx, stalled_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let counter = AtomicU64::new(1);
+        let mut stall = Some((stalled_tx, release_rx));
+        let server = FakeCdp::start_with(move |received| {
+            if received.method == "Browser.getVersion" {
+                if let Some((stalled, release)) = stall.take() {
+                    let _ = stalled.send(());
+                    let _ = release.recv();
+                }
+            }
+            super::super::testing::default_response(received, &counter)
+        });
+        let (policy, ctx) = policy_with_lease();
+        let link = Link::new(policy.clone());
+        link.open(&server.url, Duration::from_secs(5)).unwrap();
+        let _version = link
+            .request_system(Command::browser(Method::BrowserGetVersion, json!({})))
+            .unwrap();
+        stalled_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the fake stopped reading");
+
+        // Far more than any loopback socket buffers: this write stalls until
+        // the fake reads again.
+        let (about_tx, about_rx) = mpsc::channel();
+        link.on_before_write(about_tx);
+        let action = {
+            let link = link.clone();
+            let ctx = ctx.clone();
+            thread::spawn(move || {
+                link.send(
+                    &ctx,
+                    Command::in_session(
+                        &CdpSessionId("S1".into()),
+                        Method::InputDispatchMouseEvent,
+                        json!({
+                            "type": "mousePressed",
+                            "x": 1,
+                            "y": 1,
+                            "pad": "x".repeat(12 * 1024 * 1024),
+                        }),
+                    ),
+                )
+            })
+        };
+        about_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the action reached its write");
+
+        let started = Instant::now();
+        policy.write().revoke_session("s1");
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(200),
+            "revoke waited {took:?} on a stalled write"
+        );
+
+        // The browser reads again: the frame (committed before the revoke)
+        // goes out, but the revoke landed before the write finished, so the
+        // action is reported revoked, never as a success.
+        release_tx.send(()).unwrap();
+        let result = action.join().unwrap();
+        assert_eq!(result, Err(CdpError::Revoked { sent: true }));
+        let reported = result.unwrap_err().into_result("r1", true, false);
+        assert_eq!(reported.outcome, Outcome::Unknown);
+        assert_eq!(reported.reason, Some(Reason::Revoked));
+        assert!(server.wait_for(
+            |log| log.iter().any(|r| r.method == "Input.dispatchMouseEvent"),
+            Duration::from_secs(5)
+        ));
+        // Nothing after the revoke passes the gate.
+        assert_eq!(
+            link.send(&ctx, click("S1")),
+            Err(CdpError::Revoked { sent: false })
+        );
+        link.close(Vec::new(), Duration::from_millis(200));
+        let clicks = server
+            .received()
+            .into_iter()
+            .filter(|r| r.method == "Input.dispatchMouseEvent")
+            .count();
+        assert_eq!(clicks, 1);
     }
 }
