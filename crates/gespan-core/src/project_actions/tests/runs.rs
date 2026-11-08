@@ -93,8 +93,10 @@ fn a_slow_action_returns_running_then_output_reports_the_exit() {
     let _keep = FINISHED.read().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     // Waits for a file, not a clock, so a busy machine can't finish it early.
+    // On Windows a nested cmd, not PowerShell: PowerShell's startup on a busy
+    // runner can outlast the whole wait after the file is written.
     let gate = if cfg!(windows) {
-        "powershell -NoProfile -Command \"while (!(Test-Path go)) { Start-Sleep -Milliseconds 50 }\""
+        "cmd /d /c \"for /l %i in (0,0,1) do @if exist go (exit 0) else (ping -n 1 127.0.0.1 >NUL)\""
     } else {
         "while [ ! -e go ]; do sleep 0.05; done"
     };

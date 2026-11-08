@@ -6034,39 +6034,45 @@ impl Shell {
                 let worktree = MenuAction::new("switch-worktree", "Switch worktree")
                     .icon("folder-tree")
                     .flyout(self.worktree_flyout(events, window, cx));
+                let editor = self.project_menu_editor_row(cx);
+                let mut items: Vec<MenuItem> = vec![
+                    match branch {
+                        Some(branch) => worktree.value(branch),
+                        None => worktree,
+                    }
+                    .into(),
+                    MenuItem::Separator,
+                    MenuAction::new("switch-project", "Switch project")
+                        .icon("folder")
+                        .flyout(Flyout {
+                            view: picker.into(),
+                            width: 286.,
+                            padding: 0.,
+                            height: None,
+                            max_height: Some(380.),
+                            focus: Some(focus),
+                            surface: None,
+                        })
+                        .into(),
+                    MenuAction::new("project-settings", "Project settings")
+                        .icon("sliders")
+                        .flyout(self.project_settings_flyout(events, window, cx))
+                        .into(),
+                    MenuAction::new("open-remote-project", "Open folder on a machine…")
+                        .icon("globe")
+                        .into(),
+                    MenuAction::new("settings", "Settings")
+                        .icon("settings")
+                        .shortcut(format!("{MOD},"))
+                        .into(),
+                ];
+                // Beside Project settings: both act on this project.
+                if let Some(editor) = editor {
+                    items.insert(4, editor);
+                }
                 (
                     format!("{} menu", self.project_label(&self.workspace.project)).into(),
-                    vec![
-                        match branch {
-                            Some(branch) => worktree.value(branch),
-                            None => worktree,
-                        }
-                        .into(),
-                        MenuItem::Separator,
-                        MenuAction::new("switch-project", "Switch project")
-                            .icon("folder")
-                            .flyout(Flyout {
-                                view: picker.into(),
-                                width: 286.,
-                                padding: 0.,
-                                height: None,
-                                max_height: Some(380.),
-                                focus: Some(focus),
-                                surface: None,
-                            })
-                            .into(),
-                        MenuAction::new("project-settings", "Project settings")
-                            .icon("sliders")
-                            .flyout(self.project_settings_flyout(events, window, cx))
-                            .into(),
-                        MenuAction::new("open-remote-project", "Open folder on a machine…")
-                            .icon("globe")
-                            .into(),
-                        MenuAction::new("settings", "Settings")
-                            .icon("settings")
-                            .shortcut(format!("{MOD},"))
-                            .into(),
-                    ],
+                    items,
                     240.,
                     MenuStyle::Switcher,
                 )
@@ -6255,6 +6261,13 @@ impl Shell {
                     self.open_settings(crate::settings::Section::General, window, cx);
                 } else if action == "open-remote-project" {
                     self.open_remote_project(window, cx);
+                } else if action == open_in_editor::PROJECT_MENU_EDITOR_ROW
+                    && let Some(path) = self.open_in_editor_folder(cx)
+                {
+                    // The editor menu takes the row's place, as Project
+                    // settings' flyout would.
+                    let at = row.map_or_else(Point::default, |r| Point::new(r.left(), r.top()));
+                    self.open_editor_menu(path, Anchor::Point(at), window, cx);
                 } else if action == "project-settings" {
                     let at = row
                         .map_or_else(Point::default, |r| Point::new(r.right(), r.top() - px(8.)));
