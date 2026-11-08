@@ -463,8 +463,7 @@ fn startup_and_loader_env_names_block_the_action() {
     // Ordinary names, and ones that only look alike, still run.
     let fine = resolved(one(&task(
         r#"{ "label": "Dev", "command": "bun run dev",
-             "options": { "env": { "PORT": "3000", "ENVIRONMENT": "dev", "MY_LD_PRELOAD": "x",
-                                   "PATH": "${env:PATH}:./bin" } } }"#,
+             "options": { "env": { "PORT": "3000", "ENVIRONMENT": "dev", "MY_LD_PRELOAD": "x" } } }"#,
     )));
     assert_eq!(fine.blocked, None);
 }
@@ -524,10 +523,10 @@ fn whole_classes_of_code_loading_env_names_are_blocked() {
             "{name}"
         );
     }
-    // Look-alikes and PATH, which the row shows, still run.
+    // Look-alikes still run.
     let fine = resolved(one(&task(
         r#"{ "label": "Dev", "command": "bun run dev",
-             "options": { "env": { "PATH": "${env:PATH}:./bin", "NODE_ENV": "dev",
+             "options": { "env": { "NODE_ENV": "dev",
                                    "GITHUB_TOKEN": "x", "HOMEBREW_NO_ENV": "1",
                                    "MY_LD_PRELOAD": "x", "PYTHONUNBUFFERED": "1" } } }"#,
     )));
@@ -547,5 +546,209 @@ fn an_env_name_that_cant_be_shown_safely_is_blocked() {
             Some("Sets an environment variable with a name Gespan can't pass safely"),
             "{name:?}"
         );
+    }
+}
+
+/// The reason `name` set to `value` blocks a `bun run dev` task with, if any.
+fn env_blocked(name: &str, value: &str) -> Option<String> {
+    let body = serde_json::json!({
+        "label": "Dev",
+        "command": "bun run dev",
+        "options": { "env": { name: value } },
+    });
+    resolved(one(&task(&body.to_string()))).blocked
+}
+
+fn assert_runs_code(names: &[&str]) {
+    for name in names {
+        assert_eq!(
+            env_blocked(name, "./x").as_deref(),
+            Some(format!("Sets {name}, which could run code before the command").as_str()),
+            "{name}"
+        );
+    }
+}
+
+fn assert_names_programs(names: &[&str]) {
+    for name in names {
+        assert_eq!(
+            env_blocked(name, "./x").as_deref(),
+            Some(
+                format!("Sets {name}, which could change which programs the command runs").as_str()
+            ),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn interactive_shell_startup_env_names_are_blocked() {
+    // An action's terminal starts the user's shell with the action's env, so
+    // its prompts (expanded with `$(...)`), line editor, history file and
+    // zsh's function path all run or write before the command is typed.
+    assert_runs_code(&[
+        "PS0",
+        "PS1",
+        "PS2",
+        "PS3",
+        "PROMPT",
+        "RPROMPT",
+        "RPS1",
+        "PROMPT_EOL_MARK",
+        "FPATH",
+        "fpath",
+        "INPUTRC",
+        "HISTFILE",
+        "STARSHIP_CONFIG",
+    ]);
+}
+
+#[test]
+fn loader_and_config_dir_env_names_are_blocked() {
+    assert_runs_code(&[
+        "GCONV_PATH",
+        "XDG_CONFIG_HOME",
+        "XDG_CONFIG_DIRS",
+        "XDG_DATA_HOME",
+        "XDG_DATA_DIRS",
+        "xdg_config_home",
+    ]);
+}
+
+#[test]
+fn language_runtime_env_names_are_blocked() {
+    assert_runs_code(&[
+        "PERLLIB",
+        "PERL5DB",
+        "LUA_INIT",
+        "LUA_INIT_5_4",
+        "LUA_PATH",
+        "LUA_CPATH_5_1",
+        "PYTHONUSERBASE",
+        "PYTHONBREAKPOINT",
+        "DOTNET_STARTUP_HOOKS",
+        "CORECLR_PROFILER_PATH",
+        "GOFLAGS",
+        "GOTOOLCHAIN",
+    ]);
+}
+
+#[test]
+fn compiler_and_toolchain_env_names_are_blocked() {
+    assert_names_programs(&[
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTFLAGS",
+        "rustc_wrapper",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO",
+        "CARGO_HOME",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+    ]);
+}
+
+#[test]
+fn editor_pager_and_helper_env_names_are_blocked() {
+    assert_names_programs(&[
+        "EDITOR",
+        "VISUAL",
+        "PAGER",
+        "MANPAGER",
+        "BROWSER",
+        "LESS",
+        "LESSOPEN",
+        "SSH_ASKPASS",
+        "SHELL",
+        "editor",
+    ]);
+}
+
+#[test]
+fn package_manager_config_env_names_are_blocked() {
+    assert_names_programs(&[
+        "NPM_CONFIG_SCRIPT_SHELL",
+        "npm_config_script_shell",
+        "npm_config_node_options",
+        "BUN_INSTALL",
+        "BUN_CONFIG_REGISTRY",
+        "YARN_RC_FILENAME",
+        "PNPM_HOME",
+        "COREPACK_NPM_REGISTRY",
+    ]);
+}
+
+#[test]
+fn path_may_only_add_folders_after_the_inherited_ones() {
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let blocked = Some("Sets PATH, which could change which programs the command runs".to_string());
+    // Ahead of the inherited folders, a repo's `git` or `bun` would win.
+    for value in [
+        format!("./bin{sep}${{env:PATH}}"),
+        "./bin".to_string(),
+        format!("${{workspaceFolder}}/bin{sep}${{env:PATH}}"),
+        String::new(),
+        // Not a folder boundary: this is one entry, `<PATH>x`, then the
+        // separator, so it's refused rather than reasoned about.
+        format!("${{env:PATH}}x{sep}./bin"),
+        "${env:PATHX}".to_string(),
+        format!("${{env:HOME}}{sep}${{env:PATH}}"),
+    ] {
+        assert_eq!(env_blocked("PATH", &value), blocked, "{value:?}");
+    }
+    assert_eq!(
+        env_blocked("Path", "./bin").as_deref(),
+        Some("Sets Path, which could change which programs the command runs")
+    );
+    // After them it can only fill in programs that aren't installed.
+    for value in [
+        format!("${{env:PATH}}{sep}./bin"),
+        format!("${{env:PATH}}{sep}${{workspaceFolder}}/node_modules/.bin"),
+        "${env:PATH}".to_string(),
+        format!("${{env:path}}{sep}./bin"),
+    ] {
+        assert_eq!(env_blocked("PATH", &value), None, "{value:?}");
+    }
+}
+
+#[test]
+fn ordinary_app_env_names_still_run() {
+    for name in [
+        "PORT",
+        "HOST",
+        "NODE_ENV",
+        "DATABASE_URL",
+        "API_KEY",
+        "VITE_API_URL",
+        "NEXT_PUBLIC_SITE",
+        "RUST_LOG",
+        "RUST_BACKTRACE",
+        "PYTHONUNBUFFERED",
+        "PYTHONDONTWRITEBYTECODE",
+        "DEBUG",
+        "LOG_LEVEL",
+        "TZ",
+        "LANG",
+        "CI",
+        "FORCE_COLOR",
+        "NO_COLOR",
+        "TERM",
+        "DOTNET_ENVIRONMENT",
+        "ASPNETCORE_ENVIRONMENT",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOS",
+        "LESSON_COUNT",
+        "PSQL_HOST",
+        "PROMPT_TEXT",
+        "EDITOR_THEME",
+        "SHELL_LEVEL",
+        "CARGOLESS",
+        "BUNDLE_PATH",
+        "MY_XDG_DIR",
+        "PATHS",
+        "MY_PATH",
+    ] {
+        assert_eq!(env_blocked(name, "1"), None, "{name}");
     }
 }
