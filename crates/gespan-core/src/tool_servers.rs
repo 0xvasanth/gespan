@@ -20,6 +20,7 @@ pub const APP: &str = "app";
 pub const CONTROL: &str = "control";
 pub const ACTIONS: &str = "actions";
 pub const ACTIONS_READ: &str = "actions_read";
+pub const BROWSER: &str = "browser";
 
 /// The name agents know the hub by. Tools appear to Claude as
 /// `mcp__gespan__<tool>`.
@@ -309,6 +310,7 @@ fn hub() -> Result<&'static Hub, String> {
         hub.register(Arc::new(crate::project_actions::toolkit::Toolkit {
             may_run: false,
         }));
+        hub.register(Arc::new(crate::browser::toolkit::Toolkit::GLOBAL));
         Ok(hub)
     })
     .as_ref()

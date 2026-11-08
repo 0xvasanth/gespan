@@ -6,6 +6,11 @@ license.workspace = true
 publish = false
 description = "Gespan's browser module: a thin CDP client, the access policy and the agent's browser actions. Served to agents through the MCP hub."
 
+[features]
+# The fake CDP endpoint and `BrowserHost::for_tests`, for the app's own tests.
+# Only ever enabled from a dev-dependency.
+testing = []
+
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

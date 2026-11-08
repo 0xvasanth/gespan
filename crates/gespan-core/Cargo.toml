@@ -59,6 +59,7 @@ rayon = "1"
 gespan-redact = { path = "../gespan-redact" }
 gespan-mcp-config = { path = "../gespan-mcp-config" }
 mcp-hub = { path = "../mcp-hub" }
+gespan-browser = { path = "../gespan-browser" }
 herdr-link = { path = "../herdr-link" }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 
@@ -86,3 +87,4 @@ gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 gespan-tracker-client = { path = "../tracker-client", features = ["testing"] }
 tempfile = "3"
 gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }
+gespan-browser = { path = "../gespan-browser", features = ["testing"] }

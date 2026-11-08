@@ -34,10 +34,10 @@ pub trait Embedder: Send + Sync + 'static {
 }
 
 /// Tests: an in-memory database and no windows.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub(crate) struct MemoryEmbedder(std::sync::Mutex<Connection>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl MemoryEmbedder {
     pub(crate) fn new() -> MemoryEmbedder {
         let conn = Connection::open_in_memory().expect("in-memory db");
@@ -46,7 +46,7 @@ impl MemoryEmbedder {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl Embedder for MemoryEmbedder {
     fn with_db(&self, f: &mut dyn FnMut(&Connection)) {
         let conn = self.0.lock().unwrap_or_else(|e| e.into_inner());

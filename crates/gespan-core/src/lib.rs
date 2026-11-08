@@ -6,6 +6,7 @@ pub mod app_update;
 pub mod automations;
 pub mod board;
 pub mod branch_merged;
+pub mod browser;
 pub mod catalog;
 pub mod checkpoint;
 pub mod context;

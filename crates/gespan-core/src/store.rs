@@ -885,6 +885,7 @@ impl Store {
         self.write_archived(id, archived)?;
         if archived {
             crate::tool_servers::revoke(id);
+            crate::browser::session_deleted(id);
         }
         Ok(())
     }
@@ -1123,6 +1124,7 @@ impl Store {
     pub fn delete(&mut self, id: i64) -> Result<(), String> {
         self.remove_session(id)?;
         crate::tool_servers::revoke(id);
+        crate::browser::session_deleted(id);
         Ok(())
     }
     fn remove_session(&mut self, id: i64) -> Result<(), String> {

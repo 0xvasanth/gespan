@@ -1,7 +1,8 @@
 //! Test doubles for the browser module: a fake CDP endpoint speaking the same
 //! WebSocket/JSON framing as Chrome's `/devtools/browser/<id>`.
 //!
-//! Only compiled for tests. The fake records every frame it receives, answers
+//! Only compiled for tests (this crate's, and the app's through the
+//! `testing` feature). The fake records every frame it receives, answers
 //! through a pluggable responder, can emit events and can close or refuse the
 //! connection, which is all the link, target and host tests need.
 
@@ -198,6 +199,25 @@ impl FakeCdp {
     /// How many WebSocket connections completed the upgrade so far.
     pub fn connections(&self) -> usize {
         self.shared.connections.load(Ordering::Acquire)
+    }
+
+    /// A fresh profile folder whose `DevToolsActivePort` points at this
+    /// fake, for [`crate::protocol::BrowserChoice::UserDataDir`] in Attach
+    /// mode.
+    pub fn profile_dir(&self) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gespan-fake-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("profile dir");
+        let rest = self
+            .url
+            .strip_prefix("ws://127.0.0.1:")
+            .expect("loopback url");
+        let (port, path) = rest.split_once('/').expect("port and path");
+        std::fs::write(
+            dir.join(crate::discovery::ACTIVE_PORT_FILE),
+            format!("{port}\n/{path}\n"),
+        )
+        .expect("DevToolsActivePort");
+        dir
     }
 }
 

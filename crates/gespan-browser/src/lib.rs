@@ -80,8 +80,10 @@ pub mod protocol;
 mod resilience;
 pub mod semantic;
 pub mod targets;
-#[cfg(test)]
-pub(crate) mod testing;
+/// The fake CDP endpoint and a host on an in-memory database, for this
+/// crate's tests and, behind the `testing` feature, the app's.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod turn;
 mod util;
 pub mod view;
@@ -422,9 +424,10 @@ impl BrowserHost {
         host
     }
 
-    /// Host for tests: in-memory audit, no app around it.
-    #[cfg(test)]
-    pub(crate) fn for_tests(settings: BrowserSettings) -> Arc<BrowserHost> {
+    /// Host for tests: in-memory audit, no app around it, and not the
+    /// process-wide [`host`], so tests running at once never share one.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn for_tests(settings: BrowserSettings) -> Arc<BrowserHost> {
         let embedder = Arc::new(embedder::MemoryEmbedder::new());
         BrowserHost::create(0x1234, settings, embedder)
     }
