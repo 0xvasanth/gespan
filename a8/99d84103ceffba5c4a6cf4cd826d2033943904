@@ -1,0 +1,45 @@
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_9844206a362899::t_707c56e3c339a9 554-559,610-659
+crates/gespan-gpui/assets/kiro-color.svg
+  s_9844206a362899::t_66d1d4ee621eca 1-5
+crates/gespan-gpui/src/assets.rs
+  s_9844206a362899::t_8118a3e9a42371 181
+crates/gespan-gpui/src/conversation.rs
+  s_9844206a362899::t_9a7768aa4d5c81 3390-3395
+crates/gespan-gpui/src/conversation/dictation.rs
+  s_9844206a362899::t_7b2af7596d850b 1135-1189,1193,1198,1211-1234,1237-1247,1250-1256,1258-1260,1262-1263,1266-1269
+crates/gespan-gpui/src/conversation/dictation/tests.rs
+  s_9844206a362899::t_948a04a161b47e 707-774
+crates/gespan-gpui/src/conversation/pilot.rs
+  s_9844206a362899::t_0e6dc62b74c592 1209-1214
+crates/gespan-gpui/src/pilots/dictation_tests.rs
+  s_9844206a362899::t_16e340ca8acb05 183-217
+crates/gespan-gpui/src/shell/app_views.rs
+  s_9844206a362899::t_9d26efdce1dbed 65
+crates/gespan-gpui/src/shell/pinned_tabs.rs
+  s_9844206a362899::t_493399c006e7a3 126,128,161-166
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_9844206a362899::t_b928b1ae9b8c0c 841,878,888
+crates/gespan-gpui/src/shell/search.rs
+  s_9844206a362899::t_6be08ed829fd0b 97
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_9844206a362899::t_7f3b6af2581fc9 2664,2668-2708,2737-2775
+crates/gespan-gpui/src/theme.rs
+  s_9844206a362899::t_5143af8bcaa662 450-452,455-457,460,470-474,543-544,844,852-857,860-881,960-963,965,969,974-980,983-1004,1006-1011,1019,1029
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a899d84103ceffba5c4a6cf4cd826d2033943904",
+  "prompts": {},
+  "sessions": {
+    "s_9844206a362899": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1d19ecf-efb7-44d0-8c72-529f2451414c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
