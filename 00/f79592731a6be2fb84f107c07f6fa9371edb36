@@ -1,0 +1,126 @@
+crates/gespan-browser/src/audit.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-680
+crates/gespan-browser/src/live.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1429
+crates/gespan-browser/src/launch.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-524
+crates/gespan-browser/src/util.rs
+  s_35022df10dc1c3::t_443e535a3745f9 1-13
+crates/gespan-browser/src/view.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-416
+crates/gespan-browser/src/targets.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-2134
+crates/gespan-browser/src/discovery.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-743
+crates/gespan-browser/src/injected/page.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-56
+crates/gespan-browser/src/semantic/fill.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-236
+crates/gespan-browser/src/injected/edit.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-35
+crates/gespan-browser/src/semantic/cursor.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-128
+crates/gespan-browser/src/devservers/os.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-440
+crates/gespan-browser/src/injected/actionability.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-78
+crates/gespan-browser/src/semantic/snapshot.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1251
+crates/gespan-browser/src/agent/tools.rs
+  s_35022df10dc1c3::t_88e632fde67f49 1-247,249-923
+  s_35022df10dc1c3::t_7c4002439f57c5 248
+crates/gespan-browser/src/semantic/actions.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-857
+crates/gespan-browser/src/semantic/mod.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-501
+crates/gespan-browser/src/injected/select.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-54
+crates/gespan-browser/src/embedder.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-57
+.github/workflows/ci.yml
+  s_35022df10dc1c3::t_9c1a2bc0a03108 206
+crates/gespan-browser/src/semantic/element.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-793
+crates/gespan-browser/src/protocol.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1562
+crates/gespan-browser/src/pick.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-478
+crates/gespan-browser/src/turn.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-243
+crates/gespan-browser/Cargo.toml
+  s_35022df10dc1c3::t_dfec3196f538dc 2,17
+  s_35022df10dc1c3::t_7c4002439f57c5 1,3-10,12-16,18-25
+  s_35022df10dc1c3::t_bc1528f7b059a8 11
+crates/gespan-browser/src/injected/hittest.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-65
+crates/gespan-browser/instructions.md
+  s_35022df10dc1c3::t_8f7846b756c095 2-3,8-10,12,14-16,19-25,27-65,67-97,99-104
+  s_35022df10dc1c3::t_7c4002439f57c5 1,11,13,17-18,26,66,98
+  s_35022df10dc1c3::t_e2b5e359912cc2 4-7
+crates/gespan-browser/src/link.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1919
+crates/gespan-browser/src/agent/mcp.rs
+  s_35022df10dc1c3::t_4e945d709657ca 1-214
+crates/gespan-browser/src/injected/cursor.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-282
+crates/gespan-browser/src/policy.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1860
+crates/gespan-browser/src/agent/mod.rs
+  s_35022df10dc1c3::t_4e945d709657ca 1-11
+crates/gespan-browser/src/injected/marker.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-206
+Cargo.toml
+  s_35022df10dc1c3::t_9c1a2bc0a03108 3
+.gitattributes
+  s_35022df10dc1c3::t_88e632fde67f49 12-14
+crates/gespan-browser/src/lib.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 3-4,12,37,44-45,120,123,131,133,136,140,171,293,299,304,312,321,331,359,450,457,561,602-604,639,660,716,757,770,795,841,881,948,952,1084,1121,1132,1159,1168,1200,1203,1241,1283,1307,1423,1492,1628,1677,1693,1708,1721,1728,1734-1735,1743-1744,1767,1823,1831,1834,1925,1951,1964,1997,2011,2213,2298,2322,2512,2602,2638,3028,3123,3311,3536,3671,3960,4498,4501,4535,4616,4622,4712,4717,4970,5275,5287,5382,5431,5436,5530,5624
+  s_35022df10dc1c3::t_88e632fde67f49 1-2,5-11,13-36,38,42-43,46-51,57-119,121-122,124-130,132,134-135,137-139,141-170,172-292,294-298,300-303,305-311,313-320,322-330,332-358,360-449,451-456,458-560,562-601,605-638,640-659,661-715,717-756,758-769,771-794,796-840,842-880,882-947,949-951,953-1083,1085-1120,1122-1131,1133-1158,1160-1167,1169-1199,1201-1202,1204-1240,1242-1282,1284-1306,1308-1422,1424-1491,1493-1627,1629-1676,1678-1692,1694-1707,1709-1720,1722-1727,1729-1733,1736-1742,1745-1766,1768-1822,1824-1830,1832-1833,1835-1924,1926-1950,1952-1963,1965-1996,1998-2010,2012-2212,2214-2297,2299-2321,2323-2511,2513-2601,2603-2637,2639-3027,3029-3122,3124-3192,3194,3197-3310,3312-3535,3537-3566,3568-3670,3672-3959,3961-4497,4499-4500,4502-4534,4536-4615,4617-4621,4623-4711,4713-4716,4718-4969,4971-5274,5276-5286,5288-5381,5383-5430,5432-5435,5437-5529,5531-5623,5625-5645
+  s_35022df10dc1c3::t_bc1528f7b059a8 3193,3195-3196
+  s_35022df10dc1c3::t_25bb4387310273 52-56
+  s_35022df10dc1c3::t_d59f3bd7344117 3567
+  s_35022df10dc1c3::t_e2b5e359912cc2 39-41
+crates/gespan-browser/src/devservers/mod.rs
+  s_35022df10dc1c3::t_13fd5d4d06f9ed 653-656,661,669
+  s_35022df10dc1c3::t_7c4002439f57c5 1-652,657-660,662-668,670-671
+crates/gespan-browser/src/injected/read.js
+  s_35022df10dc1c3::t_7c4002439f57c5 1-141
+crates/gespan-browser/src/semantic/devtools.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-224
+crates/gespan-browser/src/resilience.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-5,7-1912
+  s_35022df10dc1c3::t_475752747b2f92 6
+crates/gespan-browser/tests/naming.rs
+  s_35022df10dc1c3::t_13fd5d4d06f9ed 1-39
+crates/gespan-browser/src/semantic/tests.rs
+  s_35022df10dc1c3::t_7c4002439f57c5 1-1145,1148-1599
+  s_35022df10dc1c3::t_13fd5d4d06f9ed 1146-1147
+Cargo.lock
+  s_35022df10dc1c3::t_ffab677d59d67e 1210-1227,1252,3641-3655,3665,3668-3677,3696,3698,3707,3798-3813,4355-4360
+crates/gespan-browser/src/diagnostics.rs
+  s_35022df10dc1c3::t_f1c7514ea185a0 1-1102
+crates/gespan-browser/src/semantic/input.rs
+  s_35022df10dc1c3::t_98b02bf89288cd 1-751
+crates/gespan-browser/src/semantic/observe.rs
+  s_35022df10dc1c3::t_cfe153e7177d47 1-535
+crates/gespan-browser/src/semantic/refs.rs
+  s_35022df10dc1c3::t_bc43c882b415ec 1-406
+crates/gespan-browser/src/testing.rs
+  s_35022df10dc1c3::t_e34064ac864d6c 1-443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00f79592731a6be2fb84f107c07f6fa9371edb36",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
