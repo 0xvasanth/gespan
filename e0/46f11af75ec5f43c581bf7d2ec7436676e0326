@@ -1,0 +1,25 @@
+mobile/src/features/connection/ConnectScreen.tsx
+  s_8175d8edb31008::t_67a05697e79f0d 22,84
+mobile/src/ui/brand.ts
+  s_8175d8edb31008::t_67a05697e79f0d 5-6
+mobile/src/features/workspace/WorkspaceDrawer.tsx
+  s_8175d8edb31008::t_67a05697e79f0d 21,215-216
+mobile/src/features/workspace/PilotHome.tsx
+  s_8175d8edb31008::t_67a05697e79f0d 26,287-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e046f11af75ec5f43c581bf7d2ec7436676e0326",
+  "prompts": {},
+  "sessions": {
+    "s_8175d8edb31008": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac8cbdbc-08b3-4df8-80eb-82983e5320da",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
