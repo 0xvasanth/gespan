@@ -48,6 +48,15 @@ impl Embedder for GespanEmbedder {
     fn display_scale(&self) -> Option<f64> {
         *SCALE.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// The Gespan browser joins the agents' kill-on-close job on Windows, so
+    /// a crash of Gespan never leaves it running with its debugging port
+    /// open. Unix stops a leftover one at the next start instead.
+    fn browser_started(&self, child: &std::process::Child) {
+        if let Err(error) = crate::process::adopt(child) {
+            tracing::warn!(%error, pid = child.id(), "the Gespan browser is not in the app's job");
+        }
+    }
 }
 
 /// Its folder in the app's data directory: the database and the Gespan
@@ -126,6 +135,14 @@ pub fn set_display_scale(scale: f64) {
 /// The key the browser module knows a session by.
 pub fn session_key(session: i64) -> String {
     format!("s{session}")
+}
+
+/// Whether `session` has a turn running that carries the browser: the
+/// switch is on, the thread holds access and its turn is active.
+pub fn turn_carries(state: &BrowserState, session: i64) -> bool {
+    let key = session_key(session);
+    gespan_browser::turn::granted(state, &key)
+        && gespan_browser::turn::session(state, &key).is_some_and(|entry| entry.turn_active)
 }
 
 /// What Gespan knows about a turn when it starts.
@@ -228,13 +245,15 @@ fn begin_turn_on(host: Option<Arc<BrowserHost>>, facts: &TurnFacts) -> Turn {
     host.turn_started(&key, WINDOW, &facts.cwd.to_string_lossy(), None);
     Turn {
         active: Some((host, key)),
-        instructions: Some(instructions_block()),
+        instructions: instructions_block(gespan_browser::agent::tools::section("overview")),
     }
 }
 
-fn instructions_block() -> String {
-    let overview = gespan_browser::agent::tools::section("overview").unwrap_or_default();
-    format!("<gespan_browser>\n{overview}\n</gespan_browser>")
+/// The `<gespan_browser>` block around the overview; none without one, so a
+/// turn never carries an empty block.
+fn instructions_block(overview: Option<&str>) -> Option<String> {
+    let overview = overview.filter(|text| !text.trim().is_empty())?;
+    Some(format!("<gespan_browser>\n{overview}\n</gespan_browser>"))
 }
 
 /// The session was deleted or archived: its grant goes, its tabs are closed
@@ -395,6 +414,16 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_missing_overview_adds_no_empty_block() {
+        assert_eq!(instructions_block(None), None);
+        assert_eq!(instructions_block(Some("  \n ")), None);
+        assert_eq!(
+            instructions_block(Some("Use your tabs.")).as_deref(),
+            Some("<gespan_browser>\nUse your tabs.\n</gespan_browser>")
+        );
+    }
+
+    #[test]
     fn always_on_carries_for_an_eligible_turn() {
         let (host, _profile) = unreachable_host(AccessMode::Always);
         host.set_toggle(true);
@@ -406,6 +435,8 @@ pub(crate) mod tests {
         assert!(turn.carries_browser());
         let entry = session(&host.state(), 1).cloned().expect("session row");
         assert!(entry.granted && entry.turn_active, "{entry:?}");
+        assert!(turn_carries(&host.state(), 1));
+        assert!(!turn_carries(&host.state(), 2), "another thread");
         let instructions = turn.instructions().expect("instructions");
         assert!(
             instructions.starts_with("<gespan_browser>"),
@@ -424,6 +455,7 @@ pub(crate) mod tests {
         drop(turn);
         let entry = session(&host.state(), 1).cloned().expect("session row");
         assert!(entry.granted && !entry.turn_active, "{entry:?}");
+        assert!(!turn_carries(&host.state(), 1), "the turn ended");
         let again = begin_turn_on(Some(host.clone()), &typed);
         assert!(again.carries_browser());
     }

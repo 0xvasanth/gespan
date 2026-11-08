@@ -90,8 +90,10 @@ fn stop_orphan(profile: &Path) {
     }
 }
 
-/// Windows needs nothing here: [`start`] puts the browser in the app's
-/// kill-on-close job, so the system ends it when the app's process ends.
+/// Nothing here off unix. On Windows the embedding app may put the browser
+/// in a kill-on-close job as it starts ([`crate::Embedder::browser_started`];
+/// Gespan's app does), and the system then ends it with the app's process.
+/// Without that, a browser left by a crashed run keeps running.
 #[cfg(not(unix))]
 fn stop_orphan(_profile: &Path) {}
 
@@ -384,8 +386,9 @@ pub fn arguments(profile: &Path, show_window: bool, scale: Option<f64>) -> Vec<S
 
 /// Start the browser. A leftover `DevToolsActivePort` from an earlier run
 /// goes first, so [`wait_for_endpoint`] only sees the new one. The host
-/// hands the process to [`crate::Embedder::browser_started`] (on Windows the
-/// app puts it in its job, so it ends with the app even after a crash).
+/// hands the process to [`crate::Embedder::browser_started`] at once; on
+/// Windows Gespan's app puts it in its kill-on-close job there, so it ends
+/// with the app even after a crash. Nothing here does that itself.
 pub fn start(
     exe: &Executable,
     profile: &Path,

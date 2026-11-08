@@ -59,7 +59,7 @@ fn create_job() -> io::Result<OwnedHandle> {
     }
 }
 
-fn assign(process: RawHandle) -> io::Result<()> {
+pub(super) fn assign(process: RawHandle) -> io::Result<()> {
     // SAFETY: both handles are live for the call.
     if unsafe { AssignProcessToJobObject(job()?.as_raw_handle(), process) } == 0 {
         return Err(io::Error::last_os_error());
@@ -224,6 +224,25 @@ mod tests {
             .stdout(Stdio::piped());
         let output = spawn(&mut command).unwrap().wait_with_output().unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ready");
+    }
+
+    #[test]
+    fn a_running_process_can_be_adopted_into_the_job() {
+        let mut child = ping().spawn().unwrap();
+        super::super::adopt(&child).unwrap();
+        let mut in_job = 0;
+        // SAFETY: both handles are live for the call.
+        let asked = unsafe {
+            IsProcessInJob(
+                child.as_raw_handle(),
+                job().unwrap().as_raw_handle(),
+                &mut in_job,
+            )
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_ne!(asked, 0);
+        assert_ne!(in_job, 0, "the adopted process is in Gespan's job");
     }
 
     #[test]
