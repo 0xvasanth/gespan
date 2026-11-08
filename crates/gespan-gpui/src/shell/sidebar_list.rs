@@ -818,9 +818,6 @@ impl Shell {
                         .when_some(
                             match label {
                                 "New" => Some(format!("{MOD}T").into_any_element()),
-                                "Notes" => self
-                                    .note_count
-                                    .map(|count| count.to_string().into_any_element()),
                                 "Inbox" if unread => Some(
                                     div()
                                         .flex_shrink_0()
@@ -1002,30 +999,26 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn focused_navigation_trailing_items_share_the_filter_axis(cx: &mut TestAppContext) {
+    fn focused_navigation_keeps_only_the_new_shortcut_on_the_filter_axis(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        for count in [0, 128] {
-            window
-                .update(visual, |shell, _, cx| {
-                    shell.note_count = Some(count);
-                    shell.notify_sidebar(cx);
-                })
-                .unwrap();
-            visual.run_until_parked();
-            let axis = visual
-                .debug_bounds("sidebar-filter-button")
-                .unwrap()
-                .center()
-                .x;
-            for selector in [
-                "sidebar-navigation-trailing-New",
-                "sidebar-navigation-trailing-Notes",
-            ] {
-                let trailing = visual.debug_bounds(selector).unwrap();
-                assert_eq!(trailing.center().x, axis, "{selector} with {count} notes");
-            }
-        }
+        visual.run_until_parked();
+        let axis = visual
+            .debug_bounds("sidebar-filter-button")
+            .unwrap()
+            .center()
+            .x;
+        let new = visual
+            .debug_bounds("sidebar-navigation-trailing-New")
+            .expect("New shows its shortcut");
+        assert_eq!(new.center().x, axis);
+        // Notes is a plain row: no count beside it.
+        assert!(visual.debug_bounds("sidebar-navigation-Notes").is_some());
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-trailing-Notes")
+                .is_none()
+        );
     }
     #[gpui::test]
     fn focused_search_sits_beside_sidebar_options(cx: &mut TestAppContext) {

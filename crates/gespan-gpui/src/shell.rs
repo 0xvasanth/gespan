@@ -769,7 +769,6 @@ pub(crate) struct Shell {
     _session_clock: gpui::Task<()>,
     notes: Option<Entity<Notes>>,
     /// The sidebar's Notes count; `None` until the store has answered.
-    note_count: Option<usize>,
     inbox: Option<Entity<crate::inbox::Inbox>>,
     automations: Option<Entity<crate::automations::Automations>>,
     flows: Option<Entity<crate::flows::FlowsView>>,
@@ -1204,7 +1203,6 @@ impl Shell {
             pending_folder: None,
             _session_clock: session_clock,
             notes: None,
-            note_count: None,
             inbox: None,
             automations: None,
             flows: None,
@@ -1325,7 +1323,6 @@ impl Shell {
             this.scan_external_editors(cx);
         }
         this.observe_accounts(cx);
-        this.load_note_count(cx);
         this.observe_picker_preferences(cx);
         if !secondary {
             let pilot_owner = cx.weak_entity();
