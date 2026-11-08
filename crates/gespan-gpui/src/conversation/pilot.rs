@@ -928,7 +928,11 @@ impl Conversation {
             .flex_col()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.input.focus_handle(cx), cx)),
+                // Keep a focus-tracking ancestor from taking focus back.
+                cx.listener(|this, _, window, cx| {
+                    window.focus(&this.input.focus_handle(cx), cx);
+                    window.prevent_default();
+                }),
             )
             .child(self.composer_anchor.probe())
             .children(runner)
