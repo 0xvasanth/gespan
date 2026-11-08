@@ -246,6 +246,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "browser own signed in gespan private profile managed attach",
     ),
     (
+        "browser-connection",
+        Section::Browser,
+        "Browser connection",
+        "browser connect connection status consent inspect remote debugging",
+    ),
+    (
         "browser-uploads",
         Section::Browser,
         "Upload folders",

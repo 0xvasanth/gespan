@@ -27,6 +27,10 @@ pub(super) const MODES: [(BrowserMode, &str, &str); 3] = [
 
 /// Thread access this build offers. "Ask in the thread" joins it with the
 /// Allow bar; until then a turn whose access would be Ask gets no browser.
+// TODO(phase 2): offer Ask again and stop forcing Always here and in
+// `save_browser`. Decide then how to treat a stored Always that phase 1
+// wrote on its own (every change and the switch save it), which the user
+// never chose.
 pub(super) const ACCESS: [(AccessMode, &str, &str); 1] =
     [(AccessMode::Always, "always", "Always on")];
 
@@ -144,6 +148,28 @@ fn inspect_step(state: &BrowserState) -> AnyElement {
     line.child(".").into_any_element()
 }
 
+/// The connection in one line: connected, waiting for the browser's consent
+/// dialog, or not connected and why.
+pub(super) fn status_line(state: &BrowserState) -> String {
+    let message = view::connection_view(state).message;
+    match view::connection_detail(state) {
+        Some(detail) if detail != message => format!("{message} {detail}"),
+        _ => message,
+    }
+}
+
+/// Connect starts a connection to your own browser: with the switch on, and
+/// not while one is up or on its way.
+pub(super) fn connect_enabled(state: &BrowserState) -> bool {
+    use gespan_core::browser::ConnectionState::*;
+    state.toggle_on
+        && !state.settings.mode.launches()
+        && !matches!(
+            state.connection.state,
+            Connected | Discovering | AwaitingConsent
+        )
+}
+
 fn text(value: &'static str) -> AnyElement {
     div().child(value).into_any_element()
 }
@@ -250,6 +276,9 @@ impl SettingsView {
         crate::browser::command(cx, move |host| {
             let mut settings = host.state().settings;
             change(&mut settings);
+            // TODO(phase 2): see `ACCESS`; this overwrites whatever access
+            // was stored, so phase 2 must not take a stored Always as the
+            // user's choice.
             settings.access = AccessMode::Always;
             host.set_settings(settings);
             Ok(())
@@ -351,6 +380,7 @@ impl SettingsView {
                 ],
             ));
         }
+        rows.push(self.browser_connection_row(state, cx));
         rows.push(self.row(
             Some("browser-access"),
             false,
@@ -401,6 +431,43 @@ impl SettingsView {
             .into()),
             None,
             rows,
+        )
+    }
+
+    /// Where the connection stands, from the host's state, and in "Your own
+    /// browser" the Connect button: the one way to show the browser's
+    /// consent dialog again once an agent's attempt used it up.
+    fn browser_connection_row(
+        &mut self,
+        state: &BrowserState,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut controls = Vec::new();
+        if !state.settings.mode.launches() {
+            let enabled = connect_enabled(state);
+            let button = secondary_button("browser-connect", "Connect", false, !enabled)
+                .debug_selector(|| "settings-browser-connect".into())
+                .child("Connect");
+            controls.push(
+                if enabled {
+                    button.on_click(cx.listener(|_, _, _, cx| {
+                        crate::browser::command(cx, |host| {
+                            host.connect();
+                            Ok(())
+                        })
+                    }))
+                } else {
+                    button
+                }
+                .into_any_element(),
+            );
+        }
+        self.row(
+            Some("browser-connection"),
+            false,
+            "Connection",
+            Some(status_line(state).into()),
+            controls,
         )
     }
 
@@ -789,6 +856,81 @@ mod tests {
         assert_eq!(host.state().settings.mode, BrowserMode::Attach);
         assert!(shown(&mut visual, "settings-browser-warning"));
         assert!(shown(&mut visual, "settings-browser-attach-steps"));
+    }
+
+    /// Wait for the host's connection thread, then show what it left.
+    fn settle(visual: &mut VisualTestContext, host: &BrowserHost, want: ConnectionState) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while host.connection().state != want {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{:?}",
+                host.connection()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        visual.update(|_, cx| crate::browser::refresh(cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    fn status(visual: &mut VisualTestContext) -> String {
+        status_line(&state(visual))
+    }
+
+    #[gpui::test]
+    fn the_connection_shows_its_state_and_connect_asks_again(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host_on(dir.path());
+        let (_, mut visual) = page(host.clone(), cx);
+        // Off: the line says so and Connect does nothing yet.
+        assert!(shown(&mut visual, "settings-row-browser-connection"));
+        assert!(shown(&mut visual, "settings-browser-connect"));
+        assert_eq!(status(&mut visual), "Browser access is off.");
+        assert!(!connect_enabled(&state(&mut visual)));
+
+        // On, with no browser to find: the line names the reason and
+        // Connect is offered.
+        click(&mut visual, "settings-toggle-browser-toggle");
+        settle(&mut visual, &host, ConnectionState::NeedsToggle);
+        let line = status(&mut visual);
+        assert!(line.contains("Remote debugging is not turned on"), "{line}");
+        assert!(line.contains("chrome://inspect"), "{line}");
+        assert!(connect_enabled(&state(&mut visual)));
+
+        // Connect reaches the host: it looks again and finds what changed
+        // since (a browser that left a stale record).
+        let profile = dir.path().join("no-browser");
+        std::fs::write(
+            profile.join("DevToolsActivePort"),
+            "1\n/devtools/browser/x\n",
+        )
+        .unwrap();
+        click(&mut visual, "settings-browser-connect");
+        settle(&mut visual, &host, ConnectionState::StalePort);
+        let line = status(&mut visual);
+        assert!(line.contains("not running"), "{line}");
+        assert!(connect_enabled(&state(&mut visual)));
+
+        // Waiting on the browser's consent dialog, or connected: nothing
+        // to click.
+        let mut waiting = state(&mut visual);
+        waiting.connection.state = ConnectionState::AwaitingConsent;
+        waiting.connection.detail = None;
+        assert!(!connect_enabled(&waiting));
+        assert_eq!(
+            status_line(&waiting),
+            "Confirm the connection in your browser."
+        );
+        waiting.connection.state = ConnectionState::Connected;
+        assert!(!connect_enabled(&waiting));
+
+        // The Gespan browser starts on its own: a status line, no Connect.
+        choose_mode(&mut visual, BrowserMode::Managed);
+        assert!(shown(&mut visual, "settings-row-browser-connection"));
+        assert!(!shown(&mut visual, "settings-browser-connect"));
+        assert!(!connect_enabled(&state(&mut visual)));
+        host.set_toggle(false);
     }
 
     #[gpui::test]

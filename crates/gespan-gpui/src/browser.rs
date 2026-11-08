@@ -58,6 +58,18 @@ pub(crate) fn install_host(host: Arc<BrowserHost>, cx: &mut App) -> Entity<Brows
     adopt(host, cx)
 }
 
+/// Read a test's own host again, as following it would after a change its
+/// connection thread made.
+#[cfg(test)]
+pub(crate) fn refresh(cx: &mut App) {
+    if let Some(browser) = get(cx) {
+        browser.update(cx, |browser, cx| {
+            browser.state = browser.host.state();
+            cx.notify();
+        });
+    }
+}
+
 fn adopt(host: Arc<BrowserHost>, cx: &mut App) -> Entity<Browser> {
     let browser = cx.new(|_| Browser {
         state: host.state(),
@@ -66,6 +78,12 @@ fn adopt(host: Arc<BrowserHost>, cx: &mut App) -> Entity<Browser> {
     });
     cx.set_global(Shared(browser.clone()));
     browser
+}
+
+/// Whether `session`'s running turn carries the browser, from the host
+/// itself: the state the page follows may still lag a turn that just began.
+pub(crate) fn turn_carries(cx: &App, session: i64) -> bool {
+    get(cx).is_some_and(|browser| core::turn_carries(&browser.read(cx).host.state(), session))
 }
 
 /// Run one of the user's commands on the host, off the UI thread and one
