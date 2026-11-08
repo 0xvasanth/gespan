@@ -1,0 +1,23 @@
+crates/gespan-browser/instructions.md
+  s_35022df10dc1c3::t_afc4420f44a74f 24
+crates/gespan-browser/src/agent/tools.rs
+  s_35022df10dc1c3::t_1edd31c00ac718 759-760,763
+crates/gespan-browser/src/turn.rs
+  s_35022df10dc1c3::t_fb35589f5fbab5 68,160-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63088476c4f29c950374313e8a44ac7d2bef280d",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
