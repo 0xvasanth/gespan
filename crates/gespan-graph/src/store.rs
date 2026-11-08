@@ -411,8 +411,10 @@ impl GraphStore {
     /// Removes the database at `path` with its `-wal` and `-shm` files,
     /// without opening it. Files that are already absent are fine; any other
     /// failure (such as a file still open elsewhere on Windows) is an error.
+    /// The WAL goes first: a failure part-way leaves the database whole, never
+    /// a stray WAL that a new `graph.db` could replay.
     pub fn wipe_files(path: &Path) -> Result<(), GraphError> {
-        for suffix in ["", "-wal", "-shm"] {
+        for suffix in ["-wal", "-shm", ""] {
             let mut file = path.as_os_str().to_owned();
             file.push(suffix);
             match std::fs::remove_file(&file) {

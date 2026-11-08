@@ -324,3 +324,26 @@ fn wipe_removes_db_wal_and_shm() {
     let empty = tempfile::tempdir().unwrap();
     GraphStore::wipe_files(&empty.path().join(FILE_NAME)).unwrap();
 }
+
+#[test]
+fn a_wipe_that_cannot_remove_the_wal_keeps_the_database() {
+    let (dir, mut store, path) = temp_store();
+    add_node(&mut store, N::Session, "S", 0);
+    drop(store);
+    // Closing checkpointed and removed the WAL. A directory in its place
+    // makes removing it fail on every OS.
+    let wal = dir.path().join(format!("{FILE_NAME}-wal"));
+    assert!(!wal.exists());
+    std::fs::create_dir(&wal).unwrap();
+
+    assert!(matches!(
+        GraphStore::wipe_files(&path),
+        Err(GraphError::Io(_))
+    ));
+    // Deleting the database first would strand a WAL that a fresh graph.db
+    // could replay; a failed wipe must leave the database as it was.
+    assert!(path.exists(), "graph.db went while its WAL stayed");
+    std::fs::remove_dir(&wal).unwrap();
+    let reopened = GraphStore::open(&path).unwrap();
+    assert!(reopened.node(&nref(N::Session, "S")).unwrap().is_some());
+}
