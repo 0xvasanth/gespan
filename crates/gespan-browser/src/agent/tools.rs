@@ -5,7 +5,7 @@
 //! the tests prove that every schema accepts exactly the fields its record
 //! accepts and requires exactly the ones it requires. Descriptions are the
 //! tool sections of `docs/browser-instructions.md`, whose overview the MCP
-//! server and the CLI instructions share.
+//! server shares.
 
 use serde_json::{json, Map, Value};
 
@@ -762,7 +762,7 @@ mod tests {
             "raw CRLF needs normalising"
         );
         let normalised = crlf.replace("\r\n", "\n");
-        for name in ["overview", "cli", "browser_click"] {
+        for name in ["overview", "browser_click"] {
             assert_eq!(section_in(&normalised, name), section(name), "{name}");
             assert!(!section(name).unwrap().contains('\r'));
         }
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_description_and_a_strict_schema() {
         assert!(section("overview").unwrap().contains("ref_stale"));
-        assert!(section("cli").unwrap().contains("{exe} browser"));
+        assert!(section("cli").is_none());
         for tool in TOOLS {
             let definition = definition(tool);
             let description = definition["description"].as_str().unwrap();

@@ -92,13 +92,3 @@ Read what the page in your tab logged: `console.*` messages, uncaught exceptions
 ## browser_network
 
 List requests of your tab that failed: HTTP 4xx and 5xx responses, network errors and CORS blocks, with method, URL, status and resource type. For a local server the start of the error response body is included. Addresses of other sites are shown without their query. Pass `next_since` from your previous call as `since` for only new failures.
-
-## cli
-
-Browser access is available in this thread. Use it through the Gespan CLI, one action per call:
-
-    {exe} browser tabs.open --url https://example.com
-    {exe} browser snapshot --tab t_1a2b3c4d
-    {exe} browser click --tab t_1a2b3c4d --ref e12
-
-Run `{exe} browser --help` for every action and its fields. Each call prints one JSON result (`outcome`, `reason`, `message`, `retryable`, `observed`, `data`); a snapshot, console or network call prints its text instead, and an action that changes the page prints the page snapshot (or its changes) as text after the JSON line (`--snapshot false` leaves it out). The exit code is 0 for done, 2 blocked, 3 failed, 4 unknown. After an `unknown` result, take a snapshot and retry only with `--request-id` set to the reported `request_id`. The CLI uses a session credential already in your environment; never print it.

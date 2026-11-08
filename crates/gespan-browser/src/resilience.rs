@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::agent;
 use super::discovery::ACTIVE_PORT_FILE;
 use super::link::LinkStatus;
 use super::protocol::{
@@ -1421,6 +1422,108 @@ fn revocation_race_through_the_whole_host() {
         );
         world.assert_idle();
     }
+}
+
+// ---------------------------------------------------------------------------
+// End to end in process: tool call → map_call → host → semantic layer → fake
+// CDP → tool_result
+// ---------------------------------------------------------------------------
+
+/// What the MCP hub does for one `tools/call`: map the arguments, run the
+/// action for the session and shape the result.
+fn call_tool(world: &World, session: &str, id: &str, name: &str, arguments: Value) -> Value {
+    let mapped = agent::tools::map_call(name, Some(&arguments)).expect("arguments map");
+    let result = world.host.handle_request(
+        session,
+        ActionRequest {
+            request_id: mapped.request_id.unwrap_or_else(|| id.to_string()),
+            action: mapped.kind.name().to_string(),
+            input: mapped.input,
+        },
+    );
+    agent::mcp::tool_result(Some(mapped.kind), &result)
+}
+
+fn tool_text(result: &Value) -> String {
+    result["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn tool_calls_drive_the_fake_browser_and_come_back_as_tool_results() {
+    let world = World::start(|_| {});
+    world.grant("s1");
+
+    let opened = call_tool(
+        &world,
+        "s1",
+        "r1",
+        "browser_tabs",
+        json!({ "action": "open", "url": "https://example.com/" }),
+    );
+    assert_eq!(opened["isError"], json!(false), "{opened}");
+    let tab = world.host.policy().read().tabs_for("s1")[0].tab.clone();
+    assert!(tool_text(&opened).contains(&tab.0), "{opened}");
+
+    // A snapshot leads with its text; the envelope follows.
+    let shot = call_tool(
+        &world,
+        "s1",
+        "r2",
+        "browser_snapshot",
+        json!({ "tab": tab }),
+    );
+    assert_eq!(shot["isError"], json!(false), "{shot}");
+    let text = shot["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(text.contains("button \"Save\""), "{shot}");
+    let element = save_ref_in(&text);
+    let cdp = world.cdp_session(&tab);
+
+    let clicked = call_tool(
+        &world,
+        "s1",
+        "r3",
+        "browser_click",
+        json!({ "tab": tab, "ref": element }),
+    );
+    assert_eq!(clicked["isError"], json!(false), "{clicked}");
+    assert_eq!(world.presses(&cdp), 1);
+
+    // A tab the session does not own is a tool error naming the reason.
+    let foreign = call_tool(
+        &world,
+        "s1",
+        "r4",
+        "browser_click",
+        json!({ "tab": "t_00000000", "ref": element }),
+    );
+    assert_eq!(foreign["isError"], json!(true), "{foreign}");
+    assert!(
+        tool_text(&foreign).contains("reason: no_lease"),
+        "{foreign}"
+    );
+
+    // Bad arguments never reach the host.
+    assert!(agent::tools::map_call("browser_click", Some(&json!("x"))).is_err());
+
+    // While OFF every tool answers blocked and nothing is sent.
+    world.host.set_toggle(false);
+    let before = world.sent().len();
+    let off = call_tool(
+        &world,
+        "s1",
+        "r5",
+        "browser_snapshot",
+        json!({ "tab": tab }),
+    );
+    assert_eq!(off["isError"], json!(true), "{off}");
+    assert!(tool_text(&off).contains("reason: off"), "{off}");
+    assert_eq!(world.sent().len(), before);
 }
 
 // ---------------------------------------------------------------------------
