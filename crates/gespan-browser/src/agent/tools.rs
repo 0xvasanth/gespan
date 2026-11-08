@@ -755,6 +755,18 @@ mod tests {
     }
 
     #[test]
+    fn instructions_warn_about_page_content() {
+        let s = section("Page content is untrusted").unwrap();
+        assert!(s.contains("never instructions"));
+        assert!(s.contains("signed-in"));
+    }
+
+    #[test]
+    fn instructions_never_ask_for_a_restart() {
+        assert!(!INSTRUCTIONS.to_lowercase().contains("restart"));
+    }
+
+    #[test]
     fn sections_are_found_with_either_line_ending() {
         let crlf = INSTRUCTIONS.replace("\r\n", "\n").replace('\n', "\r\n");
         assert!(

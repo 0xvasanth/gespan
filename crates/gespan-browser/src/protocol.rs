@@ -1328,13 +1328,13 @@ impl Default for Limits {
 pub enum BrowserMode {
     /// Gespan starts an installed Chromium browser with its own profile and
     /// connects to it directly: no remote-debugging setup, no consent dialog.
-    #[default]
     Managed,
     /// Like `Managed`, with a fresh profile for every start that is deleted
     /// when the browser closes: no sign-ins, nothing kept.
     Private,
     /// Attach to the browser the user runs: remote debugging on in
     /// `chrome://inspect`, and the browser asks on every connection.
+    #[default]
     Attach,
 }
 
@@ -1389,7 +1389,7 @@ impl Default for BrowserSettings {
             upload_roots: Vec::new(),
             allow_dotfiles: false,
             protocol_trace: false,
-            mode: BrowserMode::Managed,
+            mode: BrowserMode::default(),
             access: AccessMode::Ask,
             enabled: false,
             show_window: true,
@@ -1453,6 +1453,31 @@ pub struct AuditEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_mode_is_your_own_browser() {
+        assert_eq!(BrowserSettings::default().mode, BrowserMode::Attach);
+        assert_eq!(BrowserMode::default(), BrowserMode::Attach);
+        assert!(!BrowserSettings::default().enabled);
+    }
+
+    #[test]
+    fn stored_settings_keep_an_explicit_mode_and_default_a_missing_one() {
+        for (text, mode) in [
+            ("managed", BrowserMode::Managed),
+            ("private", BrowserMode::Private),
+            ("attach", BrowserMode::Attach),
+        ] {
+            let stored = format!(r#"{{"mode":"{text}","enabled":true}}"#);
+            let loaded: BrowserSettings = serde_json::from_str(&stored).unwrap();
+            assert_eq!(loaded.mode, mode, "{text}");
+            assert!(loaded.enabled);
+        }
+        let without_mode: BrowserSettings = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!(without_mode.mode, BrowserMode::Attach);
+        let empty: BrowserSettings = serde_json::from_str("{}").unwrap();
+        assert!(!empty.enabled);
+    }
 
     #[test]
     fn every_reason_has_a_class_a_retry_flag_and_a_message() {

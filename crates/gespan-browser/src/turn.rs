@@ -65,7 +65,7 @@ pub fn grant_change(granted: bool, bare: bool) -> Option<bool> {
 /// Status line after `/browser` alone switched the grant.
 pub fn grant_status(enabled: bool) -> &'static str {
     if enabled {
-        "Browser access is on for this thread. The agent opens its own tabs; an agent that is already running may need its next turn or a restart to see the browser tools."
+        "Browser access is on for this thread. The agent opens its own tabs; the browser tools reach an agent that is already running within moments."
     } else {
         "Browser access is off for this thread. Its tabs stay open, and the agent asks you before it uses the browser again."
     }
@@ -156,6 +156,18 @@ pub fn with_ask_note(block: &str) -> String {
 mod tests {
     use super::*;
     use crate::protocol::BrowserSettings;
+
+    #[test]
+    fn agent_facing_notices_never_ask_for_a_restart() {
+        for text in [
+            ASK_NOTE,
+            OFF_NOTICE,
+            grant_status(true),
+            grant_status(false),
+        ] {
+            assert!(!text.to_lowercase().contains("restart"), "{text}");
+        }
+    }
 
     fn state(toggle_on: bool, access: AccessMode, entry: Option<SessionAccess>) -> BrowserState {
         let mut state = crate::BrowserHost::for_tests(BrowserSettings::default()).state();

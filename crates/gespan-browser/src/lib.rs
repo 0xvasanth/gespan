@@ -3770,6 +3770,7 @@ mod tests {
     fn managed_host(server: &FakeCdp, access: AccessMode) -> (Arc<BrowserHost>, PathBuf) {
         let dir = profile_for(server);
         let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
             access,
             ..BrowserSettings::default()
         });
