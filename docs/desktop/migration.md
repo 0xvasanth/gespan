@@ -49,6 +49,11 @@ When no provider is named, or a stored id is one this build does not know, use
 Commit messages and pull requests with no session to ask default to
 `changes::TEXT_HARNESS` on both the desktop panel and the phone.
 
+Model ids cross to the phone and come in from the old desktop app through
+`Provider::wire_model_id` and `native_model_id`; only Claude's differ. A
+manifest's `settings_before_catalog` lists the saved model settings kept
+before that provider's model catalog has loaded.
+
 ## Rendering and responsiveness
 
 Keep provider I/O, parsing, file access and persistence off the UI thread.

@@ -311,16 +311,16 @@ pub(crate) fn apply_last_controls_to(
 
 /// Merges remembered controls only where the chosen model defines them with
 /// a valid value (desktop `mergeModelSettings`). Without a catalog, only the
-/// provider's known controls apply; anything else is dropped. Effort lives in
-/// `provider_efforts` and is never merged here.
+/// provider's `settings_before_catalog` apply; anything else is dropped.
+/// Effort lives in `provider_efforts` and is never merged here.
 pub(crate) fn apply_controls(
     last: &HashMap<String, String>,
     settings: &mut gespan_core::agent::Settings,
     kind: gespan_core::provider::Kind,
     model: Option<&gespan_core::catalog::Model>,
 ) {
-    use gespan_core::provider::Kind;
     let boolean = |value: &str| matches!(value, "true" | "false");
+    let before_catalog = &kind.provider().descriptor().settings_before_catalog;
     for (key, value) in last {
         let key = key.as_str();
         if matches!(
@@ -347,17 +347,16 @@ pub(crate) fn apply_controls(
                 }
                 _ => {}
             },
-            None => match (kind, key) {
-                (Kind::Claude, "fast") if boolean(value) => settings.fast = value == "true",
-                (Kind::Claude, "thinking") if boolean(value) => {
-                    settings.thinking = value.parse().ok()
-                }
-                (Kind::Claude, "context") => {
+            None if before_catalog.iter().any(|k| k == key) => match key {
+                "fast" if boolean(value) => settings.fast = value == "true",
+                "thinking" if boolean(value) => settings.thinking = value.parse().ok(),
+                "fast" | "thinking" => {}
+                "serviceTier" => settings.service_tier = Some(value.clone()),
+                _ => {
                     settings.model_settings.insert(key.into(), value.clone());
                 }
-                (Kind::Codex, "serviceTier") => settings.service_tier = Some(value.clone()),
-                _ => {}
             },
+            None => {}
         }
     }
 }
@@ -531,6 +530,11 @@ mod last_controls_tests {
         assert!(s.fast);
         assert_eq!(s.thinking, Some(true));
         assert_eq!(s.model_settings["context"], "1m");
+        assert_eq!(s.service_tier, None, "Claude has no service tier");
+        // Codex keeps its tier, and none of Claude's controls.
+        let s = apply(Kind::Codex, None);
+        assert_eq!(s.service_tier.as_deref(), Some("flex"));
+        assert!(!s.fast && s.thinking.is_none() && s.model_settings.is_empty());
         for unknown in [Kind::Omp, Kind::Pi, Kind::Cursor, Kind::Kiro] {
             let s = apply(unknown, None);
             assert!(!s.fast, "{unknown:?}");
