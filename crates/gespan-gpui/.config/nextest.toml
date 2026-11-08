@@ -4,9 +4,10 @@
 fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# The JS interpreter has a wall-clock limit that CPU contention can exceed.
+# The JS interpreters have wall-clock limits that CPU contention can exceed:
+# the editor's analysis, and the visual runtime's 60 ms budget.
 [[profile.ci.overrides]]
-filter = 'test(large_tsx_analysis)'
+filter = 'test(large_tsx_analysis) | test(=fixtures::tests::native_visual_examples_pass_the_real_runtime_and_persist_as_messages)'
 threads-required = "num-test-threads"
 
 # Wall-clock budgets: measured with the runner to themselves, as test:rust's
