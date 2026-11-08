@@ -11981,7 +11981,9 @@ mod tests {
         let (sidebar, main, tabs) = frames(cx);
         let sidebar = sidebar.unwrap();
         assert_eq!(sidebar.top(), px(0.));
-        assert_eq!(main.top(), px(0.));
+        // The title bar is its own row over the workspace and the panel.
+        assert_eq!(main.top(), px(TITLE_BAR_HEIGHT));
+        assert!(tabs.bottom() <= main.top());
         assert_eq!(main.left(), sidebar.right());
         // The strip lives in the workspace column, beside the sidebar.
         assert!(tabs.left() >= main.left());
@@ -12026,7 +12028,7 @@ mod tests {
             assert!(explorer.top() >= closed_corner.bottom());
             assert_eq!(history.top(), explorer.top());
             assert!(explorer.right() <= changes.left() && changes.right() <= history.left());
-            assert!(tabs.right() <= explorer.left());
+            assert!(tabs.bottom() <= explorer.top());
             assert_eq!(corner(cx), closed_corner);
         }
         let history = gpui::VisualTestContext::from_window(window.into(), cx)
