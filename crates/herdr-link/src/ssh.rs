@@ -480,8 +480,6 @@ mod tests {
         let a = args(&b.command().unwrap());
         for want in [
             "BatchMode=yes",
-            "ControlMaster=auto",
-            "ControlPersist=600",
             "StrictHostKeyChecking=yes",
             "ServerAliveInterval=15",
             "ServerAliveCountMax=3",
@@ -489,9 +487,20 @@ mod tests {
         ] {
             assert!(a.iter().any(|x| x == want), "missing {want}: {a:?}");
         }
-        let socket = b.control_dir.as_ref().unwrap().join("cm");
-        let at = a.iter().position(|x| x == "-S").expect("-S given");
-        assert_eq!(Path::new(&a[at + 1]), socket);
+        if cfg!(unix) {
+            for want in ["ControlMaster=auto", "ControlPersist=600"] {
+                assert!(a.iter().any(|x| x == want), "missing {want}: {a:?}");
+            }
+            let socket = b.control_dir.as_ref().unwrap().join("cm");
+            let at = a.iter().position(|x| x == "-S").expect("-S given");
+            assert_eq!(Path::new(&a[at + 1]), socket);
+        } else {
+            // No folder counts as private off Unix, so nothing is shared.
+            for want in ["ControlMaster=no", "ControlPath=none"] {
+                assert!(a.iter().any(|x| x == want), "missing {want}: {a:?}");
+            }
+            assert!(!a.iter().any(|x| x == "-S"), "{a:?}");
+        }
         assert_eq!(a.iter().filter(|x| *x == "box").count(), 1);
         assert!(a.iter().any(|x| x == "-T"));
     }
