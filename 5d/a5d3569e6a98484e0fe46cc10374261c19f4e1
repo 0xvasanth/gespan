@@ -1,0 +1,23 @@
+crates/gespan-browser/src/link.rs
+  s_35022df10dc1c3::t_beb31a7740baf0 4-15,581-585,588-594,605-606,610,630-631,633,638,694-698,733-734,737-738,746-750,758-763,765-802,805,985-988,1387-1406
+  s_35022df10dc1c3::t_d3b75d1256d56e 1922-1925,1965,1971-1974,1980-1984,1991,2008,2018,2030
+  s_35022df10dc1c3::t_8968b726bee33f 751-757
+  s_35022df10dc1c3::t_05660c4f179c70 830-847,873-874,1203-1210,2044-2134
+  s_35022df10dc1c3::t_afce9f41f33cb2 1211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5da5d3569e6a98484e0fe46cc10374261c19f4e1",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
