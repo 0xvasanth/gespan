@@ -1,0 +1,22 @@
+scripts/cargo-workspaces.test.mjs
+  s_35022df10dc1c3::t_d9f71305911035 61
+  s_35022df10dc1c3::t_fb1222aa00ad16 3,28-60,62-67,114,117,125-135
+scripts/bump-version.mjs
+  s_35022df10dc1c3::t_60507631f78aa4 51,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9961f5a6c40ab9a0021b1981514b6b0657039b8d",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
