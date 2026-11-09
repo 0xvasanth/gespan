@@ -1,0 +1,21 @@
+crates/mobile-link/src/ffi.rs
+  s_47391222688874::t_776deb5f708ed1 230-243
+.github/workflows/ci.yml
+  s_47391222688874::t_b62e7f0e6433a4 80-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e677f92405071e5532f2906fcbf5322f95a9c292",
+  "prompts": {},
+  "sessions": {
+    "s_47391222688874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee1ca4af-bcce-4cbe-90ab-1f76e13c9ef0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
