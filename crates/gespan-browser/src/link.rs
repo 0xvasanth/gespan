@@ -2195,6 +2195,10 @@ mod tests {
     /// A revocation (or OFF) must not wait for a write the browser is not
     /// reading: the policy lock is never held across the socket write.
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "Windows loopback takes the whole frame even with small socket buffers, so no write stalls"
+    )]
     fn revoke_is_not_blocked_by_a_stalled_write() {
         let (server, mut stall) = FakeCdp::start_stalling();
         let (policy, ctx) = policy_with_lease();

@@ -3497,6 +3497,10 @@ mod tests {
     /// that stopped reading: OFF cuts the socket instead of queueing on the
     /// writer, and the stuck action never ends as a success.
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "Windows loopback takes the whole frame even with small socket buffers, so no write stalls"
+    )]
     fn off_does_not_wait_on_a_stalled_write() {
         let (server, mut stall) = FakeCdp::start_stalling();
         let dir = profile_for(&server);

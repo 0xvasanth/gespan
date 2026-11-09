@@ -256,7 +256,9 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           fi
           echo "Chrome: $chrome"
-          GESPAN_TEST_CHROME="$chrome" cargo test --locked -p gespan-browser --test real_browser -- --ignored
+          # Two Chromes at a time: starting all seven at once on a small
+          # runner makes the first tab miss its timeout.
+          GESPAN_TEST_CHROME="$chrome" cargo test --locked -p gespan-browser --test real_browser -- --ignored --test-threads=2
 
   desktop:
     name: Gespan Native (${{ matrix.name }})
