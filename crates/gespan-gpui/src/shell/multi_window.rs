@@ -628,6 +628,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_further_window_picks_up_runs_the_first_started_when_it_regains_focus(
+        cx: &mut TestAppContext,
+    ) {
+        let (first, second, _) = two_windows(cx);
+        let later = first
+            .update(cx, |shell, _, _| {
+                let store = locked(&shell.store).unwrap();
+                let id = store.create("codex", CWD).unwrap().id;
+                store.set_automation_id(id, "nightly").unwrap();
+                id
+            })
+            .unwrap();
+        let listed = |cx: &mut TestAppContext| {
+            second
+                .update(cx, |shell, _, _| {
+                    shell
+                        .automation_state
+                        .session_automations
+                        .contains_key(&later)
+                })
+                .unwrap()
+        };
+        assert!(!listed(cx), "not known until the window is looked at");
+        // Focus moves away to the first window, then back.
+        first
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        second
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert!(listed(cx), "regaining focus reloads the run sessions");
+    }
+
+    #[gpui::test]
     fn a_chat_open_elsewhere_shows_there_instead_of_starting_a_second_agent(
         cx: &mut TestAppContext,
     ) {
