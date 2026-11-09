@@ -294,28 +294,19 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn header_settings_and_worktree_actions_open_focused_native_surfaces(cx: &mut TestAppContext) {
+    fn settings_entry_and_project_dropdown_worktree_actions_open_native_surfaces(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             input::bind(cx);
             crate::popover::bind(cx);
             crate::shell::bind_keys(cx);
         });
         let (window, _, active) = window(cx);
-        window
-            .update(cx, |shell, w, cx| {
-                // Only the classic layout's header menu still lists Settings.
-                shell.workspace.classic_layout = true;
-                shell.open_menu(
-                    MenuTarget::Header,
-                    Anchor::Slot(shell.project_anchor.clone()),
-                    w,
-                    cx,
-                );
-            })
-            .unwrap();
-        cx.run_until_parked();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let settings = visual.debug_bounds("menu-action-settings").unwrap();
+        visual.run_until_parked();
+        // Settings lives in the All projects block.
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
         visual.simulate_click(settings.center(), Default::default());
         visual.run_until_parked();
         window
@@ -329,17 +320,11 @@ mod tests {
         visual.simulate_keystrokes("escape");
         visual.run_until_parked();
         window
-            .update(visual, |shell, w, cx| {
-                assert!(shell.settings.is_none());
-                shell.workspace.classic_layout = false;
-                shell.open_menu(
-                    MenuTarget::Header,
-                    Anchor::Slot(shell.project_anchor.clone()),
-                    w,
-                    cx,
-                );
-            })
+            .update(visual, |shell, _, _| assert!(shell.settings.is_none()))
             .unwrap();
+        // Worktree actions live in the project dropdown.
+        let project = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_click(project.center(), Default::default());
         visual.run_until_parked();
         let row = visual.debug_bounds("menu-action-switch-worktree").unwrap();
         visual.simulate_click(row.center(), Default::default());

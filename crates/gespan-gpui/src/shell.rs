@@ -6235,7 +6235,7 @@ impl Shell {
                     MenuStyle::Switcher,
                 )
             }
-            // SidebarWorktreeSwitcher's menu under the project header.
+            // SidebarWorktreeSwitcher's menu under the project row's dropdown.
             MenuTarget::Header => {
                 let picker = cx.new(|cx| {
                     ProjectPicker::new(&self.workspace.projects, &self.workspace.project, cx)
@@ -6300,28 +6300,9 @@ impl Shell {
                         .icon("globe")
                         .into(),
                 ];
-                // The classic layout has no gear beside its project row, so
-                // its menu keeps Project settings and Settings.
-                if self.workspace.classic_layout {
-                    items.insert(
-                        3,
-                        MenuAction::new("project-settings", "Project settings")
-                            .icon("sliders")
-                            .flyout(self.project_settings_flyout(events, window, cx))
-                            .into(),
-                    );
-                    items.push(
-                        MenuAction::new("settings", "Settings")
-                            .icon("settings")
-                            .shortcut(format!("{MOD},"))
-                            .into(),
-                    );
-                }
-                // After Switch project (and Project settings in classic): both
-                // act on this project.
+                // After Switch project: it acts on this project.
                 if let Some(editor) = editor {
-                    let at = if self.workspace.classic_layout { 4 } else { 3 };
-                    items.insert(at, editor);
+                    items.insert(3, editor);
                 }
                 (
                     format!("{} menu", self.project_label(&self.workspace.project)).into(),
@@ -6510,26 +6491,14 @@ impl Shell {
                 }
             }
             MenuTarget::Header => {
-                // "Project settings" opens the project's menu beside its row.
-                if action == "settings" {
-                    self.open_settings(crate::settings::Section::General, window, cx);
-                } else if action == "open-remote-project" {
+                if action == "open-remote-project" {
                     self.open_remote_project(window, cx);
                 } else if action == open_in_editor::PROJECT_MENU_EDITOR_ROW
                     && let Some(path) = self.open_in_editor_folder(cx)
                 {
-                    // The editor menu takes the row's place, as Project
-                    // settings' flyout would.
+                    // The editor menu takes the row's place.
                     let at = row.map_or_else(Point::default, |r| Point::new(r.left(), r.top()));
                     self.open_editor_menu(path, Anchor::Point(at), window, cx);
-                } else if action == "project-settings" {
-                    let at = row
-                        .map_or_else(Point::default, |r| Point::new(r.right(), r.top() - px(8.)));
-                    let target = MenuTarget::Project {
-                        path: self.workspace.project.clone(),
-                        rail: false,
-                    };
-                    self.open_menu(target, Anchor::Point(at), window, cx);
                 }
             }
             MenuTarget::Project { path, .. } => {
@@ -10842,34 +10811,31 @@ mod tests {
             crate::popover::bind(cx);
             cx.set_reduce_motion(true);
         });
-        window
-            .update(cx, |shell, w, cx| {
-                // Classic keeps Project settings as a flyout of the header menu.
-                shell.workspace.classic_layout = true;
-                let anchor = Anchor::Slot(shell.project_anchor.clone());
-                shell.open_menu(MenuTarget::Header, anchor, w, cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-        // The settings flyout opens beside the header menu and focuses its name.
-        cx.simulate_keystrokes(window.into(), "down down right");
-        cx.run_until_parked();
-        cx.simulate_input(window.into(), "Small");
-        cx.simulate_keystrokes(window.into(), "space");
-        cx.simulate_input(window.into(), "Studio");
-        cx.run_until_parked();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let flyout = window
+        visual.run_until_parked();
+        // The gear beside the project dropdown opens Project settings.
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        visual.simulate_click(gear.center(), Default::default());
+        visual.run_until_parked();
+        let name = visual.debug_bounds("project-appearance-name").unwrap();
+        visual.simulate_click(name.center(), Default::default());
+        visual.run_until_parked();
+        visual.simulate_keystrokes("secondary-a");
+        visual.simulate_input("Small");
+        visual.simulate_keystrokes("space");
+        visual.simulate_input("Studio");
+        visual.run_until_parked();
+        let settings = window
             .update(visual, |shell, _, cx| {
-                shell
-                    .menu
-                    .as_ref()
-                    .unwrap()
-                    .menu
-                    .read(cx)
-                    .submenu_region()
-                    .get()
-                    .unwrap()
+                let open = shell.menu.as_ref().unwrap();
+                assert!(
+                    open.target
+                        == MenuTarget::Project {
+                            path: "/work/gespan".into(),
+                            rail: false
+                        }
+                );
+                open.menu.read(cx).surface_region().get().unwrap()
             })
             .unwrap();
         let controls = visual.debug_bounds("project-appearance-controls").unwrap();
@@ -10877,9 +10843,9 @@ mod tests {
         let logo = visual.debug_bounds("choose-project-logo").unwrap();
         // TabGroupMenu's p-2 belongs to the whole card, including its actions.
         for inset in [
-            controls.left() - flyout.left(),
-            flyout.right() - controls.right(),
-            name.top() - flyout.top(),
+            controls.left() - settings.left(),
+            settings.right() - controls.right(),
+            name.top() - settings.top(),
         ] {
             assert_eq!(inset, px(9.), "8px of padding inside the card's 1px frame");
         }
@@ -10888,8 +10854,8 @@ mod tests {
         assert_eq!(logo.top() - name.bottom(), px(8.));
         assert_eq!(logo.size, gpui::size(px(36.), px(36.)));
         let background = visual.debug_bounds("menu-action-background").unwrap();
-        assert_eq!(background.left() - flyout.left(), px(9.));
-        assert_eq!(flyout.right() - background.right(), px(9.));
+        assert_eq!(background.left() - settings.left(), px(9.));
+        assert_eq!(settings.right() - background.right(), px(9.));
         let color = visual
             .debug_bounds("project-color-4")
             .expect("appearance controls in the flyout");

@@ -1599,22 +1599,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn classic_header_menu_keeps_project_settings_and_settings(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let rows = window
-            .update(visual, |shell, w, cx| {
-                shell.workspace.classic_layout = true;
-                let anchor = Anchor::Slot(shell.project_anchor.clone());
-                shell.open_menu(MenuTarget::Header, anchor, w, cx);
-                shell.menu.as_ref().unwrap().menu.read(cx).item_shape()
-            })
-            .unwrap();
-        assert!(rows.contains(&"Project settings".into()), "{rows:?}");
-        assert!(rows.contains(&"Settings".into()), "{rows:?}");
-    }
-
-    #[gpui::test]
     fn focused_new_session_leads_navigation_and_marks_blank_sessions(cx: &mut TestAppContext) {
         let (window, _, active) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);

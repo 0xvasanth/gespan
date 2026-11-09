@@ -74,44 +74,6 @@ impl Shell {
         ));
         controls
     }
-    pub(super) fn project_settings_flyout(
-        &self,
-        events: &mut Vec<Subscription>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Flyout {
-        let target = MenuTarget::Project {
-            path: self.workspace.project.clone(),
-            rail: false,
-        };
-        let (label, items, width, style) = self.menu_items(&target, events, window, cx);
-        let menu = cx.new(|cx| Menu::embedded(label, items, cx).width(width).style(style));
-        let surface = menu.read(cx).surface_region();
-        let focus = menu.read(cx).content_focus();
-        events.push(cx.subscribe_in(
-            &menu,
-            window,
-            move |this, _, event: &MenuEvent, window, cx| {
-                this.close_menu(cx);
-                if let MenuEvent::Picked(action, row) = event {
-                    this.run_menu(target.clone(), action, *row, window, cx);
-                }
-                if this.background_dialog.is_none() {
-                    this.focus_workspace(window, cx);
-                }
-                cx.notify();
-            },
-        ));
-        Flyout {
-            view: menu.into(),
-            width,
-            padding: 8.,
-            height: None,
-            max_height: Some(640.),
-            focus: Some(focus),
-            surface: Some(surface),
-        }
-    }
     /// The Theme colors dialog for `path`. Its colors show live, so the
     /// project opens first.
     pub(super) fn open_project_theme(
