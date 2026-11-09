@@ -387,7 +387,7 @@ fn see_all_in_runs_emits_open_runs(cx: &mut TestAppContext) {
     );
     click(&mut visual, "automation-history-tab");
     click(&mut visual, "automation-see-all-runs");
-    assert_eq!(*opened.borrow(), [automation.id.clone()]);
+    assert_eq!(*opened.borrow(), std::slice::from_ref(&automation.id));
 }
 
 #[gpui::test]

@@ -612,6 +612,20 @@ impl Shell {
                     }
                 },
             ));
+            self.app_view_events.push(cx.subscribe_in(
+                &view,
+                window,
+                |this, _, event: &automations::OpenRuns, window, cx| {
+                    this.open_runs(
+                        runs::RunsFilter {
+                            automation: Some(event.automation.clone()),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    );
+                },
+            ));
             self.automations = Some(view);
         }
         if let Some(view) = &self.automations {

@@ -1118,3 +1118,50 @@ fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn see_all_in_runs_opens_runs_filtered_to_that_automation(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let first = scheduled_due(&data, 20_000);
+    let second = scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    assert_eq!(runs(&data.db, &first).len(), 1);
+    assert_eq!(runs(&data.db, &second).len(), 1);
+    window
+        .update(cx, |shell, window, cx| shell.open_automations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    // "See all in Runs" on the first automation.
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.automations.clone().expect("Automations opened");
+            view.update(cx, |_, cx| {
+                cx.emit(crate::automations::OpenRuns {
+                    automation: first.clone(),
+                })
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
+            let view = shell.runs.clone().expect("Runs opened");
+            assert_eq!(view.read(cx).filter().automation.as_ref(), Some(&first));
+            let rows = view.read(cx).rows();
+            assert_eq!(rows.len(), 1, "only the chosen automation's runs");
+            let expected = runs(&data.db, &first).remove(0).id;
+            assert_eq!(rows[0].id, expected);
+            // The way back to every automation.
+            view.update(cx, |view, cx| {
+                let cleared = crate::runs::RunsFilter {
+                    automation: None,
+                    ..view.filter().clone()
+                };
+                view.set_filter(cleared, cx);
+            });
+            assert_eq!(view.read(cx).rows().len(), 2);
+        })
+        .unwrap();
+}

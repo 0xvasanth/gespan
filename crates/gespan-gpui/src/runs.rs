@@ -233,6 +233,7 @@ impl Runs {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -473,11 +474,30 @@ impl Runs {
             )
         })
         .collect::<Vec<_>>();
+        // A filter set from an automation's page shows what it keeps and the
+        // way back to every automation.
+        let automation = current.automation.clone().map(|id| {
+            let name = self
+                .owners
+                .get(&id)
+                .map_or_else(|| "Deleted automation".to_string(), |o| o.name.clone());
+            self.chip(
+                "runs-filter-automation".into(),
+                format!("{name}  \u{d7}"),
+                true,
+                RunsFilter {
+                    automation: None,
+                    ..current.clone()
+                },
+                cx,
+            )
+        });
         div()
             .flex()
             .flex_wrap()
             .items_center()
             .gap(px(6.))
+            .children(automation)
             .children(projects)
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(content(0.1)))
             .children(statuses)
