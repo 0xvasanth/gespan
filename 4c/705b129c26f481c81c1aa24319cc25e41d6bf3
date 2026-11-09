@@ -1,0 +1,29 @@
+Cargo.lock
+  s_77132516614c04::t_6b514b5aee5e8b 1212
+crates/gespan-gpui/Cargo.lock
+  s_4bacecfac88f88::t_fa4f07ccd775a8 2603
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c705b129c26f481c81c1aa24319cc25e41d6bf3",
+  "prompts": {},
+  "sessions": {
+    "s_4bacecfac88f88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a4e01b14cb557e4e5",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_77132516614c04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a93abfce84722457d",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
