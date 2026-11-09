@@ -75,7 +75,7 @@ fn pull_until(
                     pane.live.is_some(),
                     pane.ended.clone(),
                     pane.size,
-                    pane.error.clone(),
+                    pane.error.as_ref().map(|error| error.text.clone()),
                 )
             });
             panic!(
@@ -300,6 +300,82 @@ fn a_button_let_go_outside_the_pane_lets_go_in_the_page(cx: &mut TestAppContext)
     assert!(rig.received("Input.dispatchMouseEvent", |p| {
         p["type"] == "mouseMoved" && p["buttons"] == 0
     }));
+}
+
+#[gpui::test]
+fn the_error_line_clears_once_a_picture_or_an_input_goes_through(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let tab = rig.open_tab(15);
+    let (pane, _window, mut visual) = pane_window(&rig, 15, tab, cx);
+    pull_until(&pane, &mut visual, |pane| pane.picture.is_some());
+    let error = |visual: &mut VisualTestContext| {
+        visual.update(|_, cx| pane.read(cx).error.as_ref().map(|e| e.text.clone()))
+    };
+    // A refused input shows; a picture right after leaves it up to be read.
+    visual.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.accept_for_tests((None, None, Some(Err("The browser refused it".into()))), cx)
+        })
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("browser-pane-error").is_some());
+    rig.push_frame(60);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !visual.update(|_, cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx))) {
+        assert!(Instant::now() < deadline, "no picture came");
+    }
+    assert_eq!(
+        error(&mut visual).as_deref(),
+        Some("The browser refused it")
+    );
+    // Up long enough, the next picture clears it.
+    visual.update(|_, cx| {
+        pane.update(cx, |pane, _| {
+            pane.set_error_for_tests("old", Duration::from_secs(4))
+        })
+    });
+    rig.push_frame(61);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !visual.update(|_, cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx))) {
+        assert!(Instant::now() < deadline, "no picture came");
+    }
+    assert_eq!(error(&mut visual), None, "a picture came: the error went");
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("browser-pane-error").is_none());
+    // An input the tab took clears it too, and a refused one does not.
+    visual.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.set_error_for_tests("old", Duration::from_secs(4));
+            pane.accept_for_tests((None, None, Some(Err("refused again".into()))), cx);
+        })
+    });
+    assert_eq!(error(&mut visual).as_deref(), Some("refused again"));
+    visual.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.set_error_for_tests("old", Duration::from_secs(4));
+            pane.accept_for_tests((None, None, Some(Ok(()))), cx);
+        })
+    });
+    assert_eq!(error(&mut visual), None, "an input went through");
+    // A click the real tab takes goes the whole way and clears it as well.
+    visual.update(|_, cx| {
+        pane.update(cx, |pane, _| {
+            pane.set_error_for_tests("old", Duration::from_secs(4))
+        })
+    });
+    let drawn = visual.debug_bounds("browser-pane-picture").unwrap();
+    visual.simulate_click(drawn.center(), Default::default());
+    visual.run_until_parked();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while error(&mut visual).is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "the click never cleared the error"
+        );
+        visual.update(|_, cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx)));
+    }
 }
 
 #[gpui::test]

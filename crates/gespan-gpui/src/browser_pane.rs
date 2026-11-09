@@ -15,6 +15,7 @@ use gpui::{
     Window, div, img, prelude::*, px,
 };
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 gpui::actions!(
     browser_pane,
@@ -121,13 +122,38 @@ pub(crate) struct Shown {
     pub(crate) height: f64,
 }
 
-/// What one pull of the view brought: a picture, how it ended, and the
-/// last input the tab refused.
+/// What one pull of the view brought: a picture, how it ended, and how
+/// the last input sent went.
 type Pulled = (
     Option<Result<gespan_core::browser::LivePicture, String>>,
     Option<Ended>,
-    Option<String>,
+    Option<Result<(), String>>,
 );
+
+/// How long the error line stays at least, so a moving page's next picture
+/// or the pointer's next move never wipes it before it can be read.
+const ERROR_SHOWN_AT_LEAST: Duration = Duration::from_secs(3);
+
+/// The red line under the toolbar: what went wrong, and since when.
+#[derive(Clone, Debug)]
+pub(crate) struct PaneError {
+    pub(crate) text: String,
+    since: Instant,
+}
+
+impl PaneError {
+    fn new(text: String) -> Self {
+        PaneError {
+            text,
+            since: Instant::now(),
+        }
+    }
+
+    /// Shown long enough for the next picture or input to clear it.
+    fn read_by(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.since) >= ERROR_SHOWN_AT_LEAST
+    }
+}
 
 pub(crate) struct BrowserPane {
     pub(crate) session: i64,
@@ -136,7 +162,9 @@ pub(crate) struct BrowserPane {
     live: Option<Arc<LivePane>>,
     pub(crate) picture: Option<Shown>,
     pub(crate) ended: Option<Ended>,
-    error: Option<String>,
+    /// Cleared by the next picture or input that goes through, once it has
+    /// been up for [`ERROR_SHOWN_AT_LEAST`].
+    pub(crate) error: Option<PaneError>,
     stage: AnchorSlot,
     size: Option<PanelSize>,
     /// Buttons held down over the picture, CDP's bit mask.
@@ -503,9 +531,15 @@ impl BrowserPane {
     }
 
     /// Show what a pull brought; `false` once the view is over.
-    fn accept(&mut self, (picture, ended, input_error): Pulled, cx: &mut Context<Self>) -> bool {
-        if let Some(error) = input_error {
-            self.error = Some(error);
+    fn accept(&mut self, (picture, ended, input): Pulled, cx: &mut Context<Self>) -> bool {
+        let now = Instant::now();
+        let went_through = matches!(picture, Some(Ok(_))) || matches!(input, Some(Ok(())));
+        if went_through && self.error.as_ref().is_some_and(|error| error.read_by(now)) {
+            self.error = None;
+            cx.notify();
+        }
+        if let Some(Err(error)) = input {
+            self.error = Some(PaneError::new(error));
             cx.notify();
         }
         match picture {
@@ -523,7 +557,7 @@ impl BrowserPane {
                 true
             }
             Some(Err(error)) => {
-                self.error = Some(error);
+                self.error = Some(PaneError::new(error));
                 cx.notify();
                 true
             }
@@ -537,6 +571,21 @@ impl BrowserPane {
                 None => true,
             },
         }
+    }
+
+    /// Tests: show `pulled` as if the view had sent it.
+    #[cfg(test)]
+    pub(crate) fn accept_for_tests(&mut self, pulled: Pulled, cx: &mut Context<Self>) {
+        self.accept(pulled, cx);
+    }
+
+    /// Tests: an error that has been up for `shown`.
+    #[cfg(test)]
+    pub(crate) fn set_error_for_tests(&mut self, text: &str, shown: Duration) {
+        self.error = Some(PaneError {
+            text: text.into(),
+            since: Instant::now() - shown,
+        });
     }
 
     /// Tests: whether the view runs.
@@ -582,7 +631,7 @@ impl BrowserPane {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.error = result.err();
+                this.error = result.err().map(PaneError::new);
                 cx.notify();
             });
         })
@@ -728,7 +777,7 @@ impl BrowserPane {
 
 /// Wait up to a second for what the view sends. Blocks: off the UI thread.
 fn pull(live: &LivePane) -> Pulled {
-    (live.take(), live.ended(), live.take_input_error())
+    (live.take(), live.ended(), live.take_input_outcome())
 }
 
 impl Render for BrowserPane {
@@ -784,7 +833,7 @@ impl Render for BrowserPane {
                     .text_color(content(0.6))
                     .child(div().truncate().child(self.url.clone())),
             );
-        let error = self.error.clone();
+        let error = self.error.as_ref().map(|error| error.text.clone());
         div()
             .id("browser-pane")
             .debug_selector(|| "browser-pane".into())
@@ -798,6 +847,7 @@ impl Render for BrowserPane {
             .when_some(error, |d, error| {
                 d.child(
                     div()
+                        .debug_selector(|| "browser-pane-error".into())
                         .px_3()
                         .py_1()
                         .text_size(px(12.))

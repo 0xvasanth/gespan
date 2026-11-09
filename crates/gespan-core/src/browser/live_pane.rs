@@ -50,8 +50,8 @@ struct Shared {
     stopping: AtomicBool,
     inputs: Mutex<Inputs>,
     input_ready: Condvar,
-    /// The last input that failed, for the pane to show.
-    input_error: Mutex<Option<String>>,
+    /// How the last input sent went, until the pane takes it.
+    input_outcome: Mutex<Option<Result<(), String>>>,
     /// The newest decoded picture the pane has not taken yet.
     latest: Mutex<Option<Result<LivePicture, String>>>,
     fresh: Condvar,
@@ -146,7 +146,7 @@ impl LivePane {
             stopping: AtomicBool::new(false),
             inputs: Mutex::new(Inputs::default()),
             input_ready: Condvar::new(),
-            input_error: Mutex::new(None),
+            input_outcome: Mutex::new(None),
             latest: Mutex::new(None),
             fresh: Condvar::new(),
             sizing: Mutex::new(Sizing::default()),
@@ -256,10 +256,11 @@ impl LivePane {
         self.shared.input_ready.notify_one();
     }
 
-    /// The last input the tab refused, once.
-    pub fn take_input_error(&self) -> Option<String> {
+    /// How the last input sent since the pane last asked went: taken by
+    /// the tab, or refused and why. `None` when none was sent.
+    pub fn take_input_outcome(&self) -> Option<Result<(), String>> {
         self.shared
-            .input_error
+            .input_outcome
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take()
@@ -386,9 +387,10 @@ fn send_inputs(shared: &Shared) {
             return;
         }
         let sent = shared.host.live_input(&shared.session, &shared.tab, &input);
-        if let Err(error) = sent {
-            *shared.input_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
-        }
+        *shared
+            .input_outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(sent);
     }
 }
 
@@ -651,6 +653,19 @@ mod tests {
         }
     }
 
+    /// How the inputs sent went, once the sender has told, for up to five
+    /// seconds.
+    fn next_outcome(pane: &LivePane) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(outcome) = pane.take_input_outcome() {
+                return outcome;
+            }
+            assert!(Instant::now() < deadline, "no outcome came");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// The next picture, skipping empty waits, for up to five seconds.
     fn next_picture(pane: &LivePane) -> LivePicture {
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -693,7 +708,7 @@ mod tests {
         assert_eq!(still.seq, 4);
         assert_eq!(still.pixels.get_pixel(0, 0).0, [3, 2, 1, 255]);
         assert_eq!(pane.ended(), None);
-        assert!(pane.take_input_error().is_none());
+        assert_eq!(pane.take_input_outcome(), None, "no input, no outcome");
     }
 
     #[test]
@@ -753,6 +768,21 @@ mod tests {
     }
 
     #[test]
+    fn each_input_tells_the_pane_how_it_went() {
+        let rig = rig(1);
+        let pane = LivePane::start_with(rig.host.clone(), 1, rig.tab.clone(), panel()).unwrap();
+        next_picture(&pane);
+        let outcome = next_outcome;
+        pane.input(LiveInput::Text { text: "a".into() });
+        assert_eq!(outcome(&pane), Ok(()));
+        assert_eq!(pane.take_input_outcome(), None, "told once");
+        // The tab goes: the next input is refused, and the pane hears why.
+        rig.host.close_tab_by_user(&rig.tab).unwrap();
+        pane.input(LiveInput::Text { text: "b".into() });
+        assert!(outcome(&pane).is_err());
+    }
+
+    #[test]
     fn no_pane_starts_while_the_browser_is_off() {
         let rig = rig(1);
         rig.host.set_toggle(false);
@@ -799,7 +829,7 @@ mod tests {
         assert!(click < text, "input keeps its order");
         assert_eq!(sent[click].params["x"], 12.0);
         assert_eq!(sent[text].params["text"], "héllo, 世界 👋");
-        assert!(pane.take_input_error().is_none());
+        assert_eq!(next_outcome(&pane), Ok(()));
     }
 
     /// Wait up to five seconds for every thread of a dropped pane to end.
