@@ -2,6 +2,7 @@
 //! tabs, listing them with "Show in Gespan".
 use super::*;
 use crate::browser_test_rig::Rig;
+use gespan_core::browser::TabState;
 use gespan_core::store::Store;
 use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 use std::sync::Mutex;
@@ -141,4 +142,47 @@ fn each_tab_the_agent_opens_is_told_once(cx: &mut TestAppContext) {
     let second = rig.open_tab(id);
     refresh(&mut visual);
     assert_eq!(*opened.lock().unwrap(), [first.0, second.0]);
+}
+
+#[gpui::test]
+fn the_globe_hides_while_the_browser_switch_is_off(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (_window, id, mut visual) = conversation(&rig, cx);
+    rig.open_tab(id);
+    refresh(&mut visual);
+    let globe = visual.debug_bounds("composer-browser").unwrap();
+    visual.simulate_click(globe.center(), Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("composer-browser-menu").is_some());
+    // Off, the thread's tab is still listed (taken back, not closed) until
+    // the browser has gone: none of it could be shown, so neither the
+    // globe nor its menu stays.
+    visual.update(|_, cx| {
+        let browser = crate::browser::get(cx).unwrap();
+        browser.update(cx, |browser, cx| {
+            let mut state = rig.host.state();
+            state.toggle_on = false;
+            for tab in &mut state.tabs {
+                tab.tab.state = TabState::Revoked;
+            }
+            assert!(!state.tabs.is_empty());
+            browser.state = state;
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual.debug_bounds("composer-browser").is_none(),
+        "no globe while the browser is off"
+    );
+    assert!(visual.debug_bounds("composer-browser-menu").is_none());
+    // On again with the tab open, the globe is back.
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("composer-browser").is_some());
+    // And once the switch really is off.
+    rig.host.set_toggle(false);
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("composer-browser").is_none());
 }

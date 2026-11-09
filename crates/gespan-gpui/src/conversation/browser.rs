@@ -1,6 +1,6 @@
 //! The thread's browser tabs: the globe beside the composer's pills while
-//! an agent has tabs open for the thread, listing them with "Show in
-//! Gespan", and the news of each tab an agent opens, which the shell uses
+//! an agent has tabs open for the thread and the browser switch is on,
+//! listing them with "Show in Gespan", and the news of each tab an agent opens, which the shell uses
 //! to show the first one beside the thread on its own.
 use super::*;
 use gespan_core::browser::{
@@ -33,14 +33,19 @@ struct Tab {
 #[derive(Default)]
 pub(super) struct State {
     tabs: Vec<Tab>,
+    /// The browser switch is on. Off, the globe hides: nothing it lists
+    /// could be shown.
+    on: bool,
     menu: bool,
     anchor: AnchorSlot,
 }
 
 impl State {
     pub(super) fn new(session: i64, cx: &gpui::App) -> Self {
+        let state = crate::browser::get(cx).map(|b| &b.read(cx).state);
         State {
-            tabs: tabs_of(session, crate::browser::get(cx).map(|b| &b.read(cx).state)),
+            tabs: tabs_of(session, state),
+            on: state.is_some_and(|state| state.toggle_on),
             ..State::default()
         }
     }
@@ -75,10 +80,13 @@ impl Conversation {
     pub(super) fn observe_browser(cx: &mut Context<Self>) -> Option<Subscription> {
         let browser = crate::browser::get(cx)?;
         Some(cx.observe(&browser, |this, browser, cx| {
-            let tabs = tabs_of(this.summary.id, Some(&browser.read(cx).state));
-            if tabs == this.browser.tabs {
+            let state = &browser.read(cx).state;
+            let on = state.toggle_on;
+            let tabs = tabs_of(this.summary.id, Some(state));
+            if tabs == this.browser.tabs && on == this.browser.on {
                 return;
             }
+            this.browser.on = on;
             // A tab that is open now and was not before: the agent opened
             // it (or it finished opening).
             let opened: Vec<String> = tabs
@@ -93,7 +101,7 @@ impl Conversation {
                 })
                 .map(|tab| tab.id.clone())
                 .collect();
-            if tabs.is_empty() {
+            if tabs.is_empty() || !on {
                 this.browser.menu = false;
             }
             this.browser.tabs = tabs;
@@ -112,9 +120,10 @@ impl Conversation {
         }));
     }
 
-    /// The globe beside the composer's pills, while the thread has tabs.
+    /// The globe beside the composer's pills, while the thread has tabs
+    /// and the browser switch is on.
     pub(super) fn browser_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.browser.tabs.is_empty() {
+        if self.browser.tabs.is_empty() || !self.browser.on {
             return None;
         }
         Some(
@@ -136,7 +145,7 @@ impl Conversation {
 
     /// The globe's menu: the thread's tabs, each to show beside the thread.
     pub(super) fn browser_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.browser.menu || self.browser.tabs.is_empty() {
+        if !self.browser.menu || self.browser.tabs.is_empty() || !self.browser.on {
             return None;
         }
         let rows: Vec<AnyElement> = self
