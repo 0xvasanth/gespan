@@ -18,12 +18,13 @@ use std::{
     time::Duration,
 };
 
-pub(crate) const CATEGORIES: [(&str, &str); 5] = [
+pub(crate) const CATEGORIES: [(&str, &str); 6] = [
     ("pullRequests", "Pull requests / Merge requests"),
     ("issues", "Issues and Linear tasks"),
     ("agentFinished", "Agent finished"),
     ("agentInput", "Agent approvals and questions"),
     ("reminders", "Reminders"),
+    ("automationRuns", "Automation runs started"),
 ];
 fn path_key(path: &str) -> String {
     let windows =

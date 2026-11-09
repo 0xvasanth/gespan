@@ -27,11 +27,13 @@ impl Conversation {
             }
         }
         self.background.tasks = tasks;
+        self.close_empty_watch_list();
         cx.notify();
     }
 
     pub(super) fn clear_background(&mut self) {
         self.background.tasks.clear();
+        self.close_empty_watch_list();
     }
 
     pub(super) fn background_shelf(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -318,7 +320,7 @@ fn first_line(command: &str) -> &str {
 }
 
 /// A ticking clock, so seconds stay padded once minutes appear.
-fn elapsed(ms: u64) -> String {
+pub(super) fn elapsed(ms: u64) -> String {
     let seconds = ms / 1000;
     if seconds < 60 {
         return format!("{seconds}s");

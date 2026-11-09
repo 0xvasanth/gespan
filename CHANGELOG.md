@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-11-09
+
+0.0.9 was tagged but never published, because its iOS and Android builds
+failed. Its changes ship in this release and are listed here.
+
+### Added
+
+- **Watch chip:** when a chat is waiting on something that will wake it, such
+  as a background command, a subagent or a Pilot's delegated session, a
+  "N watching" chip shows in the composer footer. Clicking it lists what will
+  wake the chat, jumps to its tool block, or stops watching a delegated session.
+- **Mobile app:** brought over the latest mobile app with Gespan branding,
+  including side drawer of projects and Pilots, agent question answering,
+  usage-limited continue, Pilot profiles, chats, reactions and documents,
+  native visuals, push alerts, and code fence copy controls with a
+  reconnect-safe composer.
+
+### Changed
+
+- **Gespan app calls:** an agent's calls into Gespan are captioned by what they
+  do, such as "List models", "Start session" with its title or "Search memory"
+  with the query, instead of a column of identical `app_call` rows.
+- **Explorer file opening:** clicking a file in the Explorer while a terminal
+  pane has focus now opens the file beside the terminal's owner session instead
+  of doing nothing visible.
+- **Mobile branding:** the iOS app icon, Android launcher, and splash screens
+  now use Gespan's purple icon. The drawer, Pilot home, and connect screen show
+  the purple mark untinted instead of the flat grey logo.
+
+### Fixed
+
+- **Pilot provider switch:** a Pilot keeps replying after you switch it to a
+  different provider, for example from Kiro to Claude. Before, every message on
+  the new provider got an empty reply until you switched back.
+- **Android build:** the mobile link builds again for Android after the jni
+  0.22 upgrade, and CI now checks the Android target so it cannot break
+  unnoticed.
+- **Layout tests:** updated boxy layout tests to match the title bar's new
+  position as its own row across the workspace and right panel.
+- **Boxy and rounded layouts:** applied layout fixes for both layout styles.
+
 ## [0.0.8] - 2026-11-08
 
 ### Added
@@ -2110,7 +2151,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.10
 [0.0.8]: https://github.com/0xvasanth/gespan/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/0xvasanth/gespan/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/0xvasanth/gespan/compare/v0.0.5...v0.0.6

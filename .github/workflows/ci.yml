@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
-      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/desktop-release.test.mjs scripts/package.test.mjs scripts/readme-release.test.mjs
+      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/desktop-release.test.mjs scripts/package.test.mjs scripts/fetch-sherpa-onnx.test.mjs scripts/readme-release.test.mjs
 
   mobile:
     name: Mobile checks
@@ -77,6 +77,19 @@ jobs:
       - run: bunx tsc --noEmit
         working-directory: mobile
       - run: bunx vitest run --config mobile/vitest.config.ts
+      # The Android JNI entry point is behind cfg(target_os = "android"), so no
+      # other job compiles it; a broken one used to surface only in the EAS
+      # release build. Uses the NDK the runner image ships.
+      - name: Android native link compiles
+        run: |
+          set -euo pipefail
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          rustup target add aarch64-linux-android
+          export CC_aarch64_linux_android="$bin/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$bin/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          cargo check --locked -p gespan-mobile-link --target aarch64-linux-android
 
   host:
     needs: impact
@@ -150,6 +163,17 @@ jobs:
         name: Drop the emptied sherpa-onnx folder
         shell: bash
         run: rm -rf target/sherpa-onnx-prebuilt crates/gespan-gpui/target/sherpa-onnx-prebuilt
+      # sherpa-onnx-sys downloads its libraries once from a link that can 504
+      # for hours; this fetches them through the API, with retries, instead.
+      - if: env.RUN == 'true'
+        name: Fetch the sherpa-onnx libraries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/fetch-sherpa-onnx.mjs --out "$RUNNER_TEMP/sherpa-onnx" --target "$(rustc -vV | sed -n 's/^host: //p')"
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$RUNNER_TEMP/sherpa-onnx" >> "$GITHUB_ENV"
       - if: env.RUN == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       # The tests' databases live in temp. On C: each flush takes about 4 ms,
@@ -258,6 +282,10 @@ jobs:
       - if: env.RUN == 'true'
         uses: actions/checkout@v7
       - if: env.RUN == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - if: env.RUN == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -278,6 +306,17 @@ jobs:
         name: Drop the emptied sherpa-onnx folder
         shell: bash
         run: rm -rf target/sherpa-onnx-prebuilt crates/gespan-gpui/target/sherpa-onnx-prebuilt
+      # sherpa-onnx-sys downloads its libraries once from a link that can 504
+      # for hours; this fetches them through the API, with retries, instead.
+      - if: env.RUN == 'true'
+        name: Fetch the sherpa-onnx libraries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/fetch-sherpa-onnx.mjs --out "$RUNNER_TEMP/sherpa-onnx" --target "$(rustc -vV | sed -n 's/^host: //p')"
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$RUNNER_TEMP/sherpa-onnx" >> "$GITHUB_ENV"
       - if: env.RUN == 'true'
         uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:

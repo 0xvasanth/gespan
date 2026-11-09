@@ -3,12 +3,13 @@ import { useSyncExternalStore } from "react";
 
 /**
  * What this phone is notified of: the desktop's agent categories
- * (NOTIFICATION_CATEGORIES in notificationPreferences.ts), each on until
- * turned off.
+ * (NOTIFICATION_CATEGORIES in notificationPreferences.ts), and what Pilots
+ * say, each on until turned off.
  */
 export const NOTIFICATION_CATEGORIES = [
   { id: "agentInput", label: "Approvals and questions" },
   { id: "agentFinished", label: "Agent finished" },
+  { id: "pilotMessages", label: "Messages from Pilots" },
 ] as const;
 
 export type NotificationCategory =

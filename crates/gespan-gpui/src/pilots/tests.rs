@@ -995,9 +995,8 @@ fn details_tabs_head_the_panel_and_the_corner_keeps_only_the_toggle(cx: &mut Tes
         let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
         let title_tabs = visual.debug_bounds("title-tab-strip").unwrap();
         // The Pilot's tabs head its panel, as a project's do, under the
-        // title bar (boxy's panel runs up beside the corner).
-        let inset = px(if boxy { TITLE_BAR_HEIGHT } else { 0. });
-        assert_eq!(header.top(), panel.top() + inset, "boxy {boxy}");
+        // title bar, which runs over the panel in both layouts.
+        assert_eq!(header.top(), panel.top(), "boxy {boxy}");
         assert!(header.top() >= px(TITLE_BAR_HEIGHT) - px(0.5));
         assert_eq!(header.size.height, px(crate::theme::PANE_HEADER_HEIGHT));
         assert!(header.left() >= panel.left() && header.right() <= panel.right() + px(0.5));
@@ -5474,6 +5473,69 @@ fn switching_a_pilot_chat_provider_retries_its_failed_messages(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(errors(cx)[0].1, None);
 }
+// A provider switch on a chat with history hands off on the next turn.
+// `turn_provider` is the provider that turn launched on.
+fn switch_turn(s: &Setup, turn_provider: &str, cx: &mut TestAppContext) -> Entity<Conversation> {
+    let chat = cx.update(|cx| s.manager.read(cx).chats[&s.id].clone());
+    cx.update(|cx| {
+        chat.update(cx, |view, _| {
+            assert!(view.pilot_history_ready());
+            view.summary.provider = "claude".into();
+            view.settings.pending_provider_switch = Some(gespan_core::agent::ProviderSwitch {
+                from: "kiro".into(),
+                ..Default::default()
+            });
+            view.busy = true;
+            view.turn_provider = Some(turn_provider.into());
+        })
+    });
+    chat
+}
+fn queued_message(id: &str) -> Message {
+    Message {
+        sent_at: None,
+        id: id.into(),
+        text: format!("message {id}"),
+        internal: false,
+        error: None,
+        attachments: Vec::new(),
+        report: Vec::new(),
+    }
+}
+#[gpui::test]
+fn a_pilot_provider_switch_keeps_its_handoff_turn_running(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    // The handoff turn runs on Claude while the outgoing Kiro writes its
+    // recap. Its message is not delivered yet, so the host dispatches it
+    // again on every change.
+    let chat = switch_turn(&s, "claude", cx);
+    cx.update(|cx| {
+        chat.update(cx, |view, cx| {
+            let message = queued_message("after-switch");
+            for _ in 0..3 {
+                assert!(!view.pilot_dispatch(&message, cx));
+                assert!(
+                    view.busy,
+                    "a repeat dispatch must not stop the handoff turn"
+                );
+            }
+            assert!(view.settings.pending_provider_switch.is_some());
+        })
+    });
+}
+#[gpui::test]
+fn a_pilot_provider_switch_stops_the_outgoing_providers_turn(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    // Switched while Kiro was still replying: the next message stops Kiro so
+    // the queue goes to Claude.
+    let chat = switch_turn(&s, "kiro", cx);
+    cx.update(|cx| {
+        chat.update(cx, |view, cx| {
+            assert!(!view.pilot_dispatch(&queued_message("next"), cx));
+            assert!(!view.busy, "the outgoing provider's turn stops");
+        })
+    });
+}
 #[gpui::test]
 fn pilot_sessions_start_without_a_harness_uses_an_installed_provider(cx: &mut TestAppContext) {
     let s = setup(cx);
@@ -5593,4 +5655,42 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
     search(visual, "pilot-document-search", "release");
     assert!(visual.debug_bounds("pilot-document-plan").is_none());
     assert!(visual.debug_bounds("pilot-document-summary").is_some());
+}
+#[gpui::test]
+fn stopping_a_watch_from_the_chip_drops_only_that_report(cx: &mut TestAppContext) {
+    use gespan_core::watching::Source;
+    let s = setup(cx);
+    let (a, b) = delegated_pair(&s, cx);
+    let chat = cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.refresh_cards(cx);
+            m.chat().expect("the Pilot's chat is open")
+        })
+    });
+    let watched = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            chat.read(cx)
+                .watches()
+                .into_iter()
+                .map(|w| w.source)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(watched(cx), [Source::Session(a), Source::Session(b)]);
+
+    // The chip's Stop watching button, through the chat's event.
+    cx.update(|cx| chat.update(cx, |_, cx| cx.emit(crate::conversation::StopWatching(a))));
+    cx.run_until_parked();
+    assert!(launch_of(&s, a, cx).dismissed);
+    assert!(!launch_of(&s, b, cx).dismissed);
+    assert_eq!(watched(cx), [Source::Session(b)]);
+
+    set_child(&s, a, false, cx);
+    set_child(&s, b, false, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    let reports = delegated_reports(&s, cx);
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert!(reports[0].contains(&format!("Session {b}:")));
+    assert!(!reports[0].contains(&format!("Session {a}:")));
 }

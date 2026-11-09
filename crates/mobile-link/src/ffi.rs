@@ -228,17 +228,19 @@ pub unsafe extern "C" fn gespan_link_free(output: *mut c_char) {
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_expo_modules_gespanlink_GespanLinkModule_nativeCall<'caller>(
-    mut env: jni::EnvUnowned<'caller>,
+    mut unowned_env: jni::EnvUnowned<'caller>,
     _: jni::objects::JObject<'caller>,
     input: jni::objects::JString<'caller>,
 ) -> jni::objects::JString<'caller> {
-    // An unreadable input is treated as empty, and a string that cannot be
-    // made comes back as null; neither throws into the JVM.
-    env.with_env(|env| -> jni::errors::Result<_> {
-        let input = input.try_to_string(env).unwrap_or_default();
-        env.new_string(call(&input))
-    })
-    .resolve::<jni::errors::LogErrorAndDefault>()
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let output = input
+                .try_to_string(env)
+                .map(|v| call(&v))
+                .unwrap_or_else(|_| call(""));
+            jni::objects::JString::new(env, output)
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }
 
 #[cfg(test)]

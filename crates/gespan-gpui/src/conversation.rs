@@ -40,6 +40,7 @@ mod sign_in;
 #[cfg(test)]
 mod submission_tests;
 mod title;
+mod watching;
 use crate::{
     composer_motion::ComposerMotion,
     git_picker::{GitPicker, Mode as GitMode, Picked as GitPicked},
@@ -77,6 +78,7 @@ use std::{
     },
     time::Instant,
 };
+pub(crate) use watching::StopWatching;
 // Keep empty and docked composers aligned with the transcript column. Below
 // this width the empty session drops its title.
 const COMPOSER_COLUMN: f32 = COLUMN;
@@ -212,6 +214,7 @@ pub(crate) struct Conversation {
     folder_selected: bool,
     follow_ups: follow_up::FollowUps,
     background: background_tasks::BackgroundTasks,
+    watching: watching::Watching,
     attachments: Vec<std::path::PathBuf>,
     pending_attachments: Vec<std::path::PathBuf>,
     attachment_photos: std::collections::HashMap<
@@ -245,6 +248,9 @@ pub(crate) struct Conversation {
     pending_tool: Option<String>,
     loading: bool,
     pub(crate) busy: bool,
+    /// The provider the running turn launched on. During a handoff it is the
+    /// incoming provider, while the pending switch still names the outgoing one.
+    pub(crate) turn_provider: Option<String>,
     /// The UI is idle; serialize the next launch behind the worker's last save.
     stopping: bool,
     /// Alive while this chat's turn is running, agent included.
@@ -753,6 +759,7 @@ impl Conversation {
             folder_selected: false,
             follow_ups: Default::default(),
             background: Default::default(),
+            watching: Default::default(),
             attachments: Vec::new(),
             pending_attachments: Vec::new(),
             attachment_photos: Default::default(),
@@ -854,6 +861,7 @@ impl Conversation {
             arcade: None,
             runner: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            turn_provider: None,
             title_cancel: None,
             branch_seed: None,
             branch_cancel: None,
@@ -1425,6 +1433,7 @@ impl Conversation {
         }
         .into();
         self.cancel = Arc::new(AtomicBool::new(false));
+        self.turn_provider = Some(self.summary.provider.clone());
         let summary = self.summary.clone();
         let store = self.store.clone();
         let cancel = self.cancel.clone();
@@ -3728,6 +3737,7 @@ impl Conversation {
                             )
                         },
                     )
+                    .children(self.watch_chip(cx))
                     .when(show_context, |d| {
                         d.child(
                             div()

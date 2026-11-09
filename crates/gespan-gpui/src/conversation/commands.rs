@@ -94,6 +94,7 @@ impl Conversation {
         let provider_id = self.summary.provider_id.clone();
         let model = self.model.clone();
         self.cancel = Arc::new(AtomicBool::new(false));
+        self.turn_provider = Some(self.summary.provider.clone());
         let cancel = self.cancel.clone();
         let mut context = self.context.unwrap_or_default();
         self.busy = true;

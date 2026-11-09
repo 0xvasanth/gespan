@@ -464,6 +464,10 @@ impl Shell {
                             return;
                         }
                         let linked = summary.work_item.clone();
+                        let alert = (!reveal)
+                            .then(|| event_alert_body(&due.run))
+                            .flatten()
+                            .map(|body| (summary.clone(), body));
                         this.add(summary, cx);
                         if let Some(linked) = linked {
                             this.sessions[&id]
@@ -506,6 +510,14 @@ impl Shell {
                             run.submitting = false;
                         }
                         this.automation_session_changed(id, cx);
+                        if let Some((summary, body)) = alert {
+                            this.deliver_automation_notice(
+                                &summary,
+                                &due.automation.name,
+                                &body,
+                                cx,
+                            );
+                        }
                         if reveal && this.navigation_revision == revision {
                             this.activate_session(id, window, cx);
                         }
@@ -714,6 +726,23 @@ pub(super) fn launch_available(
     Ok(())
 }
 
+/// What a run started by an Inbox event says in its alert, such as
+/// `Issue opened: acme/app#12 Fix login`. Scheduled and hand-started runs
+/// raise none.
+fn event_alert_body(run: &gespan_core::automations::AutomationRun) -> Option<String> {
+    if run.trigger != "event" {
+        return None;
+    }
+    let label = gespan_core::automations::event_label(
+        run.event_kind.as_deref().unwrap_or_default(),
+        run.event.as_deref().unwrap_or_default(),
+    );
+    Some(match run.event_title.as_deref().map(str::trim) {
+        Some(title) if !title.is_empty() => format!("{label}: {title}"),
+        _ => label,
+    })
+}
+
 fn automation_work_item(
     run: &gespan_core::automations::AutomationRun,
 ) -> Option<gespan_core::session_groups::WorkItem> {
@@ -743,6 +772,43 @@ fn automation_work_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_event_runs_have_an_alert_and_older_runs_fall_back_to_the_event() {
+        let run = |trigger: &str, title: Option<&str>| gespan_core::automations::AutomationRun {
+            id: "run".into(),
+            automation_id: "auto".into(),
+            trigger: trigger.into(),
+            scheduled_for: 0,
+            created_at: 0,
+            started_at: None,
+            completed_at: None,
+            status: "pending".into(),
+            session_id: None,
+            error: None,
+            event_key: Some("linear:issue:lin-1".into()),
+            event_kind: Some("linear".into()),
+            event: Some("issue_created".into()),
+            event_title: title.map(Into::into),
+            prompt: None,
+        };
+        assert_eq!(
+            event_alert_body(&run("event", Some("ENG-1 Crash"))).as_deref(),
+            Some("Issue created: ENG-1 Crash")
+        );
+        // A run claimed before titles were kept, or with a blank one.
+        assert_eq!(
+            event_alert_body(&run("event", None)).as_deref(),
+            Some("Issue created")
+        );
+        assert_eq!(
+            event_alert_body(&run("event", Some("  "))).as_deref(),
+            Some("Issue created")
+        );
+        for trigger in ["scheduled", "manual"] {
+            assert_eq!(event_alert_body(&run(trigger, Some("ENG-1 Crash"))), None);
+        }
+    }
 
     #[test]
     fn automation_workspace_modes_keep_their_worktree_settings() {
