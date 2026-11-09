@@ -435,3 +435,99 @@ fn closing_the_window_closes_its_users_tabs(cx: &mut TestAppContext) {
         "the agent's tab stays"
     );
 }
+
+fn notice(shell: &Shell, session: i64, cx: &App) -> Option<String> {
+    shell.sessions[&session]
+        .read(cx)
+        .link_notice()
+        .map(str::to_owned)
+}
+
+const OPENING: &str = "Opening in the in-app browser…";
+
+/// The first link can wait for the browser to start: the thread says it is
+/// opening until the pane opens, and a repeat click meanwhile opens no
+/// second tab.
+#[gpui::test]
+fn a_link_says_it_is_opening_and_a_repeat_click_opens_no_second_tab(cx: &mut TestAppContext) {
+    let rig = Rig::start_managed();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.open_thread_link(Some(session), URL.into(), cx);
+            assert_eq!(notice(shell, session, cx).as_deref(), Some(OPENING));
+            // Clicked again before the first has opened.
+            shell.open_thread_link(Some(session), URL.into(), cx);
+        })
+        .unwrap();
+    settle(window, cx);
+    let tabs = host_tabs(&rig.host, session);
+    assert_eq!(tabs.len(), 1, "one tab for the two clicks: {tabs:?}");
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(browser_tabs(shell, session, cx).len(), 1);
+            assert_eq!(notice(shell, session, cx), None, "the pane opened");
+        })
+        .unwrap();
+    // Once it has opened, a new click is a new tab, as in a browser.
+    click_link(window, Modifiers::none(), cx);
+    assert_eq!(host_tabs(&rig.host, session).len(), 2);
+}
+
+/// Two different links in flight both open; the opening line stays until
+/// the last of them has.
+#[gpui::test]
+fn different_links_in_flight_each_open(cx: &mut TestAppContext) {
+    let rig = Rig::start_managed();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.open_thread_link(Some(session), URL.into(), cx);
+            shell.open_thread_link(Some(session), "https://example.com/other".into(), cx);
+        })
+        .unwrap();
+    settle(window, cx);
+    assert_eq!(host_tabs(&rig.host, session).len(), 2);
+    assert!(navigated_to(&rig, "https://example.com/other"));
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(notice(shell, session, cx), None);
+            assert!(shell.opening_links.is_empty());
+        })
+        .unwrap();
+}
+
+/// No browser to start: the opening line gives way to the fallback's, and
+/// the link is not stuck in flight (the next click tries again).
+#[gpui::test]
+fn a_failed_open_replaces_the_opening_line_and_frees_the_link(cx: &mut TestAppContext) {
+    let host = BrowserHost::for_tests(BrowserSettings {
+        mode: BrowserMode::Managed,
+        ..BrowserSettings::default()
+    });
+    let (window, session) = thread_with_link(host.clone(), cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.open_thread_link(Some(session), URL.into(), cx);
+            assert_eq!(notice(shell, session, cx).as_deref(), Some(OPENING));
+        })
+        .unwrap();
+    settle(window, cx);
+    assert_eq!(cx.opened_url().as_deref(), Some(URL));
+    window
+        .update(cx, |shell, _, cx| {
+            let shown = notice(shell, session, cx).expect("the thread says why");
+            assert!(shown.contains("system browser"), "{shown}");
+            assert!(shell.opening_links.is_empty(), "not stuck in flight");
+            shell.open_thread_link(Some(session), URL.into(), cx);
+            assert_eq!(notice(shell, session, cx).as_deref(), Some(OPENING));
+        })
+        .unwrap();
+    settle(window, cx);
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(shell.opening_links.is_empty());
+            assert!(notice(shell, session, cx).is_some_and(|n| n.contains("system browser")));
+        })
+        .unwrap();
+}

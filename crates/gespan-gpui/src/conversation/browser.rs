@@ -32,6 +32,9 @@ struct Tab {
     user: bool,
 }
 
+/// The line above the composer while a link opens in the in-app browser.
+const LINK_OPENING: &str = "Opening in the in-app browser…";
+
 #[derive(Default)]
 pub(super) struct State {
     tabs: Vec<Tab>,
@@ -41,7 +44,8 @@ pub(super) struct State {
     menu: bool,
     anchor: AnchorSlot,
     /// A link the in-app browser could not open went to the system browser;
-    /// the reason shows above the composer for a moment.
+    /// the reason shows above the composer for a moment. While a link is
+    /// still opening, [`LINK_OPENING`] shows there.
     link_notice: Option<String>,
     link_notice_clear: Option<gpui::Task<()>>,
 }
@@ -145,6 +149,25 @@ impl Conversation {
             });
         }));
         cx.notify();
+    }
+
+    /// A link of the thread is opening in the in-app browser, which may
+    /// first have to start: say so until its pane opens
+    /// ([`Self::clear_link_opening`]) or the system browser takes it
+    /// ([`Self::show_link_notice`]).
+    pub(crate) fn show_link_opening(&mut self, cx: &mut Context<Self>) {
+        self.browser.link_notice = Some(LINK_OPENING.into());
+        self.browser.link_notice_clear = None;
+        cx.notify();
+    }
+
+    /// The thread's links have opened: the opening line goes. Any other
+    /// notice stays for its moment.
+    pub(crate) fn clear_link_opening(&mut self, cx: &mut Context<Self>) {
+        if self.browser.link_notice.as_deref() == Some(LINK_OPENING) {
+            self.browser.link_notice = None;
+            cx.notify();
+        }
     }
 
     /// The text of the link notice, while it shows.

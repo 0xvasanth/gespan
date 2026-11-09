@@ -875,6 +875,9 @@ pub(crate) struct Shell {
     /// User tabs opened from a thread's link, waiting to show beside their
     /// thread; one whose thread has no pane by then is closed.
     pending_links: Vec<(i64, crate::review::ReviewTab)>,
+    /// Links of a thread the in-app browser is opening (the first can wait
+    /// for the browser to start): a repeat click on one opens no second tab.
+    opening_links: HashSet<(i64, String)>,
     /// The review panes this frame draws; the others' browser tabs stop.
     drawn_reviews: Vec<gpui::EntityId>,
     pending_composer_focus: Option<i64>,
@@ -1296,6 +1299,7 @@ impl Shell {
             pending_review: None,
             pending_browser: None,
             pending_links: Vec::new(),
+            opening_links: HashSet::new(),
             drawn_reviews: Vec::new(),
             pending_composer_focus: None,
             review_focused: false,
@@ -1784,6 +1788,14 @@ impl Shell {
             self.link_fallback(session, &url, "the in-app browser is not running", cx);
             return;
         };
+        // Already on its way: the first click's tab is the one to show.
+        if !self.opening_links.insert((session, url.clone())) {
+            return;
+        }
+        // Starting the browser can take a while: say so until the pane opens.
+        if let Some(view) = self.sessions.get(&session) {
+            view.update(cx, |view, cx| view.show_link_opening(cx));
+        }
         let key = crate::browser::session_key(session);
         let opening = url.clone();
         let task = cx.background_executor().spawn(async move {
@@ -1793,6 +1805,11 @@ impl Shell {
             let opened = task.await;
             let _ = this.update(cx, |this, cx| {
                 crate::browser::reread(cx);
+                this.opening_links.remove(&(session, url.clone()));
+                let still_opening = this.opening_links.iter().any(|(s, _)| *s == session);
+                if !still_opening && let Some(view) = this.sessions.get(&session) {
+                    view.update(cx, |view, cx| view.clear_link_opening(cx));
+                }
                 match opened {
                     Ok(tab) => {
                         this.pending_links.push((
