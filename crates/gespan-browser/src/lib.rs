@@ -607,15 +607,23 @@ impl BrowserHost {
 
     // --- toggle and connection -------------------------------------------------
 
-    /// Main switch. ON starts discovery (asynchronously); OFF bumps the global
-    /// epoch, revokes every lease, detaches and closes the link. Tabs stay.
+    /// Main switch, for agents only. ON starts discovery (asynchronously);
+    /// OFF bumps the global epoch, revokes every agent lease, detaches and
+    /// closes the link. The user's own tabs ([`policy::Lease::user_tab`])
+    /// keep their leases and the link: then only the agents' tabs are
+    /// detached (and closed in the Gespan browser).
     pub fn set_toggle(self: &Arc<Self>, on: bool) {
-        let detach = {
+        let (detach, agent_pages) = {
             let mut policy = self.policy.write();
             if policy.toggle_on != on {
                 self.generation.fetch_add(1, Ordering::AcqRel);
             }
-            policy.set_toggle(on)
+            let agent_pages: Vec<TargetId> = policy
+                .leases()
+                .filter(|lease| lease.is_live() && !lease.user_tab)
+                .map(|lease| lease.target_id.clone())
+                .collect();
+            (policy.set_toggle(on), agent_pages)
         };
         self.persist_enabled(on);
         if on {
@@ -623,9 +631,10 @@ impl BrowserHost {
             self.event("toggle_on", Actor::User, None, None);
             if self.mode() == BrowserMode::Attach {
                 self.connect();
-            } else {
+            } else if !self.link.is_open() {
                 // The Gespan browser starts on the first agent action or
-                // "Open browser", not on the switch.
+                // "Open browser", not on the switch. One kept running for
+                // the user's own tabs stays as it is.
                 self.set_idle();
             }
         } else {
@@ -633,6 +642,17 @@ impl BrowserHost {
             // A browser that stopped reading must not hold the switch: the
             // page cleanup below would queue behind its stalled write.
             self.link.abort_if_write_stalled(link::STALL_GRACE);
+            if self.link.is_open() && !self.policy.read().user_tab_targets().is_empty() {
+                // The user's own tabs are theirs, not the agents': they stay
+                // open and the browser keeps running for them. Only what the
+                // agents held is detached, and in the Gespan browser closed.
+                targets::detach_sessions(&self.link, &detach);
+                if self.connected_to_managed() {
+                    self.close_owned_targets(&agent_pages);
+                }
+                self.emit_state();
+                return;
+            }
             self.close_managed_pages();
             if self.link.status() != LinkStatus::Closed {
                 self.link.close(detach, OFF_DETACH_BUDGET);
@@ -889,8 +909,10 @@ impl BrowserHost {
 
     fn close_if_empty(self: &Arc<Self>) {
         {
+            // With the switch off the browser only runs for the user's own
+            // tabs: it closes after the last of them as well.
             let policy = self.policy.read();
-            if !policy.toggle_on || !policy.settings.mode.launches() {
+            if !policy.settings.mode.launches() {
                 return;
             }
             if policy
@@ -917,6 +939,13 @@ impl BrowserHost {
         self.close_managed_browser_later();
         if self.policy.read().toggle_on {
             self.set_idle();
+        } else {
+            self.set_connection(
+                ConnectionState::Off,
+                Some("Browser access is off.".into()),
+                None,
+                None,
+            );
         }
         self.emit_state();
     }
@@ -940,7 +969,10 @@ impl BrowserHost {
         }
         // A window the user opened, or pages they browse in it, are theirs:
         // only a browser started for the agent alone closes by itself.
-        if user_opened || self.user_tabs().is_ok_and(|tabs| !tabs.is_empty()) {
+        if user_opened
+            || !self.policy.read().user_tab_targets().is_empty()
+            || self.user_tabs().is_ok_and(|tabs| !tabs.is_empty())
+        {
             return;
         }
         self.event("managed_closed_unused", Actor::System, None, None);
@@ -1047,17 +1079,19 @@ impl BrowserHost {
     /// already connected or connecting. Every connection means a new consent
     /// dialog in the browser; there is no automatic retry loop.
     pub fn connect(self: &Arc<Self>) {
-        self.start_connect(false);
+        self.start_connect(false, false);
     }
 
     /// A connection attempt started by an agent request (the next request
     /// after a drop starts a new discovery). It may show the consent
     /// dialog at most once per drop; after that only the user's Connect does.
     fn connect_automatically(self: &Arc<Self>) {
-        self.start_connect(true);
+        self.start_connect(true, false);
     }
 
-    fn start_connect(self: &Arc<Self>, automatic: bool) {
+    /// `for_user`: the user's own tab needs the browser, which starts
+    /// whatever the switch says (the switch is about agents only).
+    fn start_connect(self: &Arc<Self>, automatic: bool, for_user: bool) {
         // The generation is bumped under the policy write lock, so read under
         // the same guard as the switch it belongs to.
         if self.link.is_open() {
@@ -1065,7 +1099,7 @@ impl BrowserHost {
         }
         let generation = {
             let policy = self.policy.read();
-            if !policy.toggle_on {
+            if !policy.toggle_on && !for_user {
                 return;
             }
             self.generation.load(Ordering::Acquire)
@@ -1794,6 +1828,16 @@ impl BrowserHost {
         self.open_for_thread(session, window, &url)
     }
 
+    /// A link the user clicked in a thread: a new tab at `url` in the
+    /// thread's browser, held by `session` and marked the user's own
+    /// ([`policy::Lease::user_tab`]). It needs neither the switch nor the
+    /// thread's access and gives the thread none: the switch decides only
+    /// what agents get. Starts the Gespan browser when it is not running.
+    pub fn open_user_tab(self: &Arc<Self>, session: &str, url: &str) -> Result<TabId, String> {
+        let url = policy::check_url(url.trim()).map_err(|reason| reason.message().to_string())?;
+        self.open_tab_for(session, None, &url)
+    }
+
     /// A tab at `url` (already checked) that `session` holds, opened by the
     /// user. Waits for the Gespan browser to start when it is not running.
     fn open_for_thread(
@@ -1802,15 +1846,32 @@ impl BrowserHost {
         window: &str,
         url: &str,
     ) -> Result<TabId, String> {
-        let url = url.to_string();
         if !self.policy.read().toggle_on {
             return Err("Turn on browser access first.".into());
         }
+        if !self.link.is_open() && !self.mode().launches() {
+            return Err("Gespan is not connected to your browser.".into());
+        }
+        self.open_tab_for(session, Some(window), url)
+    }
+
+    /// [`Self::open_for_thread`] (`window` given: the click is the thread's
+    /// browser access) or [`Self::open_user_tab`] (no `window`: the user's
+    /// own tab, which grants nothing).
+    fn open_tab_for(
+        self: &Arc<Self>,
+        session: &str,
+        window: Option<&str>,
+        url: &str,
+    ) -> Result<TabId, String> {
+        let url = url.to_string();
+        let user_tab = window.is_none();
         if !self.link.is_open() {
-            if !self.mode().launches() {
-                return Err("Gespan is not connected to your browser.".into());
+            if user_tab {
+                self.start_connect(false, true);
+            } else {
+                self.connect_automatically();
             }
-            self.connect_automatically();
             let connection = self.wait_for_connection(MANAGED_START_WAIT);
             if connection.state != ConnectionState::Connected {
                 return Err(connection
@@ -1845,11 +1906,13 @@ impl BrowserHost {
             url: url.clone(),
             title: String::new(),
         };
-        let granted_now = self.grant_for_hand_over(session, window);
+        let granted_now = window.is_some_and(|window| self.grant_for_hand_over(session, window));
         let handle = match targets::adopt_tab(&self.link, targets::Sender::System, session, &free) {
             Ok(handle) => handle,
             Err(error) => {
-                self.undo_hand_over_grant(session, window, granted_now);
+                if let Some(window) = window {
+                    self.undo_hand_over_grant(session, window, granted_now);
+                }
                 targets::close_targets(&self.link, &[target]);
                 return Err(tab_error_message(error));
             }
@@ -1858,6 +1921,7 @@ impl BrowserHost {
         // closes it like any agent tab instead of handing it back.
         if let Some(lease) = self.policy.write().lease_mut(&handle.tab) {
             lease.from_user = false;
+            lease.user_tab = user_tab;
         }
         self.adopted(&handle, session, &free, Actor::User);
         self.close_startup_pages();
@@ -3735,6 +3799,141 @@ mod tests {
             .new_tab("s1", "main", Some("file:///etc/passwd"))
             .is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn lease_of(host: &BrowserHost, tab: &TabId) -> policy::Lease {
+        host.policy().read().lease(tab).cloned().expect("a lease")
+    }
+
+    /// A link the user clicks in a thread opens in the thread's browser with
+    /// the switch off: the browser starts for it, the thread gets no agent
+    /// access from it, and no agent call gets through.
+    #[test]
+    fn a_link_the_user_opens_starts_the_browser_with_the_switch_off_and_grants_agents_nothing() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        assert!(!host.policy().read().toggle_on);
+
+        let tab = host
+            .open_user_tab("s1", " https://example.com/docs ")
+            .unwrap();
+        assert!(host.link().is_open(), "the browser started for the user");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert!(!host.policy().read().toggle_on, "the switch stays off");
+        assert!(!host.policy().read().granted("s1"));
+        let lease = lease_of(&host, &tab);
+        assert!(lease.user_tab && !lease.from_user);
+        assert_eq!(lease.owner, "s1");
+        assert_eq!(lease.state, TabState::Open);
+        let navigated = server.wait_for(
+            |all| {
+                all.iter().any(|r| {
+                    r.method == "Page.navigate" && r.params["url"] == "https://example.com/docs"
+                })
+            },
+            Duration::from_secs(5),
+        );
+        assert!(navigated, "the page loads in the new tab");
+
+        // An agent of the same thread, even in a turn that asks for the
+        // browser, gets nothing while the switch is off.
+        host.turn_started("s1", "main", "/repo", Some(true));
+        for (id, action, input) in [
+            ("r1", "tabs.list", json!({})),
+            ("r2", "tabs.open", json!({})),
+            ("r3", "snapshot", json!({ "tab": tab.0 })),
+        ] {
+            let refused = host.handle_request("s1", request(id, action, input));
+            assert_eq!(refused.reason, Some(Reason::Off), "{action}: {refused:?}");
+        }
+
+        // URL policy: web pages only.
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "chrome://settings",
+        ] {
+            assert!(host.open_user_tab("s1", url).is_err(), "{url}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The switch going off ends the agents' tabs but leaves the user's own
+    /// tab open, attached and usable, with the browser still running; with
+    /// the switch on the agent sees it as one of the thread's tabs.
+    #[test]
+    fn switching_off_ends_agent_tabs_but_keeps_the_users_own_tab_usable() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        // ON and in the turn: the user's tab is one of the thread's tabs.
+        let listed = host.handle_request("s1", request("r2", "tabs.list", json!({})));
+        let listed = serde_json::to_string(&listed.data).unwrap();
+        assert!(
+            listed.contains(&own.0) && listed.contains(&agent.0),
+            "{listed}"
+        );
+        let agent_session = lease_of(&host, &agent).cdp_session.unwrap();
+
+        host.set_toggle(false);
+        assert_eq!(lease_of(&host, &agent).state, TabState::Revoked);
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open(), "the user's tab keeps the browser");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert!(server.wait_for(
+            |all| all.iter().any(|r| r.method == "Target.detachFromTarget"
+                && r.params["sessionId"] == agent_session.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        // Still the user's to use: the pane's Reload goes through...
+        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+            .unwrap();
+        // ...the agent tab's does not, and agents get nothing.
+        assert!(host
+            .live_navigate("s1", &agent, &live::LiveNav::Reload)
+            .is_err());
+        let refused = host.handle_request("s1", request("r3", "tabs.list", json!({})));
+        assert_eq!(refused.reason, Some(Reason::Off));
+
+        // Back on, the browser that kept running is not reported idle.
+        host.set_toggle(true);
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+
+        // The user closing it closes its page.
+        let target = lease_of(&host, &own).target_id;
+        host.close_tab_by_user(&own).unwrap();
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget"
+                    && r.params["targetId"] == target.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No browser to start: the user's link is not opened in Gespan, and the
+    /// error says why so the app can open it elsewhere.
+    #[test]
+    fn a_users_link_fails_plainly_when_the_browser_cannot_start() {
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            ..BrowserSettings::default()
+        });
+        let error = host
+            .open_user_tab("s1", "https://example.com/")
+            .unwrap_err();
+        assert!(!error.is_empty());
+        assert!(!host.link().is_open());
+        assert!(host.policy().read().leases().next().is_none());
     }
 
     #[test]

@@ -128,6 +128,13 @@ pub struct Lease {
     /// free tab adopted. Deleting the session or "close all agent tabs" gives
     /// it back instead of closing it.
     pub from_user: bool,
+    /// The user opened this tab for themselves (a link clicked in the
+    /// thread), not an agent: it is the user's browsing, so it outlives the
+    /// switch going off and the thread's access being taken away (the agent
+    /// only loses it), and "Close all agent tabs" leaves it. While the switch
+    /// is on and the thread's turn carries the browser it is a session tab
+    /// like any other; [`PolicyState::admit`] treats it no differently.
+    pub user_tab: bool,
     /// The user took this tab back (Settings "Take the tab back"). A lease
     /// revoked any other way keeps its page from other sessions until then.
     pub released: bool,
@@ -320,7 +327,9 @@ impl PolicyState {
     // --- transitions --------------------------
 
     /// OFF→ON or ON→OFF. Returns the main CDP sessions whose tabs the caller
-    /// must detach (OFF only). Tabs stay open.
+    /// must detach (OFF only). Tabs stay open; the user's own tabs keep their
+    /// leases (only the epoch moves, so no agent work admitted before goes
+    /// through).
     pub fn set_toggle(&mut self, on: bool) -> Vec<CdpSessionId> {
         if self.toggle_on == on {
             return Vec::new();
@@ -340,8 +349,9 @@ impl PolicyState {
             auth.epoch = auth.epoch.next();
         }
         let mut detach = Vec::new();
+        // The user's own tabs stay theirs: OFF only ends what agents hold.
         for lease in self.leases.values_mut() {
-            if lease.is_live() {
+            if lease.is_live() && !lease.user_tab {
                 lease.state = TabState::Revoked;
                 lease.busy = false;
                 if let Some(session) = lease.cdp_session.clone() {
@@ -512,6 +522,16 @@ impl PolicyState {
             .any(|auth| auth.granted || auth.requested)
     }
 
+    /// The pages of the tabs the user opened for themselves that are still
+    /// open: they keep the browser running whatever the switch says.
+    pub fn user_tab_targets(&self) -> HashSet<TargetId> {
+        self.leases
+            .values()
+            .filter(|lease| lease.user_tab && lease.is_live())
+            .map(|lease| lease.target_id.clone())
+            .collect()
+    }
+
     pub fn requested(&self, session: &str) -> bool {
         self.sessions
             .get(session)
@@ -529,8 +549,10 @@ impl PolicyState {
             auth.requested = false;
         }
         let mut detach = Vec::new();
+        // The user's own tabs stay open and attached for them; the epoch
+        // above voids whatever the agent was admitted to do in them.
         for lease in self.leases.values_mut() {
-            if lease.owner == session && lease.is_live() {
+            if lease.owner == session && lease.is_live() && !lease.user_tab {
                 lease.state = TabState::Revoked;
                 lease.busy = false;
                 if let Some(cdp) = lease.cdp_session.clone() {
@@ -570,7 +592,7 @@ impl PolicyState {
         let mut ended = Ended::default();
         let mut owners = Vec::new();
         for lease in self.leases.values_mut() {
-            if lease.state == TabState::Closed {
+            if lease.state == TabState::Closed || lease.user_tab {
                 continue;
             }
             ended.tabs.push(lease.tab.clone());
@@ -1263,6 +1285,7 @@ mod tests {
             busy: false,
             busy_action: 0,
             from_user: false,
+            user_tab: false,
             released: false,
             snapshot_version: 0,
             pending_dialog: None,
@@ -1670,6 +1693,78 @@ mod tests {
             TabState::Closed
         );
         assert_eq!(state.session_epoch("s2").unwrap(), epoch.next());
+    }
+
+    /// A tab the user opened from a link is theirs: the switch going off,
+    /// a revocation or "Close all agent tabs" ends only what the agent may
+    /// do, never the tab, while an agent tab of the same thread ends.
+    #[test]
+    fn a_users_own_tab_outlives_the_switch_and_revocations_but_agents_never_reach_it_while_off() {
+        let mut state = self::state();
+        state.set_toggle(true);
+        state.turn_started("s1", "main", "/repo", Some(true));
+        state.insert_lease(lease("t_00000001", "T1", "S1", "s1"));
+        let mut own = lease("t_00000002", "T2", "S2", "s1");
+        own.user_tab = true;
+        state.insert_lease(own);
+        let agent_tab = TabId("t_00000001".into());
+        let user_tab = TabId("t_00000002".into());
+        let admit = |state: &PolicyState, tab: &TabId| {
+            state.admit(
+                "s1",
+                "r",
+                ActionKind::Click,
+                Some(tab),
+                Duration::from_secs(1),
+            )
+        };
+        // ON, granted, in a turn: the user's tab is a session tab like any other.
+        assert!(admit(&state, &user_tab).is_ok());
+
+        // OFF: only the agent tab is detached and ends.
+        let epoch = state.global_epoch;
+        assert_eq!(state.set_toggle(false), vec![CdpSessionId("S1".into())]);
+        assert_eq!(state.global_epoch, epoch.next());
+        assert_eq!(state.lease(&agent_tab).unwrap().state, TabState::Revoked);
+        assert_eq!(state.lease(&user_tab).unwrap().state, TabState::Open);
+        // ...and no agent action reaches the user's tab while it is off.
+        assert_eq!(admit(&state, &user_tab).unwrap_err(), Reason::Off);
+        assert_eq!(
+            state
+                .admit(
+                    "s1",
+                    "r",
+                    ActionKind::TabsList,
+                    None,
+                    Duration::from_secs(1)
+                )
+                .unwrap_err(),
+            Reason::Off
+        );
+
+        // Back ON and granted again: the agent may use it again.
+        state.set_toggle(true);
+        assert_eq!(admit(&state, &user_tab).unwrap_err(), Reason::NotGranted);
+        state.set_grant("s1", "main", true);
+        assert!(admit(&state, &user_tab).is_ok());
+
+        // Taking the thread's access away: the tab stays open for the user,
+        // the agent's admitted work is void (epoch) and it is refused.
+        let epoch = state.session_epoch("s1").unwrap();
+        assert!(state.turn_off("s1").is_empty());
+        assert_eq!(state.session_epoch("s1").unwrap(), epoch.next());
+        assert_eq!(state.lease(&user_tab).unwrap().state, TabState::Open);
+        assert_eq!(admit(&state, &user_tab).unwrap_err(), Reason::NotGranted);
+
+        // "Close all agent tabs" is not about the user's tab.
+        let ended = state.close_all();
+        assert!(!ended.tabs.contains(&user_tab));
+        assert!(!ended.close.contains(&TargetId("T2".into())));
+        assert_eq!(state.lease(&user_tab).unwrap().state, TabState::Open);
+
+        // Deleting the thread closes it like any tab Gespan opened for it.
+        let ended = state.session_deleted("s1");
+        assert!(ended.close.contains(&TargetId("T2".into())));
     }
 
     #[test]

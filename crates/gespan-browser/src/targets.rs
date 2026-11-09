@@ -226,6 +226,7 @@ fn new_lease(
         busy: false,
         busy_action: 0,
         from_user: false,
+        user_tab: false,
         released: false,
         snapshot_version: 0,
         pending_dialog: None,
@@ -1287,13 +1288,12 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
             let tab = {
                 let mut state = policy.write();
                 // The opener may have been revoked since the check above.
-                if !state
+                let opener = state
                     .lease(&parent_tab)
-                    .is_some_and(|l| l.is_live() && l.owner == owner)
-                {
-                    None
-                } else {
-                    let lease = new_lease(
+                    .filter(|l| l.is_live() && l.owner == owner)
+                    .map(|l| l.user_tab);
+                if let Some(user_tab) = opener {
+                    let mut lease = new_lease(
                         &state,
                         &target,
                         Some(child.clone()),
@@ -1302,7 +1302,11 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
                         info["url"].as_str().unwrap_or(""),
                         info["title"].as_str().unwrap_or(""),
                     );
+                    // A popup of the user's own tab is theirs as well.
+                    lease.user_tab = user_tab;
                     Some(state.insert_lease(lease))
+                } else {
+                    None
                 }
             };
             let Some(tab) = tab else {
@@ -1999,6 +2003,46 @@ mod tests {
         created("TPOP", Some(&opener));
         thread::sleep(Duration::from_millis(200));
         assert_eq!(attaches(), before);
+        link.close(Vec::new(), Duration::from_millis(200));
+    }
+
+    /// A page the user's own tab opens is theirs too: it stays when the
+    /// switch goes off, like its opener. An agent tab's popup stays the
+    /// agent's.
+    #[test]
+    fn popups_of_the_users_own_tab_are_the_users() {
+        let server = navigating_fake();
+        let policy = policy();
+        let link = Link::new(policy.clone());
+        link.open(&server.url, Duration::from_secs(5)).unwrap();
+        let _pump = spawn_pump(link.clone(), Arc::new(|_| {})).unwrap();
+        let ctx = admit(&policy, ActionKind::TabsOpen, None);
+        let own = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
+        let ctx = admit(&policy, ActionKind::TabsOpen, None);
+        let agent = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
+        policy.write().lease_mut(&own.handle.tab).unwrap().user_tab = true;
+        let popup_of = |opener: &TabHandle, target: &str| {
+            server.emit(
+                "Target.targetCreated",
+                json!({ "targetInfo": { "targetId": target, "type": "page", "url": format!("https://{target}/"), "title": "", "attached": false, "openerId": opener.target.0 } }),
+                None,
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let found = policy
+                    .read()
+                    .leases()
+                    .find(|l| l.target_id.0 == target && l.state == TabState::Open)
+                    .map(|l| l.user_tab);
+                if let Some(user_tab) = found {
+                    return user_tab;
+                }
+                assert!(Instant::now() < deadline, "{target} was not adopted");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(popup_of(&own.handle, "TUPOP"));
+        assert!(!popup_of(&agent.handle, "TAPOP"));
         link.close(Vec::new(), Duration::from_millis(200));
     }
 
