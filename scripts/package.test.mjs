@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { dmgMegabytes, linuxTree, nativeVersion, packageNative, rpmSpec, runStapler } from "./package.mjs";
+import { dmgMegabytes, linuxTree, metainfo, nativeVersion, packageNative, rpmSpec, runStapler } from "./package.mjs";
 
 test("the DMG staging image is sized from its contents with headroom", () => {
   const MiB = 2 ** 20;
@@ -71,6 +71,23 @@ test("Linux desktop identity resolves the bundled application icon on Wayland", 
   const bundled = await readFile(join(tree, "usr/share/icons/hicolor/256x256/apps", `${icon}.png`));
   assert.deepEqual(bundled, await readFile(new URL("../crates/gespan-gpui/assets/gespan.png", import.meta.url)));
   await access(join(tree, "usr/bin/gespan"));
+});
+
+test("Linux packages tell app lists the full release version", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "native-linux-version-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const binary = join(directory, "gespan-gpui");
+  await writeFile(binary, "native executable fixture");
+  const tree = join(directory, "tree");
+  await linuxTree(tree, binary, "appimage", null, "0.0.12");
+  // AppImage managers read this instead of guessing from Gespan_0.0.12_amd64.AppImage.
+  const desktop = await readFile(join(tree, "usr/share/applications/dev.gespan.native.desktop"), "utf8");
+  assert.match(desktop, /^X-AppImage-Version=0\.0\.12$/m);
+  const xml = await readFile(join(tree, "usr/share/metainfo/dev.gespan.native.metainfo.xml"), "utf8");
+  assert.match(xml, /<release version="0\.0\.12" date="\d{4}-\d{2}-\d{2}"\/>/);
+  assert.match(xml, /<launchable type="desktop-id">dev\.gespan\.native\.desktop<\/launchable>/);
+  assert.match(metainfo("0.1.0-preview.2", "Gespan experimental preview"), /<release version="0\.1\.0-preview\.2"/);
+  assert.match(rpmSpec(nativeVersion("0.0.12"), "Gespan"), /^\/usr\/share\/metainfo\/dev\.gespan\.native\.metainfo\.xml$/m);
 });
 
 test("rpm replaces the beta package and the old Gespan app, and only those older versions", () => {

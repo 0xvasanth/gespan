@@ -44,7 +44,7 @@ export function rpmRelease({ label, sequence }) {
 // Installing over a beta replaces its gespan-native package, or the old Gespan
 // app's package, which own the same desktop entry or /usr/bin/gespan.
 export function rpmSpec(parsed, summary) {
-  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nRequires: gtk3\nRequires: webkit2gtk4.1\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
+  return `Name: gespan\nVersion: ${parsed.base}\nRelease: ${rpmRelease(parsed)}%{?dist}\nSummary: ${summary}\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\nRequires: gtk3\nRequires: webkit2gtk4.1\nObsoletes: gespan-native < 0.0.4\nObsoletes: Gespan < 0.0.4\n%description\n${summary}.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/gespan\n/usr/lib/gespan\n/usr/share/applications/dev.gespan.native.desktop\n/usr/share/metainfo/dev.gespan.native.metainfo.xml\n/usr/share/icons/hicolor/256x256/apps/gespan.png\n`;
 }
 // hdiutil's -srcfolder estimate fell short of the app on the macOS 15
 // runner ("No space left on device" inside the image), so the staging
@@ -128,7 +128,34 @@ async function linuxHerdr(work, arch) {
   return fetchHerdr({ asset: `linux-${arch}`, out: join(work, "herdr") });
 }
 
-export async function linuxTree(directory, binary, kind, herdr) {
+// AppStream metadata, so software centres and AppImage managers list the real
+// version instead of guessing one from the file name.
+export function metainfo(version, summary) {
+  const date = new Date().toISOString().slice(0, 10);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.gespan.native</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT AND Apache-2.0</project_license>
+  <name>Gespan</name>
+  <summary>${summary}</summary>
+  <description>
+    <p>One desktop app to drive all of your coding agents.</p>
+  </description>
+  <developer id="dev.gespan">
+    <name>Gespan maintainers</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <launchable type="desktop-id">dev.gespan.native.desktop</launchable>
+  <url type="homepage">https://github.com/0xvasanth/gespan</url>
+  <releases>
+    <release version="${version}" date="${date}"/>
+  </releases>
+</component>
+`;
+}
+
+export async function linuxTree(directory, binary, kind, herdr, version, summary = "Gespan") {
   const app = join(directory, "usr/lib/gespan");
   await mkdir(app, { recursive: true });
   await cp(binary, join(app, "gespan-gpui"));
@@ -150,11 +177,19 @@ export async function linuxTree(directory, binary, kind, herdr) {
   );
   await mkdir(join(directory, "usr/share/applications"), { recursive: true });
   const desktop =
-    "[Desktop Entry]\nType=Application\nName=Gespan\nExec=gespan %F\nIcon=gespan\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n";
+    "[Desktop Entry]\nType=Application\nName=Gespan\nExec=gespan %F\nIcon=gespan\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.gespan.native\n" +
+    (version ? `X-AppImage-Version=${version}\n` : "");
   await writeFile(
     join(directory, "usr/share/applications/dev.gespan.native.desktop"),
     desktop,
   );
+  if (version) {
+    await mkdir(join(directory, "usr/share/metainfo"), { recursive: true });
+    await writeFile(
+      join(directory, "usr/share/metainfo/dev.gespan.native.metainfo.xml"),
+      metainfo(version, summary),
+    );
+  }
   const icons = join(directory, "usr/share/icons/hicolor/256x256/apps");
   await mkdir(icons, { recursive: true });
   await cp(
@@ -299,7 +334,7 @@ export async function packageNative({
   } else if (kind === "linux") {
     const herdr = await linuxHerdr(work, arch);
     const debRoot = join(work, "deb");
-    await linuxTree(debRoot, binary, "deb", herdr);
+    await linuxTree(debRoot, binary, "deb", herdr, version, summary);
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
@@ -312,7 +347,7 @@ export async function packageNative({
       add(`gespan_${version}_amd64.deb`, "linux-x86_64-deb"),
     ]);
     const appDir = join(work, "Gespan.AppDir");
-    const { desktop } = await linuxTree(appDir, binary, "appimage", herdr);
+    const { desktop } = await linuxTree(appDir, binary, "appimage", herdr, version, summary);
     await writeFile(
       join(appDir, "dev.gespan.native.desktop"),
       desktop.replace("Exec=gespan %F", "Exec=gespan-gpui %F"),
@@ -341,7 +376,7 @@ export async function packageNative({
     for (const name of ["BUILD", "RPMS", "SOURCES", "SPECS", "SRPMS"])
       await mkdir(join(top, name), { recursive: true });
     const tree = join(top, "SOURCES/tree");
-    await linuxTree(tree, binary, "rpm", await linuxHerdr(work, arch));
+    await linuxTree(tree, binary, "rpm", await linuxHerdr(work, arch), version, summary);
     const spec = join(top, "SPECS/gespan.spec");
     await writeFile(
       spec,

@@ -46,15 +46,29 @@ fn seeded_10k_two_hop_is_fast_and_uses_the_indexes() {
     starts.push(info.hubs[0]);
     let two = Hops::new(2).unwrap();
     let (mut near_max, mut reach_max) = (Duration::ZERO, Duration::ZERO);
+    // Each query's time is its fastest of three runs, so one stall on a
+    // shared CI runner can't fail the budget; a slow plan is slow every time.
+    let fastest = |run: &mut dyn FnMut()| {
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                run();
+                t.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
     for &start in &starts {
-        let t = Instant::now();
-        let hits = store.neighborhood(start, Caps::DEFAULT, AsOf::Now).unwrap();
-        near_max = near_max.max(t.elapsed());
-        let t = Instant::now();
-        let reached = store
-            .reachable(start, two, Caps::DEFAULT, AsOf::Now, &EdgeFilter::All)
-            .unwrap();
-        reach_max = reach_max.max(t.elapsed());
+        let mut hits = Vec::new();
+        near_max = near_max.max(fastest(&mut || {
+            hits = store.neighborhood(start, Caps::DEFAULT, AsOf::Now).unwrap();
+        }));
+        let mut reached = Vec::new();
+        reach_max = reach_max.max(fastest(&mut || {
+            reached = store
+                .reachable(start, two, Caps::DEFAULT, AsOf::Now, &EdgeFilter::All)
+                .unwrap();
+        }));
         if start == info.hubs[0] {
             assert_eq!(hits.len(), 200, "the hub fills the total cap");
             assert_eq!(reached.len(), 200);
