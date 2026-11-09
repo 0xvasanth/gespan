@@ -174,6 +174,34 @@ mod tests {
         text(&listed)
     }
 
+    /// The user's own browsing with the switch off: the link opens in the
+    /// thread's browser, yet the thread's agent is listed no tools and its
+    /// calls are refused as `off`, even with "Always on" and a typed turn.
+    /// Once the switch is on, the user's tab is one of the thread's tabs.
+    #[test]
+    fn the_users_own_tab_with_the_switch_off_gives_the_agent_nothing() {
+        let server = FakeCdp::start();
+        let host = host_on(&server.profile_dir(), AccessMode::Always);
+        let kit = Toolkit::with_host(host.clone());
+        let own = host
+            .open_user_tab(&session_key(1), "https://example.com/")
+            .unwrap();
+        let turn = begin_turn_on(Some(host.clone()), &typed(1));
+        assert!(!turn.carries_browser());
+        assert!(kit.tools(&grant(1)).is_empty());
+        let refused = kit
+            .call(&grant(1), "browser_tabs", json!({"action": "list"}))
+            .unwrap();
+        assert_eq!(refused["isError"], json!(true), "{refused}");
+        assert!(!text(&refused).contains(&own.0), "{refused}");
+        drop(turn);
+
+        host.set_toggle(true);
+        let _turn = begin_turn_on(Some(host.clone()), &typed(1));
+        assert!(!kit.tools(&grant(1)).is_empty());
+        assert!(listed_tabs(&kit, 1).contains(&own.0));
+    }
+
     #[test]
     fn the_toolkit_is_named_like_its_mount() {
         assert_eq!(Toolkit::GLOBAL.name(), crate::tool_servers::BROWSER);
