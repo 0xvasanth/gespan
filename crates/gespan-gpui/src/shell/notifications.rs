@@ -47,6 +47,18 @@ pub(super) struct State {
     /// The bodies of the herdr agent notices that reached the OS.
     #[cfg(test)]
     pub(super) machine_notices: Vec<String>,
+    /// The session notices that reached the OS.
+    #[cfg(test)]
+    pub(super) session_notices: Vec<SessionNotice>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(super) struct SessionNotice {
+    pub target: Target,
+    pub category: String,
+    pub subtitle: String,
+    pub body: String,
 }
 
 impl State {
@@ -88,6 +100,8 @@ impl State {
             poll: None,
             #[cfg(test)]
             machine_notices: Vec::new(),
+            #[cfg(test)]
+            session_notices: Vec::new(),
         }
     }
 }
@@ -606,6 +620,20 @@ impl Shell {
         );
     }
 
+    /// Tells the user an automation started a run on its own, so the new
+    /// session is one click away. The automation names the notice.
+    pub(super) fn deliver_automation_notice(
+        &mut self,
+        summary: &Session,
+        automation: &str,
+        body: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut summary = summary.clone();
+        summary.title = automation.to_owned();
+        self.deliver_session_notice(&summary, "automationRuns", body, None, cx);
+    }
+
     /// Tells the user a herdr agent needs input or finished a turn, unless
     /// they are looking at its terminal tab. Follows the global
     /// notification and sound preferences; herdr agents belong to no project.
@@ -743,19 +771,24 @@ impl Shell {
         } else {
             body.to_owned()
         };
-        let receiver = platform::show(
-            platform::Notification {
-                tag: target.tag(self.notification_state.sequence),
-                subtitle: if category == "reminders" {
-                    "Session reminder".into()
-                } else {
-                    summary.title.clone()
-                },
-                body: delivery::clip_body(&body),
-                sound: prefs.sounds,
+        let notification = platform::Notification {
+            tag: target.tag(self.notification_state.sequence),
+            subtitle: if category == "reminders" {
+                "Session reminder".into()
+            } else {
+                summary.title.clone()
             },
-            cx,
-        );
+            body: delivery::clip_body(&body),
+            sound: prefs.sounds,
+        };
+        #[cfg(test)]
+        self.notification_state.session_notices.push(SessionNotice {
+            target,
+            category: category.to_owned(),
+            subtitle: notification.subtitle.clone(),
+            body: notification.body.clone(),
+        });
+        let receiver = platform::show(notification, cx);
         let directory = summary.cwd.clone();
         let category = category.to_owned();
         let work = cx.background_executor().spawn(async move {
