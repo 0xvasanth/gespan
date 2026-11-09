@@ -872,9 +872,10 @@ pub(crate) struct Shell {
     /// An agent's first tab in the thread the user is looking at, to show
     /// beside it without taking the keys from where they are.
     pending_browser: Option<(i64, crate::review::ReviewTab)>,
-    /// User tabs opened from a thread's link, waiting to show beside their
-    /// thread; one whose thread has no pane by then is closed.
-    pending_links: Vec<(i64, crate::review::ReviewTab)>,
+    /// User tabs opened from a thread's link (and the link), waiting to show
+    /// beside their thread; one whose thread has no pane by then is closed
+    /// and its link goes to the system browser.
+    pending_links: Vec<(i64, crate::review::ReviewTab, String)>,
     /// Links of a thread the in-app browser is opening (the first can wait
     /// for the browser to start): a repeat click on one opens no second tab.
     opening_links: HashSet<(i64, String)>,
@@ -1773,7 +1774,9 @@ impl Shell {
     /// is looking at): a new tab of the thread's in-app browser, the user's
     /// own, shown beside the thread. Needs no browser switch: that is about
     /// agents only. When the in-app browser cannot open it, the system
-    /// browser does, and the thread says why.
+    /// browser does, and the thread says why. A chat with no pane in this
+    /// workspace (a Pilot's, Inbox Ask) has nowhere to show the page, so
+    /// its links go straight to the system browser (R29).
     pub(crate) fn open_thread_link(
         &mut self,
         session: Option<i64>,
@@ -1784,6 +1787,10 @@ impl Shell {
             cx.open_url(&url);
             return;
         };
+        if self.workspace.tab_of(session).is_none() {
+            cx.open_url(&url);
+            return;
+        }
         let Some(host) = crate::browser::host(cx) else {
             self.link_fallback(session, &url, "the in-app browser is not running", cx);
             return;
@@ -1819,6 +1826,7 @@ impl Shell {
                                 tab: tab.0,
                                 own: true,
                             },
+                            url,
                         ));
                         cx.notify();
                     }
@@ -9154,15 +9162,17 @@ impl Render for Shell {
             self.focus_pane(pane, window, cx);
             self.open_review(tab, window, cx);
         }
-        for (id, tab) in std::mem::take(&mut self.pending_links) {
+        for (id, tab, url) in std::mem::take(&mut self.pending_links) {
             if self.workspace.tab_of(id).is_some() {
                 let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
                 self.focus_pane(pane, window, cx);
                 self.open_review(tab, window, cx);
             } else {
                 // The thread left the workspace meanwhile: no pane would
-                // ever show or close the user's tab, so it closes now.
+                // ever show or close the user's tab, so it closes now, and
+                // the system browser opens the link so the click isn't lost.
                 crate::review::close_own_browser_tab(&tab, cx);
+                cx.open_url(&url);
             }
         }
         if let Some((id, tab)) = self.pending_browser.take()

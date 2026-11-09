@@ -15,7 +15,10 @@ const URL: &str = "https://example.com/docs";
 
 /// A thread whose answer links to [`URL`] beside inline code, so the link
 /// is its own fragment (`rich-prose-3-0`) a click can land on.
-fn thread_with_link(host: Arc<BrowserHost>, cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64) {
+pub(super) fn thread_with_link(
+    host: Arc<BrowserHost>,
+    cx: &mut TestAppContext,
+) -> (WindowHandle<Shell>, i64) {
     cx.update(|cx| {
         cx.set_reduce_motion(true);
         crate::browser::install_host(host, cx);
@@ -62,7 +65,7 @@ fn thread_with_link(host: Arc<BrowserHost>, cx: &mut TestAppContext) -> (WindowH
     (window, id)
 }
 
-fn settle(window: WindowHandle<Shell>, cx: &mut TestAppContext) {
+pub(super) fn settle(window: WindowHandle<Shell>, cx: &mut TestAppContext) {
     for _ in 0..3 {
         cx.run_until_parked();
         window.update(cx, |_, w, _| w.refresh()).unwrap();
@@ -94,7 +97,7 @@ fn browser_tabs(shell: &Shell, session: i64, cx: &App) -> Vec<ReviewTab> {
 }
 
 /// The thread's tabs in the host, with whether each is the user's own.
-fn host_tabs(host: &BrowserHost, session: i64) -> Vec<(TabId, bool, TabState)> {
+pub(super) fn host_tabs(host: &BrowserHost, session: i64) -> Vec<(TabId, bool, TabState)> {
     let key = session_key(session);
     host.state()
         .tabs
@@ -104,7 +107,7 @@ fn host_tabs(host: &BrowserHost, session: i64) -> Vec<(TabId, bool, TabState)> {
         .collect()
 }
 
-fn navigated_to(rig: &Rig, url: &str) -> bool {
+pub(super) fn navigated_to(rig: &Rig, url: &str) -> bool {
     rig.received("Page.navigate", |params| params["url"] == url)
 }
 
@@ -376,26 +379,67 @@ fn target_of(rig: &Rig, tab: &TabId) -> String {
         .clone()
 }
 
-/// The link's thread has no pane any more when its tab is ready: nothing
-/// would ever show or close the user's tab, so it closes at once.
+/// A chat with no pane in the workspace (a Pilot's, Inbox Ask): nothing
+/// could show the page, so the system browser opens the link and no
+/// browser starts for it.
 #[gpui::test]
-fn a_users_tab_whose_thread_has_no_pane_is_closed(cx: &mut TestAppContext) {
-    let rig = Rig::start();
+fn a_link_in_a_chat_with_no_pane_goes_to_the_system_browser(cx: &mut TestAppContext) {
+    let rig = Rig::start_managed();
     let (window, _) = thread_with_link(rig.host.clone(), cx);
-    let gone = 9_999;
+    let pilot_chat = 9_999;
     window
         .update(cx, |shell, _, cx| {
-            assert!(shell.workspace.tab_of(gone).is_none());
-            shell.open_thread_link(Some(gone), URL.into(), cx)
+            assert!(shell.workspace.tab_of(pilot_chat).is_none());
+            shell.open_thread_link(Some(pilot_chat), URL.into(), cx);
+            assert!(shell.opening_links.is_empty(), "nothing in flight");
         })
         .unwrap();
     settle(window, cx);
+    assert_eq!(cx.opened_url().as_deref(), Some(URL));
+    assert_ne!(
+        rig.host.connection().state,
+        gespan_core::browser::ConnectionState::Connected,
+        "no browser started for it"
+    );
+    assert_eq!(
+        rig.host.policy().read().leases().count(),
+        0,
+        "no tab opened"
+    );
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(browser_tabs(shell, pilot_chat, cx).is_empty());
+            assert!(shell.pending_links.is_empty());
+        })
+        .unwrap();
+}
+
+/// The thread leaves the workspace while its link is opening: no pane would
+/// ever show or close the user's tab, so it closes, and the system browser
+/// opens the link so the click is not lost.
+#[gpui::test]
+fn a_thread_that_leaves_while_its_link_opens_falls_back_to_the_system_browser(
+    cx: &mut TestAppContext,
+) {
+    let rig = Rig::start_managed();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_thread_link(Some(session), URL.into(), cx);
+            assert_eq!(notice(shell, session, cx).as_deref(), Some(OPENING));
+            shell.close_tabs(&[session], None, window, cx);
+            assert!(shell.workspace.tab_of(session).is_none());
+        })
+        .unwrap();
+    assert_eq!(cx.opened_url(), None, "still opening in the in-app browser");
+    settle(window, cx);
+    assert_eq!(cx.opened_url().as_deref(), Some(URL));
     let lease = rig
         .host
         .policy()
         .read()
         .leases()
-        .find(|lease| lease.owner == session_key(gone))
+        .find(|lease| lease.owner == session_key(session))
         .cloned()
         .expect("the tab was opened");
     assert!(lease.user_tab);
@@ -406,7 +450,12 @@ fn a_users_tab_whose_thread_has_no_pane_is_closed(cx: &mut TestAppContext) {
     );
     window
         .update(cx, |shell, _, cx| {
-            assert!(browser_tabs(shell, gone, cx).is_empty());
+            assert!(browser_tabs(shell, session, cx).is_empty());
+            assert!(shell.pending_links.is_empty());
+            assert!(shell.opening_links.is_empty());
+            if shell.sessions.contains_key(&session) {
+                assert_eq!(notice(shell, session, cx), None, "no opening line left");
+            }
         })
         .unwrap();
 }
