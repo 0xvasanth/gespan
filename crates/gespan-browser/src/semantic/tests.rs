@@ -33,6 +33,44 @@ fn ax(id: &str, role: &str, name: &str, backend: i64, children: &[&str]) -> Valu
     })
 }
 
+fn focused(mut node: Value) -> Value {
+    node["properties"] =
+        json!([{ "name": "focused", "value": { "type": "booleanOrUndefined", "value": true } }]);
+    node
+}
+
+/// The todo page of the 2026-11-09 manual check, before and after Add put
+/// "Milk" in its list. The field shows the typed text as its value and,
+/// as in Chrome, again as a text node inside it.
+fn todo_page(added: bool) -> Vec<Value> {
+    let mut children = vec!["2", "3", "5", "6"];
+    if added {
+        children.insert(3, "7");
+    }
+    let mut field = ax("3", "textbox", "New todo", 12, &["4"]);
+    field["value"] = json!({ "type": "string", "value": "Milk" });
+    let mut add = ax("5", "button", "Add", 14, &[]);
+    if added {
+        add = focused(add);
+    } else {
+        field = focused(field);
+    }
+    let mut nodes = vec![
+        ax("1", "RootWebArea", "Todo demo", 1, &children),
+        ax("2", "heading", "Todo demo", 11, &[]),
+        field,
+        ax("4", "StaticText", "Milk", 13, &[]),
+        add,
+        ax("6", "link", "About", 15, &[]),
+    ];
+    if added {
+        nodes.push(ax("7", "list", "", 16, &["8"]));
+        nodes.push(ax("8", "listitem", "", 17, &["9"]));
+        nodes.push(ax("9", "StaticText", "Milk", 18, &[]));
+    }
+    nodes
+}
+
 /// What the fake page answers.
 struct Model {
     facts: HashMap<(String, i64), Value>,
@@ -62,6 +100,10 @@ struct Model {
     shot_bytes: Option<usize>,
     /// Border box (width, height) `DOM.getBoxModel` reports, at (10, 10).
     box_size: (f64, f64),
+    /// The page is the todo page instead of the shop: `Some(added)`. A
+    /// click or a key press adds "Milk" to its list and moves the focus
+    /// from the field to the Add button.
+    todo: Option<bool>,
 }
 
 impl Default for Model {
@@ -84,6 +126,7 @@ impl Default for Model {
             content: (800.0, 3000.0),
             shot_bytes: None,
             box_size: (100.0, 30.0),
+            todo: None,
         }
     }
 }
@@ -101,6 +144,13 @@ fn respond(
     let session = received.session.clone().unwrap_or_default();
     let params = &received.params;
     match received.method.as_str() {
+        "Accessibility.getFullAXTree" if session == MAIN && model.todo.is_some() => {
+            Response::Result(json!({ "nodes": todo_page(model.todo == Some(true)) }))
+        }
+        "Input.dispatchKeyEvent" if model.todo.is_some() => {
+            model.todo = Some(true);
+            Response::Result(json!({}))
+        }
         "Accessibility.getFullAXTree" if session == MAIN && params.get("frameId").is_none() => {
             let mut children = vec!["2", "3", "4", "5", "6", "7"];
             if model.status.is_some() {
@@ -270,6 +320,9 @@ fn respond(
             Response::Hold
         }
         "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+            if model.todo.is_some() {
+                model.todo = Some(true);
+            }
             if let Some(checked) = model.checked.as_mut() {
                 *checked = !*checked;
             }
@@ -1107,6 +1160,53 @@ fn actions_return_the_page_snapshot_or_its_changes() {
     h.model.lock().unwrap().on_release.clear();
     let next = h.act(ActionKind::Click, json!({ "ref": save, "snapshot": false }));
     assert_eq!(next.outcome, Outcome::Done, "{next:?}");
+}
+
+/// The 2026-11-09 check: Add puts "Milk" in the list and moves the focus.
+/// On a page this small the changes are no shorter than the page, so the
+/// whole page comes back, and it must show the new item though the agent
+/// reads interactive snapshots, which leave text out.
+#[test]
+fn the_page_after_an_action_shows_text_it_added() {
+    for kind in [ActionKind::Click, ActionKind::Press] {
+        let h = Harness::new();
+        h.model.lock().unwrap().todo = Some(false);
+        let before = h.snapshot();
+        assert!(
+            before.contains("textbox \"New todo\" [focused] [ref=e3]: Milk"),
+            "{before}"
+        );
+        let input = match kind {
+            ActionKind::Click => json!({ "ref": "e4" }),
+            _ => json!({ "ref": "e3", "key": "Enter" }),
+        };
+        let acted = h.act(kind, input);
+        assert_eq!(acted.outcome, Outcome::Done, "{acted:?}");
+        let text = acted.data.as_ref().unwrap()["snapshot"].as_str().unwrap();
+        let item = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("- text \"Milk\""))
+            .unwrap_or_else(|| panic!("{kind:?}: no Milk item in\n{text}"));
+        // Its ref works like any other.
+        let number = item.split("[ref=").nth(1).unwrap().trim_end_matches(']');
+        assert!(number.starts_with('e'), "{item}");
+        assert!(text.contains("button \"Add\" [focused]"), "{text}");
+        assert!(
+            acted.message.ends_with(
+                "The page snapshot follows, with the page's text, because text on it changed."
+            ),
+            "{}",
+            acted.message
+        );
+        // The agent's own snapshots stay interactive.
+        let after = h.snapshot();
+        assert!(!after.contains("text \"Milk\""), "{after}");
+        // With text, the field's text is its value, shown once; the only
+        // text line is the item.
+        let full = h.act(ActionKind::Snapshot, json!({ "mode": "full" }));
+        let full = full.data.unwrap()["snapshot"].as_str().unwrap().to_string();
+        assert_eq!(full.matches("text \"Milk\"").count(), 1, "{full}");
+    }
 }
 
 #[test]

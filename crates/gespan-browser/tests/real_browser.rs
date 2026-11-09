@@ -243,9 +243,28 @@ setInterval(() => {
 }, 30);
 </script>"#;
 
+/// The todo page of the 2026-11-09 manual check: Add appends the typed
+/// todo to the list synchronously, then logs an error.
+const TODO: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Todo demo</title></head>
+<body style="font-family:system-ui;padding:24px">
+<h1>Todo demo</h1>
+<input aria-label="New todo" id="t"> <button id="add">Add</button>
+<ul id="list"></ul>
+<p><a href="/about.html">About</a></p>
+<script>
+document.getElementById('add').onclick = () => {
+  const v = document.getElementById('t').value;
+  if (!v) { console.error('Add clicked with an empty todo'); return; }
+  const li = document.createElement('li'); li.textContent = v;
+  document.getElementById('list').appendChild(li);
+  console.error('TypeError: cannot read properties of undefined (reading "count")');
+};
+</script></body></html>"#;
+
 fn pages() -> PageServer {
     PageServer::start(|path| match path {
         "/form" => FORM.to_string(),
+        "/todo" => TODO.to_string(),
         "/pop" => "<!doctype html><title>pop</title>\
                    <button onclick=\"window.open('/popped')\">Pop</button>"
             .to_string(),
@@ -412,4 +431,40 @@ fn browser_crash_then_reconnect() {
     assert_ne!(restarted, pid);
     let read = text_of(&browser.ok("browser_read", json!({ "tab": tab })));
     assert!(read.contains("plain page"), "{read}");
+}
+
+/// The 2026-11-09 check: the page view a click returns shows the todo its
+/// handler added, though the agent reads interactive snapshots (which
+/// leave text out) and the page is too small for a list of changes.
+#[test]
+#[ignore = "starts the Chrome GESPAN_TEST_CHROME names"]
+fn the_page_after_a_click_shows_what_it_added() {
+    let Some(chrome) = chrome() else { return };
+    let pages = pages();
+    let browser = Browser::start(chrome);
+    let tab = browser.open(&pages.url("/todo"));
+    let page = text_of(&browser.ok("browser_snapshot", json!({ "tab": tab })));
+    let field = ref_of(&page, "textbox \"New todo\"");
+    let add = ref_of(&page, "button \"Add\"");
+
+    let typed = text_of(&browser.ok(
+        "browser_type",
+        json!({ "tab": tab, "ref": field, "text": "Milk" }),
+    ));
+    assert!(typed.contains("\"New todo\" [focused] ["), "{typed}");
+    // The field's text is its value, not a todo.
+    assert!(!typed.contains("text \"Milk\""), "{typed}");
+
+    let clicked = text_of(&browser.ok("browser_click", json!({ "tab": tab, "ref": add })));
+    let item = clicked
+        .lines()
+        .find(|l| l.trim_start().starts_with("- text \"Milk\" [ref="))
+        .unwrap_or_else(|| panic!("no Milk item after the click:\n{clicked}"));
+    assert!(clicked.contains("because text on it changed"), "{clicked}");
+    // The item's ref is usable.
+    let item = &item[item.find("[ref=").unwrap() + 5..item.rfind(']').unwrap()];
+    browser.ok(
+        "browser_hover",
+        json!({ "tab": tab, "ref": item, "snapshot": false }),
+    );
 }

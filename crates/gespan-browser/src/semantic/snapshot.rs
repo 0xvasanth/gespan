@@ -280,6 +280,7 @@ fn shown_href(href: &str, origin: Option<&str>) -> String {
     clip(local.unwrap_or(href), MAX_HREF)
 }
 
+#[derive(Clone, Default)]
 pub struct Rendered {
     pub text: String,
     pub refs: usize,
@@ -448,8 +449,16 @@ impl Renderer<'_> {
             }
         }
         self.lines.push(line);
-        let name_for_children = if worthy && !unnamed && node.role != "RootWebArea" {
-            Some(node.name.clone())
+        // Text under an element repeats its name, or a field's value (the
+        // text a textbox holds is also a text node inside it).
+        let name_for_children = if worthy && node.role != "RootWebArea" {
+            let shown = [Some(node.name.trim()), node.value.as_deref().map(str::trim)];
+            let shown: Vec<&str> = shown
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.is_empty())
+                .collect();
+            (!shown.is_empty()).then(|| shown.join("\n"))
         } else {
             None
         };
@@ -660,8 +669,9 @@ struct Taken {
     refs: usize,
     truncated: bool,
     picked: Option<u32>,
-    /// The page with its text (full mode), for whole-page snapshots only.
-    text_body: String,
+    /// The page with its text (full mode), for whole-page snapshots only;
+    /// its `text` is empty otherwise.
+    text_page: Rendered,
     /// The previous whole-page snapshot of this document (its full-mode body),
     /// when this one is a whole-page snapshot too.
     previous: Option<refs::LastSnapshot>,
@@ -713,7 +723,7 @@ fn take(run: &Run<'_>, p: &SnapshotParams, inherit: bool) -> Result<Taken, Fail>
             strip_marker(&lease.title).to_string(),
         )
     };
-    let (rendered, previous, text_body) =
+    let (rendered, previous, text_page) =
         refs::with_snapshot_table(&run.key(), loader.as_deref(), version, |table| {
             let mode = match (p.mode, inherit, &table.last) {
                 (Some(mode), _, _) => mode,
@@ -744,9 +754,9 @@ fn take(run: &Run<'_>, p: &SnapshotParams, inherit: bool) -> Result<Taken, Fail>
             // Changes after an action are computed on the page with its text
             // (full mode), so a message such as "Saved" shows up even when the
             // agent reads interactive snapshots. Text nodes get refs too.
-            let (previous, text_body) = if whole_page {
-                let text_body = if mode == SnapshotMode::Full {
-                    rendered.text.clone()
+            let (previous, text_page) = if whole_page {
+                let text_page = if mode == SnapshotMode::Full {
+                    rendered.clone()
                 } else {
                     let opts = RenderOpts {
                         mode: SnapshotMode::Full,
@@ -755,23 +765,38 @@ fn take(run: &Run<'_>, p: &SnapshotParams, inherit: bool) -> Result<Taken, Fail>
                     render(&arena, start, &opts, &mut |frame, backend, role, name| {
                         table.assign(&frames[frame], backend, role, name)
                     })
-                    .text
                 };
                 let previous = table.last.take();
                 table.last = Some(refs::LastSnapshot {
                     version,
                     mode,
-                    body: text_body.clone(),
+                    body: text_page.text.clone(),
                 });
-                (previous, text_body)
+                (previous, text_page)
             } else {
-                (None, String::new())
+                (None, Rendered::default())
             };
-            (rendered, previous, text_body)
+            (rendered, previous, text_page)
         });
+    Ok(Taken {
+        header: header(&url, &title, version, &rendered),
+        body: rendered.text,
+        version,
+        url,
+        title,
+        refs: rendered.refs,
+        truncated: rendered.truncated,
+        picked: rendered.picked,
+        previous,
+        text_page,
+    })
+}
+
+/// The lines above a whole-page snapshot body.
+fn header(url: &str, title: &str, version: u64, rendered: &Rendered) -> String {
     let mut header = format!(
         "url: {url}\ntitle: {}\nsnapshot: v{version}, {} refs{}\n",
-        quoted(&clip(&title, MAX_NAME)),
+        quoted(&clip(title, MAX_NAME)),
         rendered.refs,
         if rendered.truncated {
             ", truncated"
@@ -784,31 +809,26 @@ fn take(run: &Run<'_>, p: &SnapshotParams, inherit: bool) -> Result<Taken, Fail>
             "picked: e{number} is the element the user pointed at in the browser\n"
         ));
     }
-    Ok(Taken {
-        header,
-        body: rendered.text,
-        version,
-        url,
-        title,
-        refs: rendered.refs,
-        truncated: rendered.truncated,
-        picked: rendered.picked,
-        previous,
-        text_body,
-    })
+    header
 }
 
 /// The page snapshot an action returns (see [`after_action`]).
 pub struct Inline {
     pub text: String,
     pub version: u64,
-    /// `full`, `changes` or `unchanged`.
+    /// `full`, `full_text` (the whole page with its text), `changes` or
+    /// `unchanged`.
     pub kind: &'static str,
 }
 
 /// Snapshot of the page after an action: the whole page when there is no
 /// earlier snapshot of this document (a navigation starts a new one), else
 /// only what changed since the last one, when that is clearly shorter.
+///
+/// Changes are found on the page with its text, so a whole page in a mode
+/// that leaves text out (interactive) could hide them: a list item the
+/// action added, a "Saved" message. When it would, the whole page comes
+/// with its text instead.
 pub fn after_action(run: &Run<'_>) -> Result<Inline, Fail> {
     let params = SnapshotParams {
         tab: run.tab().clone(),
@@ -819,20 +839,44 @@ pub fn after_action(run: &Run<'_>) -> Result<Inline, Fail> {
     };
     let taken = take(run, &params, true).map_err(timeout_as_snapshot)?;
     let version = taken.version;
-    let full = || Inline {
-        text: format!("{}{}", taken.header, taken.body),
-        version,
-        kind: "full",
-    };
     let Some(previous) = &taken.previous else {
-        return Ok(full());
+        return Ok(Inline {
+            text: format!("{}{}", taken.header, taken.body),
+            version,
+            kind: "full",
+        });
     };
     let head = format!(
         "url: {}\ntitle: {}\n",
         taken.url,
         quoted(&clip(&taken.title, MAX_NAME))
     );
-    match changes(&previous.body, &taken.text_body) {
+    let found = changes(&previous.body, &taken.text_page.text);
+    let full = || {
+        let hidden = match &found {
+            Some(Changes::Some { text, .. }) => hides_additions(&taken.body, text),
+            _ => false,
+        };
+        if hidden {
+            let page = &taken.text_page;
+            Inline {
+                text: format!(
+                    "{}{}",
+                    header(&taken.url, &taken.title, version, page),
+                    page.text
+                ),
+                version,
+                kind: "full_text",
+            }
+        } else {
+            Inline {
+                text: format!("{}{}", taken.header, taken.body),
+                version,
+                kind: "full",
+            }
+        }
+    };
+    match &found {
         Some(Changes::None) => Ok(Inline {
             text: format!(
                 "{head}snapshot: v{version}, no change since v{} ({} refs)\n",
@@ -845,7 +889,7 @@ pub fn after_action(run: &Run<'_>) -> Result<Inline, Fail> {
             text,
             added,
             removed,
-        }) if text.len() * 10 < (taken.header.len() + taken.body.len()) * 6 => {
+        }) if text.len() * 10 < full().text.len() * 6 => {
             let mut summary = format!(
                 "{head}snapshot: v{version}, changes since v{}: {added} line(s) added, {removed} removed; lines not shown are as before and their refs still work\n",
                 previous.version
@@ -863,6 +907,15 @@ pub fn after_action(run: &Run<'_>) -> Result<Inline, Fail> {
         }
         _ => Ok(full()),
     }
+}
+
+/// Whether `body` leaves out a line that `diff` (from [`changes`]) adds,
+/// such as text that an interactive snapshot does not show.
+fn hides_additions(body: &str, diff: &str) -> bool {
+    let shown: std::collections::HashSet<&str> = body.lines().map(str::trim).collect();
+    diff.lines()
+        .filter_map(|line| line.strip_prefix('+'))
+        .any(|added| !shown.contains(added.trim()))
 }
 
 /// What [`changes`] found between two snapshot bodies.
@@ -1202,6 +1255,50 @@ mod tests {
     fn clip_squashes_whitespace() {
         assert_eq!(clip("  a \n\t b  ", 10), "a b");
         assert_eq!(clip("abcdef", 4), "abc…");
+    }
+
+    #[test]
+    fn an_addition_is_hidden_only_when_the_page_lacks_its_line() {
+        let page = "- document \"Todo\" [ref=e1]\n  - button \"Add\" [focused] [ref=e4]\n";
+        // A flag moved: the page shows the new line.
+        let focus =
+            "@@ document\n- - button \"Add\" [ref=e4]\n+  - button \"Add\" [focused] [ref=e4]\n";
+        assert!(!hides_additions(page, focus));
+        // Text the page leaves out, at any depth.
+        let item =
+            "@@ document\n   - button \"Add\" [focused] [ref=e4]\n+    - text \"Milk\" [ref=e6]\n";
+        assert!(hides_additions(page, item));
+        // Only removals: nothing to show.
+        let gone = "@@ document\n-  - text \"Loading\" [ref=e7]\n";
+        assert!(!hides_additions(page, gone));
+    }
+
+    #[test]
+    fn a_fields_text_is_its_value_shown_once() {
+        let mut field = ax("2", "textbox", "Name", 12, &["3"]);
+        field["value"] = json!({ "type": "string", "value": "Ana" });
+        let nodes = vec![
+            ax("1", "RootWebArea", "Form", 1, &["2", "4"]),
+            field,
+            ax("3", "StaticText", "Ana", 13, &[]),
+            ax("4", "StaticText", "Ana", 14, &[]),
+        ];
+        let mut arena = Vec::new();
+        let root = add_tree(&mut arena, raw(nodes), 0).unwrap();
+        let opts = RenderOpts {
+            mode: SnapshotMode::Full,
+            max_nodes: MAX_NODES,
+            picked: None,
+            origin: None,
+        };
+        let text = render(&arena, root, &opts, &mut numbering()).text;
+        assert!(text.contains("textbox \"Name\" [ref=e2]: Ana\n"), "{text}");
+        // The same text outside the field is the page's own.
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("text \"Ana\""))
+            .collect();
+        assert_eq!(lines, ["  - text \"Ana\" [ref=e3]"], "{text}");
     }
 
     #[test]

@@ -241,6 +241,8 @@ fn attach_snapshot(run: &Run<'_>, result: &mut ActionResult) {
         match inline.kind {
             "unchanged" => "The page snapshot did not change.",
             "changes" => "The changes to the page snapshot follow.",
+            "full_text" =>
+                "The page snapshot follows, with the page's text, because text on it changed.",
             _ => "The page snapshot follows.",
         }
     );
