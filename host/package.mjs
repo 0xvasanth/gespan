@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { resolve, join } from "node:path";
+import { retryWhileLocked } from "./retry-locked.mjs";
 
 // Official Node release checksums, pinned so release builds are reproducible.
 // https://nodejs.org/dist/v24.21.0/SHASUMS256.txt
@@ -160,8 +161,10 @@ for (const target of targets) {
   await rm(join(output, filename), { force: true });
   if (windows) {
     if (process.platform === "win32")
-      ps(
-        `Compress-Archive -Path ${psQuote(join(folder, "*"))} -DestinationPath ${psQuote(join(output, filename))}`,
+      await retryWhileLocked(() =>
+        ps(
+          `Compress-Archive -Path ${psQuote(join(folder, "*"))} -DestinationPath ${psQuote(join(output, filename))} -Force`,
+        ),
       );
     else
       execFileSync("zip", ["-q", "-r", join(output, filename), "."], {
