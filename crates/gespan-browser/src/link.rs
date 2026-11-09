@@ -1282,7 +1282,10 @@ impl Link {
             set_socket_buffer(stream, SocketBuffer::Send, STALL_SOCKET_BUFFER)
                 .expect("size the link's send buffer")
         };
-        let pad = 8 * 1024 * 1024;
+        // Well past what macOS lets a loopback socket autotune its buffers
+        // to (several MiB each way), and under MAX_MESSAGE_BYTES: at 8 MiB
+        // the macOS runner sometimes took the whole frame and never stalled.
+        let pad = 32 * 1024 * 1024;
         let buffered = send_buffer + stall.receive_buffer();
         assert!(
             pad >= 8 * buffered,
