@@ -8,6 +8,8 @@ use std::cell::{Cell, RefCell};
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Row {
     Navigation,
+    /// The Focused layout's project dropdown and gear, under All projects.
+    Project,
     /// The Focused layout's standalone New thread button.
     NewThread,
     Pilots,
@@ -330,7 +332,7 @@ impl Shell {
         }
         let groups = self.project_groups();
         let now = gespan_core::time::now_ms();
-        let mut rows = vec![Row::Navigation, Row::NewThread, Row::Pilots];
+        let mut rows = vec![Row::Navigation, Row::Project, Row::NewThread, Row::Pilots];
         if push_machine_rows(&mut rows, cx) {
             rows.push(Row::Gap);
         }
@@ -530,6 +532,7 @@ impl Shell {
         self.sidebar_list.visible_rows.borrow_mut().push(ix);
         let content = match row {
             Row::Navigation => return self.sidebar_navigation(cx),
+            Row::Project => return self.sidebar_project_row(cx),
             Row::NewThread => return self.sidebar_new_thread(cx),
             Row::Pilots => {
                 return self
@@ -1422,7 +1425,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn new_thread_row_sits_between_navigation_and_pilots(cx: &mut TestAppContext) {
+    fn project_row_sits_between_all_projects_and_new_thread(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let rows = window
             .update(cx, |shell, _, cx| {
@@ -1430,7 +1433,29 @@ mod tests {
                 shell.sidebar_list.rows.clone()
             })
             .unwrap();
-        assert_eq!(rows[..3], [Row::Navigation, Row::NewThread, Row::Pilots]);
+        assert_eq!(
+            rows[..4],
+            [Row::Navigation, Row::Project, Row::NewThread, Row::Pilots]
+        );
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let options = visual.debug_bounds("sidebar-options").unwrap();
+        let all = visual.debug_bounds("sidebar-all-projects").unwrap();
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        let divider = visual.debug_bounds("sidebar-project-divider").unwrap();
+        let project = visual.debug_bounds("sidebar-project-button").unwrap();
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        // The header keeps only the window-level controls.
+        assert!(options.bottom() <= all.top());
+        assert!(all.bottom() <= settings.top());
+        assert!(settings.bottom() <= divider.top());
+        assert!(divider.size.height <= px(1.));
+        assert!(divider.bottom() <= project.top());
+        assert!(project.bottom() <= new.top());
+        assert!(project.right() <= gear.left());
+        assert!((gear.center().y - project.center().y).abs() <= px(1.));
+        assert!(gear.bottom() <= new.top());
     }
 
     #[gpui::test]
@@ -1548,10 +1573,8 @@ mod tests {
         visual.run_until_parked();
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        let options = visual.debug_bounds("sidebar-options").unwrap();
         assert!(project.right() <= gear.left());
-        assert!(gear.right() <= options.left());
-        assert!((gear.center().y - options.center().y).abs() <= px(1.));
+        assert!((gear.center().y - project.center().y).abs() <= px(1.));
         assert!((gear.size.width - gear.size.height).abs() <= px(1.));
         visual.simulate_click(gear.center(), Default::default());
         visual.run_until_parked();
@@ -2254,9 +2277,10 @@ mod tests {
             let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
             let rows = rows(&window, cx);
             assert_eq!(
-                rows[..7],
+                rows[..8],
                 [
                     Row::Navigation,
+                    Row::Project,
                     Row::NewThread,
                     Row::Pilots,
                     Row::MachinesHeading,
