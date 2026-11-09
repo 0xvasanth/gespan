@@ -359,6 +359,7 @@ impl Shell {
                 Entry::Folder { id, sessions } => {
                     (sessions, groups.folder(id).is_some_and(|g| g.collapsed))
                 }
+                Entry::Fixed { id, sessions, .. } => (sessions, groups.fixed_is_collapsed(id)),
                 Entry::Session(_) => continue,
             };
             if !folders {
@@ -439,6 +440,7 @@ impl Shell {
                     sessions,
                     groups.folder(id).is_some_and(|folder| folder.collapsed),
                 ),
+                Entry::Fixed { id, sessions, .. } => (sessions, groups.fixed_is_collapsed(id)),
             };
             rows.push(Row::Group(entry.clone()));
             let expanded = !collapsed || !self.query.is_empty();

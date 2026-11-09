@@ -382,6 +382,7 @@ impl Shell {
             |id| self.session_metadata(id, cx).summary.pinned,
             &self.project_groups(),
             &reminders,
+            &[],
         )
     }
     /// The sessions in the order the sidebar shows them, for stepping.
@@ -1305,6 +1306,14 @@ impl Shell {
                     sessions,
                 )
             }
+            Entry::Fixed { id, name, sessions } => (
+                id.clone(),
+                name.clone(),
+                "folder",
+                None,
+                folders.fixed_is_collapsed(id),
+                sessions,
+            ),
             Entry::Pinned { sessions } if self.workspace.classic_layout => (
                 "pinned".into(),
                 "Pinned".into(),
