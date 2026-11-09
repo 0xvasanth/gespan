@@ -1268,7 +1268,7 @@ impl BrowserHost {
                         ConnectionState::StalePort,
                         Some(NO_BROWSER.into()),
                         None,
-                        Some("no browser executable".into()),
+                        Some(NO_BROWSER.into()),
                     );
                     return;
                 };

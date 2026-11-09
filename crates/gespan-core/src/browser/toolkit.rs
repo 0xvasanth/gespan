@@ -396,20 +396,34 @@ mod tests {
         assert!(!listed_tabs(&kit, 2).contains(&tab));
     }
 
+    /// The in-app browser could not start: the agent is told so, to pass
+    /// on, and never sent to a setup the in-app browser does not have.
     #[test]
-    fn attach_failure_names_the_fix() {
-        let (host, _profile) = unreachable_host(AccessMode::Always);
+    fn a_failed_start_tells_the_agent_what_happened() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = crate::browser::open(dir.path()).unwrap();
+        host.set_executable_for_tests(dir.path().join("no-such-browser"));
+        host.set_settings(gespan_browser::protocol::BrowserSettings {
+            access: AccessMode::Always,
+            ..host.state().settings
+        });
         host.set_toggle(true);
-        wait_for(&host, ConnectionState::NeedsToggle);
         let _turn = begin_turn_on(Some(host.clone()), &typed(1));
-        let kit = Toolkit::with_host(host);
+        let kit = Toolkit::with_host(host.clone());
         let started = Instant::now();
         let opened = kit
             .call(&grant(1), "browser_tabs", json!({"action": "open"}))
             .unwrap();
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(opened["isError"], json!(true), "{opened}");
-        assert!(text(&opened).contains("chrome://inspect"), "{opened}");
+        let message = text(&opened);
+        assert!(message.contains("could not start"), "{message}");
+        assert!(message.contains("no-such-browser"), "{message}");
+        let lower = message.to_lowercase();
+        for gone in ["chrome://inspect", "remote debugging", "your own browser"] {
+            assert!(!lower.contains(gone), "{gone:?}: {message}");
+        }
+        host.set_toggle(false);
     }
 
     #[test]
