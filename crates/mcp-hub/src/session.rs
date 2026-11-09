@@ -360,10 +360,12 @@ impl ServerHandler for Session {
 
 /// A toolkit's value as a result. An object with a `content` array that
 /// decodes as a result is one already, so it keeps its blocks and `isError`;
-/// anything else, or a decode failure, is the value as one text block.
+/// anything else, or a decode failure, is the value as one text block. A
+/// decoded result is marked final like one rmcp builds: without the mark,
+/// decoding leaves `resultType` out and a 2026-07-28 client rejects the reply.
 fn tool_result(value: Value) -> CallToolResult {
     if value["content"].is_array() {
-        if let Ok(result) = serde_json::from_value::<CallToolResult>(value.clone()) {
+        if let Ok(result) = serde_json::from_value::<CallToolResult>(complete(value.clone())) {
             return result;
         }
     }

@@ -105,6 +105,8 @@ fn send(hub: &Hub, method: &str, extra: &[(&str, &str)], body: &str) -> Reply {
 }
 
 const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
+const OLDER: &str = "2025-11-25";
+const NEWER: &str = "2026-07-28";
 
 fn bearer(token: &Token) -> String {
     token.bearer()
@@ -162,7 +164,7 @@ impl<'a> Client<'a> {
             &[
                 ("Authorization", &self.bearer),
                 ("Mcp-Session-Id", &self.session),
-                ("MCP-Protocol-Version", "2025-11-25"),
+                ("MCP-Protocol-Version", OLDER),
             ],
             body,
         )
@@ -497,11 +499,107 @@ fn the_host_names_the_server() {
 
 /// What a client gets back when the toolkit answers with `reply`.
 fn answer(reply: Value) -> Value {
+    answer_at(OLDER, json!({ "reply": reply }))
+}
+
+/// A tools/call as a 2026-07-28 client sends it: no handshake and no session,
+/// the revision and the caller's capabilities in the request's own `_meta`.
+fn call_without_handshake(hub: &Hub, token: &Token, tool: &str, arguments: Value) -> Value {
+    let body = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+        "name":tool,"arguments":arguments,
+        "_meta":{
+            "io.modelcontextprotocol/protocolVersion":NEWER,
+            "io.modelcontextprotocol/clientCapabilities":{},
+            "io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},
+        },
+    }});
+    let reply = send(
+        hub,
+        "POST",
+        &[
+            ("Authorization", &bearer(token)),
+            ("MCP-Protocol-Version", NEWER),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", tool),
+        ],
+        &body.to_string(),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    message(&reply)
+}
+
+/// What a client on `version` gets back for a call with `arguments`.
+fn answer_at(version: &'static str, arguments: Value) -> Value {
     let hub = hub();
     hub.register(Fake::new("visual"));
     let token = hub.mint(grant(1, &["visual"]));
-    let client = Client::connect(&hub, &token);
-    client.call("visual_who", json!({"reply":reply}))["result"].clone()
+    let reply = if version == NEWER {
+        call_without_handshake(&hub, &token, "visual_who", arguments)
+    } else {
+        Client::connect(&hub, &token).call("visual_who", arguments)
+    };
+    assert!(reply["error"].is_null(), "{reply}");
+    reply["result"].clone()
+}
+
+/// Every shape a toolkit's answer can take: blocks of its own, blocks with an
+/// error flag, a plain value, a failure, and blocks naming their own type.
+fn every_kind_of_answer() -> Vec<(&'static str, Value)> {
+    let image = json!({"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"});
+    vec![
+        (
+            "blocks",
+            json!({"reply":{"content":[{"type":"text","text":"hi"}, image]}}),
+        ),
+        (
+            "flagged",
+            json!({"reply":{"content":[{"type":"text","text":"no"}],"isError":true}}),
+        ),
+        ("plain", json!({"reply":{"ok":1}})),
+        ("failed", json!({"fail":true})),
+        (
+            "typed",
+            json!({"reply":{"resultType":"complete","content":[{"type":"text","text":"hi"}]}}),
+        ),
+    ]
+}
+
+#[test]
+fn a_client_on_2026_07_28_gets_a_result_type_on_every_tool_result() {
+    let missing: Vec<_> = every_kind_of_answer()
+        .into_iter()
+        .map(|(kind, arguments)| (kind, answer_at(NEWER, arguments)))
+        .filter(|(_, result)| result["resultType"] != "complete" || !result["content"].is_array())
+        .collect();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
+#[test]
+fn a_client_on_an_older_revision_gets_no_result_type() {
+    for (kind, arguments) in every_kind_of_answer() {
+        let result = answer_at(OLDER, arguments);
+        assert!(result.get("resultType").is_none(), "{kind}: {result}");
+        assert!(result["content"].is_array(), "{kind}: {result}");
+    }
+}
+
+#[test]
+fn blocks_keep_their_content_and_flag_on_2026_07_28() {
+    let result = answer_at(
+        NEWER,
+        json!({"reply":{"content":[{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}],"isError":true}}),
+    );
+    assert_eq!(result["content"][0]["type"], "image");
+    assert_eq!(result["content"][0]["data"], "iVBORw0KGgo=");
+    assert_eq!(result["isError"], true);
+}
+
+#[test]
+fn blocks_naming_a_result_type_other_than_complete_are_wrapped_as_text() {
+    let value = json!({"resultType":"input_required","content":[{"type":"text","text":"hi"}]});
+    let result = answer_at(NEWER, json!({ "reply": value }));
+    assert_eq!(result["resultType"], "complete");
+    assert_eq!(result["content"][0]["text"], value.to_string());
 }
 
 #[test]
