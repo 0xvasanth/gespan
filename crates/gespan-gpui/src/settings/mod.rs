@@ -49,6 +49,7 @@ pub(crate) struct SettingsContext {
     pub pilots: Vec<PilotSetting>,
     pub classic: bool,
     pub new_layout_boxy: bool,
+    pub sidebar: SidebarVisibility,
     /// The selected project, or empty outside one.
     pub cwd: String,
     pub project_label: String,
@@ -70,6 +71,17 @@ pub(crate) struct SettingsContext {
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
 }
+/// Which sidebar entries the workspace shows. Pilots is the `pilots`
+/// preference and travels with the preferences instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct SidebarVisibility {
+    pub search: bool,
+    pub notes: bool,
+    pub automations: bool,
+    pub inbox: bool,
+    pub activity: bool,
+    pub compact: bool,
+}
 impl PartialEq for SettingsContext {
     fn eq(&self, other: &Self) -> bool {
         match (&self.remote, &other.remote) {
@@ -80,6 +92,7 @@ impl PartialEq for SettingsContext {
         self.pilots == other.pilots
             && self.classic == other.classic
             && self.new_layout_boxy == other.new_layout_boxy
+            && self.sidebar == other.sidebar
             && self.cwd == other.cwd
             && self.project_label == other.project_label
             && self.archived == other.archived
@@ -114,6 +127,9 @@ pub(crate) enum SettingsEvent {
     /// The Appearance page's Layout picker: true for Focused, false for Classic.
     NewLayout(bool),
     NewLayoutBoxy(bool),
+    /// The Appearance page's Sidebar switches; the id is the one
+    /// `Shell::change_sidebar_option` takes.
+    SidebarOption(&'static str),
     Section(Section),
     OpenSession(i64),
     Archive(i64, bool),
@@ -506,6 +522,20 @@ impl SettingsView {
             });
         }));
         cx.notify();
+    }
+    /// The Sidebar switches in page order, as Settings last drew them.
+    #[cfg(test)]
+    pub(crate) fn sidebar_switches(&self) -> [bool; 7] {
+        let v = self.ctx.sidebar;
+        [
+            v.search,
+            v.notes,
+            v.automations,
+            v.inbox,
+            self.prefs.pilots,
+            v.activity,
+            v.compact,
+        ]
     }
     pub(crate) fn set_context(&mut self, ctx: SettingsContext, cx: &mut Context<Self>) {
         if self.ctx != ctx {

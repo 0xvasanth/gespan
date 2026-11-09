@@ -112,6 +112,14 @@ impl Shell {
             catalogs,
             classic: self.workspace.classic_layout,
             new_layout_boxy: self.workspace.new_layout_boxy,
+            sidebar: crate::settings::SidebarVisibility {
+                search: self.workspace.sidebar_search_visible,
+                notes: self.workspace.sidebar_notes_visible,
+                automations: self.workspace.sidebar_automations_visible,
+                inbox: self.workspace.sidebar_inbox_visible,
+                activity: self.workspace.sidebar_activity_visible,
+                compact: self.workspace.compact_session_cards,
+            },
             cwd: self.workspace.project.clone(),
             project_label: self.project_label(&self.workspace.project),
             archived,
@@ -202,6 +210,10 @@ impl Shell {
                 SettingsEvent::NewLayoutBoxy(boxy) => {
                     this.workspace.new_layout_boxy = *boxy;
                     this.layout_changed(cx);
+                    this.sync_settings(cx);
+                }
+                SettingsEvent::SidebarOption(id) => {
+                    this.change_sidebar_option(id, cx);
                     this.sync_settings(cx);
                 }
                 SettingsEvent::OpenSession(id) => {

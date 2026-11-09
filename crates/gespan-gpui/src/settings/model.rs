@@ -445,6 +445,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "classic focused new preview sidebar navigation tabs inset workspace card rounded floating linear frame",
     ),
     (
+        "sidebar-search",
+        Section::Appearance,
+        "Sidebar",
+        "search notes automations inbox pilots activity compact view entries show hide",
+    ),
+    (
         "interface-scale",
         Section::Appearance,
         "Interface scale",

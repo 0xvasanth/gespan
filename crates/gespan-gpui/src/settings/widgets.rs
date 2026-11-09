@@ -272,6 +272,13 @@ impl SettingsView {
                     | "rail-pilots-pinned"
                     | "pilot-menu-bar-icon"
                     | "show-archived"
+                    | "sidebar-search"
+                    | "sidebar-notes"
+                    | "sidebar-automations"
+                    | "sidebar-inbox"
+                    | "sidebar-pilots"
+                    | "sidebar-activity"
+                    | "compact-session-cards"
             )
         });
         let stacked = narrow && !toggle_only;

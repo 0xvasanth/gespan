@@ -2773,17 +2773,11 @@ mod tests {
             .unwrap();
         cx.refresh().unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        let options = visual.debug_bounds("sidebar-options").unwrap();
         let pilot = visual.debug_bounds("sidebar-pilot-button").unwrap();
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
-        assert!((options.center().x - pilot.center().x).abs() <= px(1.));
-        assert!((options.center().x - filter.center().x).abs() <= px(1.));
+        assert!((pilot.center().x - filter.center().x).abs() <= px(1.));
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        let search = visual.debug_bounds("sidebar-search-button").unwrap();
         assert_eq!(project.size.height, px(28.));
-        // Search and options sit on the All projects line, above the project.
-        assert!(search.bottom() <= project.top());
-        assert!(search.right() <= options.left());
     }
 
     #[gpui::test]

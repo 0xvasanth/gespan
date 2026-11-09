@@ -871,42 +871,6 @@ impl Shell {
 }
 
 impl Shell {
-    pub(super) fn sidebar_options_menu_items(&self) -> Vec<MenuItem> {
-        vec![
-            MenuAction::new("sidebar-search", "Search")
-                .icon("search")
-                .toggle(self.workspace.sidebar_search_visible)
-                .into(),
-            MenuAction::new("sidebar-notes", "Notes")
-                .icon("note")
-                .toggle(self.workspace.sidebar_notes_visible)
-                .disabled(!self.workspace.preferences.notes)
-                .into(),
-            MenuAction::new("sidebar-automations", "Automations")
-                .icon("zap")
-                .toggle(self.workspace.sidebar_automations_visible)
-                .into(),
-            MenuAction::new("sidebar-inbox", "Inbox")
-                .icon("inbox")
-                .toggle(self.workspace.sidebar_inbox_visible)
-                .into(),
-            MenuAction::new("sidebar-pilots", "Pilots")
-                .icon("ghost")
-                .toggle(self.workspace.preferences.pilots)
-                .into(),
-            MenuAction::new("sidebar-activity", "Activity")
-                .icon("response-activity")
-                .toggle(self.workspace.sidebar_activity_visible)
-                .disabled(!self.workspace.preferences.working_agents)
-                .into(),
-            MenuItem::Separator,
-            MenuAction::new("compact-session-cards", "Compact view")
-                .icon("list-bullet")
-                .toggle(self.workspace.compact_session_cards)
-                .into(),
-        ]
-    }
-
     pub(super) fn change_sidebar_option(&mut self, action: &str, cx: &mut Context<Self>) {
         let value = match action {
             "sidebar-search" => &mut self.workspace.sidebar_search_visible,
@@ -931,7 +895,6 @@ impl Shell {
 
     pub(super) fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let flows_visible = crate::flows::visible(cx);
-        // The Focused layout shows Search as an icon beside Sidebar options.
         let search_field = self.workspace.sidebar_search_visible && self.workspace.classic_layout;
         div()
             .w_full()
@@ -951,19 +914,11 @@ impl Shell {
             .flex_col()
             .gap_px()
             .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .when(!self.workspace.classic_layout, |d| d.pr_1())
-                    .child(
-                        section_label("All projects")
-                            .flex_1()
-                            .debug_selector(|| "sidebar-all-projects".into()),
-                    )
-                    .when(!self.workspace.classic_layout, |d| {
-                        d.child(self.sidebar_line_actions(cx))
-                    }),
+                div().w_full().flex().items_center().child(
+                    section_label("All projects")
+                        .flex_1()
+                        .debug_selector(|| "sidebar-all-projects".into()),
+                ),
             )
             .when(search_field, |d| {
                 d.child(
@@ -1447,15 +1402,12 @@ mod tests {
         );
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let options = visual.debug_bounds("sidebar-options").unwrap();
         let all = visual.debug_bounds("sidebar-all-projects").unwrap();
         let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
         let divider = visual.debug_bounds("sidebar-project-divider").unwrap();
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        // No header row above the list: the options share the label's line.
-        assert!(options.center().y >= all.top() && options.center().y <= all.bottom());
         assert!(all.bottom() <= settings.top());
         assert!(settings.bottom() <= divider.top());
         assert!(divider.size.height <= px(1.));
@@ -1467,7 +1419,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn search_and_options_sit_on_the_all_projects_line(cx: &mut TestAppContext) {
+    fn all_projects_line_shows_only_its_label(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         window
             .update(cx, |shell, _, cx| {
@@ -1480,32 +1432,16 @@ mod tests {
         visual.run_until_parked();
         let sidebar = visual.debug_bounds("sidebar-content").unwrap();
         let all = visual.debug_bounds("sidebar-all-projects").unwrap();
-        let search = visual.debug_bounds("sidebar-search-button").unwrap();
-        let options = visual.debug_bounds("sidebar-options").unwrap();
         // The list starts at the top: nothing sits above the label line.
         assert!(all.top() - sidebar.top() <= px(8.), "{all:?} {sidebar:?}");
-        for (name, button) in [("search", search), ("options", options)] {
-            let centre = button.center().y;
-            assert!(
-                centre >= all.top() && centre <= all.bottom(),
-                "{name} shares the label's band: {button:?} vs {all:?}"
-            );
-            assert!(
-                button.left() >= all.left(),
-                "{name} sits right of the label"
-            );
+        for gone in ["sidebar-search-button", "sidebar-options"] {
+            assert!(visual.debug_bounds(gone).is_none(), "{gone} left the line");
         }
-        assert!(search.right() <= options.left());
-        assert!(options.right() <= sidebar.right());
-        // Both still work from there.
-        visual.simulate_click(search.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, _| assert!(shell.app_search.is_some()))
-            .unwrap();
-        visual.simulate_click(options.center(), Default::default());
-        visual.run_until_parked();
-        assert!(visual.debug_bounds("menu-action-sidebar-search").is_some());
+        // The label runs the line's width, with nothing at its right end.
+        assert!(
+            all.right() >= sidebar.right() - px(16.),
+            "{all:?} {sidebar:?}"
+        );
     }
 
     #[gpui::test]
@@ -1597,16 +1533,25 @@ mod tests {
     }
 
     #[gpui::test]
-    fn focused_search_sits_beside_sidebar_options(cx: &mut TestAppContext) {
+    fn focused_search_opens_from_the_keyboard(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::input::bind(cx);
+            super::super::bind_keys(cx);
+        });
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         assert!(visual.debug_bounds("sidebar-search-field").is_none());
-        let search = visual.debug_bounds("sidebar-search-button").unwrap();
-        let options = visual.debug_bounds("sidebar-options").unwrap();
-        assert!(search.right() <= options.left());
-        assert!((search.center().y - options.center().y).abs() <= px(1.));
-        visual.simulate_click(search.center(), Default::default());
+        assert!(visual.debug_bounds("sidebar-search-button").is_none());
+        window
+            .update(visual, |shell, _, _| assert!(shell.app_search.is_none()))
+            .unwrap();
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        visual.simulate_keystrokes(&format!("{modifier}-k"));
         visual.run_until_parked();
         window
             .update(visual, |shell, _, _| assert!(shell.app_search.is_some()))
@@ -1713,8 +1658,32 @@ mod tests {
         assert!(visual.debug_bounds("sidebar-new-thread").is_none());
     }
 
+    /// Flip a sidebar switch the way a person does: on the Appearance page.
+    fn flip_in_settings(
+        window: gpui::WindowHandle<Shell>,
+        visual: &mut gpui::VisualTestContext,
+        id: &str,
+    ) {
+        window
+            .update(visual, |shell, w, cx| {
+                shell.open_settings(crate::settings::Section::Appearance, w, cx)
+            })
+            .unwrap();
+        visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
+        visual.run_until_parked();
+        let toggle = visual
+            .debug_bounds(Box::leak(format!("settings-toggle-{id}").into_boxed_str()))
+            .unwrap_or_else(|| panic!("Settings has a {id} switch"));
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, w, cx| shell.close_settings(w, cx))
+            .unwrap();
+        visual.run_until_parked();
+    }
+
     #[gpui::test]
-    fn sidebar_options_switch_card_heights_and_persist_without_loading_history(
+    fn compact_view_switch_changes_card_heights_and_persists_without_loading_history(
         cx: &mut TestAppContext,
     ) {
         let (window, _, _) = super::super::tests::window(cx);
@@ -1759,14 +1728,7 @@ mod tests {
                 .unwrap();
             visual.run_until_parked();
             assert_eq!(visual.debug_bounds(selector).unwrap().size.height, px(32.));
-            let options = visual.debug_bounds("sidebar-options").unwrap();
-            visual.simulate_click(options.center(), Default::default());
-            visual.run_until_parked();
-            let compact = visual
-                .debug_bounds("menu-action-compact-session-cards")
-                .unwrap();
-            visual.simulate_click(compact.center(), Default::default());
-            visual.run_until_parked();
+            flip_in_settings(window, visual, "compact-session-cards");
             let row = visual.debug_bounds(selector).unwrap();
             assert_eq!(row.size.height, px(60.));
             let model = visual.debug_bounds(model_selector).unwrap();
@@ -1790,21 +1752,14 @@ mod tests {
                     assert!(!restored.compact_session_cards);
                 })
                 .unwrap();
-            // Switches keep the popover open for more choices.
-            let compact = visual
-                .debug_bounds("menu-action-compact-session-cards")
-                .unwrap();
-            visual.simulate_click(compact.center(), Default::default());
-            visual.run_until_parked();
+            flip_in_settings(window, visual, "compact-session-cards");
             assert_eq!(visual.debug_bounds(selector).unwrap().size.height, px(32.));
             assert!(visual.debug_bounds(model_selector).is_none());
-            visual.simulate_click(options.center(), Default::default());
-            visual.run_until_parked();
         }
     }
 
     #[gpui::test]
-    fn sidebar_visibility_switches_stay_open_preserve_notes_and_survive_restart(
+    fn settings_sidebar_switches_hide_entries_preserve_notes_and_survive_restart(
         cx: &mut TestAppContext,
     ) {
         let (window, _, _) = super::super::tests::window(cx);
@@ -1813,56 +1768,17 @@ mod tests {
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let options = visual.debug_bounds("sidebar-options").unwrap();
-        visual.simulate_click(options.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, cx| {
-                let menu = shell.menu.as_ref().unwrap().menu.read(cx);
-                let bounds = menu.surface_region().get().unwrap();
-                assert_eq!(bounds.left(), options.left());
-                assert_eq!(bounds.size.width, px(184.));
-            })
-            .unwrap();
-        let search = visual.debug_bounds("menu-action-sidebar-search").unwrap();
-        let notes = visual.debug_bounds("menu-action-sidebar-notes").unwrap();
-        assert!(search.bottom() <= notes.top());
-        let automations = visual
-            .debug_bounds("menu-action-sidebar-automations")
-            .unwrap();
-        let inbox = visual.debug_bounds("menu-action-sidebar-inbox").unwrap();
-        let pilots = visual.debug_bounds("menu-action-sidebar-pilots").unwrap();
-        let activity = visual.debug_bounds("menu-action-sidebar-activity").unwrap();
-        let compact = visual
-            .debug_bounds("menu-action-compact-session-cards")
-            .unwrap();
-        assert!(notes.bottom() <= automations.top() && automations.bottom() <= inbox.top());
-        assert!(inbox.bottom() <= pilots.top() && pilots.bottom() <= activity.top());
-        assert!(
-            activity.bottom() < compact.top(),
-            "a divider separates Compact view"
-        );
-        for (action, navigation) in [
-            ("menu-action-sidebar-search", "sidebar-search-button"),
-            ("menu-action-sidebar-notes", "sidebar-navigation-Notes"),
-            (
-                "menu-action-sidebar-automations",
-                "sidebar-navigation-Automations",
-            ),
-            ("menu-action-sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("menu-action-sidebar-pilots", "pilot-intro"),
+        for (id, navigation) in [
+            ("sidebar-notes", "sidebar-navigation-Notes"),
+            ("sidebar-automations", "sidebar-navigation-Automations"),
+            ("sidebar-inbox", "sidebar-navigation-Inbox"),
+            ("sidebar-pilots", "pilot-intro"),
         ] {
-            assert!(visual.debug_bounds(navigation).is_some());
-            let row = visual.debug_bounds(action).unwrap();
-            visual.simulate_click(row.center(), Default::default());
-            visual.run_until_parked();
-            assert!(visual.debug_bounds(navigation).is_none());
-            assert!(
-                visual
-                    .debug_bounds("menu-action-compact-session-cards")
-                    .is_some()
-            );
+            assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
+            flip_in_settings(window, visual, id);
+            assert!(visual.debug_bounds(navigation).is_none(), "{navigation}");
         }
+        flip_in_settings(window, visual, "sidebar-search");
         window
             .update(visual, |shell, _, cx| {
                 assert_eq!(shell.active_app_view, Some(app_views::AppView::Notes));
@@ -1871,16 +1787,10 @@ mod tests {
                     shell.workspace.preferences.notes,
                     "hiding the shortcut leaves Notes enabled"
                 );
-                let menu = shell.menu.as_ref().unwrap().menu.read(cx);
-                for id in [
-                    "sidebar-search",
-                    "sidebar-notes",
-                    "sidebar-automations",
-                    "sidebar-inbox",
-                    "sidebar-pilots",
-                ] {
-                    assert_eq!(menu.toggle_state(id), Some(false));
-                }
+                assert!(!shell.workspace.sidebar_search_visible);
+                assert!(!shell.workspace.sidebar_notes_visible);
+                assert!(!shell.workspace.sidebar_automations_visible);
+                assert!(!shell.workspace.sidebar_inbox_visible);
                 assert!(!cx.global::<crate::settings::Preferences>().pilots);
                 let saved = shell.latest_state.lock().unwrap().clone();
                 let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
@@ -1891,26 +1801,40 @@ mod tests {
                 assert!(!restored.preferences.pilots);
             })
             .unwrap();
-        for (action, navigation) in [
-            ("menu-action-sidebar-search", "sidebar-search-button"),
-            ("menu-action-sidebar-notes", "sidebar-navigation-Notes"),
-            (
-                "menu-action-sidebar-automations",
-                "sidebar-navigation-Automations",
-            ),
-            ("menu-action-sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("menu-action-sidebar-pilots", "pilot-intro"),
-        ] {
-            let row = visual.debug_bounds(action).unwrap();
-            visual.simulate_click(row.center(), Default::default());
-            visual.run_until_parked();
-            assert!(visual.debug_bounds(navigation).is_some());
-        }
-        visual.simulate_click(options.center(), Default::default());
-        visual.run_until_parked();
+        // The switches read the saved state back, not a stale copy.
         window
             .update(visual, |shell, w, cx| {
-                shell.open_settings(crate::settings::Section::Pilots, w, cx)
+                shell.open_settings(crate::settings::Section::Appearance, w, cx);
+                let view = shell.settings.clone().unwrap();
+                let view = view.read(cx);
+                assert_eq!(
+                    view.sidebar_switches(),
+                    [false, false, false, false, false, true, true]
+                );
+                shell.close_settings(w, cx);
+            })
+            .unwrap();
+        for (id, navigation) in [
+            ("sidebar-notes", "sidebar-navigation-Notes"),
+            ("sidebar-automations", "sidebar-navigation-Automations"),
+            ("sidebar-inbox", "sidebar-navigation-Inbox"),
+            ("sidebar-pilots", "pilot-intro"),
+        ] {
+            flip_in_settings(window, visual, id);
+            assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
+        }
+    }
+
+    #[gpui::test]
+    fn pilots_switch_in_sidebar_and_pilots_page_stay_in_step(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        flip_in_settings(window, visual, "sidebar-pilots");
+        window
+            .update(visual, |shell, w, cx| {
+                assert!(!shell.workspace.preferences.pilots);
+                shell.open_settings(crate::settings::Section::Pilots, w, cx);
             })
             .unwrap();
         visual.run_until_parked();
@@ -1921,19 +1845,8 @@ mod tests {
         visual.run_until_parked();
         window
             .update(visual, |shell, w, cx| {
-                assert!(!shell.workspace.preferences.pilots);
+                assert!(shell.workspace.preferences.pilots);
                 shell.close_settings(w, cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        assert!(visual.debug_bounds("pilot-intro").is_none());
-        let options = visual.debug_bounds("sidebar-options").unwrap();
-        visual.simulate_click(options.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, cx| {
-                let menu = shell.menu.as_ref().unwrap().menu.read(cx);
-                assert_eq!(menu.toggle_state("sidebar-pilots"), Some(false));
             })
             .unwrap();
     }
@@ -1959,12 +1872,7 @@ mod tests {
                 .unwrap();
             visual.run_until_parked();
             assert!(visual.debug_bounds("sidebar-activity-card").is_some());
-            let options = visual.debug_bounds("sidebar-options").unwrap();
-            visual.simulate_click(options.center(), Default::default());
-            visual.run_until_parked();
-            let activity = visual.debug_bounds("menu-action-sidebar-activity").unwrap();
-            visual.simulate_click(activity.center(), Default::default());
-            visual.run_until_parked();
+            flip_in_settings(window, visual, "sidebar-activity");
             assert!(visual.debug_bounds("sidebar-activity-card").is_none());
             window
                 .update(visual, |shell, _, cx| {
@@ -1972,16 +1880,12 @@ mod tests {
                     for id in [a, b] {
                         assert!(shell.sessions[&id].read(cx).responding());
                     }
-                    let menu = shell.menu.as_ref().unwrap().menu.read(cx);
-                    assert_eq!(menu.toggle_state("sidebar-activity"), Some(false));
                     let saved = shell.latest_state.lock().unwrap().clone();
                     let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
                     assert!(!restored.sidebar_activity_visible);
                 })
                 .unwrap();
-            let activity = visual.debug_bounds("menu-action-sidebar-activity").unwrap();
-            visual.simulate_click(activity.center(), Default::default());
-            visual.run_until_parked();
+            flip_in_settings(window, visual, "sidebar-activity");
             assert!(visual.debug_bounds("sidebar-activity-card").is_some());
             window
                 .update(visual, |shell, _, _| {
@@ -1990,8 +1894,6 @@ mod tests {
                     assert!(restored.sidebar_activity_visible);
                 })
                 .unwrap();
-            visual.simulate_click(options.center(), Default::default());
-            visual.run_until_parked();
         }
         window
             .update(visual, |shell, _, cx| {

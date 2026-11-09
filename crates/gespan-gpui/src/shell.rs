@@ -402,7 +402,6 @@ pub(crate) enum MenuTarget {
     CompactProjectPicker,
     ProjectRailGroup(String),
     SessionFilter,
-    SidebarOptions,
     /// A project's actions; `rail` adds the project rail's grouping and pinning.
     Project {
         path: String,
@@ -834,7 +833,6 @@ pub(crate) struct Shell {
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
     project_settings_anchor: AnchorSlot,
-    sidebar_options_anchor: AnchorSlot,
     history: VisitHistory,
     /// User navigation invalidates pending requests that would otherwise
     /// focus a new session in a tab or project the user has already left.
@@ -1274,7 +1272,6 @@ impl Shell {
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
             project_settings_anchor: AnchorSlot::default(),
-            sidebar_options_anchor: AnchorSlot::default(),
             history: VisitHistory::default(),
             navigation_revision: 0,
             pending_project_blanks: HashSet::new(),
@@ -5902,18 +5899,6 @@ impl Shell {
         });
         events.push(
             cx.subscribe_in(&menu, window, |this, _, event: &MenuEvent, window, cx| {
-                if let MenuEvent::Picked(id, _) = event
-                    && let Some(open) = this
-                        .menu
-                        .as_ref()
-                        .filter(|m| m.target == MenuTarget::SidebarOptions)
-                {
-                    let menu = open.menu.clone();
-                    this.change_sidebar_option(id, cx);
-                    let items = this.sidebar_options_menu_items();
-                    menu.update(cx, |menu, cx| menu.replace_items(items, cx));
-                    return;
-                }
                 // A long section expands in place.
                 if let MenuEvent::Picked(id, _) = event
                     && let Some(section) = id.strip_prefix(actions::EXPAND)
@@ -6156,12 +6141,6 @@ impl Shell {
                 "Filter sessions".into(),
                 self.filter_menu_items(cx),
                 228.,
-                MenuStyle::Filter,
-            ),
-            MenuTarget::SidebarOptions => (
-                "Sidebar options".into(),
-                self.sidebar_options_menu_items(),
-                184.,
                 MenuStyle::Filter,
             ),
             MenuTarget::ProjectRailAdd => (
@@ -6462,7 +6441,6 @@ impl Shell {
                 self.set_dock_side(side, cx);
             }
             MenuTarget::SessionFilter => self.change_session_filter(action, cx),
-            MenuTarget::SidebarOptions => self.change_sidebar_option(action, cx),
             MenuTarget::Tab(id) => {
                 self.run_title_tab_menu(TitleTab::Session(id), action, window, cx)
             }
@@ -7463,49 +7441,6 @@ impl Shell {
             )
             .into_any()
     }
-    /// Search and Sidebar options, the Focused sidebar's window-level
-    /// controls, at the right end of the All projects line.
-    pub(super) fn sidebar_line_actions(&mut self, cx: &mut Context<Self>) -> gpui::Div {
-        div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap_1()
-            .when(self.workspace.sidebar_search_visible, |d| {
-                d.child(
-                    icon_button_tinted("sidebar-search", "Search", "search", nav_tint("Search"))
-                        .debug_selector(|| "sidebar-search-button".into())
-                        .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if this.app_search.is_some() {
-                                this.close_app_search(window, cx)
-                            } else {
-                                this.focus_search(window, cx)
-                            }
-                        })),
-                )
-            })
-            .child(
-                icon_button("sidebar-options", "Sidebar options", "more-horizontal")
-                    .debug_selector(|| "sidebar-options".into())
-                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
-                    .relative()
-                    .child(self.sidebar_options_anchor.probe())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.menu_open(&MenuTarget::SidebarOptions) {
-                            this.close_menu(cx);
-                        } else {
-                            this.open_menu(
-                                MenuTarget::SidebarOptions,
-                                Anchor::Slot(this.sidebar_options_anchor.clone()),
-                                window,
-                                cx,
-                            );
-                        }
-                    })),
-            )
-    }
-
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(settings) = self.settings.clone() {
             let section = settings.read(cx).section;
@@ -9930,9 +9865,6 @@ impl Render for Shell {
                     )
                     .when(point, |p| p.gap(0.))
                     .when(beside, |p| p.side(Side::Right))
-                    .when(open.target == MenuTarget::SidebarOptions, |p| {
-                        p.align(Align::Start)
-                    })
                     .when(open.target == MenuTarget::Actions, |p| {
                         p.side(Side::Top).align(crate::popover::Align::End)
                     })
