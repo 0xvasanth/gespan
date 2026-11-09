@@ -22,8 +22,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use gespan_browser::live::{KeyEvent, LiveInput};
 use gespan_browser::protocol::{
-    AccessMode, ActionRequest, BrowserMode, BrowserSettings, ConnectionState,
+    AccessMode, ActionRequest, BrowserMode, BrowserSettings, ConnectionState, TabId,
 };
 use gespan_browser::testing::PageServer;
 use gespan_browser::{agent, launch, BrowserHost};
@@ -261,9 +262,27 @@ document.getElementById('add').onclick = () => {
 };
 </script></body></html>"#;
 
+/// The editing page: one field, and a line that reports its selection,
+/// its value and how many copy and cut events it saw. What the live pane's
+/// Cmd shortcuts did is read from there, not from the clipboard.
+const EDIT: &str = r#"<!doctype html><meta charset="utf-8"><title>edit</title>
+<input aria-label="Field" id="f">
+<p id="out"></p>
+<script>
+const f = document.getElementById('f');
+let copies = 0, cuts = 0;
+document.addEventListener('copy', () => copies++);
+document.addEventListener('cut', () => cuts++);
+setInterval(() => {
+  document.getElementById('out').textContent = 'sel=[' + f.selectionStart + ',' +
+    f.selectionEnd + '] value=[' + f.value + '] copies=' + copies + ' cuts=' + cuts;
+}, 30);
+</script>"#;
+
 fn pages() -> PageServer {
     PageServer::start(|path| match path {
         "/form" => FORM.to_string(),
+        "/edit" => EDIT.to_string(),
         "/todo" => TODO.to_string(),
         "/pop" => "<!doctype html><title>pop</title>\
                    <button onclick=\"window.open('/popped')\">Pop</button>"
@@ -467,4 +486,62 @@ fn the_page_after_a_click_shows_what_it_added() {
         "browser_hover",
         json!({ "tab": tab, "ref": item, "snapshot": false }),
     );
+}
+
+/// The live pane's Cmd+A, C, X, Z and Shift+Cmd+Z, sent as the pane sends
+/// them on macOS (Meta plus the edit's command name): each one edits the
+/// focused field. Without the command Chromium on macOS ignores them.
+#[test]
+#[ignore = "starts the Chrome GESPAN_TEST_CHROME names"]
+fn the_panes_editing_shortcuts_edit_the_page() {
+    let Some(chrome) = chrome() else { return };
+    let pages = pages();
+    let browser = Browser::start(chrome);
+    let tab = browser.open(&pages.url("/edit"));
+    let page = text_of(&browser.ok("browser_snapshot", json!({ "tab": tab })));
+    let field = ref_of(&page, "textbox \"Field\"");
+    browser.ok(
+        "browser_click",
+        json!({ "tab": tab, "ref": field, "snapshot": false }),
+    );
+    let id = TabId(tab.clone());
+    let send = |input: LiveInput| browser.host.live_input("s1", &id, &input).unwrap();
+    send(LiveInput::Text {
+        text: "hello".into(),
+    });
+    let wait = |want: &str| {
+        let mut last = String::new();
+        let seen = eventually(Duration::from_secs(5), || {
+            last = text_of(&browser.call("browser_read", json!({ "tab": tab })));
+            last.contains(want)
+        });
+        assert!(seen, "want {want} in\n{last}");
+    };
+    // Typed: the caret at the end, nothing selected.
+    wait("sel=[5,5] value=[hello] copies=0 cuts=0");
+    // Cmd (Meta, 4) and Shift (8), down then up, the edit with the down.
+    let shortcut = |key: &str, shift: bool, command: &str| {
+        let upper = key.to_ascii_uppercase();
+        for event in [KeyEvent::RawKeyDown, KeyEvent::KeyUp] {
+            send(LiveInput::Key {
+                event,
+                key: key.into(),
+                code: format!("Key{upper}"),
+                text: None,
+                key_code: u32::from(upper.as_bytes()[0]),
+                modifiers: 4 | if shift { 8 } else { 0 },
+                commands: vec![command.into()],
+            });
+        }
+    };
+    shortcut("a", false, "selectAll");
+    wait("sel=[0,5] value=[hello] copies=0 cuts=0");
+    shortcut("c", false, "copy");
+    wait("sel=[0,5] value=[hello] copies=1 cuts=0");
+    shortcut("x", false, "cut");
+    wait("sel=[0,0] value=[] copies=1 cuts=1");
+    shortcut("z", false, "undo");
+    wait("value=[hello] copies=1 cuts=1");
+    shortcut("z", true, "redo");
+    wait("sel=[0,0] value=[] copies=1 cuts=1");
 }

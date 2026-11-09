@@ -70,8 +70,8 @@ fn leave_hint(macos: bool) -> &'static str {
 }
 
 /// The modifier Gespan's own shortcuts use: Cmd on macOS, Ctrl elsewhere.
-fn app_modifier(modifiers: &Modifiers) -> bool {
-    if cfg!(target_os = "macos") {
+fn app_modifier(modifiers: &Modifiers, macos: bool) -> bool {
+    if macos {
         modifiers.platform
     } else {
         modifiers.control
@@ -86,6 +86,35 @@ fn page_shortcut(c: char, shift: bool) -> bool {
         'z' => true,
         _ => false,
     }
+}
+
+/// The editing command a page shortcut runs on macOS, where Chromium
+/// leaves a Cmd key's edit undone unless the key names it. Paste is not
+/// here: the pane types the clipboard's text itself.
+fn edit_command(c: char, shift: bool) -> Option<&'static str> {
+    Some(match (c.to_ascii_lowercase(), shift) {
+        ('a', false) => "selectAll",
+        ('c', false) => "copy",
+        ('x', false) => "cut",
+        ('z', false) => "undo",
+        ('z', true) => "redo",
+        _ => return None,
+    })
+}
+
+/// AltGr off macOS: Windows reports it as Ctrl+Alt, so `@`, `{` or `€`
+/// typed with it come with both held. The character it typed (not the
+/// key's own) is text for the page, not a shortcut.
+fn alt_gr_text(keystroke: &gpui::Keystroke, macos: bool) -> Option<String> {
+    let modifiers = &keystroke.modifiers;
+    if macos || !(modifiers.control && modifiers.alt) || modifiers.platform {
+        return None;
+    }
+    keystroke.key_char.clone().filter(|text| {
+        !text.is_empty()
+            && !text.chars().any(char::is_control)
+            && !text.eq_ignore_ascii_case(&keystroke.key)
+    })
 }
 
 /// A picture on screen: its image and the page viewport it shows, in CSS
@@ -179,6 +208,11 @@ fn raw_key(key: &str) -> Option<(&'static str, &'static str, u32)> {
 /// The tab's input for a key the user pressed in the pane: editing keys,
 /// shortcuts such as select all, and the text the key typed.
 pub(crate) fn key_input(keystroke: &gpui::Keystroke, down: bool) -> Option<LiveInput> {
+    key_input_on(keystroke, down, cfg!(target_os = "macos"))
+}
+
+/// [`key_input`] as it is on macOS (`macos`) or elsewhere.
+fn key_input_on(keystroke: &gpui::Keystroke, down: bool, macos: bool) -> Option<LiveInput> {
     let modifiers = modifier_bits(&keystroke.modifiers);
     if let Some((key, code, key_code)) = raw_key(&keystroke.key) {
         return Some(LiveInput::Key {
@@ -192,7 +226,11 @@ pub(crate) fn key_input(keystroke: &gpui::Keystroke, down: bool) -> Option<LiveI
             text: (down && key_code == 13).then(|| "\r".into()),
             key_code,
             modifiers,
+            commands: Vec::new(),
         });
+    }
+    if let Some(text) = alt_gr_text(keystroke, macos) {
+        return down.then_some(LiveInput::Text { text });
     }
     let command = keystroke.modifiers.control || keystroke.modifiers.platform;
     let mut chars = keystroke.key.chars();
@@ -201,8 +239,10 @@ pub(crate) fn key_input(keystroke: &gpui::Keystroke, down: bool) -> Option<LiveI
         && !keystroke.modifiers.alt
         && c.is_ascii_alphanumeric()
     {
+        let shift = keystroke.modifiers.shift;
+        let app = app_modifier(&keystroke.modifiers, macos);
         // Gespan's shortcuts (Cmd+W, Cmd+T, Cmd+1...) are not the page's.
-        if app_modifier(&keystroke.modifiers) && !page_shortcut(c, keystroke.modifiers.shift) {
+        if app && !page_shortcut(c, shift) {
             return None;
         }
         let upper = c.to_ascii_uppercase();
@@ -221,6 +261,11 @@ pub(crate) fn key_input(keystroke: &gpui::Keystroke, down: bool) -> Option<LiveI
             text: None,
             key_code: u32::from(upper),
             modifiers,
+            commands: (macos && app && down)
+                .then(|| edit_command(c, shift))
+                .flatten()
+                .map(|command| vec![command.to_owned()])
+                .unwrap_or_default(),
         });
     }
     if !down || command {
@@ -930,7 +975,7 @@ impl BrowserPane {
 
     /// A key in the pane; `true` when the tab took it.
     fn key(&mut self, keystroke: &gpui::Keystroke, down: bool, cx: &mut Context<Self>) -> bool {
-        if app_modifier(&keystroke.modifiers)
+        if app_modifier(&keystroke.modifiers, cfg!(target_os = "macos"))
             && !keystroke.modifiers.alt
             && !keystroke.modifiers.shift
             && keystroke.key == "v"
@@ -983,6 +1028,7 @@ mod tests {
                 text: Some("\r".into()),
                 key_code: 13,
                 modifiers: 0,
+                commands: vec![],
             })
         );
         assert_eq!(
@@ -994,6 +1040,7 @@ mod tests {
                 text: None,
                 key_code: 65,
                 modifiers: 2,
+                commands: vec![],
             })
         );
         assert_eq!(
@@ -1056,6 +1103,119 @@ mod tests {
         // Shift+Cmd+A or C are Gespan's (or nobody's), not the page's.
         assert_eq!(key_input(&app_stroke("a", true), true), None);
         assert_eq!(key_input(&app_stroke("c", true), true), None);
+    }
+
+    /// `key` with Cmd on macOS (`macos`) or Ctrl elsewhere, Shift if `shift`.
+    fn shortcut_on(key: &str, shift: bool, macos: bool) -> gpui::Keystroke {
+        gpui::Keystroke {
+            modifiers: Modifiers {
+                platform: macos,
+                control: !macos,
+                shift,
+                ..Default::default()
+            },
+            key: key.into(),
+            key_char: None,
+        }
+    }
+
+    fn commands_of(input: Option<LiveInput>) -> Vec<String> {
+        match input {
+            Some(LiveInput::Key { commands, .. }) => commands,
+            other => panic!("not a key: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_macos_the_editing_shortcuts_name_their_edit_for_chromium() {
+        for (key, shift, edit) in [
+            ("a", false, "selectAll"),
+            ("c", false, "copy"),
+            ("x", false, "cut"),
+            ("z", false, "undo"),
+            ("z", true, "redo"),
+        ] {
+            let stroke = shortcut_on(key, shift, true);
+            let Some(LiveInput::Key {
+                event,
+                modifiers,
+                commands,
+                ..
+            }) = key_input_on(&stroke, true, true)
+            else {
+                panic!("Cmd+{key} goes to the page");
+            };
+            assert_eq!(event, KeyEvent::RawKeyDown);
+            assert_eq!(modifiers, 4 | if shift { 8 } else { 0 }, "Meta (and Shift)");
+            assert_eq!(commands, [edit], "Cmd+{key} shift={shift}");
+            // The edit runs once, with the key down.
+            assert!(commands_of(key_input_on(&stroke, false, true)).is_empty());
+            // Elsewhere Ctrl+key does the edit by itself.
+            let ctrl = shortcut_on(key, shift, false);
+            assert!(commands_of(key_input_on(&ctrl, true, false)).is_empty());
+        }
+        // Paste types the clipboard's text instead ([`BrowserPane::key`]).
+        assert!(commands_of(key_input_on(&shortcut_on("v", false, true), true, true)).is_empty());
+        // Ctrl+A on macOS is the line start in a field, not select all.
+        let ctrl_a = shortcut_on("a", false, false);
+        assert!(commands_of(key_input_on(&ctrl_a, true, true)).is_empty());
+        // Gespan's own shortcuts still never reach the page.
+        assert_eq!(
+            key_input_on(&shortcut_on("w", false, true), true, true),
+            None
+        );
+    }
+
+    /// Ctrl+Alt with `key_char`, as Windows reports AltGr.
+    fn alt_gr(key: &str, key_char: Option<&str>) -> gpui::Keystroke {
+        gpui::Keystroke {
+            modifiers: Modifiers {
+                control: true,
+                alt: true,
+                ..Default::default()
+            },
+            key: key.into(),
+            key_char: key_char.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn alt_gr_characters_are_typed_off_macos() {
+        // German and other layouts: AltGr+Q is @, +7 {, +8 [, +ß \, +E €.
+        for (key, typed) in [
+            ("q", "@"),
+            ("7", "{"),
+            ("0", "}"),
+            ("8", "["),
+            ("9", "]"),
+            ("ß", "\\"),
+            ("e", "€"),
+        ] {
+            let stroke = alt_gr(key, Some(typed));
+            assert_eq!(
+                key_input_on(&stroke, true, false),
+                Some(LiveInput::Text { text: typed.into() }),
+                "AltGr+{key}"
+            );
+            // Typed once, on the way down.
+            assert_eq!(key_input_on(&stroke, false, false), None);
+            // macOS has no AltGr: Ctrl+Option stays as it was.
+            assert_eq!(key_input_on(&stroke, true, true), None, "macOS {key}");
+        }
+        // Ctrl+Alt that types nothing, or only the key itself, is a
+        // shortcut, not text.
+        assert_eq!(key_input_on(&alt_gr("t", None), true, false), None);
+        assert_eq!(key_input_on(&alt_gr("t", Some("t")), true, false), None);
+        assert_eq!(key_input_on(&alt_gr("t", Some("T")), true, false), None);
+        assert_eq!(
+            key_input_on(&alt_gr("t", Some("\u{14}")), true, false),
+            None
+        );
+        // Ctrl alone keeps its shortcuts (Ctrl+A goes to the page as a key).
+        assert!(matches!(
+            key_input_on(&shortcut_on("a", false, false), true, false),
+            Some(LiveInput::Key { .. })
+        ));
     }
 
     #[test]

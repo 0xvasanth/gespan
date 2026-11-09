@@ -167,6 +167,11 @@ pub enum LiveInput {
         key_code: u32,
         #[serde(default)]
         modifiers: u32,
+        /// Editing commands the key runs (`selectAll`, `copy`, `cut`,
+        /// `undo`, `redo`). Chromium on macOS runs a Cmd shortcut's edit
+        /// only when it is named here; elsewhere the key itself does it.
+        #[serde(default)]
+        commands: Vec<String>,
     },
     /// Typed or pasted text, IME results included.
     Text { text: String },
@@ -1190,6 +1195,7 @@ fn command_for(input: &LiveInput) -> (Method, Value) {
             text,
             key_code,
             modifiers,
+            commands,
         } => {
             let mut params = json!({
                 "type": match event {
@@ -1206,6 +1212,9 @@ fn command_for(input: &LiveInput) -> (Method, Value) {
             if let Some(text) = text.as_ref().filter(|_| *event == KeyEvent::KeyDown) {
                 params["text"] = json!(text);
                 params["unmodifiedText"] = json!(text);
+            }
+            if !commands.is_empty() && *event != KeyEvent::KeyUp {
+                params["commands"] = json!(commands);
             }
             (Method::InputDispatchKeyEvent, params)
         }
@@ -1308,6 +1317,43 @@ mod tests {
         }))
         .unwrap();
         assert!(command_for(&up).1.get("text").is_none());
+
+        // No commands unless the key names some: plain keys carry none.
+        assert!(command_for(&enter).1.get("commands").is_none());
+        // Cmd+A on macOS: the edit goes with the key down, never the up.
+        let select_all = |event: KeyEvent| LiveInput::Key {
+            event,
+            key: "a".into(),
+            code: "KeyA".into(),
+            text: None,
+            key_code: 65,
+            modifiers: 4,
+            commands: vec!["selectAll".into()],
+        };
+        let (method, params) = command_for(&select_all(KeyEvent::RawKeyDown));
+        assert_eq!(method, Method::InputDispatchKeyEvent);
+        assert_eq!(
+            params,
+            json!({
+                "type": "rawKeyDown",
+                "key": "a",
+                "code": "KeyA",
+                "windowsVirtualKeyCode": 65,
+                "nativeVirtualKeyCode": 65,
+                "modifiers": 4,
+                "commands": ["selectAll"],
+            })
+        );
+        assert!(command_for(&select_all(KeyEvent::KeyUp))
+            .1
+            .get("commands")
+            .is_none());
+        let redo: LiveInput = serde_json::from_value(json!({
+            "kind": "key", "event": "rawKeyDown", "key": "z", "code": "KeyZ",
+            "keyCode": 90, "modifiers": 12, "commands": ["redo"]
+        }))
+        .unwrap();
+        assert_eq!(command_for(&redo).1["commands"], json!(["redo"]));
 
         let text: LiveInput =
             serde_json::from_value(json!({ "kind": "text", "text": "Ćao" })).unwrap();
