@@ -54,6 +54,7 @@ pub mod usage;
 pub mod user_links;
 pub mod visual;
 pub mod visual_bridge;
+pub mod watching;
 
 pub mod composer;
 pub mod orchestration;

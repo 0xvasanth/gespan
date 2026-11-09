@@ -323,7 +323,7 @@ impl Pilots {
             .map(|owner| owner.read(cx).pilot_session_views(cx))
             .unwrap_or_default();
         // LaunchedSessionCard: each launch's live state, for the chat's cards.
-        let launches = pilot
+        let launches: HashMap<i64, crate::transcript::LaunchView> = pilot
             .launches
             .iter()
             .map(|launch| {
@@ -368,6 +368,11 @@ impl Pilots {
                 (launch.session_id, view)
             })
             .collect();
+        let chat_id = chat.read(cx).summary.id;
+        let watches = gespan_core::watching::delegated(&pilot.launches, chat_id, |id| {
+            launches.get(&id).map(|v| v.state)
+        });
+        chat.update(cx, |c, cx| c.set_delegated_watches(watches, cx));
         let transcript = chat.read(cx).transcript.clone();
         transcript.update(cx, |t, cx| t.set_launches(launches, cx));
         // Only mutable cards need a snapshot; never clone the conversation's
