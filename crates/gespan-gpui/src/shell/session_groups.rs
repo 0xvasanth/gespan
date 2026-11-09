@@ -390,7 +390,7 @@ impl Shell {
 
     /// The project's sidebar entries, reminders first.
     pub(super) fn session_entries(&self, ids: &[i64], cx: &App) -> Vec<Entry> {
-        let fixed = self.fixed_folders(cx);
+        let (groups, fixed) = self.sidebar_groups(cx);
         let reminders: Vec<_> = self
             .reminders
             .iter()
@@ -399,30 +399,45 @@ impl Shell {
         build_list(
             ids,
             |id| self.session_metadata(id, cx).summary.pinned,
-            &self.project_groups(),
+            &groups,
             &reminders,
             &fixed,
         )
     }
-    /// The automatic folders: one per Pilot with launches in this project,
-    /// then Automation runs. The focused sidebar only; the original layout
-    /// keeps its structure.
-    pub(super) fn fixed_folders(&self, cx: &App) -> Vec<FixedFolder> {
+    /// The folders the sidebar lists and its automatic folders: one per
+    /// Pilot with sessions in this project, then Automation runs. The stored
+    /// folder a Pilot files its sessions in (`pilot-<id>`) shows as that
+    /// Pilot's fixed folder, after its launches, so it is not a user folder
+    /// here; the stored data is untouched. The focused sidebar only; the
+    /// original layout keeps its structure.
+    pub(super) fn sidebar_groups(&self, cx: &App) -> (Groups, Vec<FixedFolder>) {
+        let mut groups = self.project_groups();
         if self.workspace.classic_layout {
-            return Vec::new();
+            return (groups, Vec::new());
         }
-        let mut folders: Vec<_> = self
+        let mut folders = Vec::new();
+        let pilots = self
             .pilots
             .as_ref()
-            .map(|pilots| pilots.read(cx).launch_folders(&self.workspace.project))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(id, name, session_ids)| FixedFolder {
-                id: format!("{PILOT_PREFIX}{id}"),
-                name,
-                session_ids,
-            })
-            .collect();
+            .map(|pilots| pilots.read(cx).pilot_folders(&self.workspace.project))
+            .unwrap_or_default();
+        for (id, name, mut session_ids) in pilots {
+            let stored = crate::pilots::pilot_folder_id(&id);
+            if let Some(ix) = groups.folders.iter().position(|f| f.id == stored) {
+                for session in groups.folders.remove(ix).session_ids {
+                    if !session_ids.contains(&session) {
+                        session_ids.push(session);
+                    }
+                }
+            }
+            if !session_ids.is_empty() {
+                folders.push(FixedFolder {
+                    id: format!("{PILOT_PREFIX}{id}"),
+                    name,
+                    session_ids,
+                });
+            }
+        }
         let runs: Vec<i64> = self
             .automation_state
             .session_automations
@@ -436,7 +451,7 @@ impl Shell {
                 session_ids: runs,
             });
         }
-        folders
+        (groups, folders)
     }
     /// The sessions in the order the sidebar shows them, for stepping.
     pub(super) fn sidebar_navigation_ids(&self, cx: &App) -> Vec<i64> {

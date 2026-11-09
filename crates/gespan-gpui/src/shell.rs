@@ -1424,7 +1424,7 @@ impl Shell {
             let mut pilot_chrome = pilots.read(cx).overview_chrome();
             let mut pilot_error = pilots.read(cx).error.clone();
             let mut pilot_session = pilots.read(cx).routed_session();
-            let mut pilot_launches = pilots.read(cx).launch_folders(&this.workspace.project);
+            let mut pilot_launches = pilots.read(cx).pilot_folders(&this.workspace.project);
             this.observations
                 .push(cx.observe(&pilots, move |this, pilots, cx| {
                     let session = pilots.read(cx).routed_session();
@@ -1433,7 +1433,7 @@ impl Shell {
                         this.update_chat_visibility(cx);
                     }
                     // Any Pilot's launch here fills its sidebar folder.
-                    let launches = pilots.read(cx).launch_folders(&this.workspace.project);
+                    let launches = pilots.read(cx).pilot_folders(&this.workspace.project);
                     if launches != pilot_launches {
                         pilot_launches = launches;
                         this.notify_sidebar(cx);

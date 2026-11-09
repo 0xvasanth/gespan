@@ -2860,9 +2860,13 @@ mod tests {
             assert_eq!(grouped(&rows(&window, cx)), [a]);
         }
 
-        #[gpui::test]
-        fn pilot_folder_only_holds_this_projects_launches(cx: &mut TestAppContext) {
-            let (window, a, b) = setup(cx);
+        /// Adds Pilot Scout with launches of `a` here and `b` in another project.
+        fn add_scout(
+            window: &WindowHandle<Shell>,
+            a: i64,
+            b: i64,
+            cx: &mut TestAppContext,
+        ) -> Entity<crate::pilots::Pilots> {
             let pilots = window
                 .update(cx, |shell, _, _| shell.pilots.clone().unwrap())
                 .unwrap();
@@ -2885,14 +2889,52 @@ mod tests {
                 cx.notify();
             });
             cx.run_until_parked();
+            pilots
+        }
+
+        /// The user folders the sidebar lists, as (id, sessions).
+        fn folders(rows: &[Row]) -> Vec<(String, Vec<i64>)> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Group(Entry::Folder { id, sessions }) => {
+                        Some((id.clone(), sessions.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn stored_pilot_folder(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<i64> {
+            window
+                .update(cx, |shell, _, _| {
+                    shell
+                        .project_groups()
+                        .folder("pilot-scout")
+                        .map(|f| f.session_ids.clone())
+                        .unwrap_or_default()
+                })
+                .unwrap()
+        }
+
+        #[gpui::test]
+        fn pilot_folder_only_holds_this_projects_launches(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            let pilots = add_scout(&window, a, b, cx);
+            // Filed the way a launch is: into the stored `pilot-scout` folder.
+            pilots.update(cx, |pilots, cx| pilots.group_launch("scout", a, cx));
+            cx.run_until_parked();
+            assert_eq!(stored_pilot_folder(&window, cx), [a], "stored data is kept");
             cx.update(|cx| {
                 let pilots = pilots.read(cx);
                 assert_eq!(
-                    pilots.launch_folders("/work/gespan"),
-                    [("scout".to_string(), "Scout".to_string(), vec![a])]
+                    pilots.pilot_folders("/work/gespan"),
+                    [
+                        ("scout".to_string(), "Scout".to_string(), vec![a]),
+                        ("elsewhere".to_string(), "Elsewhere".to_string(), vec![]),
+                    ]
                 );
                 assert_eq!(
-                    pilots.launch_folders("/work/another-project"),
+                    pilots.pilot_folders("/work/another-project"),
                     [
                         ("scout".to_string(), "Scout".to_string(), vec![b]),
                         ("elsewhere".to_string(), "Elsewhere".to_string(), vec![b]),
@@ -2904,7 +2946,77 @@ mod tests {
                 fixed(&rows),
                 [("fixed:pilot:scout".into(), "Scout".into(), vec![a])]
             );
+            assert!(
+                folders(&rows).is_empty(),
+                "no user folder named after the Pilot"
+            );
             assert_eq!(loose(&rows), [b]);
+        }
+
+        #[gpui::test]
+        fn stored_pilot_folder_members_join_the_fixed_pilot_folder(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            let pilots = add_scout(&window, a, b, cx);
+            // A Flow session is filed in the Pilot's folder but is not a launch.
+            pilots.update(cx, |pilots, cx| {
+                pilots.group_launch("scout", a, cx);
+                pilots.file_flow_session("scout", "/work/gespan".into(), b, cx);
+            });
+            cx.run_until_parked();
+            let rows = rows(&window, cx);
+            let mut members = fixed(&rows)
+                .into_iter()
+                .find(|(id, ..)| id == "fixed:pilot:scout")
+                .map(|(_, _, sessions)| sessions)
+                .unwrap();
+            members.sort();
+            let mut both = vec![a, b];
+            both.sort();
+            assert_eq!(members, both);
+            assert!(folders(&rows).is_empty());
+            assert!(loose(&rows).is_empty());
+        }
+
+        #[gpui::test]
+        fn a_pilot_session_moved_to_a_user_folder_stays_there(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            let pilots = add_scout(&window, a, b, cx);
+            pilots.update(cx, |pilots, cx| {
+                pilots.group_launch("scout", a, cx);
+                pilots.file_flow_session("scout", "/work/gespan".into(), b, cx);
+            });
+            cx.run_until_parked();
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.update_groups(cx, |g| {
+                        g.create_folder(&[b], "folder:mine".into());
+                    });
+                    shell.invalidate_chrome(cx);
+                })
+                .unwrap();
+            let rows = rows(&window, cx);
+            assert_eq!(
+                fixed(&rows),
+                [("fixed:pilot:scout".into(), "Scout".into(), vec![a])]
+            );
+            assert_eq!(folders(&rows), [("folder:mine".to_string(), vec![b])]);
+        }
+
+        #[gpui::test]
+        fn classic_layout_still_shows_the_stored_pilot_folder(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            let pilots = add_scout(&window, a, b, cx);
+            pilots.update(cx, |pilots, cx| pilots.group_launch("scout", a, cx));
+            cx.run_until_parked();
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.workspace.classic_layout = true;
+                    shell.invalidate_chrome(cx);
+                })
+                .unwrap();
+            let rows = rows(&window, cx);
+            assert!(fixed(&rows).is_empty());
+            assert_eq!(folders(&rows), [("pilot-scout".to_string(), vec![a])]);
         }
 
         #[gpui::test]

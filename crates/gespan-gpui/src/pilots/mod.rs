@@ -11,6 +11,7 @@ mod filters;
 mod floating;
 mod flow_reviews;
 mod host;
+pub(crate) use host::pilot_folder_id;
 mod html;
 #[cfg(not(target_os = "macos"))]
 mod html_inline;
@@ -490,9 +491,9 @@ impl Pilots {
     pub(crate) fn hidden_session(&self, id: i64) -> bool {
         self.is_pilot_session(id)
     }
-    /// Each Pilot's launches in `project`, in roster order, for the
-    /// sidebar's fixed folders: (Pilot id, name, session ids).
-    pub(crate) fn launch_folders(&self, project: &str) -> Vec<(String, String, Vec<i64>)> {
+    /// Every Pilot in roster order with its launches in `project`, even
+    /// none, for the sidebar's fixed folders: (Pilot id, name, session ids).
+    pub(crate) fn pilot_folders(&self, project: &str) -> Vec<(String, String, Vec<i64>)> {
         self.roster
             .pilots
             .iter()
@@ -505,7 +506,6 @@ impl Pilots {
                     .collect();
                 (pilot.id.clone(), pilot.label(), sessions)
             })
-            .filter(|(_, _, sessions)| !sessions.is_empty())
             .collect()
     }
     pub(crate) fn set_preferences(
