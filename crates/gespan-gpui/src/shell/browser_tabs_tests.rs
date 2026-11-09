@@ -272,3 +272,158 @@ fn closing_the_pane_tab_leaves_the_agents_tab_open(cx: &mut TestAppContext) {
         "nothing closed the tab"
     );
 }
+
+#[gpui::test]
+fn leaving_the_thread_stops_its_browser_tab_and_coming_back_resumes_it(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, other, session) = shell(&rig, false, cx);
+    let tab = rig.open_tab(session);
+    refresh(window, cx);
+    let pane = window
+        .update(cx, |shell, _, cx| {
+            shell.reviews[&session]
+                .read(cx)
+                .browser_pane_for_tests(&tab.0)
+                .unwrap()
+        })
+        .unwrap();
+    cx.update(|cx| assert!(pane.read(cx).is_live()));
+    window
+        .update(cx, |shell, w, cx| shell.open(other, w, cx))
+        .unwrap();
+    refresh(window, cx);
+    refresh(window, cx);
+    cx.update(|cx| {
+        assert!(
+            !pane.read(cx).is_live(),
+            "another thread on screen: the tab's view stops"
+        )
+    });
+    window
+        .update(cx, |shell, w, cx| shell.open(session, w, cx))
+        .unwrap();
+    refresh(window, cx);
+    refresh(window, cx);
+    cx.update(|cx| assert!(pane.read(cx).is_live(), "back again, it streams again"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !cx.update(|cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx))) {
+        assert!(std::time::Instant::now() < deadline, "pictures came back");
+    }
+}
+
+/// Gespan's shortcut modifier in keystroke syntax.
+fn app_key(key: &str) -> String {
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    format!("{modifier}-{key}")
+}
+
+#[gpui::test]
+fn the_pane_keeps_the_pages_keys_and_leaves_the_apps_to_gespan(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    cx.update(|cx| {
+        crate::input::bind(cx);
+        bind_keys(cx);
+        crate::browser_pane::bind(cx);
+    });
+    let (window, _, session) = shell(&rig, false, cx);
+    let tab = rig.open_tab(session);
+    refresh(window, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let stage = visual.debug_bounds("browser-pane-stage").unwrap();
+    visual.simulate_click(stage.center(), Default::default());
+    visual.run_until_parked();
+    let key_down = |key: &'static str, modifiers: i64| {
+        rig.received("Input.dispatchKeyEvent", move |p| {
+            p["type"] == "rawKeyDown" && p["key"] == key && p["modifiers"] == modifiers
+        })
+    };
+    // Tab, Shift+Tab and Escape are the page's, not Gespan's focus keys.
+    visual.simulate_keystrokes("tab");
+    assert!(key_down("Tab", 0));
+    visual.simulate_keystrokes("shift-tab");
+    assert!(key_down("Tab", 8));
+    visual.simulate_keystrokes("escape");
+    assert!(key_down("Escape", 0));
+    // Copy is the page's.
+    let app_bit = if cfg!(target_os = "macos") { 4 } else { 2 };
+    visual.simulate_keystrokes(&app_key("c"));
+    assert!(key_down("c", app_bit));
+    // Cmd+W is Gespan's: it closes the browser tab, the page never sees it.
+    visual.simulate_keystrokes(&app_key("w"));
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            assert!(
+                browser_tabs(shell, session, cx).is_empty(),
+                "Cmd+W closed the pane's tab"
+            );
+        })
+        .unwrap();
+    assert!(
+        !rig.server
+            .received()
+            .iter()
+            .any(|r| r.method == "Input.dispatchKeyEvent" && r.params["key"] == "w"),
+        "the page got no W"
+    );
+    assert!(
+        session_tabs(&rig.host.state(), &session_key(session)).any(|t| t.tab.tab == tab),
+        "the agent keeps its tab"
+    );
+}
+
+#[gpui::test]
+fn cmd_escape_moves_the_keys_from_the_page_to_the_composer(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    cx.update(|cx| {
+        crate::input::bind(cx);
+        bind_keys(cx);
+        crate::browser_pane::bind(cx);
+    });
+    let (window, _, session) = shell(&rig, false, cx);
+    rig.open_tab(session);
+    refresh(window, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let stage = visual.debug_bounds("browser-pane-stage").unwrap();
+    visual.simulate_click(stage.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, w, cx| {
+            let pane = shell.reviews[&session]
+                .read(cx)
+                .browser_pane_for_tests(&rig_tab(shell, session, cx))
+                .unwrap();
+            assert!(pane.focus_handle(cx).is_focused(w), "the page has the keys");
+        })
+        .unwrap();
+    visual.simulate_keystrokes(&app_key("escape"));
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, w, cx| {
+            let input = shell.sessions[&session].read(cx).input.clone();
+            assert!(
+                input.focus_handle(cx).is_focused(w),
+                "the composer has them now"
+            );
+        })
+        .unwrap();
+    assert!(
+        !rig.server
+            .received()
+            .iter()
+            .any(|r| r.method == "Input.dispatchKeyEvent"),
+        "the page got no key"
+    );
+}
+
+/// The browser tab the session's review shows.
+fn rig_tab(shell: &Shell, session: i64, cx: &App) -> String {
+    match browser_tabs(shell, session, cx).first() {
+        Some(ReviewTab::Browser { tab, .. }) => tab.clone(),
+        _ => panic!("no browser tab shown"),
+    }
+}

@@ -279,6 +279,9 @@ pub(crate) struct ReviewPane {
     retiring_focus: Vec<FocusHandle>,
     pub(crate) state: ReviewState,
     sources: Vec<Source>,
+    /// The shell drew this pane in its last frame. A thread the user left
+    /// stays `visible`, so only this says its browser tab is off screen.
+    drawn: bool,
     /// Search results share one replaceable file tab until it is pinned or edited.
     preview_path: Option<String>,
     visible: bool,
@@ -400,6 +403,7 @@ impl ReviewPane {
                 ..state
             },
             sources: Vec::new(),
+            drawn: true,
             preview_path: None,
             visible: false,
             closed: false,
@@ -568,9 +572,21 @@ impl ReviewPane {
     fn sync_browsers(&self, cx: &mut Context<Self>) {
         for (ix, source) in self.sources.iter().enumerate() {
             if let Some(pane) = &source.browser {
-                let shown = ix == self.state.active && self.visible && !self.closed;
-                pane.update(cx, |pane, _| pane.set_shown(shown));
+                let shown = ix == self.state.active && self.visible && self.drawn && !self.closed;
+                pane.update(cx, |pane, cx| pane.set_shown(shown, cx));
             }
+        }
+    }
+    /// Whether the keys are somewhere in this pane.
+    pub(crate) fn contains_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
+    /// The shell drew this pane in its last frame, or stopped drawing it.
+    pub(crate) fn set_drawn(&mut self, drawn: bool, cx: &mut Context<Self>) {
+        if self.drawn != drawn {
+            self.drawn = drawn;
+            self.sync_browsers(cx);
+            cx.notify();
         }
     }
     /// Whether one of this pane's tabs shows the browser tab `tab`.

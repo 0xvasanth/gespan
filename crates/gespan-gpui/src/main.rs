@@ -586,6 +586,7 @@ fn main() {
         shell::action_runs::install(cx);
         machines::install(cx);
         browser::install(cx);
+        browser_pane::bind(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

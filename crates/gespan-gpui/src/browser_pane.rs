@@ -18,14 +18,56 @@ use gpui::{
     Point, RenderImage, Role, ScrollDelta, ScrollWheelEvent, SharedString, Subscription, Task,
     Window, div, img, prelude::*, px,
 };
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
-/// A pane not drawn for this long while its tab sends pictures is out of
-/// sight: its view stops until it is drawn again.
-const UNSEEN_FOR: Duration = Duration::from_secs(2);
+gpui::actions!(
+    browser_pane,
+    [
+        /// Tab, Shift+Tab and Escape in the pane go to the page, not to
+        /// Gespan's focus keys.
+        PageTab,
+        PageShiftTab,
+        PageEscape,
+        /// Cmd+Escape (Ctrl+Escape off macOS): the keys leave the page for
+        /// the thread's composer.
+        LeaveBrowser,
+    ]
+);
+
+/// The pane's keys: the page's Tab and Escape, and the way out.
+pub(crate) fn bind(cx: &mut App) {
+    let context = Some("BrowserPane");
+    let leave = if cfg!(target_os = "macos") {
+        "cmd-escape"
+    } else {
+        "ctrl-escape"
+    };
+    cx.bind_keys([
+        gpui::KeyBinding::new("tab", PageTab, context),
+        gpui::KeyBinding::new("shift-tab", PageShiftTab, context),
+        gpui::KeyBinding::new("escape", PageEscape, context),
+        gpui::KeyBinding::new(leave, LeaveBrowser, context),
+    ]);
+}
+
+/// The modifier Gespan's own shortcuts use: Cmd on macOS, Ctrl elsewhere.
+fn app_modifier(modifiers: &Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    }
+}
+
+/// The app-modifier shortcuts the page keeps: select all, copy, cut,
+/// paste and undo (Shift too for redo). Every other one is Gespan's.
+fn page_shortcut(c: char, shift: bool) -> bool {
+    match c.to_ascii_lowercase() {
+        'a' | 'c' | 'v' | 'x' => !shift,
+        'z' => true,
+        _ => false,
+    }
+}
 
 /// A picture on screen: its image and the page viewport it shows, in CSS
 /// pixels.
@@ -64,11 +106,9 @@ pub(crate) struct BrowserPane {
     /// Out of sight (another tab of the review pane shows): the view stops,
     /// and starts again by itself when the pane shows, from the last picture.
     paused: bool,
-    /// The review pane hides this one: it does not start again until shown.
+    /// Not on screen (the review pane shows another tab, is hidden or
+    /// closing, or the thread is not shown): no view until shown again.
     hidden: bool,
-    /// When the pane was last drawn. A pane no longer drawn (its thread is
-    /// not on screen) stops its view while pictures keep coming.
-    drawn_at: Instant,
     _pull: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,6 +182,10 @@ pub(crate) fn key_input(keystroke: &gpui::Keystroke, down: bool) -> Option<LiveI
         && !keystroke.modifiers.alt
         && c.is_ascii_alphanumeric()
     {
+        // Gespan's shortcuts (Cmd+W, Cmd+T, Cmd+1...) are not the page's.
+        if app_modifier(&keystroke.modifiers) && !page_shortcut(c, keystroke.modifiers.shift) {
+            return None;
+        }
         let upper = c.to_ascii_uppercase();
         return Some(LiveInput::Key {
             event: if down {
@@ -285,7 +329,6 @@ impl BrowserPane {
             url: String::new(),
             paused: false,
             hidden: false,
-            drawn_at: Instant::now(),
             _pull: None,
             _subscriptions: subscriptions,
         };
@@ -340,13 +383,18 @@ impl BrowserPane {
     }
 
     /// The review pane shows this tab, or hides it (another tab is in
-    /// front, or the review pane is closing): hidden, the view stops and
-    /// waits to be shown again.
-    pub(crate) fn set_shown(&mut self, shown: bool) {
+    /// front, the review pane is hidden or closing, or its thread is not
+    /// on screen): hidden, the view stops; shown again, the next frame
+    /// starts it again.
+    pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if shown != self.hidden {
+            return;
+        }
         if !shown {
             self.pause();
         }
         self.hidden = !shown;
+        cx.notify();
     }
 
     /// Start the view once the pane has a size; follow later sizes.
@@ -421,11 +469,6 @@ impl BrowserPane {
             cx.notify();
         }
         match picture {
-            // Pictures nobody sees: stop until the pane is drawn again.
-            Some(Ok(_)) if self.drawn_at.elapsed() > UNSEEN_FOR => {
-                self.pause();
-                false
-            }
             Some(Ok(picture)) => {
                 let image = Arc::new(RenderImage::new(vec![image::Frame::new(picture.pixels)]));
                 let old = self.picture.replace(Shown {
@@ -464,10 +507,15 @@ impl BrowserPane {
 
     /// Tests: take what the view sent, as the pull loop would.
     #[cfg(test)]
-    pub(crate) fn pull_for_tests(&mut self, cx: &mut Context<Self>) {
-        if let Some(live) = self.live.clone() {
-            self.accept(pull(&live), cx);
-        }
+    /// `true` when a picture came.
+    pub(crate) fn pull_for_tests(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(live) = self.live.clone() else {
+            return false;
+        };
+        let pulled = pull(&live);
+        let picture = matches!(pulled.0, Some(Ok(_)));
+        self.accept(pulled, cx);
+        picture
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
@@ -645,7 +693,6 @@ fn pull(live: &LivePane) -> Pulled {
 
 impl Render for BrowserPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.drawn_at = Instant::now();
         self.sync_size(window, cx);
         let toolbar = div()
             .h(px(36.))
@@ -714,7 +761,11 @@ impl Render for BrowserPane {
                 div()
                     .id("browser-pane-stage")
                     .debug_selector(|| "browser-pane-stage".into())
+                    .key_context("BrowserPane")
                     .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &PageTab, _, _| this.tap("tab", false)))
+                    .on_action(cx.listener(|this, _: &PageShiftTab, _, _| this.tap("tab", true)))
+                    .on_action(cx.listener(|this, _: &PageEscape, _, _| this.tap("escape", false)))
                     .relative()
                     .flex_1()
                     .min_h_0()
@@ -825,10 +876,30 @@ impl BrowserPane {
         });
     }
 
+    /// A key a binding of the pane took, down and up, for the page.
+    fn tap(&mut self, key: &str, shift: bool) {
+        let keystroke = gpui::Keystroke {
+            modifiers: Modifiers {
+                shift,
+                ..Default::default()
+            },
+            key: key.into(),
+            key_char: None,
+        };
+        for down in [true, false] {
+            if let Some(input) = key_input(&keystroke, down) {
+                self.send(input);
+            }
+        }
+    }
+
     /// A key in the pane; `true` when the tab took it.
     fn key(&mut self, keystroke: &gpui::Keystroke, down: bool, cx: &mut Context<Self>) -> bool {
-        let command = keystroke.modifiers.control || keystroke.modifiers.platform;
-        if command && !keystroke.modifiers.alt && keystroke.key == "v" {
+        if app_modifier(&keystroke.modifiers)
+            && !keystroke.modifiers.alt
+            && !keystroke.modifiers.shift
+            && keystroke.key == "v"
+        {
             if down
                 && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
                 && !text.is_empty()
@@ -906,6 +977,50 @@ mod tests {
         );
         // A shortcut with a modifier the page has no key for stays with Gespan.
         assert_eq!(key_input(&stroke("é", Some("é"), true), true), None);
+    }
+
+    /// A key with Gespan's shortcut modifier (Cmd on macOS, Ctrl elsewhere).
+    fn app_stroke(key: &str, shift: bool) -> gpui::Keystroke {
+        gpui::Keystroke {
+            modifiers: Modifiers {
+                platform: cfg!(target_os = "macos"),
+                control: !cfg!(target_os = "macos"),
+                shift,
+                ..Default::default()
+            },
+            key: key.into(),
+            key_char: None,
+        }
+    }
+
+    #[test]
+    fn app_shortcuts_stay_with_gespan_and_editing_ones_go_to_the_page() {
+        for key in ["w", "t", "n", "1", "9", "k", "b"] {
+            assert_eq!(key_input(&app_stroke(key, false), true), None, "{key}");
+            assert_eq!(key_input(&app_stroke(key, false), false), None, "{key}");
+        }
+        assert_eq!(key_input(&app_stroke(",", false), true), None);
+        for (key, shift) in [
+            ("a", false),
+            ("c", false),
+            ("v", false),
+            ("x", false),
+            ("z", false),
+            ("z", true),
+        ] {
+            let Some(LiveInput::Key {
+                event, code, text, ..
+            }) = key_input(&app_stroke(key, shift), true)
+            else {
+                panic!("{key} shift={shift} goes to the page");
+            };
+            assert_eq!(event, KeyEvent::RawKeyDown);
+            assert_eq!(code, format!("Key{}", key.to_ascii_uppercase()));
+            assert_eq!(text, None);
+        }
+        // Shift+Cmd+A or C are Gespan's (or nobody's), not the page's.
+        assert_eq!(key_input(&app_stroke("a", true), true), None);
+        assert_eq!(key_input(&app_stroke("c", true), true), None);
     }
 
     #[test]

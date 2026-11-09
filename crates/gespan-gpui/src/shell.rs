@@ -870,6 +870,8 @@ pub(crate) struct Shell {
     /// An agent's first tab in the thread the user is looking at, to show
     /// beside it without taking the keys from where they are.
     pending_browser: Option<(i64, crate::review::ReviewTab)>,
+    /// The review panes this frame draws; the others' browser tabs stop.
+    drawn_reviews: Vec<gpui::EntityId>,
     pending_composer_focus: Option<i64>,
     review_focused: bool,
     review_drag: bool,
@@ -1288,6 +1290,7 @@ impl Shell {
             review_slide: None,
             pending_review: None,
             pending_browser: None,
+            drawn_reviews: Vec::new(),
             pending_composer_focus: None,
             review_focused: false,
             review_drag: false,
@@ -1716,6 +1719,44 @@ impl Shell {
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
         }
+    }
+    /// After this frame, tell each review pane whether it was drawn: one
+    /// that was not (its thread is not on screen) stops its browser tab's
+    /// view, and starts it again once drawn.
+    fn track_drawn_reviews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.drawn_reviews.clear();
+        let this = cx.entity();
+        window.defer(cx, move |_, cx| {
+            this.update(cx, |this, cx| {
+                let drawn = std::mem::take(&mut this.drawn_reviews);
+                let reviews: Vec<_> = this
+                    .reviews
+                    .values()
+                    .cloned()
+                    .chain(this.review_slide.as_ref().map(|(_, _, r)| r.clone()))
+                    .collect();
+                for review in reviews {
+                    let shown = drawn.contains(&review.entity_id());
+                    review.update(cx, |r, cx| r.set_drawn(shown, cx));
+                }
+            });
+        });
+    }
+    /// Cmd/Ctrl+Escape in a browser tab: the keys go back to the thread's
+    /// composer, or to the window when the review fills the card.
+    fn leave_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_focused = false;
+        let chat_shown = self
+            .active_review(cx)
+            .is_none_or(|review| !review.read(cx).state.chat_hidden);
+        match self.viewing_session().and_then(|id| self.sessions.get(&id)) {
+            Some(view) if chat_shown => {
+                let focus = view.read(cx).input.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            }
+            _ => window.focus(&self.focus, cx),
+        }
+        cx.notify();
     }
     /// The session of the pane the user is looking at.
     fn viewing_session(&self) -> Option<i64> {
@@ -3131,6 +3172,7 @@ impl Shell {
             r.set_visible(true, cx);
             r.set_deferred(deferred, cx);
         });
+        self.drawn_reviews.push(review.entity_id());
         let chat_hidden = state.chat_hidden;
         let header = if in_split {
             1.
@@ -8950,6 +8992,7 @@ fn enter_from(leaf: &LayoutLeaf) -> (Edge, Rect) {
 }
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_drawn_reviews(window, cx);
         self.keep_visible_idle_agents(cx);
         self.sync_ui_scale(window, cx);
         if self.pilot_panes_unsettled(cx) {
@@ -9343,6 +9386,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &NewClaude, _, cx| this.create(Kind::Claude, cx)))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| this.open_project(cx)))
+            .on_action(cx.listener(
+                |this, _: &crate::browser_pane::LeaveBrowser, window, cx| {
+                    this.leave_browser(window, cx)
+                },
+            ))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 // A pinned tab stays put: ⌘W only closes what sits inside
                 // it, a dock terminal, a review file or one pane of a split.
@@ -9379,9 +9427,11 @@ impl Render for Shell {
                     return;
                 }
                 // A focused review closes its tab first, as a focused file pane does.
-                if this.review_focused
-                    && let Some(review) = this.active_review(cx)
-                {
+                // A browser tab keeps its clicks to itself, so the keys being in
+                // the review counts too.
+                if let Some(review) = this.active_review(cx).filter(|review| {
+                    this.review_focused || review.read(cx).contains_focus(window, cx)
+                }) {
                     review.update(cx, |r, cx| r.close_active(cx));
                     return;
                 }

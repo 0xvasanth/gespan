@@ -206,3 +206,41 @@ fn another_threads_tab_never_shows(cx: &mut TestAppContext) {
     });
     assert!(visual.debug_bounds("browser-pane-ended").is_some());
 }
+
+#[gpui::test]
+fn a_shown_pane_over_a_still_page_keeps_its_view_however_long(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let tab = rig.open_tab(13);
+    let (pane, _window, mut visual) = pane_window(&rig, 13, tab, cx);
+    pull_until(&pane, &mut visual, |pane| pane.picture.is_some());
+    // The page stays still, and nothing draws the pane again, for longer
+    // than any wait inside the view or the pane.
+    std::thread::sleep(Duration::from_millis(2500));
+    visual.update(|_, cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx)));
+    // Then the page moves: its next picture is taken and drawn.
+    rig.push_frame(50);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !visual.update(|_, cx| pane.update(cx, |pane, cx| pane.pull_for_tests(cx))) {
+        assert!(Instant::now() < deadline, "the next picture never came");
+    }
+    visual.update(|_, cx| assert!(pane.read(cx).is_live(), "the view still runs"));
+    let started = || {
+        rig.server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Page.startScreencast")
+            .count()
+    };
+    assert_eq!(
+        started(),
+        1,
+        "the same view all along, never stopped and started again"
+    );
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // And the user's click still reaches the tab.
+    let drawn = visual.debug_bounds("browser-pane-picture").unwrap();
+    visual.simulate_click(drawn.center(), Default::default());
+    visual.run_until_parked();
+    assert!(rig.received("Input.dispatchMouseEvent", |p| p["type"] == "mousePressed"));
+}
