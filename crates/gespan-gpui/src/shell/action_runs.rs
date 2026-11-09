@@ -2,7 +2,7 @@
 //! dock. Core runs them and keeps their output; a project with no window
 //! open just isn't shown.
 use super::Shell;
-use crate::terminal::{Terminal, TerminalEvent};
+use crate::terminal::Terminal;
 use gespan_core::project_actions::runs::{self, Mirror, RunEvent, Status};
 use gpui::{App, AppContext as _, Context, Entity, WeakEntity, WindowHandle};
 use std::{collections::HashMap, sync::Arc};
@@ -138,8 +138,8 @@ impl Shell {
         let dock = self.workspace.docks.entry(project.to_owned()).or_default();
         dock.add_mirror(cwd.clone());
         let terminal = cx.new(|cx| Terminal::mirror(title, cwd, cx));
-        self.observations
-            .push(cx.subscribe(&terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
+        // Its links open like any dock terminal's.
+        self.observe_terminal(&terminal, cx);
         self.terminals
             .entry(project.to_owned())
             .or_default()
@@ -152,6 +152,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::TerminalEvent;
     use crate::workspace::Workspace;
     use gpui::TestAppContext;
 
@@ -272,6 +273,41 @@ mod tests {
                 assert!(!shell.workspace.docks.contains_key(BACKGROUND));
             })
             .unwrap();
+    }
+
+    /// A link clicked in an agent run's tab opens like a dock terminal's: a
+    /// tab of the in-app browser beside the thread on screen.
+    #[gpui::test]
+    fn a_link_in_an_agent_runs_tab_opens_in_the_thread_on_screen(cx: &mut TestAppContext) {
+        use crate::shell::thread_links_tests::{host_tabs, navigated_to, settle, thread_with_link};
+        const LINK: &str = "http://localhost:5174/";
+        let rig = crate::browser_test_rig::Rig::start();
+        let (window, session) = thread_with_link(rig.host.clone(), cx);
+        let mut runs = Tabs::default();
+        cx.update(|cx| runs.apply(started("r1", PROJECT, "dev"), cx));
+        let tab = runs.0["r1"].upgrade().expect("the run's tab");
+        tab.update(cx, |_, cx| cx.emit(TerminalEvent::OpenWebLink(LINK.into())));
+        settle(window, cx);
+        let tabs = host_tabs(&rig.host, session);
+        assert!(matches!(tabs.as_slice(), [(_, true, _)]), "{tabs:?}");
+        assert!(navigated_to(&rig, LINK));
+        assert_eq!(cx.opened_url(), None, "not the system browser");
+    }
+
+    /// Without the in-app browser, a run tab's link still opens: in the
+    /// system browser.
+    #[gpui::test]
+    fn a_link_in_an_agent_runs_tab_without_a_browser_opens_in_the_system_browser(
+        cx: &mut TestAppContext,
+    ) {
+        const LINK: &str = "http://localhost:5174/";
+        let (_window, _, _) = crate::shell::tests::window(cx);
+        let mut runs = Tabs::default();
+        cx.update(|cx| runs.apply(started("r1", PROJECT, "dev"), cx));
+        let tab = runs.0["r1"].upgrade().expect("the run's tab");
+        tab.update(cx, |_, cx| cx.emit(TerminalEvent::OpenWebLink(LINK.into())));
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url().as_deref(), Some(LINK));
     }
 
     #[test]
