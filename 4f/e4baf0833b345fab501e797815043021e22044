@@ -1,0 +1,21 @@
+crates/gespan-browser/src/policy.rs
+  s_35022df10dc1c3::t_def3d37cf88526 923
+crates/gespan-browser/src/protocol.rs
+  s_35022df10dc1c3::t_17a11ae2a41bdf 1197-1200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fe4baf0833b345fab501e797815043021e22044",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
