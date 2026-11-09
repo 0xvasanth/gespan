@@ -977,12 +977,19 @@ mod tests {
         // not know the view yet: the drop's stop finds nothing to stop.
         let rig = rig(1);
         let (release, held) = std::sync::mpsc::channel::<()>();
+        let (arrived, at_gate) = std::sync::mpsc::channel::<()>();
         let pane =
             LivePane::start_gated(rig.host.clone(), 1, rig.tab.clone(), panel(), move || {
+                let _ = arrived.send(());
                 let _ = held.recv();
             })
             .unwrap();
         let threads = pane.running_threads();
+        // Drop only once the view thread is held there: dropped sooner, it
+        // sees the stop before the gate and never reaches it.
+        at_gate
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the view thread reaches the gate");
         drop(pane);
         release.send(()).unwrap();
         threads_end(&threads);
