@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-11-09
+
+### Added
+
+- **In-app browser for agents:** agents can open, read and click through web
+  pages in a browser Gespan runs itself, and you watch and use the same tab
+  live in a pane beside the thread. Links clicked in a thread open there too;
+  Cmd+click (Ctrl+click on Windows and Linux) still opens your normal browser.
+  Agents only get it in threads you typed in, and only after you turn on
+  "Let agents use the browser" in Settings › Browser.
+- **Runs:** a Runs page lists recent automation runs across projects, and the
+  Automations page shows run bars and summary cards with "See all in Runs".
+- **Fork from here:** a Fork button on prompts and responses starts a new chat
+  with the conversation up to that point.
+- **First-run setup:** a new install opens a short setup card: the coding
+  agents Gespan found and their sign-in status, theme and layout, and the
+  project to start in. Existing installs never see it, and Settings › General
+  has "Run setup again".
+
+### Changed
+
+- **Sidebar:** split into an All projects block (Inbox, Automations, Board,
+  Notes, Runs, Settings) and the open project's block (project menu, New
+  thread, Pilots, folders, threads). Each Pilot's threads sit in their own
+  folder, and Pilot avatars show whether they are working, idle or need you.
+
+### Fixed
+
+- **Handoffs:** handing a turn to another agent opens a chat that shows the
+  whole conversation and the handoff recap, instead of a blank chat with a
+  hidden recap.
+
 ## [0.0.11] - 2026-11-09
 
 0.0.9 and 0.0.10 were tagged but never published. 0.0.9's iOS and Android
@@ -2157,7 +2189,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/0xvasanth/gespan/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.11
 [0.0.8]: https://github.com/0xvasanth/gespan/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/0xvasanth/gespan/compare/v0.0.6...v0.0.7
