@@ -172,7 +172,7 @@ impl Shell {
                     .timer(std::time::Duration::from_millis(500))
                     .await;
             }
-            let _ = view.update(cx, |card, cx| card.sign_in_ended(cx));
+            view.update(cx, |card, cx| card.sign_in_ended(cx));
         })
         .detach();
     }
@@ -190,7 +190,7 @@ impl Shell {
                 && let Some(path) = paths.first()
             {
                 let path = path.to_string_lossy().into_owned();
-                let _ = view.update(cx, |card, cx| card.set_folder(path, cx));
+                view.update(cx, |card, cx| card.set_folder(path, cx));
             }
         })
         .detach();

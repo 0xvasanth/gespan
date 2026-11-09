@@ -11,8 +11,6 @@ use gpui::{AnyElement, Context, Div, Window, div, prelude::*, px, rgb};
 
 const TOP: f32 = 36.;
 const GAP: f32 = 28.;
-/// `ui::card`'s bottom padding, which its (empty) inner block always carries.
-
 /// The agents named on the card; the rest are "and 6 more".
 const AGENTS: [&str; 6] = ["Claude Code", "Codex", "Cursor", "Grok", "OpenCode", "Kiro"];
 
