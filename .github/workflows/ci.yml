@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
-      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/desktop-release.test.mjs scripts/package.test.mjs scripts/readme-release.test.mjs
+      - run: node --test scripts/ci-impact.test.mjs scripts/release-channel.test.cjs scripts/desktop-release.test.mjs scripts/package.test.mjs scripts/fetch-sherpa-onnx.test.mjs scripts/readme-release.test.mjs
 
   mobile:
     name: Mobile checks

@@ -91,6 +91,17 @@ jobs:
           # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
           # feed when that is unset.
           node scripts/release-channel.cjs native-config
+      - name: Fetch the sherpa-onnx libraries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The tests build for the runner and the app for matrix.target, so
+          # an Intel Mac build needs both archives.
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          node scripts/fetch-sherpa-onnx.mjs --out "$RUNNER_TEMP/sherpa-onnx" --target "$HOST" --target '${{ matrix.target }}'
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$RUNNER_TEMP/sherpa-onnx" >> "$GITHUB_ENV"
       - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -139,7 +150,7 @@ jobs:
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/native-notary.p8" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
-      - run: node --test scripts/desktop-release.test.mjs scripts/package.test.mjs
+      - run: node --test scripts/desktop-release.test.mjs scripts/package.test.mjs scripts/fetch-sherpa-onnx.test.mjs
       - name: Test native update backend
         run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - name: Reclaim Mac updater-test build space
@@ -240,6 +251,13 @@ jobs:
           # variable (NATIVE_STABLE_UPDATER_ENDPOINT for a stable tag), or the channel's GitHub
           # feed when that is unset.
           node scripts/release-channel.cjs native-config
+      - name: Fetch the sherpa-onnx libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/fetch-sherpa-onnx.mjs --out "$RUNNER_TEMP/sherpa-onnx" --target x86_64-unknown-linux-gnu
+          echo "SHERPA_ONNX_ARCHIVE_DIR=$RUNNER_TEMP/sherpa-onnx" >> "$GITHUB_ENV"
       - run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --release
       - run: node scripts/package.mjs rpm crates/gespan-gpui/target/release/gespan-gpui native-dist x86_64
