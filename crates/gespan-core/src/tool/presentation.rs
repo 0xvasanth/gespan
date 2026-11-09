@@ -131,7 +131,7 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     }
     let mut input = serde_json::from_str::<Value>(&call.input).unwrap_or(Value::Null);
     normalize_inputs(&mut input, 0);
-    if let Some(shown) = ticket_tool(&call.name, &input) {
+    if let Some(shown) = gespan_tool(&call.name, &input) {
         return shown;
     }
     let desktop = call.display.as_ref().unwrap_or(&input["__desktop"]);
@@ -319,17 +319,20 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     shown.target = shown.target.lines().next().unwrap_or("").into();
     shown
 }
-/// The app's own ticket and card tools, as Claude (`mcp__server__tool`), Codex
-/// (`server:tool`) and Kiro (`@server/tool`) name them.
-fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
+/// The app's own app, ticket and card tools, as Claude (`mcp__server__tool`),
+/// Codex (`server:tool` or `server.tool`) and Kiro (`@server/tool`) name them.
+fn gespan_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
     let tool = name
         .strip_prefix("mcp__gespan__")
         .or_else(|| name.strip_prefix("gespan:"))
+        .or_else(|| name.strip_prefix("gespan."))
         .or_else(|| name.strip_prefix("@gespan/"))
         .or_else(|| name.strip_prefix("mcp__gespan_ticket__"))
         .or_else(|| name.strip_prefix("gespan_ticket:"))?;
     let target = string(input, &["target"]);
     let (action, target) = match tool {
+        "app_help" => ("Look up Gespan actions", None),
+        "app_call" => app_action(input),
         "ticket_get" => ("Read ticket", string(input, &["key"])),
         "ticket_comment" => ("Comment on ticket", None),
         "ticket_status" if target.is_some() => ("Change ticket status", target),
@@ -338,9 +341,10 @@ fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
         "card_subtask_done" => ("Tick card subtask", None),
         _ => return None,
     };
+    let target = target.unwrap_or_default();
     Some(ToolPresentation {
         action: action.into(),
-        target: target.unwrap_or_default(),
+        target: target.lines().next().unwrap_or("").into(),
         file_path: None,
         start_line: None,
         command: None,
@@ -348,6 +352,83 @@ fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
         steps: Vec::new(),
     })
 }
+/// Caption for one `app_call`, from its `{action, input}` arguments, so a
+/// Pilot's calls into Gespan read as what they do rather than the tool name.
+fn app_action(arguments: &Value) -> (&'static str, Option<String>) {
+    let mut records = Vec::new();
+    inputs(arguments, 0, &mut records);
+    let Some(action) = records.iter().find_map(|v| string(v, &["action"])) else {
+        return ("Call Gespan", None);
+    };
+    let input = records
+        .iter()
+        .find_map(|v| v.get("input").filter(|input| input.is_object()))
+        .unwrap_or(&Value::Null);
+    let field = |keys: &[&str]| {
+        keys.iter().find_map(|key| match &input[*key] {
+            Value::Number(n) => Some(n.to_string()),
+            _ => string(input, &[key]),
+        })
+    };
+    match action.as_str() {
+        "models.list" => ("List models", None),
+        "sessions.list" => ("List sessions", None),
+        "sessions.read" => ("Read session", field(&["sessionId"])),
+        "sessions.start" => ("Start session", field(&["title", "prompt"])),
+        "sessions.send" => ("Message session", field(&["sessionId"])),
+        "sessions.draft" => ("Draft in session", field(&["sessionId"])),
+        "sessions.stop" => ("Stop session", field(&["sessionId"])),
+        "sessions.archive" => ("Archive session", field(&["sessionId"])),
+        "sessions.delete" => ("Delete session", field(&["sessionId"])),
+        "folders.list" => ("List folders", None),
+        "folders.move" => (
+            "Move session to folder",
+            field(&["newFolderName", "folderId"]),
+        ),
+        "worktrees.list" => ("List worktrees", None),
+        "worktrees.create" => ("Create worktree", field(&["branch"])),
+        "notes.list" => ("List notes", None),
+        "notes.read" => ("Read note", field(&["id"])),
+        "notes.write" => ("Write note", field(&["title", "id"])),
+        "artifacts.list" => ("List artifacts", field(&["kind"])),
+        "artifacts.read" => ("Read artifact", field(&["id"])),
+        "artifacts.write" => ("Write artifact", field(&["title", "id"])),
+        "soul.read" => ("Read soul", None),
+        "soul.update" => ("Update soul", None),
+        "memory.read" => ("Read memory", field(&["topic"])),
+        "memory.search" => ("Search memory", field(&["query"])),
+        "memory.add" => ("Remember", field(&["fact"])),
+        "memory.replace" => ("Update memory", field(&["fact"])),
+        "memory.remove" => ("Forget", field(&["find"])),
+        "habits.list" => ("List habits", None),
+        "habits.add" => ("Add habit", field(&["name"])),
+        "habits.update" => ("Update habit", field(&["name", "id"])),
+        "habits.run" => ("Run habit", field(&["id"])),
+        "habits.remove" => ("Remove habit", field(&["id"])),
+        "chat.card" => ("Show card", field(&["type"])),
+        "flows.list" => ("List flows", None),
+        "flows.read" => ("Read flow", field(&["flowId"])),
+        "flows.save" => ("Save flow", string(&input["flow"], &["name", "id"])),
+        "flows.delete" => ("Delete flow", field(&["flowId"])),
+        "flows.start" => ("Start flow", field(&["goal", "task", "flowId"])),
+        "flows.runs" => ("List flow runs", field(&["goal"])),
+        "flows.run" => ("Read flow run", field(&["runId"])),
+        "flows.editRun" => ("Edit flow run", field(&["runId"])),
+        "flows.cancel" => ("Cancel flow run", field(&["runId"])),
+        "flows.resume" => ("Resume flow run", field(&["runId"])),
+        "flows.approve" => ("Approve flow run", field(&["runId"])),
+        "ticket.get" => ("Read ticket", field(&["key"])),
+        "ticket.comment" => ("Comment on ticket", None),
+        "ticket.status" if field(&["target"]).is_some() => {
+            ("Change ticket status", field(&["target"]))
+        }
+        "ticket.status" => ("Ticket statuses", None),
+        "card.subtasks" => ("List card subtasks", None),
+        "card.subtask_done" => ("Tick card subtask", None),
+        _ => ("Call Gespan", Some(action)),
+    }
+}
+
 /// A step of Gespan's own visual tools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisualStep {
@@ -941,6 +1022,87 @@ mod tests {
         assert_eq!(
             shown("mcp__other__card_subtasks", json!({})).0,
             "mcp__other__card_subtasks"
+        );
+    }
+    #[test]
+    fn app_calls_are_captioned_by_their_action() {
+        let shown = |name: &str, input: Value| {
+            let shown = call(name, input).presentation();
+            (shown.action, shown.target)
+        };
+        let caption = |action: &str, target: &str| (action.to_owned(), target.to_owned());
+        // Kiro names the tool `@gespan/app_call`; the caption must not.
+        for name in [
+            "@gespan/app_call",
+            "mcp__gespan__app_call",
+            "gespan:app_call",
+            "gespan.app_call",
+        ] {
+            assert_eq!(
+                shown(name, json!({"action":"models.list","input":{}})),
+                caption("List models", "")
+            );
+            assert_eq!(
+                shown(
+                    name,
+                    json!({"action":"sessions.read","input":{"sessionId":42}})
+                ),
+                caption("Read session", "42")
+            );
+        }
+        let app = |arguments: Value| shown("@gespan/app_call", arguments);
+        // A titled session shows its title; otherwise the prompt's first line.
+        assert_eq!(
+            app(
+                json!({"action":"sessions.start","input":{"title":"Bump to 0.0.9","prompt":"Release"}})
+            ),
+            caption("Start session", "Bump to 0.0.9")
+        );
+        assert_eq!(
+            app(json!({"action":"sessions.start","input":{"prompt":"Fix the build\nThen push"}})),
+            caption("Start session", "Fix the build")
+        );
+        assert_eq!(
+            app(json!({"action":"memory.search","input":{"query":"release steps"}})),
+            caption("Search memory", "release steps")
+        );
+        assert_eq!(
+            app(json!({"action":"flows.save","input":{"flow":{"name":"Nightly"}}})),
+            caption("Save flow", "Nightly")
+        );
+        assert_eq!(
+            app(json!({"action":"ticket.status","input":{"target":"Done"}})),
+            caption("Change ticket status", "Done")
+        );
+        assert_eq!(
+            app(json!({"action":"ticket.status","input":{}})),
+            caption("Ticket statuses", "")
+        );
+        // Providers that pass arguments as a JSON string or nest them still read.
+        assert_eq!(
+            app(json!(
+                json!({"action":"notes.read","input":{"id":"n-7"}}).to_string()
+            )),
+            caption("Read note", "n-7")
+        );
+        assert_eq!(
+            app(json!({"arguments":{"action":"habits.run","input":"{\"id\":\"h-1\"}"}})),
+            caption("Run habit", "h-1")
+        );
+        // An action this build doesn't know still says which one it was.
+        assert_eq!(
+            app(json!({"action":"widgets.spin","input":{}})),
+            caption("Call Gespan", "widgets.spin")
+        );
+        assert_eq!(app(json!({})), caption("Call Gespan", ""));
+        assert_eq!(
+            shown("@gespan/app_help", json!({})),
+            caption("Look up Gespan actions", "")
+        );
+        // Another server's app_call is not ours.
+        assert_eq!(
+            shown("@other/app_call", json!({"action":"models.list"})).0,
+            "@other/app_call"
         );
     }
     #[test]
