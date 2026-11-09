@@ -61,6 +61,25 @@ fn service_lock(service: &ServiceHandle) -> Result<std::sync::MutexGuard<'_, Ser
 }
 
 impl Shell {
+    /// Loads which sessions automations started, for the Automation runs
+    /// folder, without opening the automation service.
+    pub(super) fn load_automation_sessions(&mut self, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { locked(&store)?.automation_session_ids() });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(sessions) => {
+                    this.automation_state.session_automations = sessions;
+                    this.notify_sidebar(cx);
+                }
+                Err(error) => tracing::warn!(%error, "automation runs failed to load"),
+            });
+        })
+        .detach();
+    }
     pub(super) fn initialize_automations(&mut self, cx: &mut Context<Self>) {
         if self.automation_state.opening || self.automation_state.service.is_some() {
             return;

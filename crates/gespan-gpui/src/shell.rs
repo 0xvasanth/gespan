@@ -1490,6 +1490,9 @@ impl Shell {
         if !secondary {
             this.initialize_automations(cx);
             this.initialize_flows(cx);
+        } else {
+            // Read-only: the first window schedules; this one lists the runs.
+            this.load_automation_sessions(cx);
         }
         // Tests install a fake backend instead of reading the real keychain.
         #[cfg(not(test))]
