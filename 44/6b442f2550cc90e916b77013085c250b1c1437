@@ -19,6 +19,8 @@ crates/gespan-gpui/src/search.rs
   s_7c257aa153458a::t_facda5c016a0f8 87-88,141,225,632-633
   s_7c257aa153458a::t_e922631aab1d7a 1
   s_7c257aa153458a::t_46520d10cf3198 946
+crates/gespan-gpui/src/settings/pages/general.rs
+  s_7c257aa153458a::t_9aecb700051f57 113,128-140
 ---
 {
   "schema_version": "authorship/3.0.0",
