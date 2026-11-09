@@ -78,6 +78,7 @@ pub(super) fn render(
 /// Layout's label sits at the top with 8pt above it; the rest centre.
 fn row(label: &'static str, centred: bool) -> Div {
     div()
+        .w_full()
         .flex()
         .gap(px(16.))
         .when(centred, |d| d.items_center())
@@ -144,6 +145,7 @@ fn layout_cards(classic: bool, cx: &mut Context<SetupCard>) -> impl IntoElement 
             .aria_selected(on)
             .cursor_pointer()
             .flex_1()
+            .flex_basis(px(0.))
             .min_w_0()
             .p(px(12.))
             .rounded(px(12.))
@@ -172,7 +174,11 @@ fn layout_cards(classic: bool, cx: &mut Context<SetupCard>) -> impl IntoElement 
         .id("setup-layout")
         .role(Role::RadioGroup)
         .aria_label("Layout")
+        // Without a zero basis and min width the wrapped lines size the
+        // cards, and they run past the card's right edge.
         .flex_1()
+        .flex_basis(px(0.))
+        .min_w_0()
         .flex()
         .gap(px(10.))
         .child(option(
