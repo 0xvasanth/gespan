@@ -653,10 +653,11 @@ fn dropping_the_registry_ends_its_callbacks() {
     let weak = Arc::downgrade(&h.registry);
     let Harness { registry, .. } = h;
     drop(registry);
-    assert!(
-        weak.upgrade().is_none(),
-        "a connection kept the registry alive"
-    );
+    // A callback running right now holds the registry until it returns;
+    // a connection that kept it for good would time out here.
+    wait_until("the connection to let the registry go", || {
+        weak.strong_count() == 0
+    });
 }
 
 #[test]
