@@ -20,6 +20,13 @@ use gpui::EventEmitter;
 /// Fixed folder ids start with this; they are never user folders.
 const FIXED_PREFIX: &str = "fixed:";
 const AUTOMATION_RUNS: &str = "fixed:automations";
+
+/// Automation runs wears the Automations entry's yellow zap. Only the
+/// Focused row tints its glyph; the classic row paints a folder's colour as
+/// the header fill.
+fn fixed_folder_tint(id: &str, classic: bool) -> Option<gpui::Hsla> {
+    (id == AUTOMATION_RUNS && !classic).then(|| crate::theme::nav_tint("Automations"))?
+}
 const PILOT_PREFIX: &str = "fixed:pilot:";
 
 /// Folds or opens a group header, keyed as the sidebar keys it.
@@ -1412,7 +1419,7 @@ impl Shell {
                 id.clone(),
                 name.clone(),
                 "zap",
-                None,
+                fixed_folder_tint(id, self.workspace.classic_layout),
                 folders.fixed_is_collapsed(id),
                 sessions,
             ),
@@ -2606,6 +2613,20 @@ fn ticket_status_menu(setting: Result<Option<bool>, String>) -> MenuItem {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+
+    #[test]
+    fn automation_runs_takes_the_automations_yellow_only_in_the_focused_sidebar() {
+        let yellow = crate::theme::nav_tint("Automations");
+        assert!(yellow.is_some());
+        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, false), yellow);
+        // Classic paints a folder's colour as its header fill, so it stays plain.
+        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, true), None);
+        // A Pilot's folder shows the Pilot, never the zap's colour.
+        assert_eq!(
+            fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot"), false),
+            None
+        );
+    }
 
     fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
         cx.update(|cx| {

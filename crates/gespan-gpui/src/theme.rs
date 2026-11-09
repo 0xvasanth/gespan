@@ -532,13 +532,14 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
 /// ink. Light themes take a deeper shade to keep the glyph's contrast on white.
 pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
     let (dark, light) = match label {
-        "New" => (0x3DD68C, 0x15874F),
+        "New thread" => (0x3DD68C, 0x15874F),
         "Inbox" => (0x8B95FF, 0x4F5BD5),
         "Notes" => (0xFF7EA8, 0xCC2F66),
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
         "Board" => (0xD08CFF, 0xA13FD6),
         "Runs" => (0x3CCFCF, 0x0E8A8A),
+        "Settings" => (0xFF7A5C, 0xD6452A),
         _ => return None,
     };
     Some(rgb(if is_light() { light } else { dark }).into())
@@ -1116,14 +1117,15 @@ mod nav_tint_tests {
 
     /// Every row the sidebar can list, plus Search. Flows is hidden from
     /// the UI and keeps plain ink.
-    const TINTED: [&str; 7] = [
-        "New",
+    const TINTED: [&str; 8] = [
+        "New thread",
         "Inbox",
         "Notes",
         "Search",
         "Automations",
         "Board",
         "Runs",
+        "Settings",
     ];
 
     #[test]
@@ -1170,6 +1172,7 @@ mod nav_tint_tests {
                 assert_eq!(nav_tile_ink(view.label()), tint, "{theme}: {view:?}");
             }
             assert_eq!(nav_tile_ink("Search"), nav_tint("Search").unwrap());
+            assert_eq!(nav_tile_ink("Settings"), nav_tint("Settings").unwrap());
             // Pages without a tint keep the tile's own ink.
             assert_eq!(
                 nav_tile_ink(AppView::Flows.label()),
