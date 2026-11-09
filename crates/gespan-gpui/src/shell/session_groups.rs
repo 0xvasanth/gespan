@@ -2677,8 +2677,8 @@ mod tests {
         // The New row above already starts a session, so the heading keeps
         // only its filter.
         let new_row = visual
-            .debug_bounds("sidebar-navigation-New")
-            .expect("the New row starts sessions");
+            .debug_bounds("sidebar-new-thread")
+            .expect("the New thread row starts sessions");
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         assert!(
             new_row.bottom() <= filter.top(),
@@ -2695,7 +2695,7 @@ mod tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("sidebar-filter-button").is_some());
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_some());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_some());
         assert!(visual.debug_bounds("sidebar-new-session").is_none());
     }
 
@@ -2714,7 +2714,7 @@ mod tests {
         cx.run_until_parked();
         cx.refresh().unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
         let new = visual.debug_bounds("sidebar-new-session").unwrap();
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         // Just before the filter, on the same line.

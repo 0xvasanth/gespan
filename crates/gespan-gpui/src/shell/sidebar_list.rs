@@ -8,6 +8,8 @@ use std::cell::{Cell, RefCell};
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Row {
     Navigation,
+    /// The Focused layout's standalone New thread button.
+    NewThread,
     Pilots,
     Pinned,
     Folders,
@@ -328,7 +330,7 @@ impl Shell {
         }
         let groups = self.project_groups();
         let now = gespan_core::time::now_ms();
-        let mut rows = vec![Row::Navigation, Row::Pilots];
+        let mut rows = vec![Row::Navigation, Row::NewThread, Row::Pilots];
         if push_machine_rows(&mut rows, cx) {
             rows.push(Row::Gap);
         }
@@ -528,6 +530,7 @@ impl Shell {
         self.sidebar_list.visible_rows.borrow_mut().push(ix);
         let content = match row {
             Row::Navigation => return self.sidebar_navigation(cx),
+            Row::NewThread => return self.sidebar_new_thread(cx),
             Row::Pilots => {
                 return self
                     .pilots
@@ -927,8 +930,6 @@ impl Shell {
         let flows_visible = crate::flows::visible(cx);
         // The Focused layout shows Search as an icon beside Sidebar options.
         let search_field = self.workspace.sidebar_search_visible && self.workspace.classic_layout;
-        let focused = !self.workspace.classic_layout;
-        let blank_session = focused && self.active_session_is_blank(cx);
         div()
             .w_full()
             .px_2()
@@ -940,11 +941,13 @@ impl Shell {
             .pb(px(if self.workspace.classic_layout {
                 8.
             } else {
-                12.
+                // The New thread row below supplies its own top margin.
+                0.
             }))
             .flex()
             .flex_col()
             .gap_px()
+            .child(section_label("All projects").debug_selector(|| "sidebar-all-projects".into()))
             .when(search_field, |d| {
                 d.child(
                     div()
@@ -1012,17 +1015,15 @@ impl Shell {
             })
             .children(
                 [
-                    ("New", "square-plus"),
                     ("Inbox", "inbox"),
-                    ("Notes", "note"),
                     ("Automations", "zap"),
-                    ("Flows", "git-merge"),
                     ("Board", "kanban"),
+                    ("Notes", "note"),
+                    ("Flows", "git-merge"),
+                    ("Settings", "settings"),
                 ]
                 .into_iter()
                 .filter(|(label, _)| match *label {
-                    // Only the Focused layout lists New here.
-                    "New" => focused,
                     "Notes" => {
                         self.workspace.preferences.notes && self.workspace.sidebar_notes_visible
                     }
@@ -1038,11 +1039,7 @@ impl Shell {
                     } else {
                         glyph
                     };
-                    let selected = if label == "New" {
-                        blank_session
-                    } else {
-                        self.app_view_label() == Some(label)
-                    };
+                    let selected = self.app_view_label() == Some(label);
                     let unread = label == "Inbox"
                         && self
                             .inbox
@@ -1075,7 +1072,7 @@ impl Shell {
                         .child(div().flex_1().child(label))
                         .when_some(
                             match label {
-                                "New" => Some(format!("{MOD}T").into_any_element()),
+                                "Settings" => Some(format!("{MOD},").into_any_element()),
                                 "Inbox" if unread => Some(
                                     div()
                                         .flex_shrink_0()
@@ -1124,7 +1121,9 @@ impl Shell {
                             )
                         })
                         .on_click(cx.listener(move |this, _, window, cx| match label {
-                            "New" => this.new_chat(cx),
+                            "Settings" => {
+                                this.open_settings(crate::settings::Section::General, window, cx)
+                            }
                             "Inbox" => this.open_inbox(window, cx),
                             "Notes" => this.open_notes(window, cx),
                             "Automations" => this.open_automations(window, cx),
@@ -1141,6 +1140,73 @@ impl Shell {
                             this.notify_navigation(cx);
                         }))
                 }),
+            )
+            .into_any()
+    }
+    /// The standalone glass button that starts a thread in this project.
+    fn sidebar_new_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.active_session_is_blank(cx);
+        let hovered = self.sidebar_hover == Some("New thread");
+        div()
+            .w_full()
+            .px_2()
+            .pt(px(12.))
+            .pb(px(10.))
+            .child(
+                div()
+                    .id("sidebar-new-thread")
+                    .debug_selector(|| "sidebar-new-thread".into())
+                    .role(Role::Button)
+                    .aria_label("New thread")
+                    .aria_selected(selected)
+                    .cursor_pointer()
+                    .relative()
+                    .h(px(36.))
+                    .px_3()
+                    .rounded(px(crate::modal::RADIUS))
+                    .border_1()
+                    .border_color(content(crate::modal::BORDER))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(content(if selected || hovered { 1. } else { 0.7 }))
+                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
+                    .when(selected || hovered, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .bg(content(if selected { 0.1 } else { 0.06 })),
+                        )
+                    })
+                    .child(icon("square-plus", 16.).text_color(nav_icon_color("New", selected)))
+                    .child(div().flex_1().child("New thread"))
+                    .child(
+                        div()
+                            .debug_selector(|| "sidebar-new-thread-shortcut".into())
+                            .px_1()
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(content(0.12))
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(content(0.55))
+                            .child(format!("{MOD}T")),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        if *hovered {
+                            this.sidebar_hover = Some("New thread");
+                        } else if this.sidebar_hover == Some("New thread") {
+                            this.sidebar_hover = None;
+                        }
+                        this.notify_navigation(cx);
+                    }))
+                    .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx))),
             )
             .into_any()
     }
@@ -1252,12 +1318,12 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use super::age_label;
+    use super::{Row, age_label};
     use chrono::TimeZone;
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn focused_navigation_keeps_only_the_new_shortcut_on_the_filter_axis(cx: &mut TestAppContext) {
+    fn focused_navigation_has_no_trailing_hint_for_new(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
@@ -1266,10 +1332,16 @@ mod tests {
             .unwrap()
             .center()
             .x;
-        let new = visual
-            .debug_bounds("sidebar-navigation-trailing-New")
-            .expect("New shows its shortcut");
-        assert_eq!(new.center().x, axis);
+        // The New thread button keeps its own shortcut chip, not a trailing
+        // navigation slot.
+        assert!(visual.debug_bounds("sidebar-new-thread").is_some());
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-trailing-New")
+                .is_none()
+        );
+        let inbox = visual.debug_bounds("sidebar-navigation-trailing-Inbox");
+        assert!(inbox.is_none_or(|inbox| inbox.center().x == axis));
         // Notes is a plain row: no count beside it.
         assert!(visual.debug_bounds("sidebar-navigation-Notes").is_some());
         assert!(
@@ -1278,6 +1350,147 @@ mod tests {
                 .is_none()
         );
     }
+    fn nav_order(visual: &mut gpui::VisualTestContext) -> Vec<&'static str> {
+        let mut found: Vec<_> = [
+            ("Inbox", "sidebar-navigation-Inbox"),
+            ("Automations", "sidebar-navigation-Automations"),
+            ("Board", "sidebar-navigation-Board"),
+            ("Notes", "sidebar-navigation-Notes"),
+            ("Flows", "sidebar-navigation-Flows"),
+            ("Settings", "sidebar-navigation-Settings"),
+        ]
+        .into_iter()
+        .filter_map(|(label, selector)| {
+            visual
+                .debug_bounds(selector)
+                .map(|bounds| (bounds.top(), label))
+        })
+        .collect();
+        found.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        found.into_iter().map(|(_, label)| label).collect()
+    }
+
+    #[gpui::test]
+    fn all_projects_block_lists_global_entries_in_order(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let label = visual
+            .debug_bounds("sidebar-all-projects")
+            .expect("the block is labelled");
+        let mut expected = vec!["Inbox", "Automations", "Board", "Notes"];
+        let flows = cx_flows_visible(window, visual);
+        if flows {
+            expected.push("Flows");
+        }
+        expected.push("Settings");
+        let order = nav_order(visual);
+        assert_eq!(order, expected);
+        let first = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        assert_eq!(order[0], "Inbox");
+        assert!(label.bottom() <= first.top(), "label heads the entries");
+        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
+    }
+
+    fn cx_flows_visible(
+        window: gpui::WindowHandle<Shell>,
+        visual: &mut gpui::VisualTestContext,
+    ) -> bool {
+        window
+            .update(visual, |_, _, cx| crate::flows::visible(cx))
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn hidden_entries_stay_hidden_but_settings_is_always_shown(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.sidebar_inbox_visible = false;
+                shell.workspace.sidebar_automations_visible = false;
+                shell.workspace.sidebar_notes_visible = false;
+                shell.sidebar_frame.update(cx, |_, cx| cx.notify());
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let order = nav_order(visual);
+        assert!(!order.contains(&"Inbox"));
+        assert!(!order.contains(&"Automations"));
+        assert!(!order.contains(&"Notes"));
+        assert_eq!(order.last(), Some(&"Settings"));
+    }
+
+    #[gpui::test]
+    fn new_thread_row_sits_between_navigation_and_pilots(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let rows = window
+            .update(cx, |shell, _, cx| {
+                shell.refresh_sidebar_structure(cx);
+                shell.sidebar_list.rows.clone()
+            })
+            .unwrap();
+        assert_eq!(rows[..3], [Row::Navigation, Row::NewThread, Row::Pilots]);
+    }
+
+    #[gpui::test]
+    fn classic_layout_keeps_its_navigation(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let rows = window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.sidebar_list.invalidate_structure();
+                shell.refresh_sidebar_structure(cx);
+                shell.sidebar_list.rows.clone()
+            })
+            .unwrap();
+        assert!(!rows.contains(&Row::NewThread));
+        assert!(!rows.contains(&Row::Navigation));
+    }
+
+    #[gpui::test]
+    fn settings_entry_opens_settings(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| assert!(shell.settings.is_none()))
+            .unwrap();
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        visual.simulate_click(settings.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| assert!(shell.settings.is_some()))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn new_thread_button_starts_a_draft(cx: &mut TestAppContext) {
+        let (window, _, active) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // Give the active session a message so New thread must make another.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.sessions[&active]
+                    .update(cx, |session, _| session.summary.has_messages = true);
+            })
+            .unwrap();
+        let before = window
+            .update(visual, |shell, _, _| shell.sessions.len())
+            .unwrap();
+        let button = visual.debug_bounds("sidebar-new-thread").unwrap();
+        visual.simulate_click(button.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.sessions.len(), before + 1);
+                assert_ne!(shell.workspace.active, Some(active));
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn focused_search_sits_beside_sidebar_options(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
@@ -1300,9 +1513,9 @@ mod tests {
         let (window, _, active) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let new = visual.debug_bounds("sidebar-navigation-New").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
         let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
-        assert!(new.bottom() <= inbox.top());
+        assert!(new.top() >= inbox.bottom());
         let selected = |visual: &mut gpui::VisualTestContext| {
             window
                 .update(visual, |shell, _, cx| shell.active_session_is_blank(cx))
@@ -1335,7 +1548,7 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
     }
 
     #[gpui::test]
@@ -1958,9 +2171,10 @@ mod tests {
             let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
             let rows = rows(&window, cx);
             assert_eq!(
-                rows[..6],
+                rows[..7],
                 [
                     Row::Navigation,
+                    Row::NewThread,
                     Row::Pilots,
                     Row::MachinesHeading,
                     Row::Machine("m1".into()),

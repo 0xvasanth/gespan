@@ -12884,13 +12884,13 @@ mod tests {
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
         let before = transcript.read_with(cx, |t, _| t.render_passes);
         cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(133.)), cx)
+            w.simulate_mouse_move(gpui::point(px(40.), px(128.)), cx)
         })
         .unwrap();
         cx.run_until_parked();
         assert_eq!(root.read_with(cx, |s, _| s.sidebar_hover), Some("Inbox"));
         cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(166.)), cx)
+            w.simulate_mouse_move(gpui::point(px(40.), px(227.)), cx)
         })
         .unwrap();
         cx.run_until_parked();
