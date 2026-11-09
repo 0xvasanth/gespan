@@ -755,17 +755,20 @@ impl Shell {
 impl Shell {
     pub(super) fn change_sidebar_option(&mut self, action: &str, cx: &mut Context<Self>) {
         let value = match action {
-            "sidebar-search" => &mut self.workspace.sidebar_search_visible,
-            "sidebar-notes" => &mut self.workspace.sidebar_notes_visible,
+            "sidebar-notes" => &mut self.workspace.preferences.notes,
+            "sidebar-board" => &mut self.workspace.preferences.board,
             "sidebar-automations" => &mut self.workspace.sidebar_automations_visible,
             "sidebar-inbox" => &mut self.workspace.sidebar_inbox_visible,
             "sidebar-pilots" => &mut self.workspace.preferences.pilots,
-            "sidebar-activity" => &mut self.workspace.sidebar_activity_visible,
+            "sidebar-activity" => &mut self.workspace.preferences.working_agents,
             "compact-session-cards" => &mut self.workspace.compact_session_cards,
             _ => return,
         };
         *value = !*value;
-        if action == "sidebar-pilots" {
+        if matches!(
+            action,
+            "sidebar-notes" | "sidebar-board" | "sidebar-pilots" | "sidebar-activity"
+        ) {
             self.apply_preferences(cx);
             self.sync_settings(cx);
         }
@@ -805,9 +808,7 @@ impl Shell {
                 ]
                 .into_iter()
                 .filter(|(label, _)| match *label {
-                    "Notes" => {
-                        self.workspace.preferences.notes && self.workspace.sidebar_notes_visible
-                    }
+                    "Notes" => self.workspace.preferences.notes,
                     "Automations" => self.workspace.sidebar_automations_visible,
                     "Flows" => flows_visible,
                     "Board" => self.workspace.preferences.board,
@@ -1108,7 +1109,7 @@ mod tests {
             .update(visual, |shell, _, cx| {
                 shell.workspace.sidebar_inbox_visible = false;
                 shell.workspace.sidebar_automations_visible = false;
-                shell.workspace.sidebar_notes_visible = false;
+                shell.workspace.preferences.notes = false;
                 shell.sidebar_frame.update(cx, |_, cx| cx.notify());
                 cx.notify();
             })
@@ -1181,7 +1182,6 @@ mod tests {
         let (window, _, _) = super::super::tests::window(cx);
         window
             .update(cx, |shell, _, cx| {
-                shell.workspace.sidebar_search_visible = true;
                 shell.sidebar_list.invalidate_structure();
                 cx.notify();
             })
@@ -1277,7 +1277,6 @@ mod tests {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-search-field").is_none());
         assert!(visual.debug_bounds("sidebar-search-button").is_none());
         window
             .update(visual, |shell, _, _| assert!(shell.app_search.is_none()))
@@ -1485,70 +1484,178 @@ mod tests {
     }
 
     #[gpui::test]
-    fn settings_sidebar_switches_hide_entries_preserve_notes_and_survive_restart(
-        cx: &mut TestAppContext,
-    ) {
+    fn each_sidebar_row_turns_its_feature_off(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let field = |shell: &Shell, id: &str| match id {
+            "sidebar-notes" => shell.workspace.preferences.notes,
+            "sidebar-board" => shell.workspace.preferences.board,
+            "sidebar-pilots" => shell.workspace.preferences.pilots,
+            _ => shell.workspace.preferences.working_agents,
+        };
+        for (id, selector) in [
+            ("sidebar-notes", "sidebar-navigation-Notes"),
+            ("sidebar-board", "sidebar-navigation-Board"),
+            ("sidebar-pilots", "pilot-intro"),
+        ] {
+            assert!(visual.debug_bounds(selector).is_some(), "{selector}");
+            flip_in_settings(window, visual, id);
+            assert!(!window.update(visual, |s, _, _| field(s, id)).unwrap());
+            assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+            flip_in_settings(window, visual, id);
+            assert!(window.update(visual, |s, _, _| field(s, id)).unwrap());
+            assert!(visual.debug_bounds(selector).is_some(), "{selector}");
+        }
+        // Activity has no entry without running chats; the preference is the feature.
+        flip_in_settings(window, visual, "sidebar-activity");
+        window
+            .update(visual, |s, _, _| assert!(!field(s, "sidebar-activity")))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn turning_board_off_with_its_tab_open_closes_it(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, w, cx| {
+                shell.open_board(w, cx);
+                assert_eq!(shell.active_app_view, Some(app_views::AppView::Board));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        flip_in_settings(window, visual, "sidebar-board");
+        window
+            .update(visual, |shell, _, cx| {
+                assert!(!shell.workspace.preferences.board);
+                assert_eq!(shell.active_app_view, None);
+                // The tab stays in the saved order but drops out of the strip.
+                assert!(
+                    !shell
+                        .visible_tabs(cx)
+                        .iter()
+                        .any(|t| matches!(t, TitleTab::App(app_views::AppView::Board)))
+                );
+                let saved = shell.latest_state.lock().unwrap().clone();
+                let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
+                assert!(!restored.preferences.board);
+                cx.notify();
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn turning_notes_off_with_notes_open_closes_it(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         window
             .update(cx, |shell, w, cx| shell.open_notes(w, cx))
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        for (id, navigation) in [
-            ("sidebar-notes", "sidebar-navigation-Notes"),
+        flip_in_settings(window, visual, "sidebar-notes");
+        window
+            .update(visual, |shell, _, _| {
+                assert!(!shell.workspace.preferences.notes);
+                assert_ne!(shell.active_app_view, Some(app_views::AppView::Notes));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_group_lists_its_rows_in_order(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, w, cx| {
+                shell.open_settings(crate::settings::Section::Appearance, w, cx)
+            })
+            .unwrap();
+        visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
+        visual.run_until_parked();
+        let ids = [
+            "sidebar-notes",
+            "sidebar-board",
+            "sidebar-automations",
+            "sidebar-inbox",
+            "sidebar-pilots",
+            "sidebar-activity",
+            "compact-session-cards",
+        ];
+        let tops: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                visual
+                    .debug_bounds(Box::leak(format!("settings-toggle-{id}").into_boxed_str()))
+                    .unwrap_or_else(|| panic!("{id} has a switch"))
+                    .top()
+            })
+            .collect();
+        assert!(tops.windows(2).all(|w| w[0] < w[1]), "{tops:?}");
+        assert!(
+            visual
+                .debug_bounds("settings-toggle-sidebar-search")
+                .is_none()
+        );
+        // The General page no longer repeats these features.
+        window
+            .update(visual, |shell, w, cx| {
+                shell.open_settings(crate::settings::Section::General, w, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        for gone in ["notes", "board", "working-agents"] {
+            assert!(
+                visual
+                    .debug_bounds(Box::leak(
+                        format!("settings-toggle-{gone}").into_boxed_str()
+                    ))
+                    .is_none(),
+                "{gone}"
+            );
+        }
+        window
+            .update(visual, |shell, w, cx| shell.close_settings(w, cx))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_switches_hide_entries_and_survive_restart(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let rows = [
             ("sidebar-automations", "sidebar-navigation-Automations"),
             ("sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("sidebar-pilots", "pilot-intro"),
-        ] {
+        ];
+        for (id, navigation) in rows {
             assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
             flip_in_settings(window, visual, id);
             assert!(visual.debug_bounds(navigation).is_none(), "{navigation}");
         }
-        flip_in_settings(window, visual, "sidebar-search");
+        flip_in_settings(window, visual, "sidebar-notes");
+        flip_in_settings(window, visual, "sidebar-pilots");
         window
-            .update(visual, |shell, _, cx| {
-                assert_eq!(shell.active_app_view, Some(app_views::AppView::Notes));
-                assert!(shell.notes.is_some());
-                assert!(
-                    shell.workspace.preferences.notes,
-                    "hiding the shortcut leaves Notes enabled"
-                );
-                assert!(!shell.workspace.sidebar_search_visible);
-                assert!(!shell.workspace.sidebar_notes_visible);
+            .update(visual, |shell, w, cx| {
                 assert!(!shell.workspace.sidebar_automations_visible);
                 assert!(!shell.workspace.sidebar_inbox_visible);
                 assert!(!cx.global::<crate::settings::Preferences>().pilots);
                 let saved = shell.latest_state.lock().unwrap().clone();
                 let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                assert!(!restored.sidebar_search_visible);
-                assert!(!restored.sidebar_notes_visible);
                 assert!(!restored.sidebar_automations_visible);
                 assert!(!restored.sidebar_inbox_visible);
+                assert!(!restored.preferences.notes);
                 assert!(!restored.preferences.pilots);
-            })
-            .unwrap();
-        // The switches read the saved state back, not a stale copy.
-        window
-            .update(visual, |shell, w, cx| {
+                // The switches read the saved state back, not a stale copy.
                 shell.open_settings(crate::settings::Section::Appearance, w, cx);
                 let view = shell.settings.clone().unwrap();
-                let view = view.read(cx);
                 assert_eq!(
-                    view.sidebar_switches(),
-                    [false, false, false, false, false, true, true]
+                    view.read(cx).sidebar_switches(),
+                    [false, true, false, false, false, true, true]
                 );
                 shell.close_settings(w, cx);
             })
             .unwrap();
-        for (id, navigation) in [
-            ("sidebar-notes", "sidebar-navigation-Notes"),
-            ("sidebar-automations", "sidebar-navigation-Automations"),
-            ("sidebar-inbox", "sidebar-navigation-Inbox"),
-            ("sidebar-pilots", "pilot-intro"),
-        ] {
-            flip_in_settings(window, visual, id);
-            assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
-        }
     }
 
     #[gpui::test]
@@ -1602,13 +1709,13 @@ mod tests {
             assert!(visual.debug_bounds("sidebar-activity-card").is_none());
             window
                 .update(visual, |shell, _, cx| {
-                    assert!(shell.workspace.preferences.working_agents);
+                    assert!(!shell.workspace.preferences.working_agents);
                     for id in [a, b] {
                         assert!(shell.sessions[&id].read(cx).responding());
                     }
                     let saved = shell.latest_state.lock().unwrap().clone();
                     let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                    assert!(!restored.sidebar_activity_visible);
+                    assert!(!restored.preferences.working_agents);
                 })
                 .unwrap();
             flip_in_settings(window, visual, "sidebar-activity");
@@ -1617,7 +1724,7 @@ mod tests {
                 .update(visual, |shell, _, _| {
                     let saved = shell.latest_state.lock().unwrap().clone();
                     let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                    assert!(restored.sidebar_activity_visible);
+                    assert!(restored.preferences.working_agents);
                 })
                 .unwrap();
         }

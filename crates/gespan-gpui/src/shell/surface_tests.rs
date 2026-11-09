@@ -397,14 +397,15 @@ fn switching_board_off_in_settings_saves_it_and_keeps_focus_on_settings(cx: &mut
     window
         .update(visual, |shell, window, cx| {
             Surface::Board.open(shell, window, cx);
-            shell.open_settings(crate::settings::Section::General, window, cx);
+            shell.open_settings(crate::settings::Section::Appearance, window, cx);
         })
         .unwrap();
+    visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
     visual.run_until_parked();
     visual.refresh().unwrap();
     let toggle = visual
-        .debug_bounds("settings-toggle-board")
-        .expect("the Board switch is on the General page");
+        .debug_bounds("settings-toggle-sidebar-board")
+        .expect("the Board switch is in the Appearance sidebar group");
     visual.simulate_click(toggle.center(), Default::default());
     visual.run_until_parked();
     window

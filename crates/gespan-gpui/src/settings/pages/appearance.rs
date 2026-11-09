@@ -377,31 +377,26 @@ impl SettingsView {
     fn sidebar_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let v = self.ctx.sidebar;
         let p = &self.prefs;
-        // (id for Shell::change_sidebar_option, label, on, disabled)
-        let rows: [(&'static str, &'static str, bool, bool); 7] = [
-            ("sidebar-search", "Search", v.search, false),
-            ("sidebar-notes", "Notes", v.notes, !p.notes),
-            ("sidebar-automations", "Automations", v.automations, false),
-            ("sidebar-inbox", "Inbox", v.inbox, false),
-            ("sidebar-pilots", "Pilots", p.pilots, false),
-            (
-                "sidebar-activity",
-                "Activity",
-                v.activity,
-                !p.working_agents,
-            ),
-            ("compact-session-cards", "Compact view", v.compact, false),
+        // (id for Shell::change_sidebar_option, label, on)
+        let rows: [(&'static str, &'static str, bool); 7] = [
+            ("sidebar-notes", "Notes", p.notes),
+            ("sidebar-board", "Board", p.board),
+            ("sidebar-automations", "Automations", v.automations),
+            ("sidebar-inbox", "Inbox", v.inbox),
+            ("sidebar-pilots", "Pilots", p.pilots),
+            ("sidebar-activity", "Activity", p.working_agents),
+            ("compact-session-cards", "Compact view", v.compact),
         ];
         let rows = rows
             .into_iter()
             .enumerate()
-            .map(|(ix, (id, label, on, disabled))| {
+            .map(|(ix, (id, label, on))| {
                 self.row(
                     Some(id),
                     ix == 0,
                     label,
                     None,
-                    vec![self.toggle(id, label, on, disabled, cx, move |_, _, cx| {
+                    vec![self.toggle(id, label, on, false, cx, move |_, _, cx| {
                         cx.emit(SettingsEvent::SidebarOption(id))
                     })],
                 )

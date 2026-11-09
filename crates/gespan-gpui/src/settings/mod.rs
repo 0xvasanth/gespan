@@ -70,15 +70,13 @@ pub(crate) struct SettingsContext {
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
 }
-/// Which sidebar entries the workspace shows. Pilots is the `pilots`
-/// preference and travels with the preferences instead.
+/// Which sidebar entries the workspace shows. Notes, Board, Pilots and
+/// Activity are the `notes`, `board`, `pilots` and `working_agents`
+/// preferences and travel with the preferences instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SidebarVisibility {
-    pub search: bool,
-    pub notes: bool,
     pub automations: bool,
     pub inbox: bool,
-    pub activity: bool,
     pub compact: bool,
 }
 impl PartialEq for SettingsContext {
@@ -525,12 +523,12 @@ impl SettingsView {
     pub(crate) fn sidebar_switches(&self) -> [bool; 7] {
         let v = self.ctx.sidebar;
         [
-            v.search,
-            v.notes,
+            self.prefs.notes,
+            self.prefs.board,
             v.automations,
             v.inbox,
             self.prefs.pilots,
-            v.activity,
+            self.prefs.working_agents,
             v.compact,
         ]
     }

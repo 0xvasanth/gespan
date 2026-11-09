@@ -112,11 +112,8 @@ impl Shell {
             catalogs,
             new_layout_boxy: self.workspace.new_layout_boxy,
             sidebar: crate::settings::SidebarVisibility {
-                search: self.workspace.sidebar_search_visible,
-                notes: self.workspace.sidebar_notes_visible,
                 automations: self.workspace.sidebar_automations_visible,
                 inbox: self.workspace.sidebar_inbox_visible,
-                activity: self.workspace.sidebar_activity_visible,
                 compact: self.workspace.compact_session_cards,
             },
             cwd: self.workspace.project.clone(),
@@ -208,6 +205,19 @@ impl Shell {
                 }
                 SettingsEvent::SidebarOption(id) => {
                     this.change_sidebar_option(id, cx);
+                    // A feature that is off has no view left to stay on.
+                    let prefs = &this.workspace.preferences;
+                    let closed = match this.active_app_view {
+                        Some(app_views::AppView::Board) => !prefs.board,
+                        Some(app_views::AppView::Notes) => !prefs.notes,
+                        _ => false,
+                    };
+                    if closed {
+                        this.close_app_view(window, cx);
+                        if let Some(settings) = &this.settings {
+                            window.focus(&settings.focus_handle(cx), cx);
+                        }
+                    }
                     this.sync_settings(cx);
                 }
                 SettingsEvent::OpenSession(id) => {

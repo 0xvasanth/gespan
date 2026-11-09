@@ -89,31 +89,6 @@ impl SettingsView {
                     |this, on, cx| this.update(cx, |p| p.tab_animations = on),
                 )],
             ),
-            self.row(
-                Some("notes"),
-                false,
-                "Notes",
-                Some("Show Notes in project navigation. Mention saved notes with @note.".into()),
-                vec![
-                    self.toggle("notes", "Notes", p.notes, false, cx, |this, on, cx| {
-                        this.update(cx, |p| p.notes = on)
-                    }),
-                ],
-            ),
-            self.row(
-                Some("board"),
-                false,
-                "Board",
-                Some(
-                    "A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
-                        .into(),
-                ),
-                vec![
-                    self.toggle("board", "Board", p.board, false, cx, |this, on, cx| {
-                        this.update(cx, |p| p.board = on)
-                    }),
-                ],
-            ),
         ];
         if cfg!(target_os = "macos") {
             workspace.push(self.row(
@@ -149,20 +124,6 @@ impl SettingsView {
                 false,
                 cx,
                 |this, on, cx| this.update(cx, |p| p.search_panel = on),
-            )],
-        ));
-        workspace.push(self.row(
-            Some("working-agents"),
-            false,
-            "Working agents",
-            Some("Show active chats across projects. Finished chats stay until opened.".into()),
-            vec![self.toggle(
-                "working-agents",
-                "Working agents",
-                p.working_agents,
-                false,
-                cx,
-                |this, on, cx| this.update(cx, |p| p.working_agents = on),
             )],
         ));
         workspace.push(self.row(

@@ -306,28 +306,10 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "notify alert toast permission reminder background",
     ),
     (
-        "notes",
-        Section::General,
-        "Notes",
-        "notebook markdown rail scratchpad",
-    ),
-    (
-        "board",
-        Section::General,
-        "Board",
-        "kanban cards columns tasks tickets track",
-    ),
-    (
         "quick-composer",
         Section::General,
         "Quick composer",
         "spotlight global shortcut hotkey floating prompt anywhere",
-    ),
-    (
-        "working-agents",
-        Section::General,
-        "Working agents",
-        "live running sessions rail card",
     ),
     (
         "keep-awake",
@@ -433,10 +415,46 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "translucent transparency body window",
     ),
     (
-        "sidebar-search",
+        "sidebar-notes",
         Section::Appearance,
-        "Sidebar",
-        "search notes automations inbox pilots activity compact view entries show hide",
+        "Notes",
+        "notebook markdown rail scratchpad sidebar show hide",
+    ),
+    (
+        "sidebar-board",
+        Section::Appearance,
+        "Board",
+        "kanban cards columns tasks tickets track sidebar show hide",
+    ),
+    (
+        "sidebar-activity",
+        Section::Appearance,
+        "Working agents",
+        "activity live running sessions rail card sidebar show hide",
+    ),
+    (
+        "sidebar-automations",
+        Section::Appearance,
+        "Automations",
+        "sidebar entries show hide",
+    ),
+    (
+        "sidebar-inbox",
+        Section::Appearance,
+        "Inbox",
+        "sidebar entries show hide",
+    ),
+    (
+        "sidebar-pilots",
+        Section::Appearance,
+        "Pilots",
+        "sidebar entries show hide",
+    ),
+    (
+        "compact-session-cards",
+        Section::Appearance,
+        "Compact view",
+        "sidebar session cards density show hide",
     ),
     (
         "interface-scale",
@@ -702,11 +720,11 @@ mod tests {
     }
 
     #[test]
-    fn kanban_finds_the_board_setting_in_general() {
+    fn kanban_finds_the_board_setting_in_the_sidebar_group() {
         assert!(
             search("kanban", "")
                 .iter()
-                .any(|r| r.setting == Some("board") && r.section == Section::General)
+                .any(|r| r.setting == Some("sidebar-board") && r.section == Section::Appearance)
         );
     }
 

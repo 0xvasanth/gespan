@@ -114,12 +114,8 @@ pub(crate) struct Workspace {
     pub sidebar_visible: bool,
     pub sidebar_width: f32,
     pub compact_session_cards: bool,
-    /// The Search field heading the sidebar; ⌘K opens search either way.
-    pub sidebar_search_visible: bool,
-    pub sidebar_notes_visible: bool,
     pub sidebar_automations_visible: bool,
     pub sidebar_inbox_visible: bool,
-    pub sidebar_activity_visible: bool,
     /// The inset right panel: open state, tab, width and tab order.
     pub right_panel_open: bool,
     pub right_panel_tab: crate::right_panel::RightTab,
@@ -471,11 +467,8 @@ impl Default for Workspace {
             sidebar_visible: true,
             sidebar_width: 260.,
             compact_session_cards: true,
-            sidebar_search_visible: true,
-            sidebar_notes_visible: true,
             sidebar_automations_visible: true,
             sidebar_inbox_visible: true,
-            sidebar_activity_visible: true,
             right_panel_open: false,
             right_panel_tab: Default::default(),
             right_panel_width: crate::right_panel::WIDTH_DEFAULT,
@@ -2139,10 +2132,16 @@ mod tests {
             s.compact_session_cards,
             "older workspaces retain compact cards"
         );
-        assert!(
-            s.sidebar_activity_visible,
-            "older workspaces keep the activity card visible"
+        // Visibility flags older builds wrote are ignored, not an error.
+        let s = Workspace::restore(
+            Some(
+                r#"{"sidebar_search_visible":false,"sidebar_notes_visible":false,"sidebar_activity_visible":false,"compact_session_cards":false}"#,
+            ),
+            &[],
+            "/work/a",
         );
+        assert!(!s.compact_session_cards, "the rest of the save still loads");
+        assert!(s.preferences.notes && s.preferences.working_agents);
     }
     #[test]
     fn desktop_snapshot_translation_deserializes_and_retains_unported_metadata() {
