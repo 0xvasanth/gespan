@@ -5514,7 +5514,10 @@ fn a_pilot_provider_switch_keeps_its_handoff_turn_running(cx: &mut TestAppContex
             let message = queued_message("after-switch");
             for _ in 0..3 {
                 assert!(!view.pilot_dispatch(&message, cx));
-                assert!(view.busy, "a repeat dispatch must not stop the handoff turn");
+                assert!(
+                    view.busy,
+                    "a repeat dispatch must not stop the handoff turn"
+                );
             }
             assert!(view.settings.pending_provider_switch.is_some());
         })
