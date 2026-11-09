@@ -53,6 +53,37 @@ pub(super) fn events(kind: &str) -> Vec<(String, String)> {
         _ => &[],
     })
 }
+/// The Working copy setting's label, also shown on the Runs in project card.
+pub(super) fn workspace_label(mode: &str) -> &'static str {
+    match mode {
+        "worktree" => "Fresh worktree",
+        "existing" => "Existing worktree",
+        _ => "Current",
+    }
+}
+/// The access mode's label, also shown on the Agent card.
+pub(super) fn access_label(mode: &str) -> &'static str {
+    match mode {
+        "supervised" => "Supervised",
+        "auto-accept-edits" => "Auto-accept edits",
+        "full-access" => "Full access",
+        _ => "Auto",
+    }
+}
+pub(super) fn is_effort(id: &str) -> bool {
+    matches!(
+        id,
+        "reasoningEffort" | "reasoning_effort" | "effort" | "reasoning"
+    )
+}
+/// The saved reasoning effort, for when the model's controls have not loaded.
+pub(super) fn saved_effort(draft: &AutomationUpsert) -> Option<String> {
+    ["reasoningEffort", "reasoning_effort", "effort", "reasoning"]
+        .iter()
+        .find_map(|key| draft.model_settings.get(*key))
+        .filter(|value| !value.is_empty())
+        .map(|value| effort_name(value))
+}
 fn section(label: &'static str) -> gpui::Div {
     div()
         .px(px(4.))
@@ -645,39 +676,44 @@ impl Automations {
                                 )
                             }),
                     )
+                    .child(div().pt(px(6.)).child(self.render_summary_cards(cx)))
                     .child(if editor.saved {
                         div().h(px(36.)).flex().gap(px(16.)).children(
-                            [("Settings", false), ("Run history", true)].map(|(label, history)| {
-                                div()
-                                    .id(if history {
+                            [("Instructions", false), ("Recent runs", true)].map(
+                                |(label, history)| {
+                                    let id = if history {
                                         "automation-history-tab"
                                     } else {
                                         "automation-settings-tab"
-                                    })
-                                    .role(Role::Tab)
-                                    .aria_label(label)
-                                    .h_full()
-                                    .flex()
-                                    .items_center()
-                                    .border_b_2()
-                                    .border_color(if self.history == history {
-                                        content(0.8)
-                                    } else {
-                                        content(0.)
-                                    })
-                                    .text_size(px(12.))
-                                    .text_color(content(if self.history == history {
-                                        0.9
-                                    } else {
-                                        0.5
-                                    }))
-                                    .child(label)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.history = history;
-                                        this.choice = None;
-                                        cx.notify();
-                                    }))
-                            }),
+                                    };
+                                    div()
+                                        .id(id)
+                                        .debug_selector(move || id.into())
+                                        .role(Role::Tab)
+                                        .aria_label(label)
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .border_b_2()
+                                        .border_color(if self.history == history {
+                                            content(0.8)
+                                        } else {
+                                            content(0.)
+                                        })
+                                        .text_size(px(12.))
+                                        .text_color(content(if self.history == history {
+                                            0.9
+                                        } else {
+                                            0.5
+                                        }))
+                                        .child(label)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.history = history;
+                                            this.choice = None;
+                                            cx.notify();
+                                        }))
+                                },
+                            ),
                         )
                     } else {
                         div().h(px(20.))
@@ -743,12 +779,7 @@ impl Automations {
         );
         let kind = Kind::from_id(&draft.harness);
         let model = gespan_core::store::native_model(&draft.model, &draft.harness);
-        let access = match draft.runtime_mode.as_str() {
-            "supervised" => "Supervised",
-            "auto-accept-edits" => "Auto-accept edits",
-            "full-access" => "Full access",
-            _ => "Auto",
-        };
+        let access = access_label(&draft.runtime_mode);
         let beside = cx
             .try_global::<crate::settings::Preferences>()
             .is_some_and(|p| p.model_controls == "beside");
@@ -756,12 +787,7 @@ impl Automations {
             .then(|| {
                 self.model_controls
                     .iter()
-                    .find(|control| {
-                        matches!(
-                            control.id.as_str(),
-                            "effort" | "reasoning_effort" | "reasoningEffort" | "reasoning"
-                        )
-                    })
+                    .find(|control| is_effort(&control.id))
                     .map(|control| control_label(control, draft))
             })
             .flatten();
@@ -876,14 +902,7 @@ impl Automations {
             .unwrap_or_else(|| "No folder".into());
         let workspace = self.select_control(
             "automation-workspace",
-            if draft.workspace_mode == "worktree" {
-                "Fresh worktree"
-            } else if draft.workspace_mode == "existing" {
-                "Existing worktree"
-            } else {
-                "Current"
-            }
-            .into(),
+            workspace_label(&draft.workspace_mode).into(),
             Choice::Workspace,
             options(&[("current", "Current"), ("worktree", "Fresh worktree")]),
             cx,
@@ -1009,27 +1028,32 @@ impl Automations {
                     ),
                 ))
             });
+        // Sections are the scroll's own children, in `layout::Section` order,
+        // so a summary card can scroll to one.
+        let frame = |section: gpui::Div| {
+            div()
+                .w_full()
+                .max_w(px(1024.))
+                .mx_auto()
+                .px(px(32.))
+                .child(section)
+        };
         div()
             .id("automation-settings-scroll")
+            .debug_selector(|| "automation-settings-scroll".into())
+            .track_scroll(&self.settings_scroll)
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(1024.))
-                    .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
-                    .pb(px(40.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(32.))
-                    .child(triggers_section)
-                    .child(instructions)
-                    .child(session)
-                    .child(advanced),
-            )
+            .pt(px(20.))
+            .pb(px(40.))
+            .flex()
+            .flex_col()
+            .gap(px(32.))
+            .child(frame(triggers_section))
+            .child(frame(instructions))
+            .child(frame(session))
+            .child(frame(advanced))
             .into_any_element()
     }
     fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1113,6 +1137,7 @@ impl Automations {
                 table = table.child(
                     div()
                         .id(("automation-run", index))
+                        .debug_selector(move || format!("automation-run-row-{index}"))
                         .role(Role::Button)
                         .aria_label(format!("{trigger}, {label}"))
                         .h(px(44.))
@@ -1193,8 +1218,30 @@ impl Automations {
                 }
             }
         }
+        let see_all = div()
+            .id("automation-see-all-runs")
+            .debug_selector(|| "automation-see-all-runs".into())
+            .role(Role::Link)
+            .aria_label("See all in Runs")
+            .h(px(24.))
+            .px(px(6.))
+            .rounded(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .text_size(px(12.))
+            .text_color(content(0.6))
+            .hover(|s| s.bg(content(0.05)).text_color(content(1.)))
+            .child("See all in Runs")
+            .child(icon("chevron-right", 12.))
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(automation) = this.selected.clone() {
+                    cx.emit(OpenRuns { automation });
+                }
+            }));
         div()
             .id("automation-history-scroll")
+            .debug_selector(|| "automation-history-scroll".into())
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -1206,13 +1253,23 @@ impl Automations {
                     .px(px(32.))
                     .pt(px(20.))
                     .pb(px(40.))
-                    .child(section("Run history"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(section("Recent runs"))
+                            .child(see_all),
+                    )
                     .child(table),
             )
             .into_any_element()
     }
 }
-fn control_label(control: &gespan_core::catalog::ModelControl, draft: &AutomationUpsert) -> String {
+pub(super) fn control_label(
+    control: &gespan_core::catalog::ModelControl,
+    draft: &AutomationUpsert,
+) -> String {
     let value = control_value(control, draft);
     let label = control
         .choices
@@ -1220,14 +1277,17 @@ fn control_label(control: &gespan_core::catalog::ModelControl, draft: &Automatio
         .find(|(v, _)| v == value)
         .map(|(_, l)| l)
         .unwrap_or(value);
-    match label.as_str() {
+    effort_name(label)
+}
+fn effort_name(label: &str) -> String {
+    match label {
         "low" => "Low".into(),
         "medium" => "Medium".into(),
         "high" => "High".into(),
         "xhigh" => "Extra high".into(),
         "minimal" => "Minimal".into(),
         "none" => "None".into(),
-        _ => label.clone(),
+        _ => label.to_string(),
     }
 }
 fn control_value<'a>(
@@ -1271,7 +1331,7 @@ fn gmt_offset() -> String {
         format!("GMT{sign}{}:{:02}", absolute / 60, absolute % 60)
     }
 }
-fn next_run_preview(timestamp: i64) -> String {
+pub(super) fn next_run_preview(timestamp: i64) -> String {
     let Some(date) = Local
         .timestamp_millis_opt(timestamp)
         .single()

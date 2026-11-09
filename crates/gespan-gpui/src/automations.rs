@@ -29,6 +29,9 @@ use std::{
 mod contract_tests;
 mod editor;
 mod gallery;
+mod layout;
+#[cfg(test)]
+mod layout_tests;
 mod trigger_menu;
 
 /// Event providers and schedules are separate from agent harness branding.
@@ -55,6 +58,13 @@ pub(crate) enum Event {
     Close,
     Launch(Box<DueAutomationRun>),
     OpenSession(String),
+}
+
+/// "See all in Runs": open the Runs page filtered to this automation. Its
+/// own event type so the Shell's handling of `Event` is untouched until it
+/// subscribes.
+pub(crate) struct OpenRuns {
+    pub automation: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -116,6 +126,9 @@ pub(crate) struct Automations {
     appearances: HashMap<String, gespan_core::project_appearance::ProjectAppearance>,
     automations: Vec<Automation>,
     runs: Vec<AutomationRun>,
+    /// Runs per day over the last ten days, by automation id.
+    sparklines: HashMap<String, Vec<usize>>,
+    settings_scroll: gpui::ScrollHandle,
     selected: Option<String>,
     editor: Option<Editor>,
     loading: bool,
@@ -146,6 +159,7 @@ pub(crate) struct Automations {
     request_generation: u64,
 }
 impl EventEmitter<Event> for Automations {}
+impl EventEmitter<OpenRuns> for Automations {}
 impl Focusable for Automations {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -169,6 +183,8 @@ impl Automations {
             appearances: HashMap::new(),
             automations: Vec::new(),
             runs: Vec::new(),
+            sparklines: HashMap::new(),
+            settings_scroll: gpui::ScrollHandle::new(),
             selected: None,
             editor: None,
             loading: true,
@@ -261,20 +277,35 @@ impl Automations {
                 .lock()
                 .map_err(|_| "Automations unavailable".to_string())?;
             let list = service.list()?;
-            let runs = selected_for_work
-                .as_deref()
-                .map(|id| service.runs(id))
-                .transpose()?
-                .unwrap_or_default();
-            Ok::<_, String>((list, runs))
+            let now = gespan_core::time::now_ms() as i64;
+            let mut sparklines = HashMap::new();
+            let mut runs = None;
+            // Each automation keeps at most 100 runs, so this stays small.
+            for automation in &list {
+                let history = service.runs(&automation.id)?;
+                sparklines.insert(
+                    automation.id.clone(),
+                    automations::runs_per_day(&history, layout::SPARK_DAYS, now),
+                );
+                if selected_for_work.as_deref() == Some(automation.id.as_str()) {
+                    runs = Some(history);
+                }
+            }
+            let runs = match (runs, selected_for_work.as_deref()) {
+                (Some(runs), _) => runs,
+                (None, Some(id)) => service.runs(id)?,
+                (None, None) => Vec::new(),
+            };
+            Ok::<_, String>((list, runs, sparklines))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
-                    Ok((list, runs)) => {
+                    Ok((list, runs, sparklines)) => {
                         this.automations = list;
+                        this.sparklines = sparklines;
                         if this.selected == selected {
                             this.runs = runs;
                         }
@@ -885,113 +916,9 @@ impl Render for Automations {
             })
             .cloned()
             .collect();
-        let mut list = div()
-            .id("automations-list")
-            .role(Role::ListBox)
-            .aria_label("Automations")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p(px(6.))
-            .flex()
-            .flex_col()
-            .gap(px(2.));
-        if visible.is_empty() {
-            list = list.child(
-                div()
-                    .px(px(12.))
-                    .py(px(32.))
-                    .text_size(px(12.))
-                    .text_color(content(0.45))
-                    .child(if self.loading {
-                        "Loading automations…"
-                    } else if query.trim().is_empty() {
-                        "No automations yet"
-                    } else {
-                        "No matching automations"
-                    }),
-            );
-        }
-        for automation in visible {
-            let id = automation.id.clone();
-            let toggle_id = id.clone();
-            let enabled = automation.enabled;
-            let active = !self.gallery && self.selected.as_deref() == Some(&id);
-            let kind = Kind::from_id(&automation.harness);
-            let model = gespan_core::store::native_model(&automation.model, &automation.harness);
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("automation-{id}")))
-                    .relative()
-                    .rounded(px(6.))
-                    .when(active, |d| d.bg(content(0.1)))
-                    .hover(|s| s.bg(content(0.05)))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("open-{id}")))
-                            .role(Role::Button)
-                            .aria_label(format!("Open {}", automation.name))
-                            .px(px(10.))
-                            .py(px(8.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .child(
-                                div()
-                                    .pr(px(36.))
-                                    .truncate()
-                                    .text_size(px(10.))
-                                    .text_color(content(0.45))
-                                    .child(automation.trigger_label()),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(13.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(automation.name),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.))
-                                    .text_size(px(11.))
-                                    .text_color(content(0.45))
-                                    .child(self.project_mark(&automation.cwd, 12.))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .truncate()
-                                            .child(self.project_label(&automation.cwd)),
-                                    )
-                                    .child(provider_icon(kind.id(), 13.))
-                                    .child(
-                                        div()
-                                            .max_w(px(100.))
-                                            .truncate()
-                                            .child(cached_model_name(kind, model.as_deref())),
-                                    ),
-                            )
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)),
-                            ),
-                    )
-                    .child(
-                        div().absolute().right(px(10.)).top(px(8.)).child(
-                            editor::toggle(
-                                SharedString::from(format!("toggle-{toggle_id}")),
-                                enabled,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| this.toggle(toggle_id.clone(), !enabled, cx),
-                            )),
-                        ),
-                    ),
-            );
-        }
+        let list = self.render_list(&visible, &query, cx);
         let aside = div()
-            .w(px(280.))
+            .w(px(320.))
             .flex_shrink_0()
             .border_r_1()
             .border_color(content(0.07))
@@ -999,21 +926,43 @@ impl Render for Automations {
             .flex_col()
             .child(
                 div()
-                    .h(px(36.))
-                    .px(px(8.))
-                    .border_b_1()
-                    .border_color(content(0.07))
+                    .px(px(16.))
+                    .pt(px(16.))
+                    .pb(px(10.))
                     .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(icon("search", 12.))
-                    .child(div().flex_1().min_w_0().child(self.filter.clone()))
+                    .flex_col()
+                    .gap(px(12.))
                     .child(
-                        icon_button("new-automation", "New automation", "plus").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.show_gallery(cx);
-                            }),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(15.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Automations"),
+                            )
+                            .child(
+                                icon_button("new-automation", "New automation", "plus").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.show_gallery(cx);
+                                    }),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h(px(32.))
+                            .px(px(10.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(content(0.08))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(icon("search", 12.))
+                            .child(div().flex_1().min_w_0().child(self.filter.clone())),
                     ),
             )
             .child(list);
