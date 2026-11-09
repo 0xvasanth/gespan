@@ -1419,6 +1419,30 @@ mod tests {
     }
 
     #[gpui::test]
+    fn project_row_matches_the_canvas_controls(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let project = visual.debug_bounds("sidebar-project-button").unwrap();
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
+        assert!((project.size.height - gear.size.height).abs() <= px(0.5));
+        assert!((project.top() - gear.top()).abs() <= px(0.5));
+        assert!((gear.size.width - gear.size.height).abs() <= px(0.5));
+        let gap = gear.left() - project.right();
+        assert!(gap >= px(4.) && gap <= px(8.), "gap {gap:?}");
+        // The dropdown takes the room the gear leaves: it is wide, not a
+        // text-width chip.
+        assert!(project.left() > sidebar.left());
+        assert!(project.size.width > px(100.), "{project:?}");
+        assert!(gear.right() <= sidebar.right());
+        assert!(
+            sidebar.right() - gear.right() <= px(16.),
+            "{gear:?} {sidebar:?}"
+        );
+    }
+
+    #[gpui::test]
     fn all_projects_line_shows_only_its_label(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         window

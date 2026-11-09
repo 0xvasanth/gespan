@@ -7348,10 +7348,10 @@ impl Shell {
             .child(
                 div()
                     .pt(px(6.))
-                    .h(px(34.))
+                    .h(px(38.))
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(6.))
                     .child(
                         div().flex_1().min_w_0().flex().items_center().child(
                             div()
@@ -7366,10 +7366,13 @@ impl Shell {
                                 .aria_description(self.workspace.project.clone())
                                 .aria_expanded(self.menu_open(&MenuTarget::Header))
                                 .cursor_pointer()
-                                .h(px(28.))
-                                .px_1p5()
+                                .w_full()
+                                .h(px(32.))
+                                .px(px(10.))
                                 .rounded_md()
-                                .max_w_full()
+                                .border_1()
+                                .border_color(content(crate::modal::BORDER))
+                                .bg(content(0.05))
                                 .hover(|s| s.bg(content(0.08)))
                                 .when(self.menu_open(&MenuTarget::Header), |d| d.bg(content(0.08)))
                                 .min_w_0()
@@ -7406,6 +7409,7 @@ impl Shell {
                                         )
                                     },
                                 )
+                                .child(div().flex_1())
                                 .child(icon("chevron-down", 14.))
                                 .child(self.project_anchor.probe())
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -7419,24 +7423,33 @@ impl Shell {
                         ),
                     )
                     .child(
-                        icon_button("sidebar-project-settings", "Project settings", "settings")
-                            .debug_selector(|| "sidebar-project-settings".into())
-                            .aria_expanded(settings_open)
-                            .when(settings_open, |d| d.bg(content(0.08)))
-                            .relative()
-                            .child(self.project_settings_anchor.probe())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let target = MenuTarget::Project {
-                                    path: this.workspace.project.clone(),
-                                    rail: false,
-                                };
-                                if this.menu_open(&target) {
-                                    this.close_menu(cx);
-                                } else {
-                                    let anchor = Anchor::Slot(this.project_settings_anchor.clone());
-                                    this.open_menu(target, anchor, window, cx);
-                                }
-                            })),
+                        icon_button_hover(
+                            "sidebar-project-settings",
+                            "Project settings",
+                            "settings",
+                            0.08,
+                        )
+                        .debug_selector(|| "sidebar-project-settings".into())
+                        .aria_expanded(settings_open)
+                        .size(px(32.))
+                        .border_1()
+                        .border_color(content(crate::modal::BORDER))
+                        .bg(content(0.05))
+                        .when(settings_open, |d| d.bg(content(0.08)))
+                        .relative()
+                        .child(self.project_settings_anchor.probe())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let target = MenuTarget::Project {
+                                path: this.workspace.project.clone(),
+                                rail: false,
+                            };
+                            if this.menu_open(&target) {
+                                this.close_menu(cx);
+                            } else {
+                                let anchor = Anchor::Slot(this.project_settings_anchor.clone());
+                                this.open_menu(target, anchor, window, cx);
+                            }
+                        })),
                     ),
             )
             .into_any()

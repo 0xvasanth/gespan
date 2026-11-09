@@ -2813,7 +2813,7 @@ mod tests {
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         assert!((pilot.center().x - filter.center().x).abs() <= px(1.));
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        assert_eq!(project.size.height, px(28.));
+        assert_eq!(project.size.height, px(32.));
     }
 
     #[gpui::test]
