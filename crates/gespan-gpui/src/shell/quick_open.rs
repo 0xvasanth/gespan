@@ -93,6 +93,7 @@ impl Shell {
                     Command::SwitchBoard => {
                         this.board_command(BoardCommand::SwitchBoard, window, cx)
                     }
+                    Command::GoToRuns => this.show_runs(window, cx),
                     Command::Hold => window.dispatch_action(Box::new(HoldFromMenu), cx),
                     Command::OpenLogs => {
                         let open = cx
@@ -237,13 +238,7 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            let search = visual
-                .debug_bounds(if classic {
-                    "sidebar-search-field"
-                } else {
-                    "sidebar-search-button"
-                })
-                .unwrap();
+            let search = visual.debug_bounds("sidebar-search-field").unwrap();
             visual.simulate_click(search.center(), Default::default());
             visual.run_until_parked();
             window

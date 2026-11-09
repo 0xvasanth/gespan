@@ -786,6 +786,72 @@ fn run_now_starts_a_run_and_shows_its_session(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_launched_run_shows_in_the_automation_runs_folder(cx: &mut TestAppContext) {
+    let data = data();
+    let id = save(&data.db, draft(&data.project, vec![]));
+    let window = open(&data, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    assert!(
+        visual
+            .debug_bounds("session-group-fixed:automations")
+            .is_none()
+    );
+    let automation = Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap();
+    let run = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    // Launched the way a due run is, without the background reveal.
+    window
+        .update(visual, |shell, _, cx| {
+            shell.launch_automation(DueAutomationRun { automation, run }, false, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let session = window
+        .update(visual, |shell, _, _| {
+            shell
+                .automation_state
+                .session_automations
+                .iter()
+                .find(|(_, automation)| *automation == &id)
+                .map(|(session, _)| *session)
+        })
+        .unwrap()
+        .expect("the run has a session");
+    let fixed = window
+        .update(visual, |shell, _, cx| {
+            let ids = shell.sidebar_session_ids(cx);
+            shell
+                .session_entries(&ids, cx)
+                .into_iter()
+                .find_map(|entry| match entry {
+                    gespan_core::session_groups::Entry::Fixed { id, sessions, .. }
+                        if id == "fixed:automations" =>
+                    {
+                        Some(sessions)
+                    }
+                    _ => None,
+                })
+        })
+        .unwrap();
+    assert_eq!(fixed, Some(vec![session]));
+    assert!(
+        visual
+            .debug_bounds("session-group-fixed:automations")
+            .is_some(),
+        "the folder header is drawn"
+    );
+}
+
+#[gpui::test]
 fn a_run_reuses_the_last_conversation_when_asked(cx: &mut TestAppContext) {
     let data = data();
     let mut reusing = draft(
@@ -985,4 +1051,159 @@ fn muting_automation_runs_for_the_project_or_notifications_silences_the_alert(
     deliver(&window, vec![issue(&data, 42, now_ms())], cx);
     assert_eq!(runs(&data.db, &id).len(), 3);
     assert_eq!(run_alerts(&window, cx).len(), 1);
+}
+
+#[gpui::test]
+fn runs_asked_for_before_the_service_opens_show_once_it_does(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            // As at startup: the service has not opened yet.
+            shell.automation_state.service = None;
+            shell.open_runs(
+                crate::runs::RunsFilter {
+                    status: Some("failed"),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            assert_eq!(shell.active_app_view, None, "nothing to list yet");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
+            let runs = shell.runs.as_ref().expect("Runs opened").read(cx);
+            assert_eq!(runs.filter().status, Some("failed"));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let id = scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    assert_eq!(sessions(&window, &id, cx), 1);
+    let run = runs(&data.db, &id).remove(0);
+    let session = run.session_id.clone().expect("the run started a session");
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_runs(Default::default(), window, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let native = window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
+            let rows = view.read(cx).rows();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].can_open());
+            view.update(cx, |view, cx| view.open_thread(&run.id, cx));
+            locked(&shell.store)
+                .unwrap()
+                .resolve_existing_session_id(&session)
+                .expect("the session exists")
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |shell, _| {
+            assert_eq!(shell.active_app_view, None, "Runs gives way to the thread");
+            assert_eq!(shell.workspace.active, Some(native));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn see_all_in_runs_opens_runs_filtered_to_that_automation(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let first = scheduled_due(&data, 20_000);
+    let second = scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    assert_eq!(runs(&data.db, &first).len(), 1);
+    assert_eq!(runs(&data.db, &second).len(), 1);
+    window
+        .update(cx, |shell, window, cx| shell.open_automations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    // "See all in Runs" on the first automation.
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.automations.clone().expect("Automations opened");
+            view.update(cx, |_, cx| {
+                cx.emit(crate::automations::OpenRuns {
+                    automation: first.clone(),
+                })
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
+            let view = shell.runs.clone().expect("Runs opened");
+            assert_eq!(view.read(cx).filter().automation.as_ref(), Some(&first));
+            let rows = view.read(cx).rows();
+            assert_eq!(rows.len(), 1, "only the chosen automation's runs");
+            let expected = runs(&data.db, &first).remove(0).id;
+            assert_eq!(rows[0].id, expected);
+            // The way back to every automation.
+            view.update(cx, |view, cx| {
+                let cleared = crate::runs::RunsFilter {
+                    automation: None,
+                    ..view.filter().clone()
+                };
+                view.set_filter(cleared, cx);
+            });
+        })
+        .unwrap();
+    // Every automation's runs load again.
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
+            assert_eq!(view.read(cx).rows().len(), 2);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn the_sidebar_runs_entry_drops_the_automation_filter(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let first = scheduled_due(&data, 20_000);
+    scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_runs(
+                crate::runs::RunsFilter {
+                    automation: Some(first.clone()),
+                    status: Some("failed"),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, window, cx| shell.show_runs(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
+            let filter = view.read(cx).filter().clone();
+            assert_eq!(filter.automation, None, "back to every automation");
+            assert_eq!(filter.status, Some("failed"), "the rest is kept");
+        })
+        .unwrap();
 }

@@ -1110,6 +1110,17 @@ impl Menu {
             })
             .collect()
     }
+    /// The action rows' ids, in order.
+    #[cfg(test)]
+    pub(crate) fn action_ids(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action(action) => Some(action.id.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
     /// Activates the row labelled `label`, as a click on it would.
     #[cfg(test)]
     pub(crate) fn pick_label(&mut self, label: &str, window: &mut Window, cx: &mut Context<Self>) {

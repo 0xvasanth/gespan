@@ -13,6 +13,8 @@ pub(super) struct Running {
 pub(super) struct State {
     pub service: Option<ServiceHandle>,
     pub open_requested: Option<u64>,
+    /// Runs asked for before the service opened, at this navigation.
+    pub runs_requested: Option<(u64, crate::runs::RunsFilter)>,
     opening: bool,
     pub(super) polling: bool,
     recovered: bool,
@@ -33,6 +35,7 @@ impl Default for State {
         Self {
             service: None,
             open_requested: None,
+            runs_requested: None,
             opening: false,
             polling: false,
             recovered: false,
@@ -61,6 +64,25 @@ fn service_lock(service: &ServiceHandle) -> Result<std::sync::MutexGuard<'_, Ser
 }
 
 impl Shell {
+    /// Loads which sessions automations started, for the Automation runs
+    /// folder, without opening the automation service.
+    pub(super) fn load_automation_sessions(&mut self, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { locked(&store)?.automation_session_ids() });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(sessions) => {
+                    this.automation_state.session_automations = sessions;
+                    this.notify_sidebar(cx);
+                }
+                Err(error) => tracing::warn!(%error, "automation runs failed to load"),
+            });
+        })
+        .detach();
+    }
     pub(super) fn initialize_automations(&mut self, cx: &mut Context<Self>) {
         if self.automation_state.opening || self.automation_state.service.is_some() {
             return;
@@ -84,6 +106,8 @@ impl Shell {
                 match result {
                     Ok((service, retries, sessions)) => {
                         this.automation_state.session_automations = sessions;
+                        // Their sessions move into the Automation runs folder.
+                        this.notify_sidebar(cx);
                         this.automation_state.service = Some(service);
                         for item in retries {
                             this.automation_state.event_retries.insert(item.key(), item);
@@ -92,6 +116,11 @@ impl Shell {
                             this.ensure_background_inbox(window, cx);
                         }
                         this.poll_automations(cx);
+                        let runs = this
+                            .automation_state
+                            .runs_requested
+                            .take()
+                            .filter(|(revision, _)| *revision == this.navigation_revision);
                         if this
                             .automation_state
                             .open_requested
@@ -99,6 +128,8 @@ impl Shell {
                             .is_some_and(|revision| revision == this.navigation_revision)
                         {
                             this.open_automations(window, cx);
+                        } else if let Some((_, filter)) = runs {
+                            this.open_runs(filter, window, cx);
                         } else if this.navigation_revision == 0
                             && this.active_app_view.is_none()
                             && this.settings.is_none()
@@ -476,6 +507,7 @@ impl Shell {
                         this.automation_state
                             .session_automations
                             .insert(id, due.automation.id.clone());
+                        this.notify_sidebar(cx);
                         this.automation_state.running.insert(
                             id,
                             Running {
@@ -611,9 +643,7 @@ impl Shell {
                     tracing::warn!(%error, "automation run result was not saved");
                     this.error = Some(format!("Could not save automation result: {error}"));
                 }
-                if let Some(view) = &this.automations {
-                    view.update(cx, |view, cx| view.refresh(cx));
-                }
+                this.refresh_run_views(cx);
                 cx.notify();
             });
         }));

@@ -27,7 +27,7 @@ enum Effect {
     FlowsChanged,
 }
 /// The sidebar folder holding a Pilot's sessions; the id survives renames.
-pub(super) fn pilot_folder_id(pilot_id: &str) -> String {
+pub(crate) fn pilot_folder_id(pilot_id: &str) -> String {
     format!("pilot-{pilot_id}")
 }
 fn text(v: &Value, key: &str, max: usize) -> Result<String, String> {
@@ -1063,7 +1063,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         Ok(done)
     }
     /// Files a Pilot-started session in its folder; every launch is filed.
-    pub(super) fn group_launch(&mut self, id: &str, session: i64, cx: &mut Context<Self>) {
+    pub(crate) fn group_launch(&mut self, id: &str, session: i64, cx: &mut Context<Self>) {
         let Some(launch) = self
             .roster
             .get(id)

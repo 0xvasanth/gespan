@@ -9,13 +9,44 @@ use chrono::{Local, NaiveDateTime, TimeZone};
 use gespan_core::provider_boards::StateGroup;
 use gespan_core::{
     session_groups::{
-        Entry, Groups, WorkItem, build_list, format_reminder, navigation_ids,
+        Entry, FixedFolder, Groups, WorkItem, build_list, format_reminder, navigation_ids,
         parse_github_work_item, reminder_at, reminder_presets,
     },
     store::Reminder,
     tickets::{Resolved, TicketError, TicketRef, Tracker, parse_ticket},
 };
 use gpui::EventEmitter;
+
+/// Fixed folder ids start with this; they are never user folders.
+const FIXED_PREFIX: &str = "fixed:";
+const AUTOMATION_RUNS: &str = "fixed:automations";
+
+/// The open or closed chevron that replaces a folder's glyph keeps Automation
+/// runs yellow; every other folder's chevron stays plain.
+fn chevron_tint(key: &str) -> Option<gpui::Hsla> {
+    fixed_folder_tint(key, false)
+}
+
+/// Automation runs wears the Automations entry's yellow zap. Only the
+/// Focused row tints its glyph; the classic row paints a folder's colour as
+/// the header fill.
+fn fixed_folder_tint(id: &str, classic: bool) -> Option<gpui::Hsla> {
+    (id == AUTOMATION_RUNS && !classic).then(|| crate::theme::nav_tint("Automations"))?
+}
+const PILOT_PREFIX: &str = "fixed:pilot:";
+
+/// Folds or opens a group header, keyed as the sidebar keys it.
+fn toggle_group(groups: &mut Groups, key: &str) {
+    match key {
+        "pinned" => groups.pinned_collapsed = !groups.pinned_collapsed,
+        "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
+        fixed if fixed.starts_with(FIXED_PREFIX) => {
+            let folded = groups.fixed_is_collapsed(fixed);
+            groups.set_fixed_collapsed(fixed, !folded);
+        }
+        folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
+    }
+}
 
 actions!(
     session_groups,
@@ -372,6 +403,7 @@ impl Shell {
 
     /// The project's sidebar entries, reminders first.
     pub(super) fn session_entries(&self, ids: &[i64], cx: &App) -> Vec<Entry> {
+        let (groups, fixed) = self.sidebar_groups(cx);
         let reminders: Vec<_> = self
             .reminders
             .iter()
@@ -380,9 +412,59 @@ impl Shell {
         build_list(
             ids,
             |id| self.session_metadata(id, cx).summary.pinned,
-            &self.project_groups(),
+            &groups,
             &reminders,
+            &fixed,
         )
+    }
+    /// The folders the sidebar lists and its automatic folders: one per
+    /// Pilot with sessions in this project, then Automation runs. The stored
+    /// folder a Pilot files its sessions in (`pilot-<id>`) shows as that
+    /// Pilot's fixed folder, after its launches, so it is not a user folder
+    /// here; the stored data is untouched. The focused sidebar only; the
+    /// original layout keeps its structure.
+    pub(super) fn sidebar_groups(&self, cx: &App) -> (Groups, Vec<FixedFolder>) {
+        let mut groups = self.project_groups();
+        if self.workspace.classic_layout {
+            return (groups, Vec::new());
+        }
+        let mut folders = Vec::new();
+        let pilots = self
+            .pilots
+            .as_ref()
+            .map(|pilots| pilots.read(cx).pilot_folders(&self.workspace.project))
+            .unwrap_or_default();
+        for (id, name, mut session_ids) in pilots {
+            let stored = crate::pilots::pilot_folder_id(&id);
+            if let Some(ix) = groups.folders.iter().position(|f| f.id == stored) {
+                for session in groups.folders.remove(ix).session_ids {
+                    if !session_ids.contains(&session) {
+                        session_ids.push(session);
+                    }
+                }
+            }
+            if !session_ids.is_empty() {
+                folders.push(FixedFolder {
+                    id: format!("{PILOT_PREFIX}{id}"),
+                    name,
+                    session_ids,
+                });
+            }
+        }
+        let runs: Vec<i64> = self
+            .automation_state
+            .session_automations
+            .keys()
+            .copied()
+            .collect();
+        if !runs.is_empty() {
+            folders.push(FixedFolder {
+                id: AUTOMATION_RUNS.into(),
+                name: "Automation runs".into(),
+                session_ids: runs,
+            });
+        }
+        (groups, folders)
     }
     /// The sessions in the order the sidebar shows them, for stepping.
     pub(super) fn sidebar_navigation_ids(&self, cx: &App) -> Vec<i64> {
@@ -395,6 +477,7 @@ impl Shell {
                 !self.query.is_empty()
                     || match entry {
                         Entry::Folder { id, .. } => groups.folder(id).is_none_or(|f| !f.collapsed),
+                        Entry::Fixed { id, .. } => !groups.fixed_is_collapsed(id),
                         Entry::Pinned { .. } if self.workspace.classic_layout => {
                             !groups.pinned_collapsed
                         }
@@ -739,11 +822,36 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if folder.starts_with(FIXED_PREFIX) {
+            return;
+        }
         match action {
             "rename" => self.start_rename(RenameTarget::Folder(folder), window, cx),
             "ungroup" => self.update_groups(cx, |groups| groups.dissolve(&folder)),
             _ => {}
         }
+    }
+    /// A fixed folder cannot be renamed, recoloured or ungrouped: it only folds.
+    pub(super) fn fixed_folder_menu_items(&self, folder: &str) -> Vec<MenuItem> {
+        let item = if self.project_groups().fixed_is_collapsed(folder) {
+            MenuAction::new("fixed-expand", "Expand")
+        } else {
+            MenuAction::new("fixed-collapse", "Collapse")
+        };
+        vec![item.into()]
+    }
+    pub(super) fn run_fixed_folder_menu(
+        &mut self,
+        folder: String,
+        action: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let collapsed = match action {
+            "fixed-collapse" => true,
+            "fixed-expand" => false,
+            _ => return,
+        };
+        self.update_groups(cx, |groups| groups.set_fixed_collapsed(&folder, collapsed));
     }
 
     /// Opening a session whose reminder is due dismisses it.
@@ -981,7 +1089,15 @@ impl Shell {
         self.persist(cx);
     }
 
-    fn start_rename(&mut self, target: RenameTarget, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_rename(
+        &mut self,
+        target: RenameTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(&target, RenameTarget::Folder(f) if f.starts_with(FIXED_PREFIX)) {
+            return;
+        }
         self.close_preview(cx);
         let text = match &target {
             RenameTarget::Session(id) => self.session_metadata(*id, cx).display_title(),
@@ -1305,6 +1421,14 @@ impl Shell {
                     sessions,
                 )
             }
+            Entry::Fixed { id, name, sessions } => (
+                id.clone(),
+                name.clone(),
+                "zap",
+                fixed_folder_tint(id, self.workspace.classic_layout),
+                folders.fixed_is_collapsed(id),
+                sessions,
+            ),
             Entry::Pinned { sessions } if self.workspace.classic_layout => (
                 "pinned".into(),
                 "Pinned".into(),
@@ -1316,11 +1440,25 @@ impl Shell {
             Entry::Pinned { .. } | Entry::Session(_) => return div().into_any(),
         };
         let expanded = searching || !collapsed;
+        // A Pilot's folder shows the Pilot instead of a glyph.
+        let avatar = key.strip_prefix(PILOT_PREFIX).and_then(|pilot| {
+            let pilots = self.pilots.as_ref()?.read(cx);
+            let pilot = pilots.roster.get(pilot)?;
+            Some(crate::pilots::avatar::avatar(
+                &pilot.mascot,
+                pilot.color,
+                "idle",
+                16.,
+                true,
+            ))
+        });
         let folder_id = key.strip_prefix("folder:").map(str::to_string);
         folder_id
             .as_ref()
             .and_then(|f| self.rename_row(&RenameTarget::Folder(f.clone()), cx))
-            .unwrap_or_else(|| self.group_row(&key, name, glyph, color, expanded, sessions, cx))
+            .unwrap_or_else(|| {
+                self.group_row(&key, name, glyph, avatar, color, expanded, sessions, cx)
+            })
     }
     #[allow(clippy::too_many_arguments)]
     fn group_row(
@@ -1328,6 +1466,7 @@ impl Shell {
         key: &str,
         name: String,
         glyph: &'static str,
+        avatar: Option<AnyElement>,
         color: Option<gpui::Hsla>,
         expanded: bool,
         sessions: &[i64],
@@ -1403,7 +1542,7 @@ impl Shell {
                         div()
                             .when(expanded, |d| d.invisible())
                             .group_hover(group.clone(), |s| s.invisible())
-                            .child(mark(16.)),
+                            .child(avatar.unwrap_or_else(|| mark(16.).into_any_element())),
                     )
                     .child(
                         div()
@@ -1411,14 +1550,19 @@ impl Shell {
                             .invisible()
                             .when(expanded, |d| d.visible())
                             .group_hover(group.clone(), |s| s.visible())
-                            .child(icon(
-                                if expanded {
-                                    "chevron-down"
-                                } else {
-                                    "chevron-right"
-                                },
-                                16.,
-                            )),
+                            .child(
+                                icon(
+                                    if expanded {
+                                        "chevron-down"
+                                    } else {
+                                        "chevron-right"
+                                    },
+                                    16.,
+                                )
+                                .when_some(chevron_tint(key), |chevron, tint| {
+                                    chevron.text_color(tint)
+                                }),
+                            ),
                     )
                     .relative(),
             )
@@ -1475,21 +1619,24 @@ impl Shell {
                     return;
                 }
                 let key = toggle_key.clone();
-                this.update_groups(cx, |groups| match key.as_str() {
-                    "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
-                    folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
-                });
+                this.update_groups(cx, |groups| toggle_group(groups, &key));
             }))
-            .when(key.starts_with("folder:"), |d| {
-                d.on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        let folder = menu_key.trim_start_matches("folder:").to_string();
-                        let anchor = Anchor::Point(event.position);
-                        this.open_menu(MenuTarget::Folder(folder), anchor, window, cx);
-                    }),
-                )
-            })
+            .when(
+                key.starts_with("folder:") || key.starts_with(FIXED_PREFIX),
+                |d| {
+                    d.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            let target = match menu_key.strip_prefix("folder:") {
+                                Some(folder) => MenuTarget::Folder(folder.to_string()),
+                                None => MenuTarget::FixedFolder(menu_key.clone()),
+                            };
+                            let anchor = Anchor::Point(event.position);
+                            this.open_menu(target, anchor, window, cx);
+                        }),
+                    )
+                },
+            )
             .into_any()
     }
 
@@ -1660,11 +1807,7 @@ impl Shell {
                 if !this.query.is_empty() {
                     return;
                 }
-                this.update_groups(cx, |groups| match toggle_key.as_str() {
-                    "pinned" => groups.pinned_collapsed = !groups.pinned_collapsed,
-                    "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
-                    folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
-                });
+                this.update_groups(cx, |groups| toggle_group(groups, &toggle_key));
             }))
             .when(key.starts_with("folder:"), |d| {
                 d.on_mouse_down(
@@ -2482,6 +2625,24 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 
+    #[test]
+    fn automation_runs_takes_the_automations_yellow_only_in_the_focused_sidebar() {
+        let yellow = crate::theme::nav_tint("Automations");
+        assert!(yellow.is_some());
+        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, false), yellow);
+        // Classic paints a folder's colour as its header fill, so it stays plain.
+        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, true), None);
+        // The chevron shown when the folder is open or hovered follows suit.
+        assert_eq!(chevron_tint(AUTOMATION_RUNS), yellow);
+        assert_eq!(chevron_tint("folder:user-folder"), None);
+        assert_eq!(chevron_tint("reminders"), None);
+        // A Pilot's folder shows the Pilot, never the zap's colour.
+        assert_eq!(
+            fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot"), false),
+            None
+        );
+    }
+
     fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
         cx.update(|cx| {
             crate::shell::bind_keys(cx);
@@ -2648,16 +2809,11 @@ mod tests {
             .unwrap();
         cx.refresh().unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        let options = visual.debug_bounds("sidebar-options").unwrap();
         let pilot = visual.debug_bounds("sidebar-pilot-button").unwrap();
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
-        assert!((options.center().x - pilot.center().x).abs() <= px(1.));
-        assert!((options.center().x - filter.center().x).abs() <= px(1.));
+        assert!((pilot.center().x - filter.center().x).abs() <= px(1.));
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        let search = visual.debug_bounds("sidebar-search-button").unwrap();
-        assert_eq!(project.size.height, px(28.));
-        assert!(project.right() < search.left());
-        assert!(search.right() <= options.left());
+        assert_eq!(project.size.height, px(32.));
     }
 
     #[gpui::test]
@@ -2668,8 +2824,8 @@ mod tests {
         // The New row above already starts a session, so the heading keeps
         // only its filter.
         let new_row = visual
-            .debug_bounds("sidebar-navigation-New")
-            .expect("the New row starts sessions");
+            .debug_bounds("sidebar-new-thread")
+            .expect("the New thread row starts sessions");
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         assert!(
             new_row.bottom() <= filter.top(),
@@ -2686,7 +2842,7 @@ mod tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("sidebar-filter-button").is_some());
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_some());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_some());
         assert!(visual.debug_bounds("sidebar-new-session").is_none());
     }
 
@@ -2705,7 +2861,7 @@ mod tests {
         cx.run_until_parked();
         cx.refresh().unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
         let new = visual.debug_bounds("sidebar-new-session").unwrap();
         let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
         // Just before the filter, on the same line.

@@ -5694,3 +5694,67 @@ fn stopping_a_watch_from_the_chip_drops_only_that_report(cx: &mut TestAppContext
     assert!(reports[0].contains(&format!("Session {b}:")));
     assert!(!reports[0].contains(&format!("Session {a}:")));
 }
+
+#[gpui::test]
+fn focused_rail_shows_status_dot_not_words(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    s.window
+        .update(cx, |_, _, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.settings = None;
+                m.close(cx);
+            })
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let dot: &'static str = Box::leak(format!("pilot-status-dot-{}", s.id).into_boxed_str());
+    let row_selector: &'static str = Box::leak(format!("pilot-rail-{}", s.id).into_boxed_str());
+    let set = |busy: bool, visual: &mut gpui::VisualTestContext| {
+        s.window
+            .update(visual, |_, _, cx| {
+                let chat = s.manager.read(cx).chats[&s.id].clone();
+                chat.update(cx, |v, cx| v.set_responding_for_test(busy, cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let dot_colour = |visual: &mut gpui::VisualTestContext| {
+        let bounds = visual
+            .debug_bounds(dot)
+            .expect("every row has a status dot");
+        s.window
+            .update(visual, |_, window, _| {
+                let scale = window.scale_factor();
+                window
+                    .painted_quads()
+                    .iter()
+                    .find(|q| {
+                        (q.bounds.size.width.0 - 8. * scale).abs() < 0.5
+                            && (q.bounds.left().0 - f32::from(bounds.left()) * scale).abs() < 0.5
+                            && (q.bounds.top().0 - f32::from(bounds.top()) * scale).abs() < 0.5
+                    })
+                    .map(|q| q.background)
+                    .expect("the status dot is painted")
+            })
+            .unwrap()
+    };
+    set(false, visual);
+    let idle = dot_colour(visual);
+    set(true, visual);
+    let row = visual.debug_bounds(row_selector).unwrap();
+    let avatar_dot = visual.debug_bounds(dot).expect("a working Pilot has a dot");
+    assert_eq!(avatar_dot.size, gpui::size(px(8.), px(8.)));
+    assert!(
+        row.contains(&avatar_dot.center()) && avatar_dot.center().x < row.left() + px(24.),
+        "the dot sits on the avatar at the row's start"
+    );
+    assert_ne!(
+        dot_colour(visual),
+        idle,
+        "working reads differently from idle"
+    );
+    set(false, visual);
+    assert_eq!(dot_colour(visual), idle);
+}

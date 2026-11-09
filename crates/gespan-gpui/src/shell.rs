@@ -393,6 +393,8 @@ pub(crate) enum MenuTarget {
     AppTab(app_views::AppView),
     Session(i64),
     Folder(String),
+    /// An automatic folder such as Automation runs, by its `fixed:` id.
+    FixedFolder(String),
     /// The sidebar project header's menu.
     Header,
     /// The original project rail's local or remote folder menu.
@@ -400,7 +402,6 @@ pub(crate) enum MenuTarget {
     CompactProjectPicker,
     ProjectRailGroup(String),
     SessionFilter,
-    SidebarOptions,
     /// A project's actions; `rail` adds the project rail's grouping and pinning.
     Project {
         path: String,
@@ -780,6 +781,7 @@ pub(crate) struct Shell {
     automations: Option<Entity<crate::automations::Automations>>,
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
+    runs: Option<Entity<crate::runs::Runs>>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -830,7 +832,7 @@ pub(crate) struct Shell {
     backdrop: Option<(i64, bool)>,
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
-    sidebar_options_anchor: AnchorSlot,
+    project_settings_anchor: AnchorSlot,
     history: VisitHistory,
     /// User navigation invalidates pending requests that would otherwise
     /// focus a new session in a tab or project the user has already left.
@@ -1227,6 +1229,7 @@ impl Shell {
             automations: None,
             flows: None,
             board: None,
+            runs: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -1268,7 +1271,7 @@ impl Shell {
             backdrop: None,
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
-            sidebar_options_anchor: AnchorSlot::default(),
+            project_settings_anchor: AnchorSlot::default(),
             history: VisitHistory::default(),
             navigation_revision: 0,
             pending_project_blanks: HashSet::new(),
@@ -1420,12 +1423,19 @@ impl Shell {
             let mut pilot_chrome = pilots.read(cx).overview_chrome();
             let mut pilot_error = pilots.read(cx).error.clone();
             let mut pilot_session = pilots.read(cx).routed_session();
+            let mut pilot_launches = pilots.read(cx).pilot_folders(&this.workspace.project);
             this.observations
                 .push(cx.observe(&pilots, move |this, pilots, cx| {
                     let session = pilots.read(cx).routed_session();
                     if session != pilot_session {
                         pilot_session = session;
                         this.update_chat_visibility(cx);
+                    }
+                    // Any Pilot's launch here fills its sidebar folder.
+                    let launches = pilots.read(cx).pilot_folders(&this.workspace.project);
+                    if launches != pilot_launches {
+                        pilot_launches = launches;
+                        this.notify_sidebar(cx);
                     }
                     let chrome = pilots.read(cx).overview_chrome();
                     if chrome != pilot_chrome {
@@ -1479,6 +1489,9 @@ impl Shell {
         if !secondary {
             this.initialize_automations(cx);
             this.initialize_flows(cx);
+        } else {
+            // Read-only: the first window schedules; this one lists the runs.
+            this.load_automation_sessions(cx);
         }
         // Tests install a fake backend instead of reading the real keychain.
         #[cfg(not(test))]
@@ -5886,18 +5899,6 @@ impl Shell {
         });
         events.push(
             cx.subscribe_in(&menu, window, |this, _, event: &MenuEvent, window, cx| {
-                if let MenuEvent::Picked(id, _) = event
-                    && let Some(open) = this
-                        .menu
-                        .as_ref()
-                        .filter(|m| m.target == MenuTarget::SidebarOptions)
-                {
-                    let menu = open.menu.clone();
-                    this.change_sidebar_option(id, cx);
-                    let items = this.sidebar_options_menu_items();
-                    menu.update(cx, |menu, cx| menu.replace_items(items, cx));
-                    return;
-                }
                 // A long section expands in place.
                 if let MenuEvent::Picked(id, _) = event
                     && let Some(section) = id.strip_prefix(actions::EXPAND)
@@ -6109,6 +6110,12 @@ impl Shell {
                 228.,
                 MenuStyle::Explorer,
             ),
+            MenuTarget::FixedFolder(folder) => (
+                "Folder actions".into(),
+                self.fixed_folder_menu_items(folder),
+                228.,
+                MenuStyle::Explorer,
+            ),
             MenuTarget::TerminalDock => {
                 let side = self
                     .workspace
@@ -6134,12 +6141,6 @@ impl Shell {
                 "Filter sessions".into(),
                 self.filter_menu_items(cx),
                 228.,
-                MenuStyle::Filter,
-            ),
-            MenuTarget::SidebarOptions => (
-                "Sidebar options".into(),
-                self.sidebar_options_menu_items(),
-                184.,
                 MenuStyle::Filter,
             ),
             MenuTarget::ProjectRailAdd => (
@@ -6215,7 +6216,7 @@ impl Shell {
                     MenuStyle::Switcher,
                 )
             }
-            // SidebarWorktreeSwitcher's menu under the project header.
+            // SidebarWorktreeSwitcher's menu under the project row's dropdown.
             MenuTarget::Header => {
                 let picker = cx.new(|cx| {
                     ProjectPicker::new(&self.workspace.projects, &self.workspace.project, cx)
@@ -6276,21 +6277,13 @@ impl Shell {
                             surface: None,
                         })
                         .into(),
-                    MenuAction::new("project-settings", "Project settings")
-                        .icon("sliders")
-                        .flyout(self.project_settings_flyout(events, window, cx))
-                        .into(),
                     MenuAction::new("open-remote-project", "Open folder on a machine…")
                         .icon("globe")
                         .into(),
-                    MenuAction::new("settings", "Settings")
-                        .icon("settings")
-                        .shortcut(format!("{MOD},"))
-                        .into(),
                 ];
-                // Beside Project settings: both act on this project.
+                // After Switch project: it acts on this project.
                 if let Some(editor) = editor {
-                    items.insert(4, editor);
+                    items.insert(3, editor);
                 }
                 (
                     format!("{} menu", self.project_label(&self.workspace.project)).into(),
@@ -6448,7 +6441,6 @@ impl Shell {
                 self.set_dock_side(side, cx);
             }
             MenuTarget::SessionFilter => self.change_session_filter(action, cx),
-            MenuTarget::SidebarOptions => self.change_sidebar_option(action, cx),
             MenuTarget::Tab(id) => {
                 self.run_title_tab_menu(TitleTab::Session(id), action, window, cx)
             }
@@ -6461,6 +6453,7 @@ impl Shell {
             }
             MenuTarget::Session(id) => self.run_session_menu(id, action, window, cx),
             MenuTarget::Folder(folder) => self.run_folder_menu(folder, action, window, cx),
+            MenuTarget::FixedFolder(folder) => self.run_fixed_folder_menu(folder, action, cx),
             MenuTarget::ProjectRailAdd => match action {
                 "open-project" => self.open_project(cx),
                 "open-remote-project" => self.open_remote_project(window, cx),
@@ -6478,26 +6471,14 @@ impl Shell {
                 }
             }
             MenuTarget::Header => {
-                // "Project settings" opens the project's menu beside its row.
-                if action == "settings" {
-                    self.open_settings(crate::settings::Section::General, window, cx);
-                } else if action == "open-remote-project" {
+                if action == "open-remote-project" {
                     self.open_remote_project(window, cx);
                 } else if action == open_in_editor::PROJECT_MENU_EDITOR_ROW
                     && let Some(path) = self.open_in_editor_folder(cx)
                 {
-                    // The editor menu takes the row's place, as Project
-                    // settings' flyout would.
+                    // The editor menu takes the row's place.
                     let at = row.map_or_else(Point::default, |r| Point::new(r.left(), r.top()));
                     self.open_editor_menu(path, Anchor::Point(at), window, cx);
-                } else if action == "project-settings" {
-                    let at = row
-                        .map_or_else(Point::default, |r| Point::new(r.right(), r.top() - px(8.)));
-                    let target = MenuTarget::Project {
-                        path: self.workspace.project.clone(),
-                        rail: false,
-                    };
-                    self.open_menu(target, Anchor::Point(at), window, cx);
                 }
             }
             MenuTarget::Project { path, .. } => {
@@ -7344,6 +7325,135 @@ impl Shell {
             self.open_title_tab(tab, window, cx);
         }
     }
+    /// The Focused sidebar's project row, under All projects: the project
+    /// dropdown and the Project settings gear, after a hairline.
+    pub(super) fn sidebar_project_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let settings_open = self.menu_open(&MenuTarget::Project {
+            path: self.workspace.project.clone(),
+            rail: false,
+        });
+        div()
+            .w_full()
+            .px_2()
+            .pt(px(10.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .debug_selector(|| "sidebar-project-divider".into())
+                    .mx_1p5()
+                    .h_px()
+                    .bg(content(crate::modal::BORDER)),
+            )
+            .child(
+                div()
+                    .pt(px(6.))
+                    .h(px(38.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        div().flex_1().min_w_0().flex().items_center().child(
+                            div()
+                                .id("workspace-project")
+                                .debug_selector(|| "sidebar-project-button".into())
+                                .relative()
+                                .role(Role::Button)
+                                .aria_label(format!(
+                                    "Switch project, {}",
+                                    self.project_label(&self.workspace.project)
+                                ))
+                                .aria_description(self.workspace.project.clone())
+                                .aria_expanded(self.menu_open(&MenuTarget::Header))
+                                .cursor_pointer()
+                                .w_full()
+                                .h(px(32.))
+                                .px(px(10.))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(content(crate::modal::BORDER))
+                                .bg(content(0.05))
+                                .hover(|s| s.bg(content(0.08)))
+                                .when(self.menu_open(&MenuTarget::Header), |d| d.bg(content(0.08)))
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(crate::project_settings::header_project_icon(
+                                    &self.appearance(&self.workspace.project),
+                                    &self.workspace.project,
+                                ))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(self.project_label(&self.workspace.project)),
+                                )
+                                .when_some(
+                                    self.worktree_focus.get(&self.workspace.project),
+                                    |d, focus| {
+                                        d.child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .font_weight(FontWeight::NORMAL)
+                                                .text_color(content(0.45))
+                                                .child(
+                                                    focus
+                                                        .branch
+                                                        .clone()
+                                                        .unwrap_or_else(|| "detached".into()),
+                                                ),
+                                        )
+                                    },
+                                )
+                                .child(div().flex_1())
+                                .child(icon("chevron-down", 14.))
+                                .child(self.project_anchor.probe())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if this.menu_open(&MenuTarget::Header) {
+                                        this.close_menu(cx);
+                                    } else {
+                                        let anchor = Anchor::Slot(this.project_anchor.clone());
+                                        this.open_menu(MenuTarget::Header, anchor, window, cx);
+                                    }
+                                })),
+                        ),
+                    )
+                    .child(
+                        icon_button_hover(
+                            "sidebar-project-settings",
+                            "Project settings",
+                            "settings",
+                            0.08,
+                        )
+                        .debug_selector(|| "sidebar-project-settings".into())
+                        .aria_expanded(settings_open)
+                        .size(px(32.))
+                        .border_1()
+                        .border_color(content(crate::modal::BORDER))
+                        .bg(content(0.05))
+                        .when(settings_open, |d| d.bg(content(0.08)))
+                        .relative()
+                        .child(self.project_settings_anchor.probe())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let target = MenuTarget::Project {
+                                path: this.workspace.project.clone(),
+                                rail: false,
+                            };
+                            if this.menu_open(&target) {
+                                this.close_menu(cx);
+                            } else {
+                                let anchor = Anchor::Slot(this.project_settings_anchor.clone());
+                                this.open_menu(target, anchor, window, cx);
+                            }
+                        })),
+                    ),
+            )
+            .into_any()
+    }
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(settings) = self.settings.clone() {
             let section = settings.read(cx).section;
@@ -7393,142 +7503,6 @@ impl Shell {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .child(
-                            div()
-                                .h(px(39.))
-                                .flex_shrink_0()
-                                .px_3()
-                                .pb_px()
-                                .relative()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    div().flex_1().min_w_0().flex().items_center().child(
-                                        div()
-                                            .id("workspace-project")
-                                            .debug_selector(|| "sidebar-project-button".into())
-                                            .relative()
-                                            .role(Role::Button)
-                                            .aria_label(format!(
-                                                "Switch project, {}",
-                                                self.project_label(&self.workspace.project)
-                                            ))
-                                            .aria_description(self.workspace.project.clone())
-                                            .aria_expanded(self.menu_open(&MenuTarget::Header))
-                                            .cursor_pointer()
-                                            .h(px(28.))
-                                            // The whole picker shares Search's left edge.
-                                            .px_1p5()
-                                            .ml(px(-4.))
-                                            .rounded_md()
-                                            .max_w_full()
-                                            .hover(|s| s.bg(content(0.08)))
-                                            .when(self.menu_open(&MenuTarget::Header), |d| {
-                                                d.bg(content(0.08))
-                                            })
-                                            .min_w_0()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(crate::project_settings::header_project_icon(
-                                                &self.appearance(&self.workspace.project),
-                                                &self.workspace.project,
-                                            ))
-                                            .child(
-                                                div().min_w_0().truncate().child(
-                                                    self.project_label(&self.workspace.project),
-                                                ),
-                                            )
-                                            .when_some(
-                                                self.worktree_focus.get(&self.workspace.project),
-                                                |d, focus| {
-                                                    d.child(
-                                                        div()
-                                                            .min_w_0()
-                                                            .truncate()
-                                                            .font_weight(FontWeight::NORMAL)
-                                                            .text_color(content(0.45))
-                                                            .child(
-                                                                focus
-                                                                    .branch
-                                                                    .clone()
-                                                                    .unwrap_or_else(|| {
-                                                                        "detached".into()
-                                                                    }),
-                                                            ),
-                                                    )
-                                                },
-                                            )
-                                            .child(icon("chevron-down", 14.))
-                                            .child(self.project_anchor.probe())
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                if this.menu_open(&MenuTarget::Header) {
-                                                    this.close_menu(cx);
-                                                } else {
-                                                    let anchor =
-                                                        Anchor::Slot(this.project_anchor.clone());
-                                                    this.open_menu(
-                                                        MenuTarget::Header,
-                                                        anchor,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    ),
-                                )
-                                .when(self.workspace.sidebar_search_visible, |d| {
-                                    d.child(
-                                        icon_button_tinted(
-                                            "sidebar-search",
-                                            "Search",
-                                            "search",
-                                            nav_tint("Search"),
-                                        )
-                                        .debug_selector(|| "sidebar-search-button".into())
-                                        .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
-                                        .on_click(
-                                            cx.listener(|this, _, window, cx| {
-                                                if this.app_search.is_some() {
-                                                    this.close_app_search(window, cx)
-                                                } else {
-                                                    this.focus_search(window, cx)
-                                                }
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .child(
-                                    icon_button(
-                                        "sidebar-options",
-                                        "Sidebar options",
-                                        "more-horizontal",
-                                    )
-                                    .debug_selector(|| "sidebar-options".into())
-                                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
-                                    .relative()
-                                    .child(self.sidebar_options_anchor.probe())
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| {
-                                            if this.menu_open(&MenuTarget::SidebarOptions) {
-                                                this.close_menu(cx);
-                                            } else {
-                                                this.open_menu(
-                                                    MenuTarget::SidebarOptions,
-                                                    Anchor::Slot(
-                                                        this.sidebar_options_anchor.clone(),
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        },
-                                    )),
-                                ),
-                        )
                         .child(self.virtual_sidebar(cx))
                         .children(live_agents)
                         .child(self.app_update_footer(cx)),
@@ -9323,6 +9297,10 @@ impl Render for Shell {
                         crate::windows::set_hidden(cx.entity_id(), false, cx);
                         this.resume_git(cx);
                         this.schedule_session_sync(cx);
+                        if this.secondary {
+                            // The first window may have started runs meanwhile.
+                            this.load_automation_sessions(cx);
+                        }
                         if let Some(center) = crate::accounts::get(cx) {
                             center.update(cx, |center, cx| center.app_reactivated(cx));
                         }
@@ -9900,9 +9878,6 @@ impl Render for Shell {
                     )
                     .when(point, |p| p.gap(0.))
                     .when(beside, |p| p.side(Side::Right))
-                    .when(open.target == MenuTarget::SidebarOptions, |p| {
-                        p.align(Align::Start)
-                    })
                     .when(open.target == MenuTarget::Actions, |p| {
                         p.side(Side::Top).align(crate::popover::Align::End)
                     })
@@ -10775,32 +10750,31 @@ mod tests {
             crate::popover::bind(cx);
             cx.set_reduce_motion(true);
         });
-        window
-            .update(cx, |shell, w, cx| {
-                let anchor = Anchor::Slot(shell.project_anchor.clone());
-                shell.open_menu(MenuTarget::Header, anchor, w, cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-        // The settings flyout opens beside the header menu and focuses its name.
-        cx.simulate_keystrokes(window.into(), "down down right");
-        cx.run_until_parked();
-        cx.simulate_input(window.into(), "Small");
-        cx.simulate_keystrokes(window.into(), "space");
-        cx.simulate_input(window.into(), "Studio");
-        cx.run_until_parked();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let flyout = window
+        visual.run_until_parked();
+        // The gear beside the project dropdown opens Project settings.
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        visual.simulate_click(gear.center(), Default::default());
+        visual.run_until_parked();
+        let name = visual.debug_bounds("project-appearance-name").unwrap();
+        visual.simulate_click(name.center(), Default::default());
+        visual.run_until_parked();
+        visual.simulate_keystrokes("secondary-a");
+        visual.simulate_input("Small");
+        visual.simulate_keystrokes("space");
+        visual.simulate_input("Studio");
+        visual.run_until_parked();
+        let settings = window
             .update(visual, |shell, _, cx| {
-                shell
-                    .menu
-                    .as_ref()
-                    .unwrap()
-                    .menu
-                    .read(cx)
-                    .submenu_region()
-                    .get()
-                    .unwrap()
+                let open = shell.menu.as_ref().unwrap();
+                assert!(
+                    open.target
+                        == MenuTarget::Project {
+                            path: "/work/gespan".into(),
+                            rail: false
+                        }
+                );
+                open.menu.read(cx).surface_region().get().unwrap()
             })
             .unwrap();
         let controls = visual.debug_bounds("project-appearance-controls").unwrap();
@@ -10808,9 +10782,9 @@ mod tests {
         let logo = visual.debug_bounds("choose-project-logo").unwrap();
         // TabGroupMenu's p-2 belongs to the whole card, including its actions.
         for inset in [
-            controls.left() - flyout.left(),
-            flyout.right() - controls.right(),
-            name.top() - flyout.top(),
+            controls.left() - settings.left(),
+            settings.right() - controls.right(),
+            name.top() - settings.top(),
         ] {
             assert_eq!(inset, px(9.), "8px of padding inside the card's 1px frame");
         }
@@ -10819,8 +10793,8 @@ mod tests {
         assert_eq!(logo.top() - name.bottom(), px(8.));
         assert_eq!(logo.size, gpui::size(px(36.), px(36.)));
         let background = visual.debug_bounds("menu-action-background").unwrap();
-        assert_eq!(background.left() - flyout.left(), px(9.));
-        assert_eq!(flyout.right() - background.right(), px(9.));
+        assert_eq!(background.left() - settings.left(), px(9.));
+        assert_eq!(settings.right() - background.right(), px(9.));
         let color = visual
             .debug_bounds("project-color-4")
             .expect("appearance controls in the flyout");
@@ -12882,20 +12856,24 @@ mod tests {
         let root = window.root(cx).unwrap();
         let transcript =
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
-        let before = transcript.read_with(cx, |t, _| t.render_passes);
-        cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(133.)), cx)
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert_eq!(root.read_with(cx, |s, _| s.sidebar_hover), Some("Inbox"));
-        cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(166.)), cx)
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert_eq!(root.read_with(cx, |s, _| s.sidebar_hover), Some("Notes"));
-        assert_eq!(transcript.read_with(cx, |t, _| t.render_passes), before);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
+        let before = transcript.read_with(visual, |t, _| t.render_passes);
+        visual.simulate_mouse_move(inbox.center(), None, Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            root.read_with(visual, |s, _| s.sidebar_hover),
+            Some("Inbox")
+        );
+        visual.simulate_mouse_move(notes.center(), None, Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            root.read_with(visual, |s, _| s.sidebar_hover),
+            Some("Notes")
+        );
+        assert_eq!(transcript.read_with(visual, |t, _| t.render_passes), before);
     }
     #[gpui::test]
     fn many_blank_tabs_fit_without_creating_sidebar_conversations(cx: &mut TestAppContext) {

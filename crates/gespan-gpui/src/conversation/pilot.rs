@@ -106,6 +106,12 @@ impl Conversation {
     pub(crate) fn hold_history_for_test(&mut self) {
         self.loading = true;
     }
+    /// Tests: show the chat as mid-turn, so the Pilot reads as working.
+    #[cfg(test)]
+    pub(crate) fn set_responding_for_test(&mut self, busy: bool, cx: &mut Context<Self>) {
+        self.busy = busy;
+        cx.notify();
+    }
     /// Tests: the chat took Pilot message `id`, as when its turn starts.
     #[cfg(test)]
     pub(crate) fn deliver_for_test(&mut self, id: String, cx: &mut Context<Self>) {

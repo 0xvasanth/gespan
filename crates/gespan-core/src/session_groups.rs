@@ -21,7 +21,17 @@ pub struct Folder {
     pub custom_color: Option<String>,
 }
 
-/// A project's folders, and whether its Pinned and Reminders groups are folded.
+/// An automatic folder the app fills, such as Automation runs. It is not
+/// stored: ids are `fixed:automations` and `fixed:pilot:<pilot id>`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FixedFolder {
+    pub id: String,
+    pub name: String,
+    pub session_ids: Vec<i64>,
+}
+
+/// A project's folders, and whether its Pinned, Reminders and fixed groups
+/// are folded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Groups {
     #[serde(default)]
@@ -30,9 +40,21 @@ pub struct Groups {
     pub pinned_collapsed: bool,
     #[serde(default)]
     pub reminders_collapsed: bool,
+    /// Ids of the folded fixed folders.
+    #[serde(default)]
+    pub fixed_collapsed: Vec<String>,
 }
 
 impl Groups {
+    pub fn fixed_is_collapsed(&self, id: &str) -> bool {
+        self.fixed_collapsed.iter().any(|c| c == id)
+    }
+    pub fn set_fixed_collapsed(&mut self, id: &str, collapsed: bool) {
+        self.fixed_collapsed.retain(|c| c != id);
+        if collapsed {
+            self.fixed_collapsed.push(id.into());
+        }
+    }
     pub fn folder_of(&self, session: i64) -> Option<&Folder> {
         self.folders
             .iter()
@@ -133,8 +155,8 @@ impl Groups {
     }
 }
 
-/// The sidebar's entries, top to bottom: pinned, reminders, folders, then
-/// loose sessions. `visible` is already in the list's order.
+/// The sidebar's entries, top to bottom: reminders, fixed folders, folders,
+/// pinned, then loose sessions. `visible` is already in the list's order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
     Reminders {
@@ -145,6 +167,12 @@ pub enum Entry {
         id: String,
         sessions: Vec<i64>,
     },
+    /// An automatic folder; see [`FixedFolder`].
+    Fixed {
+        id: String,
+        name: String,
+        sessions: Vec<i64>,
+    },
     /// Loose pinned sessions, shown as ordinary cards under a Pinned label.
     Pinned {
         sessions: Vec<i64>,
@@ -152,13 +180,16 @@ pub enum Entry {
     Session(i64),
 }
 
-/// buildSessionList: pins lead, followed by reminders, folders and loose
-/// sessions. Reminder membership only changes this view.
+/// buildSessionList: reminders lead, followed by fixed folders, folders, pins
+/// and loose sessions. A fixed folder only takes sessions that are not
+/// reminded, in a folder, pinned or in an earlier fixed folder. Reminder
+/// membership only changes this view.
 pub fn build_list(
     visible: &[i64],
     pinned: impl Fn(i64) -> bool,
     groups: &Groups,
     reminders: &[(i64, u64)],
+    fixed: &[FixedFolder],
 ) -> Vec<Entry> {
     let mut entries = Vec::new();
     let visible_members: HashSet<_> = visible.iter().copied().collect();
@@ -176,9 +207,35 @@ pub fn build_list(
             sessions: reminded.clone(),
         });
     }
-    let mut foldered = HashSet::new();
+    let foldered: HashSet<i64> = groups
+        .folders
+        .iter()
+        .flat_map(|f| f.session_ids.iter().copied())
+        .collect();
+    let mut taken = HashSet::new();
+    for folder in fixed {
+        let members: HashSet<_> = folder.session_ids.iter().copied().collect();
+        let members: Vec<i64> = visible
+            .iter()
+            .copied()
+            .filter(|&id| {
+                members.contains(&id)
+                    && !taken.contains(&id)
+                    && !reminded_members.contains(&id)
+                    && !foldered.contains(&id)
+                    && !pinned(id)
+            })
+            .collect();
+        taken.extend(members.iter().copied());
+        if !members.is_empty() {
+            entries.push(Entry::Fixed {
+                id: folder.id.clone(),
+                name: folder.name.clone(),
+                sessions: members,
+            });
+        }
+    }
     for folder in &groups.folders {
-        foldered.extend(folder.session_ids.iter().copied());
         let members: HashSet<_> = folder.session_ids.iter().copied().collect();
         let members: Vec<i64> = visible
             .iter()
@@ -195,7 +252,9 @@ pub fn build_list(
     let loose: Vec<i64> = visible
         .iter()
         .copied()
-        .filter(|id| !foldered.contains(id) && !reminded_members.contains(id))
+        .filter(|id| {
+            !foldered.contains(id) && !reminded_members.contains(id) && !taken.contains(id)
+        })
         .collect();
     let (pins, loose): (Vec<_>, Vec<_>) = loose.into_iter().partition(|&id| pinned(id));
     if !pins.is_empty() {
@@ -220,7 +279,9 @@ pub fn navigation_ids(entries: &[Entry], expand_collapsed: bool) -> Vec<i64> {
                     ids.extend(sessions);
                 }
             }
-            Entry::Folder { sessions, .. } | Entry::Pinned { sessions } => ids.extend(sessions),
+            Entry::Folder { sessions, .. }
+            | Entry::Fixed { sessions, .. }
+            | Entry::Pinned { sessions } => ids.extend(sessions),
         }
     }
     ids
@@ -551,6 +612,7 @@ mod tests {
             |id| id == 5 || id == 3,
             &groups,
             &[(6, 20), (3, 10)],
+            &[],
         );
         assert_eq!(
             list,
@@ -569,9 +631,160 @@ mod tests {
             ]
         );
         groups.reminders_collapsed = true;
-        let list = build_list(&visible, |id| id == 5, &groups, &[(3, 10)]);
+        let list = build_list(&visible, |id| id == 5, &groups, &[(3, 10)], &[]);
         assert_eq!(navigation_ids(&list, false), vec![2, 5, 1, 4, 6]);
         assert_eq!(navigation_ids(&list, true), vec![3, 2, 5, 1, 4, 6]);
+    }
+
+    #[test]
+    fn fixed_folders_take_unplaced_sessions_in_order() {
+        let fixed = [
+            FixedFolder {
+                id: "fixed:automations".into(),
+                name: "Automation runs".into(),
+                session_ids: vec![4, 2, 9],
+            },
+            FixedFolder {
+                id: "fixed:pilot:p".into(),
+                name: "Pilot".into(),
+                session_ids: vec![3],
+            },
+        ];
+        // 9 is not visible; 4 is reminded so it stays in Reminders.
+        let list = build_list(
+            &[1, 2, 3, 4],
+            |_| false,
+            &Groups::default(),
+            &[(4, 10)],
+            &fixed,
+        );
+        assert_eq!(
+            list,
+            vec![
+                Entry::Reminders {
+                    collapsed: false,
+                    sessions: vec![4]
+                },
+                Entry::Fixed {
+                    id: "fixed:automations".into(),
+                    name: "Automation runs".into(),
+                    sessions: vec![2]
+                },
+                Entry::Fixed {
+                    id: "fixed:pilot:p".into(),
+                    name: "Pilot".into(),
+                    sessions: vec![3]
+                },
+                Entry::Session(1),
+            ]
+        );
+        assert_eq!(navigation_ids(&list, false), vec![4, 2, 3, 1]);
+    }
+
+    #[test]
+    fn user_folder_wins_over_fixed_folder() {
+        let mut groups = Groups::default();
+        groups.create_folder(&[2], "mine".into());
+        let fixed = [FixedFolder {
+            id: "fixed:automations".into(),
+            name: "Automation runs".into(),
+            session_ids: vec![1, 2],
+        }];
+        let list = build_list(&[1, 2], |_| false, &groups, &[], &fixed);
+        assert_eq!(
+            list,
+            vec![
+                Entry::Fixed {
+                    id: "fixed:automations".into(),
+                    name: "Automation runs".into(),
+                    sessions: vec![1]
+                },
+                Entry::Folder {
+                    id: "mine".into(),
+                    sessions: vec![2]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn pinned_wins_over_fixed_folder() {
+        let fixed = [FixedFolder {
+            id: "fixed:automations".into(),
+            name: "Automation runs".into(),
+            session_ids: vec![1, 2],
+        }];
+        let list = build_list(&[1, 2], |id| id == 2, &Groups::default(), &[], &fixed);
+        assert_eq!(
+            list,
+            vec![
+                Entry::Fixed {
+                    id: "fixed:automations".into(),
+                    name: "Automation runs".into(),
+                    sessions: vec![1]
+                },
+                Entry::Pinned { sessions: vec![2] },
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_fixed_folder_is_omitted() {
+        let fixed = [
+            FixedFolder {
+                id: "fixed:automations".into(),
+                name: "Automation runs".into(),
+                session_ids: vec![],
+            },
+            FixedFolder {
+                id: "fixed:pilot:p".into(),
+                name: "Pilot".into(),
+                session_ids: vec![7],
+            },
+        ];
+        let list = build_list(&[1], |_| false, &Groups::default(), &[], &fixed);
+        assert_eq!(list, vec![Entry::Session(1)]);
+    }
+
+    #[test]
+    fn a_session_in_two_fixed_folders_stays_in_the_first() {
+        let folder = |id: &str, session_ids: Vec<i64>| FixedFolder {
+            id: id.into(),
+            name: id.into(),
+            session_ids,
+        };
+        let fixed = [
+            folder("fixed:pilot:p", vec![1, 2]),
+            folder("fixed:automations", vec![2]),
+        ];
+        let list = build_list(&[1, 2], |_| false, &Groups::default(), &[], &fixed);
+        assert_eq!(
+            list,
+            vec![Entry::Fixed {
+                id: "fixed:pilot:p".into(),
+                name: "fixed:pilot:p".into(),
+                sessions: vec![1, 2],
+            }]
+        );
+    }
+
+    #[test]
+    fn fixed_collapse_round_trips_through_json() {
+        let mut groups = Groups::default();
+        assert!(!groups.fixed_is_collapsed("fixed:automations"));
+        groups.set_fixed_collapsed("fixed:automations", true);
+        groups.set_fixed_collapsed("fixed:automations", true);
+        assert_eq!(groups.fixed_collapsed, vec!["fixed:automations"]);
+        let loaded: Groups =
+            serde_json::from_str(&serde_json::to_string(&groups).unwrap()).unwrap();
+        assert!(loaded.fixed_is_collapsed("fixed:automations"));
+        assert!(!loaded.fixed_is_collapsed("fixed:pilot:p"));
+        let mut loaded = loaded;
+        loaded.set_fixed_collapsed("fixed:automations", false);
+        assert!(loaded.fixed_collapsed.is_empty());
+        let old: Groups =
+            serde_json::from_str(r#"{"folders":[],"pinned_collapsed":true}"#).unwrap();
+        assert!(old.fixed_collapsed.is_empty());
     }
 
     #[test]
