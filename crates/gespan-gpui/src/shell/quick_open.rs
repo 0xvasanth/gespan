@@ -84,7 +84,6 @@ impl Shell {
                     Command::Sidebar => window.dispatch_action(Box::new(ToggleSidebar), cx),
                     Command::Panel => window.dispatch_action(Box::new(ToggleRightPanel), cx),
                     Command::Terminal => window.dispatch_action(Box::new(ToggleTerminal), cx),
-                    Command::Layout => window.dispatch_action(Box::new(ToggleLayout), cx),
                     Command::LinkTicket => this.link_ticket_to_active_session(window, cx),
                     Command::NewSessionFromTicket => this.open_new_ticket_dialog(window, cx),
                     Command::NewCardFromTicket => this.open_new_card_ticket_dialog(window, cx),
@@ -200,57 +199,6 @@ mod tests {
     use gespan_core::{session_groups::WorkItem, tickets::Tracker};
     use gpui::{TestAppContext, WindowHandle};
 
-    #[gpui::test]
-    fn titlebar_search_opens_files_and_sidebar_search_opens_global_search(cx: &mut TestAppContext) {
-        let (window, _, active) = crate::shell::tests::window(cx);
-        window
-            .update(cx, |shell, _, cx| {
-                let input = shell.sessions[&active].read(cx).input.clone();
-                input.update(cx, |input, cx| input.set_text("keep this draft".into(), cx));
-            })
-            .unwrap();
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        // The new layouts' corner is the panel toggle alone (search is ⌘P and
-        // the sidebar there); the original layout keeps the button.
-        assert!(visual.debug_bounds("titlebar-file-search").is_none());
-        {
-            let classic = true;
-            window
-                .update(visual, |shell, _, cx| {
-                    shell.workspace.classic_layout = classic;
-                    shell.invalidate_chrome(cx);
-                    cx.notify();
-                })
-                .unwrap();
-            visual.run_until_parked();
-            let search = visual.debug_bounds("titlebar-file-search").unwrap();
-            visual.simulate_click(search.center(), Default::default());
-            visual.run_until_parked();
-            window
-                .update(visual, |shell, w, cx| {
-                    assert!(shell.quick_open.is_some());
-                    assert!(shell.app_search.is_none());
-                    assert_eq!(
-                        shell.sessions[&active].read(cx).input.read(cx).content,
-                        "keep this draft"
-                    );
-                    shell.close_quick_open(w, cx);
-                })
-                .unwrap();
-            visual.run_until_parked();
-            let search = visual.debug_bounds("sidebar-search-field").unwrap();
-            visual.simulate_click(search.center(), Default::default());
-            visual.run_until_parked();
-            window
-                .update(visual, |shell, w, cx| {
-                    assert!(shell.app_search.is_some());
-                    assert!(shell.quick_open.is_none());
-                    shell.close_app_search(w, cx);
-                })
-                .unwrap();
-            visual.run_until_parked();
-        }
-    }
     #[gpui::test]
     fn cmd_p_and_command_palette_preserve_the_composer_draft(cx: &mut TestAppContext) {
         cx.update(|cx| {

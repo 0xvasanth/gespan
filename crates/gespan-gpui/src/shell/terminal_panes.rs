@@ -632,7 +632,6 @@ mod tests {
             window
                 .update(cx, |shell, w, cx| {
                     cx.set_reduce_motion(true);
-                    shell.workspace.classic_layout = false;
                     shell.workspace.new_layout_boxy = true;
                     shell.layout_changed(cx);
                     shell.workspace.preferences.set_terminal_placement("panel");
@@ -931,7 +930,6 @@ mod tests {
     enum Frame {
         Rounded,
         Boxy,
-        Classic,
     }
 
     /// Moves `owner` onto a real project folder holding `README.md`,
@@ -963,20 +961,11 @@ mod tests {
                 shell
                     .git
                     .update(cx, |git, cx| git.set_project(root.clone(), cx));
-                shell.workspace.classic_layout = matches!(frame, Frame::Classic);
                 shell.workspace.new_layout_boxy = matches!(frame, Frame::Boxy);
                 shell.layout_changed(cx);
-                if matches!(frame, Frame::Classic) {
-                    shell.select_classic_sidebar_tab(
-                        super::classic_sidebar::ClassicSidebarTab::Files,
-                        w,
-                        cx,
-                    );
-                } else {
-                    shell.set_right_panel_open(true, w, cx);
-                    let panel = shell.right_panel.clone().unwrap();
-                    panel.update(cx, |p, cx| p.select(RightTab::Files, cx));
-                }
+                shell.set_right_panel_open(true, w, cx);
+                let panel = shell.right_panel.clone().unwrap();
+                panel.update(cx, |p, cx| p.select(RightTab::Files, cx));
             })
             .unwrap();
         visual.run_until_parked();
@@ -1035,7 +1024,7 @@ mod tests {
     fn explorer_opens_files_beside_the_chat_while_its_split_terminal_has_focus(
         cx: &mut TestAppContext,
     ) {
-        for frame in [Frame::Rounded, Frame::Boxy, Frame::Classic] {
+        for frame in [Frame::Rounded, Frame::Boxy] {
             let (window, mut visual, owner, pane) = title_terminal(cx, true);
             let root = show_explorer(window, owner, frame, &mut visual);
             window
@@ -1112,7 +1101,7 @@ mod tests {
 
     #[gpui::test]
     fn explorer_opens_files_beside_the_focused_chat(cx: &mut TestAppContext) {
-        for frame in [Frame::Rounded, Frame::Boxy, Frame::Classic] {
+        for frame in [Frame::Rounded, Frame::Boxy] {
             let (window, _, owner) = window(cx);
             cx.update(|cx| cx.set_reduce_motion(true));
             window

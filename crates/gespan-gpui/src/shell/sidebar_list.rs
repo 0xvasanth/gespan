@@ -27,14 +27,6 @@ enum Row {
         first: bool,
         last: bool,
     },
-    ClassicGroupMember {
-        entry: Entry,
-        id: i64,
-        first: bool,
-        last: bool,
-    },
-    ClassicFolderNew(String),
-    ClassicGap(usize),
     Empty,
     MachinesHeading,
     /// A herdr machine, by id.
@@ -185,7 +177,6 @@ fn age_label(updated_at: u64, now: u64) -> &'static str {
 // Mask only the edge bands so the virtual list never needs a full-pane copy.
 fn sidebar_edge_mask(
     state: ListState,
-    top_fade: bool,
     #[cfg_attr(target_os = "macos", allow(unused_variables))] inset: bool,
     begin: bool,
 ) -> impl IntoElement {
@@ -194,7 +185,7 @@ fn sidebar_edge_mask(
         move |bounds, _, window, _| {
             let offset = state.logical_scroll_top();
             let bottom_height = px(40.).min(bounds.size.height);
-            let top_height = if top_fade && (offset.item_ix > 0 || offset.offset_in_item > px(0.)) {
+            let top_height = if offset.item_ix > 0 || offset.offset_in_item > px(0.) {
                 px(28.).min((bounds.size.height - bottom_height).max(px(0.)))
             } else {
                 px(0.)
@@ -314,22 +305,16 @@ impl Shell {
 
     fn sidebar_scope(&self) -> String {
         format!(
-            "{}\0{}\0{}\0{:?}\0{}\0{}\0{}",
+            "{}\0{}\0{:?}\0{}\0{}",
             self.workspace.project,
             self.working_copy(),
-            self.query,
             self.workspace.session_filters,
             self.workspace.preferences.show_archived,
             self.workspace.boxy_layout(),
-            self.workspace.classic_layout
         )
     }
 
     pub(super) fn prepare_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
-        if self.workspace.classic_layout {
-            self.prepare_classic_sidebar_list(entries, cx);
-            return;
-        }
         let groups = self.project_groups();
         let now = gespan_core::time::now_ms();
         let mut rows = vec![Row::Navigation, Row::Project, Row::NewThread, Row::Pilots];
@@ -371,7 +356,7 @@ impl Shell {
                 folders = true;
             }
             rows.push(Row::Group(entry.clone()));
-            if !collapsed || !self.query.is_empty() {
+            if !collapsed {
                 let members: Vec<_> = members
                     .iter()
                     .copied()
@@ -421,71 +406,12 @@ impl Shell {
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
 
-    fn prepare_classic_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
-        let groups = self.project_groups();
-        // The original sidebar: the list has p-1.5, gap-0.5 and pb-10.
-        // Its project navigation and Pilot roster belong to the first rail.
-        let mut rows = vec![Row::ClassicGap(6)];
-        for (ix, entry) in entries.iter().enumerate() {
-            if ix > 0 {
-                rows.push(Row::ClassicGap(2));
-            }
-            let (members, collapsed) = match entry {
-                Entry::Session(id) => {
-                    rows.push(Row::Session(*id));
-                    continue;
-                }
-                Entry::Pinned { sessions } => (sessions, groups.pinned_collapsed),
-                Entry::Reminders {
-                    sessions,
-                    collapsed,
-                } => (sessions, *collapsed),
-                Entry::Folder { id, sessions } => (
-                    sessions,
-                    groups.folder(id).is_some_and(|folder| folder.collapsed),
-                ),
-                Entry::Fixed { id, sessions, .. } => (sessions, groups.fixed_is_collapsed(id)),
-            };
-            rows.push(Row::Group(entry.clone()));
-            let expanded = !collapsed || !self.query.is_empty();
-            if expanded {
-                let members: Vec<_> = members.to_vec();
-                rows.extend(
-                    members
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, id)| Row::ClassicGroupMember {
-                            entry: entry.clone(),
-                            id: *id,
-                            first: ix == 0,
-                            last: ix + 1 == members.len(),
-                        }),
-                );
-                if let Entry::Folder { id, .. } = entry {
-                    rows.push(Row::ClassicFolderNew(id.clone()));
-                }
-            }
-            if expanded || matches!(entries.get(ix + 1), Some(Entry::Session(_))) {
-                rows.push(Row::ClassicGap(6));
-            }
-        }
-        if entries.is_empty() {
-            rows.push(Row::Empty);
-        }
-        push_machine_rows(&mut rows, cx);
-        rows.push(Row::ClassicGap(40));
-        self.sidebar_list.update(self.sidebar_scope(), rows);
-    }
-
     fn sync_sidebar_list_visibility(&mut self) {
         // Open rails have variable height. Remeasure only materialized rows,
         // rather than scanning every session in the project every frame.
         for ix in self.sidebar_list.visible_rows.borrow_mut().drain(..) {
-            if let Some(
-                Row::Session(id)
-                | Row::GroupedSession { id, .. }
-                | Row::ClassicGroupMember { id, .. },
-            ) = self.sidebar_list.rows.get(ix)
+            if let Some(Row::Session(id) | Row::GroupedSession { id, .. }) =
+                self.sidebar_list.rows.get(ix)
                 && (self.rails.started.contains_key(id)
                     || self.orchestration_summaries.contains_key(id))
             {
@@ -505,7 +431,6 @@ impl Shell {
             .on_scroll_wheel(cx.listener(|this, _, _, cx| this.sidebar_scrolled(cx)))
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
-                !self.workspace.classic_layout,
                 !self.workspace.boxy_layout(),
                 true,
             ))
@@ -518,7 +443,6 @@ impl Shell {
             )
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
-                !self.workspace.classic_layout,
                 !self.workspace.boxy_layout(),
                 false,
             ))
@@ -558,14 +482,8 @@ impl Shell {
             Row::Gap => return div().h(px(12.)).into_any(),
             Row::Heading { label, first } => section_label(label)
                 .when(!first, |d| d.mt_3())
-                .when(first, |d| {
-                    // The New row above already starts a session; only the
-                    // original layout, which has no New row, keeps a plus.
-                    d.when(self.workspace.classic_layout, |d| {
-                        d.child(self.sidebar_new_session_button(cx))
-                    })
-                    .child(self.sidebar_filter_button(cx))
-                })
+                // The New row above already starts a session.
+                .when(first, |d| d.child(self.sidebar_filter_button(cx)))
                 .into_any(),
             Row::Session(id) => self.session_card(id, cx),
             Row::GroupedSession { id, first, last } => {
@@ -579,24 +497,6 @@ impl Shell {
                     )
                     .into_any();
             }
-            Row::ClassicGroupMember {
-                entry,
-                id,
-                first,
-                last,
-            } => {
-                return div()
-                    .px(px(6.))
-                    .child(self.classic_group_member(&entry, id, first, last, cx))
-                    .into_any();
-            }
-            Row::ClassicFolderNew(id) => {
-                return div()
-                    .px(px(6.))
-                    .child(self.classic_folder_new_session(&id, cx))
-                    .into_any();
-            }
-            Row::ClassicGap(height) => return div().h(px(height as f32)).into_any(),
             Row::MachinesHeading => section_label("Machines").into_any(),
             Row::Machine(id) => {
                 let Some(view) = crate::machines::get(cx).and_then(|machines| {
@@ -615,62 +515,44 @@ impl Shell {
                 machine,
                 terminal_id,
             } => self.machine_agent_row(&machine, &terminal_id, cx),
-            Row::Empty => {
-                let searching = !self.query.is_empty();
-                div()
-                    .debug_selector(|| "sidebar-sessions-empty".into())
-                    .mx_1()
-                    .mt_1()
-                    .px_3()
-                    .py(px(10.))
-                    .rounded_lg()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(content(0.1))
-                    .flex()
-                    .items_center()
-                    .gap_2p5()
-                    .child(
-                        icon(if searching { "search" } else { "chat" }, 14.)
-                            .text_color(content(0.35)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(content(0.6))
-                                    .child(if searching {
-                                        "No matching sessions"
-                                    } else {
-                                        "No sessions yet"
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .debug_selector(|| "sidebar-sessions-empty-hint".into())
-                                    .text_size(px(11.))
-                                    .text_color(content(0.35))
-                                    .child(if searching {
-                                        SharedString::from("Try a different search")
-                                    } else {
-                                        format!("Start one with {MOD}T").into()
-                                    }),
-                            ),
-                    )
-                    .into_any()
-            }
+            Row::Empty => div()
+                .debug_selector(|| "sidebar-sessions-empty".into())
+                .mx_1()
+                .mt_1()
+                .px_3()
+                .py(px(10.))
+                .rounded_lg()
+                .border_1()
+                .border_dashed()
+                .border_color(content(0.1))
+                .flex()
+                .items_center()
+                .gap_2p5()
+                .child(icon("chat", 14.).text_color(content(0.35)))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(content(0.6))
+                                .child("No sessions yet"),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(|| "sidebar-sessions-empty-hint".into())
+                                .text_size(px(11.))
+                                .text_color(content(0.35))
+                                .child(format!("Start one with {MOD}T")),
+                        ),
+                )
+                .into_any(),
         };
-        div()
-            .when(self.workspace.classic_layout, |d| d.px(px(6.)))
-            .when(!self.workspace.classic_layout, |d| d.px_2().pb_px())
-            .child(content)
-            .into_any()
+        div().px_2().pb_px().child(content).into_any()
     }
 }
 
@@ -895,21 +777,12 @@ impl Shell {
 
     pub(super) fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let flows_visible = crate::flows::visible(cx);
-        let search_field = self.workspace.sidebar_search_visible && self.workspace.classic_layout;
         div()
             .w_full()
             .px_2()
-            .pt(px(if self.workspace.classic_layout {
-                2.
-            } else {
-                4.
-            }))
-            .pb(px(if self.workspace.classic_layout {
-                8.
-            } else {
-                // The New thread row below supplies its own top margin.
-                0.
-            }))
+            .pt(px(4.))
+            // The New thread row below supplies its own top margin.
+            .pb(px(0.))
             .flex()
             .flex_col()
             .gap_px()
@@ -920,71 +793,6 @@ impl Shell {
                         .debug_selector(|| "sidebar-all-projects".into()),
                 ),
             )
-            .when(search_field, |d| {
-                d.child(
-                    div()
-                        .id("rail-search")
-                        .debug_selector(|| "sidebar-search-field".into())
-                        .group("rail-search")
-                        .w_full()
-                        .h(px(32.))
-                        .mb(px(if self.workspace.classic_layout {
-                            2.
-                        } else {
-                            4.
-                        }))
-                        .px_1p5()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(content(0.08))
-                        // RailSearch's Tailwind shadow-sm, including
-                        // its tighter second layer below the border.
-                        // The vendored shader keeps it outside the
-                        // box, as CSS does.
-                        .shadow(vec![
-                            BoxShadow::new(px(0.), px(1.), rgba(0x0000001a).into())
-                                .blur_radius(px(3.)),
-                            BoxShadow::new(px(0.), px(1.), rgba(0x0000001a).into())
-                                .blur_radius(px(2.))
-                                .spread_radius(px(-1.)),
-                        ])
-                        .text_color(content(if self.sidebar_hover == Some("Search") {
-                            1.
-                        } else {
-                            0.5
-                        }))
-                        .font_weight(FontWeight::MEDIUM)
-                        .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                        .on_hover(cx.listener(|this, hovered, _, cx| {
-                            this.sidebar_hover = if *hovered { Some("Search") } else { None };
-                            this.notify_navigation(cx);
-                        }))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, window, cx| {
-                                this.focus_search(window, cx);
-                            }),
-                        )
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(14.))
-                        .child(icon("search", 16.).text_color(nav_icon_color("Search", false)))
-                        .child(div().flex_1().min_w_0().h(px(20.)).child("Search"))
-                        .child(
-                            // The shortcut span sits outside the label's `font-medium`.
-                            div()
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(content(0.4))
-                                .child(if cfg!(target_os = "macos") {
-                                    "⌘K"
-                                } else {
-                                    "Ctrl K"
-                                }),
-                        ),
-                )
-            })
             .children(
                 [
                     ("Inbox", "inbox"),
@@ -1007,11 +815,6 @@ impl Shell {
                     _ => true,
                 })
                 .map(|(label, glyph)| {
-                    let glyph = if self.workspace.classic_layout && label == "Notes" {
-                        "file"
-                    } else {
-                        glyph
-                    };
                     let selected = self.app_view_label() == Some(label);
                     let unread = label == "Inbox"
                         && self
@@ -1049,11 +852,7 @@ impl Shell {
                                 "Inbox" if unread => Some(
                                     div()
                                         .flex_shrink_0()
-                                        .size(px(if self.workspace.classic_layout {
-                                            8.
-                                        } else {
-                                            6.
-                                        }))
+                                        .size(px(6.))
                                         .rounded_full()
                                         .bg(accent_color())
                                         .into_any_element(),
@@ -1187,45 +986,7 @@ impl Shell {
             })
     }
     fn notify_navigation(&self, cx: &mut Context<Self>) {
-        if self.workspace.classic_layout {
-            self.projects_frame.update(cx, |_, cx| cx.notify());
-        } else {
-            self.sidebar_frame.update(cx, |_, cx| cx.notify());
-        }
-    }
-    /// New session in this project, just before the filter.
-    pub(super) fn sidebar_new_session_button(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let classic = self.workspace.classic_layout;
-        let new = if classic {
-            div()
-                .id("new-session")
-                .role(Role::Button)
-                .aria_label("New session")
-                .cursor_pointer()
-                .group("classic-new-session")
-                .size(px(24.))
-                .flex_shrink_0()
-                .rounded_md()
-                .flex()
-                .items_center()
-                .justify_center()
-                .hover(|s| s.bg(content(0.1)))
-                .child(
-                    icon("plus", 12.)
-                        .text_color(content(0.5))
-                        .group_hover("classic-new-session", |s| s.text_color(content(1.))),
-                )
-        } else {
-            icon_button("new-session", "New session", "plus")
-        };
-        new.debug_selector(|| "sidebar-new-session".into())
-            .on_click(cx.listener(|this, _, _, cx| {
-                let kind = this.default_kind(cx);
-                this.create(kind, cx)
-            }))
+        self.sidebar_frame.update(cx, |_, cx| cx.notify());
     }
     pub(super) fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self
@@ -1233,36 +994,9 @@ impl Shell {
             .session_filters
             .active(self.workspace.preferences.show_archived)
             || self.menu_open(&MenuTarget::SessionFilter);
-        let button = if self.workspace.classic_layout {
-            div()
-                .id("filter-sessions")
-                .role(Role::Button)
-                .aria_label("Filter sessions")
-                .aria_expanded(self.menu_open(&MenuTarget::SessionFilter))
-                .cursor_pointer()
-                .group("classic-filter")
-                .size(px(24.))
-                .flex_shrink_0()
-                .rounded_md()
-                .flex()
-                .items_center()
-                .justify_center()
-                .hover(|s| s.bg(content(0.1)))
-                .child(
-                    icon("filter", 12.)
-                        .text_color(content(if active { 1. } else { 0.5 }))
-                        .group_hover("classic-filter", |s| s.text_color(content(1.))),
-                )
-        } else {
-            icon_button("filter-sessions", "Filter sessions", "filter")
-        };
-        button
+        icon_button("filter-sessions", "Filter sessions", "filter")
             .debug_selector(|| "sidebar-filter-button".into())
-            .mr(px(if self.workspace.classic_layout {
-                0.
-            } else {
-                -5.
-            }))
+            .mr(px(-5.))
             .when(active, |d| d.bg(content(0.1)))
             .relative()
             .child(self.filter_anchor.probe())
@@ -1493,28 +1227,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn classic_layout_has_no_all_projects_block_or_new_thread_row(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let rows = window
-            .update(cx, |shell, _, cx| {
-                shell.workspace.classic_layout = true;
-                shell.layout_changed(cx);
-                shell.sidebar_list.invalidate_structure();
-                shell.refresh_sidebar_structure(cx);
-                shell.sidebar_list.rows.clone()
-            })
-            .unwrap();
-        assert!(!rows.contains(&Row::NewThread));
-        assert!(!rows.contains(&Row::Navigation));
-        cx.run_until_parked();
-        cx.refresh().unwrap();
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        assert!(visual.debug_bounds("sidebar-all-projects").is_none());
-        assert!(visual.debug_bounds("sidebar-navigation-Settings").is_none());
-        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
-    }
-
-    #[gpui::test]
     fn settings_entry_opens_settings(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
@@ -1626,7 +1338,6 @@ mod tests {
                     open.target
                         == MenuTarget::Project {
                             path: shell.workspace.project.clone(),
-                            rail: false
                         }
                 );
             })
@@ -1671,15 +1382,6 @@ mod tests {
             .unwrap();
         visual.run_until_parked();
         assert!(!selected(visual), "a conversation is not a new session");
-        window
-            .update(visual, |shell, _, cx| {
-                shell.workspace.classic_layout = true;
-                shell.invalidate_chrome(cx);
-                cx.notify();
-            })
-            .unwrap();
-        visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
     }
 
     /// Flip a sidebar switch the way a person does: on the Appearance page.
@@ -1959,7 +1661,7 @@ mod tests {
                 assert_eq!(refreshed.offset_in_item, offset.offset_in_item);
                 assert_eq!(shell.sidebar_list.structural_rebuilds, rebuilds + 2);
                 // Scope changes are also detected without a notification hook.
-                shell.query.push_str("unmatched-session-query");
+                shell.workspace.session_filters.status.working = true;
                 shell.refresh_sidebar_structure(cx);
                 assert_eq!(shell.sidebar_list.structural_rebuilds, rebuilds + 3);
                 assert!(shell.sidebar_list.rows.contains(&super::Row::Empty));
@@ -2273,33 +1975,6 @@ mod tests {
             );
             assert_eq!(mark(&window, "a", cx), Some(State::Done));
             assert_eq!(mark(&window, "b", cx), Some(State::Working));
-        }
-
-        #[gpui::test]
-        fn machines_show_in_the_classic_sidebar_after_the_sessions(cx: &mut TestAppContext) {
-            let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
-            window
-                .update(cx, |shell, _, cx| {
-                    shell.workspace.classic_layout = true;
-                    shell.sidebar_list.invalidate_structure();
-                    shell.refresh_sidebar_structure(cx);
-                })
-                .unwrap();
-            let rows = rows(&window, cx);
-            let at = rows
-                .iter()
-                .position(|r| *r == Row::MachinesHeading)
-                .unwrap();
-            assert_eq!(
-                rows[at..],
-                [
-                    Row::MachinesHeading,
-                    Row::Machine("m1".into()),
-                    agent_row("a"),
-                    agent_row("b"),
-                    Row::ClassicGap(40),
-                ]
-            );
         }
 
         #[gpui::test]
@@ -2847,25 +2522,6 @@ mod tests {
             assert!(grouped(&listed).is_empty(), "still folded after reopening");
         }
 
-        #[gpui::test]
-        fn search_opens_collapsed_fixed_folders(cx: &mut TestAppContext) {
-            let (window, a, b) = setup(cx);
-            mark_automation(&window, a, cx);
-            window
-                .update(cx, |shell, _, cx| {
-                    shell.update_groups(cx, |g| g.set_fixed_collapsed(AUTOMATIONS, true));
-                    assert_eq!(shell.sidebar_navigation_ids(cx), [b]);
-                    shell.query = "new".into();
-                    let mut ids = shell.sidebar_navigation_ids(cx);
-                    ids.sort();
-                    let mut both = vec![a, b];
-                    both.sort();
-                    assert_eq!(ids, both, "search opens folded fixed folders");
-                })
-                .unwrap();
-            assert_eq!(grouped(&rows(&window, cx)), [a]);
-        }
-
         /// Adds Pilot Scout with launches of `a` here and `b` in another project.
         fn add_scout(
             window: &WindowHandle<Shell>,
@@ -3025,36 +2681,6 @@ mod tests {
                 [("fixed:pilot:scout".into(), "Scout".into(), vec![a])]
             );
             assert_eq!(folders(&rows), [("folder:mine".to_string(), vec![b])]);
-        }
-
-        #[gpui::test]
-        fn classic_layout_still_shows_the_stored_pilot_folder(cx: &mut TestAppContext) {
-            let (window, a, b) = setup(cx);
-            let pilots = add_scout(&window, a, b, cx);
-            pilots.update(cx, |pilots, cx| pilots.group_launch("scout", a, cx));
-            cx.run_until_parked();
-            window
-                .update(cx, |shell, _, cx| {
-                    shell.workspace.classic_layout = true;
-                    shell.invalidate_chrome(cx);
-                })
-                .unwrap();
-            let rows = rows(&window, cx);
-            assert!(fixed(&rows).is_empty());
-            assert_eq!(folders(&rows), [("pilot-scout".to_string(), vec![a])]);
-        }
-
-        #[gpui::test]
-        fn classic_layout_has_no_fixed_folders(cx: &mut TestAppContext) {
-            let (window, a, _) = setup(cx);
-            mark_automation(&window, a, cx);
-            window
-                .update(cx, |shell, _, cx| {
-                    shell.workspace.classic_layout = true;
-                    shell.invalidate_chrome(cx);
-                })
-                .unwrap();
-            assert!(fixed(&rows(&window, cx)).is_empty());
         }
 
         #[gpui::test]

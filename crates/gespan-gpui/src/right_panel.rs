@@ -167,12 +167,6 @@ pub(crate) fn format_integer(value: i64) -> String {
     if value < 0 { format!("-{out}") } else { out }
 }
 
-/// Fit the complete diff label together so one number cannot push the other
-/// outside its slot. Callers include any gap that scales with their text.
-pub(crate) fn diff_stat_scale(available: f32, natural: f32) -> f32 {
-    (available.max(0.) / natural.max(f32::EPSILON)).clamp(0.1, 1.)
-}
-
 /// The Changes tab's diff stat, `+added` and `-deleted`, each only when
 /// nonzero. Empty when the tree is clean, so the tab reads "Changes".
 pub(crate) fn changes_stat(stats: Option<&gespan_core::scm::DiffStats>) -> Vec<(String, u32)> {
@@ -211,12 +205,8 @@ pub(crate) struct RightPanel {
     tab: RightTab,
     order: Vec<RightTab>,
     shown: bool,
-    sidebar_tab: Option<RightTab>,
     /// Whether the Terminal tab follows the others; the shell draws its pane.
     terminal_tab: bool,
-    /// Classic reserves the title bar's height; rounded content starts at
-    /// the card's top edge, below the window-wide title bar.
-    top_inset: f32,
     drag: Option<TabDrag>,
     skip_click: bool,
     tab_bounds: Vec<crate::popover::AnchorSlot>,
@@ -253,9 +243,7 @@ impl RightPanel {
             tab,
             order: RightTab::normalize(&order),
             shown: false,
-            sidebar_tab: None,
             terminal_tab: false,
-            top_inset: 0.,
             drag: None,
             skip_click: false,
             tab_bounds: (0..5).map(|_| Default::default()).collect(),
@@ -289,15 +277,6 @@ impl RightPanel {
         self.explorer
             .update(cx, |explorer, cx| explorer.set_show_excluded(show, cx));
     }
-    pub(crate) fn top_inset(&self) -> f32 {
-        self.top_inset
-    }
-    pub(crate) fn set_top_inset(&mut self, height: f32, cx: &mut Context<Self>) {
-        if self.top_inset != height {
-            self.top_inset = height;
-            cx.notify();
-        }
-    }
     /// The panes read and poll only while their tab is on screen.
     pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
         if self.shown == shown {
@@ -312,17 +291,8 @@ impl RightPanel {
         cx.emit(PanelEvent::Tab(tab));
         cx.notify();
     }
-    pub(crate) fn set_sidebar_tab(&mut self, tab: Option<RightTab>, cx: &mut Context<Self>) {
-        if self.sidebar_tab != tab {
-            self.sidebar_tab = tab;
-            self.sync_panes(cx);
-        }
-    }
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
-        let (shown, tab) = match self.sidebar_tab {
-            Some(tab) => (true, tab),
-            None => (self.shown, self.tab),
-        };
+        let (shown, tab) = (self.shown, self.tab);
         self.explorer.update(cx, |e, cx| {
             e.set_enabled(shown && tab == RightTab::Files, cx)
         });
@@ -588,15 +558,6 @@ impl Render for RightPanel {
             .min_h_0()
             .flex()
             .flex_col()
-            .when(self.top_inset > 0., |d| {
-                d.child(
-                    div()
-                        .h(px(self.top_inset))
-                        .flex_shrink_0()
-                        .border_b_1()
-                        .border_color(stroke()),
-                )
-            })
             .child(strip)
             .child(pane)
     }

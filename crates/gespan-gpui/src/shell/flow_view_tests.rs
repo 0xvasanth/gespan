@@ -18,8 +18,6 @@ fn setup(cx: &mut TestAppContext) -> WindowHandle<Shell> {
     window
         .update(cx, |shell, window, cx| {
             shell.workspace.sidebar_visible = true;
-            shell.workspace.project_rail_open = true;
-            shell.workspace.project_rail_width = 220.;
             shell.open(session, window, cx);
             shell.layout_changed(cx);
         })

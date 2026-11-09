@@ -1,6 +1,5 @@
-// Navigation and frame style are independent. The original layout adds a
-// project rail beside the sessions sidebar. The new layout keeps one sidebar
-// and offers either an inset rounded card or the existing full-height boxy frame.
+// One sidebar beside the workspace, framed either as an inset rounded card or
+// as the full-height boxy frame.
 use super::{CORNER_CONTROL_GAP, Shell, titlebar_drag_area};
 use crate::{
     popover::{Anchor, popover},
@@ -147,49 +146,22 @@ fn panel_button(enabled: bool, dot: bool) -> gpui::Stateful<gpui::Div> {
 }
 
 impl Shell {
-    pub(super) fn classic_titlebar_spans_window(&self, cx: &gpui::App) -> bool {
-        cfg!(target_os = "macos")
-            && self.workspace.classic_layout
-            && !self.workspace.project_rail_open
-            && self.settings.is_none()
-            && !self.app_view_open()
-            && !self.search_page()
-            && !self.pilot_active(cx)
-    }
-    /// Switch navigation layouts without changing the new layout's frame style.
-    pub(super) fn toggle_layout(&mut self, cx: &mut Context<Self>) {
-        // Someone leaving the original layout before answering the new-layout
-        // notice has never picked a frame, so they land on the boxy default.
-        // Those who already went through it keep the frame they had.
-        if self.workspace.classic_layout && !self.workspace.new_layout_prompt_dismissed {
-            self.workspace.new_layout_boxy = true;
-            self.workspace.new_layout_prompt_dismissed = true;
-        }
-        self.workspace.classic_layout = !self.workspace.classic_layout;
-        self.project_resize = None;
-        self.layout_changed(cx);
-        self.sync_settings(cx);
+    /// The open sidebar's drawn width.
+    pub(super) fn left_sidebar_width(&self) -> f32 {
+        self.workspace.sidebar_width * self.sidebar_fraction
     }
     /// Flip the Focused layout between its rounded card and boxy frame.
-    /// Classic has no frame choice, so the shortcut does nothing there.
     pub(super) fn toggle_workspace_style(&mut self, cx: &mut Context<Self>) {
-        if self.workspace.classic_layout {
-            return;
-        }
         self.workspace.new_layout_boxy = !self.workspace.new_layout_boxy;
         self.layout_changed(cx);
         self.sync_settings(cx);
     }
     pub(super) fn layout_changed(&mut self, cx: &mut Context<Self>) {
         let classic = self.workspace.boxy_layout();
-        if !self.workspace.classic_layout
-            && let Some(view) = self.active_app_view
-        {
+        if let Some(view) = self.active_app_view {
             self.remember_title_tab(TitleTab::App(view));
         }
-        if !self.workspace.classic_layout
-            && let Some(id) = self.pilots.as_ref().and_then(|m| m.read(cx).active.clone())
-        {
+        if let Some(id) = self.pilots.as_ref().and_then(|m| m.read(cx).active.clone()) {
             self.remember_title_tab(self.pilot_tab(id));
             self.reveal_active_tab(cx);
         }
@@ -202,11 +174,6 @@ impl Shell {
             .update(cx, |monitor, cx| monitor.set_classic(classic, cx));
         self.invalidate_chrome(cx);
         self.drop_peek();
-        if !self.workspace.classic_layout && !self.query.is_empty() {
-            self.query.clear();
-            self.classic_session_search
-                .update(cx, |input, cx| input.set_text(String::new(), cx));
-        }
         self.sync_right_panel(cx);
         self.fit_sidebar(cx);
         self.persist(cx);
@@ -350,50 +317,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let sidebar_width = if !self.session_sidebar_available(cx) {
-            0.
-        } else {
-            sidebar_width
-        };
-        // The right panel runs full height beside the workspace column, so
-        // opening it pushes the tabs, body and footer together.
         let card = self.workspace_content(false, right_width, full, window, cx);
         let panel = self
             .right_panel
             .clone()
             .filter(|_| right_shown && self.settings.is_none())
-            .map(|panel| self.right_panel_frame(panel, right_width, full, window, cx));
-        let footer = (!self.classic_surface_open(cx)).then(|| self.footer_row(cx));
-        let spans_window = self.classic_titlebar_spans_window(cx);
-        let original = self.workspace.classic_layout;
-        let compact_surface = cfg!(target_os = "macos")
-            && original
-            && !self.workspace.project_rail_open
-            && self.settings.is_none()
-            && self.classic_surface_open(cx);
-        let tab_bar = if spans_window || (original && self.search_page()) {
-            None
-        } else if original && self.app_view_open() {
-            Some(self.titlebar_controls_space(self.classic_app_surface_header(cx), window))
-        } else if original && self.pilot_active(cx) {
-            let bar = self.classic_pilot_header(cx);
-            Some(self.titlebar_controls_space(bar, window))
-        } else {
-            Some(self.titlebar(window, cx))
-        };
-        let show_navigation = !spans_window;
-        let navigation = show_navigation.then(|| self.navigation(cx));
-        let corner = (self.settings.is_none() && !original).then(|| self.panel_toggle(cx));
+            .map(|panel| self.right_panel_frame(panel, right_width, full, window, cx))
+            .map(|panel| div().h_full().bg(pane_fill()).child(panel));
+        let footer = self.footer_row(cx);
+        let tab_bar = self.titlebar(window, cx);
+        let navigation = self.navigation(cx);
+        let corner = self.settings.is_none().then(|| self.panel_toggle(cx));
         // As in the rounded layout, boxy's title bar is its own row across the
-        // workspace and the right panel, and the panel starts below it. The
-        // original layout keeps its full-height panel under its own corner.
-        let over_panel = self.titlebar_over_panel();
-        let panel = panel.map(|panel| div().h_full().bg(pane_fill()).child(panel));
-        let (tab_bar, panel, head) = if over_panel {
-            (None, None, (tab_bar, panel))
-        } else {
-            (tab_bar, panel, (None, None))
-        };
+        // workspace and the right panel, and the panel starts below it.
         let main = div()
             .id("main-pane-frame")
             .debug_selector(|| "main-pane-frame".into())
@@ -402,61 +338,30 @@ impl Shell {
             .h_full()
             .flex()
             .flex_col()
-            .when(!compact_surface, |d| d.bg(pane_fill()))
-            .when(compact_surface, |d| {
-                // Keep one continuous shell tint behind all traffic
-                // lights; the content wash starts below the title bar.
-                d.relative().child(
-                    div()
-                        .debug_selector(|| "classic-surface-background".into())
-                        .absolute()
-                        .top(px(TITLE_BAR_HEIGHT))
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .bg(pane_fill()),
-                )
-            })
-            .children(tab_bar)
+            .bg(pane_fill())
             .child(card)
-            .children(footer.map(|footer| {
+            .child(
                 footer
                     .h(px(28.))
                     .px_3()
                     .border_t_1()
-                    .border_color(crate::right_panel::stroke())
-            }));
-        let (head_bar, head_panel) = head;
-        let workspace = if over_panel {
-            div()
-                .id("boxy-workspace-column")
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .flex()
-                .flex_col()
-                .bg(pane_fill())
-                .children(head_bar)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .child(main)
-                        .children(head_panel),
-                )
-                .into_any_element()
-        } else {
-            main.into_any_element()
-        };
-        let body = div()
+                    .border_color(crate::right_panel::stroke()),
+            );
+        let workspace = div()
+            .id("boxy-workspace-column")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(pane_fill())
+            .child(tab_bar)
+            .child(div().flex_1().min_h_0().flex().child(main).children(panel));
+        div()
             .flex_1()
             .min_h_0()
             .flex()
             .relative()
-            .when(self.workspace.classic_layout, |d| {
-                d.child(self.project_rail_frame(cx))
-            })
             .when(sidebar_width > 0., |d| {
                 d.child(
                     div()
@@ -468,12 +373,7 @@ impl Shell {
                         .flex_shrink_0()
                         .overflow_hidden()
                         .border_r_1()
-                        .border_color(if original {
-                            content(0.07)
-                        } else {
-                            crate::right_panel::stroke()
-                        })
-                        .when(original, |d| d.bg(pane_fill()))
+                        .border_color(crate::right_panel::stroke())
                         .child(
                             // Full width while it slides; the frame clips it.
                             div()
@@ -485,66 +385,46 @@ impl Shell {
                                 .flex()
                                 .flex_col()
                                 .opacity(self.sidebar_fraction)
-                                .when(!original, |d| {
-                                    d.child(
-                                        // The traffic lights head the sidebar, where
-                                        // the window's top is; the toggle floats
-                                        // above them (see below).
-                                        titlebar_drag_area()
-                                            .w_full()
-                                            .h(px(TITLE_BAR_HEIGHT))
-                                            .flex_shrink_0(),
-                                    )
-                                })
+                                .child(
+                                    // The traffic lights head the sidebar, where
+                                    // the window's top is; the toggle floats
+                                    // above them (see below).
+                                    titlebar_drag_area()
+                                        .w_full()
+                                        .h(px(TITLE_BAR_HEIGHT))
+                                        .flex_shrink_0(),
+                                )
                                 .child(div().flex_1().min_h_0().child(self.sidebar_contents())),
                         ),
                 )
             })
             .child(workspace)
             .children(self.sidebar_resize(cx))
-            .children(panel)
-            .when(show_navigation, |d| {
-                d.child(
-                    // The traffic lights, toggle and arrows ride above the sidebar's
-                    // header as in the inset title bar: the toggle holds still, and
-                    // the arrows sit at the open sidebar's edge or after the toggle.
-                    div().absolute().top_0().left_0().children(navigation),
-                )
-            })
-            .when(!spans_window, |d| {
-                d.child(
-                    // The right panel toggle holds the window's corner too, above
-                    // the strip or an open panel's tab row. Its padding keeps
-                    // clear of Windows' controls; Linux's sit beside it.
-                    div()
-                        .absolute()
-                        .top_0()
-                        .right(px(
-                            super::client_controls_width(window) - self.window_controls
-                        ))
-                        .h(px(TITLE_BAR_HEIGHT))
-                        .children(corner),
-                )
-            });
-        if spans_window {
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(self.titlebar(window, cx))
-                .child(body)
-                .into_any_element()
-        } else {
-            body.into_any_element()
-        }
+            .child(
+                // The traffic lights, toggle and arrows ride above the sidebar's
+                // header as in the inset title bar: the toggle holds still, and
+                // the arrows sit at the open sidebar's edge or after the toggle.
+                div().absolute().top_0().left_0().child(navigation),
+            )
+            .child(
+                // The right panel toggle holds the window's corner too, above
+                // the strip or an open panel's tab row. Its padding keeps
+                // clear of Windows' controls; Linux's sit beside it.
+                div()
+                    .absolute()
+                    .top_0()
+                    .right(px(
+                        super::client_controls_width(window) - self.window_controls
+                    ))
+                    .h(px(TITLE_BAR_HEIGHT))
+                    .children(corner),
+            )
+            .into_any_element()
     }
     /// Classic: the corner's buttons, `pr-3` from the edge.
     pub(super) fn corner_room(&self, cx: &gpui::App) -> f32 {
         // Client-drawn window controls hold the corner's right end.
         let controls = self.window_controls;
-        if self.workspace.classic_layout && !self.pilot_active(cx) {
-            return controls;
-        }
         if !self.pilot_active(cx) && !self.git.read(cx).available() {
             return 6. + 24. + self.open_in_editor_room(cx) + 12. + controls;
         }
@@ -552,9 +432,9 @@ impl Shell {
         6. + 24. + 12. + controls
     }
     /// Boxy: the title bar runs over the open right panel, which starts below
-    /// it. The original layout's panel stays full height under its corner.
+    /// it.
     pub(super) fn titlebar_over_panel(&self) -> bool {
-        self.workspace.boxy_layout() && !self.workspace.classic_layout
+        self.workspace.boxy_layout()
     }
     fn corner_tabs_shown(&self) -> bool {
         self.workspace.right_panel_open
@@ -585,15 +465,8 @@ impl Shell {
         let changes = !panel_off && self.git.read(cx).has_changes();
         let open = self.corner_tabs_shown();
         // Over the panel, the corner is the toggle alone at the strip's end.
-        let span = open && !self.titlebar_over_panel();
         row.pl_1p5()
             .pr(px(12. + self.window_controls))
-            .when(span, |d| {
-                // Follow the panel's leading edge, reserving enough room for
-                // the controls while the panel is still sliding open.
-                d.w(px(self.right_drawn.max(self.corner_room(cx))))
-                    .child(titlebar_drag_area().flex_1().min_w_0())
-            })
             .child(
                 // The toggle carries the changes dot.
                 panel_button(!panel_off, !open && changes).when(!panel_off, |d| {
@@ -622,14 +495,10 @@ impl Shell {
         }
     }
     fn sidebar_resize(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        (self.session_sidebar_available(cx)
-            && self.workspace.sidebar_visible
-            && self.sidebar_slide.is_none())
-        .then(|| {
-            // The classic sidebar owns its right rule; the inset workspace
+        (self.workspace.sidebar_visible && self.sidebar_slide.is_none()).then(|| {
+            // The boxy sidebar owns its right rule; the inset workspace
             // owns the rule just beyond the sidebar's edge.
-            let border = self.project_rail_drawn_width()
-                + self.workspace.sidebar_width
+            let border = self.workspace.sidebar_width
                 + if self.workspace.boxy_layout() {
                     -0.5
                 } else {
@@ -966,7 +835,6 @@ mod tests {
         let (window, _, _) = window(cx);
         window
             .update(cx, |shell, w, cx| {
-                shell.workspace.classic_layout = false;
                 shell.workspace.new_layout_boxy = true;
                 shell.workspace.right_panel_width = 320.;
                 shell.toggle_right_panel(w, cx);
@@ -994,127 +862,105 @@ mod tests {
     }
 
     #[gpui::test]
-    fn right_sidebar_width_and_visibility_follow_both_tab_types_and_layouts(
-        cx: &mut TestAppContext,
-    ) {
+    fn right_sidebar_width_and_visibility_follow_both_tab_types(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, manager, pilot, session) = mixed_window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        for classic in [false, true] {
-            window
-                .update(visual, |shell, _, cx| {
-                    shell.workspace.classic_layout = classic;
-                    assert!(
-                        !shell.workspace.right_panel_open,
-                        "opening a Pilot respects the session's closed sidebar"
-                    );
-                    cx.notify();
-                })
-                .unwrap();
-            visual.run_until_parked();
-            assert!(visual.debug_bounds("right-panel-frame").is_none());
-            let toggle = visual
-                .debug_bounds(if classic {
-                    "classic-pilot-overview"
-                } else {
-                    "toggle-right-panel"
-                })
-                .unwrap();
-            visual.simulate_click(toggle.center(), Default::default());
-            visual.run_until_parked();
-            assert!(visual.debug_bounds("pilot-overview-panel").is_some());
-            let frame = visual.debug_bounds("right-panel-frame").unwrap();
-            let bounds = visual.debug_bounds("right-panel-resize").unwrap();
-            assert_eq!(bounds.size.width, px(6.));
-            assert!((bounds.center().x - frame.left() - px(0.5)).abs() <= px(0.5));
-            // Both halves of the transparent grab area must receive presses,
-            // including the half outside the panel's clipped contents.
-            for x in [bounds.left() + px(0.5), bounds.right() - px(0.5)] {
-                let point = gpui::point(x, bounds.center().y);
-                visual.simulate_mouse_down(point, MouseButton::Left, Default::default());
-                window
-                    .update(visual, |shell, _, _| assert!(shell.right_resize.is_some()))
-                    .unwrap();
-                visual.simulate_mouse_up(point, MouseButton::Left, Default::default());
-                visual.run_until_parked();
-            }
-            let handle = visual.debug_bounds("right-panel-resize").unwrap().center();
-            let end = handle - gpui::point(px(30.), px(0.));
-            visual.simulate_mouse_down(handle, MouseButton::Left, Default::default());
-            visual.simulate_mouse_move(end, MouseButton::Left, Default::default());
-            visual.simulate_mouse_up(end, MouseButton::Left, Default::default());
-            visual.run_until_parked();
-            let expanded = window
-                .update(visual, |shell, _, _| shell.workspace.right_panel_width)
-                .unwrap();
-            let handle = visual.debug_bounds("right-panel-resize").unwrap().center();
-            let end = handle + gpui::point(px(30.), px(0.));
-            visual.simulate_mouse_down(handle, MouseButton::Left, Default::default());
-            visual.simulate_mouse_move(end, MouseButton::Left, Default::default());
-            // The pointer is now over a Pilot detail layer that occludes mouse
-            // events. Shrinking and releasing must still reach the shell.
-            window
-                .update(visual, |shell, _, _| {
-                    assert_eq!(shell.workspace.right_panel_width, expanded - 30.);
-                })
-                .unwrap();
-            visual.simulate_mouse_up(
-                end + gpui::point(px(20.), px(0.)),
-                MouseButton::Left,
-                Default::default(),
-            );
-            visual.run_until_parked();
-            let pilot_bounds = visual.debug_bounds("right-panel-frame").unwrap();
-            let width = window
-                .update(visual, |shell, w, cx| {
-                    assert!(shell.right_resize.is_none());
-                    let width = shell.workspace.right_panel_width;
-                    assert_eq!(pilot_bounds.size.width, px(width));
-                    shell.open(session, w, cx);
-                    width
-                })
-                .unwrap();
-            visual.run_until_parked();
-            if classic {
-                assert!(visual.debug_bounds("right-panel-frame").is_none());
-            } else {
-                assert_eq!(
-                    visual.debug_bounds("right-panel-frame").unwrap(),
-                    pilot_bounds
+        window
+            .update(visual, |shell, _, cx| {
+                assert!(
+                    !shell.workspace.right_panel_open,
+                    "opening a Pilot respects the session's closed sidebar"
                 );
-            }
-            assert!(visual.debug_bounds("pilot-overview-panel").is_none());
-            if !classic {
-                let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
-                visual.simulate_click(toggle.center(), Default::default());
-                visual.run_until_parked();
-            }
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("right-panel-frame").is_none());
+        let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("pilot-overview-panel").is_some());
+        let frame = visual.debug_bounds("right-panel-frame").unwrap();
+        let bounds = visual.debug_bounds("right-panel-resize").unwrap();
+        assert_eq!(bounds.size.width, px(6.));
+        assert!((bounds.center().x - frame.left() - px(0.5)).abs() <= px(0.5));
+        // Both halves of the transparent grab area must receive presses,
+        // including the half outside the panel's clipped contents.
+        for x in [bounds.left() + px(0.5), bounds.right() - px(0.5)] {
+            let point = gpui::point(x, bounds.center().y);
+            visual.simulate_mouse_down(point, MouseButton::Left, Default::default());
             window
-                .update(visual, |_, w, cx| {
-                    manager.update(cx, |m, cx| m.open(&pilot, w, cx))
-                })
+                .update(visual, |shell, _, _| assert!(shell.right_resize.is_some()))
                 .unwrap();
+            visual.simulate_mouse_up(point, MouseButton::Left, Default::default());
             visual.run_until_parked();
-            if classic {
-                let toggle = visual.debug_bounds("classic-pilot-overview").unwrap();
-                visual.simulate_click(toggle.center(), Default::default());
-                visual.run_until_parked();
-            }
-            assert!(visual.debug_bounds("right-panel-frame").is_none());
-            window
-                .update(visual, |shell, _, _| {
-                    assert_eq!(shell.workspace.right_panel_width, width);
-                    let saved = crate::runtime::locked(&shell.store)
-                        .unwrap()
-                        .ui_state()
-                        .unwrap()
-                        .unwrap();
-                    let saved: crate::workspace::Workspace = serde_json::from_str(&saved).unwrap();
-                    assert_eq!(saved.right_panel_width, width);
-                    assert!(!saved.right_panel_open);
-                })
-                .unwrap();
         }
+        let handle = visual.debug_bounds("right-panel-resize").unwrap().center();
+        let end = handle - gpui::point(px(30.), px(0.));
+        visual.simulate_mouse_down(handle, MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(end, MouseButton::Left, Default::default());
+        visual.simulate_mouse_up(end, MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        let expanded = window
+            .update(visual, |shell, _, _| shell.workspace.right_panel_width)
+            .unwrap();
+        let handle = visual.debug_bounds("right-panel-resize").unwrap().center();
+        let end = handle + gpui::point(px(30.), px(0.));
+        visual.simulate_mouse_down(handle, MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(end, MouseButton::Left, Default::default());
+        // The pointer is now over a Pilot detail layer that occludes mouse
+        // events. Shrinking and releasing must still reach the shell.
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.workspace.right_panel_width, expanded - 30.);
+            })
+            .unwrap();
+        visual.simulate_mouse_up(
+            end + gpui::point(px(20.), px(0.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        visual.run_until_parked();
+        let pilot_bounds = visual.debug_bounds("right-panel-frame").unwrap();
+        let width = window
+            .update(visual, |shell, w, cx| {
+                assert!(shell.right_resize.is_none());
+                let width = shell.workspace.right_panel_width;
+                assert_eq!(pilot_bounds.size.width, px(width));
+                shell.open(session, w, cx);
+                width
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("right-panel-frame").unwrap(),
+            pilot_bounds
+        );
+        assert!(visual.debug_bounds("pilot-overview-panel").is_none());
+        let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |_, w, cx| {
+                manager.update(cx, |m, cx| m.open(&pilot, w, cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("right-panel-frame").is_none());
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.workspace.right_panel_width, width);
+                let saved = crate::runtime::locked(&shell.store)
+                    .unwrap()
+                    .ui_state()
+                    .unwrap()
+                    .unwrap();
+                let saved: crate::workspace::Workspace = serde_json::from_str(&saved).unwrap();
+                assert_eq!(saved.right_panel_width, width);
+                assert!(!saved.right_panel_open);
+            })
+            .unwrap();
     }
 
     #[gpui::test]

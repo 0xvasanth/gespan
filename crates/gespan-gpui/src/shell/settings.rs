@@ -110,7 +110,6 @@ impl Shell {
                 })
                 .unwrap_or_default(),
             catalogs,
-            classic: self.workspace.classic_layout,
             new_layout_boxy: self.workspace.new_layout_boxy,
             sidebar: crate::settings::SidebarVisibility {
                 search: self.workspace.sidebar_search_visible,
@@ -201,12 +200,6 @@ impl Shell {
                         window.request_decorations(decorations);
                     }
                     this.set_preferences(*prefs.clone(), window, cx)
-                }
-                SettingsEvent::NewLayout(on) => {
-                    if this.workspace.classic_layout == *on {
-                        this.toggle_layout(cx);
-                    }
-                    this.sync_settings(cx);
                 }
                 SettingsEvent::NewLayoutBoxy(boxy) => {
                     this.workspace.new_layout_boxy = *boxy;
@@ -301,7 +294,7 @@ impl Shell {
             }
         }));
         self.settings = Some(view.clone());
-        // Settings has its own complete rail, even when the project rail was hidden.
+        // Settings has its own complete nav, even when the sidebar was hidden.
         self.settings_nav_visible = true;
         self.sidebar_slide = None;
         self.sidebar_fraction = 1.;

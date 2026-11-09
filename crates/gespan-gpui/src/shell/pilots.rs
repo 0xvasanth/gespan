@@ -30,9 +30,6 @@ impl Shell {
         self.sessions[&id].update(cx, |view, cx| view.install_app_launch(settings, !draft, cx));
         self.invalidate_chrome(cx);
     }
-    pub(crate) fn close_pilot_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_open(false, window, cx);
-    }
     /// As a restart would: the store's session list omits hidden launches.
     #[cfg(test)]
     pub(crate) fn pilot_forget_session(&mut self, id: i64) {

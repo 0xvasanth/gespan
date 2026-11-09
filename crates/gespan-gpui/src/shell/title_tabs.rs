@@ -89,8 +89,7 @@ impl Shell {
             .filter(|tab| match tab {
                 TitleTab::Search => !self.workspace.preferences.search_panel,
                 TitleTab::App(view) => {
-                    !self.workspace.classic_layout
-                        && (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
+                    (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
                         && (*view != app_views::AppView::Board || self.workspace.preferences.board)
                         && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
                 }
@@ -112,8 +111,7 @@ impl Shell {
                     project,
                     worktree,
                 } => {
-                    !self.workspace.classic_layout
-                        && *project == self.workspace.project
+                    *project == self.workspace.project
                         && path_key(worktree) == path_key(self.working_copy())
                         && self.workspace.preferences.pilots
                         && self
@@ -153,9 +151,6 @@ impl Shell {
     }
 
     pub(super) fn remember_title_tab(&mut self, tab: TitleTab) {
-        if self.workspace.classic_layout && matches!(tab, TitleTab::Pilot { .. }) {
-            return;
-        }
         if !self.workspace.title_order.contains(&tab) {
             self.workspace.title_order.push(tab.clone());
         }
@@ -244,16 +239,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.classic_layout {
-            if self
-                .pilots
-                .as_ref()
-                .is_some_and(|m| m.read(cx).active.as_deref() == Some(id))
-            {
-                self.classic_rail_back(window, cx);
-            }
-            return;
-        }
         self.close_title_tabs(&[self.pilot_tab(id.into())], None, window, cx);
     }
 

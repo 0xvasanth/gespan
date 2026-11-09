@@ -258,12 +258,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "pilot agent rail hide",
     ),
     (
-        "rail-pilots-pinned",
-        Section::Pilots,
-        "Pin pilots to the icon rail",
-        "pilot rail compact collapsed icons top divider project picker",
-    ),
-    (
         "pilot-list",
         Section::Pilots,
         "Your pilots",
@@ -437,12 +431,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Appearance,
         "Main pane glass",
         "translucent transparency body window",
-    ),
-    (
-        "inset-layout",
-        Section::Appearance,
-        "Layout",
-        "classic focused new preview sidebar navigation tabs inset workspace card rounded floating linear frame",
     ),
     (
         "sidebar-search",
@@ -725,18 +713,6 @@ mod tests {
     #[test]
     fn board_is_on_until_turned_off() {
         assert!(crate::settings::preferences::Preferences::default().board);
-    }
-
-    #[test]
-    fn the_retired_collapsed_project_rail_is_not_searchable() {
-        for query in ["collapsed project rail", "collapsed rail"] {
-            assert!(
-                search(query, "")
-                    .iter()
-                    .all(|r| r.setting != Some("collapsed-project-rail")),
-                "{query}"
-            );
-        }
     }
 
     #[test]

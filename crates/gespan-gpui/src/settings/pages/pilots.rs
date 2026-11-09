@@ -5,8 +5,7 @@ impl SettingsView {
     pub(super) fn pilots_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = self.prefs.clone();
         let mut rows=vec![
-            self.row(Some("pilots-enabled"),true,"Show pilots",Some("Agents of your own on the project rail. Each works on the projects you give it, remembers what matters and picks up habits it runs on its own. Turn this off to hide them.".into()),vec![self.toggle("pilots-enabled","Show pilots",p.pilots,false,cx,|this,on,cx|this.update(cx,|p|p.pilots=on))]),
-            self.row(Some("rail-pilots-pinned"),false,"Pin pilots to the icon rail",Some("When the project rail is collapsed to icons, show each Pilot at the top of the rail, above a divider, instead of inside the project picker.".into()),vec![self.toggle("rail-pilots-pinned","Pin pilots to the icon rail",p.rail_pilots_pinned,!p.pilots,cx,|this,on,cx|this.update(cx,|p|p.rail_pilots_pinned=on))])];
+            self.row(Some("pilots-enabled"),true,"Show pilots",Some("Agents of your own on the project rail. Each works on the projects you give it, remembers what matters and picks up habits it runs on its own. Turn this off to hide them.".into()),vec![self.toggle("pilots-enabled","Show pilots",p.pilots,false,cx,|this,on,cx|this.update(cx,|p|p.pilots=on))])];
         if cfg!(target_os = "macos") {
             rows.push(self.row(Some("pilot-menu-bar-icon"),false,"Menu bar icon",Some("Chat with a Pilot or open the quick composer from the macOS menu bar. Turn this off to hide the icon.".into()),vec![self.toggle("pilot-menu-bar-icon","Menu bar icon",p.pilot_menu_bar_icon,false,cx,|this,on,cx|this.update(cx,|p|p.pilot_menu_bar_icon=on))]));
         }

@@ -115,7 +115,6 @@ impl Shell {
         let sessions = self.project_sessions(path);
         self.leave_project(path, window, cx);
         self.workspace.archived_projects.retain(|p| p != path);
-        self.workspace.project_rail_assignments.remove(path);
         self.workspace.project_appearance.remove(path);
         self.workspace.project_focus.remove(path);
         self.workspace.collapsed.remove(path);
@@ -161,7 +160,6 @@ impl Shell {
             self.close_pane(pane, window, cx);
         }
         self.workspace.projects.retain(|p| p != path);
-        self.workspace.project_rail_pinned.remove(path);
         if self.workspace.project == path {
             let next = self
                 .workspace

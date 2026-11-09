@@ -47,7 +47,6 @@ pub(crate) struct SettingsContext {
     /// The desktop's shared remote connection and SSH setup service.
     pub remote: Option<std::sync::Arc<gespan_core::remote::Connections>>,
     pub pilots: Vec<PilotSetting>,
-    pub classic: bool,
     pub new_layout_boxy: bool,
     pub sidebar: SidebarVisibility,
     /// The selected project, or empty outside one.
@@ -90,7 +89,6 @@ impl PartialEq for SettingsContext {
             _ => {}
         }
         self.pilots == other.pilots
-            && self.classic == other.classic
             && self.new_layout_boxy == other.new_layout_boxy
             && self.sidebar == other.sidebar
             && self.cwd == other.cwd
@@ -125,8 +123,6 @@ pub(crate) enum SettingsEvent {
     ManageInboxProvider(String),
     ToggleLinearTeam(String),
     Changed(Box<Preferences>),
-    /// The Appearance page's Layout picker: true for Focused, false for Classic.
-    NewLayout(bool),
     NewLayoutBoxy(bool),
     /// The Appearance page's Sidebar switches; the id is the one
     /// `Shell::change_sidebar_option` takes.
@@ -655,8 +651,6 @@ impl SettingsView {
     fn restore_defaults(&mut self, cx: &mut Context<Self>) {
         self.accent_custom_open = false;
         self.update(cx, |p| p.restore_appearance());
-        // onInsetLayout(INSET_LAYOUT_DEFAULT): React's default is the classic layout.
-        cx.emit(SettingsEvent::NewLayout(false));
     }
     /// Jump to a search result, on this page or another.
     fn go(&mut self, result: model::SearchResult, cx: &mut Context<Self>) {
@@ -701,7 +695,7 @@ impl SettingsView {
     }
 
     /// The breadcrumb and Restore defaults: in the inset title bar, or the
-    /// page's own 40px header row in the classic layout. Search joins them
+    /// page's own 40px header row in the boxy frame. Search joins them
     /// only while the settings nav, its usual home, is collapsed.
     pub(crate) fn header(
         &mut self,

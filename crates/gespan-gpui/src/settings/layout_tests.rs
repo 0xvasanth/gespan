@@ -38,12 +38,10 @@ fn window(section: Section, cx: &mut TestAppContext) -> WindowHandle<SettingsVie
 fn appearance_prefs(
     window: WindowHandle<SettingsView>,
     visual: &mut VisualTestContext,
-    classic: bool,
     change: impl FnOnce(&mut Preferences),
 ) {
     window
         .update(visual, |view, _, cx| {
-            view.ctx.classic = classic;
             change(&mut view.prefs);
             cx.notify();
         })
@@ -62,10 +60,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
     visual.simulate_resize(size(px(1200.), px(2400.)));
     const TOGGLE: &str = "settings-toggle-inset-glass";
 
-    appearance_prefs(window, visual, true, |p| p.theme = "dark".into());
-    assert!(visual.debug_bounds(TOGGLE).is_none(), "classic has no row");
-
-    appearance_prefs(window, visual, false, |_| {});
+    appearance_prefs(window, visual, |p| p.theme = "dark".into());
     let toggle = visual.debug_bounds(TOGGLE).unwrap();
     visual.simulate_click(toggle.center(), Default::default());
     visual.run_until_parked();
@@ -76,7 +71,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
     assert_eq!(saved, !crate::theme::GLASS_PLATFORM);
 
     // With the window opaque, the glass controls under it do nothing.
-    appearance_prefs(window, visual, false, |p| {
+    appearance_prefs(window, visual, |p| {
         p.inset_glass = false;
         p.body_glass = true;
     });
@@ -90,7 +85,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
         .unwrap();
 
     // Light mode keeps the dark-mode choice and won't change it.
-    appearance_prefs(window, visual, false, |p| {
+    appearance_prefs(window, visual, |p| {
         p.theme = "light".into();
         p.inset_glass = true;
     });
@@ -103,10 +98,42 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
 }
 
 #[gpui::test]
+fn restore_defaults_keeps_the_focused_layout(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |view, _, cx| {
+            view.ctx.new_layout_boxy = true;
+            cx.notify();
+        })
+        .unwrap();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    let entity = window.root(visual).unwrap();
+    let _subscription = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &SettingsEvent, _| {
+            log.borrow_mut().push(match event {
+                SettingsEvent::Changed(_) => "changed",
+                SettingsEvent::NewLayoutBoxy(_) => "workspace style",
+                _ => "other",
+            })
+        })
+    });
+    window
+        .update(visual, |view, _, cx| view.restore_defaults(cx))
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(*seen.borrow(), ["changed"], "no layout event");
+    window
+        .update(visual, |view, _, _| assert!(view.ctx.new_layout_boxy))
+        .unwrap();
+}
+
+#[gpui::test]
 fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    appearance_prefs(window, visual, true, |p| p.theme = "dark".into());
+    appearance_prefs(window, visual, |p| p.theme = "dark".into());
     assert_eq!(
         visual.debug_bounds("settings-row-blur").is_some(),
         crate::window_blur::BLUR_ADJUSTABLE
@@ -129,33 +156,31 @@ fn blur_slider_covers_the_saved_range() {
 }
 
 #[gpui::test]
-fn workspace_style_is_only_offered_under_the_new_layout(cx: &mut TestAppContext) {
+fn workspace_style_is_always_offered_and_the_layout_row_is_gone(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    for classic in [false, true, false] {
+    for boxy in [false, true] {
         window
             .update(visual, |view, _, cx| {
-                view.ctx.classic = classic;
-                view.ctx.new_layout_boxy = true;
+                view.ctx.new_layout_boxy = boxy;
                 cx.notify();
             })
             .unwrap();
         visual.run_until_parked();
-        assert_eq!(
+        assert!(
             visual
                 .debug_bounds("settings-new-layout-style-boxy")
-                .is_some(),
-            !classic
-        );
-        assert_eq!(
-            visual
-                .debug_bounds("settings-new-layout-style-rounded")
-                .is_some(),
-            !classic
+                .is_some()
         );
         assert!(
             visual
-                .debug_bounds("settings-collapsed-project-rail-hidden")
+                .debug_bounds("settings-new-layout-style-rounded")
+                .is_some()
+        );
+        assert!(visual.debug_bounds("settings-row-inset-layout").is_none());
+        assert!(
+            visual
+                .debug_bounds("settings-inset-layout-classic")
                 .is_none()
         );
     }

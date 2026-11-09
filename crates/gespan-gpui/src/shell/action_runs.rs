@@ -344,7 +344,6 @@ mod tests {
         window
             .update(cx, |shell, window, cx| {
                 cx.set_reduce_motion(true);
-                shell.workspace.classic_layout = false;
                 shell.workspace.new_layout_boxy = true;
                 shell.layout_changed(cx);
                 shell.workspace.preferences.terminal_in_panel = true;

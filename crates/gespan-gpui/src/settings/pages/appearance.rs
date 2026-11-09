@@ -98,7 +98,6 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let p = self.prefs.clone();
-        let inset = !self.ctx.classic;
         let light = p.theme == "light"
             || (p.theme == "system"
                 && matches!(
@@ -232,29 +231,26 @@ impl SettingsView {
                 ),
             ];
         page.push(self.group(None, false, "Color", None, None, color));
-        let opaque = light || (inset && !p.inset_glass) || !GLASS_PLATFORM;
-        let mut translucency = Vec::new();
-        if inset {
-            translucency.push(self.row(
-                Some("inset-glass"),
-                true,
+        let opaque = light || !p.inset_glass || !GLASS_PLATFORM;
+        let mut translucency = vec![self.row(
+            Some("inset-glass"),
+            true,
+            "Transparent window",
+            Some(transparent_window_description(GLASS_PLATFORM, light).into()),
+            vec![self.toggle(
+                "inset-glass",
                 "Transparent window",
-                Some(transparent_window_description(GLASS_PLATFORM, light).into()),
-                vec![self.toggle(
-                    "inset-glass",
-                    "Transparent window",
-                    p.inset_glass,
-                    light || !GLASS_PLATFORM,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.inset_glass = on),
-                )],
-            ));
-        }
+                p.inset_glass,
+                light || !GLASS_PLATFORM,
+                cx,
+                |this, on, cx| this.update(cx, |p| p.inset_glass = on),
+            )],
+        )];
         translucency.extend([self.row(
             Some("sidebar-opacity"),
-            !inset,
+            false,
             "Sidebar opacity",
-            Some("Applies to the project rail and the other glass panes.".into()),
+            Some("Applies to the sidebar and the other glass panes.".into()),
             vec![self.slider(
                 SliderKind::SidebarOpacity,
                 format!("{}%", p.sidebar_opacity),
@@ -314,19 +310,27 @@ impl SettingsView {
                 )
             })
             .collect();
-        let mut layout = vec![
+        let layout = vec![
             self.row(
-                Some("inset-layout"),
+                Some("new-layout-style"),
                 true,
-                "Layout",
-                Some("Classic keeps everything in one sidebar. Focused adds a project switcher, workspace tabs and a right panel.".into()),
+                "Workspace style",
+                Some(if cfg!(target_os = "macos") {
+                    "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them.".into()
+                } else {
+                    "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them.".into()
+                }),
                 vec![self.segmented(
-                    "inset-layout",
-                    "Layout",
-                    if inset { "focused" } else { "classic" },
-                    &[("classic", "Classic"), ("focused", "Focused")],
+                    "new-layout-style",
+                    "Workspace style",
+                    if self.ctx.new_layout_boxy {
+                        "boxy"
+                    } else {
+                        "rounded"
+                    },
+                    &[("rounded", "Rounded"), ("boxy", "Boxy")],
                     cx,
-                    |_, value, cx| cx.emit(SettingsEvent::NewLayout(value == "focused")),
+                    |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
                 )],
             ),
             self.row(
@@ -363,33 +367,6 @@ impl SettingsView {
                 )],
             ),
         ];
-        if inset {
-            layout.insert(
-                1,
-                self.row(
-                    Some("new-layout-style"),
-                    false,
-                    "Workspace style",
-                    Some(if cfg!(target_os = "macos") {
-                        "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them.".into()
-                    } else {
-                        "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them.".into()
-                    }),
-                    vec![self.segmented(
-                        "new-layout-style",
-                        "Workspace style",
-                        if self.ctx.new_layout_boxy {
-                            "boxy"
-                        } else {
-                            "rounded"
-                        },
-                        &[("rounded", "Rounded"), ("boxy", "Boxy")],
-                        cx,
-                        |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
-                    )],
-                ),
-            );
-        }
         page.push(self.group(None, false, "Layout", None, None, layout));
         page.push(self.sidebar_group(cx));
         page

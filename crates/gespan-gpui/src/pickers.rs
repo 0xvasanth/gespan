@@ -1367,16 +1367,8 @@ impl ModelList {
 
 pub(crate) enum ProjectPicked {
     Project(String),
-    Pilot(String),
     New,
     Remote,
-}
-
-pub(crate) struct PickerPilot {
-    pub id: String,
-    pub name: String,
-    pub mascot: String,
-    pub color: u32,
 }
 
 /// ProjectPickerPopover: a search field over the projects, the current one
@@ -1385,8 +1377,6 @@ pub(crate) struct ProjectPicker {
     appearance:
         std::collections::HashMap<String, gespan_core::project_appearance::ProjectAppearance>,
     projects: Vec<String>,
-    pilots: Vec<PickerPilot>,
-    active_pilot: Option<String>,
     current: String,
     active: usize,
     allow_remote: bool,
@@ -1409,8 +1399,6 @@ impl ProjectPicker {
         Self {
             appearance: Default::default(),
             projects,
-            pilots: Vec::new(),
-            active_pilot: None,
             current: current.into(),
             active: 0,
             allow_remote: false,
@@ -1435,28 +1423,6 @@ impl ProjectPicker {
         self.appearance = appearance;
         self
     }
-    pub(crate) fn pilots(
-        mut self,
-        pilots: Vec<PickerPilot>,
-        active: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        self.active_pilot = active.filter(|id| pilots.iter().any(|pilot| &pilot.id == id));
-        if !pilots.is_empty() {
-            self.search.update(cx, |search, cx| {
-                search.set_placeholder("Search pilots and projects...", cx)
-            });
-        }
-        self.pilots = pilots;
-        self
-    }
-    fn matching_pilots(&self, cx: &gpui::App) -> Vec<&PickerPilot> {
-        let query = self.search.read(cx).content.trim().to_lowercase();
-        self.pilots
-            .iter()
-            .filter(|pilot| pilot.name.to_lowercase().contains(&query))
-            .collect()
-    }
     fn label(&self, path: &str) -> String {
         self.appearance
             .get(path)
@@ -1476,21 +1442,14 @@ impl ProjectPicker {
             .collect()
     }
     fn step(&mut self, direction: isize, cx: &mut Context<Self>) {
-        let count = self.matching_pilots(cx).len() + self.matches(cx).len();
+        let count = self.matches(cx).len();
         if count > 0 {
             self.active = (self.active as isize + direction).clamp(0, count as isize - 1) as usize;
             cx.notify();
         }
     }
     fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let pilots = self.matching_pilots(cx);
-        if let Some(pilot) = pilots.get(ix) {
-            cx.emit(ProjectPicked::Pilot(pilot.id.clone()));
-        } else if let Some(path) = self
-            .matches(cx)
-            .into_iter()
-            .nth(ix.saturating_sub(pilots.len()))
-        {
+        if let Some(path) = self.matches(cx).into_iter().nth(ix) {
             cx.emit(ProjectPicked::Project(path));
         }
     }
@@ -1512,22 +1471,18 @@ impl Render for ProjectPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let matches = self.matches(cx);
         let focused = self.search.focus_handle(cx).is_focused(window);
-        let matching_pilots = self.matching_pilots(cx);
-        let pilot_count = matching_pilots.len();
-        let mut rows: Vec<AnyElement> = matching_pilots
+        let rows: Vec<AnyElement> = matches
             .into_iter()
             .enumerate()
-            .map(|(ix, pilot)| {
+            .map(|(ix, path)| {
                 let active = self.active == ix;
-                let current = self.active_pilot.as_ref() == Some(&pilot.id);
+                let current = path == self.current;
                 div()
-                    .id(("project-picker-pilot", ix))
-                    .debug_selector({
-                        let id = pilot.id.clone();
-                        move || format!("project-picker-pilot-{id}")
-                    })
+                    .id(("project-option", ix))
+                    .debug_selector(move || format!("project-picker-project-{ix}"))
                     .role(Role::ListBoxOption)
-                    .aria_label(format!("{}, Pilot", pilot.name))
+                    .aria_label(self.label(&path))
+                    .aria_description(path.clone())
                     .aria_selected(current)
                     .cursor_pointer()
                     .flex_shrink_0()
@@ -1554,30 +1509,39 @@ impl Render for ProjectPicker {
                                     .text_color(content(1.))
                                     .into_any_element()
                             } else {
-                                crate::pilots::avatar::avatar(
-                                    &pilot.mascot,
-                                    pilot.color,
-                                    "idle",
-                                    16.,
-                                    true,
-                                )
+                                if path.starts_with("remote://") {
+                                    icon("globe", 14.)
+                                        .text_color(content(0.6))
+                                        .into_any_element()
+                                } else {
+                                    crate::project_settings::project_icon(
+                                        &self.appearance.get(&path).cloned().unwrap_or_default(),
+                                        &path,
+                                        14.,
+                                    )
+                                }
                             }),
                     )
                     .child(
                         div()
-                            .flex_1()
                             .min_w_0()
+                            .flex_shrink_0()
+                            .max_w(px(286. - 12. - 20. - 36.))
                             .truncate()
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(pilot.name.clone()),
+                            .child(self.label(&path)),
                     )
                     .child(
                         div()
-                            .flex_shrink_0()
+                            .min_w_0()
+                            .flex_1()
+                            .max_w(px(112.))
+                            .truncate()
+                            .font_family("Menlo")
                             .text_size(px(11.))
                             .text_color(content(0.4))
-                            .child("Pilot"),
+                            .child(pretty_parent(&path)),
                     )
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                         if *hovered {
@@ -1586,88 +1550,9 @@ impl Render for ProjectPicker {
                         }
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
-                    .into_any_element()
+                    .into_any()
             })
             .collect();
-        rows.extend(matches.into_iter().enumerate().map(|(project_ix, path)| {
-            let ix = pilot_count + project_ix;
-            let active = self.active == ix;
-            let current = self.active_pilot.is_none() && path == self.current;
-            div()
-                .id(("project-option", ix))
-                .debug_selector(move || format!("project-picker-project-{project_ix}"))
-                .role(Role::ListBoxOption)
-                .aria_label(self.label(&path))
-                .aria_description(path.clone())
-                .aria_selected(current)
-                .cursor_pointer()
-                .flex_shrink_0()
-                .h(px(36.))
-                .px(px(10.))
-                .gap(px(10.))
-                .rounded(px(8.))
-                .flex()
-                .items_center()
-                .text_color(content(if active { 1. } else { 0.75 }))
-                .when(active, |d| d.bg(content(0.1)))
-                .when(!active, |d| {
-                    d.hover(|s| s.bg(content(0.05)).text_color(content(1.)))
-                })
-                .child(
-                    div()
-                        .size(px(16.))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(if current {
-                            icon("check-2", 14.)
-                                .text_color(content(1.))
-                                .into_any_element()
-                        } else {
-                            if path.starts_with("remote://") {
-                                icon("globe", 14.)
-                                    .text_color(content(0.6))
-                                    .into_any_element()
-                            } else {
-                                crate::project_settings::project_icon(
-                                    &self.appearance.get(&path).cloned().unwrap_or_default(),
-                                    &path,
-                                    14.,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_shrink_0()
-                        .max_w(px(286. - 12. - 20. - 36.))
-                        .truncate()
-                        .text_size(px(13.))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(self.label(&path)),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .max_w(px(112.))
-                        .truncate()
-                        .font_family("Menlo")
-                        .text_size(px(11.))
-                        .text_color(content(0.4))
-                        .child(pretty_parent(&path)),
-                )
-                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    if *hovered {
-                        this.active = ix;
-                        cx.notify();
-                    }
-                }))
-                .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
-                .into_any()
-        }));
         let empty = rows.is_empty();
         div()
             .id("project-picker")
@@ -1713,11 +1598,7 @@ impl Render for ProjectPicker {
                 div()
                     .id("project-list")
                     .role(Role::ListBox)
-                    .aria_label(if self.pilots.is_empty() {
-                        "Projects"
-                    } else {
-                        "Pilots and projects"
-                    })
+                    .aria_label("Projects")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -1733,11 +1614,7 @@ impl Render for ProjectPicker {
                                 .justify_center()
                                 .text_size(px(12.))
                                 .text_color(content(0.45))
-                                .child(if self.pilots.is_empty() {
-                                    "No projects found"
-                                } else {
-                                    "No pilots or projects found"
-                                }),
+                                .child("No projects found"),
                         )
                     })
                     .children(rows),

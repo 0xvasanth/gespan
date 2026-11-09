@@ -173,7 +173,6 @@ pub(crate) struct AppearanceControls {
     name: Entity<Input>,
     custom_color: Entity<Input>,
     custom_open: bool,
-    allow_logo: bool,
     busy: bool,
     error: Option<String>,
     _events: Vec<Subscription>,
@@ -226,15 +225,10 @@ impl AppearanceControls {
             name,
             custom_color,
             custom_open: false,
-            allow_logo: true,
             busy: false,
             error: None,
             _events: events,
         }
-    }
-    pub(crate) fn for_project_group(mut self) -> Self {
-        self.allow_logo = false;
-        self
     }
     pub(crate) fn focus(&self, cx: &App) -> FocusHandle {
         self.name.focus_handle(cx)
@@ -320,7 +314,7 @@ impl Render for AppearanceControls {
                     .bg(content(0.05))
                     .child(self.name.clone()),
             )
-            .when(self.allow_logo, |d| {
+            .map(|d| {
                 d.child(
                     div()
                         .flex()

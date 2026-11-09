@@ -79,18 +79,6 @@ fn save_scope_focus<S: serde::Serializer>(
     s.collect_map(focus.iter().filter(|(_, tab)| tab.saved()))
 }
 
-/// A named section of projects in the original project navigation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub(crate) struct ProjectRailGroup {
-    pub id: String,
-    pub name: String,
-    pub collapsed: bool,
-    pub color_index: Option<usize>,
-    pub custom_color: Option<String>,
-    pub mascot: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Workspace {
@@ -165,19 +153,8 @@ pub(crate) struct Workspace {
     pub last_action_fingerprints: HashMap<String, String>,
     /// The editor the title bar's Open in editor last opened a folder in.
     pub last_external_editor: Option<String>,
-    /// Original layout: separate project and session sidebars.
-    pub classic_layout: bool,
     /// The new single-sidebar layout can keep its full-height, square frame.
     pub new_layout_boxy: bool,
-    pub project_rail_open: bool,
-    pub project_rail_pilots_pinned: bool,
-    pub project_rail_width: f32,
-    pub project_rail_pinned: HashSet<String>,
-    pub project_rail_groups: Vec<ProjectRailGroup>,
-    pub project_rail_assignments: HashMap<String, String>,
-    pub classic_sidebar_tabs: HashMap<String, String>,
-    pub classic_sidebar_tab_order: Vec<String>,
-    pub new_layout_prompt_dismissed: bool,
     /// The first-run setup card to resume on; `None` once setup is done, and
     /// for every install saved before setup existed.
     pub setup: Option<crate::setup::SetupStep>,
@@ -515,18 +492,8 @@ impl Default for Workspace {
             last_actions: HashMap::new(),
             last_action_fingerprints: HashMap::new(),
             last_external_editor: None,
-            classic_layout: false,
             // Fresh installs start on the rounded frame; saved choices are kept.
             new_layout_boxy: false,
-            project_rail_open: true,
-            project_rail_pilots_pinned: false,
-            project_rail_width: 220.,
-            project_rail_pinned: HashSet::new(),
-            project_rail_groups: Vec::new(),
-            project_rail_assignments: HashMap::new(),
-            classic_sidebar_tabs: HashMap::new(),
-            classic_sidebar_tab_order: Vec::new(),
-            new_layout_prompt_dismissed: false,
             setup: None,
             preferences: crate::settings::Preferences::default(),
             session_filters: Default::default(),
@@ -538,9 +505,8 @@ impl Default for Workspace {
     }
 }
 impl Workspace {
-    /// Seed original-rail concepts from the exact desktop preference strings.
-    /// Native edits then live in their own persisted fields.
-    pub(crate) fn restore_project_rail_metadata(&mut self) {
+    /// Seed the project order from the desktop's saved project order.
+    fn restore_project_order(&mut self) {
         let Some(metadata) = self.desktop_preferences_metadata.as_ref() else {
             return;
         };
@@ -550,36 +516,6 @@ impl Workspace {
                 .as_str()
                 .and_then(|s| serde_json::from_str(s).ok())
         };
-        if let Some(value) = read("gespan.railPilotsPinned") {
-            self.project_rail_pilots_pinned = value.as_bool().unwrap_or(false);
-        }
-        if self.classic_sidebar_tab_order.is_empty()
-            && let Some(value) = read("gespan.sidebarTabOrder")
-        {
-            self.classic_sidebar_tab_order = serde_json::from_value::<Vec<String>>(value)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|tab| ["sessions", "files", "changes"].contains(&tab.as_str()))
-                .collect();
-        }
-        if self.classic_sidebar_tabs.is_empty()
-            && let Some(value) = read("gespan.projectSidebarTabs.v1")
-        {
-            self.classic_sidebar_tabs = serde_json::from_value::<HashMap<String, String>>(value)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(_, tab)| ["sessions", "files", "changes"].contains(&tab.as_str()))
-                .collect();
-        }
-        if let Some(value) = read("gespan.projectRailPinned") {
-            self.project_rail_pinned = serde_json::from_value(value).unwrap_or_default();
-        }
-        if let Some(value) = read("gespan.projectGroups") {
-            self.project_rail_groups = serde_json::from_value(value).unwrap_or_default();
-        }
-        if let Some(value) = read("gespan.projectGroupAssignments") {
-            self.project_rail_assignments = serde_json::from_value(value).unwrap_or_default();
-        }
         if let Some(value) = read("gespan.projectRailOrder")
             && let Ok(order) = serde_json::from_value::<Vec<String>>(value)
         {
@@ -599,7 +535,7 @@ impl Workspace {
     }
 
     pub fn boxy_layout(&self) -> bool {
-        self.classic_layout || self.new_layout_boxy
+        self.new_layout_boxy
     }
 
     /// Moves this running workspace to a renamed project folder, using the same
@@ -625,27 +561,23 @@ impl Workspace {
         let mut state = saved
             .and_then(|s| serde_json::from_str::<Self>(s).ok())
             .unwrap_or_default();
-        // Before the project rail returned, "classic" meant the boxy version
-        // of the single-sidebar layout. Keep that appearance for existing users.
-        if let Some(saved) = saved.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            && saved.get("new_layout_boxy").is_none()
+        let raw = saved.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+        // The classic layout drew the boxy frame. A save from it keeps that
+        // look unless it already chose a workspace style.
+        if let Some(raw) = &raw
+            && raw.get("new_layout_boxy").is_none()
+            && legacy_classic(raw)
         {
-            state.new_layout_boxy = state.classic_layout;
-            state.classic_layout = false;
+            state.new_layout_boxy = true;
         }
-        let has_rail_state = saved
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .is_some_and(|value| value.get("project_rail_pinned").is_some());
-        if !has_rail_state {
-            state.restore_project_rail_metadata();
+        // Every native save writes `new_layout_boxy`; a workspace that only
+        // the desktop import has written takes the desktop's project order.
+        if raw
+            .as_ref()
+            .is_none_or(|raw| raw.get("new_layout_boxy").is_none())
+        {
+            state.restore_project_order();
         }
-        // Hidden project navigation is retired; collapsed always means icons.
-        state.preferences.collapsed_project_rail = "compact".into();
-        state.project_rail_width = if state.project_rail_width.is_finite() {
-            state.project_rail_width.clamp(176., 360.)
-        } else {
-            220.
-        };
         if state.project.is_empty() {
             state.project = cwd.into();
         }
@@ -812,60 +744,6 @@ impl Workspace {
             self.projects.push(path.into());
         }
     }
-    /// The rail group a project is listed under. Assignments to deleted
-    /// groups leave the project in the ungrouped list.
-    pub fn project_rail_group(&self, path: &str) -> Option<&str> {
-        let id = self.project_rail_assignments.get(path)?;
-        self.project_rail_groups
-            .iter()
-            .any(|group| &group.id == id)
-            .then_some(id.as_str())
-    }
-    /// Whether two projects sit in the same rail section and reorder together.
-    pub fn project_rail_peers(&self, a: &str, b: &str) -> bool {
-        let pinned = self.project_rail_pinned.contains(a);
-        pinned == self.project_rail_pinned.contains(b)
-            && (pinned || self.project_rail_group(a) == self.project_rail_group(b))
-    }
-    /// Projects in the order the current layout shows them. The rail lists
-    /// pinned projects, then each group's members, then the rest.
-    pub fn visible_project_order(&self) -> Vec<String> {
-        if !self.classic_layout {
-            return self.projects.clone();
-        }
-        let unpinned = |p: &&String| !self.project_rail_pinned.contains(*p);
-        let mut order: Vec<String> = self
-            .projects
-            .iter()
-            .filter(|p| self.project_rail_pinned.contains(*p))
-            .cloned()
-            .collect();
-        for group in &self.project_rail_groups {
-            order.extend(
-                self.projects
-                    .iter()
-                    .filter(unpinned)
-                    .filter(|p| self.project_rail_group(p) == Some(group.id.as_str()))
-                    .cloned(),
-            );
-        }
-        order.extend(
-            self.projects
-                .iter()
-                .filter(unpinned)
-                .filter(|p| self.project_rail_group(p).is_none())
-                .cloned(),
-        );
-        order
-    }
-    /// The projects that reorder alongside `path`, in the order shown: the
-    /// whole list, or just its rail section.
-    pub fn project_peers(&self, path: &str) -> Vec<String> {
-        self.visible_project_order()
-            .into_iter()
-            .filter(|p| !self.classic_layout || self.project_rail_peers(p, path))
-            .collect()
-    }
     /// Moves a project to `to` in the saved order. Returns whether it moved.
     pub fn move_project(&mut self, path: &str, to: usize) -> bool {
         let Some(from) = self.projects.iter().position(|p| p == path) else {
@@ -879,32 +757,26 @@ impl Workspace {
         self.projects.insert(to, project);
         true
     }
-    /// Moves a project one place along what the layout shows, staying inside
-    /// its rail section. Returns whether it moved.
+    /// Moves a project one place along the saved order. Returns whether it
+    /// moved.
     pub fn step_project_order(&mut self, path: &str, step: isize) -> bool {
-        let peers = self.project_peers(path);
-        let Some(ix) = peers.iter().position(|p| p == path) else {
-            return false;
-        };
-        let Some(neighbour) = ix
-            .checked_add_signed(step.signum())
-            .and_then(|ix| peers.get(ix))
+        let Some(to) = self
+            .projects
+            .iter()
+            .position(|p| p == path)
+            .and_then(|ix| ix.checked_add_signed(step.signum()))
+            .filter(|to| *to < self.projects.len())
         else {
             return false;
         };
-        let to = self.projects.iter().position(|p| p == neighbour).unwrap();
         self.move_project(path, to)
     }
-    /// Moves a project to either end of its section: `step < 0` for the start.
+    /// Moves a project to either end of the list: `step < 0` for the start.
     pub fn move_project_to_end(&mut self, path: &str, step: isize) -> bool {
-        let peers = self.project_peers(path);
-        let target = if step < 0 {
-            peers.first()
+        let to = if step < 0 {
+            0
         } else {
-            peers.last()
-        };
-        let Some(to) = target.and_then(|t| self.projects.iter().position(|p| p == t)) else {
-            return false;
+            self.projects.len().saturating_sub(1)
         };
         self.move_project(path, to)
     }
@@ -1451,6 +1323,14 @@ pub(crate) fn follow_moved_projects(
 }
 
 /// Rewrites every place the saved workspace names the project `from`.
+/// Whether a save came from the retired classic layout.
+fn legacy_classic(saved: &serde_json::Value) -> bool {
+    saved
+        .get("classic_layout")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
 fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
     use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
     use serde_json::Value;
@@ -1476,12 +1356,7 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
     if let Some(project) = field(state, &["project"]) {
         rebase(project);
     }
-    for list in [
-        "projects",
-        "archived_projects",
-        "project_rail_pinned",
-        "collapsed",
-    ] {
+    for list in ["projects", "archived_projects", "collapsed"] {
         if let Some(paths) = field(state, &[list]).and_then(Value::as_array_mut) {
             paths.iter_mut().for_each(rebase);
             let mut seen = HashSet::new();
@@ -1495,9 +1370,7 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
         &["actions"],
         &["last_actions"],
         &["last_action_fingerprints"],
-        &["classic_sidebar_tabs"],
         &["project_appearance"],
-        &["project_rail_assignments"],
         &["preferences", "project_providers"],
     ] {
         let Some(map) = field(state, map).and_then(Value::as_object_mut) else {
@@ -1596,7 +1469,6 @@ mod tests {
             "project_focus": {old.clone(): 3},
             "recent_files": {old.clone(): [file]},
             "docks": {old.clone(): {"terminals": [old, other]}},
-            "project_rail_pinned": [old],
             "preferences": {"project_providers": {old.clone(): {}}},
             "scope_focus": {
                 format!("{}\0{}", gespan_core::files::path_key(&old), gespan_core::files::path_key(&old)): {"Session": 3},
@@ -1616,7 +1488,6 @@ mod tests {
             state["docks"][&new]["terminals"],
             serde_json::json!([new, other])
         );
-        assert_eq!(state["project_rail_pinned"], serde_json::json!([new]));
         assert!(state["preferences"]["project_providers"][&new].is_object());
         let scopes: Vec<_> = state["scope_focus"]
             .as_object()
@@ -1643,64 +1514,100 @@ mod tests {
     }
 
     #[test]
-    fn rail_moves_stay_inside_their_section_and_follow_the_drawn_order() {
-        let mut state = super::Workspace {
-            classic_layout: true,
-            projects: ["/a", "/b", "/c", "/d", "/e", "/f"]
-                .map(str::to_owned)
-                .to_vec(),
-            project_rail_pinned: ["/e".to_owned()].into(),
-            project_rail_groups: vec![super::ProjectRailGroup {
-                id: "g".into(),
-                name: "Group".into(),
-                ..Default::default()
-            }],
-            project_rail_assignments: [("/b", "g"), ("/d", "g"), ("/f", "deleted")]
-                .map(|(p, g)| (p.to_owned(), g.to_owned()))
-                .into(),
-            ..Default::default()
-        };
-        // Pinned, then the group, then the rest. A deleted group's member
-        // falls back to the ungrouped list.
+    fn a_classic_save_restores_into_focused_with_everything_kept() {
+        let saved = r#"{"projects":["/a","/b"],"tabs":[7],"title_order":[{"Session":7},{"App":"Board"}],
+          "classic_layout":true,"classic_sidebar_tabs":{"/a":"files"},"classic_sidebar_tab_order":["files"],
+          "project_rail_open":false,"project_rail_width":248.0,"project_rail_pinned":["/b"],
+          "project_rail_groups":[{"id":"g","name":"G"}],"project_rail_assignments":{"/a":"g"},
+          "project_rail_pilots_pinned":true,"new_layout_prompt_dismissed":true,
+          "preferences":{"collapsed_project_rail":"hidden","rail_pilots_pinned":true}}"#;
+        let state = super::Workspace::restore(Some(saved), &[(7, "/a".into())], "/a");
+        assert_eq!(state.projects, ["/a", "/b"]);
         assert_eq!(
-            state.visible_project_order(),
-            ["/e", "/b", "/d", "/a", "/c", "/f"]
+            state.title_order,
+            [TitleTab::Session(7), TitleTab::App(AppView::Board)]
         );
-        assert_eq!(state.project_peers("/f"), ["/a", "/c", "/f"]);
-        assert!(state.step_project_order("/f", -1));
-        assert_eq!(state.project_peers("/a"), ["/a", "/f", "/c"]);
-        assert!(!state.step_project_order("/b", -1), "/b leads its group");
-        assert!(state.move_project_to_end("/b", 1));
-        assert_eq!(state.project_peers("/d"), ["/d", "/b"]);
-        assert!(!state.step_project_order("/e", 1), "/e is the only pin");
-        // The projects row shows the saved order as it is.
-        state.classic_layout = false;
-        assert_eq!(state.visible_project_order(), state.projects);
-        assert!(state.move_project_to_end("/e", -1));
-        assert_eq!(state.projects[0], "/e");
+        assert!(
+            state.new_layout_boxy,
+            "classic with no saved style implies boxy"
+        );
     }
 
     #[test]
-    fn legacy_boxy_layout_and_hidden_rail_migrate_without_changing_appearance() {
+    fn a_saved_workspace_style_wins_over_the_classic_flag() {
         let state = super::Workspace::restore(
-            Some(r#"{"classic_layout":true,"preferences":{"collapsed_project_rail":"hidden"}}"#),
+            Some(r#"{"classic_layout":true,"new_layout_boxy":false}"#),
             &[],
             "/work",
         );
-        assert!(!state.classic_layout);
+        assert!(!state.new_layout_boxy);
+    }
+
+    #[test]
+    fn the_save_never_writes_classic_or_rail_keys() {
+        let json = serde_json::to_value(super::Workspace::restore(None, &[], "/work")).unwrap();
+        for key in [
+            "classic_layout",
+            "classic_sidebar_tabs",
+            "classic_sidebar_tab_order",
+            "new_layout_prompt_dismissed",
+            "project_rail_open",
+            "project_rail_width",
+            "project_rail_pinned",
+            "project_rail_groups",
+            "project_rail_assignments",
+            "project_rail_pilots_pinned",
+        ] {
+            assert!(json.get(key).is_none(), "{key}");
+        }
+        for key in ["collapsed_project_rail", "rail_pilots_pinned"] {
+            assert!(json["preferences"].get(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn project_moves_follow_the_saved_order() {
+        let mut state = super::Workspace {
+            projects: ["/a", "/b", "/c", "/e"].map(str::to_owned).to_vec(),
+            ..Default::default()
+        };
+        assert!(state.step_project_order("/c", -1));
+        assert_eq!(state.projects, ["/a", "/c", "/b", "/e"]);
+        assert!(!state.step_project_order("/a", -1), "/a leads");
+        assert!(!state.step_project_order("/e", 1), "/e ends");
+        assert!(state.move_project_to_end("/e", -1));
+        assert_eq!(state.projects[0], "/e");
+        assert!(state.move_project_to_end("/e", 1));
+        assert_eq!(state.projects[3], "/e");
+        assert!(!state.move_project_to_end("/missing", 1));
+    }
+
+    #[test]
+    fn the_desktop_project_order_seeds_only_a_workspace_native_never_saved() {
+        let metadata =
+            r#""desktop_preferences_metadata":{"gespan.projectRailOrder":"[\"/b\",\"/a\"]"}"#;
+        let imported = super::Workspace::restore(
+            Some(&format!(r#"{{"projects":["/a","/b"],{metadata}}}"#)),
+            &[],
+            "/a",
+        );
+        assert_eq!(imported.projects, ["/b", "/a"]);
+        let saved = serde_json::to_string(&imported).unwrap();
+        let mut reordered = super::Workspace::restore(Some(&saved), &[], "/a");
+        assert!(reordered.move_project_to_end("/a", -1));
+        let saved = serde_json::to_string(&reordered).unwrap();
+        let restored = super::Workspace::restore(Some(&saved), &[], "/a");
+        assert_eq!(restored.projects, ["/a", "/b"], "a native reorder is kept");
+    }
+
+    #[test]
+    fn a_legacy_classic_save_keeps_its_boxy_frame_across_saves() {
+        let state = super::Workspace::restore(Some(r#"{"classic_layout":true}"#), &[], "/work");
         assert!(state.new_layout_boxy);
         assert!(state.boxy_layout());
-        assert_eq!(state.preferences.collapsed_project_rail, "compact");
-        let saved = serde_json::to_string(&state).unwrap();
-        let mut state = super::Workspace::restore(Some(&saved), &[], "/work");
-        state.classic_layout = true;
-        state.project_rail_open = false;
-        state.project_rail_width = 248.;
         let saved = serde_json::to_string(&state).unwrap();
         let state = super::Workspace::restore(Some(&saved), &[], "/work");
-        assert!(state.classic_layout && state.new_layout_boxy);
-        assert!(!state.project_rail_open);
-        assert_eq!(state.project_rail_width, 248.);
+        assert!(state.new_layout_boxy);
     }
 
     use super::*;
