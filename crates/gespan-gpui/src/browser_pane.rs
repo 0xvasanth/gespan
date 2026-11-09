@@ -3,17 +3,13 @@
 //! with no web view of our own; clicks, scrolls and keys go back to the tab.
 //! Only one pane shows a tab at a time: a second view of it would stop the
 //! first, so the review pane keeps one pane per tab.
-use crate::{
-    input::{self, Input},
-    popover::AnchorSlot,
-    theme::*,
-};
+use crate::{popover::AnchorSlot, theme::*};
 use gespan_core::browser::{
     Ended, LivePane, TabId,
     live::{KeyEvent, LiveInput, LiveNav, MouseButton as LiveButton, MouseEvent, PanelSize},
 };
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, FocusHandle, Focusable, ImageSource, KeyDownEvent,
+    AnyElement, App, Bounds, Context, FocusHandle, Focusable, ImageSource, KeyDownEvent,
     KeyUpEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, RenderImage, Role, ScrollDelta, ScrollWheelEvent, SharedString, Subscription, Task,
     Window, div, img, prelude::*, px,
@@ -137,7 +133,6 @@ pub(crate) struct BrowserPane {
     pub(crate) session: i64,
     pub(crate) tab: TabId,
     focus: FocusHandle,
-    address: Entity<Input>,
     live: Option<Arc<LivePane>>,
     pub(crate) picture: Option<Shown>,
     pub(crate) ended: Option<Ended>,
@@ -353,20 +348,7 @@ fn page_point(at: Point<Pixels>, rect: Bounds<Pixels>, width: f64, height: f64) 
 
 impl BrowserPane {
     pub(crate) fn new(session: i64, tab: TabId, cx: &mut Context<Self>) -> Self {
-        let address = cx.new(|cx| {
-            let mut input = Input::field("Address", "Enter an address", content(0.35), cx);
-            input.set_font_size(12.);
-            input
-        });
-        let mut subscriptions =
-            vec![
-                cx.subscribe(&address, |this, input, _: &input::Submitted, cx| {
-                    let url = input.read(cx).content.trim().to_owned();
-                    if !url.is_empty() {
-                        this.navigate(LiveNav::Go { url }, cx);
-                    }
-                }),
-            ];
+        let mut subscriptions = Vec::new();
         if let Some(browser) = crate::browser::get(cx) {
             subscriptions.push(cx.observe(&browser, |this, _, cx| this.follow_tab(cx)));
         }
@@ -380,7 +362,6 @@ impl BrowserPane {
             session,
             tab,
             focus: cx.focus_handle(),
-            address,
             live: None,
             picture: None,
             ended: None,
@@ -416,11 +397,6 @@ impl BrowserPane {
             return;
         };
         if url != self.url {
-            // An address the user is typing stays until they send it.
-            if self.address.read(cx).content.as_ref() == self.url {
-                self.address
-                    .update(cx, |input, cx| input.set_text(url.clone(), cx));
-            }
             self.url = url;
             cx.notify();
         }
@@ -788,8 +764,14 @@ impl Render for BrowserPane {
                 cx,
                 |this, cx| this.navigate(LiveNav::Reload, cx),
             ))
+            // The tab's address, to read: the agent moves the tab, and the
+            // user only clicks and types in the page itself.
             .child(
                 div()
+                    .id("browser-pane-address")
+                    .debug_selector(|| "browser-pane-address".into())
+                    .role(Role::Label)
+                    .aria_label(SharedString::from(format!("Address {}", self.url)))
                     .min_w_0()
                     .flex_1()
                     .h(px(26.))
@@ -798,7 +780,9 @@ impl Render for BrowserPane {
                     .rounded_md()
                     .bg(content(0.05))
                     .px_2()
-                    .child(self.address.clone()),
+                    .text_size(px(12.))
+                    .text_color(content(0.6))
+                    .child(div().truncate().child(self.url.clone())),
             );
         let error = self.error.clone();
         div()

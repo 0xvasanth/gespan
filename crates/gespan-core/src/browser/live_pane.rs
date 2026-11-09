@@ -265,8 +265,7 @@ impl LivePane {
             .take()
     }
 
-    /// Back, Forward, Reload or an address. Blocks: call it off the UI
-    /// thread.
+    /// Back, Forward or Reload. Blocks: call it off the UI thread.
     pub fn navigate(&self, nav: &LiveNav) -> Result<(), String> {
         let shared = &self.shared;
         shared.host.live_navigate(&shared.session, &shared.tab, nav)

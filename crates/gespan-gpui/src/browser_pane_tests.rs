@@ -4,8 +4,8 @@
 use super::*;
 use crate::browser_test_rig::Rig;
 use gpui::{
-    Bounds, KeyDownEvent, Keystroke, TestAppContext, VisualTestContext, WindowBounds, WindowHandle,
-    WindowOptions, point, size,
+    Bounds, Entity, KeyDownEvent, Keystroke, TestAppContext, VisualTestContext, WindowBounds,
+    WindowHandle, WindowOptions, point, size,
 };
 use std::time::{Duration, Instant};
 
@@ -243,4 +243,45 @@ fn a_shown_pane_over_a_still_page_keeps_its_view_however_long(cx: &mut TestAppCo
     visual.simulate_click(drawn.center(), Default::default());
     visual.run_until_parked();
     assert!(rig.received("Input.dispatchMouseEvent", |p| p["type"] == "mousePressed"));
+}
+
+#[gpui::test]
+fn the_address_is_shown_and_never_typed_into(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let tab = rig.open_tab(17);
+    let (pane, _window, mut visual) = pane_window(&rig, 17, tab, cx);
+    pull_until(&pane, &mut visual, |pane| pane.picture.is_some());
+    let address = visual
+        .debug_bounds("browser-pane-address")
+        .expect("the tab's address shows");
+    // Clicked and typed at, the address takes nothing: no keys reach the
+    // page and the tab goes nowhere.
+    visual.simulate_click(address.center(), Default::default());
+    visual.run_until_parked();
+    for key in ["e", "enter"] {
+        visual.simulate_event(KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Default::default(),
+                key: key.into(),
+                key_char: (key == "e").then(|| "e".into()),
+            },
+            is_held: false,
+            prefer_character_input: false,
+        });
+        visual.run_until_parked();
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let sent: Vec<_> = rig
+        .server
+        .received()
+        .iter()
+        .map(|r| r.method.clone())
+        .collect();
+    assert!(!sent.iter().any(|m| m == "Page.navigate"), "{sent:?}");
+    assert!(!sent.iter().any(|m| m == "Input.insertText"), "{sent:?}");
+    assert!(
+        !sent.iter().any(|m| m == "Input.dispatchKeyEvent"),
+        "{sent:?}"
+    );
+    visual.update(|_, cx| assert!(pane.read(cx).error.is_none()));
 }

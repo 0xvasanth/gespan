@@ -24,7 +24,6 @@ use serde_json::{json, Value};
 use super::link::{
     CdpSessionId, Command, EventFilter, Link, Method, Reply, TargetId, SCREENCAST_FRAME,
 };
-use super::policy;
 use super::protocol::TabId;
 
 const POLL: Duration = Duration::from_millis(100);
@@ -1072,26 +1071,20 @@ fn request_still(link: &Link, tab: &LiveTab) -> Option<mpsc::Receiver<Reply>> {
     .ok()
 }
 
-/// The panel's Back, Forward, Reload and address field.
+/// The panel's Back, Forward and Reload. Its address is there to read: the
+/// user never types one (the agent moves the tab).
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum LiveNav {
     Back,
     Forward,
     Reload,
-    Go { url: String },
 }
 
-/// Move the tab the way the user asked. Addresses go through the same check
-/// as an agent's ([`policy::check_url`]): web pages only.
+/// Move the tab back, forward or to the same page again.
 pub fn navigate(link: &Link, tab: &LiveTab, nav: &LiveNav) -> Result<(), String> {
     match nav {
         LiveNav::Reload => send(link, &tab.main, Method::PageReload, json!({})).map(|_| ()),
-        LiveNav::Go { url } => {
-            let url = policy::check_url(&address(url))
-                .map_err(|_| "Gespan opens only web addresses here.".to_string())?;
-            send(link, &tab.main, Method::PageNavigate, json!({ "url": url })).map(|_| ())
-        }
         LiveNav::Back | LiveNav::Forward => {
             let history = send(link, &tab.main, Method::PageGetNavigationHistory, json!({}))?;
             let current = history["currentIndex"].as_i64().unwrap_or(0);
@@ -1111,22 +1104,6 @@ pub fn navigate(link: &Link, tab: &LiveTab, nav: &LiveNav) -> Result<(), String>
             .map(|_| ())
         }
     }
-}
-
-/// What the user typed into the address field, as an address: a bare host
-/// (`example.com`, `localhost:5173`) gets a scheme, the way a browser's
-/// address bar would.
-fn address(typed: &str) -> String {
-    let typed = typed.trim();
-    if typed.contains("://") || typed.eq_ignore_ascii_case("about:blank") {
-        return typed.to_string();
-    }
-    let host = typed.split(['/', '?', '#']).next().unwrap_or("");
-    let local = host.starts_with("localhost")
-        || host.starts_with("127.")
-        || host.starts_with("[::1]")
-        || host.starts_with("0.0.0.0");
-    format!("{}://{typed}", if local { "http" } else { "https" })
 }
 
 /// Hand one input event to the tab.
@@ -1456,21 +1433,18 @@ mod tests {
     }
 
     #[test]
-    fn the_address_field_reads_bare_hosts_like_a_browser() {
-        assert_eq!(address(" example.com/a "), "https://example.com/a");
-        assert_eq!(address("localhost:5173"), "http://localhost:5173");
-        assert_eq!(address("127.0.0.1:8080/x"), "http://127.0.0.1:8080/x");
-        assert_eq!(address("http://example.com"), "http://example.com");
-        let nav: LiveNav = serde_json::from_value(json!({ "kind": "go", "url": "a.dev" })).unwrap();
-        assert_eq!(
-            nav,
-            LiveNav::Go {
-                url: "a.dev".into()
-            }
-        );
+    fn the_panel_moves_back_forward_and_reloads_but_never_types_an_address() {
         assert_eq!(
             serde_json::from_value::<LiveNav>(json!({ "kind": "back" })).unwrap(),
             LiveNav::Back
+        );
+        assert_eq!(
+            serde_json::from_value::<LiveNav>(json!({ "kind": "reload" })).unwrap(),
+            LiveNav::Reload
+        );
+        assert!(
+            serde_json::from_value::<LiveNav>(json!({ "kind": "go", "url": "a.dev" })).is_err(),
+            "the address is read-only"
         );
     }
 }

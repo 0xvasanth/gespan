@@ -2208,7 +2208,7 @@ impl BrowserHost {
         }
     }
 
-    /// The panel's Back, Forward, Reload or address field, in `tab`.
+    /// The panel's Back, Forward or Reload, in `tab`.
     pub fn live_navigate(
         &self,
         session: &str,
@@ -4565,6 +4565,19 @@ mod tests {
         })
     }
 
+    /// Move `tab` to `url` the way the agent's navigation does (the pane
+    /// itself only goes back, forward or reloads).
+    fn go(host: &BrowserHost, session: &str, tab: &TabId, url: &str) {
+        let target = host.held_tab(session, tab).unwrap();
+        host.link
+            .send_system(Command::in_session(
+                &target.main,
+                Method::PageNavigate,
+                json!({ "url": url }),
+            ))
+            .unwrap();
+    }
+
     fn opened_tab(host: &Arc<BrowserHost>, session: &str, url: &str) -> TabId {
         let opened = host.handle_request(
             session,
@@ -5245,14 +5258,7 @@ mod tests {
         };
         thread::sleep(Duration::from_millis(800));
         // Another site: Chrome gives the page a new renderer.
-        host.live_navigate(
-            "s1",
-            &tab,
-            &live::LiveNav::Go {
-                url: format!("http://localhost:{port}/b"),
-            },
-        )
-        .unwrap();
+        go(&host, "s1", &tab, &format!("http://localhost:{port}/b"));
         thread::sleep(Duration::from_millis(1500));
         host.stop_live(None);
         let _ = viewing.join();
@@ -5465,7 +5471,7 @@ mod tests {
             assert!(Instant::now() < deadline, "the view kept its old size");
             thread::sleep(Duration::from_millis(50));
         }
-        // The address field takes a bare host; Back returns.
+        // Another page, then Back returns.
         let current = || {
             host.state()
                 .tabs
@@ -5482,27 +5488,13 @@ mod tests {
                 thread::sleep(Duration::from_millis(50));
             }
         };
-        host.live_navigate(
-            "s1",
-            &tab,
-            &live::LiveNav::Go {
-                url: format!("127.0.0.1:{port}/next"),
-            },
-        )
-        .unwrap();
+        go(&host, "s1", &tab, &format!("http://127.0.0.1:{port}/next"));
         wait_url("/next");
         host.live_navigate("s1", &tab, &live::LiveNav::Back)
             .unwrap();
         wait_url(&format!("{port}/"));
         // A page that stops moving gets one lossless picture at the pane's size.
-        host.live_navigate(
-            "s1",
-            &tab,
-            &live::LiveNav::Go {
-                url: format!("127.0.0.1:{port}/calm"),
-            },
-        )
-        .unwrap();
+        go(&host, "s1", &tab, &format!("http://127.0.0.1:{port}/calm"));
         wait_url("/calm");
         let deadline = Instant::now() + Duration::from_secs(5);
         let png = loop {
@@ -5522,15 +5514,6 @@ mod tests {
             let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
             assert_eq!((width, png.width), (700, 700.0));
         }
-        assert!(host
-            .live_navigate(
-                "s1",
-                &tab,
-                &live::LiveNav::Go {
-                    url: "file:///etc/passwd".into()
-                }
-            )
-            .is_err());
         // An older pane of the same tab going away leaves this view running.
         host.stop_live(Some("v0"));
         assert!(!viewing.is_finished());
@@ -6166,8 +6149,7 @@ mod tests {
         };
         let still = click("one", 130.0, 125.0, 0.0);
         // Back to the start page for the second link.
-        host.live_navigate("s1", &tab, &live::LiveNav::Go { url: start.clone() })
-            .unwrap();
+        go(&host, "s1", &tab, &start);
         thread::sleep(Duration::from_millis(800));
         let shaking = click("two", 130.0, 325.0, 5.0);
         host.stop_live(Some("click"));
