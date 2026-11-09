@@ -1194,6 +1194,10 @@ pub struct TabOverview {
     #[serde(flatten)]
     pub tab: TabInfo,
     pub session_id: String,
+    /// The user opened it for themselves (a link in the thread), not an
+    /// agent: its pane closes it, and it does not count as an agent's tab.
+    #[serde(default)]
+    pub user_tab: bool,
 }
 
 // ---------------------------------------------------------------------------

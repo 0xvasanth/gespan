@@ -920,6 +920,7 @@ impl PolicyState {
             .map(|l| TabOverview {
                 tab: l.info(),
                 session_id: l.owner.clone(),
+                user_tab: l.user_tab,
             })
             .collect();
         tabs.sort_by_key(|a| a.tab.created_at_ms);
