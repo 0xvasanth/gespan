@@ -1,0 +1,24 @@
+host/package.mjs
+  s_c46fdbb3836a3e::t_dde9a261b3efb7 164-167
+  s_c46fdbb3836a3e::t_53d9c9cebc2671 12
+host/retry-locked.test.ts
+  s_c46fdbb3836a3e::t_1e33420e76580b 1-54
+host/retry-locked.mjs
+  s_c46fdbb3836a3e::t_5fc190fa45cfdc 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aec34e5da88a2cab9c655e8967368c00b82338f0",
+  "prompts": {},
+  "sessions": {
+    "s_c46fdbb3836a3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e915514-da88-41de-8a16-4bc233115273",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
