@@ -17,7 +17,6 @@ pub(crate) enum Section {
     Mcp,
     Browser,
     Skills,
-    Pilots,
     Inbox,
     Archive,
     Worktrees,
@@ -43,7 +42,6 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
             Section::Mcp,
             Section::Browser,
             Section::Skills,
-            Section::Pilots,
         ],
     ),
     (
@@ -53,7 +51,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 15] = [
+    pub(crate) const ALL: [Section; 14] = [
         Section::General,
         Section::Diagnostics,
         Section::Connections,
@@ -65,7 +63,6 @@ impl Section {
         Section::Mcp,
         Section::Browser,
         Section::Skills,
-        Section::Pilots,
         Section::Inbox,
         Section::Archive,
         Section::Worktrees,
@@ -83,7 +80,6 @@ impl Section {
             Section::Mcp => "mcp",
             Section::Browser => "browser",
             Section::Skills => "skills",
-            Section::Pilots => "pilots",
             Section::Inbox => "inbox",
             Section::Archive => "archive",
             Section::Worktrees => "worktrees",
@@ -102,7 +98,6 @@ impl Section {
             Section::Mcp => "MCP",
             Section::Browser => "Browser",
             Section::Skills => "Skills",
-            Section::Pilots => "Pilots",
             Section::Inbox => "Inbox",
             Section::Archive => "Archive",
             Section::Worktrees => "Worktrees",
@@ -137,7 +132,6 @@ impl Section {
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
-            Section::Pilots => "The resident agent beside your tabs, and which projects have one.",
             Section::Inbox => {
                 "Manage Inbox services and notification preferences for each project."
             }
@@ -172,7 +166,6 @@ impl Section {
                 "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
             }
             Section::Skills => "skill instructions prompt",
-            Section::Pilots => "pilot resident agent mascot claim project title bar",
             Section::Inbox => {
                 "github gitlab linear jira atlassian azure devops connect token integration"
             }
@@ -193,7 +186,6 @@ impl Section {
             Section::Mcp => "globe",
             Section::Browser => "app-window",
             Section::Skills => "sparkles",
-            Section::Pilots => "ghost",
             Section::Inbox => "inbox-hi",
             Section::Archive => "archive",
             Section::Worktrees => "folder-tree",
@@ -251,17 +243,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "Upload folders",
         "browser upload files folders hidden dotfiles",
     ),
+    #[cfg(target_os = "macos")]
     (
-        "pilots-enabled",
-        Section::Pilots,
-        "Show pilots",
-        "pilot agent rail hide",
-    ),
-    (
-        "pilot-list",
-        Section::Pilots,
-        "Your pilots",
-        "pilot reset soul name projects sessions sidebar visibility hidden show",
+        "pilot-menu-bar-icon",
+        Section::General,
+        "Menu bar icon",
+        "menu bar icon tray pilot quick composer chat macos hide",
     ),
     (
         "dictation-model",
@@ -694,9 +681,19 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn settings_section_count_is_15() {
-        assert_eq!(Section::ALL.len(), 15);
+    fn menu_bar_icon_is_in_general() {
+        let results = search("menu bar", "");
+        let hit = results
+            .iter()
+            .find(|r| r.setting == Some("pilot-menu-bar-icon"));
+        assert_eq!(hit.map(|r| r.section), Some(Section::General));
+    }
+
+    #[test]
+    fn settings_section_count_is_14() {
+        assert_eq!(Section::ALL.len(), 14);
         let grouped: Vec<Section> = GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
         assert_eq!(grouped.len(), Section::ALL.len());
         for section in Section::ALL {

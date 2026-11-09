@@ -265,7 +265,6 @@ impl SettingsView {
                     | "show-remaining-usage"
                     | "mask-emails"
                     | "claude-hooks"
-                    | "pilots-enabled"
                     | "rail-pilots-pinned"
                     | "pilot-menu-bar-icon"
                     | "show-archived"

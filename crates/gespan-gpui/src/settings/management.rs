@@ -10,7 +10,6 @@ pub(super) enum Target {
     Skill,
     Worktree,
     DeleteTree(data::Tree),
-    ResetPilot(super::PilotSetting),
 }
 pub(super) struct Editor {
     pub target: Target,
@@ -78,10 +77,7 @@ impl SettingsView {
             }),
         ];
         let previous = window.focused(cx);
-        if matches!(
-            target,
-            Target::Cli(_) | Target::DeleteTree(_) | Target::ResetPilot(_)
-        ) {
+        if matches!(target, Target::Cli(_) | Target::DeleteTree(_)) {
             window.focus(&self.focus, cx);
         } else {
             window.focus(&name.read(cx).focus_handle(cx), cx);
@@ -231,11 +227,6 @@ impl SettingsView {
         }
         editor.busy = true;
         editor.error = None;
-        if let Target::ResetPilot(pilot) = target {
-            cx.emit(SettingsEvent::ResetPilot(pilot.id));
-            cx.notify();
-            return;
-        }
         if let Target::DeleteTree(tree) = target {
             cx.emit(SettingsEvent::RemoveWorktree {
                 cwd,
@@ -298,22 +289,6 @@ impl SettingsView {
         let inspection = e.inspection.clone();
         let mut rows = Vec::new();
         match &target {
-            Target::ResetPilot(pilot) => {
-                let default = gespan_core::pilot::Pilot {
-                    name: String::new(),
-                    mascot: pilot.mascot.clone(),
-                    ..Default::default()
-                }
-                .label();
-                rows.push(note(format!("Its soul goes back to the default and its name to {default}. Changes to its soul can't be recovered.")));
-                rows.push(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(content(0.5))
-                        .child("Its conversation, projects, memory and habits will be kept.")
-                        .into_any_element(),
-                );
-            }
             Target::Cli(kind) => {
                 let overridden = self.prefs.binary_paths.contains_key(kind.id());
                 let pending = gespan_core::cli::configured(*kind)
@@ -776,13 +751,6 @@ impl SettingsView {
                 }
             }
             Target::Worktree => "Create worktree",
-            Target::ResetPilot(_) => {
-                if busy {
-                    "Resetting…"
-                } else {
-                    "Reset Pilot"
-                }
-            }
             Target::DeleteTree(ref tree) => {
                 match (deleting, deleting_branch && tree.merged.is_some()) {
                     (true, true) => "Delete worktree, branch and sessions",
@@ -802,7 +770,7 @@ impl SettingsView {
             )
             .child(
                 crate::modal::disabled(
-                    if matches!(target, Target::DeleteTree(_) | Target::ResetPilot(_)) {
+                    if matches!(target, Target::DeleteTree(_)) {
                         crate::modal::danger_button("submit-management", label)
                     } else {
                         crate::modal::primary_button("submit-management", label)
@@ -833,7 +801,6 @@ impl SettingsView {
             Target::Mcp => "Add MCP server".into(),
             Target::Worktree => "Create worktree".into(),
             Target::DeleteTree(_) => "Delete worktree?".into(),
-            Target::ResetPilot(ref pilot) => format!("Reset {} to its defaults?", pilot.name),
             _ => String::new(),
         };
         let form = self.management_form(cx);

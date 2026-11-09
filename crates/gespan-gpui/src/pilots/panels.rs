@@ -1978,6 +1978,9 @@ impl Pilots {
                     MenuAction::new("background", "Background image")
                         .icon("image-add")
                         .into(),
+                    MenuAction::new("reset", "Reset to defaults…")
+                        .icon("rotate-ccw")
+                        .into(),
                     MenuAction::new("delete", "Delete pilot…")
                         .icon("trash")
                         .danger()
@@ -1995,6 +1998,7 @@ impl Pilots {
             if let MenuEvent::Picked(action, _) = event {
                 match action.as_ref() {
                     "background" => this.open_background(&target, w, cx),
+                    "reset" => this.reset_pilot(&target, w, cx),
                     "delete" => this.delete_pilot(&target, w, cx),
                     _ => {}
                 }

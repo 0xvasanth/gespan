@@ -258,59 +258,6 @@ fn skills_document_has_its_own_full_height_pane_and_compact_actions(cx: &mut Tes
 }
 
 #[gpui::test]
-fn pilot_mascot_is_beside_name_and_reset_stays_visible(cx: &mut TestAppContext) {
-    let window = window(Section::Pilots, cx);
-    window
-        .update(cx, |view, _, cx| {
-            view.ctx.pilots = vec![PilotSetting {
-                id: "layout-pilot".into(),
-                name: "Big Boss".into(),
-                mascot: "ghost".into(),
-                color: 0xee99bb,
-                projects: vec!["gespan".into(), "pilot-web".into()],
-            }];
-            cx.notify();
-        })
-        .unwrap();
-    let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    visual.run_until_parked();
-    let mascot = visual.debug_bounds("settings-pilot-mascot").unwrap();
-    let reset = visual.debug_bounds("settings-pilot-reset").unwrap();
-    assert_eq!(mascot.size, size(px(16.), px(16.)));
-    let name = visual.debug_bounds("settings-pilot-name").unwrap();
-    assert!(mascot.right() < name.left());
-    assert!(mascot.left() < px(200.));
-    assert!(name.right() <= reset.left());
-    assert!(reset.left() > px(800.));
-    assert!(reset.right() <= px(1200.));
-    assert!((mascot.top() - reset.top()).abs() < px(8.));
-    // Filing a Pilot's sessions in its folder is no longer a setting.
-    assert!(
-        visual
-            .debug_bounds("settings-toggle-pilot-sidebar-show")
-            .is_none()
-    );
-    assert!(
-        visual
-            .debug_bounds("settings-toggle-pilot-sidebar-folders")
-            .is_none()
-    );
-    visual.simulate_click(reset.center(), Default::default());
-    visual.run_until_parked();
-    assert!(visual.debug_bounds("settings-management-dialog").is_some());
-    window
-        .update(visual, |view, window, cx| {
-            view.close_management(window, cx);
-            cx.notify();
-        })
-        .unwrap();
-    visual.simulate_resize(size(px(700.), px(800.)));
-    visual.run_until_parked();
-    let reset = visual.debug_bounds("settings-pilot-reset").unwrap();
-    assert!(reset.right() <= px(700.));
-}
-
-#[gpui::test]
 fn the_mcp_page_shows_what_each_server_would_run_and_whether_it_needs_approval(
     cx: &mut TestAppContext,
 ) {

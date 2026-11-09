@@ -1659,32 +1659,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn pilots_switch_in_sidebar_and_pilots_page_stay_in_step(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        flip_in_settings(window, visual, "sidebar-pilots");
-        window
-            .update(visual, |shell, w, cx| {
-                assert!(!shell.workspace.preferences.pilots);
-                shell.open_settings(crate::settings::Section::Pilots, w, cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        let toggle = visual
-            .debug_bounds("settings-toggle-pilots-enabled")
-            .unwrap();
-        visual.simulate_click(toggle.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, w, cx| {
-                assert!(shell.workspace.preferences.pilots);
-                shell.close_settings(w, cx);
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
     fn activity_visibility_switch_preserves_agents_and_survives_restart(cx: &mut TestAppContext) {
         let (window, a, b) = super::super::tests::window(cx);
         window

@@ -46,7 +46,6 @@ pub(crate) struct ArchivedSession {
 pub(crate) struct SettingsContext {
     /// The desktop's shared remote connection and SSH setup service.
     pub remote: Option<std::sync::Arc<gespan_core::remote::Connections>>,
-    pub pilots: Vec<PilotSetting>,
     pub new_layout_boxy: bool,
     pub sidebar: SidebarVisibility,
     /// The selected project, or empty outside one.
@@ -86,8 +85,7 @@ impl PartialEq for SettingsContext {
             (None, Some(_)) | (Some(_), None) => return false,
             _ => {}
         }
-        self.pilots == other.pilots
-            && self.new_layout_boxy == other.new_layout_boxy
+        self.new_layout_boxy == other.new_layout_boxy
             && self.sidebar == other.sidebar
             && self.cwd == other.cwd
             && self.project_label == other.project_label
@@ -104,15 +102,6 @@ impl PartialEq for SettingsContext {
             && self.mobile_invite == other.mobile_invite
     }
 }
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PilotSetting {
-    pub id: String,
-    pub name: String,
-    pub mascot: String,
-    pub color: u32,
-    pub projects: Vec<String>,
-}
-
 pub(crate) enum SettingsEvent {
     WhatsNew,
     RunSetup,
@@ -139,7 +128,6 @@ pub(crate) enum SettingsEvent {
         /// A merged branch to delete too, at the commit that was checked.
         delete_branch: Option<(String, String)>,
     },
-    ResetPilot(String),
     /// Read mobile access again: the router and pairing change on their own.
     MobileRefresh,
     MobileConfigure {

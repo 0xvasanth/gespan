@@ -91,24 +91,6 @@ impl Shell {
                     )
                 })
                 .collect(),
-            pilots: self
-                .pilots
-                .as_ref()
-                .map(|m| {
-                    m.read(cx)
-                        .roster
-                        .pilots
-                        .iter()
-                        .map(|m| crate::settings::PilotSetting {
-                            id: m.id.clone(),
-                            name: m.label(),
-                            mascot: m.mascot.clone(),
-                            color: m.color,
-                            projects: m.projects.iter().map(|p| self.project_label(p)).collect(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
             catalogs,
             new_layout_boxy: self.workspace.new_layout_boxy,
             sidebar: crate::settings::SidebarVisibility {
@@ -254,21 +236,6 @@ impl Shell {
                     cx,
                 ),
                 SettingsEvent::ChooseBackground => this.choose_chat_background(cx),
-                SettingsEvent::ResetPilot(id) => {
-                    if let Some(m) = this.pilots.clone() {
-                        let reset = m.update(cx, |m, cx| m.reset_defaults(id, cx));
-                        cx.spawn(async move |this, cx| {
-                            let result = reset.await;
-                            let _ = this.update(cx, |this, cx| {
-                                if let Some(settings) = &this.settings {
-                                    settings.update(cx, |s, cx| s.management_finished(result, cx));
-                                }
-                                this.sync_settings(cx);
-                            });
-                        })
-                        .detach();
-                    }
-                }
                 SettingsEvent::MobileRefresh => this.sync_settings(cx),
                 SettingsEvent::MobileConfigure {
                     enabled,
@@ -988,7 +955,6 @@ mod tests {
             "settings-nav-mcp",
             "settings-nav-browser",
             "settings-nav-skills",
-            "settings-nav-pilots",
             "settings-nav-inbox",
             "settings-nav-archive",
             "settings-nav-worktrees",
