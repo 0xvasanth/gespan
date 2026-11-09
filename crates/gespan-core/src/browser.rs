@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// The live view's input, sizes and navigation, for the pane.
+pub use gespan_browser::live;
 pub use gespan_browser::protocol::{
     AccessMode, BrowserChoice, BrowserKind, BrowserMode, BrowserSettings, BrowserState,
     ConnectionState, TabOverview,
@@ -17,7 +19,10 @@ pub use gespan_browser::BrowserHost;
 use gespan_browser::Embedder;
 use rusqlite::Connection;
 
+mod live_pane;
 pub mod toolkit;
+
+pub use live_pane::{queue_input, Ended, LivePane};
 
 /// The window grants and requests belong to: Gespan has one main window.
 pub const WINDOW: &str = "main";
@@ -135,6 +140,56 @@ pub fn set_display_scale(scale: f64) {
 /// The key the browser module knows a session by.
 pub fn session_key(session: i64) -> String {
     format!("s{session}")
+}
+
+/// One picture of a tab shown live, decoded for drawing.
+pub struct LivePicture {
+    /// Counts the pictures of one view, from 1.
+    pub seq: u64,
+    /// The page's viewport in CSS pixels: input coordinates are in this
+    /// space, whatever the picture's own size.
+    pub width: f64,
+    pub height: f64,
+    /// The picture, BGRA as GPUI draws it.
+    pub pixels: image::RgbaImage,
+}
+
+/// Decode a picture [`BrowserHost::live_take`] handed over
+/// ([`live::LiveFrame::packed`]).
+pub fn unpack_live(packed: &[u8]) -> Result<LivePicture, String> {
+    if packed.len() <= live::PACKED_HEADER {
+        return Err("The picture is empty.".into());
+    }
+    let word = |at: usize| -> [u8; 8] { packed[at..at + 8].try_into().unwrap_or_default() };
+    let seq = u32::from_le_bytes(packed[4..8].try_into().unwrap_or_default());
+    let picture = &packed[live::PACKED_HEADER..];
+    let pixels = if packed[0] == 1 {
+        let mut pixels = image::load_from_memory_with_format(picture, image::ImageFormat::Png)
+            .map_err(|error| error.to_string())?
+            .into_rgba8();
+        for pixel in pixels.pixels_mut() {
+            pixel.0.swap(0, 2);
+        }
+        pixels
+    } else {
+        // Straight into BGRA: one pass over the picture, where decoding to
+        // RGB, widening to RGBA and swapping red and blue took three.
+        use zune_jpeg::zune_core::{
+            bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions,
+        };
+        let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::BGRA);
+        let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(picture), options);
+        let bytes = decoder.decode().map_err(|error| error.to_string())?;
+        let (width, height) = decoder.dimensions().ok_or("The picture has no size.")?;
+        image::RgbaImage::from_raw(width as u32, height as u32, bytes)
+            .ok_or("The picture is cut short.")?
+    };
+    Ok(LivePicture {
+        seq: u64::from(seq),
+        width: f64::from_le_bytes(word(8)),
+        height: f64::from_le_bytes(word(16)),
+        pixels,
+    })
 }
 
 /// Whether `session` has a turn running that carries the browser: the
@@ -630,5 +685,73 @@ pub(crate) mod tests {
         session_deleted(1);
         set_display_scale(2.0);
         set_display_scale(f64::NAN);
+    }
+    #[test]
+    fn a_live_picture_unpacks_to_bgra_with_its_viewport() {
+        use base64::Engine as _;
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let frame = live::LiveFrame {
+            tab: "t1".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(&png),
+            format: "png",
+            width: 1.5,
+            height: 1.0,
+            seq: 7,
+        };
+        let picture = unpack_live(&frame.packed().unwrap()).unwrap();
+        assert_eq!(picture.seq, 7);
+        assert_eq!((picture.width, picture.height), (1.5, 1.0));
+        assert_eq!(picture.pixels.dimensions(), (3, 2));
+        assert_eq!(picture.pixels.get_pixel(0, 0).0, [30, 20, 10, 255]);
+        assert!(unpack_live(&[0; 4]).is_err());
+        assert!(unpack_live(&[0; live::PACKED_HEADER]).is_err());
+    }
+
+    #[test]
+    fn a_live_jpeg_unpacks_to_bgra() {
+        use base64::Engine as _;
+        let mut jpeg = Vec::new();
+        image::RgbImage::from_pixel(16, 8, image::Rgb([200, 100, 20]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let frame = live::LiveFrame {
+            tab: "t1".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(&jpeg),
+            format: "jpeg",
+            width: 16.0,
+            height: 8.0,
+            seq: 3,
+        };
+        let picture = unpack_live(&frame.packed().unwrap()).unwrap();
+        assert_eq!(picture.seq, 3);
+        assert_eq!(picture.pixels.dimensions(), (16, 8));
+        let [b, g, r, a] = picture.pixels.get_pixel(5, 5).0;
+        assert!(
+            b.abs_diff(20) < 8 && g.abs_diff(100) < 8 && r.abs_diff(200) < 8,
+            "{b} {g} {r}"
+        );
+        assert_eq!(a, 255);
+    }
+
+    #[test]
+    fn a_broken_live_picture_is_an_error_not_a_panic() {
+        use base64::Engine as _;
+        for format in ["jpeg", "png"] {
+            let frame = live::LiveFrame {
+                tab: "t1".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(b"not a picture at all"),
+                format,
+                width: 16.0,
+                height: 8.0,
+                seq: 1,
+            };
+            assert!(unpack_live(&frame.packed().unwrap()).is_err(), "{format}");
+        }
     }
 }
