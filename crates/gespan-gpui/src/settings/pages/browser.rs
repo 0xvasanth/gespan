@@ -2,8 +2,9 @@
 //! access and the folders agents may upload from. Agents always use
 //! Gespan's built-in browser (its own kept profile, headless, picked from
 //! the installed Chromium browsers), so the page offers no browser choice.
-//! Phase 1 offers "Always on" access only; the Allow bar that "Ask" needs
-//! comes later, with the threads-and-tabs list and the live pane.
+//! This build offers "Always on" access only; the Allow bar that "Ask"
+//! needs comes later, with the threads-and-tabs list. The live pane beside
+//! the thread ships now and is not configured here.
 use crate::{
     settings::{
         SettingsView,
@@ -21,7 +22,7 @@ pub(super) const DESCRIPTION: &str = "Agents open their own tabs in Gespan's bui
 pub(super) const SWITCH_HELP: &str = "Gespan remembers this switch, and nothing starts until an agent needs the browser. Turning it off stops every agent action and closes the agents' tabs; pages you opened from links stay open.";
 
 /// Thread access's description.
-pub(super) const ACCESS_HELP: &str = "While the switch is on, every thread you type in can use the browser. Turns an agent or automation starts, Pilot habit runs, orchestration and remote threads never can.";
+pub(super) const ACCESS_HELP: &str = "While the switch is on, a thread or Inbox Ask can use the browser for the messages you type in it, including those you send from your phone. Pilot chats and their habit runs, turns an agent or automation starts, orchestration and remote threads never can.";
 
 /// Thread access this build offers. "Ask in the thread" joins it with the
 /// Allow bar; until then a turn whose access would be Ask gets no browser.
@@ -585,6 +586,18 @@ mod tests {
                 assert!(!lower.contains(gone), "{gone:?} in {text}");
             }
         }
+    }
+
+    /// Thread access says which turns carry the browser as the turns are
+    /// marked: typed sends (the phone's too) do, a Pilot chat's never do
+    /// (its messages launch untyped), whatever the thread.
+    #[test]
+    fn access_help_names_the_turns_that_carry_the_browser() {
+        let text = ACCESS_HELP.to_lowercase();
+        assert!(!text.contains("every thread"), "{ACCESS_HELP}");
+        assert!(text.contains("you type"), "{ACCESS_HELP}");
+        assert!(text.contains("phone"), "{ACCESS_HELP}");
+        assert!(text.contains("pilot chats"), "{ACCESS_HELP}");
     }
 
     /// The page tells the user that their link tabs share the browser with

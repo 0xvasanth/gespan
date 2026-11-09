@@ -280,8 +280,8 @@ impl Drop for Turn {
 
 /// A turn is about to start. It carries the browser when it is
 /// [`eligible`], the switch is on and the thread has access, or gets it now
-/// from "Always on" or full access. Phase 1 has no Allow bar, so a thread
-/// that would have to ask carries nothing.
+/// from "Always on" or full access. This build has no Allow bar, so a
+/// thread that would have to ask carries nothing.
 pub fn begin_turn(facts: &TurnFacts) -> Turn {
     begin_turn_on(host(), facts)
 }

@@ -649,10 +649,13 @@ impl BrowserHost {
             let user_pages = self.policy.read().user_tab_targets();
             if self.link.is_open() && self.connected_to_managed() && !user_pages.is_empty() {
                 // The user's own tabs are theirs, not the agents': they stay
-                // open and the browser keeps running for them. Everything
-                // else closes: what the agents held (detached first) and the
-                // pages no one holds, such as a popup of a revoked tab, so
-                // nothing of the agents' stays up behind the user's tabs.
+                // open and the browser keeps running for them. The connection
+                // stays Connected on purpose, since it is: the switch, not the
+                // connection, refuses the agents (`Reason::Off`), and Settings
+                // shows no line for a running browser. Everything else
+                // closes: what the agents held (detached first) and the pages
+                // no one holds, such as a popup of a revoked tab, so nothing
+                // of the agents' stays up behind the user's tabs.
                 targets::detach_sessions(&self.link, &detach);
                 self.close_owned_targets(&agent_pages);
                 self.close_pages_except(&user_pages, Instant::now() + OFF_DETACH_BUDGET);
@@ -1841,9 +1844,8 @@ impl BrowserHost {
         self.open_for_thread(session, window, &url)
     }
 
-    /// "New tab" in a thread's browser pane: a tab at `url`, or a blank one
-    /// for the user to type an address into, held by `session` like any tab
-    /// Gespan opened for it. The user's click is the thread's access.
+    /// "New tab" in a thread's browser pane: a tab at `url` (or blank), held
+    /// by `session` like any tab Gespan opened for it. The user's click is the thread's access.
     pub fn new_tab(
         self: &Arc<Self>,
         session: &str,
