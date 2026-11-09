@@ -1,0 +1,19 @@
+crates/gespan-core/src/browser/live_pane.rs
+  s_2c69d4e87b971d::t_f72be5741cd417 980,983,988-992
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d047326a7224133569e23ab640fdc72d1ad985c2",
+  "prompts": {},
+  "sessions": {
+    "s_2c69d4e87b971d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cf18683-44b4-41db-9717-b41d8e4a2510",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
