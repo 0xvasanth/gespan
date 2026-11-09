@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-browser"
-version = "0.0.8"
+version = "0.0.10"
 dependencies = [
  "base64 0.22.1",
  "hmac 0.13.0",
