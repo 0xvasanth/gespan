@@ -427,6 +427,27 @@ impl Store {
         self.change_provider(id, provider)?;
         self.save_agent_settings(id, settings)
     }
+    /// A new session that starts with another conversation's `rows`, as a fork
+    /// or a handoff does. Remote hosts own their transcripts, so a remote
+    /// session starts empty and relies on its settings' handoff recap.
+    pub fn create_from(
+        &mut self,
+        provider: &str,
+        cwd: &str,
+        title: &str,
+        settings: &crate::agent::Settings,
+        rows: &[Row],
+    ) -> Result<Session, String> {
+        let mut summary = self.create(provider, cwd)?;
+        summary.title = title.into();
+        self.title(summary.id, title)?;
+        self.configure_agent(summary.id, provider, settings)?;
+        if !rows.is_empty() && self.remote_session(summary.id)?.is_none() {
+            self.write_rows(summary.id, 0, rows)?;
+            summary.has_messages = true;
+        }
+        Ok(summary)
+    }
     pub fn change_provider(&self, id: i64, provider: &str) -> Result<(), String> {
         if let Some(mut remote) = self.remote_session(id)? {
             if remote.summary.provider != provider {
@@ -1292,6 +1313,61 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn create_from_seeds_a_new_session_with_rows_and_settings() {
+        let mut store = super::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let rows = vec![
+            super::Row {
+                role: "user".into(),
+                text: "Plan the footer".into(),
+                first: true,
+                sent_at: Some(7),
+            },
+            super::Row {
+                role: "assistant".into(),
+                text: "Here is the plan.".into(),
+                first: true,
+                sent_at: None,
+            },
+        ];
+        let settings = crate::agent::Settings {
+            model: Some("opus".into()),
+            handoff: Some(crate::agent::Handoff {
+                from: "codex".into(),
+                brief: "## Session so far".into(),
+            }),
+            ..Default::default()
+        };
+        let summary = store
+            .create_from("claude", "/work/gespan", "Fork of Footer", &settings, &rows)
+            .unwrap();
+        assert_eq!(summary.title, "Fork of Footer");
+        assert!(summary.has_messages);
+        assert_eq!(summary.provider_id, None);
+        assert_eq!(store.load(summary.id).unwrap().rows, rows);
+        let saved = store.agent_settings(summary.id).unwrap().unwrap();
+        assert_eq!(saved.model.as_deref(), Some("opus"));
+        assert_eq!(saved.handoff.unwrap().from, "codex");
+        let listed = store.sessions().unwrap();
+        let listed = listed.iter().find(|s| s.id == summary.id).unwrap();
+        assert!(listed.has_messages);
+        assert_eq!(listed.title, "Fork of Footer");
+    }
+    #[test]
+    fn create_from_no_rows_is_an_empty_session() {
+        let mut store = super::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let summary = store
+            .create_from(
+                "claude",
+                "/work/gespan",
+                "Handoff",
+                &Default::default(),
+                &[],
+            )
+            .unwrap();
+        assert!(!summary.has_messages);
+        assert!(store.load(summary.id).unwrap().rows.is_empty());
+    }
     #[test]
     fn removed_worktree_keeps_history_and_requires_reattachment() {
         let mut store = super::Store::open(std::path::Path::new(":memory:")).unwrap();

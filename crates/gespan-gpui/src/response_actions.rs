@@ -36,6 +36,10 @@ pub(crate) enum Request {
         kind: TransferKind,
         anchor: AnchorSlot,
     },
+    /// Branch a new session at the message on row `turn`.
+    Fork {
+        turn: usize,
+    },
 }
 #[derive(Clone)]
 pub(crate) struct Transfer {
@@ -44,6 +48,14 @@ pub(crate) struct Transfer {
     pub from: String,
     pub turn: Vec<Row>,
     pub through: Vec<Row>,
+    /// A fork's chosen row in `through`.
+    pub at: usize,
+    /// The source session and the store cursor of its turns above `through`,
+    /// when the view has not loaded every page.
+    pub source: i64,
+    pub older: Option<i64>,
+    /// Turn receipts keyed by row of `through`.
+    pub turns: std::collections::HashMap<usize, gespan_core::agent::TurnInfo>,
     pub cwd: String,
     pub title: String,
     pub settings: Settings,

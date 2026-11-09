@@ -72,6 +72,8 @@ use terminal_panes::terminal_drag_ghost;
 mod title_tabs;
 #[cfg(test)]
 mod transcript_find_tests;
+#[cfg(test)]
+mod transfer_tests;
 mod tray;
 pub(crate) use multi_window::WindowSeed;
 pub(crate) use tray::reopen;
@@ -2025,6 +2027,8 @@ impl Shell {
         .detach();
         self.invalidate_chrome(cx);
     }
+    /// A handoff or fork carries the conversation into its new session, so
+    /// it opens with that history; a second opinion starts a fresh review.
     fn transfer_response(&mut self, transfer: Transfer, cx: &mut Context<Self>) {
         use gespan_core::{
             agent::{Handoff, Settings},
@@ -2037,43 +2041,86 @@ impl Shell {
             .map(|center| center.read(cx).selected(target_kind, &transfer.cwd))
             .unwrap_or_default();
         let work = cx.background_executor().spawn(async move {
-            let mut settings = Settings {
-                account,
-                revision: response::now_ms() * 1_000_000,
-                model: transfer.target.model.clone(),
-                effort: transfer.target.effort.clone(),
-                model_settings: transfer.target.settings.clone(),
-                access: transfer.settings.access,
-                worktree_cwd: transfer.settings.worktree_cwd.clone(),
-                ..Settings::default()
+            let (mut history, mut turns, mut at) = (transfer.through, transfer.turns, transfer.at);
+            // The view may hold only the newest pages of a long chat.
+            if transfer.kind != TransferKind::SecondOpinion
+                && let Some(before) = transfer.older
+            {
+                let page = locked(&store)?.load_before(transfer.source, before, true)?;
+                let older = page.rows.len();
+                turns = page
+                    .turns
+                    .into_iter()
+                    .chain(turns.into_iter().map(|(turn, info)| (turn + older, info)))
+                    .collect();
+                history.splice(0..0, page.rows);
+                at += older;
+            }
+            let mut prompt = None;
+            let mut draft = None;
+            let (settings, rows, title) = match transfer.kind {
+                TransferKind::Fork => {
+                    let fork = response::fork_at(&history, at);
+                    let mut settings =
+                        response::carried_settings(&transfer.settings, &turns, fork.rows.len());
+                    // A remote host keeps its own transcript; carry a recap instead.
+                    if transfer.cwd.starts_with("remote://") && !fork.rows.is_empty() {
+                        settings.handoff = Some(Handoff {
+                            from: transfer.from.clone(),
+                            brief: response::handoff(&fork.rows),
+                        });
+                    }
+                    draft = fork.draft;
+                    (settings, fork.rows, format!("Fork of {}", transfer.title))
+                }
+                kind => {
+                    let mut settings = Settings {
+                        account,
+                        revision: response::now_ms() * 1_000_000,
+                        model: transfer.target.model.clone(),
+                        effort: transfer.target.effort.clone(),
+                        model_settings: transfer.target.settings.clone(),
+                        access: transfer.settings.access,
+                        worktree_cwd: transfer.settings.worktree_cwd.clone(),
+                        ..Settings::default()
+                    };
+                    if kind == TransferKind::SecondOpinion {
+                        prompt = Some(response::second_opinion(&transfer.from, &transfer.turn));
+                        (settings, Vec::new(), "Second opinion".to_owned())
+                    } else {
+                        settings.handoff = Some(Handoff {
+                            from: transfer.from.clone(),
+                            brief: response::handoff(&history),
+                        });
+                        settings.turns = turns
+                            .into_iter()
+                            .filter(|(turn, _)| *turn < history.len())
+                            .collect();
+                        (settings, history, transfer.title)
+                    }
+                }
             };
-            let prompt = if transfer.kind == TransferKind::SecondOpinion {
-                Some(response::second_opinion(&transfer.from, &transfer.turn))
-            } else {
-                settings.handoff = Some(Handoff {
-                    from: transfer.from.clone(),
-                    brief: response::handoff(&transfer.through),
-                });
-                None
-            };
-            let mut summary = locked(&store)?.create(&transfer.target.provider, &transfer.cwd)?;
-            summary.title = if transfer.kind == TransferKind::SecondOpinion {
-                "Second opinion".into()
-            } else {
-                transfer.title
-            };
-            locked(&store)?.title(summary.id, &summary.title)?;
-            locked(&store)?.configure_agent(summary.id, &summary.provider, &settings)?;
-            Ok::<_, String>((summary, settings, prompt))
+            let summary = locked(&store)?.create_from(
+                &transfer.target.provider,
+                &transfer.cwd,
+                &title,
+                &settings,
+                &rows,
+            )?;
+            Ok::<_, String>((summary, settings, prompt, draft))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
-                Ok((summary, settings, prompt)) => {
+                Ok((summary, settings, prompt, draft)) => {
                     let id = summary.id;
                     this.add(summary, cx);
-                    this.sessions[&id]
-                        .update(cx, |view, cx| view.install_transfer(settings, prompt, cx));
+                    this.sessions[&id].update(cx, |view, cx| {
+                        view.install_transfer(settings, prompt, cx);
+                        if let Some(draft) = draft {
+                            view.set_draft_text(draft, cx);
+                        }
+                    });
                     this.order.retain(|s| *s != id);
                     this.order.insert(0, id);
                     if this.navigation_revision == navigation_revision {

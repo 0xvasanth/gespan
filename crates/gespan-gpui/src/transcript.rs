@@ -839,6 +839,10 @@ impl TranscriptView {
     pub(crate) fn history_complete(&self) -> bool {
         self.history_before.is_none()
     }
+    /// The store cursor for the turns above `history_rows`, if any remain.
+    pub(crate) fn history_cursor(&self) -> Option<i64> {
+        self.history_before
+    }
     pub(crate) fn document(text: String, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
         view.document = true;
@@ -1294,6 +1298,20 @@ impl TranscriptView {
                     cx.notify();
                 })),
             )
+            .when(!self.pilot && !self.side_question, |d| {
+                d.child(
+                    response_actions::button(
+                        start,
+                        "fork-message",
+                        "Fork from here",
+                        "git-branch",
+                        false,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(ResponseRequest::Fork { turn: start })
+                    })),
+                )
+            })
             .when(
                 !self.pilot
                     && !self.side_question
@@ -2185,7 +2203,7 @@ impl TranscriptView {
         // Reserve the full icon strip before the sibling clock is laid out.
         // Intrinsic flex measurement otherwise reports only its widest button.
         let strip_width = if output.is_empty() { 14. } else { 44. }
-            + if self.side_question { 0. } else { 52. }
+            + if self.side_question { 0. } else { 78. }
             + if metrics.is_some() { 29. } else { 0. };
         let mut actions = div()
             .flex()
@@ -2310,6 +2328,18 @@ impl TranscriptView {
                             anchor: click_anchor.clone(),
                         })
                     })),
+            );
+        }
+        if !self.side_question {
+            actions = actions.child(
+                response_actions::button(
+                    turn,
+                    "response-fork",
+                    "Fork from here",
+                    "git-branch",
+                    false,
+                )
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(ResponseRequest::Fork { turn }))),
             );
         }
         if metrics.is_some() {
