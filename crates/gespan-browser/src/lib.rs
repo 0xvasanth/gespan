@@ -90,7 +90,7 @@ pub mod view;
 
 pub use embedder::Embedder;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -589,7 +589,7 @@ impl BrowserHost {
     /// leased (revoked, released, closed, or dropped with the connection), so
     /// the table only lists tabs some session actually holds.
     fn sync_lease_rows(&self) {
-        let live: std::collections::HashSet<String> = self
+        let live: HashSet<String> = self
             .policy
             .read()
             .leases()
@@ -610,8 +610,9 @@ impl BrowserHost {
     /// Main switch, for agents only. ON starts discovery (asynchronously);
     /// OFF bumps the global epoch, revokes every agent lease, detaches and
     /// closes the link. The user's own tabs ([`policy::Lease::user_tab`])
-    /// keep their leases and the link: then only the agents' tabs are
-    /// detached (and closed in the Gespan browser).
+    /// keep their leases and the link: then every other page of the Gespan
+    /// browser closes (the agents' tabs detached first), and the browser
+    /// keeps running for the user's tabs alone.
     pub fn set_toggle(self: &Arc<Self>, on: bool) {
         let (detach, agent_pages) = {
             let mut policy = self.policy.write();
@@ -645,15 +646,16 @@ impl BrowserHost {
             // Only the Gespan browser stays up for them; the user's own
             // browser (Attach, which no Gespan path reaches) is let go of
             // as before.
-            if self.link.is_open()
-                && self.connected_to_managed()
-                && !self.policy.read().user_tab_targets().is_empty()
-            {
+            let user_pages = self.policy.read().user_tab_targets();
+            if self.link.is_open() && self.connected_to_managed() && !user_pages.is_empty() {
                 // The user's own tabs are theirs, not the agents': they stay
-                // open and the browser keeps running for them. Only what the
-                // agents held is detached, and in the Gespan browser closed.
+                // open and the browser keeps running for them. Everything
+                // else closes: what the agents held (detached first) and the
+                // pages no one holds, such as a popup of a revoked tab, so
+                // nothing of the agents' stays up behind the user's tabs.
                 targets::detach_sessions(&self.link, &detach);
                 self.close_owned_targets(&agent_pages);
+                self.close_pages_except(&user_pages, Instant::now() + OFF_DETACH_BUDGET);
                 self.emit_state();
                 return;
             }
@@ -760,11 +762,33 @@ impl BrowserHost {
             return;
         }
         let deadline = Instant::now() + OFF_DETACH_BUDGET;
-        let Ok(reply) = self.link.send_system_within(
-            Command::browser(Method::TargetGetTargets, json!({})),
-            OFF_DETACH_BUDGET,
-        ) else {
+        if !self.close_pages_except(&HashSet::new(), deadline) {
             return;
+        }
+        // The browser may close the socket before it answers; the write is
+        // what counts, and the process exit is awaited by the caller.
+        let left = deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_millis(100));
+        if self.link.is_open() {
+            let _ = self
+                .link
+                .send_system_within(Command::browser(Method::BrowserClose, json!({})), left);
+        }
+    }
+
+    /// Close every page of the Gespan browser but `keep`, before
+    /// `deadline`: the agents' tabs and the pages no one holds (a popup of a
+    /// revoked tab, a startup page). False when the browser did not list
+    /// its pages or went away meanwhile: then there is nothing more to ask
+    /// of it.
+    fn close_pages_except(&self, keep: &HashSet<TargetId>, deadline: Instant) -> bool {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let Ok(reply) = self
+            .link
+            .send_system_within(Command::browser(Method::TargetGetTargets, json!({})), left)
+        else {
+            return false;
         };
         let pages: Vec<TargetId> = reply["targetInfos"]
             .as_array()
@@ -773,6 +797,7 @@ impl BrowserHost {
             .filter(|info| info["type"] == "page")
             .filter_map(|info| info["targetId"].as_str())
             .map(|id| TargetId(id.to_string()))
+            .filter(|target| !keep.contains(target))
             .collect();
         let gone = |error: &link::CdpError| {
             matches!(
@@ -789,21 +814,12 @@ impl BrowserHost {
                 Command::browser(Method::TargetCloseTarget, json!({ "targetId": page.0 })),
                 left,
             ) {
-                Err(error) if gone(&error) => return,
+                Err(error) if gone(&error) => return false,
                 Err(error) if error.reason() == Reason::CdpTimeout => break,
                 _ => {}
             }
         }
-        // The browser may close the socket before it answers; the write is
-        // what counts, and the process exit is awaited by the caller.
-        let left = deadline
-            .saturating_duration_since(Instant::now())
-            .max(Duration::from_millis(100));
-        if self.link.is_open() {
-            let _ = self
-                .link
-                .send_system_within(Command::browser(Method::BrowserClose, json!({})), left);
-        }
+        true
     }
 
     /// Stop the Gespan browser this run started and wait until it is gone
@@ -912,9 +928,7 @@ impl BrowserHost {
     }
 
     fn close_if_empty(self: &Arc<Self>) {
-        {
-            // With the switch off the browser only runs for the user's own
-            // tabs: it closes after the last of them as well.
+        let switch_on = {
             let policy = self.policy.read();
             if !policy.settings.mode.launches() {
                 return;
@@ -925,8 +939,16 @@ impl BrowserHost {
             {
                 return;
             }
+            policy.toggle_on
+        };
+        if !self.link.is_open() {
+            return;
         }
-        if !self.link.is_open() || !self.user_tabs().is_ok_and(|tabs| tabs.is_empty()) {
+        // With the switch off the browser only runs for the user's own tabs
+        // (no lease is live any more, see above): it closes after the last
+        // of them, whatever pages no one holds are left. With it on, a page
+        // no one holds is one an agent may still be given.
+        if switch_on && !self.user_tabs().is_ok_and(|tabs| tabs.is_empty()) {
             return;
         }
         self.event("managed_closed_empty", Actor::System, None, None);
@@ -2507,6 +2529,24 @@ impl BrowserHost {
             targets::detach_sessions(&self.link, &detach);
         }
         self.emit_state();
+    }
+
+    /// Thread `session` left the app's workspace (its tab closed): the
+    /// user's own tabs of it close, since no pane is left to show or close
+    /// them. Its agent tabs are left as they are, and once nothing is open
+    /// the Gespan browser closes ([`Self::close_when_empty`]).
+    pub fn thread_closed(self: &Arc<Self>, session: &str) {
+        let closed = self.policy.write().close_user_tabs_of_session(session);
+        if closed.tabs.is_empty() {
+            return;
+        }
+        self.close_owned_targets(&closed.close);
+        for tab in &closed.tabs {
+            self.db.with(|conn| audit::lease_closed(conn, tab));
+        }
+        self.event("thread_closed", Actor::User, Some(session), None);
+        self.emit_state();
+        self.close_when_empty();
     }
 
     /// Session deleted: its grant goes, the tabs opened for it are closed and
@@ -4206,6 +4246,187 @@ mod tests {
         host.set_toggle(false);
         assert!(!host.link().is_open(), "nothing of the user's is left");
         assert_eq!(host.connection().state, ConnectionState::Off);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Gespan browser whose pages are the ones it was asked to create,
+    /// plus `free`: pages no one holds (say a popup of a revoked tab).
+    fn listing_fake(free: &'static [&'static str]) -> FakeCdp {
+        let counter = Arc::new(AtomicU64::new(1));
+        let pages = Arc::new(Mutex::new(
+            free.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        ));
+        FakeCdp::start_with(move |received| match received.method.as_str() {
+            "Target.createTarget" => {
+                let response = super::testing::default_response(received, &counter);
+                if let Response::Result(value) = &response {
+                    let id = value["targetId"].as_str().unwrap_or_default().to_string();
+                    pages.lock().unwrap().push(id);
+                }
+                response
+            }
+            "Target.closeTarget" => {
+                let id = received.params["targetId"].as_str().unwrap_or_default();
+                pages.lock().unwrap().retain(|page| page != id);
+                Response::Result(json!({ "success": true }))
+            }
+            "Target.getTargets" => {
+                let infos: Vec<Value> = pages
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|id| json!({ "targetId": id, "type": "page", "url": format!("https://{id}.example/"), "title": "", "attached": false }))
+                    .collect();
+                Response::Result(json!({ "targetInfos": infos }))
+            }
+            _ => super::testing::default_response(received, &counter),
+        })
+    }
+
+    fn close_sent(server: &FakeCdp, target: &str) -> bool {
+        server
+            .received()
+            .iter()
+            .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == target)
+    }
+
+    /// R32: switching off closes every page of the Gespan browser but the
+    /// user's own tabs: the agents' tabs and a page no one holds as well.
+    #[test]
+    fn switching_off_closes_every_page_but_the_users_tabs() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let (own_target, agent_target) = (
+            lease_of(&host, &own).target_id,
+            lease_of(&host, &agent).target_id,
+        );
+        assert!(!close_sent(&server, "TFREE"), "nothing closed it yet");
+
+        host.set_toggle(false);
+        assert!(close_sent(&server, "TFREE"), "the free page closed");
+        assert!(
+            close_sent(&server, &agent_target.0),
+            "the agent's tab closed"
+        );
+        assert!(!close_sent(&server, &own_target.0), "the user's tab stays");
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open(), "the browser runs for the user's tab");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R32: with the switch off no agent acts, so a popup of the user's tab
+    /// is the user's even when an agent acted in that tab last; no agent
+    /// lease comes to be while the switch is off.
+    #[test]
+    fn with_the_switch_off_a_popup_of_the_users_tab_is_theirs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opener = lease_of(&host, &own).target_id;
+        // An agent acted in the user's tab last...
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        assert!(!lease_of(&host, &own).user_driven);
+        host.set_toggle(false);
+        // ...but with the switch off what the tab opens is the user's.
+        open_popup(&server, &opener, "TOFF");
+        let popup = adopted_lease(&host, "TOFF");
+        assert!(popup.user_tab, "the user's, not an agent's");
+        assert!(
+            host.policy()
+                .read()
+                .leases()
+                .all(|lease| !lease.is_live() || lease.user_tab),
+            "no agent lease while the switch is off"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R32: with the switch off the Gespan browser runs only for the user's
+    /// tabs: closing the last closes it, whatever pages no one holds are
+    /// left (they kept it running before).
+    #[test]
+    fn closing_the_last_users_tab_with_the_switch_off_closes_the_browser() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_unused_grace(Duration::from_millis(50));
+        assert!(!host.state().toggle_on);
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        assert!(host.link().is_open());
+        assert!(!host.user_tabs().unwrap().is_empty(), "a page no one holds");
+        host.close_tab_by_user(&own).unwrap();
+        assert!(
+            wait_state(&host, ConnectionState::Off),
+            "the browser stayed up: {:?}",
+            host.connection()
+        );
+        assert!(!host.link().is_open());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With the switch on, a page no one holds may still be given to a
+    /// thread: the browser stays for it after the last tab closes.
+    #[test]
+    fn with_the_switch_on_a_free_page_keeps_the_browser() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_unused_grace(Duration::from_millis(50));
+        host.set_toggle(true);
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        host.close_tab_by_user(&own).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(host.link().is_open());
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A thread leaving the workspace closes the user's own tabs of it, and
+    /// only those: its agent tabs and other threads' tabs stay.
+    #[test]
+    fn a_closed_thread_closes_only_its_users_tabs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let other = host
+            .open_user_tab("s2", "main", "https://example.com/")
+            .unwrap();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let own_target = lease_of(&host, &own).target_id;
+        let agent_target = lease_of(&host, &agent).target_id;
+
+        host.thread_closed("s1");
+        assert!(host
+            .policy()
+            .read()
+            .lease(&own)
+            .is_none_or(|lease| lease.state == TabState::Closed));
+        assert!(close_sent(&server, &own_target.0));
+        assert_eq!(lease_of(&host, &agent).state, TabState::Open);
+        assert!(!close_sent(&server, &agent_target.0));
+        assert_eq!(lease_of(&host, &other).state, TabState::Open);
+        // Nothing of the thread's left to close: a second call is a no-op.
+        host.thread_closed("s1");
+        host.set_toggle(false);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

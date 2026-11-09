@@ -668,15 +668,25 @@ impl PolicyState {
     /// App window `window` closed: the user's own tabs of its threads end
     /// (their pages are for the caller to close).
     pub fn close_user_tabs_of_window(&mut self, window: &str) -> Ended {
-        let sessions: HashSet<&String> = self
+        let sessions: HashSet<String> = self
             .sessions
             .iter()
             .filter(|(_, auth)| auth.window == window)
-            .map(|(id, _)| id)
+            .map(|(id, _)| id.clone())
             .collect();
+        self.close_user_tabs_where(|owner| sessions.contains(owner))
+    }
+
+    /// The user's own tabs of `session` end (its thread left the
+    /// workspace); its agent tabs stay as they are. Returns what to close.
+    pub fn close_user_tabs_of_session(&mut self, session: &str) -> Ended {
+        self.close_user_tabs_where(|owner| owner == session)
+    }
+
+    fn close_user_tabs_where(&mut self, owned: impl Fn(&str) -> bool) -> Ended {
         let mut ended = Ended::default();
         for lease in self.leases.values_mut() {
-            if lease.user_tab && lease.is_live() && sessions.contains(&lease.owner) {
+            if lease.user_tab && lease.is_live() && owned(&lease.owner) {
                 lease.state = TabState::Closed;
                 lease.busy = false;
                 ended.tabs.push(lease.tab.clone());

@@ -1307,10 +1307,14 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
             let tab = {
                 let mut state = policy.write();
                 // The opener may have been revoked since the check above.
+                // With the switch off no agent acts, so whatever a user's
+                // tab opens is the user's whoever acted in it last: no
+                // agent lease comes to be while the switch is off.
+                let switch_off = !state.toggle_on;
                 let opener = state
                     .lease(&parent_tab)
                     .filter(|l| l.is_live() && l.owner == owner)
-                    .map(|l| l.user_tab && l.user_driven);
+                    .map(|l| l.user_tab && (l.user_driven || switch_off));
                 if let Some(user_tab) = opener {
                     let mut lease = new_lease(
                         &state,
