@@ -1174,17 +1174,24 @@ impl Shell {
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(content(if selected || hovered { 1. } else { 0.7 }))
                     .child(crate::modal::surface(crate::modal::RADIUS - 1.))
-                    .when(selected || hovered, |d| {
+                    .when(selected, |d| {
                         d.child(
                             div()
                                 .absolute()
                                 .top_0()
                                 .left_0()
                                 .size_full()
-                                .bg(content(if selected { 0.1 } else { 0.06 })),
+                                .bg(content(0.1)),
                         )
                     })
-                    .child(icon("square-plus", 16.).text_color(nav_icon_color("New", selected)))
+                    .hover(|s| s.text_color(content(1.)))
+                    .child(
+                        icon("pencil-edit-02", 16.).text_color(content(if selected || hovered {
+                            0.9
+                        } else {
+                            0.6
+                        })),
+                    )
                     .child(div().flex_1().child("New thread"))
                     .child(
                         div()
@@ -1323,7 +1330,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn focused_navigation_has_no_trailing_hint_for_new(cx: &mut TestAppContext) {
+    fn focused_navigation_keeps_the_settings_hint_on_the_filter_axis(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
@@ -1340,8 +1347,10 @@ mod tests {
                 .debug_bounds("sidebar-navigation-trailing-New")
                 .is_none()
         );
-        let inbox = visual.debug_bounds("sidebar-navigation-trailing-Inbox");
-        assert!(inbox.is_none_or(|inbox| inbox.center().x == axis));
+        let settings = visual
+            .debug_bounds("sidebar-navigation-trailing-Settings")
+            .expect("Settings shows its shortcut");
+        assert_eq!(settings.center().x, axis);
         // Notes is a plain row: no count beside it.
         assert!(visual.debug_bounds("sidebar-navigation-Notes").is_some());
         assert!(
@@ -1370,6 +1379,15 @@ mod tests {
         found.into_iter().map(|(_, label)| label).collect()
     }
 
+    fn cx_flows_visible(
+        window: gpui::WindowHandle<Shell>,
+        visual: &mut gpui::VisualTestContext,
+    ) -> bool {
+        window
+            .update(visual, |_, _, cx| crate::flows::visible(cx))
+            .unwrap()
+    }
+
     #[gpui::test]
     fn all_projects_block_lists_global_entries_in_order(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
@@ -1387,18 +1405,8 @@ mod tests {
         let order = nav_order(visual);
         assert_eq!(order, expected);
         let first = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
-        assert_eq!(order[0], "Inbox");
         assert!(label.bottom() <= first.top(), "label heads the entries");
         assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
-    }
-
-    fn cx_flows_visible(
-        window: gpui::WindowHandle<Shell>,
-        visual: &mut gpui::VisualTestContext,
-    ) -> bool {
-        window
-            .update(visual, |_, _, cx| crate::flows::visible(cx))
-            .unwrap()
     }
 
     #[gpui::test]
@@ -1435,11 +1443,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn classic_layout_keeps_its_navigation(cx: &mut TestAppContext) {
+    fn classic_layout_has_no_all_projects_block_or_new_thread_row(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let rows = window
             .update(cx, |shell, _, cx| {
                 shell.workspace.classic_layout = true;
+                shell.layout_changed(cx);
                 shell.sidebar_list.invalidate_structure();
                 shell.refresh_sidebar_structure(cx);
                 shell.sidebar_list.rows.clone()
@@ -1447,6 +1456,12 @@ mod tests {
             .unwrap();
         assert!(!rows.contains(&Row::NewThread));
         assert!(!rows.contains(&Row::Navigation));
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("sidebar-all-projects").is_none());
+        assert!(visual.debug_bounds("sidebar-navigation-Settings").is_none());
+        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
     }
 
     #[gpui::test]
