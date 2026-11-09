@@ -1021,9 +1021,9 @@ impl Shell {
                     ("Inbox", "inbox"),
                     ("Runs", "clock"),
                     ("Automations", "zap"),
+                    ("Flows", "git-merge"),
                     ("Board", "kanban"),
                     ("Notes", "note"),
-                    ("Flows", "git-merge"),
                     ("Settings", "settings"),
                 ]
                 .into_iter()
@@ -1363,9 +1363,9 @@ mod tests {
             ("Inbox", "sidebar-navigation-Inbox"),
             ("Runs", "sidebar-navigation-Runs"),
             ("Automations", "sidebar-navigation-Automations"),
+            ("Flows", "sidebar-navigation-Flows"),
             ("Board", "sidebar-navigation-Board"),
             ("Notes", "sidebar-navigation-Notes"),
-            ("Flows", "sidebar-navigation-Flows"),
             ("Settings", "sidebar-navigation-Settings"),
         ]
         .into_iter()
@@ -1397,9 +1397,8 @@ mod tests {
             .debug_bounds("sidebar-all-projects")
             .expect("the block is labelled");
         let mut expected = vec!["Inbox", "Runs", "Automations", "Board", "Notes"];
-        let flows = cx_flows_visible(window, visual);
-        if flows {
-            expected.push("Flows");
+        if cx_flows_visible(window, visual) {
+            expected.insert(3, "Flows");
         }
         expected.push("Settings");
         let order = nav_order(visual);
@@ -2963,6 +2962,25 @@ mod tests {
                 "no user folder named after the Pilot"
             );
             assert_eq!(loose(&rows), [b]);
+        }
+
+        #[gpui::test]
+        fn a_launch_cwd_with_a_trailing_slash_still_lands_in_the_pilot_folder(
+            cx: &mut TestAppContext,
+        ) {
+            let (window, a, b) = setup(cx);
+            let pilots = add_scout(&window, a, b, cx);
+            pilots.update(cx, |pilots, cx| {
+                pilots.roster.pilots[0].launches = vec![launch(a, "/work/gespan/")];
+                cx.notify();
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    pilots.read(cx).pilot_folders("/work/gespan")[0].2,
+                    vec![a],
+                    "a trailing slash is the same project"
+                );
+            });
         }
 
         #[gpui::test]
