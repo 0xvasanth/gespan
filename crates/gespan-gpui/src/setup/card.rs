@@ -91,6 +91,11 @@ impl SetupCard {
         self.step
     }
 
+    /// The look and agent choices the card shows.
+    pub(crate) fn prefs(&self) -> &Preferences {
+        &self.prefs
+    }
+
     /// The installed agents and what each says about sign-in.
     pub(crate) fn agents(&self) -> &[Agent] {
         &self.agents

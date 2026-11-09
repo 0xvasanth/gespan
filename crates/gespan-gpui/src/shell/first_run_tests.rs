@@ -172,3 +172,29 @@ fn a_fresh_install_starts_with_no_sessions_and_the_welcome_card(cx: &mut TestApp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn run_setup_again_opens_welcome_with_current_values_and_keeps_projects(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = super::tests::window(cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.workspace.preferences.theme = "dark".into();
+            shell.run_setup_again(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let card = shell.setup.as_ref().expect("setup opens").view.read(cx);
+            assert_eq!(card.step(), SetupStep::Welcome);
+            assert_eq!(card.prefs().theme, "dark");
+        })
+        .unwrap();
+    emit(window, SetupEvent::Finish("/work/gespan".into()), cx);
+    let projects = window
+        .update(cx, |shell, _, _| shell.workspace.projects.clone())
+        .unwrap();
+    assert!(projects.contains(&"/work/gespan".to_string()));
+    assert!(projects.contains(&"/work/another-project".to_string()));
+}

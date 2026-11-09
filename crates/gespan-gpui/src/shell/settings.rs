@@ -177,6 +177,7 @@ impl Shell {
                         inbox.update(cx, |inbox, cx| inbox.toggle_linear_team(id.clone(), cx));
                     }
                 }
+                SettingsEvent::RunSetup => this.run_setup_again(window, cx),
                 SettingsEvent::WhatsNew => {
                     this.open_whats_new(crate::notifications::updater::version().into(), cx)
                 }
