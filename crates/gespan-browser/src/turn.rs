@@ -11,7 +11,8 @@ use crate::protocol::{AccessMode, BrowserState, SessionAccess};
 /// The command's name, as the composer lists it.
 pub const COMMAND: &str = "browser";
 /// The composer's description of `/browser`.
-pub const COMMAND_DESCRIPTION: &str = "Let this thread open and use its own tabs in your browser.";
+pub const COMMAND_DESCRIPTION: &str =
+    "Let this thread open and use its own tabs in Gespan's built-in browser.";
 
 /// The line an "ask" turn adds to the `<gespan_browser>` block.
 pub const ASK_NOTE: &str = "This thread has no browser access yet. Your first browser action asks the user in Gespan and waits for the answer. If it returns not_granted, continue without the browser and do not try it again in this turn.";

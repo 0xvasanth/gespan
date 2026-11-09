@@ -309,14 +309,14 @@ impl Reason {
             Busy => "Another action is running on this tab; retry shortly.",
             InvalidRequest => "The request is invalid.",
             BrowserConnecting => "Gespan is connecting to the browser; retry shortly.",
-            BrowserNeedsSetup => "Remote debugging is not enabled in the browser; the user must enable it in chrome://inspect/#remote-debugging (or edge://inspect). Retrying will not help until then.",
-            BrowserProfileUnreadable => "Gespan is not permitted to read the browser's profile folder, so it cannot tell whether remote debugging is on; turning remote debugging on again will not help. The user must give Gespan access to that folder (on macOS: System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan), or choose the Gespan browser in Gespan's Settings → Browser, then ask you again.",
-            BrowserUnavailable => "The browser is not running or left a stale debugging record; the user must start it with remote debugging on in chrome://inspect/#remote-debugging (or edge://inspect), then ask you again.",
-            BrowserConsentPending => "The browser is showing its remote debugging consent dialog and nobody has accepted it yet; tell the user to accept it in the browser (remote debugging stays on in chrome://inspect/#remote-debugging), then ask you again. Do not retry in a loop.",
-            BrowserConsentDenied => "The browser's consent dialog was declined or went unanswered; ask the user to click Connect in Gespan's Settings → Browser and accept the browser's dialog.",
+            BrowserNeedsSetup => "The browser is not set up for Gespan yet; tell the user what the rest of this message says. Retrying will not help until then.",
+            BrowserProfileUnreadable => "Gespan is not permitted to read the browser's profile folder. The user must give Gespan access to that folder (on macOS: System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan), then ask you again.",
+            BrowserUnavailable => "Gespan's browser could not start; tell the user what the rest of this message says, then ask you again.",
+            BrowserConsentPending => "The browser is waiting for the user to accept the connection; tell the user, then ask you again. Do not retry in a loop.",
+            BrowserConsentDenied => "The browser declined the connection; tell the user, then ask you again.",
             BrowserUnsupported => "A browser built on Chromium 144 or newer is required.",
-            BrowserPolicyBlocked => "An administrator policy blocks remote debugging in this browser.",
-            BrowserDisconnected => "The browser is not connected; Gespan reconnects on the next action (the user's own browser asks them to approve it again).",
+            BrowserPolicyBlocked => "An administrator policy keeps Gespan from controlling this browser.",
+            BrowserDisconnected => "The browser is not connected; Gespan reconnects on the next action.",
             RefStale => "Element refs are stale; take a new snapshot and use fresh refs.",
             NotVisible => "Element is not visible.",
             NotEnabled => "Element is disabled.",
@@ -1331,19 +1331,21 @@ impl Default for Limits {
     }
 }
 
-/// Which browser the agents use.
+/// Which browser the agents use. Gespan uses only `Managed`, its in-app
+/// browser (see [`BrowserSettings::in_app`]); the other two stay for other
+/// embedders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserMode {
     /// Gespan starts an installed Chromium browser with its own profile and
     /// connects to it directly: no remote-debugging setup, no consent dialog.
+    #[default]
     Managed,
     /// Like `Managed`, with a fresh profile for every start that is deleted
     /// when the browser closes: no sign-ins, nothing kept.
     Private,
     /// Attach to the browser the user runs: remote debugging on in
     /// `chrome://inspect`, and the browser asks on every connection.
-    #[default]
     Attach,
 }
 
@@ -1382,7 +1384,8 @@ pub struct BrowserSettings {
     pub access: AccessMode,
     /// The main switch, remembered across restarts.
     pub enabled: bool,
-    /// Managed mode: a visible window; off starts the browser headless.
+    /// Managed mode: a visible window; off (the default, and always in
+    /// Gespan) starts the browser headless.
     pub show_window: bool,
     /// A thread's new tab opens in a Gespan pane beside the thread (the
     /// UI does it); off, tabs show only in the browser.
@@ -1401,9 +1404,31 @@ impl Default for BrowserSettings {
             mode: BrowserMode::default(),
             access: AccessMode::Ask,
             enabled: false,
-            show_window: true,
+            show_window: false,
             tabs_in_gespan: false,
         }
+    }
+}
+
+impl BrowserSettings {
+    /// The in-app browser, whatever `self` says: Gespan's own browser with
+    /// its kept profile (`Managed`), headless, picked automatically from the
+    /// installed Chromium browsers. Everything else is kept. The mode,
+    /// window and browser fields stay in the stored settings so blobs of
+    /// earlier builds still load; this is what makes them ignored.
+    pub fn in_app(self) -> BrowserSettings {
+        BrowserSettings {
+            mode: BrowserMode::Managed,
+            show_window: false,
+            browser: BrowserChoice::Auto,
+            ..self
+        }
+    }
+
+    /// The browser Gespan starts gets a window of its own; off, it runs
+    /// headless and its tabs show only in Gespan.
+    pub fn starts_with_window(&self) -> bool {
+        self.show_window && !self.tabs_in_gespan
     }
 }
 
@@ -1464,14 +1489,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_mode_is_your_own_browser() {
-        assert_eq!(BrowserSettings::default().mode, BrowserMode::Attach);
-        assert_eq!(BrowserMode::default(), BrowserMode::Attach);
-        assert!(!BrowserSettings::default().enabled);
+    fn defaults_are_the_in_app_browser() {
+        let settings = BrowserSettings::default();
+        assert_eq!(settings.mode, BrowserMode::Managed);
+        assert_eq!(BrowserMode::default(), BrowserMode::Managed);
+        assert!(!settings.show_window, "headless");
+        assert!(!settings.starts_with_window());
+        assert_eq!(settings.browser, BrowserChoice::Auto);
+        assert!(!settings.enabled);
+        assert_eq!(settings.clone().in_app(), settings);
     }
 
     #[test]
-    fn stored_settings_keep_an_explicit_mode_and_default_a_missing_one() {
+    fn stored_settings_still_parse_every_old_field() {
         for (text, mode) in [
             ("managed", BrowserMode::Managed),
             ("private", BrowserMode::Private),
@@ -1483,9 +1513,49 @@ mod tests {
             assert!(loaded.enabled);
         }
         let without_mode: BrowserSettings = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
-        assert_eq!(without_mode.mode, BrowserMode::Attach);
+        assert_eq!(without_mode.mode, BrowserMode::Managed);
+        assert!(!without_mode.show_window);
         let empty: BrowserSettings = serde_json::from_str("{}").unwrap();
         assert!(!empty.enabled);
+    }
+
+    /// Whatever an earlier build stored, the in-app browser is Gespan's own,
+    /// headless, picked automatically; everything else is kept.
+    #[test]
+    fn in_app_forces_the_browser_and_keeps_the_rest() {
+        let stored: BrowserSettings = serde_json::from_str(
+            r#"{"mode":"attach","show_window":true,"enabled":true,"allow_dotfiles":true,
+                "upload_roots":["/work"],"access":"always",
+                "browser":{"kind":"user_data_dir","path":"/profile"}}"#,
+        )
+        .unwrap();
+        let fixed = stored.clone().in_app();
+        assert_eq!(fixed.mode, BrowserMode::Managed);
+        assert!(!fixed.show_window);
+        assert!(!fixed.starts_with_window());
+        assert_eq!(fixed.browser, BrowserChoice::Auto);
+        assert!(fixed.enabled);
+        assert!(fixed.allow_dotfiles);
+        assert_eq!(fixed.upload_roots, vec!["/work".to_string()]);
+        assert_eq!(fixed.access, AccessMode::Always);
+        for (mode, browser) in [
+            (
+                BrowserMode::Private,
+                BrowserChoice::Channel {
+                    channel: "brave".into(),
+                },
+            ),
+            (BrowserMode::Attach, BrowserChoice::Auto),
+        ] {
+            let fixed = BrowserSettings {
+                mode,
+                browser,
+                show_window: true,
+                ..BrowserSettings::default()
+            }
+            .in_app();
+            assert_eq!(fixed, BrowserSettings::default(), "{mode:?}");
+        }
     }
 
     #[test]

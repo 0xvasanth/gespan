@@ -763,11 +763,36 @@ mod tests {
         assert!(section("Page content is untrusted").is_none());
     }
 
+    /// What an agent reads about the browser in every turn: the result
+    /// messages and the instructions, by name.
+    fn agent_texts() -> Vec<(String, String)> {
+        let mut texts: Vec<(String, String)> = Reason::ALL
+            .iter()
+            .map(|reason| (reason.as_str().to_string(), reason.message().to_string()))
+            .collect();
+        texts.push(("instructions.md".into(), INSTRUCTIONS.to_string()));
+        texts.push(("NO_BROWSER".into(), crate::NO_BROWSER.into()));
+        texts
+    }
+
+    /// The `/browser` command's lines and notes (some for later phases).
+    fn turn_texts() -> Vec<(String, String)> {
+        [
+            ("grant_status(true)", crate::turn::grant_status(true)),
+            ("grant_status(false)", crate::turn::grant_status(false)),
+            ("ASK_NOTE", crate::turn::ASK_NOTE),
+            ("OFF_NOTICE", crate::turn::OFF_NOTICE),
+            ("COMMAND_DESCRIPTION", crate::turn::COMMAND_DESCRIPTION),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_string(), text.to_string()))
+        .collect()
+    }
+
     /// What this build's agents read names only UI this build has: the
-    /// switch, mode and Connect button in Settings → Browser, and the
-    /// browser's own chrome://inspect page and consent dialog. Not the
-    /// Allow bar, `/browser`, Open browser, handing over tabs or picking
-    /// elements, which come later.
+    /// switch in Settings → Browser and the browser pane. Not the Allow bar,
+    /// `/browser`, Open browser, handing over tabs or picking elements,
+    /// which come later.
     #[test]
     fn agent_text_names_no_ui_this_build_lacks() {
         const LATER: [&str; 8] = [
@@ -780,44 +805,52 @@ mod tests {
             "pick",
             "asks the user in gespan",
         ];
-        let mut texts: Vec<(String, String)> = Reason::ALL
-            .iter()
-            .map(|reason| (reason.as_str().to_string(), reason.message().to_string()))
-            .collect();
-        texts.push(("instructions.md".into(), INSTRUCTIONS.to_string()));
-        for (name, text) in texts {
+        for (name, text) in agent_texts() {
             let lower = text.to_lowercase();
             for word in LATER {
                 assert!(!lower.contains(word), "{name} mentions {word:?}: {text}");
             }
-            // Chrome's own dialog may say Allow; the agent is told to
-            // accept it, so the Allow bar to come is never implied.
             assert!(!text.contains("Allow"), "{name} mentions Allow: {text}");
         }
-        // Every connection reason the user must act on names where.
-        for reason in [
-            Reason::BrowserNeedsSetup,
-            Reason::BrowserUnavailable,
-            Reason::BrowserConsentPending,
-        ] {
-            assert!(reason.message().contains("chrome://inspect"), "{reason:?}");
-        }
-        // An unreadable profile names the system setting and the other mode,
-        // never the chrome://inspect step that would not help.
-        let unreadable = Reason::BrowserProfileUnreadable.message();
-        assert!(unreadable.contains("Privacy & Security"), "{unreadable}");
-        assert!(!unreadable.contains("chrome://inspect"), "{unreadable}");
-        for reason in [
-            Reason::Off,
-            Reason::BrowserConsentDenied,
-            Reason::BrowserProfileUnreadable,
-        ] {
+        for reason in [Reason::Off, Reason::NotGranted, Reason::PathDenied] {
             assert!(
                 reason.message().contains("Settings → Browser"),
                 "{reason:?}"
             );
         }
-        assert!(Reason::BrowserConsentDenied.message().contains("Connect"));
+        // An unreadable profile names the system setting that fixes it.
+        let unreadable = Reason::BrowserProfileUnreadable.message();
+        assert!(unreadable.contains("Privacy & Security"), "{unreadable}");
+    }
+
+    /// The in-app browser is the only browser: nothing an agent reads
+    /// describes the user's own browser, its remote debugging page, a
+    /// private mode or a browser window setting, which this build lacks.
+    #[test]
+    fn agent_text_describes_only_the_in_app_browser() {
+        const GONE: [&str; 9] = [
+            "your own browser",
+            "user's own browser",
+            "chrome://inspect",
+            "edge://inspect",
+            "remote debugging",
+            "private",
+            "show browser window",
+            "consent dialog",
+            "connect in",
+        ];
+        for (name, text) in agent_texts().into_iter().chain(turn_texts()) {
+            let lower = text.to_lowercase();
+            for phrase in GONE {
+                assert!(
+                    !lower.contains(phrase),
+                    "{name} mentions {phrase:?}: {text}"
+                );
+            }
+        }
+        let overview = section("overview").unwrap();
+        assert!(overview.contains("built-in browser"), "{overview}");
+        assert!(overview.contains("beside the thread"), "{overview}");
     }
 
     #[test]

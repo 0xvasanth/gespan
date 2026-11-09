@@ -8,7 +8,7 @@ use std::process::Child;
 
 use rusqlite::Connection;
 
-use crate::protocol::BrowserState;
+use crate::protocol::{BrowserSettings, BrowserState};
 
 pub trait Embedder: Send + Sync + 'static {
     /// Run `f` on the app's SQLite database, which holds the audit tables,
@@ -31,6 +31,13 @@ pub trait Embedder: Send + Sync + 'static {
     /// puts it in its job object, so it ends with the app even after a
     /// crash; OFF and app exit stop it either way.
     fn browser_started(&self, _child: &Child) {}
+
+    /// The settings the app runs with, from what was stored (at start) or
+    /// what its UI saves. An app that offers fewer choices than the module
+    /// fixes the rest here; both the host and the database get the result.
+    fn fix_settings(&self, settings: BrowserSettings) -> BrowserSettings {
+        settings
+    }
 }
 
 /// Tests: an in-memory database and no windows.

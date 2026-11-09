@@ -62,6 +62,12 @@ impl Embedder for GespanEmbedder {
             tracing::warn!(%error, pid = child.id(), "the Gespan browser is not in the app's job");
         }
     }
+
+    /// Stored settings at start and every save from Settings.
+    fn fix_settings(&self, settings: BrowserSettings) -> BrowserSettings {
+        // Gespan always runs its in-app browser (Managed, headless, Auto); the Attach and Private code in gespan-browser is never reached from here.
+        settings.in_app()
+    }
 }
 
 /// Its folder in the app's data directory: the database and the Gespan
@@ -413,25 +419,88 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_reopened_data_dir_keeps_the_mode_and_the_switch() {
+    fn a_reopened_data_dir_keeps_the_switch_and_the_in_app_browser() {
         let dir = tempfile::tempdir().unwrap();
         let first = open(dir.path()).unwrap();
+        let settings = first.state().settings;
         assert!(!first.state().toggle_on);
-        assert_eq!(first.state().settings.mode, BrowserMode::Attach);
+        assert_eq!(settings.mode, BrowserMode::Managed);
+        assert!(!settings.show_window, "headless");
+        assert_eq!(settings.browser, BrowserChoice::Auto);
+        // Whatever a save asks for, Gespan runs its own browser.
         first.set_settings(BrowserSettings {
             mode: BrowserMode::Private,
-            ..first.state().settings
+            show_window: true,
+            browser: BrowserChoice::Channel {
+                channel: "brave".into(),
+            },
+            allow_dotfiles: true,
+            ..settings
         });
+        let saved = first.state().settings;
+        assert_eq!(saved.mode, BrowserMode::Managed);
+        assert!(!saved.show_window);
+        assert_eq!(saved.browser, BrowserChoice::Auto);
+        assert!(saved.allow_dotfiles, "the rest is kept");
         first.set_toggle(true);
         drop(first);
         let next = open(dir.path()).unwrap();
         let state = next.state();
         assert!(state.toggle_on);
-        assert_eq!(state.settings.mode, BrowserMode::Private);
+        assert_eq!(
+            state.settings,
+            BrowserSettings {
+                enabled: true,
+                ..saved
+            }
+        );
         // The remembered switch starts nothing until an agent needs it.
         assert_eq!(state.connection.state, ConnectionState::Idle);
         // Not the process-wide host.
         assert!(host().is_none_or(|running| !Arc::ptr_eq(&running, &next)));
+    }
+
+    /// Settings an earlier build stored (your own browser, a private one, a
+    /// window, a chosen browser) load as the in-app browser, headless, and
+    /// the database is fixed too. The rest of what was stored is kept.
+    #[test]
+    fn settings_an_earlier_build_stored_load_as_the_in_app_browser() {
+        let stored = [
+            r#"{"mode":"attach","show_window":true,"enabled":true,"allow_dotfiles":true,
+                "upload_roots":["/work"],"browser":{"kind":"user_data_dir","path":"/profile"}}"#,
+            r#"{"mode":"private","show_window":true,"enabled":false,
+                "browser":{"kind":"channel","channel":"msedge"}}"#,
+            r#"{"mode":"managed","show_window":true}"#,
+        ];
+        for text in stored {
+            let dir = tempfile::tempdir().unwrap();
+            drop(open(dir.path()).unwrap());
+            let db = Connection::open(dir.path().join(FOLDER).join(DATABASE)).unwrap();
+            let blob: BrowserSettings = serde_json::from_str(text).unwrap();
+            gespan_browser::audit::save_settings(&db, &blob).unwrap();
+            drop(db);
+
+            let host = open(dir.path()).unwrap();
+            let settings = host.state().settings;
+            assert_eq!(settings.mode, BrowserMode::Managed, "{text}");
+            assert!(!settings.show_window, "{text}");
+            assert_eq!(settings.browser, BrowserChoice::Auto, "{text}");
+            assert_eq!(settings.enabled, blob.enabled, "{text}");
+            assert_eq!(settings.allow_dotfiles, blob.allow_dotfiles, "{text}");
+            assert_eq!(settings.upload_roots, blob.upload_roots, "{text}");
+            assert_eq!(host.state().toggle_on, blob.enabled, "{text}");
+            // It starts headless.
+            let args = gespan_browser::launch::arguments(
+                Path::new("/profile"),
+                settings.starts_with_window(),
+                None,
+            );
+            assert!(args.contains(&"--headless=new".to_string()), "{text}");
+            drop(host);
+            let db = Connection::open(dir.path().join(FOLDER).join(DATABASE)).unwrap();
+            let kept = gespan_browser::audit::load_settings(&db).unwrap().unwrap();
+            assert_eq!(kept, settings, "the database holds the fixed settings");
+        }
     }
 
     #[test]
@@ -658,7 +727,8 @@ pub(crate) mod tests {
 
         let now = state().expect("started");
         assert!(!now.toggle_on, "the switch starts off");
-        assert_eq!(now.settings.mode, BrowserMode::Attach);
+        assert_eq!(now.settings.mode, BrowserMode::Managed);
+        assert!(!now.settings.show_window);
 
         // Settings reach the database and every subscriber.
         let host = host().expect("started");

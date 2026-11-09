@@ -458,6 +458,7 @@ pub fn wait_for_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::BrowserSettings;
 
     #[test]
     fn windows_paths_cover_both_program_files_and_the_user_install() {
@@ -742,6 +743,23 @@ mod tests {
         let _ = stranger.kill();
         let _ = stranger.wait();
         let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// The settings Gespan runs with, whatever was stored, start the
+    /// browser headless.
+    #[test]
+    fn the_in_app_browser_starts_headless() {
+        let profile = Path::new("/tmp/gespan-profile");
+        let stored = BrowserSettings {
+            mode: BrowserMode::Attach,
+            show_window: true,
+            ..BrowserSettings::default()
+        };
+        for settings in [BrowserSettings::default(), stored.in_app()] {
+            let args = arguments(profile, settings.starts_with_window(), None);
+            assert!(args.contains(&"--headless=new".to_string()), "{args:?}");
+            assert!(args.contains(&"--hide-scrollbars".to_string()), "{args:?}");
+        }
     }
 
     #[test]

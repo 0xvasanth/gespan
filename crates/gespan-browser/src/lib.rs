@@ -145,6 +145,9 @@ pub const UNUSED_CLOSE_GRACE: Duration = Duration::from_secs(10);
 /// agent that closes one tab and opens the next does not restart it.
 pub const EMPTY_CLOSE_GRACE: Duration = Duration::from_secs(2);
 
+/// Why the Gespan browser cannot start: no Chromium browser to start.
+pub const NO_BROWSER: &str = "No Chromium-based browser is installed on this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, then try again.";
+
 /// The Gespan browser process this run started.
 struct ManagedBrowser {
     child: Child,
@@ -362,10 +365,12 @@ pub fn open(
         let _ = audit::prune(conn, now_ms());
         let run_id = audit::next_run_id(conn).map_err(|e| e.to_string())?;
         let _ = audit::close_stale_leases(conn, run_id);
-        let settings = audit::load_settings(conn)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let stored = audit::load_settings(conn).ok().flatten();
+        let settings = embedder.fix_settings(stored.clone().unwrap_or_default());
+        if stored.is_some_and(|stored| stored != settings) {
+            // What an earlier build stored is fixed in the database too.
+            let _ = audit::save_settings(conn, &settings);
+        }
         Ok::<_, String>((run_id, settings))
     })
     .ok_or("The app's database must be open before the browser module")??;
@@ -662,10 +667,10 @@ impl BrowserHost {
     }
 
     fn set_idle(&self) {
-        let detail = match self.mode() {
-            BrowserMode::Managed => "The Gespan browser starts when an agent needs it.",
-            BrowserMode::Private => "The private Gespan browser starts when an agent needs it and forgets everything when it closes.",
-            BrowserMode::Attach => "Gespan connects to your browser when an agent needs it.",
+        let detail = if self.mode().launches() {
+            "The Gespan browser starts when an agent needs it."
+        } else {
+            "Gespan connects to your browser when an agent needs it."
         };
         self.set_connection(ConnectionState::Idle, Some(detail.into()), None, None);
     }
@@ -1261,7 +1266,7 @@ impl BrowserHost {
                     self.attempt_state(
                         generation,
                         ConnectionState::StalePort,
-                        Some("No supported browser was found on this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or switch to your own browser in Settings → Browser.".into()),
+                        Some(NO_BROWSER.into()),
                         None,
                         Some("no browser executable".into()),
                     );
@@ -1280,10 +1285,7 @@ impl BrowserHost {
                 }
                 let user_opened = self.force_window.swap(false, Ordering::AcqRel);
                 // Agent tabs shown in Gespan need no browser window of their own.
-                let show_window = {
-                    let settings = &self.policy.read().settings;
-                    (settings.show_window && !settings.tabs_in_gespan) || user_opened
-                };
+                let show_window = self.policy.read().settings.starts_with_window() || user_opened;
                 // Started and registered under the lock, so OFF or a mode
                 // change (generation first, then the slot) either stops this
                 // browser or comes before it is started at all.
@@ -2303,7 +2305,8 @@ impl BrowserHost {
         }
     }
 
-    pub fn set_settings(self: &Arc<Self>, mut settings: BrowserSettings) {
+    pub fn set_settings(self: &Arc<Self>, settings: BrowserSettings) {
+        let mut settings = self.embedder.fix_settings(settings);
         let (mode_changed, toggle_on) = {
             let mut policy = self.policy.write();
             // The switch has its own command; settings never flip it.
@@ -3278,11 +3281,11 @@ fn profile_unreadable_detail(user_data_dir: &std::path::Path, os: discovery::Os)
     let file = user_data_dir.join(discovery::ACTIVE_PORT_FILE);
     match os {
         discovery::Os::Mac => format!(
-            "macOS blocked Gespan from reading {}. Turn Gespan on in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan (if Gespan was started from a terminal, turn that terminal app on instead), or choose Gespan browser in Settings → Browser.",
+            "macOS blocked Gespan from reading {}. Turn Gespan on in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan (if Gespan was started from a terminal, turn that terminal app on instead).",
             file.display()
         ),
         discovery::Os::Windows | discovery::Os::Linux => format!(
-            "Permission denied reading {}. Give your user account read access to the browser's profile folder, or choose Gespan browser in Settings → Browser.",
+            "Permission denied reading {}. Give your user account read access to the browser's profile folder.",
             file.display()
         ),
     }
@@ -4037,8 +4040,8 @@ mod tests {
 
     /// Each OS gets the fix it has: macOS names Full Disk Access (and the
     /// terminal a dev build was started from), others the folder's
-    /// permissions; all name the file and the Gespan browser way out, and
-    /// none sends the user back to chrome://inspect.
+    /// permissions; all name the file, and none sends the user back to
+    /// chrome://inspect or to a Settings choice Gespan no longer offers.
     #[test]
     fn the_unreadable_profile_detail_names_each_systems_fix() {
         let dir = std::path::Path::new("/profiles/chrome");
@@ -4060,10 +4063,7 @@ mod tests {
         ] {
             let text = profile_unreadable_detail(dir, os);
             assert!(text.contains("DevToolsActivePort"), "{text}");
-            assert!(
-                text.contains("Gespan browser in Settings → Browser"),
-                "{text}"
-            );
+            assert!(!text.contains("Settings → Browser"), "{text}");
             assert!(!text.contains("chrome://inspect"), "{text}");
             assert!(!text.contains("Allow"), "{text}");
         }
@@ -4085,12 +4085,7 @@ mod tests {
         assert!(took < wait + Duration::from_secs(2), "bounded: {took:?}");
         assert_eq!(pending.outcome, Outcome::Blocked);
         assert_eq!(pending.reason, Some(Reason::BrowserConsentPending));
-        assert!(
-            pending.message.contains("chrome://inspect"),
-            "{}",
-            pending.message
-        );
-        assert!(pending.message.contains("consent"), "{}", pending.message);
+        assert!(pending.message.contains("accept"), "{}", pending.message);
         // The dialog is still up: the next action waits on the same attempt
         // instead of opening a second one.
         let again = host.handle_request("s1", request("r2", "tabs.open", json!({})));

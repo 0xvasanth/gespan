@@ -5,8 +5,7 @@
 //! `src/features/settings/model/browser.ts`; Gespan Native uses this.
 
 use crate::protocol::{
-    BrowserChoice, BrowserInfo, BrowserKind, BrowserMode, BrowserState, ConnectionState,
-    TabOverview, TabState,
+    BrowserChoice, BrowserInfo, BrowserKind, BrowserState, ConnectionState, TabOverview, TabState,
 };
 
 /// The connection's colour.
@@ -222,44 +221,50 @@ pub fn connection_view(state: &BrowserState) -> ConnectionView {
         return attach;
     }
     // The Gespan browser has no consent step, so it never shows the guide.
-    let private = state.settings.mode == BrowserMode::Private;
-    let name = if private {
-        "private Gespan browser"
-    } else {
-        "Gespan browser"
-    };
     let connection = &state.connection;
     let mut view = match connection.state {
         ConnectionState::Discovering => ConnectionView {
-            message: format!("Starting the {name}…"),
+            message: "Starting the Gespan browser…".into(),
             ..attach
         },
         ConnectionState::Idle => ConnectionView {
-            message: if private {
-                format!("Ready. The {name} starts when an agent needs it and forgets everything when it closes.")
-            } else {
-                format!("Ready. The {name} starts when an agent needs it.")
-            },
+            message: "Ready. The Gespan browser starts when an agent needs it.".into(),
             action: None,
             ..attach
         },
         ConnectionState::Connected => ConnectionView {
             message: match &connection.browser {
-                Some(browser) => format!("The {name} is running on {}.", product_label(browser)),
-                None => format!("The {name} is running."),
+                Some(browser) => format!(
+                    "The Gespan browser is running on {}.",
+                    product_label(browser)
+                ),
+                None => "The Gespan browser is running.".into(),
             },
             ..attach
         },
         ConnectionState::Disconnected => view(
-            format!("The {name} closed. It starts again when an agent needs it."),
+            "The Gespan browser closed. It starts again when an agent needs it.",
             Tone::Neutral,
             None,
+            false,
+        ),
+        // No browser to start, or a start that failed: the detail says which.
+        ConnectionState::StalePort => view(
+            "The Gespan browser could not start.",
+            Tone::Error,
+            Some(Action::Retry),
             false,
         ),
         _ => attach,
     };
     view.guide = false;
     view
+}
+
+/// The connection needs the user: something to fix, not a browser that is
+/// off, starting, ready or running. Settings shows the line only then.
+pub fn connection_problem(state: &BrowserState) -> bool {
+    matches!(connection_view(state).tone, Tone::Warning | Tone::Error)
 }
 
 fn attach_view(state: &BrowserState) -> ConnectionView {
@@ -308,7 +313,7 @@ fn attach_view(state: &BrowserState) -> ConnectionView {
             false,
         ),
         ConnectionState::PolicyBlocked => view(
-            "An administrator policy blocks remote debugging in this browser. Contact your administrator.",
+            "An administrator policy keeps Gespan from controlling this browser. Contact your administrator.",
             Error,
             None,
             false,
@@ -360,7 +365,7 @@ pub fn connection_detail(state: &BrowserState) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{BrowserSettings, SessionAccess};
+    use crate::protocol::{BrowserMode, BrowserSettings, SessionAccess};
 
     fn state(mode: BrowserMode, connection: ConnectionState) -> BrowserState {
         let mut state = crate::BrowserHost::for_tests(BrowserSettings::default()).state();
@@ -401,6 +406,45 @@ mod tests {
         let attach = connection_view(&state(BrowserMode::Attach, ConnectionState::ConsentDenied));
         assert!(attach.guide);
         assert_eq!(attach.action, Some(Action::Connect));
+    }
+
+    /// The in-app browser's line is a problem only when there is something
+    /// to fix: no browser to start or a start that failed, an old browser,
+    /// a policy. Off, ready, starting, running and closed are not.
+    #[test]
+    fn only_real_errors_of_the_gespan_browser_are_problems() {
+        for quiet in [
+            ConnectionState::Off,
+            ConnectionState::Idle,
+            ConnectionState::Discovering,
+            ConnectionState::Connected,
+            ConnectionState::Disconnected,
+        ] {
+            let state = state(BrowserMode::Managed, quiet);
+            assert!(!connection_problem(&state), "{quiet:?}");
+        }
+        for problem in [
+            ConnectionState::StalePort,
+            ConnectionState::UnsupportedVersion,
+            ConnectionState::PolicyBlocked,
+        ] {
+            let state = state(BrowserMode::Managed, problem);
+            assert!(connection_problem(&state), "{problem:?}");
+            let message = connection_view(&state).message.to_lowercase();
+            for gone in [
+                "your own browser",
+                "chrome://inspect",
+                "remote debugging",
+                "private",
+            ] {
+                assert!(!message.contains(gone), "{problem:?}: {message}");
+            }
+        }
+        let failed = state(BrowserMode::Managed, ConnectionState::StalePort);
+        assert_eq!(
+            connection_view(&failed).message,
+            "The Gespan browser could not start."
+        );
     }
 
     /// An unreadable profile is its own line, with Retry and without the
