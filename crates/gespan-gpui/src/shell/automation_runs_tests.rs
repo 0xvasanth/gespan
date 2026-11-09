@@ -805,3 +805,184 @@ fn a_run_reuses_the_last_conversation_when_asked(cx: &mut TestAppContext) {
     assert_eq!(saved[0].session_id, saved[1].session_id, "{saved:?}");
     assert_eq!(sessions(&window, &id, cx), 1);
 }
+
+/// The automation-run alerts that reached the OS: the session each opens,
+/// its subtitle and its body.
+fn run_alerts(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<(i64, String, String)> {
+    window
+        .update(cx, |shell, _, _| {
+            shell
+                .notification_state
+                .session_notices
+                .iter()
+                .filter(|notice| notice.category == "automationRuns")
+                .map(|notice| match notice.target {
+                    crate::notifications::delivery::Target::Session(id) => {
+                        (id, notice.subtitle.clone(), notice.body.clone())
+                    }
+                    other => panic!("an automation alert opens its session, not {other:?}"),
+                })
+                .collect()
+        })
+        .unwrap()
+}
+
+fn allow_notices(window: &WindowHandle<Shell>, cx: &mut TestAppContext) {
+    window
+        .update(cx, |shell, _, _| shell.allow_notices_for_test(true))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_run_started_by_a_new_issue_raises_one_alert_that_opens_its_session(cx: &mut TestAppContext) {
+    let data = data();
+    let id = on_issue(&data);
+    let window = open(&data, cx);
+    allow_notices(&window, cx);
+    let opened = issue(&data, 12, now_ms());
+    deliver(&window, vec![opened.clone()], cx);
+    let session = window
+        .update(cx, |shell, _, _| {
+            shell
+                .automation_state
+                .session_automations
+                .iter()
+                .find(|(_, automation)| *automation == &id)
+                .map(|(session, _)| *session)
+        })
+        .unwrap()
+        .expect("the run opened a session");
+    assert_eq!(
+        run_alerts(&window, cx),
+        [(
+            session,
+            "Check the build".to_string(),
+            "Issue opened: acme/app#12 Issue 12".to_string()
+        )]
+    );
+
+    // Each Inbox refresh offers the item again; it neither runs nor alerts again.
+    deliver(&window, vec![opened.clone()], cx);
+    deliver(&window, vec![opened], cx);
+    assert_eq!(run_alerts(&window, cx).len(), 1);
+
+    // A second issue is a second run and a second alert.
+    deliver(&window, vec![issue(&data, 13, now_ms())], cx);
+    let bodies: Vec<_> = run_alerts(&window, cx).into_iter().map(|a| a.2).collect();
+    assert_eq!(
+        bodies,
+        [
+            "Issue opened: acme/app#12 Issue 12",
+            "Issue opened: acme/app#13 Issue 13"
+        ]
+    );
+}
+
+#[gpui::test]
+fn each_kind_of_github_event_names_itself_in_the_alert(cx: &mut TestAppContext) {
+    let data = data();
+    save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![
+                AutomationTrigger::new("github", "pull_request_opened"),
+                AutomationTrigger::new("github", "draft_opened"),
+            ],
+        ),
+    );
+    let window = open(&data, cx);
+    allow_notices(&window, cx);
+    let pull = |number: i64, draft: bool| gespan_core::inbox::Item {
+        kind: "pr".into(),
+        draft,
+        title: format!("Change {number}"),
+        url: format!("https://github.com/acme/app/pull/{number}"),
+        ..issue(&data, number, now_ms())
+    };
+    deliver(&window, vec![pull(20, false)], cx);
+    deliver(&window, vec![pull(21, true)], cx);
+    let bodies: Vec<_> = run_alerts(&window, cx).into_iter().map(|a| a.2).collect();
+    assert_eq!(
+        bodies,
+        [
+            "Pull request opened: acme/app#20 Change 20",
+            "Draft opened: acme/app#21 Change 21"
+        ]
+    );
+}
+
+#[gpui::test]
+fn scheduled_and_hand_started_runs_raise_no_start_alert(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    allow_notices(&window, cx);
+    // A schedule repeats on its own; an alert for every hour would be noise.
+    let scheduled = scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    assert_eq!(runs(&data.db, &scheduled).len(), 1);
+
+    // Run now opens the session in front of the user, who needs no alert.
+    let id = save(&data.db, draft(&data.project, vec![]));
+    let automation = Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap();
+    let run = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    window
+        .update(cx, |shell, _, cx| {
+            shell.launch_automation(DueAutomationRun { automation, run }, true, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(runs(&data.db, &id).len(), 1);
+    assert!(run_alerts(&window, cx).is_empty());
+}
+
+#[gpui::test]
+fn muting_automation_runs_for_the_project_or_notifications_silences_the_alert(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let id = on_issue(&data);
+    let window = open(&data, cx);
+    allow_notices(&window, cx);
+    let project = data.project.clone();
+    window
+        .update(cx, |shell, _, _| {
+            let prefs = &mut shell.workspace.preferences;
+            let key = prefs.known_notification_project_id(&project).unwrap();
+            prefs.project_notifications =
+                serde_json::json!({ key: { "disabled": ["automationRuns"] } });
+        })
+        .unwrap();
+    deliver(&window, vec![issue(&data, 40, now_ms())], cx);
+    assert_eq!(runs(&data.db, &id).len(), 1, "the run still starts");
+    assert!(run_alerts(&window, cx).is_empty());
+
+    // Other categories muted do not silence it.
+    window
+        .update(cx, |shell, _, _| {
+            let prefs = &mut shell.workspace.preferences;
+            let key = prefs.known_notification_project_id(&project).unwrap();
+            prefs.project_notifications =
+                serde_json::json!({ key: { "disabled": ["agentFinished"] } });
+        })
+        .unwrap();
+    deliver(&window, vec![issue(&data, 41, now_ms())], cx);
+    assert_eq!(run_alerts(&window, cx).len(), 1);
+
+    // Turning notifications off silences it too.
+    window
+        .update(cx, |shell, _, _| shell.allow_notices_for_test(false))
+        .unwrap();
+    deliver(&window, vec![issue(&data, 42, now_ms())], cx);
+    assert_eq!(runs(&data.db, &id).len(), 3);
+    assert_eq!(run_alerts(&window, cx).len(), 1);
+}

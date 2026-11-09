@@ -31,6 +31,7 @@ const MAX_NAME: usize = 200;
 const MAX_PROMPT: usize = 1_000_000;
 const MAX_TRIGGERS: usize = 20;
 const MAX_RUNS_PER_AUTOMATION: i64 = 100;
+const MAX_EVENT_TITLE: usize = 300;
 /// A run that starts this soon after its time is on time, whatever the
 /// missed-run grace. Schedules are polled every 30 seconds and the Inbox is
 /// fetched every few minutes, so "Do not catch up" still runs while Gespan is open.
@@ -142,6 +143,10 @@ pub struct AutomationRun {
     pub event_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<String>,
+    /// The item the event is about, such as `acme/app#12 Fix login`, for the
+    /// alert that the run started. Older runs have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
 }
@@ -187,6 +192,8 @@ pub struct AutomationEventClaim {
     pub event: String,
     pub scheduled_for: i64,
     pub prompt: String,
+    #[serde(default)]
+    pub title: String,
 }
 
 fn default_true() -> bool {
@@ -557,6 +564,7 @@ fn new_run(
         event_key: None,
         event_kind: None,
         event: None,
+        event_title: None,
         prompt: Some(prompt.to_string()),
     }
 }
@@ -998,7 +1006,7 @@ impl Service {
             tx.rollback().map_err(|error| error.to_string())?;
             return Ok(None);
         }
-        let run = new_event_run(
+        let mut run = new_event_run(
             automation_id,
             &claim.event_key,
             &claim.event_kind,
@@ -1007,6 +1015,8 @@ impl Service {
             now,
             &claim.prompt,
         );
+        let title: String = claim.title.trim().chars().take(MAX_EVENT_TITLE).collect();
+        run.event_title = (!title.is_empty()).then_some(title);
         automation.last_run_at = Some(now);
         automation.last_run_status = Some(run.status.clone());
         automation.last_run_error = None;
@@ -1520,6 +1530,12 @@ pub fn claim_inbox_events_retry(
             } else {
                 item.title.trim().to_string()
             };
+            let headline =
+                if crate::inbox::is_tracker(&item.provider) || item.repo.trim().is_empty() {
+                    format!("{reference} {title}")
+                } else {
+                    format!("{}{reference} {title}", item.repo.trim())
+                };
             let mut external = format!("{reference} {title}");
             if !item.url.trim().is_empty() {
                 external.push('\n');
@@ -1544,6 +1560,7 @@ pub fn claim_inbox_events_retry(
                     event: trigger.event,
                     scheduled_for: if occurred_at == 0 { now } else { occurred_at },
                     prompt,
+                    title: headline,
                 },
                 now,
             ) {
@@ -2115,6 +2132,110 @@ mod tests {
         assert!(claim_inbox_events(&mut service, &[issue], now_millis())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn an_event_run_records_what_it_is_about_for_its_alert() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.sqlite");
+        let mut service = Service::open(&path).unwrap();
+        let automation = save(
+            &mut service,
+            vec![
+                AutomationTrigger::new("github", "pull_request_opened"),
+                AutomationTrigger::new("linear", "issue_created"),
+            ],
+        );
+        let mut pull = item(7);
+        pull.title = "  Fix login  ".into();
+        let ticket = crate::inbox::Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            id: "lin-9".into(),
+            identifier: "ENG-9".into(),
+            title: "Crash on start".into(),
+            ..Default::default()
+        };
+        let claims = claim_inbox_events(&mut service, &[pull, ticket], now_millis()).unwrap();
+        let titles: Vec<_> = claims
+            .iter()
+            .map(|claim| claim.run.event_title.as_deref())
+            .collect();
+        // A repository item names its repository; a tracker item its key.
+        assert_eq!(
+            titles,
+            [Some("acme/app#7 Fix login"), Some("ENG-9 Crash on start")]
+        );
+
+        // The title is kept with the run, so a run started after a restart
+        // still has it.
+        drop(service);
+        let mut service = Service::open(&path).unwrap();
+        let mut saved: Vec<_> = service
+            .runs(&automation.id)
+            .unwrap()
+            .into_iter()
+            .filter_map(|run| run.event_title)
+            .collect();
+        saved.sort();
+        assert_eq!(saved, ["ENG-9 Crash on start", "acme/app#7 Fix login"]);
+    }
+
+    #[test]
+    fn an_event_title_is_capped_and_a_blank_one_is_left_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", "issue_opened")],
+        );
+        let claim = |key: &str, title: String| AutomationEventClaim {
+            event_key: key.into(),
+            event_kind: "github".into(),
+            event: "issue_opened".into(),
+            scheduled_for: 0,
+            prompt: "Fix it".into(),
+            title,
+        };
+        let long = service
+            .claim_event(
+                &automation.id,
+                claim("github:issue:a/b:1", "é".repeat(500)),
+                now_millis(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            long.run.event_title.unwrap().chars().count(),
+            MAX_EVENT_TITLE
+        );
+        let blank = service
+            .claim_event(
+                &automation.id,
+                claim("github:issue:a/b:2", "   ".into()),
+                now_millis(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(blank.run.event_title, None);
+    }
+
+    #[test]
+    fn runs_and_claims_saved_before_event_titles_still_load() {
+        let run: AutomationRun = serde_json::from_value(serde_json::json!({
+            "id": "run", "automationId": "auto", "trigger": "event",
+            "scheduledFor": 1, "createdAt": 1, "status": "succeeded",
+            "eventKey": "github:issue:a/b:1"
+        }))
+        .unwrap();
+        assert_eq!(run.event_title, None);
+        assert!(!serde_json::to_string(&run).unwrap().contains("eventTitle"));
+        let claim: AutomationEventClaim = serde_json::from_value(serde_json::json!({
+            "eventKey": "github:issue:a/b:1", "eventKind": "github",
+            "event": "issue_opened", "scheduledFor": 0, "prompt": "Fix it"
+        }))
+        .unwrap();
+        assert_eq!(claim.title, "");
     }
 
     /// Saves a time automation with these triggers and grace.
