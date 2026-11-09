@@ -1,9 +1,6 @@
 //! AppearancePage, ChatBackgroundCard, workspace themes and AccentColorPicker.
 use crate::popover::{Align, Anchor, Side, popover};
-use crate::settings::{
-    SettingsEvent, SettingsView, SliderKind, preferences::UI_SCALE_PERCENTS,
-    widgets::secondary_button,
-};
+use crate::settings::{SettingsEvent, SettingsView, SliderKind, widgets::secondary_button};
 use crate::theme::*;
 use crate::window_blur::BLUR_ADJUSTABLE;
 use gpui::{
@@ -300,16 +297,6 @@ impl SettingsView {
             translucency,
         ));
         page.push(self.chat_background_card(cx));
-        let scale_options = UI_SCALE_PERCENTS
-            .iter()
-            .map(|percent| {
-                (
-                    percent.to_string(),
-                    SharedString::from(format!("{percent}%")),
-                    None,
-                )
-            })
-            .collect();
         let layout = vec![
             self.row(
                 Some("new-layout-style"),
@@ -338,32 +325,25 @@ impl SettingsView {
                 false,
                 "Interface scale",
                 Some("Zoom the whole interface. You can also use Ctrl+=, Ctrl+-, and Ctrl+0 (Cmd on macOS).".into()),
-                vec![self.select(
-                    "interface-scale",
-                    "Interface scale",
-                    &p.ui_scale.to_string(),
-                    scale_options,
-                    None,
+                vec![self.slider(
+                    SliderKind::InterfaceScale,
+                    format!("{}%", p.ui_scale),
+                    false,
                     cx,
-                    |this, v, cx| {
-                        if let Ok(v) = v.parse() {
-                            this.update(cx, |p| p.ui_scale = v)
-                        }
-                    },
                 )],
             ),
             self.row(
-                Some("show-excluded-files"),
+                Some("tab-animations"),
                 false,
-                "Show excluded files",
-                Some("Show files and folders Git excludes, such as build output and dependencies, in the explorer.".into()),
+                "Tab animations",
+                Some("Animate tabs as they open and close.".into()),
                 vec![self.toggle(
-                    "show-excluded-files",
-                    "Show excluded files",
-                    p.show_excluded_files,
+                    "tab-animations",
+                    "Tab animations",
+                    p.tab_animations,
                     false,
                     cx,
-                    |this, on, cx| this.update(cx, |p| p.show_excluded_files = on),
+                    |this, on, cx| this.update(cx, |p| p.tab_animations = on),
                 )],
             ),
         ];

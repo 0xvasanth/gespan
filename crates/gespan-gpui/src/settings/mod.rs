@@ -155,6 +155,8 @@ pub(crate) enum SliderKind {
     Blur,
     BackgroundEmpty,
     BackgroundSession,
+    /// Positions index `UI_SCALE_PERCENTS`.
+    InterfaceScale,
 }
 impl SliderKind {
     fn id(self) -> &'static str {
@@ -166,6 +168,7 @@ impl SliderKind {
             SliderKind::Blur => "blur",
             SliderKind::BackgroundEmpty => "background-empty",
             SliderKind::BackgroundSession => "background-session",
+            SliderKind::InterfaceScale => "interface-scale",
         }
     }
     fn label(self) -> &'static str {
@@ -177,6 +180,7 @@ impl SliderKind {
             SliderKind::Blur => "Blur radius",
             SliderKind::BackgroundEmpty => "Empty chat background visibility",
             SliderKind::BackgroundSession => "Session background visibility",
+            SliderKind::InterfaceScale => "Interface scale",
         }
     }
     fn range(self) -> (u32, u32) {
@@ -187,6 +191,7 @@ impl SliderKind {
             SliderKind::SidebarOpacity => (15, 100),
             SliderKind::Blur => (1, 64),
             SliderKind::BackgroundEmpty | SliderKind::BackgroundSession => (5, 65),
+            SliderKind::InterfaceScale => (0, UI_SCALE_PERCENTS.len() as u32 - 1),
         }
     }
     fn get(self, p: &Preferences) -> u32 {
@@ -198,6 +203,7 @@ impl SliderKind {
             SliderKind::Blur => p.sidebar_blur,
             SliderKind::BackgroundEmpty => p.chat_background_empty,
             SliderKind::BackgroundSession => p.chat_background_session,
+            SliderKind::InterfaceScale => scale_step(p.ui_scale),
         }
     }
     fn set(self, p: &mut Preferences, value: u32) {
@@ -209,8 +215,21 @@ impl SliderKind {
             SliderKind::Blur => p.sidebar_blur = value,
             SliderKind::BackgroundEmpty => p.chat_background_empty = value,
             SliderKind::BackgroundSession => p.chat_background_session = value,
+            SliderKind::InterfaceScale => {
+                let last = UI_SCALE_PERCENTS.len() - 1;
+                p.ui_scale = UI_SCALE_PERCENTS[(value as usize).min(last)];
+            }
         }
     }
+}
+
+/// The step of `UI_SCALE_PERCENTS` closest to a saved scale.
+fn scale_step(percent: u32) -> u32 {
+    UI_SCALE_PERCENTS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, step)| step.abs_diff(percent))
+        .map_or(0, |(ix, _)| ix as u32)
 }
 
 pub(crate) struct SettingsView {

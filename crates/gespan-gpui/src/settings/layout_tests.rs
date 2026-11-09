@@ -130,6 +130,92 @@ fn restore_defaults_keeps_the_focused_layout(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn interface_scale_slider_steps_through_every_percent(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual
+        .debug_bounds("settings-slider-interface-scale")
+        .unwrap();
+    // The thumb travels the track less its own 12px width.
+    let travel = track.size.width.as_f32() - 12.;
+    let last = (UI_SCALE_PERCENTS.len() - 1) as f32;
+    let mut seen = Vec::new();
+    for ix in 0..UI_SCALE_PERCENTS.len() {
+        let x = track.left() + px(6. + travel * ix as f32 / last);
+        visual.simulate_click(point(x, track.center().y), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        seen.push(
+            window
+                .update(visual, |view, _, _| view.prefs.ui_scale)
+                .unwrap(),
+        );
+    }
+    assert_eq!(seen, UI_SCALE_PERCENTS);
+}
+
+#[test]
+fn interface_scale_slider_maps_positions_to_percents() {
+    let kind = SliderKind::InterfaceScale;
+    assert_eq!(kind.range(), (0, UI_SCALE_PERCENTS.len() as u32 - 1));
+    let mut prefs = Preferences::default();
+    assert_eq!(UI_SCALE_PERCENTS[kind.get(&prefs) as usize], prefs.ui_scale);
+    kind.set(&mut prefs, 0);
+    assert_eq!(prefs.ui_scale, 50);
+    kind.set(&mut prefs, 15);
+    assert_eq!(prefs.ui_scale, 200);
+    // A saved scale off the list lands on the nearest step.
+    prefs.ui_scale = 117;
+    assert_eq!(UI_SCALE_PERCENTS[kind.get(&prefs) as usize], 120);
+    prefs.ui_scale = 5000;
+    assert_eq!(kind.get(&prefs), 15);
+}
+
+#[gpui::test]
+fn editor_group_lists_the_moved_rows(cx: &mut TestAppContext) {
+    let window = window(Section::Chat, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let ys: Vec<_> = [
+        "settings-row-file-tabs",
+        "settings-row-file-word-wrap",
+        "settings-row-show-excluded-files",
+        "settings-row-format-on-save",
+    ]
+    .into_iter()
+    .map(|selector| {
+        visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is on the Chat page"))
+            .origin
+            .y
+    })
+    .collect();
+    assert!(ys.windows(2).all(|w| w[0] < w[1]), "{ys:?}");
+}
+
+#[gpui::test]
+fn the_general_page_no_longer_holds_editor_rows(cx: &mut TestAppContext) {
+    let window = window(Section::General, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for selector in [
+        "settings-row-file-tabs",
+        "settings-row-file-word-wrap",
+        "settings-row-tab-animations",
+    ] {
+        assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+    }
+}
+
+#[gpui::test]
 fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);

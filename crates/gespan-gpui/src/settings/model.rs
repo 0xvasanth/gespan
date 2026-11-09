@@ -106,15 +106,13 @@ impl Section {
     pub(crate) fn description(self) -> &'static str {
         match self {
             Section::General => {
-                "The build you are running, how Gespan reaches you, and the panels it shows."
+                "The build you are running, how Gespan reaches you, and how it runs."
             }
             Section::Diagnostics => {
                 "Report a problem, your logs, and the failures counted on this machine."
             }
             Section::Connections => "Connect your machines and run agents remotely through SSH.",
-            Section::Appearance => {
-                "Theme, tint, translucency, workspace layout, and conversation backgrounds."
-            }
+            Section::Appearance => "Theme, tint, translucency, workspace style, and the sidebar.",
             Section::Keybindings => {
                 "Every shortcut the workspace handles, from the app menu and the key handler."
             }
@@ -141,7 +139,7 @@ impl Section {
     }
     fn keywords(self) -> &'static str {
         match self {
-            Section::General => "version update sounds notifications notes board rail",
+            Section::General => "version update sounds notifications notes board",
             Section::Diagnostics => {
                 "diagnostics crash report issue bug email github logs folder copy failures counters errors"
             }
@@ -149,7 +147,7 @@ impl Section {
                 "ssh remote host machine server environment always on herdr machines remote agents"
             }
             Section::Appearance => {
-                "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
+                "theme dark light color accent glass blur zoom scale wallpaper sidebar"
             }
             Section::Keybindings => "shortcut hotkey keyboard binding",
             Section::Dictation => "voice microphone speech parakeet",
@@ -318,19 +316,19 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "file-tabs",
-        Section::General,
+        Section::Chat,
         "File tabs",
         "editor open top workspace normal session pane beside chat",
     ),
     (
         "file-word-wrap",
-        Section::General,
+        Section::Chat,
         "Word wrap",
         "files editor long lines horizontal scroll wrapping",
     ),
     (
         "tab-animations",
-        Section::General,
+        Section::Appearance,
         "Tab animations",
         "motion open close resize transition",
     ),
@@ -451,7 +449,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "show-excluded-files",
-        Section::Appearance,
+        Section::Chat,
         "Show excluded files",
         "explorer gitignore ignored hidden files tree",
     ),
@@ -728,6 +726,52 @@ mod tests {
     #[test]
     fn board_is_on_until_turned_off() {
         assert!(crate::settings::preferences::Preferences::default().board);
+    }
+
+    #[test]
+    fn moved_rows_are_found_on_their_new_pages() {
+        for (query, id, section) in [
+            ("file tabs", "file-tabs", Section::Chat),
+            ("word wrap", "file-word-wrap", Section::Chat),
+            ("show excluded files", "show-excluded-files", Section::Chat),
+            ("tab animations", "tab-animations", Section::Appearance),
+        ] {
+            let hit = search(query, "")
+                .into_iter()
+                .find(|r| r.setting == Some(id));
+            assert_eq!(hit.map(|r| r.section), Some(section), "{query}");
+        }
+        for id in ["file-tabs", "file-word-wrap", "show-excluded-files"] {
+            let entries: Vec<_> = INDEX.iter().filter(|e| e.0 == id).collect();
+            assert_eq!(entries.len(), 1, "{id} is indexed once");
+            assert_eq!(entries[0].1, Section::Chat, "{id}");
+        }
+    }
+
+    #[test]
+    fn retired_rows_are_not_searchable() {
+        for id in [
+            "inset-layout",
+            "rail-pilots-pinned",
+            "pilots-enabled",
+            "search-panel",
+        ] {
+            assert!(INDEX.iter().all(|e| e.0 != id), "{id} is still indexed");
+        }
+    }
+
+    #[test]
+    fn section_copy_names_what_each_page_now_holds() {
+        assert_eq!(
+            Section::General.description(),
+            "The build you are running, how Gespan reaches you, and how it runs."
+        );
+        assert_eq!(
+            Section::Appearance.description(),
+            "Theme, tint, translucency, workspace style, and the sidebar."
+        );
+        assert!(!Section::General.keywords().contains("rail"));
+        assert!(!Section::Appearance.keywords().contains("rail"));
     }
 
     #[test]

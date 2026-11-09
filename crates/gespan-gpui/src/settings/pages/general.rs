@@ -46,50 +46,7 @@ impl SettingsView {
                 },
             ),
         ];
-        let mut workspace = vec![
-            self.row(
-                Some("file-tabs"),
-                true,
-                "File tabs",
-                Some("Choose where files open.".into()),
-                vec![self.segmented(
-                    "file-tabs",
-                    "File tabs",
-                    &p.file_tabs,
-                    &[("pane", "Beside chat"), ("workspace", "Top bar")],
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.file_tabs = v.into()),
-                )],
-            ),
-            self.row(
-                Some("file-word-wrap"),
-                false,
-                "Word wrap",
-                Some("Wrap long lines to fit the editor.".into()),
-                vec![self.toggle(
-                    "file-word-wrap",
-                    "Word wrap",
-                    p.file_word_wrap,
-                    false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.file_word_wrap = on),
-                )],
-            ),
-            self.row(
-                Some("tab-animations"),
-                false,
-                "Tab animations",
-                Some("Animate tabs as they open and close.".into()),
-                vec![self.toggle(
-                    "tab-animations",
-                    "Tab animations",
-                    p.tab_animations,
-                    false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.tab_animations = on),
-                )],
-            ),
-        ];
+        let mut workspace = Vec::new();
         if cfg!(target_os = "macos") {
             workspace.push(self.row(
                 Some("quick-composer"),
@@ -143,7 +100,7 @@ impl SettingsView {
             Some("terminal-placement"),
             false,
             "Terminal",
-            Some("Where new terminals open: docked below the chat, as a tab in the right panel (Focused layout), or as their own tabs in the title bar.".into()),
+            Some("Where new terminals open: docked below the chat, as a tab in the right panel, or as their own tabs in the title bar.".into()),
             vec![self.segmented(
                 "terminal-placement",
                 "Terminal",
