@@ -2068,6 +2068,7 @@ impl Conversation {
                 })
                 .detach();
             }
+            ResponseRequest::Fork { turn } => self.fork_from(*turn, cx),
             ResponseRequest::Target { turn, kind, anchor } => {
                 if self
                     .response_request
@@ -2111,18 +2112,48 @@ impl Conversation {
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.summary.provider)
             .to_owned();
-        let (rows, through) = self.transcript.read(cx).response_rows(turn);
+        let transcript = self.transcript.read(cx);
+        let (rows, through) = transcript.response_rows(turn);
         let transfer = Transfer {
             kind,
             target,
             from,
             turn: rows,
+            at: through.len().saturating_sub(1),
             through,
+            source: self.summary.id,
+            older: transcript.history_cursor(),
+            turns: transcript.turns.clone(),
             cwd: self.summary.cwd.clone(),
             title: self.summary.title.clone(),
             settings: self.settings.clone(),
         };
         self.close_response_menu(cx);
+        cx.emit(transfer);
+    }
+    /// Branch a new session at the message on row `turn`, on this session's
+    /// provider and model. Its model picker can then change either.
+    fn fork_from(&mut self, turn: usize, cx: &mut Context<Self>) {
+        let transcript = self.transcript.read(cx);
+        let transfer = Transfer {
+            kind: gespan_core::response::TransferKind::Fork,
+            target: gespan_core::response::Target {
+                provider: self.summary.provider.clone(),
+                model: self.settings.model.clone(),
+                effort: self.settings.effort.clone(),
+                settings: self.settings.model_settings.clone(),
+            },
+            from: self.summary.provider.clone(),
+            turn: Vec::new(),
+            through: transcript.history_rows().to_vec(),
+            at: turn,
+            source: self.summary.id,
+            older: transcript.history_cursor(),
+            turns: transcript.turns.clone(),
+            cwd: self.summary.cwd.clone(),
+            title: self.summary.title.clone(),
+            settings: self.settings.clone(),
+        };
         cx.emit(transfer);
     }
     pub(crate) fn worktree_deleted(
@@ -3336,6 +3367,7 @@ impl Conversation {
             .children(if self.is_remote() { None } else { self.sign_in_card(cx).or_else(|| self.auth_notice(cx)) })
             .when(self.settings.worktree_removed,|d|d.child(div().mb_2().p_3().rounded_lg().border_1().border_color(content(0.1)).flex().items_center().gap_3().text_size(px(12.)).child(div().flex_1().child("Worktree deleted. Select a branch or worktree to continue this conversation.")).child(tool_pill("reattach-worktree","Select worktree").child("Select worktree").on_click(cx.listener(|this,_,window,cx|this.open_git(GitMode::Worktree,window,cx))))))
             .when_some(self.settings.handoff.clone(), |d, handoff| {
+                let brief = gespan_core::response::strip_goal_sections(&handoff.brief);
                 d.child(
                     div()
                         .mb(px(6.))
@@ -3344,24 +3376,43 @@ impl Conversation {
                         .rounded(px(10.))
                         .bg(content(0.05))
                         .flex()
-                        .items_center()
-                        .gap(px(8.))
+                        .flex_col()
+                        .gap(px(6.))
                         .text_size(px(12.))
                         .text_color(content(0.7))
-                        .child(icon("response-handoff", 14.))
-                        .child(div().min_w_0().flex_1().child(format!(
-                            "Handoff from {} · Add your next instruction below",
-                            Kind::from_id(&handoff.from).label()
-                        )))
                         .child(
-                            tool_pill("dismiss-handoff", "Dismiss handoff")
-                                .child(icon("close", 12.))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.settings.handoff = None;
-                                    this.save_settings(cx);
-                                    cx.notify();
-                                })),
-                        ),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(icon("response-handoff", 14.))
+                                .child(div().min_w_0().flex_1().child(format!(
+                                    "Handoff from {} · Add your next instruction below",
+                                    Kind::from_id(&handoff.from).label()
+                                )))
+                                .child(
+                                    tool_pill("dismiss-handoff", "Dismiss handoff")
+                                        .child(icon("close", 12.))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.settings.handoff = None;
+                                            this.save_settings(cx);
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        // The recap the next send carries to the incoming agent.
+                        .when(!brief.trim().is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .id("handoff-recap")
+                                    .debug_selector(|| "handoff-recap".into())
+                                    .max_h(px(96.))
+                                    .overflow_y_scroll()
+                                    .pl(px(22.))
+                                    .text_color(content(0.55))
+                                    .child(brief),
+                            )
+                        }),
                 )
             })
             .when_some(self.git_picker.clone(), |d, picker| {
