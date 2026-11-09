@@ -1146,7 +1146,6 @@ impl Shell {
     /// The standalone glass button that starts a thread in this project.
     fn sidebar_new_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.active_session_is_blank(cx);
-        let hovered = self.sidebar_hover == Some("New thread");
         div()
             .w_full()
             .px_2()
@@ -1160,6 +1159,7 @@ impl Shell {
                     .aria_label("New thread")
                     .aria_selected(selected)
                     .cursor_pointer()
+                    .group("sidebar-new-thread")
                     .relative()
                     .h(px(36.))
                     .px_3()
@@ -1172,25 +1172,24 @@ impl Shell {
                     .gap_2()
                     .text_size(px(14.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(content(if selected || hovered { 1. } else { 0.7 }))
-                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
-                    .when(selected, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .size_full()
-                                .bg(content(0.1)),
-                        )
-                    })
+                    .text_color(content(if selected { 1. } else { 0.7 }))
                     .hover(|s| s.text_color(content(1.)))
+                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
+                    // The fill sits above the glass so hovering never
+                    // replaces the frosted surface.
                     .child(
-                        icon("pencil-edit-02", 16.).text_color(content(if selected || hovered {
-                            0.9
-                        } else {
-                            0.6
-                        })),
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .when(selected, |d| d.bg(content(0.1)))
+                            .group_hover("sidebar-new-thread", |s| s.bg(content(0.06))),
+                    )
+                    .child(
+                        icon("pencil-edit-02", 16.)
+                            .text_color(content(if selected { 0.9 } else { 0.6 }))
+                            .group_hover("sidebar-new-thread", |s| s.text_color(content(0.9))),
                     )
                     .child(div().flex_1().child("New thread"))
                     .child(
@@ -1205,14 +1204,6 @@ impl Shell {
                             .text_color(content(0.55))
                             .child(format!("{MOD}T")),
                     )
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        if *hovered {
-                            this.sidebar_hover = Some("New thread");
-                        } else if this.sidebar_hover == Some("New thread") {
-                            this.sidebar_hover = None;
-                        }
-                        this.notify_navigation(cx);
-                    }))
                     .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx))),
             )
             .into_any()
