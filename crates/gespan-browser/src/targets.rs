@@ -914,6 +914,9 @@ pub enum TabEvent {
     Crashed(TabId),
     /// Main frame navigated (user or page initiated as well).
     Navigated(TabId),
+    /// The tab's title or address moved without a new document: the title
+    /// arrives after the navigation, and a page may `pushState`.
+    Changed(TabId),
     DialogOpened(TabId),
     DialogClosed(TabId),
 }
@@ -1035,13 +1038,22 @@ pub fn handle_event(link: &Link, event: &CdpEvent, notify: &dyn Fn(TabEvent)) {
                 return;
             };
             let mut state = policy.write();
-            if let Some(lease) = state.lease_for_target_mut(&TargetId(target)) {
-                if let Some(url) = string_field(info, "url") {
-                    lease.url = url;
-                }
-                if let Some(title) = string_field(info, "title") {
-                    lease.title = title;
-                }
+            let Some(lease) = state.lease_for_target_mut(&TargetId(target)) else {
+                return;
+            };
+            let mut changed = false;
+            if let Some(url) = string_field(info, "url") {
+                changed |= lease.url != url;
+                lease.url = url;
+            }
+            if let Some(title) = string_field(info, "title") {
+                changed |= lease.title != title;
+                lease.title = title;
+            }
+            let tab = lease.tab.clone();
+            drop(state);
+            if changed {
+                notify(TabEvent::Changed(tab));
             }
         }
         "Page.frameNavigated" => {
@@ -1067,13 +1079,19 @@ pub fn handle_event(link: &Link, event: &CdpEvent, notify: &dyn Fn(TabEvent)) {
             let Some(tab) = tab_holding(&state, session) else {
                 return;
             };
+            let mut changed = false;
             if let Some(lease) = state.lease_mut(&tab) {
                 if lease.cdp_session.as_ref() == Some(session) {
                     if let Some(url) = string_field(&event.params, "url") {
+                        changed = lease.url != url;
                         lease.url = url;
                     }
                     lease.snapshot_version += 1;
                 }
+            }
+            drop(state);
+            if changed {
+                notify(TabEvent::Changed(tab));
             }
         }
         "Page.javascriptDialogOpening" => {
@@ -1936,6 +1954,75 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         assert_eq!(policy.read().lease(&tab).unwrap().state, TabState::Crashed);
         assert!(server.received().len() > sent_before);
+        link.close(Vec::new(), Duration::from_millis(200));
+    }
+
+    /// The tab's title arrives after its navigation, and a page's own
+    /// `pushState` moves its address without a new document: the host must
+    /// hear of both, or the UI keeps showing the old title and address
+    /// until something else happens. A repeat of what the lease already
+    /// holds is no change.
+    #[test]
+    fn a_title_or_address_change_tells_the_host() {
+        let server = navigating_fake();
+        let policy = policy();
+        let link = Link::new(policy.clone());
+        link.open(&server.url, Duration::from_secs(5)).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let _pump = spawn_pump(
+            link.clone(),
+            Arc::new(move |e| sink.lock().unwrap().push(e)),
+        )
+        .unwrap();
+        let ctx = admit(&policy, ActionKind::TabsOpen, None);
+        let opened = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
+        let (tab, target, session) = (
+            opened.handle.tab.clone(),
+            opened.handle.target.0.clone(),
+            opened.handle.session.0.clone(),
+        );
+        let changed = |events: &Arc<Mutex<Vec<TabEvent>>>| {
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| matches!(e, TabEvent::Changed(t) if *t == tab))
+                .count()
+        };
+        let wait_for = |want: usize| {
+            let until = Instant::now() + Duration::from_secs(2);
+            while changed(&events) < want {
+                assert!(Instant::now() < until, "the host was not told ({want})");
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let info = |url: &str, title: &str| json!({ "targetInfo": { "targetId": target, "type": "page", "url": url, "title": title, "attached": true } });
+        server.emit(
+            "Target.targetInfoChanged",
+            info("http://127.0.0.1:5173/", "Home"),
+            None,
+        );
+        wait_for(1);
+        assert_eq!(policy.read().lease(&tab).unwrap().title, "Home");
+        // The same info again changes nothing.
+        server.emit(
+            "Target.targetInfoChanged",
+            info("http://127.0.0.1:5173/", "Home"),
+            None,
+        );
+        server.emit(
+            "Page.navigatedWithinDocument",
+            json!({ "frameId": "F", "url": "http://127.0.0.1:5173/about.html" }),
+            Some(&session),
+        );
+        wait_for(2);
+        assert_eq!(
+            policy.read().lease(&tab).unwrap().url,
+            "http://127.0.0.1:5173/about.html"
+        );
+        thread::sleep(Duration::from_millis(100));
+        assert_eq!(changed(&events), 2, "a repeat is not a change");
         link.close(Vec::new(), Duration::from_millis(200));
     }
 

@@ -1691,7 +1691,10 @@ impl BrowserHost {
                 self.db.with(|conn| audit::lease_closed(conn, tab));
                 self.close_when_empty();
             }
-            TabEvent::Navigated(_) | TabEvent::DialogOpened(_) | TabEvent::DialogClosed(_) => {}
+            TabEvent::Navigated(_)
+            | TabEvent::Changed(_)
+            | TabEvent::DialogOpened(_)
+            | TabEvent::DialogClosed(_) => {}
         }
         self.emit_state();
     }

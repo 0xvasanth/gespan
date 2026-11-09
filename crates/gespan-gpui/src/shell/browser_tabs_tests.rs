@@ -445,3 +445,71 @@ fn rig_tab(shell: &Shell, session: i64, cx: &App) -> String {
         _ => panic!("no browser tab shown"),
     }
 }
+
+/// The label above a pane follows the page: its title once the browser
+/// reports one, the host while it has none, and each later navigation.
+#[gpui::test]
+fn the_pane_tab_label_follows_the_pages_title_and_address(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, _, session) = shell(&rig, false, cx);
+    let tab = rig.open_tab(session);
+    refresh(window, cx);
+    let label = |cx: &mut TestAppContext| -> String {
+        window
+            .update(cx, |shell, _, cx| {
+                shell.reviews[&session]
+                    .read(cx)
+                    .browser_pane_for_tests(&tab.0)
+                    .unwrap()
+                    .read(cx)
+                    .title()
+            })
+            .unwrap()
+    };
+    let target = rig
+        .server
+        .received()
+        .iter()
+        .rev()
+        .find(|r| r.method == "Target.attachToTarget")
+        .and_then(|r| r.params["targetId"].as_str().map(str::to_string))
+        .expect("the tab's target");
+    let changed = |url: &str, title: &str, cx: &mut TestAppContext| {
+        rig.server.emit(
+            "Target.targetInfoChanged",
+            serde_json::json!({ "targetInfo": { "targetId": target, "type": "page", "url": url, "title": title, "attached": true } }),
+            None,
+        );
+        // The pump reads the event on its own thread.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !rig
+            .host
+            .state()
+            .tabs
+            .iter()
+            .any(|t| t.tab.url == url && t.tab.title == title)
+        {
+            assert!(
+                std::time::Instant::now() < until,
+                "{url} never reached the host"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        refresh(window, cx);
+    };
+    // A fresh tab has no title yet.
+    changed("about:blank", "", cx);
+    assert_eq!(label(cx), "about:blank");
+    // A link navigated it: no title yet, the host stands in.
+    changed("http://127.0.0.1:5173/", "", cx);
+    assert_eq!(label(cx), "127.0.0.1");
+    // The page's title arrives.
+    changed("http://127.0.0.1:5173/", "Home", cx);
+    assert_eq!(label(cx), "Home");
+    // "About" inside the pane: a new title wins over the old one.
+    changed("http://127.0.0.1:5173/about.html", "About", cx);
+    assert_eq!(label(cx), "About");
+    // Back to a page without a title: the label does not keep "About".
+    changed("http://127.0.0.1:5173/plain.html", "", cx);
+    assert_eq!(label(cx), "127.0.0.1");
+}
