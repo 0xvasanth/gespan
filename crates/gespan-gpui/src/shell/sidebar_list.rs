@@ -1187,7 +1187,10 @@ impl Shell {
                             .left_0()
                             .size_full()
                             .when(selected, |d| d.bg(content(0.1)))
-                            .group_hover("sidebar-new-thread", |s| s.bg(content(0.06))),
+                            // Hovering never dims the selected fill.
+                            .group_hover("sidebar-new-thread", move |s| {
+                                s.bg(content(if selected { 0.1 } else { 0.06 }))
+                            }),
                     )
                     .child(
                         icon("pencil-edit-02", 16.)
@@ -1547,23 +1550,21 @@ mod tests {
         let button = visual.debug_bounds("sidebar-project-button").unwrap();
         visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
-        let rows = window
+        let (ids, editor) = window
             .update(visual, |shell, _, cx| {
                 let open = shell.menu.as_ref().expect("the project menu opened");
                 assert!(open.target == MenuTarget::Header);
-                open.menu.read(cx).item_shape()
+                let editor = shell.project_menu_editor_row(cx).map(|item| match item {
+                    MenuItem::Action(action) => action.id.to_string(),
+                    _ => unreachable!("the editor row is an action"),
+                });
+                (open.menu.read(cx).action_ids(), editor)
             })
             .unwrap();
-        for gone in ["Project settings", "Settings"] {
-            assert!(!rows.contains(&gone.to_string()), "{gone} left: {rows:?}");
-        }
-        for kept in [
-            "Switch worktree",
-            "Switch project",
-            "Open folder on a machine…",
-        ] {
-            assert!(rows.contains(&kept.to_string()), "{kept} missing: {rows:?}");
-        }
+        let mut expected = vec!["switch-worktree".to_string(), "switch-project".into()];
+        expected.extend(editor);
+        expected.push("open-remote-project".into());
+        assert_eq!(ids, expected);
     }
 
     #[gpui::test]
@@ -1599,7 +1600,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn focused_new_session_leads_navigation_and_marks_blank_sessions(cx: &mut TestAppContext) {
+    fn new_thread_sits_below_navigation_and_marks_blank_sessions(cx: &mut TestAppContext) {
         let (window, _, active) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();

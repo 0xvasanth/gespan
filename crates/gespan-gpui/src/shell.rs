@@ -7348,6 +7348,10 @@ impl Shell {
     /// The Focused sidebar's project row, under All projects: the project
     /// dropdown and the Project settings gear, after a hairline.
     pub(super) fn sidebar_project_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let settings_open = self.menu_open(&MenuTarget::Project {
+            path: self.workspace.project.clone(),
+            rail: false,
+        });
         div()
             .w_full()
             .px_2()
@@ -7437,6 +7441,8 @@ impl Shell {
                     .child(
                         icon_button("sidebar-project-settings", "Project settings", "settings")
                             .debug_selector(|| "sidebar-project-settings".into())
+                            .aria_expanded(settings_open)
+                            .when(settings_open, |d| d.bg(content(0.08)))
                             .relative()
                             .child(self.project_settings_anchor.probe())
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -12917,20 +12923,24 @@ mod tests {
         let root = window.root(cx).unwrap();
         let transcript =
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
-        let before = transcript.read_with(cx, |t, _| t.render_passes);
-        cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(128.)), cx)
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert_eq!(root.read_with(cx, |s, _| s.sidebar_hover), Some("Inbox"));
-        cx.update_window(window.into(), |_, w, cx| {
-            w.simulate_mouse_move(gpui::point(px(40.), px(227.)), cx)
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert_eq!(root.read_with(cx, |s, _| s.sidebar_hover), Some("Notes"));
-        assert_eq!(transcript.read_with(cx, |t, _| t.render_passes), before);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
+        let before = transcript.read_with(visual, |t, _| t.render_passes);
+        visual.simulate_mouse_move(inbox.center(), None, Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            root.read_with(visual, |s, _| s.sidebar_hover),
+            Some("Inbox")
+        );
+        visual.simulate_mouse_move(notes.center(), None, Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            root.read_with(visual, |s, _| s.sidebar_hover),
+            Some("Notes")
+        );
+        assert_eq!(transcript.read_with(visual, |t, _| t.render_passes), before);
     }
     #[gpui::test]
     fn many_blank_tabs_fit_without_creating_sidebar_conversations(cx: &mut TestAppContext) {

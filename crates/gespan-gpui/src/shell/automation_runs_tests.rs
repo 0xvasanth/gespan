@@ -786,6 +786,72 @@ fn run_now_starts_a_run_and_shows_its_session(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_launched_run_shows_in_the_automation_runs_folder(cx: &mut TestAppContext) {
+    let data = data();
+    let id = save(&data.db, draft(&data.project, vec![]));
+    let window = open(&data, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    assert!(
+        visual
+            .debug_bounds("session-group-fixed:automations")
+            .is_none()
+    );
+    let automation = Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap();
+    let run = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    // Launched the way a due run is, without the background reveal.
+    window
+        .update(visual, |shell, _, cx| {
+            shell.launch_automation(DueAutomationRun { automation, run }, false, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let session = window
+        .update(visual, |shell, _, _| {
+            shell
+                .automation_state
+                .session_automations
+                .iter()
+                .find(|(_, automation)| *automation == &id)
+                .map(|(session, _)| *session)
+        })
+        .unwrap()
+        .expect("the run has a session");
+    let fixed = window
+        .update(visual, |shell, _, cx| {
+            let ids = shell.sidebar_session_ids(cx);
+            shell
+                .session_entries(&ids, cx)
+                .into_iter()
+                .find_map(|entry| match entry {
+                    gespan_core::session_groups::Entry::Fixed { id, sessions, .. }
+                        if id == "fixed:automations" =>
+                    {
+                        Some(sessions)
+                    }
+                    _ => None,
+                })
+        })
+        .unwrap();
+    assert_eq!(fixed, Some(vec![session]));
+    assert!(
+        visual
+            .debug_bounds("session-group-fixed:automations")
+            .is_some(),
+        "the folder header is drawn"
+    );
+}
+
+#[gpui::test]
 fn a_run_reuses_the_last_conversation_when_asked(cx: &mut TestAppContext) {
     let data = data();
     let mut reusing = draft(
