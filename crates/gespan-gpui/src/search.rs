@@ -1,5 +1,4 @@
-//! Global search, as the original full page (SearchView.tsx) or, when the
-//! `search_panel` preference is on, a floating command panel.
+//! Global search: the floating command panel.
 use crate::{
     input::{self, Input},
     runtime::{Database, locked},
@@ -11,9 +10,9 @@ use gespan_core::{
     transcript::Row,
 };
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     MouseButton, MouseMoveEvent, Pixels, Point, Render, Role, ScrollHandle, StyledText,
-    Subscription, Task, Window, canvas, div, fill, point, prelude::*, px, relative, size,
+    Subscription, Task, Window, div, point, prelude::*, px, relative,
 };
 use std::{
     collections::HashMap,
@@ -35,8 +34,6 @@ pub(crate) struct Sources {
     pub projects: Vec<String>,
     pub recent: Vec<String>,
     pub logos: HashMap<String, String>,
-    pub classic: bool,
-    pub panel: bool,
 }
 pub(crate) struct SearchView {
     pub(crate) input: Entity<Input>,
@@ -47,9 +44,6 @@ pub(crate) struct SearchView {
     projects: Vec<String>,
     recent: Vec<String>,
     logos: HashMap<String, String>,
-    classic: bool,
-    /// Floating command panel; otherwise the original full page.
-    panel: bool,
     files: Vec<gespan_core::files::ProjectFile>,
     scope: Scope,
     query: String,
@@ -90,13 +84,8 @@ impl SearchView {
         sources: Sources,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| {
-            if sources.panel {
-                Input::command_field("Search", "Search conversations, files, projects…", cx)
-            } else {
-                Input::field("Search", "Search everything...", content(0.4), cx)
-            }
-        });
+        let input = cx
+            .new(|cx| Input::command_field("Search", "Search conversations, files, projects…", cx));
         let changed = cx.subscribe(&input, |this, _, _: &input::Changed, cx| {
             this.query = this.input.read(cx).content.trim().to_owned();
             this.active = 0;
@@ -127,8 +116,6 @@ impl SearchView {
             projects: sources.projects,
             recent: sources.recent,
             logos: sources.logos,
-            classic: sources.classic,
-            panel: sources.panel,
             files: vec![],
             scope: Scope::All,
             query: String::new(),
@@ -151,14 +138,8 @@ impl SearchView {
             _changed: changed,
         };
         // Recent conversations show at once; recent files join once listed.
-        if view.panel {
-            view.hits = view.suggestions();
-        }
+        view.hits = view.suggestions();
         view
-    }
-    pub(crate) fn set_classic(&mut self, classic: bool, cx: &mut Context<Self>) {
-        self.classic = classic;
-        cx.notify();
     }
     pub(crate) fn draft(&self, cx: &App) -> (String, Scope) {
         (self.input.read(cx).content.to_string(), self.scope)
@@ -241,11 +222,7 @@ impl SearchView {
     }
     fn rank(&mut self, cx: &mut Context<Self>) {
         self.hits = if self.query.is_empty() {
-            if self.panel {
-                self.suggestions()
-            } else {
-                vec![]
-            }
+            self.suggestions()
         } else {
             search::grouped(
                 search::titles(&self.summaries, &self.query)
@@ -398,98 +375,6 @@ impl SearchView {
         }
     }
 }
-fn empty_state() -> AnyElement {
-    div()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .px_6()
-                .pb(px(96.))
-                .child(
-                    div()
-                        .relative()
-                        .w(px(288.))
-                        .h(px(192.))
-                        .mb_2()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            canvas(
-                                |_, _, _| (),
-                                |bounds, _, window, _| {
-                                    for row in 0..19 {
-                                        for col in 0..27 {
-                                            let x = (col as f32 - 13.) * 10.;
-                                            let y = (row as f32 - 9.) * 10.;
-                                            let radius =
-                                                ((x / 144.).powi(2) + (y / 96.).powi(2)).sqrt();
-                                            let alpha =
-                                                0.14 * ((0.76 - radius) / 0.58).clamp(0., 1.);
-                                            window.paint_quad(
-                                                fill(
-                                                    Bounds::new(
-                                                        bounds.center()
-                                                            + point(px(x - 1.5), px(y - 1.5)),
-                                                        size(px(3.), px(3.)),
-                                                    ),
-                                                    content(alpha),
-                                                )
-                                                .corner_radii(px(1.5)),
-                                            );
-                                        }
-                                    }
-                                },
-                            )
-                            .absolute()
-                            .size_full(),
-                        )
-                        .child(
-                            div()
-                                .size(px(56.))
-                                .rounded(px(16.))
-                                .relative()
-                                .child(
-                                    canvas(
-                                        |_, _, _| (),
-                                        |bounds, _, window, _| {
-                                            let quad = fill(bounds, content(0.06));
-                                            #[cfg(any(target_os = "macos", target_os = "windows"))]
-                                            let quad =
-                                                quad.border_color(gpui::backdrop_blur_marker(
-                                                    4. * window.scale_factor(),
-                                                ));
-                                            window.paint_quad(quad.corner_radii(px(16.)));
-                                        },
-                                    )
-                                    .absolute()
-                                    .size_full(),
-                                )
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(icon("search", 24.).text_color(content(0.5))),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_size(px(13.))
-                        .line_height(px(19.5))
-                        .max_w(px(320.))
-                        .text_center()
-                        .text_color(content(0.45))
-                        .child("Find files, conversations, messages, and projects."),
-                ),
-        )
-        .into_any_element()
-}
 /// The heading a result sits under; consecutive hits share one.
 fn section(target: &Target, suggesting: bool) -> &'static str {
     match (target, suggesting) {
@@ -612,9 +497,6 @@ impl SearchView {
     fn child_index(&self, ix: usize) -> usize {
         let suggesting = self.query.is_empty();
         let mut child = usize::from(self.truncated.0 || self.truncated.1);
-        if !self.panel {
-            return child + ix;
-        }
         let mut last = None;
         for (i, hit) in self.hits.iter().enumerate().take(ix + 1) {
             let heading = section(&hit.target, suggesting);
@@ -747,243 +629,11 @@ impl SearchView {
     }
 }
 impl Render for SearchView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.panel {
-            self.render_panel(cx).into_any_element()
-        } else {
-            self.render_page(window, cx).into_any_element()
-        }
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_panel(cx)
     }
 }
 impl SearchView {
-    /// The original page: a title-strip field, scope tabs and full-height rows.
-    fn render_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows: Vec<_> = self
-            .hits
-            .iter()
-            .enumerate()
-            .map(|(ix, hit)| {
-                let mark = match &hit.target {
-                    Target::Conversation(_) => provider_icon(&hit.provider, 14.).into_any_element(),
-                    Target::Message { .. } => icon("message-square", 14.)
-                        .text_color(content(0.55))
-                        .into_any_element(),
-                    Target::File { path, .. } => crate::file_icons::file_type_icon(
-                        &search::project_name(path),
-                        false,
-                        false,
-                        16.,
-                    ),
-                    Target::Project(path) => self
-                        .logos
-                        .get(path)
-                        .map(|logo| {
-                            crate::image_memory::thumbnail(std::path::PathBuf::from(logo))
-                                .size(px(14.))
-                                .rounded_sm()
-                                .into_any_element()
-                        })
-                        .unwrap_or_else(|| icon("folder", 14.).into_any_element()),
-                };
-                let text = StyledText::new(hit.title.clone()).with_highlights(
-                    hit.highlights.iter().cloned().map(|range| {
-                        (
-                            range,
-                            HighlightStyle {
-                                font_weight: None,
-                                color: Some(accent_color()),
-                                ..Default::default()
-                            },
-                        )
-                    }),
-                );
-                div()
-                    .id(("app-search-row", ix))
-                    .debug_selector(move || format!("app-search-row-{ix}"))
-                    .role(Role::ListItem)
-                    .aria_selected(self.active == ix)
-                    .aria_label(format!("{} {}", hit.title, hit.meta))
-                    .h(px(32.))
-                    .w_full()
-                    .flex_shrink_0()
-                    .rounded_md()
-                    .px_2()
-                    .flex()
-                    .gap_2()
-                    .items_center()
-                    .text_size(px(13.))
-                    .when(self.active == ix, |d| {
-                        d.bg(content(if content(1.).l < 0.5 { 0.06 } else { 0.10 }))
-                    })
-                    .child(
-                        div()
-                            .size(px(16.))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(mark),
-                    )
-                    .child(div().min_w_0().flex_1().truncate().child(text))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .max_w(relative(0.45))
-                            .truncate()
-                            .font_family("monospace")
-                            .text_size(px(11.))
-                            .text_color(content(0.4))
-                            .child(hit.meta.clone()),
-                    )
-                    .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
-                        if this.pointer.is_some_and(|old| old != event.position)
-                            && this.active != ix
-                        {
-                            this.active = ix;
-                            cx.notify();
-                        }
-                        this.pointer = Some(event.position);
-                    }))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
-                    .into_any_element()
-            })
-            .collect();
-        let loading = self.sessions_loading || self.files_loading;
-        let stroke = content(if self.classic { 0.07 } else { 0.04 });
-        let selection = if content(1.).l < 0.5 { 0.06 } else { 0.10 };
-        div()
-            .id("app-search")
-            .key_context("Workspace")
-            .debug_selector(|| "app-search".into())
-            .aria_label("Search")
-            .size_full()
-            .min_h_0()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .text_color(content(1.))
-            .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                this.step(1, cx);
-                cx.stop_propagation();
-            }))
-            .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                this.step(-1, cx);
-                cx.stop_propagation();
-            }))
-            .capture_action(cx.listener(|this, _: &input::Submit, _, cx| {
-                this.pick(this.active, cx);
-                cx.stop_propagation();
-            }))
-            .on_action(cx.listener(|this, _: &crate::shell::DismissMenu, _, cx| {
-                if !this.input.read(cx).is_composing() {
-                    cx.emit(Event::Close);
-                }
-                cx.stop_propagation();
-            }))
-            .child(
-                div()
-                    .id("app-search-header")
-                    .debug_selector(|| "app-search-header".into())
-                    .h(px(40.))
-                    .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(stroke)
-                    .pl(px(12.))
-                    .pr(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(icon("search", 14.).text_color(content(0.5)))
-                    .child(
-                        div()
-                            .debug_selector(|| "app-search-field".into())
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.input.clone()),
-                    )
-                    .when(loading, |d| {
-                        d.child(crate::right_panel::spinner(
-                            "app-search-loading",
-                            "loader",
-                            14.,
-                        ))
-                    }),
-            )
-            .child(
-                div()
-                    .id("app-search-scopes")
-                    .debug_selector(|| "app-search-scopes".into())
-                    .h(px(36.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(1.))
-                    .px_3()
-                    .border_b_1()
-                    .border_color(stroke)
-                    .children(
-                        Scope::ALL
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, (scope, label))| {
-                                div()
-                                    .id(("app-search-scope", ix))
-                                    .debug_selector(move || format!("app-search-scope-{ix}"))
-                                    .role(Role::Button)
-                                    .aria_label(label)
-                                    .child(label)
-                                    .aria_selected(self.scope == scope)
-                                    .rounded_md()
-                                    .px_2()
-                                    .py_1()
-                                    .text_size(px(12.))
-                                    .line_height(px(18.))
-                                    .bg(content(if self.scope == scope { selection } else { 0. }))
-                                    .text_color(content(if self.scope == scope { 1. } else { 0.5 }))
-                                    .hover(|s| s.bg(content(0.05)).text_color(content(1.)))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.select_scope(scope, cx);
-                                    }))
-                            }),
-                    ),
-            )
-            .child(if self.query.is_empty() {
-                empty_state()
-            } else {
-                div()
-                    .id("app-search-results")
-                    .role(Role::ListBox)
-                    .aria_label("Search results")
-                    .flex_1()
-                    .min_h_0()
-                    .p_1p5()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .when(self.truncated.0 || self.truncated.1, |d| {
-                        d.child(
-                            div()
-                                .px_2p5()
-                                .py_1()
-                                .text_size(px(11.))
-                                .text_color(content(0.45))
-                                .child("Results limited to the first matches"),
-                        )
-                    })
-                    .children(rows)
-                    .when(self.hits.is_empty() && !loading, |d| {
-                        d.child(
-                            div()
-                                .px_2()
-                                .py_1p5()
-                                .text_size(px(12.))
-                                .text_color(content(0.5))
-                                .child(self.error.clone().unwrap_or_else(|| "No results".into())),
-                        )
-                    })
-                    .into_any_element()
-            })
-    }
     fn render_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let suggesting = self.query.is_empty();
         let mut list: Vec<AnyElement> = vec![];
@@ -1285,7 +935,7 @@ mod tests {
                     .unwrap()
                     .size
                     .height,
-                px(40.)
+                px(56.)
             );
             assert_eq!(
                 visual
@@ -1293,7 +943,7 @@ mod tests {
                     .unwrap()
                     .size
                     .height,
-                px(36.)
+                px(37.)
             );
             for (selector, min_width) in [
                 ("app-search-scope-0", 28.),
@@ -1402,7 +1052,6 @@ mod tests {
                         Arc::new(Mutex::new(store)),
                         Sources {
                             summaries: vec![session],
-                            panel: true,
                             ..Default::default()
                         },
                         cx,

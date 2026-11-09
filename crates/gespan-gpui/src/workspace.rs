@@ -42,7 +42,6 @@ impl AppView {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum TitleTab {
     Session(i64),
-    Search,
     App(AppView),
     Pilot {
         id: String,
@@ -55,7 +54,7 @@ impl TitleTab {
     pub fn session(&self) -> Option<i64> {
         match self {
             Self::Session(id) => Some(*id),
-            Self::Pilot { .. } | Self::Search | Self::App(_) => None,
+            Self::Pilot { .. } | Self::App(_) => None,
         }
     }
 }
@@ -66,6 +65,26 @@ impl TitleTab {
     fn saved(&self) -> bool {
         !matches!(self, Self::App(AppView::Flows | AppView::Runs))
     }
+}
+
+/// Entries that no longer parse (a retired tab, one from a newer build) are
+/// dropped on their own so they cannot cost the whole saved workspace.
+fn lenient_tabs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<TitleTab>, D::Error> {
+    let entries = Vec::<serde_json::Value>::deserialize(d)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect())
+}
+
+fn lenient_focus<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<HashMap<String, TitleTab>, D::Error> {
+    let entries = HashMap::<String, serde_json::Value>::deserialize(d)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(project, entry)| Some((project, serde_json::from_value(entry).ok()?)))
+        .collect())
 }
 
 fn save_title_order<S: serde::Serializer>(tabs: &[TitleTab], s: S) -> Result<S::Ok, S::Error> {
@@ -84,13 +103,16 @@ fn save_scope_focus<S: serde::Serializer>(
 pub(crate) struct Workspace {
     pub window: crate::window_state::WindowState,
     pub tabs: Vec<i64>,
-    #[serde(serialize_with = "save_title_order")]
+    #[serde(serialize_with = "save_title_order", deserialize_with = "lenient_tabs")]
     pub title_order: Vec<TitleTab>,
     /// Tabs pinned to the strip's left edge as icon cards, in pin order.
     /// Each stays in `title_order` too; this only marks and orders them.
-    #[serde(serialize_with = "save_title_order")]
+    #[serde(serialize_with = "save_title_order", deserialize_with = "lenient_tabs")]
     pub pinned_tabs: Vec<TitleTab>,
-    #[serde(serialize_with = "save_scope_focus")]
+    #[serde(
+        serialize_with = "save_scope_focus",
+        deserialize_with = "lenient_focus"
+    )]
     pub scope_focus: HashMap<String, TitleTab>,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
     /// while saved conversations retain their own execution directories.
@@ -2198,5 +2220,25 @@ mod tests {
                 .docks
                 .contains_key("/work")
         );
+    }
+
+    #[test]
+    fn a_saved_search_tab_is_dropped_on_load() {
+        let saved = r#"{"projects":["/a"],"tabs":[7],"title_order":[{"Session":7},"Search"],"pinned_tabs":["Search"],"scope_focus":{"/a":"Search"},"preferences":{"search_panel":false}}"#;
+        let restored = Workspace::restore(Some(saved), &[(7, "/a".into())], "/a");
+        assert_eq!(restored.projects, ["/a"]);
+        assert_eq!(restored.title_order, [TitleTab::Session(7)]);
+        assert!(restored.pinned_tabs.is_empty());
+        assert!(restored.scope_focus.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_tab_does_not_discard_the_rest_of_the_workspace() {
+        let saved = r#"{"projects":["/a"],"title_order":["Gone",{"Session":7},{"Mystery":1}],"scope_focus":{"/a":{"Session":7},"/b":"Gone"}}"#;
+        let state: Workspace = serde_json::from_str(saved).expect("one bad entry is not fatal");
+        assert_eq!(state.projects, ["/a"]);
+        assert_eq!(state.title_order, [TitleTab::Session(7)]);
+        assert_eq!(state.scope_focus.len(), 1);
+        assert_eq!(state.scope_focus["/a"], TitleTab::Session(7));
     }
 }

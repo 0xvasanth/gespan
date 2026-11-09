@@ -107,7 +107,6 @@ impl Shell {
         match tab {
             TitleTab::Session(id) => MenuTarget::Tab(*id),
             TitleTab::Pilot { id, .. } => MenuTarget::PilotTab(id.clone()),
-            TitleTab::Search => MenuTarget::SearchTab,
             TitleTab::App(view) => MenuTarget::AppTab(*view),
         }
     }
@@ -158,7 +157,6 @@ impl Shell {
                     None => (Face::Neutral, div().into_any_element(), "Pilot".into()),
                 }
             }
-            TitleTab::Search => (Face::Neutral, neutral("search", "Search"), "Search".into()),
             TitleTab::App(view) => (
                 Face::Neutral,
                 neutral(view.icon(), view.label()),

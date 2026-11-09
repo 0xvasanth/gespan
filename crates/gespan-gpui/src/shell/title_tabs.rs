@@ -87,7 +87,6 @@ impl Shell {
             .title_order
             .iter()
             .filter(|tab| match tab {
-                TitleTab::Search => !self.workspace.preferences.search_panel,
                 TitleTab::App(view) => {
                     (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
                         && (*view != app_views::AppView::Board || self.workspace.preferences.board)
@@ -127,9 +126,6 @@ impl Shell {
     pub(super) fn active_title_tab(&self, cx: &App) -> Option<TitleTab> {
         if let Some(view) = self.active_app_view {
             return Some(TitleTab::App(view));
-        }
-        if self.search_page() {
-            return Some(TitleTab::Search);
         }
         self.pilots
             .as_ref()
@@ -188,7 +184,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match tab {
-            TitleTab::Search => self.open_app_search(window, cx),
             TitleTab::App(view) => match view {
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),
@@ -358,10 +353,6 @@ impl Shell {
                 && self.active_app_view == Some(*view)
             {
                 self.leave_app_views(cx);
-            }
-            if *tab == TitleTab::Search {
-                self.leave_app_search(cx);
-                self.saved_search = None;
             }
             if let TitleTab::Session(id) = tab {
                 self.workspace.close(*id);

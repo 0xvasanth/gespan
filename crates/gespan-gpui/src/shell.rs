@@ -380,7 +380,6 @@ fn adjacent<T: PartialEq + Clone>(items: &[T], current: Option<&T>, step: isize)
 pub(crate) enum MenuTarget {
     Tab(i64),
     PilotTab(String),
-    SearchTab,
     AppTab(app_views::AppView),
     Session(i64),
     Folder(String),
@@ -1482,18 +1481,14 @@ impl Shell {
     }
     fn update_chat_visibility(&mut self, cx: &mut Context<Self>) {
         if let Some(inbox) = &self.inbox {
-            let active = self.active_app_view == Some(app_views::AppView::Inbox)
-                && self.settings.is_none()
-                && !self.search_page();
+            let active =
+                self.active_app_view == Some(app_views::AppView::Inbox) && self.settings.is_none();
             inbox.update(cx, |inbox, cx| inbox.set_active(active, cx));
         }
         // Every pane of the active tab is on screen, not just the focused one.
         let mut shown: HashSet<i64> = match self.workspace.active_tab() {
             Some(tab)
-                if !self.app_view_open()
-                    && self.settings.is_none()
-                    && !self.search_page()
-                    && !self.pilot_active(cx) =>
+                if !self.app_view_open() && self.settings.is_none() && !self.pilot_active(cx) =>
             {
                 self.workspace.layout(tab).leaf_ids().into_iter().collect()
             }
@@ -1505,7 +1500,6 @@ impl Shell {
             && self.workspace.right_panel_open
             && !self.app_view_open()
             && self.settings.is_none()
-            && !self.search_page()
         {
             shown.extend(
                 self.pilots
@@ -2122,7 +2116,6 @@ impl Shell {
         (self.workspace.right_panel_open || self.right_slide.is_some())
             && !self.app_view_open()
             && self.settings.is_none()
-            && !self.search_page()
             && (self.pilot_active(cx) || self.git.read(cx).available())
     }
     fn sync_right_panel(&mut self, cx: &mut Context<Self>) {
@@ -2131,7 +2124,6 @@ impl Shell {
             && self.workspace.right_panel_open
             && !self.app_view_open()
             && self.settings.is_none()
-            && !self.search_page()
             && !opening;
         if let Some(panel) = &self.right_panel {
             let terminal_tab = self.terminal_in_panel(cx);
@@ -5869,14 +5861,10 @@ impl Shell {
                 200.,
                 MenuStyle::Explorer,
             ),
-            MenuTarget::Tab(_)
-            | MenuTarget::PilotTab(_)
-            | MenuTarget::SearchTab
-            | MenuTarget::AppTab(_) => {
+            MenuTarget::Tab(_) | MenuTarget::PilotTab(_) | MenuTarget::AppTab(_) => {
                 let tab = match target {
                     MenuTarget::Tab(id) => TitleTab::Session(*id),
                     MenuTarget::PilotTab(id) => self.pilot_tab(id.clone()),
-                    MenuTarget::SearchTab => TitleTab::Search,
                     MenuTarget::AppTab(view) => TitleTab::App(*view),
                     _ => unreachable!(),
                 };
@@ -5940,7 +5928,6 @@ impl Shell {
                         "Tab actions for {}",
                         match &tab {
                             TitleTab::Session(id) => title(id),
-                            TitleTab::Search => "Search".into(),
                             TitleTab::App(view) => view.label().into(),
                             TitleTab::Pilot { id, .. } => self
                                 .pilots
@@ -6181,7 +6168,6 @@ impl Shell {
             MenuTarget::PilotTab(id) => {
                 self.run_title_tab_menu(self.pilot_tab(id), action, window, cx)
             }
-            MenuTarget::SearchTab => self.run_title_tab_menu(TitleTab::Search, action, window, cx),
             MenuTarget::AppTab(view) => {
                 self.run_title_tab_menu(TitleTab::App(view), action, window, cx)
             }
@@ -7942,7 +7928,7 @@ impl Shell {
         let source = match &id {
             TitleTab::Session(tab) => Some(DragSource::Tab(*tab)),
             TitleTab::Pilot { .. } => Some(DragSource::PilotTab),
-            TitleTab::Search | TitleTab::App(_) => None,
+            TitleTab::App(_) => None,
         };
         let was = self.pane_drag.is_some();
         self.pane_drag = source.filter(|_| armed).map(|source| PaneDrag {
@@ -8295,8 +8281,7 @@ impl Shell {
                 let (copy, ((leaving, dir, progress), shuffle)) = copies.remove(&id)?;
                 let active = self.workspace.active_tab() == Some(id)
                     && !self.app_view_open()
-                    && !self.pilot_active(cx)
-                    && !self.search_page();
+                    && !self.pilot_active(cx);
                 // The press itself redraws the strip to arm tab dragging.
                 // Keep its ink stable until that press is released, even if
                 // hover hitboxes are being replaced during that redraw.
@@ -8498,14 +8483,6 @@ impl Shell {
                     let element = self
                         .app_title_tab(*view, tab_width(tab), cx)
                         .left(shifts[ix]);
-                    Some(if dragged.as_ref() == Some(tab) {
-                        gpui::deferred(element).with_priority(1).into_any_element()
-                    } else {
-                        element.into_any_element()
-                    })
-                }
-                TitleTab::Search => {
-                    let element = self.search_title_tab(tab_width(tab), cx).left(shifts[ix]);
                     Some(if dragged.as_ref() == Some(tab) {
                         gpui::deferred(element).with_priority(1).into_any_element()
                     } else {
@@ -9202,10 +9179,6 @@ impl Render for Shell {
                 }
                 if let Some(view) = this.active_app_view.filter(|_| this.settings.is_none()) {
                     this.close_title_tabs(&[TitleTab::App(view)], None, window, cx);
-                    return;
-                }
-                if this.search_page() {
-                    this.close_search_tab(window, cx);
                     return;
                 }
                 if this.app_search.is_some() {

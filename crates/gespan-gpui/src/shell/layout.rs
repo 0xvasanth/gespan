@@ -165,9 +165,6 @@ impl Shell {
             self.remember_title_tab(self.pilot_tab(id));
             self.reveal_active_tab(cx);
         }
-        if let Some(search) = &self.app_search {
-            search.view.update(cx, |v, cx| v.set_classic(classic, cx));
-        }
         self.usage_footer
             .update(cx, |footer, cx| footer.set_classic(classic, cx));
         self.resources
@@ -437,10 +434,7 @@ impl Shell {
         self.workspace.boxy_layout()
     }
     fn corner_tabs_shown(&self) -> bool {
-        self.workspace.right_panel_open
-            && !self.app_view_open()
-            && self.settings.is_none()
-            && !self.search_page()
+        self.workspace.right_panel_open && !self.app_view_open() && self.settings.is_none()
     }
     /// Classic: the panel toggle holds the corner, spanning an open panel;
     /// the panel's own row of tabs switches its tools.
@@ -530,15 +524,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        if let Some(search) = self.app_search.as_ref().filter(|s| !s.panel) {
-            return div()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .flex()
-                .overflow_hidden()
-                .child(search.view.clone());
-        }
         if let Some(settings) = &self.settings {
             return div()
                 .flex_1()

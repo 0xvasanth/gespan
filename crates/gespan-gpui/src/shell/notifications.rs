@@ -427,7 +427,7 @@ impl Shell {
     }
 
     pub(super) fn notice_session_visible(&self, id: i64, cx: &App) -> bool {
-        if self.app_view_open() || self.settings.is_some() || self.search_page() {
+        if self.app_view_open() || self.settings.is_some() {
             return false;
         }
         if self.pilot_active(cx) {

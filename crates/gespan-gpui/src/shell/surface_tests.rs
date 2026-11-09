@@ -11,7 +11,6 @@ enum Surface {
     Flows,
     Board,
     Runs,
-    Search,
     Pilot,
 }
 
@@ -41,7 +40,6 @@ impl Surface {
                 )));
                 shell.open_runs(Default::default(), window, cx);
             }
-            Self::Search => shell.open_app_search(window, cx),
             Self::Pilot => {
                 let project = shell.workspace.project.clone();
                 let session = shell.workspace.active;
@@ -64,7 +62,6 @@ impl Surface {
             | Self::Flows
             | Self::Board
             | Self::Runs => shell.close_app_view(window, cx),
-            Self::Search => shell.close_app_search(window, cx),
             // Returning to a conversation is the same route used by opening
             // a Pilot's launched session.
             Self::Pilot => shell.open(session, window, cx),
@@ -214,7 +211,6 @@ fn app_surfaces_stay_tabbed_in_both_workspace_styles(cx: &mut TestAppContext) {
             Surface::Flows,
             Surface::Board,
             Surface::Runs,
-            Surface::Search,
             Surface::Pilot,
         ] {
             window
