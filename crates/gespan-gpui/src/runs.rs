@@ -75,8 +75,9 @@ pub(crate) fn status_chip(run: &AutomationRun) -> &'static str {
     }
 }
 
+/// Running or queued. An unknown status shows as Queued, so it counts too.
 fn live(status: &str) -> bool {
-    matches!(status, "pending" | "running")
+    !matches!(status, "succeeded" | "failed" | "cancelled" | "skipped")
 }
 
 /// The header counts: (running, including queued; started today; failed
@@ -210,17 +211,30 @@ impl Runs {
                 if this.generation != generation {
                     return;
                 }
-                this.loading = false;
-                match result {
-                    Ok((runs, automations)) => this.apply(runs, automations, cx),
-                    Err(error) => {
-                        this.error = Some(error);
-                        cx.notify();
-                    }
-                }
+                this.loaded(result, cx);
             });
         })
         .detach();
+    }
+
+    /// A refresh finished. A failure keeps the rows it had and says so.
+    pub(crate) fn loaded(
+        &mut self,
+        result: Result<(Vec<AutomationRun>, Vec<Automation>), String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.loading = false;
+        match result {
+            Ok((runs, automations)) => self.apply(runs, automations, cx),
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     pub(crate) fn apply(
@@ -280,10 +294,12 @@ impl Runs {
 
     /// Every project that has runs, ordered by name.
     pub(crate) fn projects(&self) -> Vec<String> {
+        // Keyed like the filter, so one folder spelled two ways is one chip.
+        let mut keys = std::collections::HashSet::new();
         let mut projects: Vec<String> = Vec::new();
         for run in &self.runs {
             if let Some(owner) = self.owners.get(&run.automation_id)
-                && !projects.contains(&owner.cwd)
+                && keys.insert(gespan_core::files::path_key(&owner.cwd))
             {
                 projects.push(owner.cwd.clone());
             }
@@ -535,6 +551,8 @@ impl Runs {
                             div()
                                 .text_size(px(11.))
                                 .text_color(content(0.45))
+                                .line_clamp(2)
+                                .text_ellipsis()
                                 .child(error),
                         )
                     }),
@@ -698,6 +716,21 @@ impl Render for Runs {
                                 "runs-count-failed",
                                 format!("{failed} failed today"),
                             )),
+                    )
+                    // Rows from the last good load stay; the failure is said.
+                    .when_some(
+                        self.error.clone().filter(|_| !self.runs.is_empty()),
+                        |d, error| {
+                            d.child(
+                                div()
+                                    .debug_selector(|| "runs-refresh-error".into())
+                                    .mt(px(-8.))
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.45))
+                                    .child(format!("Could not refresh runs: {error}")),
+                            )
+                        },
                     )
                     .child(self.filters(cx))
                     .child(self.panel(rows, today_start, cx)),

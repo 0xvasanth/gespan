@@ -1,5 +1,4 @@
 use super::*;
-use crate::workspace::{AppView, TitleTab, Workspace};
 use gespan_core::automations::{AutomationTrigger, AutomationUpsert};
 use gpui::TestAppContext;
 use std::{cell::RefCell, path::Path, rc::Rc};
@@ -98,11 +97,16 @@ fn counts_include_queued_as_running() {
         run("6", "a", "running", today - HOUR),
     ];
     assert_eq!(counts(&runs, today), (3, 4, 1));
+    // A status this build does not know shows as Queued, so it counts as
+    // running too.
+    let unknown = run("7", "a", "waiting", today + HOUR);
+    assert_eq!(status_chip(&unknown), "Queued");
+    assert_eq!(counts(&[unknown], today), (1, 1, 0));
     assert_eq!(counts(&[], today), (0, 0, 0));
 }
 
 #[test]
-fn rows_group_by_day_with_today_and_yesterday_named() {
+fn day_label_names_today_and_yesterday_and_dates_older_days() {
     let now = chrono::Local::now();
     let today = local_day_start(now.timestamp_millis());
     assert_eq!(day_label(today + HOUR, today), "Today");
@@ -284,25 +288,92 @@ fn open_thread_emits_open_session(cx: &mut TestAppContext) {
     assert_eq!(*opened.borrow(), vec!["42".to_string()]);
 }
 
-#[test]
-fn runs_tab_survives_restart() {
-    let mut state = Workspace {
-        project: "/work/gespan".into(),
-        ..Default::default()
-    };
-    state.open(7);
-    state.title_order.push(TitleTab::App(AppView::Runs));
-    state
-        .scope_focus
-        .insert("/work/gespan".into(), TitleTab::App(AppView::Runs));
-    let saved = serde_json::to_string(&state).unwrap();
+#[gpui::test]
+fn runs_shown_as_queued_stay_under_the_running_chip(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![
+                run("odd", "a", "waiting", 3_000),
+                run("queued", "a", "pending", 2_000),
+                run("done", "a", "succeeded", 1_000),
+            ],
+            vec![],
+            cx,
+        );
+        view.set_filter(
+            RunsFilter {
+                status: Some("running"),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(ids(&view.rows()), vec!["odd", "queued"]);
+    });
+}
 
-    let restored = Workspace::restore(Some(&saved), &[(7, "/work/gespan".into())], "/work");
-    assert_eq!(restored.tabs, vec![7]);
-    assert!(restored.title_order.contains(&TitleTab::App(AppView::Runs)));
-    assert_eq!(
-        restored.scope_focus.get("/work/gespan"),
-        Some(&TitleTab::App(AppView::Runs))
+#[gpui::test]
+fn one_project_spelled_two_ways_gets_one_chip(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    let alpha = project("alpha");
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![
+                run("1", "one", "succeeded", 2_000),
+                run("2", "two", "failed", 1_000),
+            ],
+            vec![
+                automation("one", "Triage", &alpha),
+                automation("two", "Release notes", &format!("{alpha}/")),
+            ],
+            cx,
+        );
+        assert_eq!(view.projects(), vec![alpha.clone()]);
+        // And that one chip keeps both automations' runs.
+        view.set_filter(
+            RunsFilter {
+                project: Some(alpha.clone()),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(ids(&view.rows()), vec!["1", "2"]);
+    });
+}
+
+#[gpui::test]
+fn a_failed_refresh_keeps_the_rows_and_says_so(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(vec![run("kept", "gone", "succeeded", 1_000)], vec![], cx)
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-refresh-error").is_none());
+
+    view.update(cx, |view, cx| {
+        view.loaded(Err("database is locked".into()), cx)
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(ids(&view.rows()), vec!["kept"], "the last good rows stay");
+        assert_eq!(view.error(), Some("database is locked"));
+    });
+    assert!(
+        cx.debug_bounds("runs-refresh-error").is_some(),
+        "the header says the refresh failed"
     );
-    assert_eq!(AppView::Runs.label(), "Runs");
+    assert!(cx.debug_bounds("runs-row-kept").is_some());
+
+    // The next good load clears it.
+    view.update(cx, |view, cx| {
+        view.loaded(
+            Ok((vec![run("new", "gone", "succeeded", 2_000)], vec![])),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-refresh-error").is_none());
 }

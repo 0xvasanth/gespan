@@ -538,6 +538,7 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
         "Board" => (0xD08CFF, 0xA13FD6),
+        "Runs" => (0x3CCFCF, 0x0E8A8A),
         _ => return None,
     };
     Some(rgb(if is_light() { light } else { dark }).into())
@@ -1115,7 +1116,15 @@ mod nav_tint_tests {
 
     /// Every row the sidebar can list, plus Search. Flows is hidden from
     /// the UI and keeps plain ink.
-    const TINTED: [&str; 6] = ["New", "Inbox", "Notes", "Search", "Automations", "Board"];
+    const TINTED: [&str; 7] = [
+        "New",
+        "Inbox",
+        "Notes",
+        "Search",
+        "Automations",
+        "Board",
+        "Runs",
+    ];
 
     #[test]
     fn every_navigation_row_gets_its_own_colour() {
@@ -1155,19 +1164,17 @@ mod nav_tint_tests {
                 AppView::Notes,
                 AppView::Automations,
                 AppView::Board,
+                AppView::Runs,
             ] {
                 let tint = nav_tint(view.label()).expect("page has a tint");
                 assert_eq!(nav_tile_ink(view.label()), tint, "{theme}: {view:?}");
             }
             assert_eq!(nav_tile_ink("Search"), nav_tint("Search").unwrap());
             // Pages without a tint keep the tile's own ink.
-            for view in [AppView::Flows, AppView::Runs] {
-                assert_eq!(
-                    nav_tile_ink(view.label()),
-                    crate::tab_tile::tile_ink(),
-                    "{theme}: {view:?}"
-                );
-            }
+            assert_eq!(
+                nav_tile_ink(AppView::Flows.label()),
+                crate::tab_tile::tile_ink()
+            );
         }
     }
 

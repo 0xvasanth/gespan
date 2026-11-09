@@ -61,10 +61,10 @@ impl TitleTab {
 }
 
 impl TitleTab {
-    /// Builds from before Flows reject an unknown `AppView` and with it the
-    /// whole saved workspace, so a Flows tab lives only while the app runs.
+    /// Older builds reject an unknown `AppView` and with it the whole saved
+    /// workspace, so Flows and Runs tabs live only while the app runs.
     fn saved(&self) -> bool {
-        *self != Self::App(AppView::Flows)
+        !matches!(self, Self::App(AppView::Flows | AppView::Runs))
     }
 }
 
@@ -100,6 +100,7 @@ pub(crate) struct Workspace {
     pub title_order: Vec<TitleTab>,
     /// Tabs pinned to the strip's left edge as icon cards, in pin order.
     /// Each stays in `title_order` too; this only marks and orders them.
+    #[serde(serialize_with = "save_title_order")]
     pub pinned_tabs: Vec<TitleTab>,
     #[serde(serialize_with = "save_scope_focus")]
     pub scope_focus: HashMap<String, TitleTab>,
@@ -1697,6 +1698,7 @@ mod tests {
         project: String,
         tabs: Vec<i64>,
         title_order: Vec<BeforeFlowsTab>,
+        pinned_tabs: Vec<BeforeFlowsTab>,
         scope_focus: HashMap<String, BeforeFlowsTab>,
     }
     #[derive(Deserialize, Debug, PartialEq)]
@@ -1764,6 +1766,66 @@ mod tests {
         );
         // The in-memory workspace keeps its Flows tab while the app runs.
         assert!(state.title_order.contains(&TitleTab::App(AppView::Flows)));
+    }
+
+    #[test]
+    fn a_saved_runs_tab_does_not_cost_an_older_build_its_workspace() {
+        let mut state = Workspace {
+            project: "/work/gespan".into(),
+            ..Default::default()
+        };
+        state.open(7);
+        state.title_order.push(TitleTab::App(AppView::Automations));
+        state.title_order.push(TitleTab::App(AppView::Runs));
+        state.title_order.push(TitleTab::App(AppView::Flows));
+        state.pinned_tabs.push(TitleTab::App(AppView::Runs));
+        state.pinned_tabs.push(TitleTab::App(AppView::Flows));
+        state.pinned_tabs.push(TitleTab::App(AppView::Automations));
+        state
+            .scope_focus
+            .insert("/work/gespan".into(), TitleTab::App(AppView::Runs));
+        state
+            .scope_focus
+            .insert("/work/other".into(), TitleTab::Session(7));
+        let saved = serde_json::to_string(&state).unwrap();
+
+        // A build that knows neither Runs nor Flows still reads the file.
+        let older: BeforeFlows = serde_json::from_str(&saved).expect("older build parses it");
+        assert_eq!(older.project, "/work/gespan");
+        assert_eq!(older.tabs, vec![7]);
+        assert_eq!(
+            older.title_order,
+            vec![
+                BeforeFlowsTab::Session(7),
+                BeforeFlowsTab::App(BeforeFlowsView::Automations)
+            ]
+        );
+        assert_eq!(
+            older.pinned_tabs,
+            vec![BeforeFlowsTab::App(BeforeFlowsView::Automations)]
+        );
+        assert_eq!(older.scope_focus.len(), 1);
+        assert_eq!(older.scope_focus["/work/other"], BeforeFlowsTab::Session(7));
+
+        // This build restores everything except the Runs tab.
+        let restored = Workspace::restore(Some(&saved), &[(7, "/work/gespan".into())], "/work");
+        assert_eq!(restored.project, "/work/gespan");
+        assert_eq!(restored.tabs, vec![7]);
+        assert!(
+            restored
+                .title_order
+                .contains(&TitleTab::App(AppView::Automations))
+        );
+        assert!(!restored.title_order.contains(&TitleTab::App(AppView::Runs)));
+        assert!(!restored.pinned_tabs.contains(&TitleTab::App(AppView::Runs)));
+        assert!(!restored.scope_focus.contains_key("/work/gespan"));
+        // The in-memory workspace keeps its open Runs tab until restart.
+        assert!(state.title_order.contains(&TitleTab::App(AppView::Runs)));
+        assert!(state.pinned_tabs.contains(&TitleTab::App(AppView::Runs)));
+        assert_eq!(
+            state.scope_focus["/work/gespan"],
+            TitleTab::App(AppView::Runs)
+        );
     }
 
     #[test]
