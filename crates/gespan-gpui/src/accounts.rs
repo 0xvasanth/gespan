@@ -696,6 +696,12 @@ impl Accounts {
             .map_or(Surface::Settings, |editor| editor.surface);
         self.start_auth(kind, id, action, adding, surface, cx);
     }
+    /// Whether a sign-in is still running, not finished or failed.
+    pub(crate) fn auth_in_progress(&self) -> bool {
+        self.signin
+            .as_ref()
+            .is_some_and(|s| !s.complete && s.error.is_none())
+    }
     pub(crate) fn begin_footer_auth(&mut self, kind: Kind, id: &str, cx: &mut Context<Self>) {
         self.start_auth(kind, id, AuthAction::SignIn, None, Surface::Footer, cx);
     }

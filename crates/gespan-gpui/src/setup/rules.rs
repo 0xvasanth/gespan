@@ -10,6 +10,14 @@ pub(crate) fn first_run(saved: Option<&str>, has_sessions: bool) -> bool {
     saved.is_none() && !has_sessions
 }
 
+/// Whether the saved workspace is partway through setup, as after quitting
+/// on a card.
+pub(crate) fn setup_pending(saved: Option<&str>) -> bool {
+    saved
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .is_some_and(|state| !state["setup"].is_null())
+}
+
 /// The saved workspace with setup pending on its first card.
 pub(crate) fn with_pending_setup(saved: Option<String>) -> String {
     let mut state = saved
@@ -83,6 +91,15 @@ mod tests {
         let ws = Workspace::restore(Some(&kept), &[], "/w");
         assert_eq!(ws.setup, Some(SetupStep::Welcome));
         assert!(ws.new_layout_prompt_dismissed);
+    }
+
+    #[test]
+    fn setup_stays_pending_across_a_relaunch() {
+        assert!(setup_pending(Some(&with_pending_setup(None))));
+        assert!(setup_pending(Some(r#"{"setup":"Project"}"#)));
+        assert!(!setup_pending(Some(r#"{"setup":null}"#)));
+        assert!(!setup_pending(Some("{}")));
+        assert!(!setup_pending(None));
     }
 
     #[test]

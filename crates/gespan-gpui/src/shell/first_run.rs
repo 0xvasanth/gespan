@@ -14,6 +14,9 @@ pub(super) struct SetupOverlay {
     /// The project open when "Folder on a machine…" was asked for; a change
     /// from it is the machine folder picked.
     remote_from: Option<String>,
+    /// Only setup on a fresh install drops the launch folder it didn't pick;
+    /// Run setup again leaves every project alone.
+    drop_launch: bool,
 }
 
 fn home() -> String {
@@ -23,10 +26,17 @@ fn home() -> String {
 }
 
 impl Shell {
+    /// Whether this window shows setup. Only the first window does; others
+    /// wait for it.
+    pub(super) fn setup_shows(&self) -> bool {
+        self.workspace.setup.is_some() && !self.secondary
+    }
+
     /// Opens setup on `step`, from a fresh install or Settings › General.
     pub(super) fn open_setup(
         &mut self,
         step: SetupStep,
+        drop_launch: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -59,6 +69,7 @@ impl Shell {
             view,
             _subscriptions: subscriptions,
             remote_from: None,
+            drop_launch,
         });
         if self.workspace.setup != Some(step) {
             self.workspace.setup = Some(step);
@@ -74,7 +85,7 @@ impl Shell {
             self.close_settings(window, cx);
         }
         self.setup = None;
-        self.open_setup(SetupStep::Welcome, window, cx);
+        self.open_setup(SetupStep::Welcome, false, window, cx);
     }
 
     fn on_setup_event(
@@ -120,14 +131,16 @@ impl Shell {
             }
             SetupEvent::SignIn(kind) => {
                 let project = self.workspace.project.clone();
+                // Tests never start a real provider login.
+                #[cfg(not(test))]
                 if let Some(accounts) = crate::accounts::get(cx) {
                     accounts.update(cx, |accounts, cx| {
                         let id = accounts.selected(*kind, &project).id;
                         accounts.begin_footer_auth(*kind, &id, cx);
                     });
-                } else {
-                    view.update(cx, |card, cx| card.sign_in_ended(cx));
                 }
+                let _ = (project, kind);
+                self.watch_sign_in(view.clone(), cx);
             }
             SetupEvent::Rescan => crate::installed_providers::probe(cx),
             SetupEvent::ChooseFolder => self.choose_setup_folder(view.clone(), cx),
@@ -140,6 +153,28 @@ impl Shell {
             SetupEvent::Finish(path) => self.finish_setup(path.clone(), window, cx),
         }
         cx.notify();
+    }
+
+    /// Clears the card's "Waiting for browser…" once no sign-in is running,
+    /// including one that failed, was cancelled or never started.
+    fn watch_sign_in(&mut self, view: Entity<SetupCard>, cx: &mut Context<Self>) {
+        let accounts = crate::accounts::get(cx);
+        cx.spawn(async move |_, cx| {
+            loop {
+                let running = accounts
+                    .as_ref()
+                    .map(|a| a.read_with(cx, |a, _| a.auth_in_progress()))
+                    .unwrap_or(false);
+                if !running {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+            }
+            let _ = view.update(cx, |card, cx| card.sign_in_ended(cx));
+        })
+        .detach();
     }
 
     fn choose_setup_folder(&mut self, view: Entity<SetupCard>, cx: &mut Context<Self>) {
@@ -162,7 +197,13 @@ impl Shell {
     }
 
     fn finish_setup(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let launch = self.setup_launch.clone();
+        let drop_launch = self.setup.as_ref().is_some_and(|s| s.drop_launch);
+        // Passing the picked folder as the launch folder drops nothing.
+        let launch = if drop_launch {
+            self.setup_launch.clone()
+        } else {
+            path.clone()
+        };
         let launch_has_sessions = self.session_summaries.values().any(|s| s.cwd == launch);
         self.remember_project_location(&path, cx);
         self.workspace
@@ -182,9 +223,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if !self.setup_shows() {
+            return None;
+        }
         let step = self.workspace.setup?;
         if self.setup.is_none() {
-            self.open_setup(step, window, cx);
+            self.open_setup(step, true, window, cx);
         }
         let setup = self.setup.as_mut()?;
         // A folder picked in the machine picker becomes the setup folder.

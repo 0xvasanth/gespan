@@ -87,13 +87,21 @@ impl SetupCard {
         card
     }
 
+    #[cfg(test)]
     pub(crate) fn step(&self) -> SetupStep {
         self.step
     }
 
     /// The look and agent choices the card shows.
+    #[cfg(test)]
     pub(crate) fn prefs(&self) -> &Preferences {
         &self.prefs
+    }
+
+    /// The agent whose sign-in is running.
+    #[cfg(test)]
+    pub(crate) fn signing_in(&self) -> Option<Kind> {
+        self.signing_in
     }
 
     /// The installed agents and what each says about sign-in.
@@ -150,7 +158,7 @@ impl SetupCard {
         cx.notify();
     }
 
-    pub(super) fn sign_in(&mut self, kind: Kind, cx: &mut Context<Self>) {
+    pub(crate) fn sign_in(&mut self, kind: Kind, cx: &mut Context<Self>) {
         if self.signing_in.is_some() {
             return;
         }

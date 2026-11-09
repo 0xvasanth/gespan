@@ -63,21 +63,35 @@ fn escape_and_scrim_clicks_leave_setup_open(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn shell_shortcuts_are_blocked_while_setup_is_open(cx: &mut TestAppContext) {
+    cx.update(super::bind_keys);
     let window = pending(cx, SetupStep::Welcome);
-    let count = |cx: &mut TestAppContext| {
+    let state = |cx: &mut TestAppContext| {
         window
-            .update(cx, |shell, _, _| shell.session_summaries.len())
+            .update(cx, |shell, _, _| {
+                (
+                    shell.session_summaries.len(),
+                    shell.settings.is_some(),
+                    shell.workspace.projects.clone(),
+                )
+            })
             .unwrap()
     };
-    let before = count(cx);
-    let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    visual.simulate_keystrokes(if cfg!(target_os = "macos") {
-        "cmd-t"
+    let before = state(cx);
+    let m = if cfg!(target_os = "macos") {
+        "cmd"
     } else {
-        "ctrl-t"
-    });
-    visual.run_until_parked();
-    assert_eq!(count(cx), before);
+        "ctrl"
+    };
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    for keys in ["t", "n", ",", "o", "w"] {
+        visual.simulate_keystrokes(&format!("{m}-{keys}"));
+        visual.run_until_parked();
+    }
+    assert_eq!(
+        state(cx),
+        before,
+        "no shortcut reaches the shell under the card"
+    );
     assert!(open(window, cx));
 }
 
@@ -197,4 +211,54 @@ fn run_setup_again_opens_welcome_with_current_values_and_keeps_projects(cx: &mut
         .unwrap();
     assert!(projects.contains(&"/work/gespan".to_string()));
     assert!(projects.contains(&"/work/another-project".to_string()));
+}
+
+#[gpui::test]
+fn run_setup_again_never_removes_a_project_without_sessions(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = super::tests::window(cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.setup_launch = "/work/unused".into();
+            shell.workspace.add_project("/work/unused");
+            shell.run_setup_again(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    emit(window, SetupEvent::Finish("/work/gespan".into()), cx);
+    let projects = window
+        .update(cx, |shell, _, _| shell.workspace.projects.clone())
+        .unwrap();
+    assert!(projects.contains(&"/work/unused".to_string()));
+}
+
+#[gpui::test]
+fn a_sign_in_that_never_starts_does_not_leave_the_card_waiting(cx: &mut TestAppContext) {
+    let window = pending(cx, SetupStep::Agents);
+    let card = window
+        .update(cx, |shell, _, _| shell.setup.as_ref().unwrap().view.clone())
+        .unwrap();
+    card.update(cx, |card, cx| card.sign_in(Kind::Codex, cx));
+    cx.run_until_parked();
+    assert_eq!(card.read_with(cx, |card, _| card.signing_in()), None);
+}
+
+#[gpui::test]
+fn a_second_window_does_not_show_setup(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = super::tests::window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.secondary = true;
+            shell.workspace.setup = Some(SetupStep::Welcome);
+            cx.notify();
+        })
+        .unwrap();
+    cx.refresh().unwrap();
+    cx.run_until_parked();
+    assert!(
+        window
+            .update(cx, |shell, _, _| shell.setup.is_none())
+            .unwrap()
+    );
 }

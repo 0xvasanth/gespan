@@ -483,6 +483,8 @@ fn main() {
     } else {
         saved
     };
+    // Until setup picks a project, the launch folder gets no thread.
+    let setup_pending = setup::rules::setup_pending(saved.as_deref());
     let existing_project = if use_gespan {
         saved
             .as_deref()
@@ -548,7 +550,7 @@ fn main() {
             .unwrap();
     }
     let mut sessions = db.sessions().expect("read native sessions");
-    if sessions.is_empty() && !first_run {
+    if sessions.is_empty() && !setup_pending {
         sessions.push(db.create("codex", &cwd).expect("create initial session"));
     }
     // Gather compact sidebar state before entering the platform event loop.

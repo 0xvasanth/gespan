@@ -9395,7 +9395,12 @@ impl Render for Shell {
             .relative()
             .role(Role::Application)
             .aria_label("Gespan")
-            .key_context("Workspace")
+            // While setup shows, no Workspace shortcut reaches the shell.
+            .key_context(if self.setup_shows() {
+                "Setup"
+            } else {
+                "Workspace"
+            })
             .track_focus(&self.focus)
             .capture_key_up(cx.listener(|this, _, _, _| this.archive_shortcut_held = false))
             .on_action(cx.listener(|this, _: &ArchiveSession, window, cx| {
