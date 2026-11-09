@@ -1,0 +1,27 @@
+scripts/fetch-sherpa-onnx.mjs
+  s_9d7815a51c4ef7::t_41786a77ef3aa6 1-153
+package.json
+  s_9d7815a51c4ef7::t_4caa78b1d2cff8 28
+.github/workflows/desktop-release.yml
+  s_9d7815a51c4ef7::t_4caa78b1d2cff8 94-104,153,254-260
+.github/workflows/ci.yml
+  s_9d7815a51c4ef7::t_4caa78b1d2cff8 55
+scripts/fetch-sherpa-onnx.test.mjs
+  s_9d7815a51c4ef7::t_f9227a5ae40689 1-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d83e004d70d449c4d6237288c6d7ae8414b065e6",
+  "prompts": {},
+  "sessions": {
+    "s_9d7815a51c4ef7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5ea2a3eb-d165-4fb0-ae50-c5638cf92fe0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
