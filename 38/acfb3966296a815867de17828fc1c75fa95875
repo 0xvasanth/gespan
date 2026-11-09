@@ -1,0 +1,19 @@
+crates/gespan-core/src/browser/toolkit.rs
+  s_c46fdbb3836a3e::t_4c770cfc49ea39 177-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38acfb3966296a815867de17828fc1c75fa95875",
+  "prompts": {},
+  "sessions": {
+    "s_c46fdbb3836a3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e915514-da88-41de-8a16-4bc233115273",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
