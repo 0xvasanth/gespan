@@ -12,7 +12,9 @@ pub(crate) enum SetupEvent {
     Step(SetupStep),
     /// A Look pick, applied live behind the card.
     Preferences(Box<Preferences>),
-    Layout { classic: bool },
+    Layout {
+        classic: bool,
+    },
     DefaultAgent(Kind),
     SignIn(Kind),
     Rescan,
@@ -89,6 +91,11 @@ impl SetupCard {
         self.step
     }
 
+    /// The installed agents and what each says about sign-in.
+    pub(crate) fn agents(&self) -> &[Agent] {
+        &self.agents
+    }
+
     /// Moves to `step` and tells the shell, so a relaunch resumes there.
     pub(super) fn go(&mut self, step: SetupStep, cx: &mut Context<Self>) {
         self.step = step;
@@ -114,7 +121,11 @@ impl SetupCard {
         self.go(SetupStep::Project, cx);
     }
 
-    pub(super) fn set_prefs(&mut self, change: impl FnOnce(&mut Preferences), cx: &mut Context<Self>) {
+    pub(super) fn set_prefs(
+        &mut self,
+        change: impl FnOnce(&mut Preferences),
+        cx: &mut Context<Self>,
+    ) {
         change(&mut self.prefs);
         cx.emit(SetupEvent::Preferences(Box::new(self.prefs.clone())));
         cx.notify();
@@ -169,8 +180,9 @@ impl SetupCard {
     /// thread whether it is signed in.
     pub(crate) fn refresh_agents(&mut self, cx: &mut Context<Self>) {
         let installed = crate::installed_providers::snapshot(cx);
-        let (found, missing): (Vec<Kind>, Vec<Kind>) =
-            Kind::ALL.into_iter().partition(|kind| installed.installed(*kind));
+        let (found, missing): (Vec<Kind>, Vec<Kind>) = Kind::ALL
+            .into_iter()
+            .partition(|kind| installed.installed(*kind));
         self.missing = missing;
         self.agents = found
             .iter()
@@ -215,7 +227,10 @@ impl SetupCard {
     #[cfg(test)]
     pub(crate) fn set_agents(&mut self, agents: Vec<Agent>, cx: &mut Context<Self>) {
         let found: Vec<Kind> = agents.iter().map(|a| a.kind).collect();
-        self.missing = Kind::ALL.into_iter().filter(|k| !found.contains(k)).collect();
+        self.missing = Kind::ALL
+            .into_iter()
+            .filter(|k| !found.contains(k))
+            .collect();
         self.agents = agents;
         cx.notify();
     }

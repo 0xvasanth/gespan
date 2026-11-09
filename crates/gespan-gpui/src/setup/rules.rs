@@ -104,7 +104,10 @@ mod tests {
     fn not_found_line_names_what_is_missing() {
         assert_eq!(not_found_line(&[]), "Every supported agent is installed");
         assert_eq!(not_found_line(&["Kiro"]), "Not found: Kiro");
-        assert_eq!(not_found_line(&["Grok", "Kiro"]), "Not found: Grok and Kiro");
+        assert_eq!(
+            not_found_line(&["Grok", "Kiro"]),
+            "Not found: Grok and Kiro"
+        );
         assert_eq!(
             not_found_line(&["Grok", "Omp", "Fx", "Hermes", "Devin", "Kiro"]),
             "Not found: Grok, Omp and 4 more"

@@ -37,7 +37,7 @@ pub(crate) fn well() -> Hsla {
     if is_light() {
         content(0.03)
     } else {
-        rgba(0xffffff06).into()
+        rgba(0xffffff09).into()
     }
 }
 /// Rules inside the card: the footer line and list separators.
@@ -89,7 +89,9 @@ fn glass(radius: f32) -> impl IntoElement {
 }
 
 /// The 720pt card: glass, a hairline edge, the long soft drop and the
-/// 28/40/28 padding. `top` is 36 on Welcome, 28 elsewhere.
+/// 28/40/28 padding. `top` is 36 on Welcome, 28 elsewhere. Add the card's
+/// blocks with `.child`: the glass layers are out of flow, so they take no
+/// gap.
 pub(crate) fn card(top: f32, gap: f32) -> Div {
     div()
         .relative()
@@ -113,16 +115,12 @@ pub(crate) fn card(top: f32, gap: f32) -> Div {
         )
         .text_color(content(1.))
         .text_size(px(14.))
-        .child(
-            div()
-                .relative()
-                .pt(px(top))
-                .px(px(40.))
-                .pb(px(28.))
-                .flex()
-                .flex_col()
-                .gap(px(gap)),
-        )
+        .pt(px(top))
+        .px(px(40.))
+        .pb(px(28.))
+        .flex()
+        .flex_col()
+        .gap(px(gap))
 }
 
 /// "Step N of 3", the three progress pills and, unless on Project, "Skip
@@ -139,18 +137,22 @@ pub(crate) fn header(step: usize, skip: Option<Stateful<Div>>) -> Div {
                 .child(SharedString::from(format!("Step {step} of 3"))),
         )
         .child(div().flex().gap(px(4.)).children((1..=3).map(|n| {
-            div()
-                .w(px(28.))
-                .h(px(4.))
-                .rounded_full()
-                .bg(if n <= step { violet() } else { content(0.14) })
+            div().w(px(28.)).h(px(4.)).rounded_full().bg(if n <= step {
+                violet()
+            } else {
+                content(0.14)
+            })
         })))
         .child(div().flex_1())
         .children(skip)
 }
 
 /// A text link styled control: "Skip setup", "Back".
-pub(crate) fn text_button(id: impl Into<ElementId>, label: &'static str, size: f32) -> Stateful<Div> {
+pub(crate) fn text_button(
+    id: impl Into<ElementId>,
+    label: &'static str,
+    size: f32,
+) -> Stateful<Div> {
     div()
         .id(id)
         .role(Role::Button)
@@ -182,7 +184,11 @@ pub(crate) fn lead(text: impl Into<SharedString>, size: f32, line: f32) -> Div {
 
 /// The light primary pill with the brand glow; dimmed and inert when
 /// `enabled` is false.
-pub(crate) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>, enabled: bool) -> Stateful<Div> {
+pub(crate) fn primary(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    enabled: bool,
+) -> Stateful<Div> {
     let label = label.into();
     let base = div()
         .id(id)
@@ -197,7 +203,11 @@ pub(crate) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>, 
     if enabled {
         base.cursor_pointer()
             .bg(content(0.92))
-            .text_color(if is_light() { white(1.) } else { rgb(0x111111).into() })
+            .text_color(if is_light() {
+                white(1.)
+            } else {
+                rgb(0x111111).into()
+            })
             .shadow(vec![
                 gpui::BoxShadow::new(px(0.), px(0.), rgba(0xaf97fa59).into()).spread_radius(px(1.)),
                 gpui::BoxShadow::new(px(0.), px(8.), rgba(0x8f64f673).into()).blur_radius(px(32.)),
@@ -249,7 +259,9 @@ pub(crate) fn radio(on: bool) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .when(on, |d| d.child(div().size(px(8.)).rounded_full().bg(violet())))
+        .when(on, |d| {
+            d.child(div().size(px(8.)).rounded_full().bg(violet()))
+        })
 }
 
 /// A 7pt status dot.

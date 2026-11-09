@@ -32,7 +32,14 @@ pub(crate) fn open(step: SetupStep, launch: &str, cx: &mut TestAppContext) -> Op
             },
             |_, cx| {
                 cx.new(|cx| {
-                    SetupCard::new(step, Preferences::default(), false, launch, "/Users/a".into(), cx)
+                    SetupCard::new(
+                        step,
+                        Preferences::default(),
+                        false,
+                        launch,
+                        "/Users/a".into(),
+                        cx,
+                    )
                 })
             },
         )
@@ -41,11 +48,17 @@ pub(crate) fn open(step: SetupStep, launch: &str, cx: &mut TestAppContext) -> Op
     let card = window.root(cx).unwrap();
     let sink = events.clone();
     cx.update(|cx| {
-        cx.subscribe(&card, move |_, event: &SetupEvent, _| sink.borrow_mut().push(event.clone()))
-            .detach();
+        cx.subscribe(&card, move |_, event: &SetupEvent, _| {
+            sink.borrow_mut().push(event.clone())
+        })
+        .detach();
     });
     cx.run_until_parked();
-    Opened { window, card, events }
+    Opened {
+        window,
+        card,
+        events,
+    }
 }
 
 /// Clicks the element tagged with debug selector `selector`.
