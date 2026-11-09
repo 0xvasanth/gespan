@@ -642,14 +642,18 @@ impl BrowserHost {
             // A browser that stopped reading must not hold the switch: the
             // page cleanup below would queue behind its stalled write.
             self.link.abort_if_write_stalled(link::STALL_GRACE);
-            if self.link.is_open() && !self.policy.read().user_tab_targets().is_empty() {
+            // Only the Gespan browser stays up for them; the user's own
+            // browser (Attach, which no Gespan path reaches) is let go of
+            // as before.
+            if self.link.is_open()
+                && self.connected_to_managed()
+                && !self.policy.read().user_tab_targets().is_empty()
+            {
                 // The user's own tabs are theirs, not the agents': they stay
                 // open and the browser keeps running for them. Only what the
                 // agents held is detached, and in the Gespan browser closed.
                 targets::detach_sessions(&self.link, &detach);
-                if self.connected_to_managed() {
-                    self.close_owned_targets(&agent_pages);
-                }
+                self.close_owned_targets(&agent_pages);
                 self.emit_state();
                 return;
             }
@@ -1922,6 +1926,7 @@ impl BrowserHost {
         if let Some(lease) = self.policy.write().lease_mut(&handle.tab) {
             lease.from_user = false;
             lease.user_tab = user_tab;
+            lease.user_driven = user_tab;
         }
         self.adopted(&handle, session, &free, Actor::User);
         self.close_startup_pages();
@@ -2274,6 +2279,13 @@ impl BrowserHost {
         }
     }
 
+    /// Who acted last in `tab`: the user (its pane) or an agent.
+    fn mark_driver(&self, tab: &TabId, user: bool) {
+        if let Some(lease) = self.policy.write().lease_mut(tab) {
+            lease.user_driven = user;
+        }
+    }
+
     /// The panel's Back, Forward or Reload, in `tab`.
     pub fn live_navigate(
         &self,
@@ -2282,6 +2294,7 @@ impl BrowserHost {
         nav: &live::LiveNav,
     ) -> Result<(), String> {
         let target = self.held_tab(session, tab)?;
+        self.mark_driver(tab, true);
         live::navigate(&self.link, &target, nav)
     }
 
@@ -2293,6 +2306,7 @@ impl BrowserHost {
         input: &live::LiveInput,
     ) -> Result<(), String> {
         let target = self.held_tab(session, tab)?;
+        self.mark_driver(tab, true);
         if let Some(control) = self
             .live
             .lock()
@@ -2756,6 +2770,11 @@ impl BrowserHost {
             }
             thread::sleep(Duration::from_millis(20));
         };
+        // From now on what the tab opens is the agent's doing, until the
+        // user acts in it again (see `Lease::user_driven`).
+        if let Some(tab) = ctx.tab.as_ref() {
+            self.mark_driver(tab, false);
+        }
         let commands_before = self.link.commands_sent();
         let mut result = self.run_action(&ctx, kind, &request.input, commands_before);
         self.policy.write().end_action(slot);
@@ -3865,12 +3884,11 @@ mod tests {
     #[test]
     fn switching_off_ends_agent_tabs_but_keeps_the_users_own_tab_usable() {
         let server = FakeCdp::start();
-        let dir = profile_for(&server);
-        let host = BrowserHost::for_tests(settings_for(&dir));
+        let (host, dir) = managed_host(&server, AccessMode::Always);
         host.set_toggle(true);
-        assert!(wait_state(&host, ConnectionState::Connected));
         host.turn_started("s1", "main", "/repo", Some(true));
         let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        assert!(host.connection().browser.unwrap().managed);
         let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
         assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
         let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
@@ -3882,6 +3900,7 @@ mod tests {
             "{listed}"
         );
         let agent_session = lease_of(&host, &agent).cdp_session.unwrap();
+        let agent_target = lease_of(&host, &agent).target_id;
 
         host.set_toggle(false);
         assert_eq!(lease_of(&host, &agent).state, TabState::Revoked);
@@ -3891,6 +3910,12 @@ mod tests {
         assert!(server.wait_for(
             |all| all.iter().any(|r| r.method == "Target.detachFromTarget"
                 && r.params["sessionId"] == agent_session.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        // In the Gespan browser the agent's page itself closes.
+        assert!(server.wait_for(
+            |all| all.iter().any(|r| r.method == "Target.closeTarget"
+                && r.params["targetId"] == agent_target.0.as_str()),
             Duration::from_secs(5),
         ));
         // Still the user's to use: the pane's Reload goes through...
@@ -3917,6 +3942,107 @@ mod tests {
                     && r.params["targetId"] == target.0.as_str()),
             Duration::from_secs(5),
         ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The lease of the page `target` once the pump adopted it.
+    fn adopted_lease(host: &BrowserHost, target: &str) -> policy::Lease {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let found = host
+                .policy()
+                .read()
+                .leases()
+                .find(|l| l.target_id.0 == target && l.state == TabState::Open)
+                .cloned();
+            if let Some(lease) = found {
+                return lease;
+            }
+            assert!(Instant::now() < deadline, "{target} was not adopted");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn open_popup(server: &FakeCdp, opener: &TargetId, target: &str) {
+        server.emit(
+            "Target.targetCreated",
+            json!({ "targetInfo": { "targetId": target, "type": "page", "url": format!("https://{target}/"), "title": "", "attached": false, "openerId": opener.0 } }),
+            None,
+        );
+    }
+
+    /// Security: a page an agent's action opens from the user's own tab is
+    /// the agent's, so it ends with the switch and keeps nothing running; a
+    /// page the user's own input there opens is the user's.
+    #[test]
+    fn popups_of_the_users_tab_belong_to_whoever_acted_in_it_last() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let opener = lease_of(&host, &own).target_id;
+
+        // An agent acts in the user's tab (switch on, turn carries it)...
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        // ...so the page it opens next is the agent's.
+        open_popup(&server, &opener, "TAGENT");
+        let agents = adopted_lease(&host, "TAGENT");
+        assert!(!agents.user_tab, "an agent-caused popup is the agent's");
+
+        // The user's own input in the pane makes the next popup theirs.
+        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+            .unwrap();
+        open_popup(&server, &opener, "TUSER");
+        assert!(adopted_lease(&host, "TUSER").user_tab);
+
+        host.set_toggle(false);
+        assert_eq!(lease_of(&host, &agents.tab).state, TabState::Revoked);
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == "TAGENT"),
+            Duration::from_secs(5),
+        ));
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Security: with only pages an agent caused left (the user's own tab
+    /// closed), switching off closes the link and the browser as before.
+    #[test]
+    fn agent_popups_alone_do_not_keep_the_browser_after_switching_off() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let opener = lease_of(&host, &own).target_id;
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        open_popup(&server, &opener, "TAGENT");
+        assert!(!adopted_lease(&host, "TAGENT").user_tab);
+        host.close_tab_by_user(&own).unwrap();
+
+        host.set_toggle(false);
+        assert!(!host.link().is_open(), "nothing of the user's is left");
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The user's own browser (Attach: upstream code no Gespan path reaches)
+    /// is let go of on OFF even with a user tab open in it.
+    #[test]
+    fn switching_off_lets_go_of_an_attached_browser_even_with_a_users_tab() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.open_user_tab("s1", "https://example.com/").unwrap();
+        host.set_toggle(false);
+        assert!(!host.link().is_open());
+        assert_eq!(host.connection().state, ConnectionState::Off);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

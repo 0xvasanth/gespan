@@ -135,6 +135,11 @@ pub struct Lease {
     /// is on and the thread's turn carries the browser it is a session tab
     /// like any other; [`PolicyState::admit`] treats it no differently.
     pub user_tab: bool,
+    /// The last one to act in the tab was the user (opening it, or input and
+    /// navigation in its pane), not an agent's action. Only then is a popup
+    /// of a [`Self::user_tab`] the user's too: a page an agent's click opens
+    /// is the agent's, and ends with the switch like any agent tab.
+    pub user_driven: bool,
     /// The user took this tab back (Settings "Take the tab back"). A lease
     /// revoked any other way keeps its page from other sessions until then.
     pub released: bool,
@@ -1286,6 +1291,7 @@ mod tests {
             busy_action: 0,
             from_user: false,
             user_tab: false,
+            user_driven: false,
             released: false,
             snapshot_version: 0,
             pending_dialog: None,

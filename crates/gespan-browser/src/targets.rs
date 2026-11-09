@@ -227,6 +227,7 @@ fn new_lease(
         busy_action: 0,
         from_user: false,
         user_tab: false,
+        user_driven: false,
         released: false,
         snapshot_version: 0,
         pending_dialog: None,
@@ -1291,7 +1292,7 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
                 let opener = state
                     .lease(&parent_tab)
                     .filter(|l| l.is_live() && l.owner == owner)
-                    .map(|l| l.user_tab);
+                    .map(|l| l.user_tab && l.user_driven);
                 if let Some(user_tab) = opener {
                     let mut lease = new_lease(
                         &state,
@@ -1302,8 +1303,10 @@ fn on_attached(link: &Link, parent: &CdpSessionId, params: &Value, notify: &dyn 
                         info["url"].as_str().unwrap_or(""),
                         info["title"].as_str().unwrap_or(""),
                     );
-                    // A popup of the user's own tab is theirs as well.
+                    // A popup the user caused in their own tab is theirs as
+                    // well; one an agent's action opened is the agent's.
                     lease.user_tab = user_tab;
+                    lease.user_driven = user_tab;
                     Some(state.insert_lease(lease))
                 } else {
                     None
@@ -2006,9 +2009,10 @@ mod tests {
         link.close(Vec::new(), Duration::from_millis(200));
     }
 
-    /// A page the user's own tab opens is theirs too: it stays when the
-    /// switch goes off, like its opener. An agent tab's popup stays the
-    /// agent's.
+    /// A page the user's own tab opens while the user drives it is theirs
+    /// too: it stays when the switch goes off, like its opener. An agent
+    /// tab's popup, or one opened after an agent acted in the user's tab,
+    /// is the agent's.
     #[test]
     fn popups_of_the_users_own_tab_are_the_users() {
         let server = navigating_fake();
@@ -2020,7 +2024,12 @@ mod tests {
         let own = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
         let ctx = admit(&policy, ActionKind::TabsOpen, None);
         let agent = open_tab(&link, &ctx, None, WaitUntil::Load, false).unwrap();
-        policy.write().lease_mut(&own.handle.tab).unwrap().user_tab = true;
+        {
+            let mut state = policy.write();
+            let lease = state.lease_mut(&own.handle.tab).unwrap();
+            lease.user_tab = true;
+            lease.user_driven = true;
+        }
         let popup_of = |opener: &TabHandle, target: &str| {
             server.emit(
                 "Target.targetCreated",
@@ -2043,6 +2052,13 @@ mod tests {
         };
         assert!(popup_of(&own.handle, "TUPOP"));
         assert!(!popup_of(&agent.handle, "TAPOP"));
+        // An agent acted in the user's tab last: what it opens is the agent's.
+        policy
+            .write()
+            .lease_mut(&own.handle.tab)
+            .unwrap()
+            .user_driven = false;
+        assert!(!popup_of(&own.handle, "TAPOP2"));
         link.close(Vec::new(), Duration::from_millis(200));
     }
 

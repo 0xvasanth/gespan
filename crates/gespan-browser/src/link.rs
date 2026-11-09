@@ -1694,6 +1694,7 @@ mod tests {
             busy_action: 0,
             from_user: false,
             user_tab: false,
+            user_driven: false,
             released: false,
             snapshot_version: 0,
             pending_dialog: None,
