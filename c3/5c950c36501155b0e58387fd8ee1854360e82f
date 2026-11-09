@@ -1,0 +1,24 @@
+docs/design/first-run-setup.md
+  s_97573b51d9fe22::t_079f4a9d338151 176
+  s_97573b51d9fe22::t_8526e894385dda 182-184
+  s_97573b51d9fe22::t_e4932de9e2ff3a 144-146,148-149,153-155
+docs/design/first-run-setup-plan.md
+  s_97573b51d9fe22::t_8239424274d3f6 1-188,192-245
+  s_97573b51d9fe22::t_25fd14c9ba3a1e 189-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c35c950c36501155b0e58387fd8ee1854360e82f",
+  "prompts": {},
+  "sessions": {
+    "s_97573b51d9fe22": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a87849f-c4fa-4794-89a4-0cb887032f3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
