@@ -230,6 +230,13 @@ impl Automations {
         self.appearances = appearances;
         cx.notify();
     }
+    /// The name of the automation `id`, once the list has loaded it.
+    pub(crate) fn automation_name(&self, id: &str) -> Option<String> {
+        self.automations
+            .iter()
+            .find(|automation| automation.id == id)
+            .map(|automation| automation.name.clone())
+    }
     fn project_label(&self, path: &str) -> String {
         self.appearances
             .get(path)

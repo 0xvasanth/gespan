@@ -377,3 +377,99 @@ fn a_failed_refresh_keeps_the_rows_and_says_so(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.debug_bounds("runs-refresh-error").is_none());
 }
+
+#[gpui::test]
+fn an_automations_runs_load_even_when_older_than_the_latest_200(cx: &mut TestAppContext) {
+    let service = service();
+    let old = save(&service, &project("alpha"), "Old and quiet");
+    let busy: Vec<String> = ["One", "Two", "Three"]
+        .iter()
+        .map(|name| save(&service, &project("beta"), name))
+        .collect();
+    let base = now_ms() - 1_000_000;
+    let mut quiet = Vec::new();
+    for offset in 0..3 {
+        quiet.push(run_now(&service, &old, base + offset));
+    }
+    // Three busy automations push past the 200 latest runs.
+    for step in 0..100 {
+        for (index, id) in busy.iter().enumerate() {
+            run_now(&service, id, base + 10_000 + step * 10 + index as i64);
+        }
+    }
+    let view = cx.new(|cx| Runs::new(service.clone(), cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.rows().len(), LIMIT, "the latest 200 of everything");
+        assert!(view.rows().iter().all(|row| !quiet.contains(&row.id)));
+    });
+    // "See all in Runs" for the quiet one lists exactly its own runs.
+    view.update(cx, |view, cx| {
+        view.set_filter(
+            RunsFilter {
+                automation: Some(old.clone()),
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        let mut shown: Vec<_> = ids(&view.rows()).into_iter().map(String::from).collect();
+        shown.sort();
+        quiet.sort();
+        assert_eq!(shown, quiet);
+    });
+    // Clearing goes back to the latest 200.
+    view.update(cx, |view, cx| view.set_filter(RunsFilter::default(), cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.rows().len(), LIMIT));
+}
+
+#[gpui::test]
+fn the_automation_chip_is_not_deleted_while_the_first_load_is_in_flight(cx: &mut TestAppContext) {
+    let service = service();
+    let id = save(&service, &project("alpha"), "Triage");
+    let view = cx.new(|cx| Runs::new(service.clone(), cx));
+    // Before the load lands: the carried name, or none, never "Deleted".
+    view.update(cx, |view, cx| {
+        view.set_filter(
+            RunsFilter {
+                automation: Some(id.clone()),
+                automation_name: Some("Triage".into()),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(view.automation_label().as_deref(), Some("Triage"));
+        view.set_filter(
+            RunsFilter {
+                automation: Some(id.clone()),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(view.automation_label().as_deref(), Some(""));
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.automation_label().as_deref(), Some("Triage"));
+    });
+    // Loaded, and the automation is not there: now it is gone.
+    view.update(cx, |view, cx| {
+        view.set_filter(
+            RunsFilter {
+                automation: Some("missing".into()),
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            view.automation_label().as_deref(),
+            Some("Deleted automation")
+        );
+    });
+}

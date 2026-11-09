@@ -615,10 +615,12 @@ impl Shell {
             self.app_view_events.push(cx.subscribe_in(
                 &view,
                 window,
-                |this, _, event: &automations::OpenRuns, window, cx| {
+                |this, view, event: &automations::OpenRuns, window, cx| {
+                    let automation_name = view.read(cx).automation_name(&event.automation);
                     this.open_runs(
                         runs::RunsFilter {
                             automation: Some(event.automation.clone()),
+                            automation_name,
                             ..Default::default()
                         },
                         window,
@@ -698,12 +700,17 @@ impl Shell {
         }
     }
 
-    /// Opens Runs keeping the filter it last showed.
+    /// Opens Runs keeping the project and status it last showed; one
+    /// automation's filter belongs to "See all in Runs" and is dropped.
     pub(super) fn show_runs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let filter = self
             .runs
             .as_ref()
-            .map(|view| view.read(cx).filter().clone())
+            .map(|view| runs::RunsFilter {
+                automation: None,
+                automation_name: None,
+                ..view.read(cx).filter().clone()
+            })
             .unwrap_or_default();
         self.open_runs(filter, window, cx);
     }

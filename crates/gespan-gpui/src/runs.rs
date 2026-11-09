@@ -31,6 +31,9 @@ pub(crate) struct RunsFilter {
     /// A run status; `running` also keeps queued (`pending`) runs.
     pub status: Option<&'static str>,
     pub automation: Option<String>,
+    /// The name of `automation`, shown on its chip until the first load
+    /// resolves it.
+    pub automation_name: Option<String>,
 }
 
 pub(crate) enum Event {
@@ -196,11 +199,17 @@ impl Runs {
         self.generation += 1;
         let generation = self.generation;
         let service = self.service.clone();
+        // One automation's own kept history reaches back past the latest 200
+        // runs of everything.
+        let automation = self.filter.automation.clone();
         let work = cx.background_executor().spawn(async move {
             let mut service = service
                 .lock()
                 .map_err(|_| "Automations are unavailable".to_string())?;
-            let runs = service.recent_runs(LIMIT)?;
+            let runs = match &automation {
+                Some(id) => service.runs(id)?,
+                None => service.recent_runs(LIMIT)?,
+            };
             let automations = service.list()?;
             Ok::<_, String>((runs, automations))
         });
@@ -264,7 +273,11 @@ impl Runs {
 
     pub(crate) fn set_filter(&mut self, filter: RunsFilter, cx: &mut Context<Self>) {
         if self.filter != filter {
+            let reload = self.filter.automation != filter.automation;
             self.filter = filter;
+            if reload {
+                self.refresh(cx);
+            }
             cx.notify();
         }
     }
@@ -427,6 +440,18 @@ impl Runs {
             .into_any_element()
     }
 
+    /// What the automation chip names: the automation's own name, the one
+    /// the filter carried while the first load is in flight, and only once
+    /// loaded without it, "Deleted automation".
+    pub(crate) fn automation_label(&self) -> Option<String> {
+        let id = self.filter.automation.as_ref()?;
+        Some(match self.owners.get(id) {
+            Some(owner) => owner.name.clone(),
+            None if self.loading => self.filter.automation_name.clone().unwrap_or_default(),
+            None => "Deleted automation".to_string(),
+        })
+    }
+
     fn filters(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.filter.clone();
         let mut projects = vec![self.chip(
@@ -476,11 +501,7 @@ impl Runs {
         .collect::<Vec<_>>();
         // A filter set from an automation's page shows what it keeps and the
         // way back to every automation.
-        let automation = current.automation.clone().map(|id| {
-            let name = self
-                .owners
-                .get(&id)
-                .map_or_else(|| "Deleted automation".to_string(), |o| o.name.clone());
+        let automation = self.automation_label().map(|name| {
             self.chip(
                 "runs-filter-automation".into(),
                 format!("{name}  \u{d7}"),

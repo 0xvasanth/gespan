@@ -1161,7 +1161,49 @@ fn see_all_in_runs_opens_runs_filtered_to_that_automation(cx: &mut TestAppContex
                 };
                 view.set_filter(cleared, cx);
             });
+        })
+        .unwrap();
+    // Every automation's runs load again.
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
             assert_eq!(view.read(cx).rows().len(), 2);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn the_sidebar_runs_entry_drops_the_automation_filter(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let first = scheduled_due(&data, 20_000);
+    scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_runs(
+                crate::runs::RunsFilter {
+                    automation: Some(first.clone()),
+                    status: Some("failed"),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, window, cx| shell.show_runs(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
+            let filter = view.read(cx).filter().clone();
+            assert_eq!(filter.automation, None, "back to every automation");
+            assert_eq!(filter.status, Some("failed"), "the rest is kept");
         })
         .unwrap();
 }
