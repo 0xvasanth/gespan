@@ -633,6 +633,29 @@ fn has_event_trigger(automation: &Automation, kind: &str, event: &str) -> bool {
     }
 }
 
+/// Runs per local calendar day, oldest first; the last element is the day of
+/// `now`. Runs outside the window (older, or after `now`'s day) are ignored.
+pub fn runs_per_day(runs: &[AutomationRun], days: usize, now: i64) -> Vec<usize> {
+    let mut counts = vec![0; days];
+    let local_date = |at: i64| {
+        chrono::DateTime::from_timestamp_millis(at)
+            .map(|time| time.with_timezone(&Local).date_naive())
+    };
+    let Some(today) = local_date(now) else {
+        return counts;
+    };
+    for run in runs {
+        let Some(date) = local_date(run.created_at) else {
+            continue;
+        };
+        let ago = (today - date).num_days();
+        if ago >= 0 && (ago as usize) < days {
+            counts[days - 1 - ago as usize] += 1;
+        }
+    }
+    counts
+}
+
 fn list_runs(conn: &Connection, automation_id: &str) -> Result<Vec<AutomationRun>, String> {
     let mut statement = conn
         .prepare(
@@ -800,6 +823,33 @@ impl Service {
         conn.execute("DELETE FROM automations WHERE id = ?1", [id])
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// The latest runs across every automation, newest first. `limit` is
+    /// clamped to 1..=500.
+    pub fn recent_runs(&mut self, limit: usize) -> Result<Vec<AutomationRun>, String> {
+        let limit = limit.clamp(1, 500) as i64;
+        let conn = self.lock_conn()?;
+        let mut statement = conn
+            .prepare(
+                "SELECT run_json FROM automation_runs
+                 ORDER BY created_at DESC, id DESC LIMIT ?1",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([limit], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        let mut runs = rows
+            .map(|row| {
+                let value = row.map_err(|error| error.to_string())?;
+                serde_json::from_str::<AutomationRun>(&value).map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Launch prompts are only needed by restart recovery.
+        for run in &mut runs {
+            run.prompt = None;
+        }
+        Ok(runs)
     }
 
     pub fn runs(&mut self, automation_id: &str) -> Result<Vec<AutomationRun>, String> {
@@ -1617,6 +1667,76 @@ mod tests {
         chrono::DateTime::from_timestamp_millis(at)
             .unwrap()
             .to_rfc3339()
+    }
+
+    #[test]
+    fn recent_runs_spans_automations_newest_first() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let first = save(&mut service, vec![]);
+        let second = save(&mut service, vec![]);
+        let base = now_millis();
+        let a1 = service.run_now(&first.id, base + 1_000).unwrap();
+        let b1 = service.run_now(&second.id, base + 2_000).unwrap();
+        let a2 = service.run_now(&first.id, base + 3_000).unwrap();
+        let b2 = service.run_now(&second.id, base + 4_000).unwrap();
+        let recent = service.recent_runs(3).unwrap();
+        let ids: Vec<&str> = recent.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(ids, [b2.id.as_str(), a2.id.as_str(), b1.id.as_str()]);
+        assert!(!ids.contains(&a1.id.as_str()));
+        assert_eq!(service.recent_runs(500).unwrap().len(), 4);
+        // A zero limit is clamped up to one rather than returning nothing.
+        assert_eq!(service.recent_runs(0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn recent_runs_keeps_runs_of_deleted_automations() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(&mut service, vec![]);
+        service.run_now(&automation.id, now_millis()).unwrap();
+        assert_eq!(service.recent_runs(10).unwrap().len(), 1);
+        service.delete(&automation.id).unwrap();
+        // The connection enables foreign keys and `automation_runs.automation_id`
+        // is ON DELETE CASCADE, so deleting an automation removes its runs: they
+        // do not outlive it. (Relevant to the Runs page: no orphan rows.)
+        assert!(service.recent_runs(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn runs_per_day_buckets_by_local_day() {
+        let day = |offset: i64, time: &str| {
+            let date = Local::now().date_naive() + chrono::Duration::days(offset);
+            local_at(&format!("{}T{time}", date.format("%Y-%m-%d")))
+        };
+        let make = |created_at: i64| {
+            AutomationRun {
+            id: format!("run-{created_at}"),
+            automation_id: "a".into(),
+            created_at,
+            ..serde_json::from_str::<AutomationRun>(
+                r#"{"id":"x","automationId":"a","trigger":"manual","scheduledFor":0,"createdAt":0,"status":"succeeded"}"#,
+            )
+            .unwrap()
+        }
+        };
+        let runs = vec![
+            make(day(0, "00:30:00")),
+            make(day(0, "23:30:00")),
+            make(day(-1, "12:00:00")),
+            make(day(-7, "12:00:00")),
+        ];
+        let now = day(0, "12:00:00");
+        let counts = runs_per_day(&runs, 7, now);
+        assert_eq!(counts.len(), 7);
+        assert_eq!(counts[6], 2, "today");
+        assert_eq!(counts[5], 1, "yesterday");
+        assert_eq!(counts[..5].iter().sum::<usize>(), 0);
+        // Eight days ago is outside a seven-day window; a future run is ignored.
+        let mut more = runs.clone();
+        more.push(make(day(1, "12:00:00")));
+        assert_eq!(runs_per_day(&more, 7, now), counts);
+        assert!(runs_per_day(&runs, 0, now).is_empty());
     }
 
     #[test]
