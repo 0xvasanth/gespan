@@ -863,6 +863,20 @@ impl Render for BrowserPane {
                         MouseButton::Middle,
                         cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event, cx)),
                     )
+                    // A button pressed over the page and let go anywhere
+                    // else still lets go in the page, or it stays in a drag.
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseUpEvent, _, _| this.release_out(event)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseUpEvent, _, _| this.release_out(event)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Middle,
+                        cx.listener(|this, event: &MouseUpEvent, _, _| this.release_out(event)),
+                    )
                     .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, _| {
                         this.mouse(
                             MouseEvent::Moved,
@@ -907,6 +921,20 @@ impl BrowserPane {
     }
 
     fn release(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
+        self.let_go(event);
+        cx.stop_propagation();
+    }
+
+    /// A button let go outside the stage: the page lets go of it too, at
+    /// the edge of the picture nearest the pointer, when it went down over
+    /// the picture. Anywhere else's buttons are not the page's.
+    fn release_out(&mut self, event: &MouseUpEvent) {
+        if button_of(event.button).is_some_and(|(_, bit)| self.buttons & bit != 0) {
+            self.let_go(event);
+        }
+    }
+
+    fn let_go(&mut self, event: &MouseUpEvent) {
         let Some((button, bit)) = button_of(event.button) else {
             return;
         };
@@ -918,7 +946,9 @@ impl BrowserPane {
             event.click_count.max(1),
             &event.modifiers,
         );
-        cx.stop_propagation();
+        if self.buttons == 0 {
+            self.press = None;
+        }
     }
 
     fn wheel(&mut self, event: &ScrollWheelEvent) {

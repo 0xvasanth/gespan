@@ -4,8 +4,8 @@
 use super::*;
 use crate::browser_test_rig::Rig;
 use gpui::{
-    Bounds, Entity, KeyDownEvent, Keystroke, TestAppContext, VisualTestContext, WindowBounds,
-    WindowHandle, WindowOptions, point, size,
+    Bounds, Entity, KeyDownEvent, Keystroke, MouseButton, TestAppContext, VisualTestContext,
+    WindowBounds, WindowHandle, WindowOptions, point, size,
 };
 use std::time::{Duration, Instant};
 
@@ -243,6 +243,63 @@ fn a_shown_pane_over_a_still_page_keeps_its_view_however_long(cx: &mut TestAppCo
     visual.simulate_click(drawn.center(), Default::default());
     visual.run_until_parked();
     assert!(rig.received("Input.dispatchMouseEvent", |p| p["type"] == "mousePressed"));
+}
+
+/// The mouse events the tab got, as CDP params.
+fn mouse_events(rig: &Rig, kind: &str) -> Vec<serde_json::Value> {
+    rig.server
+        .received()
+        .iter()
+        .filter(|r| r.method == "Input.dispatchMouseEvent" && r.params["type"] == kind)
+        .map(|r| r.params.clone())
+        .collect()
+}
+
+#[gpui::test]
+fn a_button_let_go_outside_the_pane_lets_go_in_the_page(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let tab = rig.open_tab(14);
+    let (pane, _window, mut visual) = pane_window(&rig, 14, tab, cx);
+    pull_until(&pane, &mut visual, |pane| pane.picture.is_some());
+    let drawn = visual.debug_bounds("browser-pane-picture").unwrap();
+    let toolbar = visual.debug_bounds("browser-pane-address").unwrap();
+    // A let-go over the toolbar that never went down in the page is not
+    // the page's.
+    visual.simulate_mouse_up(toolbar.center(), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    // A drag from the page's middle, let go over the toolbar above it.
+    visual.simulate_mouse_down(drawn.center(), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert!(rig.received("Input.dispatchMouseEvent", |p| p["type"] == "mousePressed"));
+    visual.update(|_, cx| assert_eq!(pane.read(cx).buttons, 1, "held"));
+    visual.simulate_mouse_up(toolbar.center(), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert!(
+        rig.received("Input.dispatchMouseEvent", |p| p["type"] == "mouseReleased"),
+        "the page let go"
+    );
+    let released = mouse_events(&rig, "mouseReleased");
+    assert_eq!(
+        released.len(),
+        1,
+        "only the page's own button: {released:?}"
+    );
+    let up = &released[0];
+    assert_eq!(up["button"], "left");
+    assert_eq!(up["buttons"], 0, "no button held after");
+    // At the picture's edge nearest the pointer: its top.
+    assert_eq!(up["y"].as_f64(), Some(0.), "{up}");
+    visual.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.buttons, 0);
+        assert!(pane.press.is_none());
+    });
+    // The next move over the page is a hover, not the drag going on.
+    visual.simulate_mouse_move(drawn.center(), None, Default::default());
+    visual.run_until_parked();
+    assert!(rig.received("Input.dispatchMouseEvent", |p| {
+        p["type"] == "mouseMoved" && p["buttons"] == 0
+    }));
 }
 
 #[gpui::test]
