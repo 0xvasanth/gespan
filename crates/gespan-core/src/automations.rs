@@ -1690,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn recent_runs_keeps_runs_of_deleted_automations() {
+    fn recent_runs_drop_runs_of_deleted_automations() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
         let automation = save(&mut service, vec![]);
@@ -1721,9 +1721,10 @@ mod tests {
         }
         };
         let runs = vec![
-            make(day(0, "00:30:00")),
+            make(day(0, "12:00:00")),
             make(day(0, "23:30:00")),
             make(day(-1, "12:00:00")),
+            make(day(-6, "12:00:00")),
             make(day(-7, "12:00:00")),
         ];
         let now = day(0, "12:00:00");
@@ -1731,8 +1732,10 @@ mod tests {
         assert_eq!(counts.len(), 7);
         assert_eq!(counts[6], 2, "today");
         assert_eq!(counts[5], 1, "yesterday");
-        assert_eq!(counts[..5].iter().sum::<usize>(), 0);
-        // Eight days ago is outside a seven-day window; a future run is ignored.
+        assert_eq!(counts[0], 1, "six days ago opens the window");
+        assert_eq!(counts[1..5].iter().sum::<usize>(), 0);
+        // Seven days ago is before the window (today and the six days before
+        // it), so it is not counted above; a run tomorrow is ignored too.
         let mut more = runs.clone();
         more.push(make(day(1, "12:00:00")));
         assert_eq!(runs_per_day(&more, 7, now), counts);

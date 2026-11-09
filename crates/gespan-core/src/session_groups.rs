@@ -30,7 +30,8 @@ pub struct FixedFolder {
     pub session_ids: Vec<i64>,
 }
 
-/// A project's folders, and whether its Pinned, Reminders and fixed groups are folded.
+/// A project's folders, and whether its Pinned, Reminders and fixed groups
+/// are folded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Groups {
     #[serde(default)]
@@ -181,7 +182,8 @@ pub enum Entry {
 
 /// buildSessionList: reminders lead, followed by fixed folders, folders, pins
 /// and loose sessions. A fixed folder only takes sessions that are not
-/// reminded, in a folder, pinned or in an earlier fixed folder. Reminder membership only changes this view.
+/// reminded, in a folder, pinned or in an earlier fixed folder. Reminder
+/// membership only changes this view.
 pub fn build_list(
     visible: &[i64],
     pinned: impl Fn(i64) -> bool,
