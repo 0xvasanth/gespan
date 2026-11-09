@@ -21,6 +21,12 @@ use gpui::EventEmitter;
 const FIXED_PREFIX: &str = "fixed:";
 const AUTOMATION_RUNS: &str = "fixed:automations";
 
+/// The open or closed chevron that replaces a folder's glyph keeps Automation
+/// runs yellow; every other folder's chevron stays plain.
+fn chevron_tint(key: &str) -> Option<gpui::Hsla> {
+    fixed_folder_tint(key, false)
+}
+
 /// Automation runs wears the Automations entry's yellow zap. Only the
 /// Focused row tints its glyph; the classic row paints a folder's colour as
 /// the header fill.
@@ -1544,14 +1550,19 @@ impl Shell {
                             .invisible()
                             .when(expanded, |d| d.visible())
                             .group_hover(group.clone(), |s| s.visible())
-                            .child(icon(
-                                if expanded {
-                                    "chevron-down"
-                                } else {
-                                    "chevron-right"
-                                },
-                                16.,
-                            )),
+                            .child(
+                                icon(
+                                    if expanded {
+                                        "chevron-down"
+                                    } else {
+                                        "chevron-right"
+                                    },
+                                    16.,
+                                )
+                                .when_some(chevron_tint(key), |chevron, tint| {
+                                    chevron.text_color(tint)
+                                }),
+                            ),
                     )
                     .relative(),
             )
@@ -2621,6 +2632,10 @@ mod tests {
         assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, false), yellow);
         // Classic paints a folder's colour as its header fill, so it stays plain.
         assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, true), None);
+        // The chevron shown when the folder is open or hovered follows suit.
+        assert_eq!(chevron_tint(AUTOMATION_RUNS), yellow);
+        assert_eq!(chevron_tint("folder:user-folder"), None);
+        assert_eq!(chevron_tint("reminders"), None);
         // A Pilot's folder shows the Pilot, never the zap's colour.
         assert_eq!(
             fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot"), false),
