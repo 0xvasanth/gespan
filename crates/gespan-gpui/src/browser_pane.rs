@@ -28,7 +28,7 @@ gpui::actions!(
         PageTab,
         PageShiftTab,
         PageEscape,
-        /// Cmd+Escape (Ctrl+Escape off macOS): the keys leave the page for
+        /// F6 (and Cmd+Escape on macOS): the keys leave the page for
         /// the thread's composer.
         LeaveBrowser,
     ]
@@ -37,17 +37,36 @@ gpui::actions!(
 /// The pane's keys: the page's Tab and Escape, and the way out.
 pub(crate) fn bind(cx: &mut App) {
     let context = Some("BrowserPane");
-    let leave = if cfg!(target_os = "macos") {
-        "cmd-escape"
-    } else {
-        "ctrl-escape"
-    };
     cx.bind_keys([
         gpui::KeyBinding::new("tab", PageTab, context),
         gpui::KeyBinding::new("shift-tab", PageShiftTab, context),
         gpui::KeyBinding::new("escape", PageEscape, context),
-        gpui::KeyBinding::new(leave, LeaveBrowser, context),
     ]);
+    cx.bind_keys(
+        leave_keys(cfg!(target_os = "macos"))
+            .iter()
+            .map(|key| gpui::KeyBinding::new(key, LeaveBrowser, context)),
+    );
+}
+
+/// The keys that take the keys out of the page: F6 everywhere, as in a
+/// browser, and Cmd+Escape too on macOS. Ctrl+Escape belongs to the
+/// system off macOS (Windows' Start menu, KDE's System Activity).
+fn leave_keys(macos: bool) -> &'static [&'static str] {
+    if macos {
+        &["f6", "cmd-escape"]
+    } else {
+        &["f6"]
+    }
+}
+
+/// The hint the pane shows while it has the keys.
+fn leave_hint(macos: bool) -> &'static str {
+    if macos {
+        "F6 or ⌘Esc to leave"
+    } else {
+        "F6 to leave"
+    }
 }
 
 /// The modifier Gespan's own shortcuts use: Cmd on macOS, Ctrl elsewhere.
@@ -772,6 +791,22 @@ impl Render for BrowserPane {
                     .overflow_hidden()
                     .child(self.stage.layout_probe())
                     .child(self.body(cx))
+                    .when(self.focus.is_focused(window), |d| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "browser-pane-leave-hint".into())
+                                .absolute()
+                                .bottom(px(8.))
+                                .right(px(8.))
+                                .px(px(6.))
+                                .py(px(2.))
+                                .rounded_md()
+                                .bg(gpui::black().opacity(0.55))
+                                .text_size(px(11.))
+                                .text_color(gpui::white().opacity(0.85))
+                                .child(leave_hint(cfg!(target_os = "macos"))),
+                        )
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, window, cx| {
@@ -1021,6 +1056,36 @@ mod tests {
         // Shift+Cmd+A or C are Gespan's (or nobody's), not the page's.
         assert_eq!(key_input(&app_stroke("a", true), true), None);
         assert_eq!(key_input(&app_stroke("c", true), true), None);
+    }
+
+    #[test]
+    fn f6_leaves_the_page_on_every_platform_and_cmd_escape_on_macos() {
+        // The table each platform compiles, whichever this one is.
+        assert_eq!(leave_keys(true), ["f6", "cmd-escape"]);
+        assert_eq!(leave_keys(false), ["f6"]);
+        for macos in [true, false] {
+            assert!(
+                !leave_keys(macos).iter().any(|key| key.contains("ctrl")),
+                "Ctrl+Escape is the system's off macOS"
+            );
+            let bindings: Vec<_> = leave_keys(macos)
+                .iter()
+                .map(|key| gpui::KeyBinding::new(key, LeaveBrowser, Some("BrowserPane")))
+                .collect();
+            assert!(bindings.iter().any(|binding| {
+                binding.keystrokes().len() == 1 && binding.keystrokes()[0].key() == "f6"
+            }));
+        }
+        assert_eq!(leave_hint(true), "F6 or ⌘Esc to leave");
+        assert_eq!(leave_hint(false), "F6 to leave");
+        // F6 has nothing for the page even without its binding.
+        let f6 = gpui::Keystroke {
+            modifiers: Modifiers::default(),
+            key: "f6".into(),
+            key_char: None,
+        };
+        assert_eq!(key_input(&f6, true), None);
+        assert_eq!(key_input(&f6, false), None);
     }
 
     #[test]

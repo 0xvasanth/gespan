@@ -377,7 +377,7 @@ fn the_pane_keeps_the_pages_keys_and_leaves_the_apps_to_gespan(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn cmd_escape_moves_the_keys_from_the_page_to_the_composer(cx: &mut TestAppContext) {
+fn f6_and_cmd_escape_move_the_keys_from_the_page_to_the_composer(cx: &mut TestAppContext) {
     let rig = Rig::start();
     cx.update(|cx| {
         crate::input::bind(cx);
@@ -388,34 +388,51 @@ fn cmd_escape_moves_the_keys_from_the_page_to_the_composer(cx: &mut TestAppConte
     rig.open_tab(session);
     refresh(window, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    let stage = visual.debug_bounds("browser-pane-stage").unwrap();
-    visual.simulate_click(stage.center(), Default::default());
-    visual.run_until_parked();
-    window
-        .update(visual, |shell, w, cx| {
-            let pane = shell.reviews[&session]
-                .read(cx)
-                .browser_pane_for_tests(&rig_tab(shell, session, cx))
-                .unwrap();
-            assert!(pane.focus_handle(cx).is_focused(w), "the page has the keys");
-        })
-        .unwrap();
-    visual.simulate_keystrokes(&app_key("escape"));
-    visual.run_until_parked();
-    window
-        .update(visual, |shell, w, cx| {
-            let input = shell.sessions[&session].read(cx).input.clone();
-            assert!(
-                input.focus_handle(cx).is_focused(w),
-                "the composer has them now"
-            );
-        })
-        .unwrap();
+    let mut leaves = vec!["f6"];
+    if cfg!(target_os = "macos") {
+        leaves.push("cmd-escape");
+    }
+    for leave in leaves {
+        assert!(
+            visual.debug_bounds("browser-pane-leave-hint").is_none(),
+            "no hint while the page does not have the keys"
+        );
+        let stage = visual.debug_bounds("browser-pane-stage").unwrap();
+        visual.simulate_click(stage.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        window
+            .update(visual, |shell, w, cx| {
+                let pane = shell.reviews[&session]
+                    .read(cx)
+                    .browser_pane_for_tests(&rig_tab(shell, session, cx))
+                    .unwrap();
+                assert!(pane.focus_handle(cx).is_focused(w), "the page has the keys");
+            })
+            .unwrap();
+        assert!(
+            visual.debug_bounds("browser-pane-leave-hint").is_some(),
+            "the pane says how to leave while it has the keys"
+        );
+        visual.simulate_keystrokes(leave);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        window
+            .update(visual, |shell, w, cx| {
+                let input = shell.sessions[&session].read(cx).input.clone();
+                assert!(
+                    input.focus_handle(cx).is_focused(w),
+                    "{leave}: the composer has the keys now"
+                );
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("browser-pane-leave-hint").is_none());
+    }
     assert!(
         !rig.server
             .received()
             .iter()
-            .any(|r| r.method == "Input.dispatchKeyEvent"),
+            .any(|r| r.method == "Input.dispatchKeyEvent" || r.method == "Input.insertText"),
         "the page got no key"
     );
 }

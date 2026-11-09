@@ -1742,7 +1742,7 @@ impl Shell {
             });
         });
     }
-    /// Cmd/Ctrl+Escape in a browser tab: the keys go back to the thread's
+    /// F6 (or Cmd+Escape on macOS) in a browser tab: the keys go back to the thread's
     /// composer, or to the window when the review fills the card.
     fn leave_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.review_focused = false;
