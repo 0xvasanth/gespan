@@ -132,7 +132,7 @@ impl Section {
             }
             Section::Mcp => "Find MCP servers across providers and manage their connections.",
             Section::Browser => {
-                "Let agents open and use their own tabs in a Chromium browser: yours, or one Gespan starts."
+                "Let agents open and use their own tabs in Gespan's built-in browser."
             }
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
@@ -169,7 +169,7 @@ impl Section {
                 "tools servers connections oauth authenticate login claude codex cursor opencode"
             }
             Section::Browser => {
-                "browser chrome edge brave chromium web page tabs cdp remote debugging inspect private upload"
+                "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
             }
             Section::Skills => "skill instructions prompt",
             Section::Pilots => "pilot resident agent mascot claim project title bar",
@@ -240,16 +240,10 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "browser chrome agents web switch on off beta",
     ),
     (
-        "browser-mode",
+        "browser-access",
         Section::Browser,
-        "Which browser agents use",
-        "browser own signed in gespan private profile managed attach",
-    ),
-    (
-        "browser-connection",
-        Section::Browser,
-        "Browser connection",
-        "browser connect connection status consent inspect remote debugging",
+        "Thread access",
+        "browser threads access always on agents",
     ),
     (
         "browser-uploads",
