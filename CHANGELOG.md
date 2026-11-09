@@ -7,13 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.10] - 2026-11-09
+## [0.0.11] - 2026-11-09
 
-0.0.9 was tagged but never published, because its iOS and Android builds
-failed. Its changes ship in this release and are listed here.
+0.0.9 and 0.0.10 were tagged but never published. 0.0.9's iOS and Android
+builds failed, and 0.0.10's Intel Mac build could not download a speech
+library from GitHub. Their changes ship in this release and are listed here.
 
 ### Added
 
+- **Automation run alerts:** when an automation starts a run for a new Inbox
+  item, such as an opened GitHub issue, a notification names the automation
+  and the item, and clicking it opens the run's session. Scheduled runs and
+  Run now raise no alert, and a per-project "Automation runs started" switch
+  in Notifications turns it off.
 - **Watch chip:** when a chat is waiting on something that will wake it, such
   as a background command, a subagent or a Pilot's delegated session, a
   "N watching" chip shows in the composer footer. Clicking it lists what will
@@ -2151,8 +2157,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.10...HEAD
-[0.0.10]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.10
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.11
 [0.0.8]: https://github.com/0xvasanth/gespan/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/0xvasanth/gespan/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/0xvasanth/gespan/compare/v0.0.5...v0.0.6
