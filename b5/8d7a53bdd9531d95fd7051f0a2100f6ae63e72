@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_35022df10dc1c3::t_890ff605714d72 259-261
+crates/gespan-browser/src/lib.rs
+  s_35022df10dc1c3::t_194632e797e808 3500-3503
+crates/gespan-browser/src/link.rs
+  s_35022df10dc1c3::t_0f4f158b1bf7e4 2198-2201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b58d7a53bdd9531d95fd7051f0a2100f6ae63e72",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
