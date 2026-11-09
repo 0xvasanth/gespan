@@ -7463,6 +7463,49 @@ impl Shell {
             )
             .into_any()
     }
+    /// Search and Sidebar options, the Focused sidebar's window-level
+    /// controls, at the right end of the All projects line.
+    pub(super) fn sidebar_line_actions(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .when(self.workspace.sidebar_search_visible, |d| {
+                d.child(
+                    icon_button_tinted("sidebar-search", "Search", "search", nav_tint("Search"))
+                        .debug_selector(|| "sidebar-search-button".into())
+                        .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.app_search.is_some() {
+                                this.close_app_search(window, cx)
+                            } else {
+                                this.focus_search(window, cx)
+                            }
+                        })),
+                )
+            })
+            .child(
+                icon_button("sidebar-options", "Sidebar options", "more-horizontal")
+                    .debug_selector(|| "sidebar-options".into())
+                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
+                    .relative()
+                    .child(self.sidebar_options_anchor.probe())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.menu_open(&MenuTarget::SidebarOptions) {
+                            this.close_menu(cx);
+                        } else {
+                            this.open_menu(
+                                MenuTarget::SidebarOptions,
+                                Anchor::Slot(this.sidebar_options_anchor.clone()),
+                                window,
+                                cx,
+                            );
+                        }
+                    })),
+            )
+    }
+
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(settings) = self.settings.clone() {
             let section = settings.read(cx).section;
@@ -7512,67 +7555,6 @@ impl Shell {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .child(
-                            div()
-                                .h(px(39.))
-                                .flex_shrink_0()
-                                .px_3()
-                                .pb_px()
-                                .relative()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                // The project row sits below All projects.
-                                .child(div().flex_1())
-                                .when(self.workspace.sidebar_search_visible, |d| {
-                                    d.child(
-                                        icon_button_tinted(
-                                            "sidebar-search",
-                                            "Search",
-                                            "search",
-                                            nav_tint("Search"),
-                                        )
-                                        .debug_selector(|| "sidebar-search-button".into())
-                                        .when(self.app_search.is_some(), |d| d.bg(content(0.1)))
-                                        .on_click(
-                                            cx.listener(|this, _, window, cx| {
-                                                if this.app_search.is_some() {
-                                                    this.close_app_search(window, cx)
-                                                } else {
-                                                    this.focus_search(window, cx)
-                                                }
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .child(
-                                    icon_button(
-                                        "sidebar-options",
-                                        "Sidebar options",
-                                        "more-horizontal",
-                                    )
-                                    .debug_selector(|| "sidebar-options".into())
-                                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
-                                    .relative()
-                                    .child(self.sidebar_options_anchor.probe())
-                                    .on_click(cx.listener(
-                                        |this, _, window, cx| {
-                                            if this.menu_open(&MenuTarget::SidebarOptions) {
-                                                this.close_menu(cx);
-                                            } else {
-                                                this.open_menu(
-                                                    MenuTarget::SidebarOptions,
-                                                    Anchor::Slot(
-                                                        this.sidebar_options_anchor.clone(),
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        },
-                                    )),
-                                ),
-                        )
                         .child(self.virtual_sidebar(cx))
                         .children(live_agents)
                         .child(self.app_update_footer(cx)),

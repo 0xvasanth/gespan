@@ -2781,7 +2781,8 @@ mod tests {
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         let search = visual.debug_bounds("sidebar-search-button").unwrap();
         assert_eq!(project.size.height, px(28.));
-        assert!(project.right() < search.left());
+        // Search and options sit on the All projects line, above the project.
+        assert!(search.bottom() <= project.top());
         assert!(search.right() <= options.left());
     }
 

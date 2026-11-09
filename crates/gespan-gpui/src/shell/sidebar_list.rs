@@ -950,7 +950,21 @@ impl Shell {
             .flex()
             .flex_col()
             .gap_px()
-            .child(section_label("All projects").debug_selector(|| "sidebar-all-projects".into()))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .when(!self.workspace.classic_layout, |d| d.pr_1())
+                    .child(
+                        section_label("All projects")
+                            .flex_1()
+                            .debug_selector(|| "sidebar-all-projects".into()),
+                    )
+                    .when(!self.workspace.classic_layout, |d| {
+                        d.child(self.sidebar_line_actions(cx))
+                    }),
+            )
             .when(search_field, |d| {
                 d.child(
                     div()
@@ -1451,8 +1465,8 @@ mod tests {
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        // The header keeps only the window-level controls.
-        assert!(options.bottom() <= all.top());
+        // No header row above the list: the options share the label's line.
+        assert!(options.center().y >= all.top() && options.center().y <= all.bottom());
         assert!(all.bottom() <= settings.top());
         assert!(settings.bottom() <= divider.top());
         assert!(divider.size.height <= px(1.));
@@ -1461,6 +1475,48 @@ mod tests {
         assert!(project.right() <= gear.left());
         assert!((gear.center().y - project.center().y).abs() <= px(1.));
         assert!(gear.bottom() <= new.top());
+    }
+
+    #[gpui::test]
+    fn search_and_options_sit_on_the_all_projects_line(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.sidebar_search_visible = true;
+                shell.sidebar_list.invalidate_structure();
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
+        let all = visual.debug_bounds("sidebar-all-projects").unwrap();
+        let search = visual.debug_bounds("sidebar-search-button").unwrap();
+        let options = visual.debug_bounds("sidebar-options").unwrap();
+        // The list starts at the top: nothing sits above the label line.
+        assert!(all.top() - sidebar.top() <= px(8.), "{all:?} {sidebar:?}");
+        for (name, button) in [("search", search), ("options", options)] {
+            let centre = button.center().y;
+            assert!(
+                centre >= all.top() && centre <= all.bottom(),
+                "{name} shares the label's band: {button:?} vs {all:?}"
+            );
+            assert!(
+                button.left() >= all.left(),
+                "{name} sits right of the label"
+            );
+        }
+        assert!(search.right() <= options.left());
+        assert!(options.right() <= sidebar.right());
+        // Both still work from there.
+        visual.simulate_click(search.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| assert!(shell.app_search.is_some()))
+            .unwrap();
+        visual.simulate_click(options.center(), Default::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("menu-action-sidebar-search").is_some());
     }
 
     #[gpui::test]
