@@ -1,0 +1,24 @@
+crates/mcp-hub/tests/endpoint.rs
+  s_35022df10dc1c3::t_5697ac81728a41 550-557,560-563
+  s_35022df10dc1c3::t_8e14ffbdadb457 569-574
+  s_35022df10dc1c3::t_8b0d2469e95833 108-109,502,529-532,541-549,558-559,564-568,575-602
+  s_35022df10dc1c3::t_21733bee9fe636 167,503-528,536-540
+crates/mcp-hub/src/session.rs
+  s_35022df10dc1c3::t_2d6977ffe5b84e 363-365,368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef42711f5880c8bee76a3121455c6fe8770b1f3e",
+  "prompts": {},
+  "sessions": {
+    "s_35022df10dc1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7715c054-9282-407e-a2e3-2c5ce9e9c445",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
