@@ -261,6 +261,7 @@ impl Pilots {
             cx,
         );
         let id = id.to_string();
+        let handle = window.window_handle();
         cx.spawn(async move |this, cx| {
             if prompt.await.ok() != Some(1) {
                 return;
@@ -268,12 +269,20 @@ impl Pilots {
             let reset = this.update(cx, |this, cx| this.reset_defaults(&id, cx));
             let Ok(reset) = reset else { return };
             let result = reset.await;
-            let _ = this.update(cx, |this, cx| {
-                if let Err(e) = result {
-                    this.error = Some(e);
-                }
-                this.changed(cx);
-            });
+            let _ = this.update(cx, |this, cx| this.changed(cx));
+            if let Err(e) = result
+                && let Ok(ack) = handle.update(cx, |_, window, cx| {
+                    window.prompt(
+                        gpui::PromptLevel::Critical,
+                        &format!("Couldn't reset {name}"),
+                        Some(&e),
+                        &["OK"],
+                        cx,
+                    )
+                })
+            {
+                let _ = ack.await;
+            }
         })
         .detach();
     }
