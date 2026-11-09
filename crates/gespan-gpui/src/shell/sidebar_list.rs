@@ -1162,70 +1162,61 @@ impl Shell {
             )
             .into_any()
     }
-    /// The standalone glass button that starts a thread in this project.
+    /// The row that starts a thread in this project, styled like the
+    /// navigation rows above it.
     fn sidebar_new_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        const LABEL: &str = "New thread";
         let selected = self.active_session_is_blank(cx);
         div()
             .w_full()
             .px_2()
-            .pt(px(12.))
-            .pb(px(10.))
+            .pt(px(8.))
+            .pb(px(6.))
             .child(
                 div()
                     .id("sidebar-new-thread")
                     .debug_selector(|| "sidebar-new-thread".into())
                     .role(Role::Button)
-                    .aria_label("New thread")
+                    .aria_label(LABEL)
                     .aria_selected(selected)
                     .cursor_pointer()
-                    .group("sidebar-new-thread")
-                    .relative()
-                    .h(px(36.))
-                    .px_3()
-                    .rounded(px(crate::modal::RADIUS))
-                    .border_1()
-                    .border_color(content(crate::modal::BORDER))
-                    .overflow_hidden()
+                    .h(px(32.))
+                    .px_2()
+                    .rounded_md()
                     .flex()
                     .items_center()
                     .gap_2()
                     .text_size(px(14.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(content(if selected { 1. } else { 0.7 }))
-                    .hover(|s| s.text_color(content(1.)))
-                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
-                    // The fill sits above the glass so hovering never
-                    // replaces the frosted surface.
+                    .text_color(content(if selected || self.sidebar_hover == Some(LABEL) {
+                        1.
+                    } else {
+                        0.5
+                    }))
+                    .when(selected, |d| d.bg(content(0.1)))
+                    .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
+                    .child(icon("pencil-edit-02", 16.).text_color(nav_icon_color(LABEL, selected)))
+                    .child(div().flex_1().child(LABEL))
                     .child(
                         div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full()
-                            .when(selected, |d| d.bg(content(0.1)))
-                            // Hovering never dims the selected fill.
-                            .group_hover("sidebar-new-thread", move |s| {
-                                s.bg(content(if selected { 0.1 } else { 0.06 }))
-                            }),
-                    )
-                    .child(
-                        icon("pencil-edit-02", 16.)
-                            .text_color(content(if selected { 0.9 } else { 0.6 }))
-                            .group_hover("sidebar-new-thread", |s| s.text_color(content(0.9))),
-                    )
-                    .child(div().flex_1().child("New thread"))
-                    .child(
-                        div()
-                            .debug_selector(|| "sidebar-new-thread-shortcut".into())
-                            .px_1()
-                            .rounded(px(4.))
-                            .border_1()
-                            .border_color(content(0.12))
-                            .text_size(px(10.))
+                            .debug_selector(|| "sidebar-navigation-trailing-New thread".into())
+                            .w(px(TRAILING_SLOT))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .text_size(px(11.))
                             .font_weight(FontWeight::NORMAL)
-                            .text_color(content(0.55))
+                            .text_color(content(0.35))
                             .child(format!("{MOD}T")),
                     )
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        if *hovered {
+                            this.sidebar_hover = Some(LABEL);
+                        } else if this.sidebar_hover == Some(LABEL) {
+                            this.sidebar_hover = None;
+                        }
+                        this.notify_navigation(cx);
+                    }))
                     .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx))),
             )
             .into_any()
@@ -1352,14 +1343,12 @@ mod tests {
             .unwrap()
             .center()
             .x;
-        // The New thread button keeps its own shortcut chip, not a trailing
-        // navigation slot.
+        // New thread shows its shortcut in the same trailing column.
         assert!(visual.debug_bounds("sidebar-new-thread").is_some());
-        assert!(
-            visual
-                .debug_bounds("sidebar-navigation-trailing-New")
-                .is_none()
-        );
+        let hint = visual
+            .debug_bounds("sidebar-navigation-trailing-New thread")
+            .expect("New thread shows its shortcut");
+        assert_eq!(hint.center().x, axis);
         let settings = visual
             .debug_bounds("sidebar-navigation-trailing-Settings")
             .expect("Settings shows its shortcut");
@@ -1517,6 +1506,30 @@ mod tests {
         visual.simulate_click(options.center(), Default::default());
         visual.run_until_parked();
         assert!(visual.debug_bounds("menu-action-sidebar-search").is_some());
+    }
+
+    #[gpui::test]
+    fn new_thread_row_matches_the_navigation_rows(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        assert_eq!(new.left(), inbox.left());
+        assert_eq!(new.size.width, inbox.size.width);
+        assert_eq!(new.size.height, inbox.size.height);
+        // Same hint column as Settings.
+        let hint = visual
+            .debug_bounds("sidebar-navigation-trailing-New thread")
+            .unwrap();
+        let settings = visual
+            .debug_bounds("sidebar-navigation-trailing-Settings")
+            .unwrap();
+        assert_eq!(hint.center().x, settings.center().x);
+        assert_eq!(hint.size.width, settings.size.width);
+        // Its own row: space above (project row) and below (Pilots).
+        let project = visual.debug_bounds("sidebar-project-button").unwrap();
+        assert!(new.top() - project.bottom() >= px(4.));
     }
 
     #[gpui::test]
