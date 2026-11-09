@@ -1,0 +1,57 @@
+crates/gespan-gpui/src/setup/look.rs
+  s_97573b51d9fe22::t_b61f750a3125e2 88,156,284
+  s_97573b51d9fe22::t_3148e105ad00a9 391-393
+  s_97573b51d9fe22::t_bd7f9c0c7b132b 1-9,11-87,89-155,157-283,285-390,394-455
+  s_97573b51d9fe22::t_a448e1eafe41c8 456-491
+crates/gespan-gpui/src/shell.rs
+  s_97573b51d9fe22::t_c36b8d628df5d9 5109-5110
+  s_97573b51d9fe22::t_89ddf6b06229e3 751-754,1209-1210
+  s_97573b51d9fe22::t_fb5fab26c9d6d5 16-18,5111-5113,9913
+crates/gespan-gpui/src/setup/agents.rs
+  s_97573b51d9fe22::t_6ab8868f098be6 83-84,86,300-342,344-443
+  s_97573b51d9fe22::t_b16a51573b7ef0 343
+  s_97573b51d9fe22::t_b61f750a3125e2 1-15,17-82,85,87-299
+  s_97573b51d9fe22::t_961335aec35a33 444-472
+crates/gespan-gpui/src/setup/welcome.rs
+  s_97573b51d9fe22::t_2d0846fe1713f1 59
+  s_97573b51d9fe22::t_06eda151ba0928 61
+  s_97573b51d9fe22::t_d01bbf26ed746a 124,127-131,138,141
+  s_97573b51d9fe22::t_e6a1a1c2cb5d42 1-10,12-58,60,62-123,125-126,132-137,139-140,142-156
+crates/gespan-gpui/src/shell/first_run_tests.rs
+  s_97573b51d9fe22::t_8e32a3de20dd66 133-155
+  s_97573b51d9fe22::t_3148e105ad00a9 1-132
+  s_97573b51d9fe22::t_5c0546426d9936 156-174
+crates/gespan-gpui/src/shell/first_run.rs
+  s_97573b51d9fe22::t_fffc99cb056b98 1-214
+  s_97573b51d9fe22::t_e6c12a18010cfe 215-223
+crates/gespan-gpui/src/main.rs
+  s_97573b51d9fe22::t_27623f9692911c 475-485,551
+crates/gespan-gpui/src/setup/project.rs
+  s_97573b51d9fe22::t_f1b3c1335c7378 1-14,16-478
+  s_97573b51d9fe22::t_d5569ddd620e76 479-535
+crates/gespan-gpui/src/setup/ui.rs
+  s_97573b51d9fe22::t_05d0726d817d08 92-94,118-123
+  s_97573b51d9fe22::t_c9cf3fde5bbebc 40,140-144,151-155,187-191,206-210,262-264
+crates/gespan-gpui/src/setup/card.rs
+  s_97573b51d9fe22::t_b9fbb5e30fcda4 15-17,94-98,124-128,183-185,230-233
+crates/gespan-gpui/src/setup/rules.rs
+  s_97573b51d9fe22::t_df5b0e156bed22 107-110
+crates/gespan-gpui/src/setup/test_support.rs
+  s_97573b51d9fe22::t_6d96cf00cd5521 35-42,51-54,57-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51a9b8187f00bad5d3caf886c5af0c6812a12505",
+  "prompts": {},
+  "sessions": {
+    "s_97573b51d9fe22": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a87849f-c4fa-4794-89a4-0cb887032f3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
