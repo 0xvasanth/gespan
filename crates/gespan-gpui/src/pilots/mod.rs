@@ -494,6 +494,7 @@ impl Pilots {
     /// Every Pilot in roster order with its launches in `project`, even
     /// none, for the sidebar's fixed folders: (Pilot id, name, session ids).
     pub(crate) fn pilot_folders(&self, project: &str) -> Vec<(String, String, Vec<i64>)> {
+        let project = gespan_core::files::path_key(project);
         self.roster
             .pilots
             .iter()
@@ -501,7 +502,7 @@ impl Pilots {
                 let sessions: Vec<i64> = pilot
                     .launches
                     .iter()
-                    .filter(|launch| launch.cwd == project)
+                    .filter(|launch| gespan_core::files::path_key(&launch.cwd) == project)
                     .map(|launch| launch.session_id)
                     .collect();
                 (pilot.id.clone(), pilot.label(), sessions)

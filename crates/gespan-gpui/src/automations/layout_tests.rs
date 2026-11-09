@@ -171,6 +171,24 @@ fn list_groups_automations_by_project(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn folders_spelled_with_and_without_a_trailing_slash_share_a_group(cx: &mut TestAppContext) {
+    let page = page();
+    let time = AutomationTrigger::new("time", "daily");
+    let plain = save(&page, "One", "/work/langfuse", time.clone());
+    let slashed = save(&page, "Two", "/work/langfuse/", time);
+    let (window, visual) = open(&page, "/work/langfuse", cx);
+    let groups = window
+        .read_with(&visual, |view, _| {
+            view.project_groups(&view.automations)
+                .into_iter()
+                .map(|(_, items)| items.len())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(groups, vec![2], "{} and {}", plain.id, slashed.id);
+}
+
+#[gpui::test]
 fn card_sparkline_has_ten_days(cx: &mut TestAppContext) {
     let page = page();
     let busy = save(

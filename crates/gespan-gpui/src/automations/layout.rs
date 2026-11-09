@@ -34,13 +34,20 @@ impl Automations {
     ) -> Vec<(String, Vec<&'a Automation>)> {
         let mut groups: Vec<(String, Vec<&Automation>)> = Vec::new();
         for automation in automations {
-            match groups.iter_mut().find(|(cwd, _)| *cwd == automation.cwd) {
+            let key = gespan_core::files::path_key(&automation.cwd);
+            match groups
+                .iter_mut()
+                .find(|(cwd, _)| gespan_core::files::path_key(cwd) == key)
+            {
                 Some((_, items)) => items.push(automation),
                 None => groups.push((automation.cwd.clone(), vec![automation])),
             }
         }
         groups.sort_by_cached_key(|(cwd, _)| {
-            (*cwd != self.cwd, self.project_label(cwd).to_lowercase())
+            (
+                gespan_core::files::path_key(cwd) != gespan_core::files::path_key(&self.cwd),
+                self.project_label(cwd).to_lowercase(),
+            )
         });
         groups
     }
