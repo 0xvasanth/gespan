@@ -12,6 +12,12 @@ run-name: Mobile ${{ inputs.release }} ${{ inputs.platform }} ${{ github.ref_nam
 # build after any native change (native modules, app.json, Expo upgrades,
 # crates/mobile-link).
 #
+# CI builds with --non-interactive, where EAS never signs in to Apple and so
+# never syncs iOS capabilities. After adding an entitlement (push from
+# expo-notifications, say), run `eas credentials -p ios` once by hand, choose
+# production, then "All: Set up all the required credentials", and sign in to
+# Apple: that enables the capability and replaces the provisioning profile.
+#
 # "apk" builds an installable Android APK with the apk profile, signed with the
 # project's EAS keystore, for people outside Google Play. It goes on the draft
 # of the tag's GitHub release, which the Release workflow creates.
