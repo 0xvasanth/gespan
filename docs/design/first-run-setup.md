@@ -141,16 +141,18 @@ toast.
 
 ## When it shows
 
-Show setup when `setup.done` is false and the store has no saved sessions.
+Show setup only on a true first run: there's no saved workspace row and the store has no
+sessions. In that case `main.rs` writes `setup: Welcome` into the workspace it hands the
+shell, and skips creating the usual initial session in the launch folder.
 
-On first load, if `setup.done` is missing but sessions exist, set `setup.done = true`
-quietly. That covers Tauri migrants and anyone upgrading.
+Any saved workspace without a `setup` key counts as done. That covers existing installs.
+Tauri migrants have sessions, so they're covered too.
 
 Don't key it on "no projects".
 
-While setup is open, don't auto-add the launch folder as a project; offer it as the
-suggestion instead. Skip the suggestion when the folder is `/` or the home directory (a Dock
-launch).
+The launch folder is still added as a project, as today. If it isn't the folder picked and
+has no sessions, finishing setup removes it again. It's offered as the "Opened from"
+suggestion, except when it's `/` or the home directory (a Dock launch).
 
 ## Skip and resume
 
@@ -171,15 +173,15 @@ Defaults when skipped:
 
 | Value | Where | New? |
 | --- | --- | --- |
-| card to resume on | `Workspace.setup_step: Option<SetupStep>` | new |
-| setup finished | `Workspace.setup_done: bool` (serde default false) | new |
+| card to resume on, or done | `Workspace.setup: Option<SetupStep>` (`None` = done) | new |
 | default agent | `Preferences.default_provider` / `last_provider` via `use_by_default` | existing |
 | theme, accent, glass | `Preferences.theme`, `accent_color`, `inset_glass` | existing |
 | layout | `Workspace.classic_layout` (through `toggle_layout`) | existing |
 | project | `Workspace.projects` / `project` via `add_project` + `select_project` | existing |
 
-Because `serde(default)` gives `setup_done = false` to every existing install, the
-quiet-migration rule above is what keeps it hidden for them. Test it.
+`serde(default)` gives every existing install `setup = None` (done), so no migration is
+needed. Only a true first run sets it. The implementation plan is in
+`docs/design/first-run-setup-plan.md`.
 
 ## Implementation sketch (for the plan)
 
