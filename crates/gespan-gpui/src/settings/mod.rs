@@ -365,6 +365,9 @@ impl SettingsView {
         if let Some(center) = crate::accounts::get(cx) {
             subscriptions.push(cx.observe(&center, |_, _, cx| cx.notify()));
         }
+        if let Some(browser) = crate::browser::get(cx) {
+            subscriptions.push(cx.observe(&browser, |_, _, cx| cx.notify()));
+        }
         if let Some(machines) = crate::machines::get(cx) {
             subscriptions.push(cx.observe(&machines, |this, machines, cx| {
                 this.herdr_machines_changed(&machines, cx)

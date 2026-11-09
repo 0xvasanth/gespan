@@ -1,0 +1,35 @@
+[package]
+name = "gespan-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Gespan's browser module: a thin CDP client, the access policy and the agent's browser actions. Served to agents through the MCP hub."
+
+[features]
+# The fake CDP endpoint and `BrowserHost::for_tests`, for the app's own tests.
+# Only ever enabled from a dev-dependency.
+testing = []
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "hooks"], default-features = false }
+uuid = { version = "1", features = ["v4"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+base64 = "0.22"
+url = "2.5"
+sha2 = "0.11"
+hmac = "0.13"
+toml = "0.9.12"
+log = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Diagnostics_ToolHelp"] }
+
+# The integration tests use the test doubles (`testing`) too.
+[dev-dependencies]
+gespan-browser = { path = ".", features = ["testing"] }

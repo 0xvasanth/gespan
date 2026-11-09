@@ -108,8 +108,11 @@ impl Conversation {
                 if let Some(turn) = settings.turn_model.as_mut() {
                     turn.started_at = Some(gespan_core::time::now_ms());
                 }
+                // The replay goes as what the failed turn was: the user's own
+                // only when they had typed it.
+                let typed = settings.user_typed;
                 self.sign_in.replaying = Some(settings);
-                self.launch_prompt(prompt, cx);
+                self.launch_prompt(prompt, typed, cx);
             }
             None => {
                 self.status = format!(

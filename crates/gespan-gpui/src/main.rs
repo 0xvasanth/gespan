@@ -10,6 +10,10 @@ mod arcade;
 mod assets;
 mod automations;
 mod board;
+mod browser;
+mod browser_pane;
+#[cfg(test)]
+mod browser_test_rig;
 mod changes;
 mod composer_completion;
 mod composer_motion;
@@ -443,6 +447,10 @@ fn main() {
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
     gespan_core::tool_servers::configure(tool_data);
+    // Optional: without it the browser toolkit lists nothing and says so.
+    if let Err(error) = gespan_core::browser::start(Some(tool_data)) {
+        tracing::warn!(%error, "the browser module did not start");
+    }
     gespan_core::machines::configure(tool_data);
     gespan_core::checkpoint::init(
         database
@@ -553,6 +561,12 @@ fn main() {
         #[cfg(not(target_os = "macos"))]
         cx.set_app_identity("dev.gespan.native", "Gespan");
         flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
+        // The Gespan browser goes with the app.
+        cx.on_app_quit(|cx| {
+            cx.background_executor()
+                .spawn(async { gespan_core::browser::shutdown() })
+        })
+        .detach();
         #[cfg(debug_assertions)]
         dev_reload::install(cx);
         cx.set_global(title_raster);
@@ -571,6 +585,8 @@ fn main() {
         worktree_setups::install(cx);
         shell::action_runs::install(cx);
         machines::install(cx);
+        browser::install(cx);
+        browser_pane::bind(cx);
         cx.set_prompt_builder(modal::prompt_builder);
         explorer::bind(cx);
         history::bind(cx);

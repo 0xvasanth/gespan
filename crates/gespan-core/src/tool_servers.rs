@@ -20,10 +20,16 @@ pub const APP: &str = "app";
 pub const CONTROL: &str = "control";
 pub const ACTIONS: &str = "actions";
 pub const ACTIONS_READ: &str = "actions_read";
+pub const BROWSER: &str = "browser";
 
 /// The name agents know the hub by. Tools appear to Claude as
 /// `mcp__gespan__<tool>`.
 const SERVER_NAME: &str = "gespan";
+/// How long Codex waits on one call to the app's MCP server. Its default
+/// gives up on long tools such as a browser action that waits for the
+/// browser to start or connect ([`gespan_browser::HOST_WAIT`]) on top of its
+/// own time limit.
+const CODEX_TOOL_TIMEOUT_SECS: u64 = 300;
 /// Set on the relay process alone, by the agent that starts it, or for the
 /// CLIs of agents that mount no MCP servers.
 const ENV_URL: &str = "GESPAN_MCP_URL";
@@ -309,6 +315,7 @@ fn hub() -> Result<&'static Hub, String> {
         hub.register(Arc::new(crate::project_actions::toolkit::Toolkit {
             may_run: false,
         }));
+        hub.register(Arc::new(crate::browser::toolkit::Toolkit::GLOBAL));
         Ok(hub)
     })
     .as_ref()
@@ -471,6 +478,7 @@ impl Access {
             json!({
                 "url":self.url,
                 "http_headers":{"Authorization":self.token.bearer()},
+                "tool_timeout_sec":CODEX_TOOL_TIMEOUT_SECS,
             }),
         );
         json!({"mcp_servers":servers})
@@ -692,6 +700,20 @@ mod tests {
         assert_eq!(
             server["http_headers"]["Authorization"],
             format!("Bearer {}", secret_of(&access))
+        );
+    }
+
+    #[test]
+    fn codex_config_sets_a_long_tool_timeout() {
+        let access = Access::open(&mount(5002)).unwrap();
+        let config = access.codex_config(&mount(5002));
+        assert_eq!(
+            config["mcp_servers"]["gespan"]["tool_timeout_sec"],
+            CODEX_TOOL_TIMEOUT_SECS
+        );
+        // Longer than the browser holds a call beyond the action's limit.
+        assert!(
+            std::time::Duration::from_secs(CODEX_TOOL_TIMEOUT_SECS) > gespan_browser::HOST_WAIT
         );
     }
 

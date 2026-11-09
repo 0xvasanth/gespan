@@ -227,10 +227,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SHARED=(-p gespan-mobile-link -p gespan-keep-awake -p gespan-redact -p gespan-mcp-config -p mcp-hub -p gespan-tracker-secrets -p gespan-tracker-client -p gespan-board-store -p gespan-models -p gespan-speech -p herdr-link -p gespan-graph)
+          SHARED=(-p gespan-mobile-link -p gespan-keep-awake -p gespan-redact -p gespan-mcp-config -p mcp-hub -p gespan-tracker-secrets -p gespan-tracker-client -p gespan-board-store -p gespan-models -p gespan-speech -p herdr-link -p gespan-graph -p gespan-browser)
           cargo fmt --check "${SHARED[@]}"
           cargo clippy --locked "${SHARED[@]}" --all-targets -- -D warnings
           cargo test --locked "${SHARED[@]}"
+      # The browser tools against a real, headless Chrome. The runner images
+      # ship Google Chrome at these paths; where one is missing, Chrome for
+      # Testing (stable) is installed instead. Each test also stops itself
+      # (and its Chrome) after two minutes.
+      - if: env.RUN == 'true'
+        name: Browser against real Chrome
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            macOS) chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+            Windows) chrome="C:/Program Files/Google/Chrome/Application/chrome.exe" ;;
+            *) chrome=/usr/bin/google-chrome ;;
+          esac
+          if [ ! -f "$chrome" ]; then
+            echo "No Google Chrome at $chrome; installing Chrome for Testing"
+            chrome=$(bunx @puppeteer/browsers@2.6.1 install chrome@stable --path "$RUNNER_TEMP/chrome" | tail -n 1 | cut -d' ' -f2-)
+          fi
+          # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's
+          # sandbox uses unless AppArmor allows them.
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          fi
+          echo "Chrome: $chrome"
+          # Two Chromes at a time: starting all seven at once on a small
+          # runner makes the first tab miss its timeout.
+          GESPAN_TEST_CHROME="$chrome" cargo test --locked -p gespan-browser --test real_browser -- --ignored --test-threads=2
 
   desktop:
     name: Gespan Native (${{ matrix.name }})

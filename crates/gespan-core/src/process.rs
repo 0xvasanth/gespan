@@ -17,6 +17,20 @@ pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
     command.spawn()
 }
 
+/// Put a process that is already running in the kill-on-close job of
+/// [`spawn`] (Windows), so it ends with Gespan even when Gespan crashes.
+/// What it started before the call stays outside the job. Elsewhere it does
+/// nothing: unix callers stop their processes themselves.
+pub fn adopt(child: &std::process::Child) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return job::assign(std::os::windows::io::AsRawHandle::as_raw_handle(child));
+    #[cfg(not(windows))]
+    {
+        let _ = child;
+        Ok(())
+    }
+}
+
 /// What an `isolate`d command started: its process group on unix, a job of
 /// its own on Windows. It outlives the command, so what the command left
 /// running can still be stopped.

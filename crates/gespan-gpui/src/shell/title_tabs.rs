@@ -366,6 +366,7 @@ impl Shell {
         self.tab_scroll_task = None;
         self.cancel_pane_drag(cx);
         let session_active = self.workspace.active;
+        let threads = self.shown_threads();
         for tab in &closing {
             if let TitleTab::App(view) = tab
                 && self.active_app_view == Some(*view)
@@ -387,6 +388,7 @@ impl Shell {
             .scope_focus
             .retain(|_, tab| !closing.contains(tab));
         self.workspace.prune_pinned_tabs();
+        self.close_left_threads_browser_tabs(threads, cx);
         if replace {
             if let Some(pilots) = self.pilots.clone() {
                 pilots.update(cx, |m, cx| m.close(cx));

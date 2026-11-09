@@ -215,7 +215,7 @@ impl Conversation {
             cx.notify();
             return;
         }
-        self.launch_prompt("Continue from where you left off.".into(), cx);
+        self.launch_prompt("Continue from where you left off.".into(), false, cx);
         cx.emit(SessionChanged);
         cx.notify();
     }

@@ -2,6 +2,7 @@
 //! commit tabs. Working tree and commit diffs load their files four at a time
 //! off the UI thread and build each diff there too; the view only lays out rows.
 use crate::{
+    browser_pane::BrowserPane,
     diff_view::{DiffEvent, DiffFile, DiffView},
     file_editor::{FileEditor, FileEvent},
     git_status::{GitChanged, ProjectGit},
@@ -59,6 +60,17 @@ pub(crate) enum ReviewTab {
         session: i64,
         path: Option<String>,
     },
+    /// "Show in Gespan": one of the session's browser tabs, live. It lasts
+    /// this run only: the tabs are gone when Gespan restarts. Closing it
+    /// only hides an agent's tab; the agent keeps it.
+    Browser {
+        session: i64,
+        tab: String,
+        /// The user opened it (a link clicked in the thread): it closes
+        /// with its pane tab, as in a browser.
+        #[serde(default)]
+        own: bool,
+    },
 }
 impl ReviewTab {
     /// SurfaceTabs's `surfaceTabPresentation`.
@@ -90,6 +102,7 @@ impl ReviewTab {
                 }
             }
             Self::Session { .. } => "Session Changes".into(),
+            Self::Browser { .. } => "Browser".into(),
         }
     }
     /// `editorTabKey`: one Changes tab per checkout and side, one per commit.
@@ -119,6 +132,8 @@ impl ReviewTab {
                     cwd: b, session: y, ..
                 },
             ) => a == b && x == y,
+            // One pane a tab: a second view of it would stop the first.
+            (Self::Browser { tab: a, .. }, Self::Browser { tab: b, .. }) => a == b,
             _ => false,
         }
     }
@@ -133,6 +148,21 @@ pub(crate) struct ReviewState {
     pub ratio: f32,
     /// The chat beside it was closed; the review fills the card.
     pub chat_hidden: bool,
+}
+
+/// Drop the saved browser tabs (they belong to the run that showed them)
+/// and say which tab is active after: the same one when it stays, else the
+/// nearest one before it, else the first.
+fn strip_browser_tabs(tabs: &mut Vec<ReviewTab>, active: usize) -> usize {
+    let browser = |tab: &ReviewTab| matches!(tab, ReviewTab::Browser { .. });
+    let kept_before = tabs.iter().take(active).filter(|tab| !browser(tab)).count();
+    let active_stays = tabs.get(active).is_some_and(|tab| !browser(tab));
+    tabs.retain(|tab| !browser(tab));
+    if active_stays {
+        kept_before
+    } else {
+        kept_before.saturating_sub(1)
+    }
 }
 
 pub(crate) enum ReviewEvent {
@@ -157,6 +187,9 @@ struct Loaded {
 /// One tab's files and diffs.
 struct Source {
     tab: ReviewTab,
+    /// A browser tab's live pane.
+    browser: Option<Entity<BrowserPane>>,
+    _browser_events: Option<Subscription>,
     view: Entity<DiffView>,
     editor: Option<Entity<FileEditor>>,
     editor_mode: bool,
@@ -171,7 +204,37 @@ struct Source {
     _tasks: Vec<Task<()>>,
     _events: Subscription,
 }
+/// Close `tab` in the browser when it is a browser tab the user opened;
+/// an agent's tab only ever leaves the pane.
+pub(crate) fn close_own_browser_tab(tab: &ReviewTab, cx: &gpui::App) {
+    let ReviewTab::Browser { tab, own: true, .. } = tab else {
+        return;
+    };
+    let Some(host) = crate::browser::host(cx) else {
+        return;
+    };
+    let tab = gespan_core::browser::TabId(tab.clone());
+    // Off the UI thread: closing waits for the browser. A tab already
+    // gone (the page closed itself) has nothing left to close.
+    cx.background_executor()
+        .spawn(async move {
+            let open = host.state().tabs.iter().any(|entry| {
+                entry.tab.tab == tab && entry.tab.state != gespan_core::browser::TabState::Closed
+            });
+            if open && let Err(error) = host.serialized(|| host.close_tab_by_user(&tab)) {
+                log_error("close browser tab", &error);
+            }
+        })
+        .detach();
+}
 impl Source {
+    /// A browser tab the user opened closes with its pane tab, once.
+    fn close_own_browser_tab(&mut self, cx: &gpui::App) {
+        close_own_browser_tab(&self.tab, cx);
+        if let ReviewTab::Browser { own, .. } = &mut self.tab {
+            *own = false;
+        }
+    }
     fn cancel(&mut self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self._tasks.clear();
@@ -265,6 +328,9 @@ pub(crate) struct ReviewPane {
     retiring_focus: Vec<FocusHandle>,
     pub(crate) state: ReviewState,
     sources: Vec<Source>,
+    /// The shell drew this pane in its last frame. A thread the user left
+    /// stays `visible`, so only this says its browser tab is off screen.
+    drawn: bool,
     /// Search results share one replaceable file tab until it is pinned or edited.
     preview_path: Option<String>,
     visible: bool,
@@ -386,6 +452,7 @@ impl ReviewPane {
                 ..state
             },
             sources: Vec::new(),
+            drawn: true,
             preview_path: None,
             visible: false,
             closed: false,
@@ -402,6 +469,16 @@ impl ReviewPane {
             menu: None,
             _subscriptions: subscriptions,
         };
+        // The pane going away (its window closed, its thread left the
+        // workspace) takes the user's own browser tabs with it.
+        cx.on_release(|this: &mut Self, cx| {
+            for source in &mut this.sources {
+                source.close_own_browser_tab(cx);
+            }
+        })
+        .detach();
+        // Browser tabs belong to the run that showed them.
+        this.state.active = strip_browser_tabs(&mut this.state.tabs, this.state.active);
         let tabs = this.state.tabs.clone();
         for tab in tabs {
             let source = this.source(tab, cx);
@@ -411,6 +488,16 @@ impl ReviewPane {
         this
     }
     fn source(&mut self, tab: ReviewTab, cx: &mut Context<Self>) -> Source {
+        let browser = match &tab {
+            ReviewTab::Browser { session, tab, .. } => {
+                let (session, tab) = (*session, gespan_core::browser::TabId(tab.clone()));
+                Some(cx.new(|cx| BrowserPane::new(session, tab, cx)))
+            }
+            _ => None,
+        };
+        let browser_events = browser
+            .as_ref()
+            .map(|pane| cx.observe(pane, |_, _, cx| cx.notify()));
         let cached = self.git.update(cx, |git, _| git.review_cache.take(&tab));
         let view = cached
             .as_ref()
@@ -473,6 +560,8 @@ impl ReviewPane {
             })
         });
         Source {
+            browser,
+            _browser_events: browser_events,
             editor_mode,
             editor,
             _editor_events: editor_events,
@@ -507,6 +596,13 @@ impl ReviewPane {
                     ReviewTab::Changes { staged: b, .. }
                 ) if a == b
             ) && matches!(tab, ReviewTab::Changes { .. } | ReviewTab::Session { .. });
+            let mut tab = tab;
+            // "Show in Gespan" for a tab the user opened keeps it theirs.
+            if let (ReviewTab::Browser { own: was, .. }, ReviewTab::Browser { own, .. }) =
+                (&self.sources[ix].tab, &mut tab)
+            {
+                *own |= *was;
+            }
             self.sources[ix].tab = tab;
             if reload {
                 self.sources[ix].cancel();
@@ -524,6 +620,41 @@ impl ReviewPane {
         self.load_active(cx);
         cx.emit(ReviewEvent::Changed);
         cx.notify();
+    }
+    /// Browser tabs out of sight stop their live view; each starts again by
+    /// itself when its tab shows.
+    fn sync_browsers(&self, cx: &mut Context<Self>) {
+        for (ix, source) in self.sources.iter().enumerate() {
+            if let Some(pane) = &source.browser {
+                let shown = ix == self.state.active && self.visible && self.drawn && !self.closed;
+                pane.update(cx, |pane, cx| pane.set_shown(shown, cx));
+            }
+        }
+    }
+    /// Whether the keys are somewhere in this pane.
+    pub(crate) fn contains_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
+    /// The shell drew this pane in its last frame, or stopped drawing it.
+    pub(crate) fn set_drawn(&mut self, drawn: bool, cx: &mut Context<Self>) {
+        if self.drawn != drawn {
+            self.drawn = drawn;
+            self.sync_browsers(cx);
+            cx.notify();
+        }
+    }
+    /// Whether one of this pane's tabs shows the browser tab `tab`.
+    pub(crate) fn shows_browser_tab(&self, tab: &str) -> bool {
+        self.sources
+            .iter()
+            .any(|source| matches!(&source.tab, ReviewTab::Browser { tab: t, .. } if t == tab))
+    }
+    #[cfg(test)]
+    pub(crate) fn browser_pane_for_tests(&self, tab: &str) -> Option<Entity<BrowserPane>> {
+        self.sources.iter().find_map(|source| match &source.tab {
+            ReviewTab::Browser { tab: t, .. } if t == tab => source.browser.clone(),
+            _ => None,
+        })
     }
     /// Single-clicked search matches reuse a clean preview; explicit opens pin it.
     pub(crate) fn open_file(&mut self, tab: ReviewTab, pin: bool, cx: &mut Context<Self>) {
@@ -591,6 +722,7 @@ impl ReviewPane {
         if self.sources.len() == 1 {
             self.preview_path = None;
             self.hovered_tab = None;
+            self.sources[0].close_own_browser_tab(cx);
             cx.emit(ReviewEvent::Empty);
             return;
         }
@@ -599,6 +731,7 @@ impl ReviewPane {
         }
         let mut removed = self.sources.remove(ix);
         removed.cancel();
+        removed.close_own_browser_tab(cx);
         self.git
             .update(cx, |git, _| git.review_cache.remember(&removed));
         if self.state.active >= ix && self.state.active > 0 {
@@ -631,6 +764,7 @@ impl ReviewPane {
         let source = self.sources.remove(keep);
         for mut removed in self.sources.drain(..) {
             removed.cancel();
+            removed.close_own_browser_tab(cx);
             self.git
                 .update(cx, |git, _| git.review_cache.remember(&removed));
         }
@@ -901,6 +1035,7 @@ impl ReviewPane {
                 });
             }
         }
+        self.sync_browsers(cx);
         if visible && !was {
             self.load_active(cx);
         }
@@ -908,6 +1043,7 @@ impl ReviewPane {
     pub(crate) fn cache_closed(&mut self, cx: &mut Context<Self>) {
         self.closed = true;
         self.visible = false;
+        self.sync_browsers(cx);
         for source in &mut self.sources {
             source.cancel();
             if let Some(editor) = &source.editor {
@@ -951,7 +1087,7 @@ impl ReviewPane {
         let Some(source) = self.sources.get_mut(ix) else {
             return;
         };
-        if source.editor_mode && source.editor.is_some() {
+        if source.editor_mode && source.editor.is_some() || source.browser.is_some() {
             return;
         }
         if source.complete && matches!(source.tab, ReviewTab::Commit { .. }) {
@@ -975,7 +1111,7 @@ impl ReviewPane {
             let tab = tab.clone();
             async move {
                 match &tab {
-                    ReviewTab::File { .. } => unreachable!(),
+                    ReviewTab::File { .. } | ReviewTab::Browser { .. } => unreachable!(),
                     ReviewTab::Changes { cwd, .. } => {
                         let root = PathBuf::from(cwd);
                         let index = scm::review_index(&root, known_index.as_ref())?;
@@ -1003,7 +1139,7 @@ impl ReviewPane {
                     Ok((files, versions)) => {
                         source.error = None;
                         let order: Vec<(String, Option<bool>, ChangedFile)> = match &tab {
-                            ReviewTab::File { .. } => unreachable!(),
+                            ReviewTab::File { .. } | ReviewTab::Browser { .. } => unreachable!(),
                             ReviewTab::Changes { path, staged, .. } => {
                                 let mut entries: Vec<_> = entries(&files, *staged)
                                     .into_iter()
@@ -1101,7 +1237,9 @@ impl ReviewPane {
                             .background_executor()
                             .spawn(async move {
                                 let diff = match &tab {
-                                    ReviewTab::File { .. } => unreachable!(),
+                                    ReviewTab::File { .. } | ReviewTab::Browser { .. } => {
+                                        unreachable!()
+                                    }
                                     ReviewTab::Changes { cwd, .. } => scm::file_diff(
                                         &PathBuf::from(cwd),
                                         &relative,
@@ -1212,7 +1350,7 @@ impl ReviewPane {
             return;
         };
         let models: Vec<DiffFile> = match &source.tab {
-            ReviewTab::File { .. } => return,
+            ReviewTab::File { .. } | ReviewTab::Browser { .. } => return,
             ReviewTab::Changes { staged, .. } => entries(files, *staged)
                 .into_iter()
                 .map(|(id, kind, file)| {
@@ -1331,7 +1469,7 @@ impl ReviewPane {
             .iter()
             .fold((0, 0), |(a, d), f| (a + f.additions, d + f.deletions));
         let (focus, file_count) = match &source.tab {
-            ReviewTab::File { .. } => return,
+            ReviewTab::File { .. } | ReviewTab::Browser { .. } => return,
             ReviewTab::Changes { path, staged, .. } => (
                 path.as_ref().and_then(|p| {
                     entries(files, *staged)
@@ -1577,10 +1715,7 @@ impl ReviewPane {
                                             .rounded_md()
                                             .text_size(px(13.))
                                             .text_color(content(0.5))
-                                            .child(crate::tab_tile::file_tile(
-                                                matches!(ghost, ReviewTab::File { .. })
-                                                    .then_some(label.as_ref()),
-                                            ))
+                                            .child(review_tile(&ghost, label.as_ref()))
                                             .child(div().min_w_0().truncate().child(label)),
                                     ),
                             )
@@ -1653,7 +1788,10 @@ impl ReviewPane {
                 let active = ix == self.state.active;
                 let hovered = self.hovered_tab == Some(ix);
                 let preview = matches!(&source.tab, ReviewTab::File { path, .. } if self.preview_path.as_ref() == Some(path));
-                let label: SharedString = source.tab.label().into();
+                let label: SharedString = match &source.browser {
+                    Some(pane) => pane.read(cx).title().into(),
+                    None => source.tab.label().into(),
+                };
                 div()
                     .id(("review-tab", ix))
                     .relative()
@@ -1722,10 +1860,7 @@ impl ReviewPane {
                                     d.text_color(content(0.5))
                                 }
                             })
-                            .child(crate::tab_tile::file_tile(
-                                matches!(source.tab, ReviewTab::File { .. })
-                                    .then_some(label.as_ref()),
-                            ))
+                            .child(review_tile(&source.tab, label.as_ref()))
                             .child(
                                 div()
                                     .flex_1()
@@ -1822,9 +1957,17 @@ impl Render for ReviewPane {
             }
             None => 1.,
         };
+        self.sync_browsers(cx);
         let body: AnyElement = match self.sources.get(self.state.active) {
             None => div().into_any_element(),
             Some(_) if self.deferred => div().into_any_element(),
+            Some(source) if source.browser.is_some() => {
+                let pane = source.browser.as_ref().unwrap();
+                if self.focus.is_focused(window) {
+                    window.focus(&pane.focus_handle(cx), cx);
+                }
+                pane.clone().into_any_element()
+            }
             Some(source) if source.editor_mode && source.editor.is_some() => {
                 let editor = source.editor.as_ref().unwrap();
                 if self.focus.is_focused(window) {
@@ -1838,6 +1981,7 @@ impl Render for ReviewPane {
                     | ReviewTab::Changes { cwd, .. }
                     | ReviewTab::Commit { cwd, .. }
                     | ReviewTab::Session { cwd, .. } => cwd,
+                    ReviewTab::Browser { .. } => unreachable!("drawn by its pane"),
                 };
                 if cwd.is_empty() || cwd == "~" {
                     centered()
@@ -1858,6 +2002,7 @@ impl Render for ReviewPane {
                                     "Couldn’t load changes"
                                 }
                                 ReviewTab::Commit { .. } => "Couldn’t load commit",
+                                ReviewTab::Browser { .. } => "Couldn’t show the tab",
                             },
                         ))
                         .child(
@@ -1918,6 +2063,15 @@ impl Render for ReviewPane {
     }
 }
 
+/// A tab's tile: a file's type, a browser tab's globe, or a diff.
+fn review_tile(tab: &ReviewTab, label: &str) -> gpui::Div {
+    match tab {
+        ReviewTab::File { .. } => crate::tab_tile::file_tile(Some(label)),
+        ReviewTab::Browser { .. } => crate::tab_tile::browser_tile(),
+        _ => crate::tab_tile::file_tile(None),
+    }
+}
+
 fn centered() -> gpui::Div {
     div().size_full().flex().items_center().justify_center()
 }
@@ -1967,6 +2121,76 @@ fn tab_menu_items(tab: &ReviewTab, can_close_others: bool) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_browser_tabs_go_and_the_active_tab_stays_active() {
+        let file = |name: &str| ReviewTab::File {
+            cwd: "/repo".into(),
+            path: name.into(),
+        };
+        let browser = |tab: &str| ReviewTab::Browser {
+            session: 1,
+            tab: tab.into(),
+            own: false,
+        };
+        let saved = vec![
+            browser("t1"),
+            file("a"),
+            browser("t2"),
+            file("b"),
+            file("c"),
+        ];
+        // The active file keeps the focus, wherever the browser tabs were.
+        for (active, want) in [(1, "a"), (3, "b"), (4, "c")] {
+            let mut tabs = saved.clone();
+            let active = strip_browser_tabs(&mut tabs, active);
+            assert_eq!(tabs, [file("a"), file("b"), file("c")]);
+            assert_eq!(tabs[active], file(want), "active {active}");
+        }
+        // An active browser tab gives way to the tab before it, or the first.
+        let mut tabs = saved.clone();
+        let active = strip_browser_tabs(&mut tabs, 2);
+        assert_eq!(tabs[active], file("a"));
+        let mut tabs = saved.clone();
+        assert_eq!(strip_browser_tabs(&mut tabs, 0), 0);
+        // Nothing to strip: unchanged, an active past the end too (the
+        // constructor clamps it to the tabs it has).
+        let mut tabs = vec![file("a"), file("b")];
+        assert_eq!(strip_browser_tabs(&mut tabs, 1), 1);
+        assert_eq!(tabs.len(), 2);
+        let mut tabs = vec![browser("t1")];
+        assert_eq!(strip_browser_tabs(&mut tabs, 0), 0);
+        assert!(tabs.is_empty());
+    }
+
+    #[gpui::test]
+    fn a_saved_pane_with_browser_tabs_reopens_on_the_tab_it_showed(cx: &mut gpui::TestAppContext) {
+        let repo = Repo::new();
+        let cwd = repo.cwd();
+        let git = cx.new(|cx| ProjectGit::new(cwd.clone(), cx));
+        let file = |name: &str| ReviewTab::File {
+            cwd: cwd.clone(),
+            path: repo.0.join(name).to_string_lossy().into_owned(),
+        };
+        let saved = ReviewState {
+            tabs: vec![
+                ReviewTab::Browser {
+                    session: 1,
+                    tab: "t_gone".into(),
+                    own: false,
+                },
+                file("a.txt"),
+                file("b.txt"),
+            ],
+            active: 2,
+            ..Default::default()
+        };
+        let pane = cx.new(|cx| ReviewPane::new(git, saved, cx));
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.state.tabs, [file("a.txt"), file("b.txt")]);
+            assert_eq!(pane.state.active, 1, "b.txt stays the active tab");
+        });
+    }
 
     #[test]
     fn failed_actions_log_their_action_and_error() {

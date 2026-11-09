@@ -1,0 +1,6930 @@
+//! Browser module: lets an agent use a Chromium browser (Chrome, Edge, Brave,
+//! Vivaldi, Opera or Arc) through a thin, in-process CDP client, under the
+//! user's control at every moment. The browser is either the Gespan
+//! browser, which Gespan starts on a profile of its own (kept, or private
+//! and deleted when it closes), or the user's own browser, attached to after
+//! the browser's consent dialog.
+//!
+//! Architecture:
+//!
+//! - [`discovery`]: finds `DevToolsActivePort`, probes the port, checks the
+//!   version and administrator policies. Never launches a browser.
+//! - [`launch`]: finds an installed browser and starts the Gespan browser
+//!   on its profile, then hands its endpoint to the same connect path.
+//! - [`link`]: the one WebSocket to the browser. Every command goes through
+//!   [`Link::send`], which re-checks toggle, epochs and lease under the policy
+//!   read lock immediately before the socket write. The method set is closed.
+//! - [`policy`]: the authority: global toggle, epochs, per-session grants and
+//!   tokens, per-tab leases, admission, limits, request-id dedup, URL and
+//!   upload-path rules.
+//! - [`targets`]: tab lifecycle (create, attach, marker, close, focus), popups
+//!   and OOPIFs via session-scoped auto-attach, and the event pump that keeps
+//!   the lease table current.
+//! - [`audit`]: `browser_audit`, `browser_events`, `browser_leases` and the
+//!   persisted settings in the app's SQLite database.
+//! - [`protocol`]: the frozen contract shared with the semantic layer, the
+//!   CLI/MCP adapters and the UI: action names and parameter records, the
+//!   four outcome classes, reasons, tab and connection state, settings.
+//! - [`semantic`]: the page actions (snapshot, click, type, …); the core
+//!   calls [`semantic::execute`] for every action it does not handle itself
+//!   (`tabs.*`).
+//! - [`diagnostics`]: console messages, uncaught exceptions and failed
+//!   requests of agent tabs, recorded on the link thread; read by the
+//!   `console` and `network` actions and summarised in `observed.signals`.
+//! - [`pick`]: "Point at an element": the user picks an element of a thread's
+//!   tab with the browser's inspect highlight; the composer gets a line
+//!   naming it and the agent's next snapshot marks it.
+//! - [`live`]: "Show in Gespan": a thread's tab shown live in a Gespan
+//!   panel (CDP screencast), with the user's clicks and typing sent back.
+//! - [`agent`]: the agent side: tool names, schemas and descriptions, and
+//!   the shaping of an action result into an MCP tool result. The MCP hub
+//!   serves them.
+//! - [`devservers`]: which `localhost` ports each checkout's app runs on.
+//!
+//! The crate is shared by the Tauri app (`src-tauri`) and Gespan Native
+//! (`crates/gespan-gpui`). What only the app knows (its database, its
+//! windows, its process job) comes through an [`Embedder`] given to
+//! [`init`]; the app's UI talks to [`host`] directly and is told about every
+//! change through [`Embedder::state_changed`].
+//!
+//! # How the rest of the app talks to this module
+//!
+//! **Agent side (the MCP hub).** The hub resolves the calling session and
+//! passes each tool call to [`BrowserHost::handle_request`] as an
+//! [`protocol::ActionRequest`]; it gets one [`protocol::ActionResult`] back.
+//! Policy refusals (`browser_off`, `not_granted`, `turn_inactive`, …) are
+//! ordinary `blocked` results.
+//!
+//! **UI.** The [`BrowserHost`] methods (toggle, grants, answers to access
+//! requests, tabs, live view), and the [`protocol::BrowserState`] the
+//! embedder receives after every change. [`turn_started`] takes an optional
+//! `browser_access` flag that grants or drops `/browser` for the session.
+//!
+//! **Semantic layer.** [`semantic::Exec`] gives it the link, the admitted
+//! [`policy::RequestCtx`], the resolved [`targets::TabHandle`] and the
+//! settings; see that module's docs.
+
+pub mod agent;
+pub mod audit;
+pub mod devservers;
+pub mod diagnostics;
+pub mod discovery;
+mod embedder;
+pub mod launch;
+pub mod link;
+pub mod live;
+pub mod pick;
+pub mod policy;
+pub mod protocol;
+#[cfg(test)]
+mod resilience;
+pub mod semantic;
+pub mod targets;
+/// The fake CDP endpoint and a host on an in-memory database, for this
+/// crate's tests and, behind the `testing` feature, the app's.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+pub mod turn;
+mod util;
+pub mod view;
+
+pub use embedder::Embedder;
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Child;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use rusqlite::Connection;
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
+
+use audit::Actor;
+use discovery::{Candidate, Located, CONSENT_TIMEOUT};
+use link::{CdpSessionId, ClosedBy, Command, Link, LinkStatus, Method, OpenError, TargetId};
+use policy::{audit_url, now_ms, Dedup, Policy, PolicyState, RequestCtx, BUSY_WAIT};
+use protocol::{
+    AccessMode, ActionKind, ActionRequest, ActionResult, AuditEntry, BrowserInfo, BrowserMode,
+    BrowserSettings, BrowserState, CommonInput, ConnectionInfo, ConnectionState, Outcome, Reason,
+    TabId, TabState, TabsAdoptParams, TabsCloseParams, TabsFocusParams, TabsListParams,
+    TabsOpenParams, WaitUntil, MIN_BROWSER_MAJOR,
+};
+use targets::TabEvent;
+
+/// How long `OFF` waits for the browser to acknowledge our detaches.
+pub const OFF_DETACH_BUDGET: Duration = Duration::from_millis(500);
+/// How long an agent action waits for the user to answer an access request.
+/// It comes on top of the action's own time limit; see [`HOST_WAIT`].
+pub const ASK_WAIT: Duration = Duration::from_secs(45);
+/// How long an agent action waits for the Gespan browser to start.
+pub const MANAGED_START_WAIT: Duration = Duration::from_secs(launch::START_TIMEOUT.as_secs() + 5);
+/// The longest a request can be held beyond its action's own time limit: an
+/// access request, a cold start of the Gespan browser, a busy tab, and the
+/// snapshot taken after the action. The agent's client waits at least this
+/// long on top of the action's limit, so it never gives up on a request the
+/// host is still working on.
+pub const HOST_WAIT: Duration = ASK_WAIT
+    .saturating_add(MANAGED_START_WAIT)
+    .saturating_add(BUSY_WAIT)
+    .saturating_add(semantic::SNAPSHOT_BUDGET);
+/// How long an agent action waits for the user's own browser to connect,
+/// its consent dialog included. It takes the shares of [`HOST_WAIT`] an
+/// attach does not use: no access request is asked in this build, and no
+/// Gespan browser starts. Chrome's dialog may stay up longer; the action
+/// then reports it as pending.
+pub const ATTACH_WAIT: Duration = ASK_WAIT.saturating_add(MANAGED_START_WAIT);
+/// How long the Gespan browser may take to close before it is killed.
+const MANAGED_CLOSE_WAIT: Duration = Duration::from_secs(3);
+/// How long the Gespan browser stays up after an access request was
+/// declined or expired while no thread may use it.
+pub const UNUSED_CLOSE_GRACE: Duration = Duration::from_secs(10);
+/// How long the Gespan browser stays up once its last tab closed, so an
+/// agent that closes one tab and opens the next does not restart it.
+pub const EMPTY_CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// Why the Gespan browser cannot start: no Chromium browser to start.
+pub const NO_BROWSER: &str = "No Chromium-based browser is installed on this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, then try again.";
+
+/// The Gespan browser process this run started.
+struct ManagedBrowser {
+    child: Child,
+    show_window: bool,
+    /// The user opened its window ("Open browser"), so it is theirs to close.
+    user_opened: bool,
+    profile: PathBuf,
+    /// Private mode: the profile is deleted once the browser has exited.
+    ephemeral: bool,
+}
+
+impl ManagedBrowser {
+    fn exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// After exit: a private profile goes. Chrome's helper processes can hold
+    /// files for a moment after the main one exits, hence the retries.
+    fn forget(self) {
+        if !self.ephemeral {
+            return;
+        }
+        for _ in 0..20 {
+            if std::fs::remove_dir_all(&self.profile).is_ok() || !self.profile.exists() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
+
+/// Wait up to [`MANAGED_CLOSE_WAIT`] for the Gespan browser to exit, kill
+/// it otherwise, then forget it (a private profile is deleted). The browser
+/// was asked to close over the link first when the link was up
+/// ([`BrowserHost::close_managed_pages`]).
+fn stop_managed(mut managed: ManagedBrowser) {
+    let deadline = Instant::now() + MANAGED_CLOSE_WAIT;
+    while Instant::now() < deadline && !managed.exited() {
+        thread::sleep(Duration::from_millis(100));
+    }
+    if !managed.exited() {
+        let _ = managed.child.kill();
+        let _ = managed.child.wait();
+    }
+    managed.forget();
+}
+
+/// A request the host is handling now. A retry with the same id (the
+/// agent's client lost the answer) waits for this one's result instead of
+/// running the action a second time; finished results are in the policy's
+/// dedup ring.
+struct InFlight {
+    input_hash: u64,
+    state: Mutex<InFlightState>,
+    done: Condvar,
+}
+
+enum InFlightState {
+    Running,
+    Finished(Box<ActionResult>),
+    /// The handler ended without a result (it panicked).
+    Lost,
+}
+
+/// Owner of an [`InFlight`] entry: dropping it hands the result to the
+/// waiting retries and removes the entry.
+struct InFlightGuard<'a> {
+    host: &'a BrowserHost,
+    key: (String, String),
+    entry: Arc<InFlight>,
+    result: Option<Box<ActionResult>>,
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        // The dedup ring already holds the result (stored by `finish`), so
+        // a retry arriving after the removal finds it there.
+        {
+            let mut inflight = self.host.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            if inflight
+                .get(&self.key)
+                .is_some_and(|entry| Arc::ptr_eq(entry, &self.entry))
+            {
+                inflight.remove(&self.key);
+            }
+        }
+        *self.entry.state.lock().unwrap_or_else(|e| e.into_inner()) = match self.result.take() {
+            Some(result) => InFlightState::Finished(result),
+            None => InFlightState::Lost,
+        };
+        self.entry.done.notify_all();
+    }
+}
+
+/// What a request id means when a request arrives.
+enum Claim<'a> {
+    /// New: this request runs; the guard announces its result.
+    Fresh(InFlightGuard<'a>),
+    /// Finished earlier with the same input.
+    Cached(Box<ActionResult>),
+    /// Running now with the same input.
+    Running(Arc<InFlight>),
+    /// Used before with different input.
+    Conflict,
+}
+
+static HOST: OnceLock<Arc<BrowserHost>> = OnceLock::new();
+
+/// The process-wide host, once [`init`] ran.
+pub fn host() -> Option<Arc<BrowserHost>> {
+    HOST.get().cloned()
+}
+
+/// Where audit rows go: the app's database, through its [`Embedder`].
+struct Db(Arc<dyn Embedder>);
+
+impl Db {
+    fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {
+        with_db(self.0.as_ref(), f).and_then(Result::ok)
+    }
+}
+
+/// Run `f` on the embedder's database; `None` when it has none now.
+fn with_db<T>(embedder: &dyn Embedder, f: impl FnOnce(&Connection) -> T) -> Option<T> {
+    let mut f = Some(f);
+    let mut out = None;
+    embedder.with_db(&mut |conn| {
+        if let Some(f) = f.take() {
+            out = Some(f(conn));
+        }
+    });
+    out
+}
+
+/// The module's single instance: policy, link, connection state, audit.
+pub struct BrowserHost {
+    policy: Arc<Policy>,
+    link: Link,
+    connection: Mutex<ConnectionInfo>,
+    /// `generation + 1` of the connection attempt running now, 0 when none.
+    connecting: AtomicU64,
+    /// Bumped by every toggle change. An attempt from an older generation
+    /// (OFF, or OFF→ON, happened while it ran) neither reports its state nor
+    /// keeps a socket it opened.
+    generation: AtomicU64,
+    /// How long the browser's consent dialog may stay unanswered, in ms.
+    consent_timeout_ms: AtomicU64,
+    /// [`ASK_WAIT`]; shorter in tests.
+    ask_wait_ms: AtomicU64,
+    /// [`ATTACH_WAIT`]; shorter in tests.
+    attach_wait_ms: AtomicU64,
+    /// [`UNUSED_CLOSE_GRACE`]; shorter in tests.
+    unused_grace_ms: AtomicU64,
+    /// Bumped by every scheduled "close when unused"; only the latest fires.
+    unused_close: AtomicU64,
+    /// A Gespan browser shutting down in the background (OFF, mode change).
+    closing: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Whether an agent request may still start a connection attempt that
+    /// shows the browser's consent dialog. One per drop: restored when a connection is established or the toggle goes
+    /// ON, spent by the first automatic attempt that reaches the browser.
+    auto_dialog: AtomicBool,
+    /// Profile folder of the Gespan browser (managed mode).
+    profile: Mutex<Option<PathBuf>>,
+    managed: Mutex<Option<ManagedBrowser>>,
+    /// "Open browser" asked for a visible window on the next start.
+    force_window: AtomicBool,
+    /// The blank page the Gespan browser starts with, until an agent tab
+    /// replaces it.
+    startup_pages: Mutex<Vec<TargetId>>,
+    /// Cancels the element pick running now, if any (one at a time).
+    picking: Mutex<Option<Arc<AtomicBool>>>,
+    /// Stops the live view running now, if any (one at a time).
+    /// The live views running now, at most one per tab.
+    live: Mutex<Vec<Arc<live::LiveControl>>>,
+    /// Tests: the browser counts as a hidden Gespan browser, whose windows
+    /// the live view may resize.
+    #[cfg(test)]
+    hidden_for_tests: AtomicBool,
+    /// Requests being handled now, by session and request id.
+    inflight: Mutex<HashMap<(String, String), Arc<InFlight>>>,
+    /// Serialises the Settings and thread-menu commands, which run off the
+    /// main thread but must not interleave (a quick ON then OFF).
+    commands: Mutex<()>,
+    /// The browser executable the Gespan browser starts from, for tests.
+    #[cfg(any(test, feature = "testing"))]
+    test_executable: Mutex<Option<launch::Executable>>,
+    db: Db,
+    /// Key of the audit's text fingerprints ([`audit::install_secret`]).
+    audit_secret: [u8; 32],
+    /// Role of the `ref` a running press/select aims at, read before the
+    /// action can change the page; the audit uses it to redact.
+    audit_targets: Mutex<HashMap<(String, String), String>>,
+    embedder: Arc<dyn Embedder>,
+    run_id: u64,
+}
+
+/// Create the host, migrate the audit tables and register it as the
+/// process-wide [`host`]. The app calls it once at startup, after its
+/// database is open; `app_data_dir` holds the Gespan browser's profiles.
+pub fn init(embedder: Arc<dyn Embedder>, app_data_dir: Option<&Path>) -> Result<(), String> {
+    let host = open(embedder, app_data_dir)?;
+    HOST.set(host)
+        .map_err(|_| "Browser module initialised twice".to_string())
+}
+
+/// What [`init`] does short of registering the host: the settings and the
+/// remembered switch the embedder's database holds, as the next start of
+/// the app would load them.
+pub fn open(
+    embedder: Arc<dyn Embedder>,
+    app_data_dir: Option<&Path>,
+) -> Result<Arc<BrowserHost>, String> {
+    let (run_id, settings) = with_db(embedder.as_ref(), |conn| {
+        audit::migrate(conn).map_err(|e| e.to_string())?;
+        let _ = audit::prune(conn, now_ms());
+        let run_id = audit::next_run_id(conn).map_err(|e| e.to_string())?;
+        let _ = audit::close_stale_leases(conn, run_id);
+        let stored = audit::load_settings(conn).ok().flatten();
+        let settings = embedder.fix_settings(stored.clone().unwrap_or_default());
+        if stored.is_some_and(|stored| stored != settings) {
+            // What an earlier build stored is fixed in the database too.
+            let _ = audit::save_settings(conn, &settings);
+        }
+        Ok::<_, String>((run_id, settings))
+    })
+    .ok_or("The app's database must be open before the browser module")??;
+    let enabled = settings.enabled;
+    let host = BrowserHost::create(run_id, settings, embedder);
+    if let Some(dir) = app_data_dir {
+        let profile = launch::profile_dir(dir);
+        launch::clear_private(&profile);
+        host.set_profile_dir(profile);
+    }
+    if enabled {
+        host.restore_toggle();
+    }
+    Ok(host)
+}
+
+/// App exit: the Gespan browser goes with the app.
+pub fn shutdown() {
+    if let Some(host) = host() {
+        host.close_managed_browser();
+    }
+}
+
+impl BrowserHost {
+    fn create(
+        run_id: u64,
+        settings: BrowserSettings,
+        embedder: Arc<dyn Embedder>,
+    ) -> Arc<BrowserHost> {
+        let policy = Arc::new(Policy::new(PolicyState::new(run_id, settings)));
+        let link = Link::new(policy.clone());
+        let host = Arc::new(BrowserHost {
+            policy,
+            link,
+            connection: Mutex::new(ConnectionInfo {
+                state: ConnectionState::Off,
+                browser: None,
+                detail: Some("Browser access is off.".into()),
+                since_ms: now_ms(),
+                last_error: None,
+            }),
+            connecting: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
+            consent_timeout_ms: AtomicU64::new(CONSENT_TIMEOUT.as_millis() as u64),
+            ask_wait_ms: AtomicU64::new(ASK_WAIT.as_millis() as u64),
+            attach_wait_ms: AtomicU64::new(ATTACH_WAIT.as_millis() as u64),
+            unused_grace_ms: AtomicU64::new(UNUSED_CLOSE_GRACE.as_millis() as u64),
+            unused_close: AtomicU64::new(0),
+            closing: Mutex::new(None),
+            auto_dialog: AtomicBool::new(true),
+            profile: Mutex::new(None),
+            managed: Mutex::new(None),
+            force_window: AtomicBool::new(false),
+            #[cfg(test)]
+            hidden_for_tests: AtomicBool::new(false),
+            startup_pages: Mutex::new(Vec::new()),
+            picking: Mutex::new(None),
+            live: Mutex::new(Vec::new()),
+            inflight: Mutex::new(HashMap::new()),
+            commands: Mutex::new(()),
+            #[cfg(any(test, feature = "testing"))]
+            test_executable: Mutex::new(None),
+            db: Db(embedder.clone()),
+            audit_secret: with_db(embedder.as_ref(), audit::install_secret)
+                .unwrap_or_else(audit::random_secret),
+            audit_targets: Mutex::new(HashMap::new()),
+            embedder,
+            run_id,
+        });
+        let weak: Weak<BrowserHost> = Arc::downgrade(&host);
+        host.link.set_on_closed(move |by| {
+            if let Some(host) = weak.upgrade() {
+                host.on_link_closed(by);
+            }
+        });
+        host
+    }
+
+    /// Host for tests: in-memory audit, no app around it, and not the
+    /// process-wide [`host`], so tests running at once never share one.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn for_tests(settings: BrowserSettings) -> Arc<BrowserHost> {
+        let embedder = Arc::new(embedder::MemoryEmbedder::new());
+        BrowserHost::create(0x1234, settings, embedder)
+    }
+
+    /// Tests: start the Gespan browser from `path` rather than the first
+    /// browser installed (CI points it at the runner's Chrome).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_executable_for_tests(&self, path: PathBuf) {
+        *self
+            .test_executable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(launch::Executable {
+            kind: protocol::BrowserKind::Chrome,
+            path,
+        });
+    }
+
+    /// Tests: the process id of the Gespan browser this host started.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn managed_pid_for_tests(&self) -> Option<u32> {
+        self.managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|managed| managed.child.id())
+    }
+
+    pub fn policy(&self) -> &Arc<Policy> {
+        &self.policy
+    }
+
+    /// Run one of the user's commands (Settings, thread menu, pane). They
+    /// run off the UI thread, since most of them wait for the browser, but
+    /// must not interleave: a quick ON then OFF stays in that order.
+    pub fn serialized<T>(&self, work: impl FnOnce() -> T) -> T {
+        let _serial = self.commands.lock().unwrap_or_else(|e| e.into_inner());
+        work()
+    }
+
+    /// Shorter consent waits for tests (the browser's own dialog has no limit).
+    #[cfg(test)]
+    pub(crate) fn set_consent_timeout(&self, timeout: Duration) {
+        self.consent_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::Release);
+    }
+
+    /// Shorter waits for the user's own browser to connect, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_attach_wait(&self, wait: Duration) {
+        self.attach_wait_ms
+            .store(wait.as_millis() as u64, Ordering::Release);
+    }
+
+    /// Shorter waits for an answer to an access request, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_ask_wait(&self, wait: Duration) {
+        self.ask_wait_ms
+            .store(wait.as_millis() as u64, Ordering::Release);
+    }
+
+    /// Shorter grace before an unused Gespan browser closes, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_unused_grace(&self, grace: Duration) {
+        self.unused_grace_ms
+            .store(grace.as_millis() as u64, Ordering::Release);
+    }
+
+    /// Treat `child` as the Gespan browser this run started, for tests.
+    #[cfg(test)]
+    pub(crate) fn adopt_managed_for_tests(&self, child: Child, profile: PathBuf, ephemeral: bool) {
+        *self.managed.lock().unwrap_or_else(|e| e.into_inner()) = Some(ManagedBrowser {
+            child,
+            show_window: true,
+            user_opened: false,
+            profile,
+            ephemeral,
+        });
+    }
+
+    #[cfg(test)]
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    // --- state for the UI ------------------------------------------------------
+
+    pub fn connection(&self) -> ConnectionInfo {
+        self.connection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn state(&self) -> BrowserState {
+        let policy = self.policy.read();
+        BrowserState {
+            toggle_on: policy.toggle_on,
+            connection: self.connection(),
+            sessions: policy.session_access(),
+            tabs: policy.overview(),
+            settings: policy.settings.clone(),
+            global_epoch: policy.global_epoch,
+        }
+    }
+
+    fn emit_state(&self) {
+        self.sync_lease_rows();
+        self.embedder.state_changed(&self.state());
+    }
+
+    fn set_connection(
+        &self,
+        state: ConnectionState,
+        detail: Option<String>,
+        browser: Option<BrowserInfo>,
+        last_error: Option<String>,
+    ) {
+        {
+            let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+            connection.state = state;
+            connection.detail = detail;
+            connection.browser = browser;
+            connection.since_ms = now_ms();
+            if state == ConnectionState::Connected {
+                connection.last_error = None;
+            } else if last_error.is_some() {
+                connection.last_error = last_error;
+            }
+        }
+        self.emit_state();
+    }
+
+    /// Close the `browser_leases` rows of this run whose tab is no longer
+    /// leased (revoked, released, closed, or dropped with the connection), so
+    /// the table only lists tabs some session actually holds.
+    fn sync_lease_rows(&self) {
+        let live: HashSet<String> = self
+            .policy
+            .read()
+            .leases()
+            .filter(|l| l.is_live())
+            .map(|l| l.tab.0.clone())
+            .collect();
+        self.db
+            .with(|conn| audit::close_leases_except(conn, self.run_id, &live));
+    }
+
+    fn event(&self, kind: &str, actor: Actor, session: Option<&str>, detail: Option<&str>) {
+        self.db
+            .with(|conn| audit::event(conn, kind, actor, session, detail));
+    }
+
+    // --- toggle and connection -------------------------------------------------
+
+    /// Main switch, for agents only. ON starts discovery (asynchronously);
+    /// OFF bumps the global epoch, revokes every agent lease, detaches and
+    /// closes the link. The user's own tabs ([`policy::Lease::user_tab`])
+    /// keep their leases and the link: then every other page of the Gespan
+    /// browser closes (the agents' tabs detached first), and the browser
+    /// keeps running for the user's tabs alone.
+    pub fn set_toggle(self: &Arc<Self>, on: bool) {
+        let (detach, agent_pages) = {
+            let mut policy = self.policy.write();
+            if policy.toggle_on != on {
+                self.generation.fetch_add(1, Ordering::AcqRel);
+            }
+            let agent_pages: Vec<TargetId> = policy
+                .leases()
+                .filter(|lease| lease.is_live() && !lease.user_tab)
+                .map(|lease| lease.target_id.clone())
+                .collect();
+            (policy.set_toggle(on), agent_pages)
+        };
+        self.persist_enabled(on);
+        if on {
+            self.auto_dialog.store(true, Ordering::Release);
+            self.event("toggle_on", Actor::User, None, None);
+            if self.mode() == BrowserMode::Attach {
+                self.connect();
+            } else if !self.link.is_open() {
+                // The Gespan browser starts on the first agent action or
+                // "Open browser", not on the switch. One kept running for
+                // the user's own tabs stays as it is.
+                self.set_idle();
+            }
+        } else {
+            self.event("toggle_off", Actor::User, None, None);
+            // A browser that stopped reading must not hold the switch: the
+            // page cleanup below would queue behind its stalled write.
+            self.link.abort_if_write_stalled(link::STALL_GRACE);
+            // Only the Gespan browser stays up for them; the user's own
+            // browser (Attach, which no Gespan path reaches) is let go of
+            // as before.
+            let user_pages = self.policy.read().user_tab_targets();
+            if self.link.is_open() && self.connected_to_managed() && !user_pages.is_empty() {
+                // The user's own tabs are theirs, not the agents': they stay
+                // open and the browser keeps running for them. The connection
+                // stays Connected on purpose, since it is: the switch, not the
+                // connection, refuses the agents (`Reason::Off`), and Settings
+                // shows no line for a running browser. Everything else
+                // closes: what the agents held (detached first) and the pages
+                // no one holds, such as a popup of a revoked tab, so nothing
+                // of the agents' stays up behind the user's tabs.
+                targets::detach_sessions(&self.link, &detach);
+                self.close_owned_targets(&agent_pages);
+                self.close_pages_except(&user_pages, Instant::now() + OFF_DETACH_BUDGET);
+                self.emit_state();
+                return;
+            }
+            self.close_managed_pages();
+            if self.link.status() != LinkStatus::Closed {
+                self.link.close(detach, OFF_DETACH_BUDGET);
+            }
+            // A UI command: the process exit and a private profile's deletion
+            // take seconds, so they finish in the background.
+            self.close_managed_browser_later();
+            self.set_connection(
+                ConnectionState::Off,
+                Some("Browser access is off.".into()),
+                None,
+                None,
+            );
+        }
+        self.emit_state();
+    }
+
+    /// Startup with the switch remembered ON: nothing connects or starts
+    /// until an agent needs the browser.
+    fn restore_toggle(&self) {
+        {
+            let mut policy = self.policy.write();
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            policy.set_toggle(true);
+        }
+        self.event("toggle_on", Actor::System, None, Some("remembered"));
+        self.set_idle();
+    }
+
+    fn mode(&self) -> BrowserMode {
+        self.policy.read().settings.mode
+    }
+
+    fn set_idle(&self) {
+        let detail = if self.mode().launches() {
+            "The Gespan browser starts when an agent needs it."
+        } else {
+            "Gespan connects to your browser when an agent needs it."
+        };
+        self.set_connection(ConnectionState::Idle, Some(detail.into()), None, None);
+    }
+
+    fn persist_enabled(&self, on: bool) {
+        let settings = {
+            let mut policy = self.policy.write();
+            if policy.settings.enabled == on {
+                return;
+            }
+            policy.settings.enabled = on;
+            policy.settings.clone()
+        };
+        self.db.with(|conn| audit::save_settings(conn, &settings));
+    }
+
+    pub fn set_profile_dir(&self, dir: PathBuf) {
+        *self.profile.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+    }
+
+    fn profile_dir(&self) -> Option<PathBuf> {
+        self.profile
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn connected_to_managed(&self) -> bool {
+        self.connection()
+            .browser
+            .as_ref()
+            .is_some_and(|browser| browser.managed)
+    }
+
+    /// The first agent tab in the Gespan browser closes the blank page it
+    /// started with, unless the user has since used that page.
+    fn close_startup_pages(&self) {
+        let startup =
+            std::mem::take(&mut *self.startup_pages.lock().unwrap_or_else(|e| e.into_inner()));
+        if startup.is_empty() || !self.link.is_open() || !self.connected_to_managed() {
+            return;
+        }
+        let Ok(reply) = self
+            .link
+            .send_system(Command::browser(Method::TargetGetTargets, json!({})))
+        else {
+            return;
+        };
+        let still_blank: Vec<TargetId> = blank_pages(&reply)
+            .into_iter()
+            .filter(|target| startup.contains(target))
+            .collect();
+        targets::close_targets(&self.link, &still_blank);
+    }
+
+    /// Close every page of the Gespan browser while the link is still up,
+    /// so it does not offer to restore them, then the browser itself
+    /// (`Browser.close`: a headless one stays up without pages). All of it
+    /// fits in [`OFF_DETACH_BUDGET`]; a browser that stops answering is left
+    /// to [`Self::close_managed_browser`], which kills it.
+    fn close_managed_pages(&self) {
+        if !self.link.is_open() || !self.connected_to_managed() {
+            return;
+        }
+        let deadline = Instant::now() + OFF_DETACH_BUDGET;
+        if !self.close_pages_except(&HashSet::new(), deadline) {
+            return;
+        }
+        // The browser may close the socket before it answers; the write is
+        // what counts, and the process exit is awaited by the caller.
+        let left = deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_millis(100));
+        if self.link.is_open() {
+            let _ = self
+                .link
+                .send_system_within(Command::browser(Method::BrowserClose, json!({})), left);
+        }
+    }
+
+    /// Close every page of the Gespan browser but `keep`, before
+    /// `deadline`: the agents' tabs and the pages no one holds (a popup of a
+    /// revoked tab, a startup page). False when the browser did not list
+    /// its pages or went away meanwhile: then there is nothing more to ask
+    /// of it.
+    fn close_pages_except(&self, keep: &HashSet<TargetId>, deadline: Instant) -> bool {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let Ok(reply) = self
+            .link
+            .send_system_within(Command::browser(Method::TargetGetTargets, json!({})), left)
+        else {
+            return false;
+        };
+        let pages: Vec<TargetId> = reply["targetInfos"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|info| info["type"] == "page")
+            .filter_map(|info| info["targetId"].as_str())
+            .map(|id| TargetId(id.to_string()))
+            .filter(|target| !keep.contains(target))
+            .collect();
+        let gone = |error: &link::CdpError| {
+            matches!(
+                error.reason(),
+                Reason::LinkDown | Reason::BrowserDisconnected
+            )
+        };
+        for page in pages {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match self.link.send_system_within(
+                Command::browser(Method::TargetCloseTarget, json!({ "targetId": page.0 })),
+                left,
+            ) {
+                Err(error) if gone(&error) => return false,
+                Err(error) if error.reason() == Reason::CdpTimeout => break,
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// Stop the Gespan browser this run started and wait until it is gone
+    /// (app exit, failed start): it closes its pages first when the link is
+    /// up, and is killed when it does not exit in time.
+    pub fn close_managed_browser(&self) {
+        self.close_managed_pages();
+        let managed = self
+            .managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(managed) = managed {
+            stop_managed(managed);
+        }
+        self.finish_closing();
+    }
+
+    /// [`Self::close_managed_browser`] for UI commands: the pages close now
+    /// (within [`OFF_DETACH_BUDGET`]), the process exit and the profile
+    /// cleanup run on a thread. The next start waits for it
+    /// ([`Self::finish_closing`]), so two browsers never share a profile.
+    fn close_managed_browser_later(&self) {
+        self.close_managed_pages();
+        let managed = self
+            .managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let Some(managed) = managed else { return };
+        let mut closing = self.closing.lock().unwrap_or_else(|e| e.into_inner());
+        let earlier = closing.take();
+        let spawned = thread::Builder::new()
+            .name("browser-close".into())
+            .spawn(move || {
+                if let Some(earlier) = earlier {
+                    let _ = earlier.join();
+                }
+                stop_managed(managed);
+            });
+        *closing = spawned.ok();
+    }
+
+    /// Wait for a background shutdown of the Gespan browser to end.
+    fn finish_closing(&self) {
+        let closing = self
+            .closing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(closing) = closing {
+            let _ = closing.join();
+        }
+    }
+
+    /// After an access request was declined or expired: when no thread may
+    /// use the Gespan browser once [`UNUSED_CLOSE_GRACE`] has passed, close
+    /// it instead of leaving it running until the switch goes off.
+    fn close_when_unused(self: &Arc<Self>) {
+        if !self.mode().launches() {
+            return;
+        }
+        let ticket = self.unused_close.fetch_add(1, Ordering::AcqRel) + 1;
+        let grace = Duration::from_millis(self.unused_grace_ms.load(Ordering::Acquire));
+        let host = self.clone();
+        let _ = thread::Builder::new()
+            .name("browser-unused".into())
+            .spawn(move || {
+                thread::sleep(grace);
+                // A start still running (the warm-up) ends first.
+                let deadline = Instant::now() + launch::START_TIMEOUT;
+                while host.connecting.load(Ordering::Acquire) != 0 && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                if host.unused_close.load(Ordering::Acquire) == ticket {
+                    host.close_if_unused();
+                }
+            });
+    }
+
+    /// A tab closed: once [`EMPTY_CLOSE_GRACE`] has passed with no tab
+    /// open, no thread's and none of the user's, the Gespan browser
+    /// closes. Nothing of the browser runs then; the next agent action or
+    /// "Open browser" starts it again.
+    fn close_when_empty(self: &Arc<Self>) {
+        if !self.mode().launches() {
+            return;
+        }
+        let ticket = self.unused_close.fetch_add(1, Ordering::AcqRel) + 1;
+        let grace = Duration::from_millis(
+            self.unused_grace_ms
+                .load(Ordering::Acquire)
+                .min(EMPTY_CLOSE_GRACE.as_millis() as u64),
+        );
+        let host = self.clone();
+        let _ = thread::Builder::new()
+            .name("browser-empty".into())
+            .spawn(move || {
+                thread::sleep(grace);
+                if host.unused_close.load(Ordering::Acquire) == ticket
+                    && host.connecting.load(Ordering::Acquire) == 0
+                {
+                    host.close_if_empty();
+                }
+            });
+    }
+
+    fn close_if_empty(self: &Arc<Self>) {
+        let switch_on = {
+            let policy = self.policy.read();
+            if !policy.settings.mode.launches() {
+                return;
+            }
+            if policy
+                .leases()
+                .any(|lease| matches!(lease.state, TabState::Open | TabState::Attaching))
+            {
+                return;
+            }
+            policy.toggle_on
+        };
+        if !self.link.is_open() {
+            return;
+        }
+        // With the switch off the browser only runs for the user's own tabs
+        // (no lease is live any more, see above): it closes after the last
+        // of them, whatever pages no one holds are left. With it on, a page
+        // no one holds is one an agent may still be given.
+        if switch_on && !self.user_tabs().is_ok_and(|tabs| tabs.is_empty()) {
+            return;
+        }
+        self.event("managed_closed_empty", Actor::System, None, None);
+        self.close_managed_now();
+    }
+
+    /// Close the Gespan browser that [`Self::close_if_unused`] or
+    /// [`Self::close_if_empty`] found nothing left in.
+    fn close_managed_now(self: &Arc<Self>) {
+        self.close_managed_pages();
+        if self.link.status() != LinkStatus::Closed {
+            self.link.close(Vec::new(), OFF_DETACH_BUDGET);
+        }
+        self.close_managed_browser_later();
+        if self.policy.read().toggle_on {
+            self.set_idle();
+        } else {
+            self.set_connection(
+                ConnectionState::Off,
+                Some("Browser access is off.".into()),
+                None,
+                None,
+            );
+        }
+        self.emit_state();
+    }
+
+    fn close_if_unused(self: &Arc<Self>) {
+        {
+            let policy = self.policy.read();
+            if !policy.toggle_on || !policy.settings.mode.launches() || policy.anyone_has_access() {
+                return;
+            }
+        }
+        let (started, user_opened) = {
+            let managed = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                managed.is_some(),
+                managed.as_ref().is_some_and(|managed| managed.user_opened),
+            )
+        };
+        if !started && self.link.status() == LinkStatus::Closed {
+            return;
+        }
+        // A window the user opened, or pages they browse in it, are theirs:
+        // only a browser started for the agent alone closes by itself.
+        if user_opened
+            || !self.policy.read().user_tab_targets().is_empty()
+            || self.user_tabs().is_ok_and(|tabs| !tabs.is_empty())
+        {
+            return;
+        }
+        self.event("managed_closed_unused", Actor::System, None, None);
+        self.close_managed_now();
+    }
+
+    /// The link to the Gespan browser dropped: when the window was closed
+    /// or the browser crashed, its process exits shortly after. Forget it then
+    /// (a private profile is deleted); a browser that keeps running stays.
+    fn reap_managed_browser(self: &Arc<Self>) {
+        let host = self.clone();
+        let _ = thread::Builder::new()
+            .name("browser-reap".into())
+            .spawn(move || {
+                for _ in 0..100 {
+                    if host.take_exited_browser() {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            });
+    }
+
+    fn find_executable(&self, choice: &protocol::BrowserChoice) -> Option<launch::Executable> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(exe) = self
+            .test_executable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            return Some(exe);
+        }
+        launch::find_executable(choice)
+    }
+
+    /// A start that failed or lost its generation: stop the browser `pid` it
+    /// started, unless something else already took it out of the slot.
+    fn stop_started(&self, pid: u32) {
+        let mine = {
+            let mut slot = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+            if slot
+                .as_ref()
+                .is_some_and(|managed| managed.child.id() == pid)
+            {
+                slot.take()
+            } else {
+                None
+            }
+        };
+        if let Some(managed) = mine {
+            stop_managed(managed);
+        }
+    }
+
+    /// True when there is nothing left to wait for.
+    fn take_exited_browser(&self) -> bool {
+        let exited = {
+            let mut slot = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(managed) = slot.as_mut() else {
+                return true;
+            };
+            if !managed.exited() {
+                return false;
+            }
+            slot.take()
+        };
+        if let Some(managed) = exited {
+            managed.forget();
+        }
+        true
+    }
+
+    /// Settings "Open browser": the Gespan browser with a visible window,
+    /// for signing in to sites. A headless one is restarted.
+    pub fn open_window(self: &Arc<Self>) -> Result<(), String> {
+        if !self.mode().launches() {
+            return Err("Open browser is only for the Gespan browser.".into());
+        }
+        if !self.policy.read().toggle_on {
+            return Err("Turn on browser access first.".into());
+        }
+        let headless = {
+            let mut managed = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+            managed.as_mut().map(|managed| {
+                // Now the user's window: it no longer closes when unused.
+                managed.user_opened = true;
+                !managed.show_window
+            })
+        };
+        if headless == Some(true) {
+            self.close_managed_pages();
+            self.disconnect();
+            self.close_managed_browser_later();
+        } else if self.link.is_open() {
+            return Ok(());
+        }
+        self.force_window.store(true, Ordering::Release);
+        self.connect();
+        Ok(())
+    }
+
+    /// Start discovery and connection on a background thread, if ON and not
+    /// already connected or connecting. Every connection means a new consent
+    /// dialog in the browser; there is no automatic retry loop.
+    pub fn connect(self: &Arc<Self>) {
+        self.start_connect(false, false);
+    }
+
+    /// A connection attempt started by an agent request (the next request
+    /// after a drop starts a new discovery). It may show the consent
+    /// dialog at most once per drop; after that only the user's Connect does.
+    fn connect_automatically(self: &Arc<Self>) {
+        self.start_connect(true, false);
+    }
+
+    /// `for_user`: the user's own tab needs the browser, which starts
+    /// whatever the switch says (the switch is about agents only).
+    fn start_connect(self: &Arc<Self>, automatic: bool, for_user: bool) {
+        // The generation is bumped under the policy write lock, so read under
+        // the same guard as the switch it belongs to.
+        if self.link.is_open() {
+            return;
+        }
+        let generation = {
+            let policy = self.policy.read();
+            if !policy.toggle_on && !for_user {
+                return;
+            }
+            self.generation.load(Ordering::Acquire)
+        };
+        let mine = generation + 1;
+        let running = self.connecting.load(Ordering::Acquire);
+        // One attempt per generation; a stale one (from before a toggle
+        // change) does not hold up the new one.
+        if running == mine
+            || self
+                .connecting
+                .compare_exchange(running, mine, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return;
+        }
+        let host = self.clone();
+        let spawned = thread::Builder::new()
+            .name("browser-connect".into())
+            .spawn(move || {
+                host.run_connect(automatic, generation);
+                let _ =
+                    host.connecting
+                        .compare_exchange(mine, 0, Ordering::AcqRel, Ordering::Acquire);
+            });
+        if spawned.is_err() {
+            let _ = self
+                .connecting
+                .compare_exchange(mine, 0, Ordering::AcqRel, Ordering::Acquire);
+        }
+    }
+
+    fn current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::Acquire) == generation
+    }
+
+    /// [`Self::set_connection`] for a connection attempt: dropped when the
+    /// toggle changed since the attempt started.
+    fn attempt_state(
+        &self,
+        generation: u64,
+        state: ConnectionState,
+        detail: Option<String>,
+        browser: Option<BrowserInfo>,
+        last_error: Option<String>,
+    ) {
+        if self.current(generation) {
+            self.set_connection(state, detail, browser, last_error);
+        }
+    }
+
+    /// Discovery (candidates, port file, probe) then [`Self::connect_endpoint`].
+    fn run_connect(self: &Arc<Self>, automatic: bool, generation: u64) {
+        if self.mode().launches() {
+            self.run_connect_managed(generation);
+            return;
+        }
+        let before = self.connection();
+        let choice = self.policy.read().settings.browser.clone();
+        self.attempt_state(
+            generation,
+            ConnectionState::Discovering,
+            Some("Looking for your browser…".into()),
+            None,
+            None,
+        );
+        match discovery::locate(&choice) {
+            Located::NoBrowser => self.attempt_state(
+                generation,
+                ConnectionState::NeedsToggle,
+                Some(format!(
+                    "No browser profile was found. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, or choose its profile folder in Settings → Browser. {}",
+                    discovery::setup_instruction(None)
+                )),
+                None,
+                None,
+            ),
+            Located::NeedsToggle { candidates } => {
+                let kind = candidates.first().map(|c| c.kind);
+                match kind.and_then(discovery::policy_blocks_debugging) {
+                    Some(policy) => self.attempt_state(
+                        generation,
+                        ConnectionState::PolicyBlocked,
+                        Some(format!(
+                            "An administrator policy blocks remote debugging ({policy}). Ask your administrator; Gespan never works around policies."
+                        )),
+                        None,
+                        None,
+                    ),
+                    None => self.attempt_state(
+                        generation,
+                        ConnectionState::NeedsToggle,
+                        Some(discovery::setup_instruction(kind)),
+                        None,
+                        None,
+                    ),
+                }
+            }
+            Located::Unreadable { candidate } => {
+                self.event(
+                    "profile_unreadable",
+                    Actor::System,
+                    None,
+                    Some(&candidate.channel),
+                );
+                self.attempt_state(
+                    generation,
+                    ConnectionState::ProfileUnreadable,
+                    Some(profile_unreadable_detail(
+                        &candidate.user_data_dir,
+                        discovery::Os::current(),
+                    )),
+                    None,
+                    None,
+                )
+            }
+            Located::StalePort { candidate, port } => self.attempt_state(
+                generation,
+                ConnectionState::StalePort,
+                Some(format!(
+                    "{} left a DevToolsActivePort file (port {port}) but nothing answers there: the browser is closed or the file is stale. Start the browser and retry.",
+                    candidate.channel
+                )),
+                None,
+                None,
+            ),
+            Located::Found { .. }
+                if automatic && !self.auto_dialog.swap(false, Ordering::AcqRel) =>
+            {
+                // Discovery is harmless; another consent dialog is not.
+                self.event(
+                    "auto_connect_skipped",
+                    Actor::System,
+                    None,
+                    Some("consent dialog already shown once since the last drop"),
+                );
+                self.attempt_state(
+                    generation,
+                    before.state,
+                    Some("The browser already showed its consent dialog once since the connection ended; ask the user to click Connect in Gespan's Settings → Browser.".into()),
+                    None,
+                    None,
+                );
+            }
+            Located::Found {
+                candidate, ws_url, ..
+            } => self.connect_endpoint(candidate, &ws_url, generation),
+        }
+    }
+
+    /// Managed mode: reuse the Gespan browser when it already runs, start
+    /// it otherwise, then connect like to any other endpoint. No consent
+    /// dialog: the browser was started by us with its own profile.
+    fn run_connect_managed(self: &Arc<Self>, generation: u64) {
+        // A browser still shutting down holds its profile.
+        self.finish_closing();
+        let private = self.mode() == BrowserMode::Private;
+        let profile = if private {
+            // The private browser still running keeps its profile; a new one
+            // gets a fresh folder.
+            let current = self
+                .managed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .filter(|managed| managed.ephemeral)
+                .map(|managed| managed.profile.clone());
+            current
+                .filter(|dir| launch::running(dir).is_some())
+                .or_else(|| self.profile_dir().map(|dir| launch::private_dir(&dir)))
+        } else {
+            self.profile_dir()
+        };
+        let Some(profile) = profile else {
+            self.attempt_state(
+                generation,
+                ConnectionState::StalePort,
+                Some("Gespan has no folder for its browser profile.".into()),
+                None,
+                None,
+            );
+            return;
+        };
+        self.attempt_state(
+            generation,
+            ConnectionState::Discovering,
+            Some("Starting the Gespan browser…".into()),
+            None,
+            None,
+        );
+        let choice = self.policy.read().settings.browser.clone();
+        let exe = self.find_executable(&choice);
+        let kind = exe.as_ref().map(|exe| exe.kind);
+        let active = match launch::running(&profile) {
+            Some(active) => active,
+            None => {
+                let Some(exe) = exe else {
+                    self.attempt_state(
+                        generation,
+                        ConnectionState::StalePort,
+                        Some(NO_BROWSER.into()),
+                        None,
+                        Some(NO_BROWSER.into()),
+                    );
+                    return;
+                };
+                // A browser of an earlier start that no longer serves its
+                // profile (hung, or exited and not reaped yet) goes first: a
+                // second start on a profile in use only hands over to it.
+                let previous = self
+                    .managed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(previous) = previous {
+                    stop_managed(previous);
+                }
+                let user_opened = self.force_window.swap(false, Ordering::AcqRel);
+                // Agent tabs shown in Gespan need no browser window of their own.
+                let show_window = self.policy.read().settings.starts_with_window() || user_opened;
+                // Started and registered under the lock, so OFF or a mode
+                // change (generation first, then the slot) either stops this
+                // browser or comes before it is started at all.
+                let started = {
+                    let mut slot = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+                    if !self.current(generation) {
+                        return;
+                    }
+                    let raced = slot.take();
+                    let started = launch::start(&exe, &profile, show_window, self.display_scale())
+                        .map(|child| {
+                            self.embedder.browser_started(&child);
+                            let pid = child.id();
+                            *slot = Some(ManagedBrowser {
+                                child,
+                                show_window,
+                                user_opened,
+                                profile: profile.clone(),
+                                ephemeral: private,
+                            });
+                            pid
+                        });
+                    drop(slot);
+                    // Only a stale attempt can have registered one since.
+                    if let Some(raced) = raced {
+                        stop_managed(raced);
+                    }
+                    started
+                };
+                let pid = match started {
+                    Ok(pid) => pid,
+                    Err(error) => {
+                        self.attempt_state(
+                            generation,
+                            ConnectionState::StalePort,
+                            Some(format!(
+                                "The Gespan browser could not start ({}).",
+                                exe.path.display()
+                            )),
+                            None,
+                            Some(error.to_string()),
+                        );
+                        return;
+                    }
+                };
+                self.event(
+                    "managed_started",
+                    Actor::System,
+                    None,
+                    Some(&exe.path.display().to_string()),
+                );
+                let ready = launch::wait_for_endpoint(&profile, launch::START_TIMEOUT, || {
+                    if !self.current(generation) {
+                        return launch::Started::Gone;
+                    }
+                    let mut slot = self.managed.lock().unwrap_or_else(|e| e.into_inner());
+                    match slot.as_mut() {
+                        Some(managed) if managed.child.id() == pid => {
+                            match managed.child.try_wait() {
+                                Ok(Some(status)) => launch::Started::Exited(status.to_string()),
+                                _ => launch::Started::Running,
+                            }
+                        }
+                        // OFF or a mode change took it.
+                        _ => launch::Started::Gone,
+                    }
+                });
+                if !self.current(generation) {
+                    self.stop_started(pid);
+                    return;
+                }
+                match ready {
+                    Ok(active) => active,
+                    Err(message) => {
+                        self.stop_started(pid);
+                        self.attempt_state(
+                            generation,
+                            ConnectionState::StalePort,
+                            Some(format!("The Gespan browser did not start. {message}")),
+                            None,
+                            Some(message),
+                        );
+                        return;
+                    }
+                }
+            }
+        };
+        if !self.current(generation) {
+            return;
+        }
+        let candidate = launch::candidate(&profile, kind.unwrap_or(protocol::BrowserKind::Chrome));
+        self.connect_endpoint(candidate, &discovery::ws_url(&active), generation);
+    }
+
+    /// Open the socket (consent dialog), check the version,
+    /// read the target list once, start the event pump.
+    pub fn connect_endpoint(self: &Arc<Self>, candidate: Candidate, ws_url: &str, generation: u64) {
+        let managed = candidate.channel == launch::CHANNEL;
+        if managed {
+            self.attempt_state(
+                generation,
+                ConnectionState::Discovering,
+                Some("Connecting to the Gespan browser…".into()),
+                None,
+                None,
+            );
+        } else {
+            self.attempt_state(
+                generation,
+                ConnectionState::AwaitingConsent,
+                Some("Confirm the remote debugging permission in your browser.".into()),
+                None,
+                None,
+            );
+            self.event(
+                "consent_pending",
+                Actor::System,
+                None,
+                Some(&format!(
+                    "{} ({})",
+                    candidate.channel,
+                    candidate.user_data_dir.display()
+                )),
+            );
+        }
+        if !self.current(generation) {
+            return;
+        }
+        let consent_timeout =
+            Duration::from_millis(self.consent_timeout_ms.load(Ordering::Acquire));
+        match self.link.open(ws_url, consent_timeout) {
+            Ok(()) => {}
+            Err(OpenError::AlreadyOpen) => return,
+            Err(OpenError::ConsentTimeout) => {
+                self.event("consent_timeout", Actor::Error, None, None);
+                self.attempt_state(
+                    generation,
+                    ConnectionState::ConsentTimeout,
+                    Some("The browser's consent dialog was not answered in time. Click Connect in Settings → Browser to try again.".into()),
+                    None,
+                    Some("consent timeout".into()),
+                );
+                return;
+            }
+            Err(OpenError::Refused(message)) => {
+                self.event("consent_denied", Actor::User, None, Some(&message));
+                self.attempt_state(
+                    generation,
+                    ConnectionState::ConsentDenied,
+                    Some("The browser refused the connection. Click Connect in Settings → Browser to try again.".into()),
+                    None,
+                    Some(message),
+                );
+                return;
+            }
+            Err(OpenError::Unreachable(message)) => {
+                self.attempt_state(
+                    generation,
+                    ConnectionState::StalePort,
+                    Some("The browser endpoint went away before the connection opened. Start the browser and retry.".into()),
+                    None,
+                    Some(message),
+                );
+                return;
+            }
+            Err(OpenError::Aborted) => {
+                let state = if self.policy.read().toggle_on {
+                    ConnectionState::Disconnected
+                } else {
+                    ConnectionState::Off
+                };
+                self.attempt_state(
+                    generation,
+                    state,
+                    Some("Connection attempt cancelled.".into()),
+                    None,
+                    None,
+                );
+                return;
+            }
+        }
+        if !self.current(generation) {
+            // The toggle moved while the user was answering the dialog.
+            self.link.close(Vec::new(), OFF_DETACH_BUDGET);
+            return;
+        }
+        let version = self
+            .link
+            .send_system(Command::browser(Method::BrowserGetVersion, json!({})))
+            .ok();
+        let product = version
+            .as_ref()
+            .and_then(|v| v["product"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let major = discovery::parse_version(&product)
+            .map(|(_, major)| major)
+            .unwrap_or(0);
+        if !discovery::version_supported(major) {
+            self.link.close(Vec::new(), OFF_DETACH_BUDGET);
+            self.event("unsupported_version", Actor::Error, None, Some(&product));
+            self.attempt_state(
+                generation,
+                ConnectionState::UnsupportedVersion,
+                Some(format!(
+                    "{} is too old; a browser built on Chromium {MIN_BROWSER_MAJOR} or newer is required.",
+                    if product.is_empty() {
+                        "This browser"
+                    } else {
+                        product.as_str()
+                    }
+                )),
+                None,
+                Some(format!("product {product:?}")),
+            );
+            return;
+        }
+        // Diagnostics only: no attach, no adoption. The
+        // Gespan browser's start page is remembered so the first agent tab
+        // can replace it.
+        let targets = self
+            .link
+            .send_system(Command::browser(Method::TargetGetTargets, json!({})));
+        *self.startup_pages.lock().unwrap_or_else(|e| e.into_inner()) = match targets {
+            Ok(reply) if managed => blank_pages(&reply),
+            _ => Vec::new(),
+        };
+        let info = BrowserInfo {
+            kind: candidate.kind,
+            channel: candidate.channel.clone(),
+            product: product.clone(),
+            major,
+            user_data_dir: candidate.user_data_dir.display().to_string(),
+            tabs_total: 0,
+            managed,
+        };
+        let weak = Arc::downgrade(self);
+        let _ = targets::spawn_pump(
+            self.link.clone(),
+            Arc::new(move |event| {
+                if let Some(host) = weak.upgrade() {
+                    host.on_tab_event(event);
+                }
+            }),
+        );
+        // After the pump listens: popups of agent tabs are found through
+        // `Target.targetCreated` (see `targets::handle_event`).
+        let _ = self.link.send_system(Command::browser(
+            Method::TargetSetDiscoverTargets,
+            json!({ "discover": true }),
+        ));
+        self.auto_dialog.store(true, Ordering::Release);
+        self.event("connected", Actor::User, None, Some(&product));
+        self.attempt_state(
+            generation,
+            ConnectionState::Connected,
+            Some(product),
+            Some(info),
+            None,
+        );
+    }
+
+    /// Settings "Disconnect": close the link while the toggle stays ON. The
+    /// next agent request or Connect click starts a new discovery.
+    pub fn disconnect(self: &Arc<Self>) {
+        self.event("disconnect", Actor::User, None, None);
+        if self.link.status() != LinkStatus::Closed {
+            let detach: Vec<CdpSessionId> = self
+                .policy
+                .read()
+                .leases()
+                .filter(|l| l.is_live())
+                .filter_map(|l| l.cdp_session.clone())
+                .collect();
+            // The on_closed hook moves the state to Disconnected.
+            self.link.close(detach, OFF_DETACH_BUDGET);
+        } else {
+            self.on_link_closed(ClosedBy::Us);
+        }
+    }
+
+    /// Link thread hook: socket gone (ours or the browser's). Epoch up,
+    /// leases cleared; tabs in the browser stay.
+    fn on_link_closed(self: &Arc<Self>, by: ClosedBy) {
+        self.policy.write().connection_lost();
+        let toggle_on = self.policy.read().toggle_on;
+        let managed = self.mode().launches();
+        if managed {
+            self.reap_managed_browser();
+        }
+        let (state, detail) = if toggle_on && managed {
+            (
+                ConnectionState::Idle,
+                "The Gespan browser closed; it starts again when an agent needs it.",
+            )
+        } else if toggle_on {
+            (
+                ConnectionState::Disconnected,
+                "Connection to the browser ended; the next request asks for a new permission in the browser.",
+            )
+        } else {
+            (ConnectionState::Off, "Browser access is off.")
+        };
+        let actor = match by {
+            ClosedBy::Us => Actor::System,
+            ClosedBy::Peer => Actor::User,
+            ClosedBy::Error => Actor::Error,
+        };
+        self.event("disconnected", actor, None, Some(&format!("{by:?}")));
+        let current = self.connection().state;
+        if current != ConnectionState::Off || toggle_on {
+            self.set_connection(state, Some(detail.into()), None, None);
+        }
+    }
+
+    fn on_tab_event(self: &Arc<Self>, event: TabEvent) {
+        match &event {
+            TabEvent::PopupOpened { tab, owner, opener } => {
+                let lease = self.policy.read().lease(tab).cloned();
+                if let Some(lease) = lease {
+                    self.db.with(|conn| {
+                        audit::lease_opened(
+                            conn,
+                            self.run_id,
+                            tab,
+                            &lease.target_id.0,
+                            owner,
+                            Some(opener),
+                            &lease.url,
+                        )
+                    });
+                }
+            }
+            TabEvent::PopupBlocked { owner, opener } => {
+                self.event(
+                    "popup_blocked",
+                    Actor::System,
+                    Some(owner),
+                    Some(&format!("opener {}", opener.0)),
+                );
+            }
+            TabEvent::Closed(tab) | TabEvent::Crashed(tab) => {
+                self.db.with(|conn| audit::lease_closed(conn, tab));
+                self.close_when_empty();
+            }
+            TabEvent::Navigated(_)
+            | TabEvent::Changed(_)
+            | TabEvent::DialogOpened(_)
+            | TabEvent::DialogClosed(_) => {}
+        }
+        self.emit_state();
+    }
+
+    // --- permissions -----------------------------------------------------------
+
+    /// `/browser` on or off for a session.
+    pub fn set_grant(&self, session: &str, window: &str, enabled: bool) {
+        let was_granted = self.policy.read().granted(session);
+        let detach = self.policy.write().set_grant(session, window, enabled);
+        if self.link.is_open() {
+            targets::detach_sessions(&self.link, &detach);
+        }
+        // Recorded only when the grant actually changed.
+        if enabled != was_granted {
+            self.event(
+                if enabled { "grant_on" } else { "grant_off" },
+                Actor::User,
+                Some(session),
+                None,
+            );
+        }
+        self.emit_state();
+    }
+
+    /// Settings "Revoke": the session loses its grant and leases; tabs stay.
+    pub fn revoke(&self, session: &str) {
+        let detach = self.policy.write().turn_off(session);
+        if self.link.is_open() {
+            targets::detach_sessions(&self.link, &detach);
+        }
+        self.event("revoked", Actor::User, Some(session), None);
+        self.emit_state();
+    }
+
+    /// Hand a tab to another session.
+    pub fn transfer(&self, tab: &TabId, from: &str, to: &str) -> Result<(), Reason> {
+        self.policy.write().transfer(tab, from, to)?;
+        // The new owner starts from its own snapshot.
+        semantic::forget_refs(&self.link, tab);
+        self.db.with(|conn| audit::lease_transferred(conn, tab, to));
+        self.event(
+            "transfer",
+            Actor::User,
+            Some(from),
+            Some(&format!("{} -> {to}", tab.0)),
+        );
+        self.emit_state();
+        Ok(())
+    }
+
+    /// Settings "Take the tab back": the lease is released, the
+    /// marker comes off, we detach, and the tab stays open for the user. The
+    /// owning session's next action on it gets `no_lease`.
+    pub fn release_tab(&self, tab: &TabId) -> Result<(), String> {
+        let (owner, main_frame) = {
+            let state = self.policy.read();
+            let lease = state.lease(tab).ok_or("Unknown tab")?;
+            (lease.owner.clone(), lease.main_frame_id.clone())
+        };
+        let detach = self
+            .policy
+            .write()
+            .release_lease(tab)
+            .map_err(|reason| reason.message().to_string())?;
+        if let Some(session) = detach {
+            if self.link.is_open() {
+                if let Some(frame) = main_frame.as_deref() {
+                    let _ = targets::release_marker(&self.link, &session, frame);
+                }
+                targets::detach_sessions(&self.link, std::slice::from_ref(&session));
+            }
+        }
+        self.db.with(|conn| audit::lease_closed(conn, tab));
+        self.event("tab_released", Actor::User, Some(&owner), Some(&tab.0));
+        self.emit_state();
+        Ok(())
+    }
+
+    /// Pages no thread holds, for the user's "Give to a thread" list. In the
+    /// user's own browser these are their own tabs; only the UI sees them.
+    pub fn user_tabs(&self) -> Result<Vec<targets::FreeTab>, String> {
+        if !self.link.is_open() {
+            return Err("Gespan is not connected to the browser.".into());
+        }
+        let mut tabs = targets::free_tabs(&self.link).map_err(|e| format!("{e:?}"))?;
+        // Pages of the browser itself (settings, new tab page) are no use.
+        tabs.retain(|tab| tab.url.starts_with("http://") || tab.url.starts_with("https://"));
+        Ok(tabs)
+    }
+
+    /// The user hands one of the browser's tabs to a thread, which gets
+    /// browser access with it (the hand-over is the user's consent).
+    pub fn give_tab(&self, free_id: &str, session: &str, window: &str) -> Result<TabId, String> {
+        let free = self
+            .user_tabs()?
+            .into_iter()
+            .find(|tab| tab.id == free_id)
+            .ok_or("That tab is gone or another thread already holds it.")?;
+        let granted_now = self.grant_for_hand_over(session, window);
+        let handle = match targets::adopt_tab(&self.link, targets::Sender::System, session, &free) {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.undo_hand_over_grant(session, window, granted_now);
+                return Err(tab_error_message(error));
+            }
+        };
+        self.adopted(&handle, session, &free, Actor::User);
+        Ok(handle.tab)
+    }
+
+    /// A hand-over (give a tab, open the app) is the thread's browser
+    /// access. True when the grant is new, so a failed hand-over takes it
+    /// back ([`Self::undo_hand_over_grant`]) and one the session already
+    /// had stays.
+    fn grant_for_hand_over(&self, session: &str, window: &str) -> bool {
+        if self.policy.read().granted(session) {
+            return false;
+        }
+        self.set_grant(session, window, true);
+        true
+    }
+
+    fn undo_hand_over_grant(&self, session: &str, window: &str, granted_now: bool) {
+        if granted_now {
+            self.set_grant(session, window, false);
+        }
+    }
+
+    /// "Open this branch's app" in the thread's browser menu: a new tab at
+    /// `url` (a local dev server), held by `session`. Like handing over a
+    /// tab, the user's click is the thread's browser access. Waits for the
+    /// Gespan browser to start when it is not running yet.
+    pub fn open_app(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: &str,
+    ) -> Result<TabId, String> {
+        let url = policy::check_url(url).map_err(|reason| reason.message().to_string())?;
+        if !diagnostics::is_local_url(&url) {
+            return Err("Only an app on this computer can be opened from here.".into());
+        }
+        self.open_for_thread(session, window, &url)
+    }
+
+    /// "New tab" in a thread's browser pane: a tab at `url` (or blank), held
+    /// by `session` like any tab Gespan opened for it. The user's click is the thread's access.
+    pub fn new_tab(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: Option<&str>,
+    ) -> Result<TabId, String> {
+        let url = match url.map(str::trim).filter(|url| !url.is_empty()) {
+            Some(url) => policy::check_url(url).map_err(|reason| reason.message().to_string())?,
+            None => "about:blank".to_string(),
+        };
+        self.open_for_thread(session, window, &url)
+    }
+
+    /// A link the user clicked in a thread: a new tab at `url` in the
+    /// thread's browser, held by `session` and marked the user's own
+    /// ([`policy::Lease::user_tab`]). It needs neither the switch nor the
+    /// thread's access and gives the thread none: the switch decides only
+    /// what agents get. Starts the Gespan browser when it is not running.
+    ///
+    /// `window` is the app window the thread shows in: closing it closes
+    /// the user's tabs of its threads ([`Self::window_closed`]). In the
+    /// user's own browser (Attach) with the switch off this refuses:
+    /// Gespan never attaches to it for anything but agents the user let in.
+    pub fn open_user_tab(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: &str,
+    ) -> Result<TabId, String> {
+        let url = policy::check_url(url.trim()).map_err(|reason| reason.message().to_string())?;
+        if !self.mode().launches() && !self.policy.read().toggle_on {
+            return Err("Gespan only opens links in its own browser.".into());
+        }
+        self.policy.write().note_window(session, window);
+        self.open_tab_for(session, window, &url, true)
+    }
+
+    /// A tab at `url` (already checked) that `session` holds, opened by the
+    /// user. Waits for the Gespan browser to start when it is not running.
+    fn open_for_thread(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: &str,
+    ) -> Result<TabId, String> {
+        if !self.policy.read().toggle_on {
+            return Err("Turn on browser access first.".into());
+        }
+        if !self.link.is_open() && !self.mode().launches() {
+            return Err("Gespan is not connected to your browser.".into());
+        }
+        self.open_tab_for(session, window, url, false)
+    }
+
+    /// [`Self::open_for_thread`] (the click is the thread's browser access)
+    /// or [`Self::open_user_tab`] (`user_tab`: the user's own tab, which
+    /// grants nothing).
+    fn open_tab_for(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: &str,
+        user_tab: bool,
+    ) -> Result<TabId, String> {
+        let url = url.to_string();
+        if !self.link.is_open() {
+            if user_tab {
+                self.start_connect(false, true);
+            } else {
+                self.connect_automatically();
+            }
+            let connection = self.wait_for_connection(MANAGED_START_WAIT);
+            if connection.state != ConnectionState::Connected {
+                return Err(connection
+                    .detail
+                    .unwrap_or_else(|| "The Gespan browser did not start.".into()));
+            }
+        }
+        // Blank first, so the tab is ours (marker, console) before the
+        // app's first script runs; then the app.
+        let managed = self.mode().launches();
+        let in_gespan = self.policy.read().settings.tabs_in_gespan;
+        // In the hidden Gespan browser each tab gets a window of its own,
+        // which the pane sizes to itself (as agent tabs, see `open_tab`).
+        let created = self
+            .link
+            .send_system(Command::browser(
+                Method::TargetCreateTarget,
+                json!({
+                    "url": "about:blank",
+                    "background": !managed || in_gespan,
+                    "newWindow": managed && in_gespan && self.browser_hidden(),
+                }),
+            ))
+            .map_err(|error| format!("{error:?}"))?;
+        let target = created["targetId"]
+            .as_str()
+            .map(|id| TargetId(id.to_string()))
+            .ok_or("The browser opened no tab.")?;
+        let free = targets::FreeTab {
+            id: targets::free_id(&target),
+            target: target.clone(),
+            url: url.clone(),
+            title: String::new(),
+        };
+        let granted_now = !user_tab && self.grant_for_hand_over(session, window);
+        // Gespan opened this tab for the thread, so ending the thread
+        // closes it like any agent tab instead of handing it back. Marked as
+        // the lease goes in, so the switch going off meanwhile already sees
+        // a user tab as the user's.
+        let adopted = targets::adopt_tab_with(
+            &self.link,
+            targets::Sender::System,
+            session,
+            &free,
+            |lease| {
+                lease.from_user = false;
+                lease.user_tab = user_tab;
+                lease.user_driven = user_tab;
+            },
+        );
+        let handle = match adopted {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.undo_hand_over_grant(session, window, granted_now);
+                targets::close_targets(&self.link, &[target]);
+                return Err(tab_error_message(error));
+            }
+        };
+        self.adopted(&handle, session, &free, Actor::User);
+        self.close_startup_pages();
+        if url != "about:blank" {
+            self.link
+                .send_system(Command::in_session(
+                    &handle.session,
+                    Method::PageNavigate,
+                    json!({ "url": url }),
+                ))
+                .map_err(|error| format!("The tab opened, but not the page: {error:?}"))?;
+        }
+        Ok(handle.tab)
+    }
+
+    fn adopted(
+        &self,
+        handle: &targets::TabHandle,
+        owner: &str,
+        free: &targets::FreeTab,
+        actor: Actor,
+    ) {
+        self.db.with(|conn| {
+            audit::lease_opened(
+                conn,
+                self.run_id,
+                &handle.tab,
+                &handle.target.0,
+                owner,
+                None,
+                &free.url,
+            )
+        });
+        self.event(
+            "tab_adopted",
+            actor,
+            Some(owner),
+            Some(&audit_url(&free.url)),
+        );
+        self.emit_state();
+    }
+
+    /// "Point at an element" in the thread indicator: the user picks an
+    /// element in `tab`, one of `session`'s tabs. `None` when they cancelled.
+    /// Blocks until the click, a cancel or [`pick::PICK_TIMEOUT`].
+    pub fn pick_element(
+        &self,
+        session: &str,
+        tab: &TabId,
+        in_pane: bool,
+    ) -> Result<Option<pick::PickedElement>, String> {
+        if !self.link.is_open() {
+            return Err("Gespan is not connected to the browser.".into());
+        }
+        let headless = self
+            .managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|managed| !managed.show_window);
+        // In a Gespan pane the user clicks the tab's picture; a window is
+        // only needed to pick in the browser itself.
+        if headless && !in_pane {
+            return Err("The Gespan browser runs without a window. Turn its window on in Settings to point at elements.".into());
+        }
+        let target = {
+            let state = self.policy.read();
+            let lease = state.lease(tab).ok_or("That tab is gone.")?;
+            if lease.owner != session {
+                return Err("That tab belongs to another thread.".into());
+            }
+            if lease.state != TabState::Open {
+                return Err("That tab is not open.".into());
+            }
+            pick::PickTab {
+                tab: tab.clone(),
+                main: lease
+                    .cdp_session
+                    .clone()
+                    .ok_or("That tab is still opening.")?,
+                frames: lease
+                    .frames
+                    .values()
+                    .map(|frame| frame.cdp_session.clone())
+                    .collect(),
+                url: lease.url.clone(),
+                bring_to_front: !in_pane,
+            }
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let previous = self
+            .picking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(cancel.clone());
+        if let Some(previous) = previous {
+            previous.store(true, Ordering::Release);
+        }
+        let alive = || {
+            self.policy
+                .read()
+                .lease(tab)
+                .is_some_and(|lease| lease.state == TabState::Open && lease.owner == session)
+        };
+        let outcome = pick::wait_for_pick(&self.link, &target, &cancel, pick::PICK_TIMEOUT, alive);
+        {
+            let mut picking = self.picking.lock().unwrap_or_else(|e| e.into_inner());
+            if picking.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancel)) {
+                *picking = None;
+            }
+        }
+        match outcome? {
+            pick::Outcome::Picked(node) => {
+                let loader = self
+                    .policy
+                    .read()
+                    .lease(tab)
+                    .and_then(|lease| lease.main_loader_id.clone());
+                let number = semantic::mark_picked(
+                    &self.link,
+                    tab,
+                    loader.as_deref(),
+                    &node.session,
+                    node.backend,
+                );
+                let picked = pick::describe(&self.link, &target, &node, number);
+                self.event(
+                    "element_picked",
+                    Actor::User,
+                    Some(session),
+                    Some(&audit_url(&target.url)),
+                );
+                Ok(Some(picked))
+            }
+            pick::Outcome::Cancelled => Ok(None),
+            pick::Outcome::TimedOut => Err("No element was picked within two minutes.".into()),
+            pick::Outcome::TabGone => {
+                Err("The tab closed or changed hands while you were picking.".into())
+            }
+        }
+    }
+
+    /// Stop the element pick running now.
+    pub fn cancel_pick(&self) {
+        let running = self
+            .picking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(cancel) = running {
+            cancel.store(true, Ordering::Release);
+        }
+    }
+
+    /// The pixel ratio of the display Gespan's main window is on.
+    fn display_scale(&self) -> Option<f64> {
+        self.embedder.display_scale()
+    }
+
+    /// The main-frame session of `tab` when `session` holds it open.
+    fn held_tab(&self, session: &str, tab: &TabId) -> Result<live::LiveTab, String> {
+        let state = self.policy.read();
+        let lease = state.lease(tab).ok_or("That tab is gone.")?;
+        if lease.owner != session {
+            return Err("That tab belongs to another thread.".into());
+        }
+        if lease.state != TabState::Open {
+            return Err("That tab is not open.".into());
+        }
+        Ok(live::LiveTab {
+            tab: tab.clone(),
+            target: lease.target_id.clone(),
+            main: lease
+                .cdp_session
+                .clone()
+                .ok_or("That tab is still opening.")?,
+            window: None,
+        })
+    }
+
+    /// "Show in Gespan": stream pictures of `tab`, one of `session`'s tabs,
+    /// to `sink` until [`Self::stop_live`], another view of the same tab, or
+    /// the tab is gone. Views of different tabs run side by side. Blocks
+    /// while the view runs.
+    pub fn live_view(
+        &self,
+        session: &str,
+        tab: &TabId,
+        view: &str,
+        size: live::PanelSize,
+        sink: impl FnMut(live::LiveFrame),
+    ) -> Result<live::LiveEnd, String> {
+        self.live_view_with(session, tab, view, size, || {}, sink)
+    }
+
+    /// [`Self::live_view`], calling `registered` once the view is known by
+    /// its name: from then on [`Self::stop_live`] and [`Self::resize_live`]
+    /// for it take effect. A pane that went away, or changed size, before
+    /// that learns of it here instead of losing the stop or the size.
+    pub fn live_view_with(
+        &self,
+        session: &str,
+        tab: &TabId,
+        view: &str,
+        size: live::PanelSize,
+        registered: impl FnOnce(),
+        sink: impl FnMut(live::LiveFrame),
+    ) -> Result<live::LiveEnd, String> {
+        if !self.link.is_open() {
+            return Err("Gespan is not connected to the browser.".into());
+        }
+        let mut target = self.held_tab(session, tab)?;
+        target.window = self.own_window(&target.target);
+        let control = Arc::new(live::LiveControl::new(view.to_string(), tab.clone()));
+        let previous = {
+            let mut running = self.live.lock().unwrap_or_else(|e| e.into_inner());
+            let previous = running
+                .iter()
+                .position(|c| c.tab == *tab || c.view == view)
+                .map(|ix| running.remove(ix));
+            running.push(control.clone());
+            previous
+        };
+        registered();
+        if let Some(previous) = previous {
+            previous.stop();
+            previous.wait_finished(Duration::from_secs(2));
+        }
+        let alive = || {
+            self.policy
+                .read()
+                .lease(tab)
+                .is_some_and(|lease| lease.state == TabState::Open && lease.owner == session)
+        };
+        // Stopped as it registered: the tab is left as it was.
+        let outcome = if control.stopped() {
+            Ok(live::LiveEnd::Stopped)
+        } else {
+            live::run(&self.link, &target, size, &control, alive, sink)
+        };
+        control.finish();
+        {
+            let mut running = self.live.lock().unwrap_or_else(|e| e.into_inner());
+            running.retain(|c| !Arc::ptr_eq(c, &control));
+        }
+        outcome
+    }
+
+    /// The Gespan browser runs without a window anyone sees.
+    fn browser_hidden(&self) -> bool {
+        let hidden = self
+            .managed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|managed| !managed.show_window);
+        #[cfg(test)]
+        let hidden = hidden || self.hidden_for_tests.load(Ordering::Acquire);
+        hidden
+    }
+
+    /// The window of `target` when the live view may give it the panel's
+    /// size: the Gespan browser runs hidden (no one sees its windows) and
+    /// no other tab shares that window, so resizing it changes only this
+    /// tab's page.
+    fn own_window(&self, target: &TargetId) -> Option<i64> {
+        if !self.browser_hidden() {
+            return None;
+        }
+        let window_of = |target: &str| {
+            self.link
+                .send_system(Command::browser(
+                    Method::BrowserGetWindowForTarget,
+                    json!({ "targetId": target }),
+                ))
+                .ok()?["windowId"]
+                .as_i64()
+        };
+        let own = window_of(&target.0)?;
+        let targets = self
+            .link
+            .send_system(Command::browser(Method::TargetGetTargets, json!({})))
+            .ok()?;
+        let shared = targets["targetInfos"]
+            .as_array()?
+            .iter()
+            .filter(|info| info["type"] == "page" && info["targetId"] != target.0.as_str())
+            .filter_map(|info| info["targetId"].as_str())
+            .any(|other| window_of(other) == Some(own));
+        (!shared).then_some(own)
+    }
+
+    /// Pause the live view of `tab`, if one runs, until the hold is dropped.
+    fn hold_live(&self, tab: &TabId) -> Option<live::LiveHold> {
+        let control = self
+            .live
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|control| control.tab == *tab)
+            .cloned()?;
+        Some(control.hold())
+    }
+
+    /// Stop the live view `view`, if it runs (every view without one). A
+    /// pane that goes away stops only its own view, never the one a newer
+    /// pane started, even for the same tab (a pane moved in the layout is a
+    /// new pane while the old one animates out).
+    pub fn stop_live(&self, view: Option<&str>) {
+        let stopped: Vec<_> = {
+            let mut running = self.live.lock().unwrap_or_else(|e| e.into_inner());
+            match view {
+                Some(view) => running
+                    .iter()
+                    .position(|c| c.view == view)
+                    .map(|ix| running.remove(ix))
+                    .into_iter()
+                    .collect(),
+                None => running.drain(..).collect(),
+            }
+        };
+        for control in stopped {
+            control.stop();
+        }
+    }
+
+    /// The running view named `view`.
+    fn live_control(&self, view: &str) -> Option<Arc<live::LiveControl>> {
+        self.live
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|c| c.view == view)
+            .cloned()
+    }
+
+    /// The next picture for the pane of `view`: the newest one after
+    /// `after`, waiting up to [`live::PULL_WAIT`] for it. Empty when none
+    /// came in time or the view is over; the pane asks again while it shows.
+    pub fn live_take(&self, view: &str, after: u64) -> Vec<u8> {
+        self.live_control(view)
+            .and_then(|control| control.take(after, live::PULL_WAIT))
+            .unwrap_or_default()
+    }
+
+    /// The pane of `view` changed size: its view follows it.
+    pub fn resize_live(&self, view: &str, size: live::PanelSize) {
+        if let Some(control) = self.live_control(view) {
+            control.resize(size);
+        }
+    }
+
+    /// Who acted last in `tab`: the user (its pane) or an agent.
+    fn mark_driver(&self, tab: &TabId, user: bool) {
+        if let Some(lease) = self.policy.write().lease_mut(tab) {
+            lease.user_driven = user;
+        }
+    }
+
+    /// The panel's Back, Forward or Reload, in `tab`.
+    pub fn live_navigate(
+        &self,
+        session: &str,
+        tab: &TabId,
+        nav: &live::LiveNav,
+    ) -> Result<(), String> {
+        let target = self.held_tab(session, tab)?;
+        self.mark_driver(tab, true);
+        live::navigate(&self.link, &target, nav)
+    }
+
+    /// The user's click, scroll or key in the live view of `tab`.
+    pub fn live_input(
+        &self,
+        session: &str,
+        tab: &TabId,
+        input: &live::LiveInput,
+    ) -> Result<(), String> {
+        let target = self.held_tab(session, tab)?;
+        // Only a real gesture is the user acting: a pointer resting over
+        // the pane (moves) or a scroll must not claim what an agent's
+        // click opens next.
+        if input.is_gesture() {
+            self.mark_driver(tab, true);
+        }
+        if let Some(control) = self
+            .live
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|control| control.tab == *tab)
+        {
+            control.touch();
+        }
+        live::input(&self.link, &target, input)
+    }
+
+    /// Settings "Close tab" for any agent tab, whoever owns it.
+    pub fn close_tab_by_user(self: &Arc<Self>, tab: &TabId) -> Result<(), String> {
+        let target = {
+            let state = self.policy.read();
+            let lease = state.lease(tab).ok_or("Unknown tab")?;
+            if lease.state == TabState::Closed {
+                return Err("Tab is already closed".into());
+            }
+            lease.target_id.clone()
+        };
+        self.close_owned_targets(&[target]);
+        if let Some(lease) = self.policy.write().lease_mut(tab) {
+            lease.state = TabState::Closed;
+            lease.busy = false;
+        }
+        self.db.with(|conn| audit::lease_closed(conn, tab));
+        self.event("tab_closed", Actor::User, None, Some(&tab.0));
+        self.emit_state();
+        self.close_when_empty();
+        Ok(())
+    }
+
+    /// The user closes one of the browser's tabs no thread holds (the X
+    /// beside "Add" in a thread's browser menu).
+    pub fn close_free_tab(self: &Arc<Self>, free_id: &str) -> Result<(), String> {
+        let free = self
+            .user_tabs()?
+            .into_iter()
+            .find(|tab| tab.id == free_id)
+            .ok_or("That tab is already gone or a thread holds it now.")?;
+        targets::close_targets(&self.link, &[free.target]);
+        self.event("free_tab_closed", Actor::User, None, None);
+        self.emit_state();
+        self.close_when_empty();
+        Ok(())
+    }
+
+    /// Settings "Close all agent tabs". Tabs the user handed over are given
+    /// back, not closed.
+    pub fn close_all_tabs(self: &Arc<Self>) {
+        let ended = self.policy.write().close_all();
+        self.end_leases(&ended);
+        self.event("tabs_closed_all", Actor::User, None, None);
+        self.emit_state();
+        self.close_when_empty();
+    }
+
+    /// Close or give back the tabs of ended leases, and close their rows.
+    fn end_leases(&self, ended: &policy::Ended) {
+        if self.link.is_open() {
+            targets::give_back(&self.link, &ended.give_back);
+        }
+        self.close_owned_targets(&ended.close);
+        for tab in &ended.tabs {
+            self.db.with(|conn| audit::lease_closed(conn, tab));
+        }
+    }
+
+    fn close_owned_targets(&self, targets: &[TargetId]) {
+        if self.link.is_open() {
+            targets::close_targets(&self.link, targets);
+        }
+    }
+
+    pub fn set_settings(self: &Arc<Self>, settings: BrowserSettings) {
+        let mut settings = self.embedder.fix_settings(settings);
+        let (mode_changed, toggle_on) = {
+            let mut policy = self.policy.write();
+            // The switch has its own command; settings never flip it.
+            settings.enabled = policy.toggle_on;
+            let changed = policy.settings.mode != settings.mode;
+            if changed {
+                // An attempt for the old kind of browser neither reports
+                // nor keeps what it started.
+                self.generation.fetch_add(1, Ordering::AcqRel);
+            }
+            policy.settings = settings.clone();
+            (changed, policy.toggle_on)
+        };
+        self.db.with(|conn| audit::save_settings(conn, &settings));
+        if mode_changed {
+            // The other kind of browser from now on: drop the current link
+            // (and the Gespan browser) and wait for the next agent action.
+            self.event(
+                "mode_changed",
+                Actor::User,
+                None,
+                Some(&format!("{:?}", settings.mode)),
+            );
+            self.close_managed_pages();
+            if self.link.status() != LinkStatus::Closed {
+                self.disconnect();
+            }
+            self.close_managed_browser_later();
+            if toggle_on {
+                self.set_idle();
+            }
+        }
+        self.emit_state();
+    }
+
+    // --- hooks from control.rs / session_store.rs ------------------------------
+
+    /// Turn start (`control_authorize_turn`): the session gets or keeps its
+    /// token; `browser_access` sets the grant when the frontend passes it.
+    pub fn turn_started(
+        &self,
+        session: &str,
+        window: &str,
+        cwd: &str,
+        browser_access: Option<bool>,
+    ) {
+        // The audit records transitions, not turns: a frontend may authorize
+        // the same turn several times, and most turns keep the grant as is.
+        let was_granted = self.policy.read().granted(session);
+        let dropping = browser_access == Some(false) && was_granted;
+        let detach: Vec<CdpSessionId> = if dropping {
+            self.policy
+                .read()
+                .leases()
+                .filter(|l| l.owner == session && l.is_live())
+                .filter_map(|l| l.cdp_session.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.policy
+            .write()
+            .turn_started(session, window, cwd, browser_access);
+        if dropping {
+            if self.link.is_open() {
+                targets::detach_sessions(&self.link, &detach);
+            }
+            self.event(
+                "grant_off",
+                Actor::User,
+                Some(session),
+                Some("turn without browser access"),
+            );
+        } else if !was_granted && self.policy.read().granted(session) {
+            self.event("grant_on", Actor::User, Some(session), None);
+        }
+        self.emit_state();
+    }
+
+    pub fn turn_finished(&self, session: &str) {
+        self.policy.write().turn_finished(session);
+        self.emit_state();
+    }
+
+    pub fn window_closed(&self, window: &str) {
+        // The user's own tabs of the window's threads close with it: no pane
+        // is left to show or close them.
+        let closed = self.policy.write().close_user_tabs_of_window(window);
+        self.close_owned_targets(&closed.close);
+        for tab in &closed.tabs {
+            self.db.with(|conn| audit::lease_closed(conn, tab));
+        }
+        let detach = self.policy.write().window_closed(window);
+        if self.link.is_open() {
+            targets::detach_sessions(&self.link, &detach);
+        }
+        self.emit_state();
+    }
+
+    /// Thread `session` left the app's workspace (its tab closed): the
+    /// user's own tabs of it close, since no pane is left to show or close
+    /// them. Its agent tabs are left as they are, and once nothing is open
+    /// the Gespan browser closes ([`Self::close_when_empty`]).
+    pub fn thread_closed(self: &Arc<Self>, session: &str) {
+        let closed = self.policy.write().close_user_tabs_of_session(session);
+        if closed.tabs.is_empty() {
+            return;
+        }
+        self.close_owned_targets(&closed.close);
+        for tab in &closed.tabs {
+            self.db.with(|conn| audit::lease_closed(conn, tab));
+        }
+        self.event("thread_closed", Actor::User, Some(session), None);
+        self.emit_state();
+        self.close_when_empty();
+    }
+
+    /// Session deleted: its grant goes, the tabs opened for it are closed and
+    /// the ones the user handed it are given back.
+    pub fn session_deleted(&self, session: &str) {
+        let ended = self.policy.write().session_deleted(session);
+        self.end_leases(&ended);
+        self.event("session_deleted", Actor::System, Some(session), None);
+        self.emit_state();
+    }
+
+    /// The session's `GESPAN_BROWSER_TOKEN`, once a turn was authorised.
+    pub fn token_for(&self, session: &str) -> Option<String> {
+        self.policy.read().token_for(session).map(str::to_string)
+    }
+
+    pub fn session_for_token(&self, token: &str) -> Option<String> {
+        self.policy.read().session_for_token(token)
+    }
+
+    /// Ask mode: put the request to the user in the session's thread and
+    /// wait for "Allow" (true) or "Not now", the end of the turn, OFF or
+    /// [`ASK_WAIT`] (false).
+    fn ask_user(self: &Arc<Self>, session: &str) -> bool {
+        let asked = {
+            let mut policy = self.policy.write();
+            policy.toggle_on && !policy.requested(session) && policy.request_grant(session)
+        };
+        if !asked {
+            // Another action of the session is already waiting, or the
+            // session cannot ask now.
+            return self.wait_for_answer(session, false);
+        }
+        self.event("grant_requested", Actor::System, Some(session), None);
+        self.emit_state();
+        // Start the Gespan browser while the user decides, so an Allow near
+        // the end of the wait does not add a cold start on top of it.
+        if self.mode().launches() {
+            self.connect_automatically();
+        }
+        self.wait_for_answer(session, true)
+    }
+
+    fn wait_for_answer(self: &Arc<Self>, session: &str, owner: bool) -> bool {
+        let deadline =
+            Instant::now() + Duration::from_millis(self.ask_wait_ms.load(Ordering::Acquire));
+        loop {
+            {
+                let policy = self.policy.read();
+                if policy.granted(session) {
+                    return true;
+                }
+                if !policy.toggle_on || !policy.requested(session) {
+                    return false;
+                }
+            }
+            if Instant::now() >= deadline {
+                if owner {
+                    self.policy.write().withdraw_request(session);
+                    self.event("grant_request_expired", Actor::System, Some(session), None);
+                    self.emit_state();
+                    self.close_when_unused();
+                }
+                return false;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The user's answer to an access request (`browser_answer_request`).
+    pub fn answer_request(self: &Arc<Self>, session: &str, window: &str, allow: bool) {
+        if allow {
+            self.set_grant(session, window, true);
+            return;
+        }
+        self.policy.write().decline_request(session);
+        self.event("grant_declined", Actor::User, Some(session), None);
+        self.emit_state();
+        self.close_when_unused();
+    }
+
+    /// Wait until the running connection attempt ends, then report where it
+    /// left the connection.
+    fn wait_for_connection(&self, budget: Duration) -> ConnectionInfo {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            let connection = self.connection();
+            if connection.state == ConnectionState::Connected
+                || self.connecting.load(Ordering::Acquire) == 0
+            {
+                return connection;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        self.connection()
+    }
+
+    // --- the request path ------------------------------------------------------
+
+    /// Run one agent action for `session`. Always returns exactly one result.
+    pub fn handle_request(self: &Arc<Self>, session: &str, request: ActionRequest) -> ActionResult {
+        let started = Instant::now();
+        let request_id = request.request_id.clone();
+        if request_id.is_empty() || request_id.len() > 128 {
+            return ActionResult::from_reason(&request_id, Reason::InvalidRequest)
+                .with_message("request_id must be 1-128 characters.");
+        }
+        let Some(kind) = ActionKind::parse(&request.action) else {
+            let result = ActionResult::from_reason(&request_id, Reason::InvalidRequest)
+                .with_message(format!("Unknown action `{}`.", request.action));
+            return self.finish(session, None, None, &request, started, 0, result);
+        };
+        let common: CommonInput = match serde_json::from_value(request.input.clone()) {
+            Ok(common) => common,
+            Err(error) => {
+                let result = ActionResult::from_reason(&request_id, Reason::InvalidRequest)
+                    .with_message(format!("Invalid input: {error}"));
+                return self.finish(session, Some(kind), None, &request, started, 0, result);
+            }
+        };
+        // A full-page screenshot gets the tab's viewport to itself.
+        let _live = (kind == ActionKind::Screenshot && request.input["full_page"] == true)
+            .then(|| common.tab.as_ref().and_then(|tab| self.hold_live(tab)))
+            .flatten();
+        let mut guard = match self.claim(session, &request_id, &request.input) {
+            Claim::Fresh(guard) => guard,
+            Claim::Cached(result) => return *result,
+            Claim::Running(entry) => {
+                let budget = self.host_wait() + kind.effective_timeout(common.timeout_ms);
+                return wait_in_flight(&entry, &request_id, budget);
+            }
+            Claim::Conflict => {
+                let result = ActionResult::from_reason(&request_id, Reason::InvalidRequest)
+                    .with_message(
+                        "request_id was already used with different input; use a new id.",
+                    );
+                return self.finish(session, Some(kind), None, &request, started, 0, result);
+            }
+        };
+        let key = (session.to_string(), request_id.clone());
+        if matches!(kind, ActionKind::Press | ActionKind::Select) {
+            if let (Some(tab), Some(element)) = (common.tab.as_ref(), request.input["ref"].as_str())
+            {
+                if let Some(role) = semantic::ref_role(&self.link, tab, element) {
+                    self.audit_targets
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(key.clone(), role);
+                }
+            }
+        }
+        let result = self.run_request(session, &request, kind, &common, started);
+        self.audit_targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key);
+        guard.result = Some(Box::new(result.clone()));
+        result
+    }
+
+    /// Look `request_id` up among finished and running requests, and claim
+    /// it for this request when it is new. Under the in-flight lock, so a
+    /// retry sees either the running entry or, once that is gone, the
+    /// stored result (`finish` stores it before the entry goes).
+    fn claim(&self, session: &str, request_id: &str, input: &Value) -> Claim<'_> {
+        let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        // Bind first: a guard living in a `match` scrutinee would still be
+        // held while `finish` takes the lock again.
+        let dedup = self.policy.write().dedup_check(session, request_id, input);
+        match dedup {
+            Dedup::Cached(result) => return Claim::Cached(result),
+            Dedup::Conflict => return Claim::Conflict,
+            Dedup::Fresh => {}
+        }
+        let key = (session.to_string(), request_id.to_string());
+        let hash = policy::input_hash(input);
+        if let Some(entry) = inflight.get(&key) {
+            return if entry.input_hash == hash {
+                Claim::Running(entry.clone())
+            } else {
+                Claim::Conflict
+            };
+        }
+        let entry = Arc::new(InFlight {
+            input_hash: hash,
+            state: Mutex::new(InFlightState::Running),
+            done: Condvar::new(),
+        });
+        inflight.insert(key.clone(), entry.clone());
+        Claim::Fresh(InFlightGuard {
+            host: self,
+            key,
+            entry,
+            result: None,
+        })
+    }
+
+    /// The longest a request is held beyond its action's limit
+    /// ([`HOST_WAIT`], with this host's access-request wait).
+    fn host_wait(&self) -> Duration {
+        Duration::from_millis(self.ask_wait_ms.load(Ordering::Acquire))
+            + MANAGED_START_WAIT
+            + BUSY_WAIT
+            + semantic::SNAPSHOT_BUDGET
+    }
+
+    /// [`Self::handle_request`] once the request id is claimed.
+    fn run_request(
+        self: &Arc<Self>,
+        session: &str,
+        request: &ActionRequest,
+        kind: ActionKind,
+        common: &CommonInput,
+        started: Instant,
+    ) -> ActionResult {
+        let request_id = request.request_id.as_str();
+        let timeout = kind.effective_timeout(common.timeout_ms);
+        let mut admitted =
+            self.policy
+                .read()
+                .admit(session, request_id, kind, common.tab.as_ref(), timeout);
+        if admitted.as_ref().err() == Some(&Reason::NotGranted)
+            && self.policy.read().settings.access == AccessMode::Ask
+        {
+            // Admitted again whatever the answer: OFF or a revocation during
+            // the wait is reported as such, not as `not_granted`.
+            self.ask_user(session);
+            admitted =
+                self.policy
+                    .read()
+                    .admit(session, request_id, kind, common.tab.as_ref(), timeout);
+        }
+        let mut ctx = match admitted {
+            Ok(ctx) => ctx,
+            Err(reason) => {
+                let result = ActionResult::from_reason(request_id, reason);
+                return self.finish(session, Some(kind), None, request, started, 0, result);
+            }
+        };
+        let mut connection = self.connection();
+        let budget = if self.mode().launches() {
+            // The Gespan browser starts on demand; the action waits for it.
+            (connection.state != ConnectionState::Connected).then_some(MANAGED_START_WAIT)
+        } else {
+            // The user's own browser connects on demand too, after a restart
+            // or a drop: the action waits for discovery and Chrome's consent
+            // dialog rather than failing while they run in the background.
+            // What the user must fix (chrome://inspect, a declined dialog,
+            // an old browser) is reported at once.
+            attach_retries(connection.state).then(|| {
+                Duration::from_millis(self.attach_wait_ms.load(Ordering::Acquire))
+                    .saturating_sub(started.elapsed())
+            })
+        };
+        if let Some(budget) = budget {
+            self.connect_automatically();
+            connection = self.wait_for_connection(budget);
+            if connection.state == ConnectionState::Connected {
+                // A fresh deadline and epochs for the action itself. Bound
+                // first, so the read guard is gone before `finish` locks.
+                let readmitted = self.policy.read().admit(
+                    session,
+                    request_id,
+                    kind,
+                    common.tab.as_ref(),
+                    timeout,
+                );
+                match readmitted {
+                    Ok(fresh) => ctx = fresh,
+                    Err(reason) => {
+                        let result = ActionResult::from_reason(request_id, reason);
+                        return self.finish(session, Some(kind), None, request, started, 0, result);
+                    }
+                }
+            }
+        }
+        if let Some(reason) = connection.state.agent_reason() {
+            let mut result = ActionResult::from_reason(request_id, reason);
+            if let Some(detail) = connection.detail {
+                result.message = format!("{} {detail}", result.message);
+            }
+            return self.finish(session, Some(kind), Some(&ctx), request, started, 0, result);
+        }
+        // One action per tab, N per connection: wait briefly, then `busy`.
+        let busy_deadline = Instant::now() + BUSY_WAIT.min(timeout);
+        let slot = loop {
+            if let Some(slot) = self.policy.write().try_begin_action(ctx.tab.as_ref()) {
+                break slot;
+            }
+            if Instant::now() >= busy_deadline {
+                let result = ActionResult::from_reason(request_id, Reason::Busy);
+                return self.finish(session, Some(kind), Some(&ctx), request, started, 0, result);
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        // From now on what the tab opens is the agent's doing, until the
+        // user acts in it again (see `Lease::user_driven`).
+        if let Some(tab) = ctx.tab.as_ref() {
+            self.mark_driver(tab, false);
+        }
+        let commands_before = self.link.commands_sent();
+        let mut result = self.run_action(&ctx, kind, &request.input, commands_before);
+        self.policy.write().end_action(slot);
+        self.report_signals(&ctx, kind, &mut result);
+        let commands_sent = self.link.commands_sent().saturating_sub(commands_before);
+        self.finish(
+            session,
+            Some(kind),
+            Some(&ctx),
+            request,
+            started,
+            commands_sent,
+            result,
+        )
+    }
+
+    fn run_action(
+        &self,
+        ctx: &RequestCtx,
+        kind: ActionKind,
+        input: &Value,
+        commands_before: u64,
+    ) -> ActionResult {
+        let request_id = ctx.request_id.as_str();
+        match kind {
+            ActionKind::TabsList => {
+                if let Err(result) = parse_params::<TabsListParams>(request_id, input) {
+                    return *result;
+                }
+                let tabs = self.policy.read().tabs_for(&ctx.session);
+                let count = tabs.len();
+                let mut message = match count {
+                    0 => "No open tabs. Use tabs.open to open one.".to_string(),
+                    1 => "1 open tab.".to_string(),
+                    n => format!("{n} open tabs."),
+                };
+                // In the Gespan browser, tabs the user opened are free for
+                // any thread to adopt. The user's own browser stays private.
+                let free = if self.mode().launches() {
+                    targets::free_tabs(&self.link).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                if !free.is_empty() {
+                    message.push_str(&format!(
+                        " {} free tab(s) the user opened; tabs.adopt with `free` takes one.",
+                        free.len()
+                    ));
+                }
+                // Where this thread's branch serves its app, so the agent
+                // checks its own worktree, not another thread's port.
+                let apps = devservers::for_session(&ctx.session);
+                if let Some(app) = apps.iter().find(|app| app.page).or(apps.first()) {
+                    message.push_str(&format!(
+                        " This worktree's app runs at {}; open it with tabs.open.",
+                        app.url
+                    ));
+                }
+                let apps: Vec<Value> = apps
+                    .iter()
+                    .map(|app| json!({ "url": app.url, "process": app.process, "page": app.page }))
+                    .collect();
+                ActionResult::done(request_id, message)
+                    .with_data(json!({ "tabs": tabs, "free": free, "apps": apps }))
+            }
+            ActionKind::TabsAdopt => {
+                let params = match parse_params::<TabsAdoptParams>(request_id, input) {
+                    Ok(params) => params,
+                    Err(result) => return *result,
+                };
+                if !self.mode().launches() {
+                    return ActionResult::from_reason(request_id, Reason::NoLease).with_message(
+                        "Only tabs of the Gespan browser can be adopted. In the user's own browser, the user hands a tab to this thread in Gespan.",
+                    );
+                }
+                let free = targets::free_tabs(&self.link)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|tab| tab.id == params.free);
+                let Some(free) = free else {
+                    return ActionResult::from_reason(request_id, Reason::NoLease).with_message(
+                        format!(
+                            "{} is not a free tab; call tabs.list for the current ones.",
+                            params.free
+                        ),
+                    );
+                };
+                match targets::adopt_tab(
+                    &self.link,
+                    targets::Sender::Agent(ctx),
+                    &ctx.session,
+                    &free,
+                ) {
+                    Ok(handle) => {
+                        self.adopted(&handle, &ctx.session, &free, Actor::Agent);
+                        ActionResult::done(
+                            request_id,
+                            format!(
+                                "Adopted the tab at {} as {}. Take a snapshot before acting on it.",
+                                free.url, handle.tab.0
+                            ),
+                        )
+                        .with_data(
+                            json!({ "tab": handle.tab, "url": free.url, "title": free.title }),
+                        )
+                    }
+                    Err(error) => error.into_result(
+                        request_id,
+                        true,
+                        self.link.commands_sent() > commands_before,
+                    ),
+                }
+            }
+            ActionKind::TabsOpen => {
+                let params = match parse_params::<TabsOpenParams>(request_id, input) {
+                    Ok(params) => params,
+                    Err(result) => return *result,
+                };
+                match targets::open_tab(
+                    &self.link,
+                    ctx,
+                    params.url.as_deref(),
+                    WaitUntil::Usable,
+                    self.browser_hidden(),
+                ) {
+                    Ok(opened) => {
+                        self.close_startup_pages();
+                        let tab = opened.handle.tab.clone();
+                        let url = opened.observed.url.clone().unwrap_or_default();
+                        self.db.with(|conn| {
+                            audit::lease_opened(
+                                conn,
+                                self.run_id,
+                                &tab,
+                                &opened.handle.target.0,
+                                &ctx.session,
+                                None,
+                                &url,
+                            )
+                        });
+                        let data = json!({
+                            "tab": tab,
+                            "url": url,
+                            "title": opened.observed.title.clone().unwrap_or_default(),
+                        });
+                        let mut result = match opened.navigation {
+                            Ok(()) => ActionResult::done(
+                                request_id,
+                                format!(
+                                    "Opened tab {} at {url}. Use tab: \"{}\" for actions on it.",
+                                    tab.0, tab.0
+                                ),
+                            ),
+                            Err((reason, message)) => ActionResult::from_reason(request_id, reason)
+                                .with_message(format!(
+                                    "{message} The tab {} is open; navigate it again or close it.",
+                                    tab.0
+                                )),
+                        }
+                        .with_data(data)
+                        .with_observed(opened.observed);
+                        if params.url.is_some() {
+                            let settings = self.policy.read().settings.clone();
+                            semantic::attach_snapshot_for(
+                                &self.link,
+                                ctx,
+                                &opened.handle,
+                                &settings,
+                                input,
+                                &mut result,
+                            );
+                        }
+                        result
+                    }
+                    Err(error) => error.into_result(
+                        request_id,
+                        true,
+                        self.link.commands_sent() > commands_before,
+                    ),
+                }
+            }
+            ActionKind::TabsClose => {
+                let params = match parse_params::<TabsCloseParams>(request_id, input) {
+                    Ok(params) => params,
+                    Err(result) => return *result,
+                };
+                match targets::close_tab(&self.link, ctx, &params.tab) {
+                    Ok(()) => {
+                        self.db.with(|conn| audit::lease_closed(conn, &params.tab));
+                        ActionResult::done(request_id, format!("Closed tab {}.", params.tab.0))
+                    }
+                    Err(error) => error.into_result(
+                        request_id,
+                        true,
+                        self.link.commands_sent() > commands_before,
+                    ),
+                }
+            }
+            ActionKind::TabsFocus => {
+                let params = match parse_params::<TabsFocusParams>(request_id, input) {
+                    Ok(params) => params,
+                    Err(result) => return *result,
+                };
+                if params.user_visible != Some(true) {
+                    return ActionResult::from_reason(request_id, Reason::InvalidRequest).with_message(
+                        "tabs.focus changes what the user sees; pass user_visible: true to confirm. Other actions work on background tabs without focusing them.",
+                    );
+                }
+                match targets::focus_tab(&self.link, ctx, &params.tab) {
+                    Ok(()) => ActionResult::done(
+                        request_id,
+                        format!("Tab {} is now in front.", params.tab.0),
+                    ),
+                    Err(error) => error.into_result(
+                        request_id,
+                        false,
+                        self.link.commands_sent() > commands_before,
+                    ),
+                }
+            }
+            _ => {
+                let handle = if kind.requires_lease() {
+                    let Some(tab) = ctx.tab.as_ref() else {
+                        return ActionResult::from_reason(request_id, Reason::InvalidRequest)
+                            .with_message("This action needs a `tab`.");
+                    };
+                    match targets::handle_for(&self.policy.read(), &ctx.session, tab) {
+                        Ok(handle) => Some(handle),
+                        Err(reason) => return ActionResult::from_reason(request_id, reason),
+                    }
+                } else {
+                    None
+                };
+                let settings = self.policy.read().settings.clone();
+                let result = semantic::execute(semantic::Exec {
+                    link: &self.link,
+                    ctx,
+                    kind,
+                    input,
+                    handle: handle.as_ref(),
+                    settings: &settings,
+                });
+                self.closed_mid_action(ctx, kind, commands_before, result)
+            }
+        }
+    }
+
+    /// Console errors and failed requests of the action's tab that no result
+    /// reported yet go into `observed.signals` and the message, so the agent
+    /// hears about a broken page without asking: those the action caused and
+    /// those the page produced on its own since the last result.
+    fn report_signals(&self, ctx: &RequestCtx, kind: ActionKind, result: &mut ActionResult) {
+        if result.outcome == Outcome::Blocked
+            || matches!(
+                kind,
+                ActionKind::Console
+                    | ActionKind::Network
+                    | ActionKind::TabsList
+                    | ActionKind::TabsClose
+            )
+        {
+            return;
+        }
+        let tab = ctx.tab.clone().or_else(|| {
+            result
+                .data
+                .as_ref()
+                .and_then(|d| d.get("tab"))
+                .and_then(Value::as_str)
+                .map(|t| TabId(t.to_string()))
+        });
+        let Some(tab) = tab else {
+            return;
+        };
+        let session = {
+            let state = self.policy.read();
+            state
+                .lease(&tab)
+                .filter(|l| l.owner == ctx.session)
+                .and_then(|l| l.cdp_session.clone())
+        };
+        let Some(session) = session else {
+            return;
+        };
+        let Some(signals) = self.link.diagnostics().take_signals(&session) else {
+            return;
+        };
+        result.observed.signals = Some(signals);
+        result.message = format!(
+            "{} {}",
+            result.message.trim_end(),
+            diagnostics::signals_message(signals)
+        );
+    }
+
+    /// The tab closed or crashed while the action ran:
+    /// the send gate refuses the next command as `no_lease`, but for the
+    /// agent this is `target_closed`, failed (or `unknown` when a mutation
+    /// had already written), not a tab it never owned.
+    fn closed_mid_action(
+        &self,
+        ctx: &RequestCtx,
+        kind: ActionKind,
+        commands_before: u64,
+        result: ActionResult,
+    ) -> ActionResult {
+        if result.reason != Some(Reason::NoLease) {
+            return result;
+        }
+        let gone = ctx.tab.as_ref().is_some_and(|tab| {
+            self.policy.read().lease(tab).is_some_and(|l| {
+                l.owner == ctx.session && matches!(l.state, TabState::Closed | TabState::Crashed)
+            })
+        });
+        if !gone {
+            return result;
+        }
+        let wrote = self.link.commands_sent() > commands_before;
+        let outcome = if kind.mutates() && wrote {
+            Outcome::Unknown
+        } else {
+            Outcome::Failed
+        };
+        let mut closed =
+            ActionResult::from_reason(&ctx.request_id, Reason::TargetClosed).with_outcome(outcome);
+        closed.observed = result.observed;
+        closed
+    }
+
+    /// Timing, audit row, dedup entry, lease cleanup, state emit.
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &self,
+        session: &str,
+        kind: Option<ActionKind>,
+        ctx: Option<&RequestCtx>,
+        request: &ActionRequest,
+        started: Instant,
+        commands_sent: u64,
+        mut result: ActionResult,
+    ) -> ActionResult {
+        result.timing_ms = started.elapsed().as_millis() as u64;
+        let tab = ctx.and_then(|c| c.tab.clone()).or_else(|| {
+            result
+                .data
+                .as_ref()
+                .and_then(|d| d.get("tab"))
+                .and_then(Value::as_str)
+                .map(|t| TabId(t.to_string()))
+        });
+        let url = {
+            let state = self.policy.read();
+            tab.as_ref()
+                .and_then(|t| state.lease(t))
+                .map(|l| audit_url(&l.url))
+                .or_else(|| result.observed.url.as_deref().map(audit_url))
+        };
+        let (global_epoch, session_epoch) = match ctx {
+            Some(ctx) => (ctx.global_epoch, ctx.session_epoch),
+            None => {
+                let state = self.policy.read();
+                (
+                    state.global_epoch,
+                    state.session_epoch(session).unwrap_or(protocol::Epoch {
+                        run: self.run_id,
+                        seq: 0,
+                    }),
+                )
+            }
+        };
+        let target_role = self
+            .audit_targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&(session.to_string(), request.request_id.clone()))
+            .cloned();
+        let params = kind
+            .map(|k| {
+                audit::redact_params(
+                    k,
+                    &request.input,
+                    &self.audit_secret,
+                    target_role.as_deref(),
+                )
+            })
+            .unwrap_or_else(|| json!({}));
+        let action_name = kind
+            .map(|k| k.name().to_string())
+            .unwrap_or_else(|| request.action.clone());
+        self.db.with(|conn| {
+            audit::record(
+                conn,
+                &audit::AuditRecord {
+                    session_id: session,
+                    request_id: &request.request_id,
+                    global_epoch,
+                    session_epoch,
+                    action: &action_name,
+                    tab: tab.as_ref(),
+                    url: url.as_deref(),
+                    params: &params,
+                    outcome: result.outcome,
+                    reason: result.reason,
+                    duration_ms: result.timing_ms as i64,
+                    commands_sent: commands_sent as i64,
+                },
+            )
+        });
+        // Dedup protects against executing a mutation twice. A
+        // `blocked` result executed nothing, so a retry with the same id after
+        // the user acted (toggle, consent, grant) must run again.
+        if result.outcome != Outcome::Blocked {
+            self.policy
+                .write()
+                .dedup_store(session, &request.request_id, &request.input, &result);
+        }
+        // Closed tabs vanish from the list after the response that reported them.
+        if result.reason == Some(Reason::TargetClosed)
+            || matches!(kind, Some(ActionKind::TabsList | ActionKind::TabsClose))
+        {
+            self.policy.write().forget_closed(session);
+        }
+        if matches!(
+            kind,
+            Some(
+                ActionKind::TabsOpen
+                    | ActionKind::TabsClose
+                    | ActionKind::TabsList
+                    | ActionKind::TabsFocus
+            )
+        ) || result.observed.new_tab.is_some()
+        {
+            self.emit_state();
+        }
+        result
+    }
+
+    pub fn audit_list(&self, session: Option<&str>, limit: u32) -> Vec<AuditEntry> {
+        self.db
+            .with(|conn| audit::list(conn, session, limit))
+            .unwrap_or_default()
+    }
+
+    pub fn events_list(&self, limit: u32) -> Vec<audit::EventEntry> {
+        self.db
+            .with(|conn| audit::events(conn, limit))
+            .unwrap_or_default()
+    }
+
+    pub fn audit_clear(&self) {
+        self.db.with(audit::clear);
+        self.event("audit_cleared", Actor::User, None, None);
+    }
+}
+
+/// A retry of a request that is still running: its result once it ends,
+/// or, after `budget`, an answer that says so instead of running it twice.
+fn wait_in_flight(entry: &InFlight, request_id: &str, budget: Duration) -> ActionResult {
+    let deadline = Instant::now() + budget;
+    let mut state = entry.state.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        match &*state {
+            InFlightState::Finished(result) => return (**result).clone(),
+            InFlightState::Lost => {
+                return ActionResult::from_reason(request_id, Reason::LinkDown).with_message(format!(
+                    "The first attempt of request {request_id} ended without a result; the action may have happened. Take a snapshot before deciding whether to repeat it with a new request_id."
+                ))
+            }
+            InFlightState::Running => {}
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return ActionResult::from_reason(request_id, Reason::Busy)
+                .with_outcome(Outcome::Unknown)
+                .with_message(format!(
+                    "Request {request_id} is still running in Gespan (it may be waiting for the user to allow browser access). Retry later with the same request_id to get its result; a new id would run the action again."
+                ));
+        }
+        state = entry
+            .done
+            .wait_timeout(state, left)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
+
+/// What the user sees when a hand-over of a tab failed.
+fn tab_error_message(error: targets::TabError) -> String {
+    match error {
+        targets::TabError::Reason(reason, message) => {
+            message.unwrap_or_else(|| reason.message().to_string())
+        }
+        targets::TabError::Cdp(error) => format!("{error:?}"),
+    }
+}
+
+fn parse_params<T: DeserializeOwned>(
+    request_id: &str,
+    input: &Value,
+) -> Result<T, Box<ActionResult>> {
+    serde_json::from_value(input.clone()).map_err(|error| {
+        Box::new(
+            ActionResult::from_reason(request_id, Reason::InvalidRequest)
+                .with_message(format!("Invalid input: {error}")),
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Hooks for the rest of the app (no-ops before `init`)
+// ---------------------------------------------------------------------------
+
+/// `control_authorize_turn`: prepare the session token and apply `browser_access`.
+pub fn turn_started(session: &str, window: &str, cwd: &str, browser_access: Option<bool>) {
+    if let Some(host) = host() {
+        host.turn_started(session, window, cwd, browser_access);
+    }
+}
+
+/// `control_turn_finished`: in-flight actions of the session end as `unknown`.
+pub fn turn_finished(session: &str) {
+    if let Some(host) = host() {
+        host.turn_finished(session);
+    }
+}
+
+pub fn window_closed(window: &str) {
+    if let Some(host) = host() {
+        host.window_closed(window);
+    }
+}
+
+pub fn session_deleted(session: &str) {
+    if let Some(host) = host() {
+        host.session_deleted(session);
+    }
+}
+
+/// The token to inject as [`protocol::ENV_TOKEN`] into a provider process.
+pub fn child_token(session: &str) -> Option<String> {
+    host().and_then(|host| host.token_for(session))
+}
+
+/// Pages of a `Target.getTargets` reply that still show a blank or new-tab
+/// page.
+fn blank_pages(reply: &Value) -> Vec<TargetId> {
+    reply["targetInfos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|info| info["type"] == "page")
+        .filter(|info| {
+            let url = info["url"].as_str().unwrap_or("");
+            url == "about:blank"
+                || url.starts_with("chrome://newtab")
+                || url.starts_with("edge://newtab")
+        })
+        .filter_map(|info| info["targetId"].as_str())
+        .map(|id| TargetId(id.to_string()))
+        .collect()
+}
+
+/// Connection states in which an agent action on the user's own browser
+/// (re)connects and waits for the result: nothing connected yet (a
+/// remembered switch after a restart), a drop, a browser that was closed,
+/// remote debugging that may have been turned on since, an unanswered
+/// consent dialog, a profile folder the system may since have opened to
+/// Gespan, or an attempt already running. A declined dialog, an old browser
+/// and an administrator policy need the user first.
+fn attach_retries(state: ConnectionState) -> bool {
+    matches!(
+        state,
+        ConnectionState::Idle
+            | ConnectionState::Disconnected
+            | ConnectionState::StalePort
+            | ConnectionState::NeedsToggle
+            | ConnectionState::ProfileUnreadable
+            | ConnectionState::ConsentTimeout
+            | ConnectionState::Discovering
+            | ConnectionState::AwaitingConsent
+    )
+}
+
+/// What the user does when the system refuses Gespan the browser's profile
+/// folder, for Settings and the agent alike.
+fn profile_unreadable_detail(user_data_dir: &std::path::Path, os: discovery::Os) -> String {
+    let file = user_data_dir.join(discovery::ACTIVE_PORT_FILE);
+    match os {
+        discovery::Os::Mac => format!(
+            "macOS blocked Gespan from reading {}. Turn Gespan on in System Settings → Privacy & Security → Full Disk Access, then quit and reopen Gespan (if Gespan was started from a terminal, turn that terminal app on instead).",
+            file.display()
+        ),
+        discovery::Os::Windows | discovery::Os::Linux => format!(
+            "Permission denied reading {}. Give your user account read access to the browser's profile folder.",
+            file.display()
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protocol::{BrowserChoice, ConsoleLevel, TabInfo, TabOverview, ISOLATED_WORLD};
+    use super::testing::{FakeCdp, Response};
+    use super::*;
+
+    /// A profile directory whose `DevToolsActivePort` points at the fake.
+    fn profile_for(server: &FakeCdp) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gespan-host-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rest = server.url.strip_prefix("ws://127.0.0.1:").unwrap();
+        let (port, path) = rest.split_once('/').unwrap();
+        std::fs::write(
+            dir.join(discovery::ACTIVE_PORT_FILE),
+            format!("{port}\n/{path}\n"),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn settings_for(dir: &std::path::Path) -> BrowserSettings {
+        BrowserSettings {
+            browser: BrowserChoice::UserDataDir {
+                path: dir.display().to_string(),
+            },
+            mode: BrowserMode::Attach,
+            access: AccessMode::Always,
+            ..BrowserSettings::default()
+        }
+    }
+
+    fn wait_state(host: &BrowserHost, state: ConnectionState) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if host.connection().state == state {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// The main switch acts at once even while a write is stuck on a browser
+    /// that stopped reading: OFF cuts the socket instead of queueing on the
+    /// writer, and the stuck action never ends as a success.
+    #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "Windows loopback takes the whole frame even with small socket buffers, so no write stalls"
+    )]
+    fn off_does_not_wait_on_a_stalled_write() {
+        let (server, mut stall) = FakeCdp::start_stalling();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::Connected),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let (ctx, session) = {
+            let policy = host.policy().read();
+            let session = policy.lease(&tab).unwrap().cdp_session.clone().unwrap();
+            let ctx = policy
+                .admit(
+                    "s1",
+                    "r2",
+                    protocol::ActionKind::Click,
+                    Some(&tab),
+                    Duration::from_secs(30),
+                )
+                .unwrap();
+            (ctx, session)
+        };
+        let action = host.link().start_stalled_write(&stall, &ctx, &session);
+
+        let started = Instant::now();
+        host.set_toggle(false);
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(200),
+            "OFF waited {took:?} on a stalled write"
+        );
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        let result = action.join().unwrap();
+        // On Unix the shutdown fails the blocked send at once. Winsock
+        // documents that for closesocket, not shutdown, so on Windows the
+        // write may instead run into the link's 5 s write timeout; either
+        // way OFF itself did not wait (above) and the action is no success.
+        #[cfg(unix)]
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the stalled write outlived the shutdown: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            matches!(
+                result,
+                Err(link::CdpError::Revoked { .. }) | Err(link::CdpError::LinkDown { sent: false })
+            ),
+            "{result:?}"
+        );
+        stall.release();
+        // The cut-off frame never reached the browser.
+        assert!(!server
+            .received()
+            .iter()
+            .any(|r| r.method == "Input.dispatchMouseEvent"));
+    }
+
+    fn request(id: &str, action: &str, input: Value) -> ActionRequest {
+        ActionRequest {
+            request_id: id.into(),
+            action: action.into(),
+            input,
+        }
+    }
+
+    #[test]
+    fn toggle_on_discovers_connects_and_off_detaches_and_blocks() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        // Requests while OFF never reach anything.
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let off = host.handle_request("s1", request("r0", "tabs.list", json!({})));
+        assert_eq!(off.reason, Some(Reason::Off));
+        assert_eq!(off.outcome, Outcome::Blocked);
+
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::Connected),
+            "{:?}",
+            host.connection()
+        );
+        let connection = host.connection();
+        let info = connection.browser.unwrap();
+        assert_eq!(info.major, 144);
+        assert_eq!(info.channel, "custom");
+        assert!(info.product.starts_with("Chrome/"));
+        let received = server.received();
+        let methods: Vec<&str> = received.iter().map(|r| r.method.as_str()).collect();
+        // Diagnostics, then browser-wide target events (popups of agent
+        // tabs are found through them): nothing attached, nothing adopted.
+        assert_eq!(
+            methods,
+            vec![
+                "Browser.getVersion",
+                "Target.getTargets",
+                "Target.setDiscoverTargets"
+            ]
+        );
+        assert_eq!(received[2].params, json!({ "discover": true }));
+        assert_eq!(received[2].session, None);
+        let token = host.token_for("s1").unwrap();
+        assert_eq!(token.len(), 64);
+        assert_eq!(host.session_for_token(&token).as_deref(), Some("s1"));
+        assert_eq!(host.session_for_token("nope"), None);
+
+        // tabs.open → tabs.list → tabs.close.
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = opened.data.as_ref().unwrap()["tab"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(TabId(tab.clone()).is_well_formed());
+        let listed = host.handle_request("s1", request("r2", "tabs.list", json!({})));
+        let tabs: Vec<TabInfo> =
+            serde_json::from_value(listed.data.unwrap()["tabs"].clone()).unwrap();
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].tab.0, tab);
+        assert_eq!(tabs[0].state, TabState::Open);
+        // Same request id, same input: cached, no second tab.
+        let again = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(again.data.as_ref().unwrap()["tab"], json!(tab));
+        assert_eq!(host.policy().read().tabs_for("s1").len(), 1);
+        // Same request id, different input: invalid.
+        let conflict = host.handle_request(
+            "s1",
+            request("r1", "tabs.open", json!({ "url": "https://x/" })),
+        );
+        assert_eq!(conflict.reason, Some(Reason::InvalidRequest));
+        // Another session sees nothing and cannot touch the tab.
+        host.turn_started("s2", "main", "/repo", Some(true));
+        let foreign = host.handle_request("s2", request("f1", "tabs.close", json!({ "tab": tab })));
+        assert_eq!(foreign.reason, Some(Reason::NoLease));
+        let empty = host.handle_request("s2", request("f2", "tabs.list", json!({})));
+        assert_eq!(empty.data.unwrap()["tabs"], json!([]));
+        // Unknown action and unknown fields are invalid requests, audited.
+        let unknown = host.handle_request("s1", request("u1", "teleport", json!({})));
+        assert_eq!(unknown.reason, Some(Reason::InvalidRequest));
+        let typo = host.handle_request("s1", request("u2", "tabs.open", json!({ "urll": "x" })));
+        assert_eq!(typo.reason, Some(Reason::InvalidRequest));
+        // Focus needs the explicit flag.
+        let focus = host.handle_request("s1", request("fo1", "tabs.focus", json!({ "tab": tab })));
+        assert_eq!(focus.reason, Some(Reason::InvalidRequest));
+        let focus = host.handle_request(
+            "s1",
+            request(
+                "fo2",
+                "tabs.focus",
+                json!({ "tab": tab, "user_visible": true }),
+            ),
+        );
+        assert_eq!(focus.outcome, Outcome::Done, "{focus:?}");
+        assert_eq!(
+            server.received().last().unwrap().method,
+            "Page.bringToFront"
+        );
+        // Semantic actions reach the semantic layer: a ref before any
+        // snapshot is stale, and nothing is sent for it.
+        let before = server.received().len();
+        let click = host.handle_request(
+            "s1",
+            request("c1", "click", json!({ "tab": tab, "ref": "e1" })),
+        );
+        assert_eq!(click.reason, Some(Reason::RefStale));
+        assert_eq!(server.received().len(), before);
+        // Turn end: blocked as turn_inactive, nothing sent.
+        let before = server.received().len();
+        host.turn_finished("s1");
+        let inactive = host.handle_request("s1", request("t1", "tabs.list", json!({})));
+        assert_eq!(inactive.reason, Some(Reason::TurnInactive));
+        assert_eq!(server.received().len(), before);
+        host.turn_started("s1", "main", "/repo", None);
+
+        // OFF: detach our session, close the link, tabs stay open in the browser.
+        host.set_toggle(false);
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        assert_eq!(host.link().status(), LinkStatus::Closed);
+        let received = server.received();
+        assert!(received
+            .iter()
+            .any(|r| r.method == "Target.detachFromTarget"));
+        assert!(!received.iter().any(|r| r.method == "Target.closeTarget"));
+        assert!(server.wait_for_close(Duration::from_secs(2)));
+        let blocked = host.handle_request("s1", request("o1", "tabs.list", json!({})));
+        assert_eq!(blocked.reason, Some(Reason::Off));
+        assert!(host.policy().read().tabs_for("s1").is_empty());
+        let state = host.state();
+        assert!(!state.toggle_on);
+        assert_eq!(state.connection.state, ConnectionState::Off);
+
+        // Audit: one row per request, typed text never stored.
+        let rows = host.audit_list(Some("s1"), 50);
+        let actions: Vec<&str> = rows.iter().map(|r| r.action.as_str()).collect();
+        assert!(actions.contains(&"tabs.open"));
+        assert!(actions.contains(&"teleport"));
+        assert!(actions.iter().filter(|a| **a == "tabs.open").count() >= 1);
+        // Newest first; the oldest r1 row is the real open, the newest the
+        // refused re-use with different input.
+        let open_row = rows.iter().rev().find(|r| r.request_id == "r1").unwrap();
+        assert_eq!(open_row.outcome, Outcome::Done);
+        let conflict_row = rows.iter().find(|r| r.request_id == "r1").unwrap();
+        assert_eq!(conflict_row.outcome, Outcome::Blocked);
+        assert_eq!(open_row.tab.as_deref(), Some(tab.as_str()));
+        assert!(open_row.commands_sent >= 7);
+        let events = host.events_list(50);
+        let kinds: Vec<&str> = events.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"toggle_on"));
+        assert!(kinds.contains(&"connected"));
+        assert!(kinds.contains(&"toggle_off"));
+        assert!(kinds.contains(&"disconnected"));
+        host.audit_clear();
+        assert!(host.audit_list(None, 50).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The audit records a grant when it changes, not on every turn: the
+    /// frontend may authorize one turn several times (seen as three
+    /// `grant_on` rows per turn in Ognjen's log).
+    #[test]
+    fn grant_events_record_transitions_only() {
+        let host =
+            BrowserHost::for_tests(settings_for(&std::env::temp_dir().join("gespan-grants")));
+        let count = |kind: &str| {
+            host.events_list(50)
+                .iter()
+                .filter(|e| e.kind == kind && e.session_id.as_deref() == Some("s1"))
+                .count()
+        };
+        for _ in 0..3 {
+            host.turn_started("s1", "main", "/repo", Some(true));
+        }
+        assert!(host.policy().read().granted("s1"));
+        // A turn that says nothing about the browser keeps the grant quietly,
+        // and granting again from Settings changes nothing.
+        host.turn_started("s1", "main", "/repo", None);
+        host.set_grant("s1", "main", true);
+        assert_eq!(count("grant_on"), 1);
+        assert_eq!(count("grant_off"), 0);
+        // Dropping it is recorded once, however often it is dropped again.
+        host.turn_started("s1", "main", "/repo", Some(false));
+        host.turn_started("s1", "main", "/repo", Some(false));
+        host.set_grant("s1", "main", false);
+        assert!(!host.policy().read().granted("s1"));
+        assert_eq!(count("grant_off"), 1);
+        assert_eq!(count("grant_on"), 1);
+        // A later grant is a new transition, from either path.
+        host.set_grant("s1", "main", true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        assert_eq!(count("grant_on"), 2);
+        host.turn_started("s1", "main", "/repo", Some(false));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        assert_eq!(count("grant_on"), 3);
+        assert_eq!(count("grant_off"), 2);
+    }
+
+    #[test]
+    fn old_browsers_are_refused_and_missing_files_ask_for_the_toggle() {
+        let counter = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let server = FakeCdp::start_with(move |received| {
+            if received.method == "Browser.getVersion" {
+                return Response::Result(json!({ "product": "Chrome/143.0.1.2" }));
+            }
+            super::testing::default_response(received, &counter)
+        });
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::UnsupportedVersion),
+            "{:?}",
+            host.connection()
+        );
+        assert!(server.wait_for_close(Duration::from_secs(2)));
+        // The link's own close ran its hook before the refusal was recorded:
+        // the state stays, it is not turned into "Disconnected" a moment later.
+        thread::sleep(Duration::from_millis(50));
+        let connection = host.connection();
+        assert_eq!(connection.state, ConnectionState::UnsupportedVersion);
+        assert!(connection.detail.unwrap().contains("144"));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let blocked = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(blocked.reason, Some(Reason::BrowserUnsupported));
+        assert_eq!(blocked.outcome, Outcome::Blocked);
+
+        // No DevToolsActivePort: NeedsToggle with the instruction; the agent
+        // request repeats the instruction and kicks off nothing harmful.
+        std::fs::remove_file(dir.join(discovery::ACTIVE_PORT_FILE)).unwrap();
+        host.set_toggle(false);
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::NeedsToggle),
+            "{:?}",
+            host.connection()
+        );
+        // OFF dropped every grant: without a new /browser the session is not granted.
+        let ungranted = host.handle_request("s1", request("r2a", "tabs.open", json!({})));
+        assert_eq!(ungranted.reason, Some(Reason::NotGranted));
+        host.set_grant("s1", "main", true);
+        let needs = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup));
+        assert!(needs.message.contains("chrome://inspect"));
+        // A stale file: the port does not answer.
+        std::fs::write(
+            dir.join(discovery::ACTIVE_PORT_FILE),
+            "1\n/devtools/browser/x\n",
+        )
+        .unwrap();
+        host.set_toggle(false);
+        host.set_toggle(true);
+        host.set_grant("s1", "main", true);
+        assert!(
+            wait_state(&host, ConnectionState::StalePort),
+            "{:?}",
+            host.connection()
+        );
+        let stale = host.handle_request("s1", request("r3", "tabs.open", json!({})));
+        assert_eq!(stale.reason, Some(Reason::BrowserUnavailable));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_a_branchs_app_gives_the_thread_a_tab_at_the_app() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        assert!(host
+            .open_app("s1", "main", "http://localhost:5174/")
+            .unwrap_err()
+            .contains("Turn on"));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        assert!(
+            host.open_app("s1", "main", "https://example.com/").is_err(),
+            "only an app on this computer"
+        );
+        assert!(!host.policy().read().granted("s1"));
+
+        let tab = host
+            .open_app("s1", "main", "http://localhost:5174/")
+            .unwrap();
+        // The click is the thread's access, and the tab is its own.
+        assert!(host.policy().read().granted("s1"));
+        let tabs = host.policy().read().tabs_for("s1");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].tab, tab);
+        let received = server.received();
+        let created = received
+            .iter()
+            .position(|r| r.method == "Target.createTarget")
+            .unwrap();
+        assert_eq!(received[created].params["url"], "about:blank");
+        // Marker and console are set up before the app loads.
+        let marker = received
+            .iter()
+            .position(|r| r.method == "Page.addScriptToEvaluateOnNewDocument")
+            .unwrap();
+        let navigate = received
+            .iter()
+            .position(|r| r.method == "Page.navigate")
+            .unwrap();
+        assert!(created < marker && marker < navigate);
+        assert_eq!(received[navigate].params["url"], "http://localhost:5174/");
+        assert!(received[navigate].session.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_tab_from_the_pane_is_the_threads_and_blank_or_at_its_address() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+
+        let blank = host.new_tab("s1", "main", None).unwrap();
+        // The click is the thread's access, and the tab is its own.
+        assert!(host.policy().read().granted("s1"));
+        assert_eq!(host.policy().read().tabs_for("s1")[0].tab, blank);
+        // Blank: nothing to load, the user types the address.
+        assert!(!server
+            .received()
+            .iter()
+            .any(|r| r.method == "Page.navigate"));
+
+        let page = host
+            .new_tab("s1", "main", Some(" https://example.com/ "))
+            .unwrap();
+        assert_ne!(page, blank);
+        assert_eq!(host.policy().read().tabs_for("s1").len(), 2);
+        let received = server.received();
+        let navigate = received
+            .iter()
+            .find(|r| r.method == "Page.navigate")
+            .unwrap();
+        assert_eq!(navigate.params["url"], "https://example.com/");
+        assert!(host
+            .new_tab("s1", "main", Some("file:///etc/passwd"))
+            .is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn lease_of(host: &BrowserHost, tab: &TabId) -> policy::Lease {
+        host.policy().read().lease(tab).cloned().expect("a lease")
+    }
+
+    /// A link the user clicks in a thread opens in the thread's browser with
+    /// the switch off: the browser starts for it, the thread gets no agent
+    /// access from it, and no agent call gets through.
+    #[test]
+    fn a_link_the_user_opens_starts_the_browser_with_the_switch_off_and_grants_agents_nothing() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        assert!(!host.policy().read().toggle_on);
+
+        let tab = host
+            .open_user_tab("s1", "main", " https://example.com/docs ")
+            .unwrap();
+        assert!(host.link().is_open(), "the browser started for the user");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert!(host.connection().browser.unwrap().managed);
+        assert!(!host.policy().read().toggle_on, "the switch stays off");
+        assert!(!host.policy().read().granted("s1"));
+        let lease = lease_of(&host, &tab);
+        assert!(lease.user_tab && !lease.from_user);
+        assert_eq!(lease.owner, "s1");
+        assert_eq!(lease.state, TabState::Open);
+        let navigated = server.wait_for(
+            |all| {
+                all.iter().any(|r| {
+                    r.method == "Page.navigate" && r.params["url"] == "https://example.com/docs"
+                })
+            },
+            Duration::from_secs(5),
+        );
+        assert!(navigated, "the page loads in the new tab");
+
+        // An agent of the same thread, even in a turn that asks for the
+        // browser, gets nothing while the switch is off.
+        host.turn_started("s1", "main", "/repo", Some(true));
+        for (id, action, input) in [
+            ("r1", "tabs.list", json!({})),
+            ("r2", "tabs.open", json!({})),
+            ("r3", "snapshot", json!({ "tab": tab.0 })),
+        ] {
+            let refused = host.handle_request("s1", request(id, action, input));
+            assert_eq!(refused.reason, Some(Reason::Off), "{action}: {refused:?}");
+        }
+
+        // URL policy: web pages only.
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "chrome://settings",
+        ] {
+            assert!(host.open_user_tab("s1", "main", url).is_err(), "{url}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The switch going off ends the agents' tabs but leaves the user's own
+    /// tab open, attached and usable, with the browser still running; with
+    /// the switch on the agent sees it as one of the thread's tabs.
+    #[test]
+    fn switching_off_ends_agent_tabs_but_keeps_the_users_own_tab_usable() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        assert!(host.connection().browser.unwrap().managed);
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        // ON and in the turn: the user's tab is one of the thread's tabs.
+        let listed = host.handle_request("s1", request("r2", "tabs.list", json!({})));
+        let listed = serde_json::to_string(&listed.data).unwrap();
+        assert!(
+            listed.contains(&own.0) && listed.contains(&agent.0),
+            "{listed}"
+        );
+        let agent_session = lease_of(&host, &agent).cdp_session.unwrap();
+        let agent_target = lease_of(&host, &agent).target_id;
+
+        host.set_toggle(false);
+        assert_eq!(lease_of(&host, &agent).state, TabState::Revoked);
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open(), "the user's tab keeps the browser");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert!(server.wait_for(
+            |all| all.iter().any(|r| r.method == "Target.detachFromTarget"
+                && r.params["sessionId"] == agent_session.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        // In the Gespan browser the agent's page itself closes.
+        assert!(server.wait_for(
+            |all| all.iter().any(|r| r.method == "Target.closeTarget"
+                && r.params["targetId"] == agent_target.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        // Still the user's to use: the pane's Reload goes through...
+        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+            .unwrap();
+        // ...the agent tab's does not, and agents get nothing.
+        assert!(host
+            .live_navigate("s1", &agent, &live::LiveNav::Reload)
+            .is_err());
+        let refused = host.handle_request("s1", request("r3", "tabs.list", json!({})));
+        assert_eq!(refused.reason, Some(Reason::Off));
+
+        // Back on, the browser that kept running is not reported idle.
+        host.set_toggle(true);
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+
+        // The user closing it closes its page.
+        let target = lease_of(&host, &own).target_id;
+        host.close_tab_by_user(&own).unwrap();
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget"
+                    && r.params["targetId"] == target.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The lease of the page `target` once the pump adopted it.
+    fn adopted_lease(host: &BrowserHost, target: &str) -> policy::Lease {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let found = host
+                .policy()
+                .read()
+                .leases()
+                .find(|l| l.target_id.0 == target && l.state == TabState::Open)
+                .cloned();
+            if let Some(lease) = found {
+                return lease;
+            }
+            assert!(Instant::now() < deadline, "{target} was not adopted");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn open_popup(server: &FakeCdp, opener: &TargetId, target: &str) {
+        server.emit(
+            "Target.targetCreated",
+            json!({ "targetInfo": { "targetId": target, "type": "page", "url": format!("https://{target}/"), "title": "", "attached": false, "openerId": opener.0 } }),
+            None,
+        );
+    }
+
+    /// Security: a page an agent's action opens from the user's own tab is
+    /// the agent's, so it ends with the switch and keeps nothing running; a
+    /// page the user's own input there opens is the user's.
+    #[test]
+    fn popups_of_the_users_tab_belong_to_whoever_acted_in_it_last() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opener = lease_of(&host, &own).target_id;
+
+        // An agent acts in the user's tab (switch on, turn carries it)...
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        // ...so the page it opens next is the agent's.
+        open_popup(&server, &opener, "TAGENT");
+        let agents = adopted_lease(&host, "TAGENT");
+        assert!(!agents.user_tab, "an agent-caused popup is the agent's");
+
+        // A pointer resting over the pane is no gesture: still the agent's.
+        host.live_input("s1", &own, &mouse(live::MouseEvent::Moved))
+            .unwrap();
+        host.live_input(
+            "s1",
+            &own,
+            &live::LiveInput::Wheel {
+                x: 10.,
+                y: 10.,
+                delta_x: 0.,
+                delta_y: 40.,
+                modifiers: 0,
+            },
+        )
+        .unwrap();
+        open_popup(&server, &opener, "THOVER");
+        let hovered = adopted_lease(&host, "THOVER");
+        assert!(!hovered.user_tab, "a hover does not make it the user's");
+
+        // The user's own press in the pane makes the next popup theirs.
+        host.live_input("s1", &own, &mouse(live::MouseEvent::Pressed))
+            .unwrap();
+        open_popup(&server, &opener, "TUSER");
+        assert!(adopted_lease(&host, "TUSER").user_tab);
+        // So does the pane's Reload, after another agent action.
+        let _ = host.handle_request("s1", request("r2", "screenshot", json!({ "tab": own.0 })));
+        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+            .unwrap();
+        open_popup(&server, &opener, "TNAV");
+        assert!(adopted_lease(&host, "TNAV").user_tab);
+
+        host.set_toggle(false);
+        assert_eq!(lease_of(&host, &agents.tab).state, TabState::Revoked);
+        assert_eq!(lease_of(&host, &hovered.tab).state, TabState::Revoked);
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == "TAGENT"),
+            Duration::from_secs(5),
+        ));
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn mouse(event: live::MouseEvent) -> live::LiveInput {
+        live::LiveInput::Mouse {
+            event,
+            x: 10.,
+            y: 10.,
+            button: if event == live::MouseEvent::Moved {
+                live::MouseButton::None
+            } else {
+                live::MouseButton::Left
+            },
+            buttons: 0,
+            click_count: 1,
+            modifiers: 0,
+        }
+    }
+
+    #[test]
+    fn only_presses_keys_and_text_count_as_the_user_acting() {
+        assert!(mouse(live::MouseEvent::Pressed).is_gesture());
+        assert!(mouse(live::MouseEvent::Released).is_gesture());
+        assert!(!mouse(live::MouseEvent::Moved).is_gesture());
+        assert!(!live::LiveInput::Wheel {
+            x: 0.,
+            y: 0.,
+            delta_x: 0.,
+            delta_y: 1.,
+            modifiers: 0
+        }
+        .is_gesture());
+        assert!(live::LiveInput::Text { text: "a".into() }.is_gesture());
+    }
+
+    /// The user's own browser (Attach) with the switch off: a user's link
+    /// is refused (the app opens it in the system browser) and Gespan does
+    /// not attach to the browser for it.
+    #[test]
+    fn a_users_link_is_refused_in_an_attached_browser_with_the_switch_off() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        assert!(host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .is_err());
+        thread::sleep(Duration::from_millis(100));
+        assert!(!host.link().is_open());
+        assert_ne!(host.connection().state, ConnectionState::Connected);
+        assert!(host.policy().read().leases().next().is_none());
+        assert!(server.received().is_empty(), "{:?}", server.received());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Closing an app window closes the user's own tabs of its threads; other
+    /// windows' tabs and agent tabs stay.
+    #[test]
+    fn closing_a_window_closes_its_users_tabs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        let gone = host
+            .open_user_tab("s1", "w2", "https://example.com/")
+            .unwrap();
+        let kept = host
+            .open_user_tab("s2", "main", "https://example.com/")
+            .unwrap();
+        let target = lease_of(&host, &gone).target_id;
+        host.window_closed("w2");
+        // Closed, and its row gone with the window's thread.
+        assert!(host
+            .policy()
+            .read()
+            .lease(&gone)
+            .is_none_or(|lease| lease.state == TabState::Closed));
+        assert_eq!(lease_of(&host, &kept).state, TabState::Open);
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget"
+                    && r.params["targetId"] == target.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The switch going off while a user's tab is still attaching: the lease
+    /// is the user's from the moment it exists, so it is not revoked.
+    #[test]
+    fn switching_off_while_a_users_tab_opens_keeps_it_the_users() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let server = FakeCdp::start_with(move |received| {
+            if received.method == "Target.attachToTarget" {
+                if let Response::Result(value) = testing::default_response(received, &counter) {
+                    return Response::Delay(Duration::from_millis(400), value);
+                }
+            }
+            testing::default_response(received, &counter)
+        });
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        let opener = host.clone();
+        let opening =
+            thread::spawn(move || opener.open_user_tab("s1", "main", "https://example.com/"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.policy().read().leases().next().is_none() {
+            assert!(Instant::now() < deadline, "the tab never started attaching");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let attaching = host.policy().read().leases().next().cloned().unwrap();
+        assert_eq!(attaching.state, TabState::Attaching);
+        assert!(attaching.user_tab, "the user's from the moment it exists");
+        host.set_toggle(false);
+        let tab = opening.join().unwrap().expect("the user's tab still opens");
+        assert_eq!(lease_of(&host, &tab).state, TabState::Open);
+        assert!(lease_of(&host, &tab).user_tab);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Security: with only pages an agent caused left (the user's own tab
+    /// closed), switching off closes the link and the browser as before.
+    #[test]
+    fn agent_popups_alone_do_not_keep_the_browser_after_switching_off() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opener = lease_of(&host, &own).target_id;
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        open_popup(&server, &opener, "TAGENT");
+        assert!(!adopted_lease(&host, "TAGENT").user_tab);
+        host.close_tab_by_user(&own).unwrap();
+
+        host.set_toggle(false);
+        assert!(!host.link().is_open(), "nothing of the user's is left");
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Gespan browser whose pages are the ones it was asked to create,
+    /// plus `free`: pages no one holds (say a popup of a revoked tab).
+    fn listing_fake(free: &'static [&'static str]) -> FakeCdp {
+        let counter = Arc::new(AtomicU64::new(1));
+        let pages = Arc::new(Mutex::new(
+            free.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        ));
+        FakeCdp::start_with(move |received| match received.method.as_str() {
+            "Target.createTarget" => {
+                let response = super::testing::default_response(received, &counter);
+                if let Response::Result(value) = &response {
+                    let id = value["targetId"].as_str().unwrap_or_default().to_string();
+                    pages.lock().unwrap().push(id);
+                }
+                response
+            }
+            "Target.closeTarget" => {
+                let id = received.params["targetId"].as_str().unwrap_or_default();
+                pages.lock().unwrap().retain(|page| page != id);
+                Response::Result(json!({ "success": true }))
+            }
+            "Target.getTargets" => {
+                let infos: Vec<Value> = pages
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|id| json!({ "targetId": id, "type": "page", "url": format!("https://{id}.example/"), "title": "", "attached": false }))
+                    .collect();
+                Response::Result(json!({ "targetInfos": infos }))
+            }
+            _ => super::testing::default_response(received, &counter),
+        })
+    }
+
+    fn close_sent(server: &FakeCdp, target: &str) -> bool {
+        server
+            .received()
+            .iter()
+            .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == target)
+    }
+
+    /// R32: switching off closes every page of the Gespan browser but the
+    /// user's own tabs: the agents' tabs and a page no one holds as well.
+    #[test]
+    fn switching_off_closes_every_page_but_the_users_tabs() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let (own_target, agent_target) = (
+            lease_of(&host, &own).target_id,
+            lease_of(&host, &agent).target_id,
+        );
+        assert!(!close_sent(&server, "TFREE"), "nothing closed it yet");
+
+        host.set_toggle(false);
+        assert!(close_sent(&server, "TFREE"), "the free page closed");
+        assert!(
+            close_sent(&server, &agent_target.0),
+            "the agent's tab closed"
+        );
+        assert!(!close_sent(&server, &own_target.0), "the user's tab stays");
+        assert_eq!(lease_of(&host, &own).state, TabState::Open);
+        assert!(host.link().is_open(), "the browser runs for the user's tab");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R32: with the switch off no agent acts, so a popup of the user's tab
+    /// is the user's even when an agent acted in that tab last; no agent
+    /// lease comes to be while the switch is off.
+    #[test]
+    fn with_the_switch_off_a_popup_of_the_users_tab_is_theirs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let opener = lease_of(&host, &own).target_id;
+        // An agent acted in the user's tab last...
+        let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
+        assert!(!lease_of(&host, &own).user_driven);
+        host.set_toggle(false);
+        // ...but with the switch off what the tab opens is the user's.
+        open_popup(&server, &opener, "TOFF");
+        let popup = adopted_lease(&host, "TOFF");
+        assert!(popup.user_tab, "the user's, not an agent's");
+        assert!(
+            host.policy()
+                .read()
+                .leases()
+                .all(|lease| !lease.is_live() || lease.user_tab),
+            "no agent lease while the switch is off"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R32: with the switch off the Gespan browser runs only for the user's
+    /// tabs: closing the last closes it, whatever pages no one holds are
+    /// left (they kept it running before).
+    #[test]
+    fn closing_the_last_users_tab_with_the_switch_off_closes_the_browser() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_unused_grace(Duration::from_millis(50));
+        assert!(!host.state().toggle_on);
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        assert!(host.link().is_open());
+        assert!(!host.user_tabs().unwrap().is_empty(), "a page no one holds");
+        host.close_tab_by_user(&own).unwrap();
+        assert!(
+            wait_state(&host, ConnectionState::Off),
+            "the browser stayed up: {:?}",
+            host.connection()
+        );
+        assert!(!host.link().is_open());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With the switch on, a page no one holds may still be given to a
+    /// thread: the browser stays for it after the last tab closes.
+    #[test]
+    fn with_the_switch_on_a_free_page_keeps_the_browser() {
+        let server = listing_fake(&["TFREE"]);
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_unused_grace(Duration::from_millis(50));
+        host.set_toggle(true);
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        host.close_tab_by_user(&own).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(host.link().is_open());
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A thread leaving the workspace closes the user's own tabs of it, and
+    /// only those: its agent tabs and other threads' tabs stay.
+    #[test]
+    fn a_closed_thread_closes_only_its_users_tabs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        let other = host
+            .open_user_tab("s2", "main", "https://example.com/")
+            .unwrap();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        let agent = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let own_target = lease_of(&host, &own).target_id;
+        let agent_target = lease_of(&host, &agent).target_id;
+
+        host.thread_closed("s1");
+        assert!(host
+            .policy()
+            .read()
+            .lease(&own)
+            .is_none_or(|lease| lease.state == TabState::Closed));
+        assert!(close_sent(&server, &own_target.0));
+        assert_eq!(lease_of(&host, &agent).state, TabState::Open);
+        assert!(!close_sent(&server, &agent_target.0));
+        assert_eq!(lease_of(&host, &other).state, TabState::Open);
+        // Nothing of the thread's left to close: a second call is a no-op.
+        host.thread_closed("s1");
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The user's own browser (Attach: upstream code no Gespan path reaches)
+    /// is let go of on OFF even with a user tab open in it.
+    #[test]
+    fn switching_off_lets_go_of_an_attached_browser_even_with_a_users_tab() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
+        host.set_toggle(false);
+        assert!(!host.link().is_open());
+        assert_eq!(host.connection().state, ConnectionState::Off);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No browser to start: the user's link is not opened in Gespan, and the
+    /// error says why so the app can open it elsewhere.
+    #[test]
+    fn a_users_link_fails_plainly_when_the_browser_cannot_start() {
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            ..BrowserSettings::default()
+        });
+        let error = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap_err();
+        assert!(!error.is_empty());
+        assert!(!host.link().is_open());
+        assert!(host.policy().read().leases().next().is_none());
+    }
+
+    #[test]
+    fn revoke_transfer_and_session_deletion_act_on_the_browser() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        host.turn_started("s2", "main", "/repo", Some(true));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        let a = host.handle_request("s1", request("a", "tabs.open", json!({})));
+        let b = host.handle_request("s1", request("b", "tabs.open", json!({})));
+        let tab_a = TabId(a.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let tab_b = TabId(b.data.unwrap()["tab"].as_str().unwrap().to_string());
+        assert_eq!(host.policy().read().tabs_for("s1").len(), 2);
+
+        // Transfer: s2 now owns tab_a; s1's next action on it is no_lease.
+        host.transfer(&tab_a, "s1", "s2").unwrap();
+        assert_eq!(host.policy().read().tabs_for("s2").len(), 1);
+        let lost = host.handle_request("s1", request("c", "tabs.close", json!({ "tab": tab_a.0 })));
+        assert_eq!(lost.reason, Some(Reason::NoLease));
+        assert_eq!(
+            host.transfer(&tab_b, "s1", "nobody"),
+            Err(Reason::NotGranted)
+        );
+
+        // User takes tab_a back: marker release in our world, detach, lease revoked, tab open.
+        let before = server.received().len();
+        host.release_tab(&tab_a).unwrap();
+        let received = server.received();
+        let tail: Vec<&str> = received[before..]
+            .iter()
+            .map(|r| r.method.as_str())
+            .collect();
+        assert_eq!(
+            tail,
+            vec![
+                "Page.createIsolatedWorld",
+                "Runtime.callFunctionOn",
+                "Target.detachFromTarget"
+            ]
+        );
+        assert_eq!(received[before].params["worldName"], json!(ISOLATED_WORLD));
+        assert!(received[before + 1].params["functionDeclaration"]
+            .as_str()
+            .unwrap()
+            .contains("__gespanMarkerRelease"));
+        assert_eq!(
+            host.policy().read().lease(&tab_a).unwrap().state,
+            TabState::Revoked
+        );
+        assert!(host.policy().read().tabs_for("s2").is_empty());
+        let gone =
+            host.handle_request("s2", request("c2", "tabs.close", json!({ "tab": tab_a.0 })));
+        assert_eq!(gone.reason, Some(Reason::NoLease));
+        // Releasing again is a no-op; unknown tabs are errors.
+        host.release_tab(&tab_a).unwrap();
+        assert!(host.release_tab(&TabId("t_deadbeef".into())).is_err());
+
+        // Revoke s1: its remaining tab is detached, not closed.
+        let before = server.received().len();
+        host.revoke("s1");
+        let received = server.received();
+        assert_eq!(received.len(), before + 1);
+        assert_eq!(received[before].method, "Target.detachFromTarget");
+        let revoked = host.handle_request("s1", request("d", "tabs.list", json!({})));
+        assert_eq!(revoked.reason, Some(Reason::NotGranted));
+        assert_eq!(
+            host.policy().read().lease(&tab_b).unwrap().state,
+            TabState::Revoked
+        );
+
+        // User closes a tab from Settings, then deletes session s2.
+        host.close_tab_by_user(&tab_b).unwrap();
+        assert!(server
+            .received()
+            .iter()
+            .any(|r| r.method == "Target.closeTarget"));
+        assert!(host.close_tab_by_user(&tab_b).is_err());
+        let closes_before = server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Target.closeTarget")
+            .count();
+        host.session_deleted("s2");
+        let closes_after = server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Target.closeTarget")
+            .count();
+        assert_eq!(closes_after, closes_before + 1);
+        assert!(host.policy().read().session("s2").is_none());
+        assert!(host
+            .state()
+            .tabs
+            .iter()
+            .all(|t: &TabOverview| t.tab.state == TabState::Closed));
+
+        // Dropping browser access on a turn start revokes too.
+        host.turn_started("s3", "main", "/repo", Some(true));
+        let c = host.handle_request("s3", request("e", "tabs.open", json!({})));
+        assert_eq!(c.outcome, Outcome::Done);
+        let detaches = server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Target.detachFromTarget")
+            .count();
+        host.turn_started("s3", "main", "/repo", Some(false));
+        let detaches_after = server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Target.detachFromTarget")
+            .count();
+        assert_eq!(detaches_after, detaches + 1);
+        assert!(!host.policy().read().granted("s3"));
+
+        // Settings change persists through the audit db and shows in state.
+        let mut settings = settings_for(&dir);
+        settings.limits.tabs_per_session = 2;
+        host.set_settings(settings.clone());
+        // The remembered switch follows the toggle, not the settings call.
+        settings.enabled = true;
+        assert_eq!(host.state().settings, settings);
+        host.disconnect();
+        assert!(
+            wait_state(&host, ConnectionState::Disconnected),
+            "{:?}",
+            host.connection()
+        );
+        assert!(host.state().toggle_on);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dead_browser_moves_the_state_to_disconnected_and_clears_leases() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        let opened = host.handle_request("s1", request("a", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done);
+        let epoch = host.policy().read().global_epoch;
+        server.close_current();
+        assert!(
+            wait_state(&host, ConnectionState::Disconnected),
+            "{:?}",
+            host.connection()
+        );
+        assert!(host.policy().read().tabs_for("s1").is_empty());
+        assert_ne!(host.policy().read().global_epoch, epoch);
+        // The next request reconnects (the fake still listens) and runs.
+        let after = host.handle_request("s1", request("b", "tabs.list", json!({})));
+        assert_eq!(after.outcome, Outcome::Done, "{after:?}");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 2);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Your own browser, with the switch remembered from the last run.
+    fn remembered_attach_host(dir: &std::path::Path) -> Arc<BrowserHost> {
+        let host = BrowserHost::for_tests(BrowserSettings {
+            enabled: true,
+            ..settings_for(dir)
+        });
+        host.restore_toggle();
+        assert_eq!(host.connection().state, ConnectionState::Idle);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        host
+    }
+
+    /// After a restart the first action connects to the user's own browser
+    /// and waits for its consent dialog, instead of failing with
+    /// `browser_disconnected` while the connection starts in the background.
+    #[test]
+    fn a_remembered_switch_connects_your_own_browser_on_the_first_action() {
+        let delay = Duration::from_millis(400);
+        let server = FakeCdp::start_with_consent_delay(delay);
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        // The remembered switch alone reaches nothing.
+        assert!(server.received().is_empty());
+        assert_eq!(server.connections(), 0);
+
+        let started = Instant::now();
+        let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert!(opened.data.unwrap()["tab"].as_str().is_some());
+        assert!(started.elapsed() >= delay, "it waited for the consent");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 1);
+        assert!(host
+            .events_list(50)
+            .iter()
+            .any(|event| event.kind == "consent_pending"));
+        // The next action uses the same connection.
+        let listed = host.handle_request("s1", request("r2", "tabs.list", json!({})));
+        assert_eq!(listed.outcome, Outcome::Done, "{listed:?}");
+        assert_eq!(server.connections(), 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The 2026-11-09 sequence: the switch goes on while remote debugging is
+    /// off, an agent gets the chrome://inspect instruction, then the user
+    /// turns remote debugging on. The next agent action looks again and
+    /// connects instead of repeating the instruction.
+    #[test]
+    fn turning_on_remote_debugging_later_lets_the_next_action_connect() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let port_file = dir.join(discovery::ACTIVE_PORT_FILE);
+        let written = std::fs::read_to_string(&port_file).unwrap();
+        std::fs::remove_file(&port_file).unwrap();
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::NeedsToggle),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let needs = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup), "{needs:?}");
+        assert!(
+            needs.message.contains("chrome://inspect"),
+            "{}",
+            needs.message
+        );
+        assert_eq!(server.connections(), 0);
+
+        // Chrome writes DevToolsActivePort once remote debugging is on.
+        std::fs::write(&port_file, written).unwrap();
+        let started = Instant::now();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert_eq!(server.connections(), 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A port file Gespan may not read (macOS app-data protection answers
+    /// EPERM) is not "remote debugging is off": the agent and Settings name
+    /// the real fix, and once the file is readable the next action connects.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_port_file_is_not_reported_as_remote_debugging_off() {
+        use std::os::unix::fs::PermissionsExt;
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let port_file = dir.join(discovery::ACTIVE_PORT_FILE);
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&port_file).is_ok() {
+            // Running as root: permissions are not enforced.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::ProfileUnreadable),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let blocked = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert_eq!(blocked.outcome, Outcome::Blocked);
+        assert_eq!(
+            blocked.reason,
+            Some(Reason::BrowserProfileUnreadable),
+            "{blocked:?}"
+        );
+        assert!(
+            !blocked.message.contains("chrome://inspect"),
+            "{}",
+            blocked.message
+        );
+        assert!(
+            blocked.message.contains("Privacy & Security"),
+            "{}",
+            blocked.message
+        );
+        assert!(
+            blocked.message.contains(&dir.display().to_string()),
+            "names the folder: {}",
+            blocked.message
+        );
+        assert_eq!(server.connections(), 0);
+
+        // Access granted: the next action looks again and connects.
+        std::fs::set_permissions(&port_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        assert_eq!(host.connection().state, ConnectionState::Connected);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each OS gets the fix it has: macOS names Full Disk Access (and the
+    /// terminal a dev build was started from), others the folder's
+    /// permissions; all name the file, and none sends the user back to
+    /// chrome://inspect or to a Settings choice Gespan no longer offers.
+    #[test]
+    fn the_unreadable_profile_detail_names_each_systems_fix() {
+        let dir = std::path::Path::new("/profiles/chrome");
+        let mac = profile_unreadable_detail(dir, discovery::Os::Mac);
+        assert!(
+            mac.contains("Privacy & Security → Full Disk Access"),
+            "{mac}"
+        );
+        assert!(mac.contains("terminal"), "{mac}");
+        for os in [discovery::Os::Linux, discovery::Os::Windows] {
+            let other = profile_unreadable_detail(dir, os);
+            assert!(other.contains("Permission denied"), "{other}");
+            assert!(!other.contains("macOS"), "{other}");
+        }
+        for os in [
+            discovery::Os::Mac,
+            discovery::Os::Linux,
+            discovery::Os::Windows,
+        ] {
+            let text = profile_unreadable_detail(dir, os);
+            assert!(text.contains("DevToolsActivePort"), "{text}");
+            assert!(!text.contains("Settings → Browser"), "{text}");
+            assert!(!text.contains("chrome://inspect"), "{text}");
+            assert!(!text.contains("Allow"), "{text}");
+        }
+    }
+
+    /// A consent dialog nobody answers holds the action no longer than the
+    /// attach wait, and the result names what the user must do.
+    #[test]
+    fn an_unanswered_consent_dialog_ends_within_the_wait_with_the_fix() {
+        let server = FakeCdp::start_silent();
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        let wait = Duration::from_millis(600);
+        host.set_attach_wait(wait);
+        let started = Instant::now();
+        let pending = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        let took = started.elapsed();
+        assert!(took >= wait, "it waited for the dialog: {took:?}");
+        assert!(took < wait + Duration::from_secs(2), "bounded: {took:?}");
+        assert_eq!(pending.outcome, Outcome::Blocked);
+        assert_eq!(pending.reason, Some(Reason::BrowserConsentPending));
+        assert!(pending.message.contains("accept"), "{}", pending.message);
+        // The dialog is still up: the next action waits on the same attempt
+        // instead of opening a second one.
+        let again = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(again.reason, Some(Reason::BrowserConsentPending));
+        let asked = host
+            .events_list(50)
+            .iter()
+            .filter(|event| event.kind == "consent_pending")
+            .count();
+        assert_eq!(asked, 1);
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Chrome gives up on its dialog before the attach wait ends: the action
+    /// reports it at once and points at Settings → Browser → Connect.
+    #[test]
+    fn a_consent_dialog_that_times_out_points_at_connect() {
+        let server = FakeCdp::start_silent();
+        let dir = profile_for(&server);
+        let host = remembered_attach_host(&dir);
+        host.set_consent_timeout(Duration::from_millis(300));
+        let started = Instant::now();
+        let declined = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(declined.outcome, Outcome::Blocked);
+        assert_eq!(declined.reason, Some(Reason::BrowserConsentDenied));
+        assert!(
+            declined.message.contains("Settings → Browser"),
+            "{}",
+            declined.message
+        );
+        assert!(declined.message.contains("Connect"), "{}", declined.message);
+        assert_eq!(host.connection().state, ConnectionState::ConsentTimeout);
+        // One dialog per drop: the next action does not ask Chrome again.
+        let again = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(again.reason, Some(Reason::BrowserConsentDenied));
+        assert!(again.message.contains("Connect"), "{}", again.message);
+        // The user's Connect asks again (and the dialog is still unanswered).
+        host.connect();
+        assert!(wait_state(&host, ConnectionState::AwaitingConsent));
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No browser with remote debugging on: the first action says so at
+    /// once, naming chrome://inspect, rather than waiting out the bound.
+    #[test]
+    fn no_browser_to_attach_to_fails_at_once_naming_chrome_inspect() {
+        let dir = std::env::temp_dir().join(format!("gespan-host-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = remembered_attach_host(&dir);
+        let started = Instant::now();
+        let needs = host.handle_request("s1", request("r1", "tabs.open", json!({})));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert_eq!(needs.outcome, Outcome::Blocked);
+        assert_eq!(needs.reason, Some(Reason::BrowserNeedsSetup));
+        assert!(
+            needs.message.contains("chrome://inspect"),
+            "{}",
+            needs.message
+        );
+        // Turned on since: the next action finds it and connects.
+        let server = FakeCdp::start();
+        let rest = server.url.strip_prefix("ws://127.0.0.1:").unwrap();
+        let (port, path) = rest.split_once('/').unwrap();
+        std::fs::write(
+            dir.join(discovery::ACTIVE_PORT_FILE),
+            format!("{port}\n/{path}\n"),
+        )
+        .unwrap();
+        let opened = host.handle_request("s1", request("r2", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blank_pages_are_the_start_page_and_new_tab_pages_only() {
+        let reply = json!({ "targetInfos": [
+            { "targetId": "A", "type": "page", "url": "about:blank" },
+            { "targetId": "B", "type": "page", "url": "chrome://newtab/" },
+            { "targetId": "C", "type": "page", "url": "https://github.com/" },
+            { "targetId": "D", "type": "service_worker", "url": "about:blank" },
+        ]});
+        let ids: Vec<String> = blank_pages(&reply).into_iter().map(|t| t.0).collect();
+        assert_eq!(ids, vec!["A", "B"]);
+    }
+
+    /// Managed mode with a Gespan browser already listening on the fake.
+    fn managed_host(server: &FakeCdp, access: AccessMode) -> (Arc<BrowserHost>, PathBuf) {
+        let dir = profile_for(server);
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            access,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(dir.clone());
+        (host, dir)
+    }
+
+    #[test]
+    fn managed_mode_starts_on_the_first_action_and_remembers_the_switch() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        // The switch alone starts nothing.
+        assert_eq!(host.connection().state, ConnectionState::Idle);
+        assert!(server.received().is_empty());
+        assert!(host.policy().read().settings.enabled);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let listed = host.handle_request("s1", request("r1", "tabs.list", json!({})));
+        assert_eq!(listed.outcome, Outcome::Done, "{listed:?}");
+        let info = host.connection().browser.unwrap();
+        assert!(info.managed);
+        assert_eq!(info.channel, launch::CHANNEL);
+        // No consent step for our own browser.
+        assert!(!host
+            .events_list(50)
+            .iter()
+            .any(|event| event.kind == "consent_pending"));
+        host.set_toggle(false);
+        assert!(!host.policy().read().settings.enabled);
+        // A remembered switch comes back without connecting.
+        let restored = BrowserHost::for_tests(BrowserSettings {
+            enabled: true,
+            ..BrowserSettings::default()
+        });
+        restored.restore_toggle();
+        assert!(restored.policy().read().toggle_on);
+        assert_eq!(restored.connection().state, ConnectionState::Idle);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn wait_requested(host: &BrowserHost, session: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if host
+                .state()
+                .sessions
+                .iter()
+                .any(|s| s.session_id == session && s.requested)
+            {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// A fake Chrome whose pages log, throw and fail requests, for the
+    /// console and network actions and the signals every result carries.
+    fn noisy_fake() -> FakeCdp {
+        use super::testing::Event;
+        let counter = Arc::new(AtomicU64::new(1));
+        FakeCdp::start_with(move |received| {
+            let session = received.session.as_deref();
+            match received.method.as_str() {
+                "Page.navigate" => {
+                    let url = received.params["url"].as_str().unwrap_or("").to_string();
+                    let mut events = vec![Event::new(
+                        "Page.frameNavigated",
+                        json!({ "frame": { "id": "T1", "loaderId": "L2", "url": url } }),
+                        session,
+                    )];
+                    if url.starts_with("http://localhost") {
+                        events.extend([
+                            Event::new(
+                                "Runtime.exceptionThrown",
+                                json!({ "exceptionDetails": {
+                                    "text": "Uncaught",
+                                    "exception": { "type": "object", "subtype": "error", "description": "TypeError: user.map is not a function" },
+                                    "stackTrace": { "callFrames": [{ "functionName": "App", "url": "http://localhost:5173/src/App.tsx", "lineNumber": 11, "columnNumber": 4 }] }
+                                } }),
+                                session,
+                            ),
+                            Event::new(
+                                "Network.requestWillBeSent",
+                                json!({ "requestId": "R1", "type": "Fetch", "request": { "method": "GET", "url": "http://localhost:5173/api/user" } }),
+                                session,
+                            ),
+                            Event::new(
+                                "Network.responseReceived",
+                                json!({ "requestId": "R1", "type": "Fetch", "response": { "url": "http://localhost:5173/api/user", "status": 500, "statusText": "Internal Server Error" } }),
+                                session,
+                            ),
+                            Event::new("Network.loadingFinished", json!({ "requestId": "R1" }), session),
+                        ]);
+                    }
+                    events.push(Event::new(
+                        "Page.lifecycleEvent",
+                        json!({ "frameId": "T1", "loaderId": "L2", "name": "load" }),
+                        session,
+                    ));
+                    Response::ResultThen(json!({ "frameId": "T1", "loaderId": "L2" }), events)
+                }
+                // Chrome replays the messages it kept before it answers.
+                "Runtime.enable" => Response::EventsThen(
+                    vec![Event::new(
+                        "Runtime.consoleAPICalled",
+                        json!({ "type": "warning", "executionContextId": 3, "args": [{ "type": "string", "value": "kept by the browser" }] }),
+                        session,
+                    )],
+                    json!({}),
+                ),
+                "Network.getResponseBody" => Response::Result(
+                    json!({ "body": "{\"error\": \"db down\"}", "base64Encoded": false }),
+                ),
+                _ => super::testing::default_response(received, &counter),
+            }
+        })
+    }
+
+    /// A page with one button; every inspect mode the user is in gets a
+    /// click on it while `click` is set.
+    fn pickable_fake(click: Arc<AtomicBool>) -> FakeCdp {
+        use super::testing::Event;
+        let counter = Arc::new(AtomicU64::new(1));
+        FakeCdp::start_with(move |received| {
+            let session = received.session.as_deref();
+            match received.method.as_str() {
+                "Page.navigate" => {
+                    let url = received.params["url"].as_str().unwrap_or("").to_string();
+                    Response::ResultThen(
+                        json!({ "frameId": "T1", "loaderId": "L2" }),
+                        vec![
+                            Event::new(
+                                "Page.frameNavigated",
+                                json!({ "frame": { "id": "T1", "loaderId": "L2", "url": url } }),
+                                session,
+                            ),
+                            Event::new(
+                                "Page.lifecycleEvent",
+                                json!({ "frameId": "T1", "loaderId": "L2", "name": "load" }),
+                                session,
+                            ),
+                        ],
+                    )
+                }
+                "Overlay.setInspectMode"
+                    if received.params["mode"] == "searchForNode"
+                        && click.load(Ordering::Acquire) =>
+                {
+                    Response::ResultThen(
+                        json!({}),
+                        vec![Event::new(
+                            "Overlay.inspectNodeRequested",
+                            json!({ "backendNodeId": 77 }),
+                            session,
+                        )],
+                    )
+                }
+                "DOM.describeNode" => Response::Result(json!({
+                    "node": { "localName": "button", "attributes": ["id", "save", "style", "x"] }
+                })),
+                "Accessibility.getPartialAXTree" => Response::Result(json!({ "nodes": [
+                    { "backendDOMNodeId": 77, "role": { "value": "button" }, "name": { "value": "Save" } }
+                ]})),
+                "Accessibility.getFullAXTree" => Response::Result(json!({ "nodes": [
+                    { "nodeId": "1", "role": { "value": "RootWebArea" }, "name": { "value": "Form" }, "backendDOMNodeId": 1, "childIds": ["2", "3"] },
+                    { "nodeId": "2", "role": { "value": "link" }, "name": { "value": "Home" }, "backendDOMNodeId": 76, "childIds": [] },
+                    { "nodeId": "3", "role": { "value": "button" }, "name": { "value": "Save" }, "backendDOMNodeId": 77, "childIds": [] },
+                ]})),
+                "DOM.getBoxModel" => Response::Result(json!({ "model": {
+                    "border": [10.0, 10.0, 90.0, 10.0, 90.0, 40.0, 10.0, 40.0]
+                }})),
+                "Page.getLayoutMetrics" => Response::Result(json!({
+                    "cssLayoutViewport": { "pageX": 0, "pageY": 0, "clientWidth": 800, "clientHeight": 600 }
+                })),
+                "Page.captureScreenshot" => Response::Result(json!({ "data": "iVBORw0KGgo=" })),
+                _ => super::testing::default_response(received, &counter),
+            }
+        })
+    }
+
+    #[test]
+    fn a_picked_element_reaches_the_composer_and_the_agents_snapshot() {
+        let click = Arc::new(AtomicBool::new(true));
+        let server = pickable_fake(click.clone());
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let opened = host.handle_request(
+            "s1",
+            request(
+                "p1",
+                "tabs.open",
+                json!({ "url": "https://example.com/form", "snapshot": false }),
+            ),
+        );
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = TabId(
+            opened.data.as_ref().unwrap()["tab"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+
+        let picked = host.pick_element("s1", &tab, false).unwrap().unwrap();
+        assert_eq!(picked.role, "button");
+        assert_eq!(picked.name, "Save");
+        assert_eq!(picked.tag, "<button id=\"save\">");
+        assert_eq!(picked.reference, None);
+        assert_eq!(picked.image.as_deref(), Some("iVBORw0KGgo="));
+        assert!(
+            picked
+                .text
+                .contains(&format!("in tab {} (https://example.com/form)", tab.0))
+                && picked.text.ends_with("marks it [picked by the user]."),
+            "{}",
+            picked.text
+        );
+        let sent: Vec<(String, Value)> = server
+            .received()
+            .into_iter()
+            .map(|r| (r.method, r.params))
+            .collect();
+        let at = |method: &str, mode: Option<&str>| {
+            sent.iter()
+                .position(|(m, p)| m == method && mode.is_none_or(|mode| p["mode"] == mode))
+                .unwrap_or_else(|| panic!("{method} not sent: {sent:?}"))
+        };
+        assert!(
+            at("Page.bringToFront", None) < at("Overlay.setInspectMode", Some("searchForNode"))
+        );
+        assert!(at("DOM.enable", None) < at("Overlay.enable", None));
+        // Inspect mode ends before the element is photographed.
+        assert!(at("Overlay.setInspectMode", Some("none")) < at("Page.captureScreenshot", None));
+        assert!(at("Overlay.disable", None) < at("DOM.disable", None));
+
+        let snapshot =
+            host.handle_request("s1", request("p2", "snapshot", json!({ "tab": tab.0 })));
+        assert_eq!(snapshot.outcome, Outcome::Done, "{snapshot:?}");
+        let data = snapshot.data.unwrap();
+        let text = data["snapshot"].as_str().unwrap();
+        assert!(
+            text.contains("- button \"Save\" [ref=e3] [picked by the user]"),
+            "{text}"
+        );
+        assert!(text.contains("picked: e3 is the element"), "{text}");
+        assert_eq!(data["picked"], "e3");
+        assert!(
+            snapshot.message.contains("pointed at e3"),
+            "{}",
+            snapshot.message
+        );
+
+        // Picked again after the snapshot: the ref comes along.
+        let again = host.pick_element("s1", &tab, false).unwrap().unwrap();
+        assert_eq!(again.reference.as_deref(), Some("e3"));
+        assert!(again.text.ends_with(", ref e3."), "{}", again.text);
+
+        // Another thread's tab is not the user's to pick in for this one.
+        let other = host.pick_element("s2", &tab, false).unwrap_err();
+        assert!(other.contains("another thread"), "{other}");
+
+        // No click: the user cancels.
+        click.store(false, Ordering::Release);
+        let waiting = {
+            let host = host.clone();
+            let tab = tab.clone();
+            thread::spawn(move || host.pick_element("s1", &tab, false))
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.picking.lock().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "the pick never started");
+            thread::sleep(Duration::from_millis(5));
+        }
+        host.cancel_pick();
+        assert_eq!(waiting.join().unwrap(), Ok(None));
+    }
+
+    /// A tab whose screencast sends `frames` pictures, the next one after
+    /// each acknowledgement.
+    fn screencast_fake(frames: i64) -> FakeCdp {
+        use super::testing::Event;
+        let counter = Arc::new(AtomicU64::new(1));
+        // The viewport Gespan asked for: pictures show the page at it.
+        let viewport = Arc::new(Mutex::new((800, 600)));
+        let picture = move |data: String, n: i64, size: (i64, i64), session: Option<&str>| {
+            Event::new(
+                "Page.screencastFrame",
+                json!({
+                    "data": data,
+                    "sessionId": n,
+                    "metadata": { "deviceWidth": size.0, "deviceHeight": size.1, "offsetTop": 0, "pageScaleFactor": 1 }
+                }),
+                session,
+            )
+        };
+        let size = {
+            let viewport = viewport.clone();
+            move || *viewport.lock().unwrap()
+        };
+        // Valid base64 (of `frame<n>`), so a picture packs for the panel.
+        let frame = move |n: i64, session: Option<&str>| {
+            use base64::Engine as _;
+            let data = base64::engine::general_purpose::STANDARD.encode(format!("frame{n}"));
+            picture(data, n, size(), session)
+        };
+        FakeCdp::start_with(move |received| {
+            let session = received.session.as_deref();
+            match received.method.as_str() {
+                "Emulation.setDeviceMetricsOverride" => {
+                    let params = &received.params;
+                    *viewport.lock().unwrap() = (
+                        params["width"].as_i64().unwrap_or(0),
+                        params["height"].as_i64().unwrap_or(0),
+                    );
+                    Response::Result(json!({}))
+                }
+                "Page.getLayoutMetrics" => Response::Result(json!({
+                    "cssContentSize": { "x": 0, "y": 0, "width": 800, "height": 5000 },
+                    "cssLayoutViewport": { "pageX": 0, "pageY": 0, "clientWidth": 800, "clientHeight": 600 },
+                    "cssVisualViewport": { "pageX": 0, "pageY": 0, "clientWidth": 800, "clientHeight": 600, "scale": 1 },
+                })),
+                // While the page loads, one picture of the tab's own window
+                // comes before the panel's again.
+                "Page.reload" => Response::ResultThen(
+                    json!({}),
+                    vec![
+                        picture("loading".into(), 2000, (1200, 800), session),
+                        picture("loaded".into(), 2001, *viewport.lock().unwrap(), session),
+                    ],
+                ),
+                "Page.navigate" => {
+                    let url = received.params["url"].as_str().unwrap_or("").to_string();
+                    Response::ResultThen(
+                        json!({ "frameId": "T1", "loaderId": "L2" }),
+                        vec![
+                            Event::new(
+                                "Page.frameNavigated",
+                                json!({ "frame": { "id": "T1", "loaderId": "L2", "url": url } }),
+                                session,
+                            ),
+                            Event::new(
+                                "Page.lifecycleEvent",
+                                json!({ "frameId": "T1", "loaderId": "L2", "name": "load" }),
+                                session,
+                            ),
+                        ],
+                    )
+                }
+                "Page.startScreencast" => Response::ResultThen(json!({}), vec![frame(1, session)]),
+                // Chrome on Windows sends the last picture again right after
+                // a screenshot.
+                "Page.captureScreenshot" => Response::ResultThen(
+                    json!({ "data": "c3RpbGw=" }),
+                    vec![{
+                        use base64::Engine as _;
+                        picture(
+                            base64::engine::general_purpose::STANDARD
+                                .encode(format!("frame{}", frames.max(1))),
+                            1000,
+                            *viewport.lock().unwrap(),
+                            session,
+                        )
+                    }],
+                ),
+                "Page.screencastFrameAck" => {
+                    let n = received.params["sessionId"].as_i64().unwrap_or(0);
+                    if n < frames {
+                        Response::ResultThen(json!({}), vec![frame(n + 1, session)])
+                    } else {
+                        Response::Result(json!({}))
+                    }
+                }
+                _ => super::testing::default_response(received, &counter),
+            }
+        })
+    }
+
+    /// Move `tab` to `url` the way the agent's navigation does (the pane
+    /// itself only goes back, forward or reloads).
+    fn go(host: &BrowserHost, session: &str, tab: &TabId, url: &str) {
+        let target = host.held_tab(session, tab).unwrap();
+        host.link
+            .send_system(Command::in_session(
+                &target.main,
+                Method::PageNavigate,
+                json!({ "url": url }),
+            ))
+            .unwrap();
+    }
+
+    fn opened_tab(host: &Arc<BrowserHost>, session: &str, url: &str) -> TabId {
+        let opened = host.handle_request(
+            session,
+            request(
+                &format!("open {url}"),
+                "tabs.open",
+                json!({ "url": url, "snapshot": false }),
+            ),
+        );
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        TabId(
+            opened.data.as_ref().unwrap()["tab"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    #[test]
+    fn the_live_view_streams_acknowledged_pictures_until_stopped() {
+        let server = screencast_fake(3);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    |frame| frames.lock().unwrap().push(frame),
+                )
+            })
+        };
+        // The panel's own path: it asks for the next picture and gets the
+        // newest one, packed, with the page's size in front.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut taken = Vec::new();
+        while taken.len() < 3 {
+            assert!(Instant::now() < deadline, "pictures never came");
+            let after = taken.last().copied().unwrap_or(0);
+            let packed = host.live_take("v1", after);
+            if packed.is_empty() {
+                continue;
+            }
+            assert!(packed.len() > live::PACKED_HEADER);
+            let seq = u64::from(u32::from_le_bytes(packed[4..8].try_into().unwrap()));
+            assert!(seq > after);
+            assert_eq!(f64::from_le_bytes(packed[8..16].try_into().unwrap()), 640.0);
+            taken.push(seq);
+        }
+        assert_eq!(taken, vec![1, 2, 3]);
+        // The pane of another view gets nothing.
+        assert!(host.live_take("v2", 0).is_empty());
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        // Once the view is over, the pane's request comes back empty at once.
+        assert!(host.live_take("v1", 3).is_empty());
+
+        // A slow run may end on the still picture too; the moving ones come first.
+        let frames: Vec<_> = frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.format == "jpeg")
+            .cloned()
+            .collect();
+        assert_eq!(
+            frames.iter().map(|f| f.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(frames[0].data, "ZnJhbWUx");
+        assert_eq!((frames[0].width, frames[0].height), (640.0, 480.0));
+        assert_eq!(frames[0].tab, tab.0);
+
+        let sent = server.received();
+        let start = sent
+            .iter()
+            .find(|r| r.method == "Page.startScreencast")
+            .expect("screencast started");
+        assert_eq!(start.params["maxWidth"], 642);
+        assert_eq!(start.params["format"], "jpeg");
+        let acks: Vec<i64> = sent
+            .iter()
+            .filter(|r| r.method == "Page.screencastFrameAck")
+            .filter_map(|r| r.params["sessionId"].as_i64())
+            .collect();
+        assert_eq!(acks, vec![1, 2, 3]);
+        let at = |method: &str| {
+            sent.iter()
+                .position(|r| r.method == method)
+                .unwrap_or_else(|| panic!("{method} not sent"))
+        };
+        assert!(at("Emulation.setDeviceMetricsOverride") < at("Page.startScreencast"));
+        assert!(at("Page.stopScreencast") < at("Emulation.clearDeviceMetricsOverride"));
+        let metrics = &sent[at("Emulation.setDeviceMetricsOverride")].params;
+        assert_eq!(
+            (metrics["width"].as_u64(), metrics["height"].as_u64()),
+            (Some(640), Some(480))
+        );
+    }
+
+    #[test]
+    fn a_still_page_gets_one_lossless_picture() {
+        let server = screencast_fake(2);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    |frame| frames.lock().unwrap().push(frame),
+                )
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while frames.lock().unwrap().len() < 3 {
+            assert!(Instant::now() < deadline, "no still picture came");
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Still: only one lossless picture, not one per poll.
+        thread::sleep(Duration::from_millis(700));
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        let frames = frames.lock().unwrap().clone();
+        let formats: Vec<_> = frames.iter().map(|f| (f.format, f.data.as_str())).collect();
+        assert_eq!(
+            formats,
+            vec![
+                ("jpeg", "ZnJhbWUx"),
+                ("jpeg", "ZnJhbWUy"),
+                ("png", "c3RpbGw=")
+            ]
+        );
+        assert_eq!((frames[2].width, frames[2].height), (640.0, 480.0));
+    }
+
+    #[test]
+    fn a_picture_of_the_tabs_own_window_never_shows_in_the_pane() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    |frame| frames.lock().unwrap().push(frame),
+                )
+            })
+        };
+        let shown = |data: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !frames.lock().unwrap().iter().any(|f| f.data == data) {
+                assert!(Instant::now() < deadline, "{data} was not shown");
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        shown("ZnJhbWUx");
+        host.live_navigate("s1", &tab, &live::LiveNav::Reload)
+            .unwrap();
+        shown("loaded");
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        let frames = frames.lock().unwrap();
+        assert!(frames.iter().all(|f| f.data != "loading"), "{frames:?}");
+        assert!(frames.iter().all(|f| (f.width, f.height) == (640.0, 480.0)));
+        // And the panel's viewport went back to the tab.
+        let sent: Vec<_> = server.received().into_iter().map(|r| r.method).collect();
+        let reload = sent.iter().position(|m| m == "Page.reload").unwrap();
+        assert!(
+            sent[reload..]
+                .iter()
+                .any(|m| m == "Emulation.setDeviceMetricsOverride"),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn a_full_page_screenshot_pauses_the_live_view() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let frames = Arc::new(AtomicU64::new(0));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    |_| {
+                        frames.fetch_add(1, Ordering::Relaxed);
+                    },
+                )
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while frames.load(Ordering::Relaxed) == 0 {
+            assert!(Instant::now() < deadline, "no picture");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let shot = host.handle_request(
+            "s1",
+            request(
+                "full",
+                "screenshot",
+                json!({ "tab": tab.0, "full_page": true }),
+            ),
+        );
+        assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+        // The view starts again at the pane's size once the shot is taken.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let sent = loop {
+            let sent = server.received();
+            let full = sent
+                .iter()
+                .position(|r| r.params["captureBeyondViewport"] == true)
+                .expect("a full-page capture");
+            if sent[full..]
+                .iter()
+                .any(|r| r.method == "Page.startScreencast")
+            {
+                break sent;
+            }
+            assert!(Instant::now() < deadline, "the view did not resume");
+            thread::sleep(Duration::from_millis(10));
+        };
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        let full = sent
+            .iter()
+            .position(|r| r.params["captureBeyondViewport"] == true)
+            .unwrap();
+        let last_start = sent[..full]
+            .iter()
+            .rposition(|r| r.method == "Page.startScreencast")
+            .unwrap();
+        let methods: Vec<_> = sent.iter().map(|r| r.method.as_str()).collect();
+        for paused in [
+            "Page.stopScreencast",
+            "Emulation.clearDeviceMetricsOverride",
+        ] {
+            assert!(
+                sent[last_start..full].iter().any(|r| r.method == paused),
+                "{methods:?}"
+            );
+        }
+        let resumed = &sent[full..];
+        let metrics = resumed
+            .iter()
+            .position(|r| r.method == "Emulation.setDeviceMetricsOverride")
+            .expect("the pane's viewport again");
+        assert_eq!(resumed[metrics].params["width"], 640);
+    }
+
+    #[test]
+    fn views_of_two_tabs_run_side_by_side() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let first = opened_tab(&host, "s1", "https://example.com/a");
+        let second = opened_tab(&host, "s1", "https://example.com/b");
+        assert_ne!(first, second);
+        let view = |name: &'static str, tab: &TabId| {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    name,
+                    live::PanelSize::new(640, 480, 1.0),
+                    |_| {},
+                )
+            })
+        };
+        let started = |count: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while server
+                .received()
+                .iter()
+                .filter(|r| r.method == "Page.startScreencast")
+                .count()
+                < count
+            {
+                assert!(Instant::now() < deadline, "a view never started");
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let a = view("a", &first);
+        started(1);
+        let b = view("b", &second);
+        started(2);
+        thread::sleep(Duration::from_millis(250));
+        assert!(
+            !a.is_finished(),
+            "another tab's view leaves this one running"
+        );
+        host.stop_live(Some("b"));
+        assert_eq!(b.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        thread::sleep(Duration::from_millis(100));
+        assert!(!a.is_finished());
+        host.stop_live(None);
+        assert_eq!(a.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_moved_pane_takes_over_the_tab_after_the_old_view_hands_it_back() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let view = |name: &'static str| {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    name,
+                    live::PanelSize::new(640, 480, 1.0),
+                    |_| {},
+                )
+            })
+        };
+        let started = |count: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while server
+                .received()
+                .iter()
+                .filter(|r| r.method == "Page.startScreencast")
+                .count()
+                < count
+            {
+                assert!(Instant::now() < deadline, "the view never started");
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let old = view("old");
+        started(1);
+        let new = view("new");
+        assert_eq!(old.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        started(2);
+        // The old pane goes away late: the new view keeps running.
+        host.stop_live(Some("old"));
+        thread::sleep(Duration::from_millis(250));
+        assert!(!new.is_finished());
+        host.stop_live(Some("new"));
+        assert_eq!(new.join().unwrap(), Ok(live::LiveEnd::Stopped));
+
+        // The old view's clean-up came before the new view's viewport.
+        let sent = server.received();
+        let methods: Vec<&str> = sent.iter().map(|r| r.method.as_str()).collect();
+        let first_clear = methods
+            .iter()
+            .position(|m| *m == "Emulation.clearDeviceMetricsOverride")
+            .unwrap();
+        let second_metrics = methods
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| **m == "Emulation.setDeviceMetricsOverride")
+            .nth(1)
+            .map(|(i, _)| i)
+            .unwrap();
+        assert!(first_clear < second_metrics, "{methods:?}");
+    }
+
+    #[test]
+    fn live_input_reaches_only_the_owning_threads_tab() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let click: live::LiveInput = serde_json::from_value(json!({
+            "kind": "mouse", "event": "mousePressed", "x": 12.0, "y": 34.0,
+            "button": "left", "buttons": 1, "clickCount": 1
+        }))
+        .unwrap();
+
+        host.live_input("s1", &tab, &click).unwrap();
+        let pressed = server
+            .received()
+            .into_iter()
+            .find(|r| r.method == "Input.dispatchMouseEvent")
+            .expect("click sent");
+        assert_eq!(pressed.params["type"], "mousePressed");
+        assert_eq!(
+            (pressed.params["x"].as_f64(), pressed.params["y"].as_f64()),
+            (Some(12.0), Some(34.0))
+        );
+
+        let refused = host.live_input("s2", &tab, &click).unwrap_err();
+        assert!(refused.contains("another thread"), "{refused}");
+        let other = host
+            .live_view(
+                "s2",
+                &tab,
+                "v2",
+                live::PanelSize::new(640, 480, 1.0),
+                |_| {},
+            )
+            .unwrap_err();
+        assert!(other.contains("another thread"), "{other}");
+    }
+
+    #[test]
+    fn a_view_stopped_as_it_registers_never_touches_the_tab() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let before = server.received().len();
+        let ended = host.live_view_with(
+            "s1",
+            &tab,
+            "v1",
+            live::PanelSize::new(640, 480, 1.0),
+            || host.stop_live(Some("v1")),
+            |_| {},
+        );
+        assert_eq!(ended, Ok(live::LiveEnd::Stopped));
+        let sent: Vec<_> = server.received()[before..]
+            .iter()
+            .map(|r| r.method.clone())
+            .collect();
+        assert!(
+            !sent
+                .iter()
+                .any(|m| m == "Page.startScreencast" || m == "Emulation.setDeviceMetricsOverride"),
+            "{sent:?}"
+        );
+        // Over, it is no longer known by its name.
+        assert!(host.live_control("v1").is_none());
+    }
+
+    #[test]
+    fn a_size_given_as_the_view_registers_is_followed() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let viewing = {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || {
+                host.live_view_with(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    || host.resize_live("v1", live::PanelSize::new(800, 600, 1.0)),
+                    |_| {},
+                )
+            })
+        };
+        assert!(server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Emulation.setDeviceMetricsOverride"
+                    && r.params["width"] == 800),
+            Duration::from_secs(5)
+        ));
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+    }
+
+    /// A real Chrome at `exe` on a fresh profile, ready for Gespan to
+    /// connect to.
+    fn start_real_chrome(exe: &std::ffi::OsStr) -> (std::process::Child, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("gespan-live-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut args = vec![
+            format!("--user-data-dir={}", dir.display()),
+            "--remote-debugging-port=0".to_string(),
+            "--no-first-run".to_string(),
+            "--no-default-browser-check".to_string(),
+            "--window-size=1000,700".to_string(),
+        ];
+        #[cfg(unix)]
+        if unsafe { libc::geteuid() } == 0 {
+            args.push("--no-sandbox".to_string());
+        }
+        if std::env::var_os("DISPLAY").is_none() && cfg!(target_os = "linux") {
+            args.push("--headless=new".to_string());
+        }
+        args.push("about:blank".to_string());
+        let chrome = std::process::Command::new(exe).args(&args).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !dir.join(discovery::ACTIVE_PORT_FILE).is_file() {
+            assert!(Instant::now() < deadline, "Chrome did not start");
+            thread::sleep(Duration::from_millis(50));
+        }
+        // The port is up a moment before the first window.
+        thread::sleep(Duration::from_secs(1));
+
+        (chrome, dir)
+    }
+
+    /// Against a real Chrome: a full-page screenshot of a long page could
+    /// leave the tab's viewport the page's height, and the pane showed the
+    /// whole page squeezed into a strip.
+    #[test]
+    fn a_full_page_screenshot_leaves_the_pane_at_its_size_in_a_real_chrome() {
+        let Some(exe) = std::env::var_os("GESPAN_TEST_CHROME") else {
+            return;
+        };
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let page = format!(
+                "<!doctype html><title>long</title><body style='margin:0;font:30px sans-serif'>\
+                <div id=n>0</div><p>{}</p>\
+                <script>let k=0;setInterval(()=>document.getElementById('n').textContent=++k,100)</script>",
+                "lorem ipsum dolor ".repeat(2000)
+            );
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let page = page.clone();
+                thread::spawn(move || {
+                    let mut buffer = [0u8; 2048];
+                    let _ = stream.read(&mut buffer);
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+                        page.len()
+                    );
+                });
+            }
+        });
+        let (mut chrome, dir) = start_real_chrome(&exe);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", &format!("http://127.0.0.1:{port}/"));
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(900, 600, 1.0),
+                    |frame| frames.lock().unwrap().push(frame),
+                )
+            })
+        };
+        thread::sleep(Duration::from_secs(1));
+        let taking = Instant::now();
+        let shot = host.handle_request(
+            "s1",
+            request(
+                "full",
+                "screenshot",
+                json!({ "tab": tab.0, "full_page": true }),
+            ),
+        );
+        let took = taking.elapsed();
+        assert_eq!(shot.outcome, Outcome::Done, "{shot:?}");
+        let seen = frames.lock().unwrap().len();
+        thread::sleep(Duration::from_millis(1500));
+        host.stop_live(None);
+        let _ = viewing.join();
+        host.set_toggle(false);
+        let _ = chrome.kill();
+        let _ = chrome.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        let after: Vec<_> = frames.lock().unwrap()[seen..]
+            .iter()
+            .map(|f| (f.width, f.height))
+            .collect();
+        assert!(after.len() > 5, "{after:?}");
+        assert!(
+            after.iter().all(|size| *size == (900.0, 600.0)),
+            "{after:?}"
+        );
+        // As fast as without a pane: with the pictures running it took
+        // several times longer.
+        eprintln!("full-page screenshot with the pane open: {took:?}");
+        assert!(took < Duration::from_secs(6), "{took:?}");
+    }
+
+    /// Against a real Chrome: in a hidden Gespan browser the tab's own
+    /// window takes the panel's size, so even a navigation to another site
+    /// (a new renderer) never shows the page at another size, and the size
+    /// stays the window's once the panel closes.
+    #[test]
+    fn the_live_view_gives_the_tabs_own_window_the_panels_size_in_a_real_chrome() {
+        let Some(exe) = std::env::var_os("GESPAN_TEST_CHROME") else {
+            return;
+        };
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            const PAGE: &str = "<!doctype html><title>page</title><body style='margin:0;font:20px sans-serif'>\
+                <div id=n>0</div><script>let k=0;(function f(){document.getElementById('n').textContent=++k;requestAnimationFrame(f)})()</script>";
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                thread::spawn(move || {
+                    let mut buffer = [0u8; 2048];
+                    let _ = stream.read(&mut buffer);
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                        PAGE.len()
+                    );
+                });
+            }
+        });
+        let (mut chrome, dir) = start_real_chrome(&exe);
+        let host = BrowserHost::for_tests(BrowserSettings {
+            separate_window: true,
+            ..settings_for(&dir)
+        });
+        host.hidden_for_tests.store(true, Ordering::Release);
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", &format!("http://127.0.0.1:{port}/a"));
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(900, 600, 1.0),
+                    |frame| frames.lock().unwrap().push((frame.width, frame.height)),
+                )
+            })
+        };
+        thread::sleep(Duration::from_millis(800));
+        // Another site: Chrome gives the page a new renderer.
+        go(&host, "s1", &tab, &format!("http://localhost:{port}/b"));
+        thread::sleep(Duration::from_millis(1500));
+        host.stop_live(None);
+        let _ = viewing.join();
+        let target = host.held_tab("s1", &tab).unwrap();
+        let metrics = host
+            .link
+            .send_system(Command::in_session(
+                &target.main,
+                Method::PageGetLayoutMetrics,
+                json!({}),
+            ))
+            .unwrap();
+        host.set_toggle(false);
+        let _ = chrome.kill();
+        let _ = chrome.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        let frames = frames.lock().unwrap().clone();
+        assert!(frames.len() > 10, "{frames:?}");
+        assert!(
+            frames
+                .iter()
+                .all(|(w, h)| (w - 900.0).abs() <= 1.5 && (h - 600.0).abs() <= 1.5),
+            "{frames:?}"
+        );
+        let viewport = &metrics["cssVisualViewport"];
+        assert!(
+            (viewport["clientWidth"].as_f64().unwrap() - 900.0).abs() <= 1.5,
+            "{metrics}"
+        );
+        assert!(
+            (viewport["clientHeight"].as_f64().unwrap() - 600.0).abs() <= 1.5,
+            "{metrics}"
+        );
+    }
+
+    /// Against a real Chrome, when `GESPAN_TEST_CHROME` names one: the
+    /// agent's tab stays in the background, and the live view still gets
+    /// moving pictures, and a click and typed text reach the page.
+    #[test]
+    fn live_view_of_a_background_tab_in_a_real_chrome() {
+        let Some(exe) = std::env::var_os("GESPAN_TEST_CHROME") else {
+            return;
+        };
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            const PAGE: &str = "<!doctype html><meta charset=utf-8><title>start</title>\
+                <body style='margin:0;font:20px sans-serif'><div id=n>0</div>\
+                <button id=b style='position:absolute;left:20px;top:80px;width:200px;height:60px' \
+                onclick=\"this.textContent='clicked'\">click me</button>\
+                <form onsubmit=\"document.getElementById('b').textContent='sent: '+document.getElementById('i').value;return false\">\
+                <input id=i oninput=\"document.getElementById('b').textContent='typed: '+this.value\" style='position:absolute;left:20px;top:160px;width:300px;height:40px'></form>\
+                <script>let k=0;(function f(){document.getElementById('n').textContent=++k;requestAnimationFrame(f)})()</script>";
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                // One thread each: a connection Chrome opens ahead and
+                // leaves idle must not hold up the next request.
+                thread::spawn(move || {
+                    let mut buffer = [0u8; 2048];
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    // A page that keeps still, for the lossless picture.
+                    let page = if buffer[..read].starts_with(b"GET /calm") {
+                        "<!doctype html><title>calm</title><h1>calm</h1>"
+                    } else {
+                        PAGE
+                    };
+                    let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+                    page.len()
+                );
+                });
+            }
+        });
+
+        let (mut chrome, dir) = start_real_chrome(&exe);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(
+            wait_state(&host, ConnectionState::Connected),
+            "{:?}",
+            host.connection()
+        );
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", &format!("http://127.0.0.1:{port}/"));
+
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let started = Instant::now();
+        let viewing = {
+            let (host, tab, frames) = (host.clone(), tab.clone(), frames.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(900, 600, 1.0),
+                    |frame| frames.lock().unwrap().push((started.elapsed(), frame)),
+                )
+            })
+        };
+        // The panel's own path meanwhile: pull pictures the way the pane does.
+        let pulled = {
+            let host = host.clone();
+            thread::spawn(move || {
+                let mut got = Vec::new();
+                let mut after = 0;
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while Instant::now() < deadline {
+                    let packed = host.live_take("v1", after);
+                    if packed.is_empty() {
+                        continue;
+                    }
+                    let seq = u64::from(u32::from_le_bytes(packed[4..8].try_into().unwrap()));
+                    assert!(seq > after);
+                    assert_eq!(packed[live::PACKED_HEADER..][..2], [0xFF, 0xD8], "a JPEG");
+                    after = seq;
+                    got.push(seq);
+                }
+                got
+            })
+        };
+        thread::sleep(Duration::from_secs(3));
+        let count = frames.lock().unwrap().len();
+        let pulled = pulled.join().unwrap();
+        assert!(
+            pulled.len() > 10,
+            "the panel took {} pictures",
+            pulled.len()
+        );
+
+        let send = |input: Value| {
+            let input: live::LiveInput = serde_json::from_value(input).unwrap();
+            host.live_input("s1", &tab, &input).unwrap();
+        };
+        let click = |x: f64, y: f64| {
+            for (event, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+                send(json!({ "kind": "mouse", "event": event, "x": x, "y": y,
+                    "button": "left", "buttons": buttons, "clickCount": 1 }));
+            }
+        };
+        let looks = AtomicU64::new(0);
+        let snapshot = || {
+            let id = format!("look{}", looks.fetch_add(1, Ordering::Relaxed));
+            let taken =
+                host.handle_request("s1", request(&id, "snapshot", json!({ "tab": tab.0 })));
+            taken
+                .data
+                .as_ref()
+                .and_then(|d| d["snapshot"].as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let wait_for = |want: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let now = snapshot();
+                if now.contains(want) || Instant::now() >= deadline {
+                    return now;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        };
+        click(120.0, 110.0);
+        let after_click = wait_for("button \"clicked\"");
+        assert!(after_click.contains("button \"clicked\""), "{after_click}");
+        click(170.0, 180.0);
+        send(json!({ "kind": "text", "text": "Ćao šđž" }));
+        let after_text = wait_for("button \"typed: Ćao šđž\"");
+        assert!(
+            after_text.contains("button \"typed: Ćao šđž\""),
+            "{after_text}"
+        );
+        send(
+            json!({ "kind": "key", "event": "keyDown", "key": "Enter", "code": "Enter",
+            "text": "\r", "keyCode": 13 }),
+        );
+        send(
+            json!({ "kind": "key", "event": "keyUp", "key": "Enter", "code": "Enter",
+            "keyCode": 13 }),
+        );
+        let after_typing = wait_for("sent: Ćao šđž");
+        assert!(after_typing.contains("sent: Ćao šđž"), "{after_typing}");
+
+        // "Point at an element" in the pane: the click on the picture picks.
+        let picking = {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || host.pick_element("s1", &tab, true))
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let picked = loop {
+            send(
+                json!({ "kind": "mouse", "event": "mouseMoved", "x": 120.0, "y": 110.0,
+                "button": "none", "buttons": 0, "clickCount": 0 }),
+            );
+            click(120.0, 110.0);
+            thread::sleep(Duration::from_millis(200));
+            if picking.is_finished() || Instant::now() >= deadline {
+                host.cancel_pick();
+                break picking.join().unwrap();
+            }
+        };
+        let picked = picked.unwrap().expect("the click in the pane picked");
+        assert_eq!(picked.role, "button", "{picked:?}");
+
+        // The pane got smaller: pictures follow at the new size.
+        host.resize_live("v1", live::PanelSize::new(700, 500, 1.0));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while frames.lock().unwrap().last().map(|(_, f)| f.width) != Some(700.0) {
+            assert!(Instant::now() < deadline, "the view kept its old size");
+            thread::sleep(Duration::from_millis(50));
+        }
+        // Another page, then Back returns.
+        let current = || {
+            host.state()
+                .tabs
+                .into_iter()
+                .find(|t| t.tab.tab == tab)
+                .unwrap()
+                .tab
+                .url
+        };
+        let wait_url = |want: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !current().ends_with(want) {
+                assert!(Instant::now() < deadline, "{} is not {want}", current());
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        go(&host, "s1", &tab, &format!("http://127.0.0.1:{port}/next"));
+        wait_url("/next");
+        host.live_navigate("s1", &tab, &live::LiveNav::Back)
+            .unwrap();
+        wait_url(&format!("{port}/"));
+        // A page that stops moving gets one lossless picture at the pane's size.
+        go(&host, "s1", &tab, &format!("http://127.0.0.1:{port}/calm"));
+        wait_url("/calm");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let png = loop {
+            let last = frames.lock().unwrap().last().map(|(_, f)| f.clone());
+            if let Some(frame) = last.filter(|f| f.format == "png") {
+                break frame;
+            }
+            assert!(Instant::now() < deadline, "no lossless picture");
+            thread::sleep(Duration::from_millis(50));
+        };
+        {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&png.data)
+                .unwrap();
+            assert_eq!(&bytes[1..4], b"PNG");
+            let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+            assert_eq!((width, png.width), (700, 700.0));
+        }
+        // An older pane of the same tab going away leaves this view running.
+        host.stop_live(Some("v0"));
+        assert!(!viewing.is_finished());
+
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
+        let frames = frames.lock().unwrap();
+        let first = frames.first().map(|(at, _)| *at);
+        eprintln!(
+            "live view: {count} pictures in 3 s, first after {first:?}, last {}x{} css px, {} bytes",
+            frames.last().map_or(0.0, |(_, f)| f.width),
+            frames.last().map_or(0.0, |(_, f)| f.height),
+            frames.last().map_or(0, |(_, f)| f.data.len()),
+        );
+        if let (Some(path), Some((_, frame))) =
+            (std::env::var_os("GESPAN_TEST_LIVE_FRAME"), frames.last())
+        {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&frame.data)
+                .unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        host.set_toggle(false);
+        let _ = chrome.kill();
+        let _ = chrome.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(count >= 30, "only {count} pictures in 3 s");
+    }
+
+    #[test]
+    fn console_network_and_signals_reach_the_agent() {
+        let server = noisy_fake();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let methods = |server: &FakeCdp| -> Vec<String> {
+            server.received().into_iter().map(|r| r.method).collect()
+        };
+
+        // A local server: capture is on before its scripts run, and the
+        // result of the very action that loaded it reports the trouble.
+        let opened = host.handle_request(
+            "s1",
+            request(
+                "c1",
+                "tabs.open",
+                json!({ "url": "http://localhost:5173/" }),
+            ),
+        );
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = opened.data.as_ref().unwrap()["tab"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let sent = methods(&server);
+        let enable = sent.iter().position(|m| m == "Runtime.enable").unwrap();
+        let navigate = sent.iter().position(|m| m == "Page.navigate").unwrap();
+        assert!(enable < navigate, "{sent:?}");
+        assert_eq!(
+            opened.observed.signals,
+            Some(protocol::PageSignals {
+                console_errors: 1,
+                failed_requests: 1
+            })
+        );
+        assert!(
+            opened
+                .message
+                .contains("1 new console error and 1 failed request"),
+            "{}",
+            opened.message
+        );
+
+        let console = host.handle_request("s1", request("c2", "console", json!({ "tab": tab })));
+        assert_eq!(console.outcome, Outcome::Done, "{console:?}");
+        let data = console.data.unwrap();
+        let text = data["text"].as_str().unwrap();
+        assert!(
+            text.contains(
+                "error (uncaught exception): Uncaught TypeError: user.map is not a function"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("at App (http://localhost:5173/src/App.tsx:12:5)"),
+            "{text}"
+        );
+        assert!(
+            !console.message.contains("capture started"),
+            "{}",
+            console.message
+        );
+        let next = data["next_since"].as_u64().unwrap();
+
+        let network = host.handle_request("s1", request("c3", "network", json!({ "tab": tab })));
+        let text = network.data.as_ref().unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            text.contains("GET http://localhost:5173/api/user: 500 Internal Server Error (fetch)"),
+            "{text}"
+        );
+        assert!(text.contains(r#"body: {"error": "db down"}"#), "{text}");
+        assert!(methods(&server)
+            .iter()
+            .any(|m| m == "Network.getResponseBody"));
+
+        // Read once, reported once: the next result is quiet...
+        let quiet = host.handle_request(
+            "s1",
+            request(
+                "c4",
+                "wait",
+                json!({ "tab": tab, "for": "time", "value": 1 }),
+            ),
+        );
+        assert_eq!(quiet.outcome, Outcome::Done, "{quiet:?}");
+        assert_eq!(quiet.observed.signals, None);
+        // ...until the page breaks again on its own.
+        let session = host
+            .policy()
+            .read()
+            .lease(&TabId(tab.clone()))
+            .unwrap()
+            .cdp_session
+            .clone()
+            .unwrap();
+        server.emit(
+            "Runtime.consoleAPICalled",
+            json!({ "type": "error", "executionContextId": 3, "args": [{ "type": "string", "value": "save failed" }] }),
+            Some(&session.0),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while host
+            .link()
+            .diagnostics()
+            .console(&session, ConsoleLevel::All, next, 10)
+            .entries
+            .is_empty()
+        {
+            assert!(Instant::now() < deadline, "the error never arrived");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let fresh = host.handle_request(
+            "s1",
+            request(
+                "c5",
+                "console",
+                json!({ "tab": tab, "since": next, "level": "error" }),
+            ),
+        );
+        let text = fresh.data.unwrap()["text"].as_str().unwrap().to_string();
+        assert!(text.contains("error (console): save failed"), "{text}");
+        assert!(!text.contains("TypeError"), "{text}");
+
+        // A remote site: capture goes off before it loads, and comes back
+        // only when the agent asks, with what the browser kept.
+        host.handle_request("s1", request("c6", "network", json!({ "tab": tab })));
+        let before = methods(&server).len();
+        let away = host.handle_request(
+            "s1",
+            request(
+                "c7",
+                "navigate",
+                json!({ "tab": tab, "url": "https://example.com/" }),
+            ),
+        );
+        assert_eq!(away.outcome, Outcome::Done, "{away:?}");
+        let sent = methods(&server)[before..].to_vec();
+        assert_eq!(
+            sent.first().map(String::as_str),
+            Some("Runtime.disable"),
+            "{sent:?}"
+        );
+        assert!(!host.link().diagnostics().capturing(&session));
+        let asked = host.handle_request(
+            "s1",
+            request("c8", "console", json!({ "tab": tab, "level": "warning" })),
+        );
+        assert!(
+            asked.message.contains("Console capture started now"),
+            "{}",
+            asked.message
+        );
+        let text = asked.data.unwrap()["text"].as_str().unwrap().to_string();
+        assert!(
+            text.contains("warning (console): kept by the browser"),
+            "{text}"
+        );
+        assert!(host.link().diagnostics().capturing(&session));
+        // Asked once, it stays on for this tab even on remote pages.
+        let before = methods(&server).len();
+        host.handle_request(
+            "s1",
+            request(
+                "c9",
+                "navigate",
+                json!({ "tab": tab, "url": "https://example.org/" }),
+            ),
+        );
+        assert!(!methods(&server)[before..]
+            .iter()
+            .any(|m| m == "Runtime.disable"));
+
+        // Another session's agent cannot read this tab.
+        host.turn_started("s2", "main", "/repo", Some(true));
+        let foreign = host.handle_request("s2", request("x1", "console", json!({ "tab": tab })));
+        assert_eq!(foreign.reason, Some(Reason::NoLease));
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ask_mode_waits_for_the_users_answer() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Ask);
+        host.set_toggle(true);
+
+        // Allow: the waiting action runs.
+        host.turn_started("s1", "main", "/repo", None);
+        let waiting = {
+            let host = host.clone();
+            thread::spawn(move || host.handle_request("s1", request("a1", "tabs.list", json!({}))))
+        };
+        assert!(wait_requested(&host, "s1"));
+        host.answer_request("s1", "main", true);
+        let allowed = waiting.join().unwrap();
+        assert_eq!(allowed.outcome, Outcome::Done, "{allowed:?}");
+        assert!(host.policy().read().granted("s1"));
+        assert!(!host.policy().read().requested("s1"));
+
+        // Not now: not_granted, and no new prompt for the rest of the turn.
+        host.turn_started("s2", "main", "/repo", None);
+        let waiting = {
+            let host = host.clone();
+            thread::spawn(move || host.handle_request("s2", request("b1", "tabs.list", json!({}))))
+        };
+        assert!(wait_requested(&host, "s2"));
+        host.answer_request("s2", "main", false);
+        assert_eq!(waiting.join().unwrap().reason, Some(Reason::NotGranted));
+        let again = host.handle_request("s2", request("b2", "tabs.list", json!({})));
+        assert_eq!(again.reason, Some(Reason::NotGranted));
+        assert!(!host.policy().read().requested("s2"));
+
+        // The next turn may ask again; the turn ending withdraws the prompt.
+        host.turn_started("s2", "main", "/repo", None);
+        let waiting = {
+            let host = host.clone();
+            thread::spawn(move || host.handle_request("s2", request("b3", "tabs.list", json!({}))))
+        };
+        assert!(wait_requested(&host, "s2"));
+        host.turn_finished("s2");
+        assert_eq!(waiting.join().unwrap().reason, Some(Reason::NotGranted));
+        // Without a turn nobody is asked.
+        let idle = host.handle_request("s3", request("c1", "tabs.list", json!({})));
+        assert_eq!(idle.reason, Some(Reason::NotGranted));
+        assert!(!host.policy().read().requested("s3"));
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The agent's client lost the answer while the user was still deciding
+    /// and retried with the same id: the retry waits for the first attempt
+    /// and gets its result; the action runs once.
+    #[test]
+    fn a_retry_of_a_request_still_running_gets_its_result() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Ask);
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", None);
+        let send = |id: &str, input: Value| {
+            let host = host.clone();
+            let request = request(id, "tabs.open", input);
+            thread::spawn(move || host.handle_request("s1", request))
+        };
+        let first = send("o1", json!({}));
+        assert!(wait_requested(&host, "s1"));
+        let retry = send("o1", json!({}));
+        // Same id, other input: refused while the first one runs.
+        let conflict = host.handle_request(
+            "s1",
+            request("o1", "tabs.open", json!({ "url": "https://x/" })),
+        );
+        assert_eq!(conflict.reason, Some(Reason::InvalidRequest));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !host
+            .inflight
+            .lock()
+            .unwrap()
+            .values()
+            .any(|entry| Arc::strong_count(entry) > 2)
+        {
+            assert!(Instant::now() < deadline, "the retry never waited");
+            thread::sleep(Duration::from_millis(5));
+        }
+        host.answer_request("s1", "main", true);
+        let first = first.join().unwrap();
+        let retry = retry.join().unwrap();
+        assert_eq!(first.outcome, Outcome::Done, "{first:?}");
+        assert_eq!(retry.data, first.data);
+        assert_eq!(host.policy().read().tabs_for("s1").len(), 1);
+        let creates = server
+            .received()
+            .iter()
+            .filter(|r| r.method == "Target.createTarget")
+            .count();
+        assert_eq!(creates, 1);
+        assert!(host.inflight.lock().unwrap().is_empty());
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in browser that never opens its debugging port.
+    #[cfg(unix)]
+    fn silent_browser() -> (launch::Executable, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("gespan-silent-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("browser");
+        std::fs::write(&path, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let exe = launch::Executable {
+            kind: protocol::BrowserKind::Chrome,
+            path,
+        };
+        (exe, dir)
+    }
+
+    /// OFF or a mode change while the Gespan browser is still starting:
+    /// the browser goes, and a private profile with it.
+    #[cfg(unix)]
+    #[test]
+    fn a_browser_still_starting_stops_with_off_and_mode_changes() {
+        let (exe, bin) = silent_browser();
+        for mode_change in [false, true] {
+            let root = bin.join(format!("app-{mode_change}"));
+            let host = BrowserHost::for_tests(BrowserSettings {
+                mode: BrowserMode::Private,
+                access: AccessMode::Always,
+                ..BrowserSettings::default()
+            });
+            *host.test_executable.lock().unwrap() = Some(exe.clone());
+            host.set_profile_dir(root.join("browser-profile"));
+            host.set_toggle(true);
+            host.connect();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (pid, profile) = loop {
+                if let Some(managed) = host.managed.lock().unwrap().as_ref() {
+                    break (managed.child.id(), managed.profile.clone());
+                }
+                assert!(Instant::now() < deadline, "the browser never started");
+                thread::sleep(Duration::from_millis(5));
+            };
+            assert_eq!(host.connection().state, ConnectionState::Discovering);
+            if mode_change {
+                host.set_settings(BrowserSettings {
+                    mode: BrowserMode::Managed,
+                    ..host.state().settings
+                });
+            } else {
+                host.set_toggle(false);
+            }
+            let alive = || unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+            assert!(eventually(|| !alive()), "the starting browser kept running");
+            assert!(
+                eventually(|| !profile.exists()),
+                "the private profile stays"
+            );
+            assert!(eventually(|| host.connecting.load(Ordering::Acquire) == 0));
+            assert!(host.managed.lock().unwrap().is_none());
+            // The cancelled start reports nothing over the new state.
+            let expected = if mode_change {
+                ConnectionState::Idle
+            } else {
+                ConnectionState::Off
+            };
+            assert_eq!(host.connection().state, expected);
+        }
+        let _ = std::fs::remove_dir_all(&bin);
+    }
+
+    /// A hand-over that fails leaves the thread without browser access it
+    /// did not have before, and keeps a grant it had.
+    #[test]
+    fn a_failed_hand_over_grants_nothing() {
+        let counter = Arc::new(AtomicU64::new(1));
+        let server = FakeCdp::start_with(move |received| match received.method.as_str() {
+            "Target.getTargets" => Response::Result(json!({ "targetInfos": [
+                { "targetId": "P1", "type": "page", "url": "https://example.com/", "title": "Example", "attached": false },
+            ]})),
+            "Target.attachToTarget" => Response::Error {
+                code: -32000,
+                message: "No target with given id found".into(),
+            },
+            _ => super::testing::default_response(received, &counter),
+        });
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        let free = host.user_tabs().unwrap();
+        assert_eq!(free.len(), 1, "{free:?}");
+        assert!(host.give_tab(&free[0].id, "s1", "main").is_err());
+        assert!(!host.policy().read().granted("s1"));
+        assert!(host
+            .open_app("s1", "main", "http://localhost:5174/")
+            .is_err());
+        assert!(!host.policy().read().granted("s1"));
+        // A grant the thread already had stays.
+        host.set_grant("s2", "main", true);
+        assert!(host.give_tab(&free[0].id, "s2", "main").is_err());
+        assert!(host.policy().read().granted("s2"));
+        assert!(host.policy().read().tabs_for("s1").is_empty());
+        host.set_toggle(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The whole managed path against the Chrome or Edge on this machine:
+    /// start, connect without consent, open a tab, read it, close the
+    /// browser on OFF. `cargo test -- --ignored managed_mode_drives`.
+    #[test]
+    #[ignore = "starts the Chrome or Edge installed on this machine"]
+    fn managed_mode_drives_a_real_browser() {
+        let dir = std::env::temp_dir().join(format!("gespan-managed-{}", uuid::Uuid::new_v4()));
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            access: AccessMode::Always,
+            show_window: false,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(dir.clone());
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let opened = host.handle_request(
+            "s1",
+            request("m1", "tabs.open", json!({ "url": "about:blank" })),
+        );
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let info = host.connection().browser.unwrap();
+        assert!(info.managed, "{info:?}");
+        // The start page made way for the agent's tab.
+        let targets = host
+            .link()
+            .send_system(Command::browser(Method::TargetGetTargets, json!({})))
+            .unwrap();
+        let pages = targets["targetInfos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|info| info["type"] == "page")
+            .count();
+        assert_eq!(pages, 1, "{targets}");
+        let tab = opened.data.unwrap()["tab"].as_str().unwrap().to_string();
+        let read = host.handle_request("s1", request("m2", "read", json!({ "tab": tab })));
+        assert_eq!(read.outcome, Outcome::Done, "{read:?}");
+        host.set_toggle(false);
+        // OFF closes the browser in the background.
+        assert!(eventually(|| launch::running(&dir).is_none()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Up to 15 s for something OFF finishes in the background.
+    fn eventually(done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        done()
+    }
+
+    /// Tabs the user opened in the Gespan browser: an agent adopts one, the
+    /// user hands another to a second thread. Needs network for example.com.
+    #[test]
+    #[ignore = "starts the Chrome or Edge installed on this machine"]
+    fn user_tabs_can_be_adopted_and_handed_over() {
+        let dir = std::env::temp_dir().join(format!("gespan-adopt-{}", uuid::Uuid::new_v4()));
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            access: AccessMode::Always,
+            show_window: false,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(dir.clone());
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let listed = host.handle_request("s1", request("a0", "tabs.list", json!({})));
+        assert_eq!(listed.outcome, Outcome::Done, "{listed:?}");
+        let user_page = |url: &str| {
+            host.link()
+                .send_system(Command::browser(
+                    Method::TargetCreateTarget,
+                    json!({ "url": url }),
+                ))
+                .unwrap();
+            thread::sleep(Duration::from_millis(1500));
+        };
+        user_page("https://example.com/?user=1");
+        let listed = host.handle_request("s1", request("a1", "tabs.list", json!({})));
+        let data = listed.data.unwrap();
+        let free = data["free"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tab| tab["url"].as_str().unwrap().contains("user=1"))
+            .unwrap_or_else(|| panic!("{data}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let adopted =
+            host.handle_request("s1", request("a2", "tabs.adopt", json!({ "free": free })));
+        assert_eq!(adopted.outcome, Outcome::Done, "{adopted:?}");
+        let tab = adopted.data.unwrap()["tab"].as_str().unwrap().to_string();
+        let read = host.handle_request("s1", request("a3", "read", json!({ "tab": tab })));
+        assert_eq!(read.outcome, Outcome::Done, "{read:?}");
+        // Adopted once: no longer free.
+        let again = host.handle_request("s1", request("a4", "tabs.adopt", json!({ "free": free })));
+        assert_eq!(again.reason, Some(Reason::NoLease));
+
+        user_page("https://example.com/?user=2");
+        let mine = host
+            .user_tabs()
+            .unwrap()
+            .into_iter()
+            .find(|tab| tab.url.contains("user=2"))
+            .unwrap();
+        assert!(!host.policy().read().granted("s2"));
+        host.give_tab(&mine.id, "s2", "main").unwrap();
+        assert!(host.policy().read().granted("s2"));
+        assert_eq!(host.policy().read().tabs_for("s2").len(), 1);
+        host.set_toggle(false);
+        assert!(eventually(|| launch::running(&dir).is_none()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link clicked through the live view, as the pane clicks it: once
+    /// still, once with the hand moving 5 px while pressed (which Edge on
+    /// Windows can take for a link drag). Prints what each opened.
+    /// `cargo test -- --ignored live_clicks_open_links --nocapture`.
+    #[test]
+    #[ignore = "starts the Chrome or Edge installed on this machine"]
+    fn live_clicks_open_links() {
+        let server = testing::PageServer::start(|path| {
+            if path == "/" {
+                "<!doctype html><title>start</title><body style='margin:0'>\
+                 <a id=one href='/one' style='position:absolute;left:100px;top:100px;font:40px sans-serif'>One</a>\
+                 <a id=two href='/two' style='position:absolute;left:100px;top:300px;font:40px sans-serif'>Two</a>"
+                    .to_string()
+            } else {
+                format!("<!doctype html><title>{path}</title><a href='/'>back</a>")
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("gespan-click-{}", uuid::Uuid::new_v4()));
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            access: AccessMode::Always,
+            show_window: false,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(dir.clone());
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let start = server.url("/");
+        let opened = host.handle_request("s1", request("c1", "tabs.open", json!({ "url": start })));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let tab = TabId(opened.data.unwrap()["tab"].as_str().unwrap().to_string());
+        let viewer = {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || {
+                host.live_view(
+                    "s1",
+                    &tab,
+                    "click",
+                    live::PanelSize::new(800, 600, 1.0),
+                    |_| {},
+                )
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while host.live_take("click", 0).is_empty() {
+            assert!(Instant::now() < deadline, "no first picture");
+        }
+        let mouse = |event, x: f64, y: f64, button, buttons| live::LiveInput::Mouse {
+            event,
+            x,
+            y,
+            button,
+            buttons,
+            click_count: u32::from(event != live::MouseEvent::Moved),
+            modifiers: 0,
+        };
+        let click = |name: &str, x: f64, y: f64, shake: f64| {
+            use live::{MouseButton as B, MouseEvent as E};
+            let send = |input| host.live_input("s1", &tab, &input).unwrap();
+            for step in 0..5 {
+                send(mouse(
+                    E::Moved,
+                    x - 20.0 + 4.0 * f64::from(step),
+                    y,
+                    B::None,
+                    0,
+                ));
+                thread::sleep(Duration::from_millis(16));
+            }
+            send(mouse(E::Moved, x, y, B::None, 0));
+            send(mouse(E::Pressed, x, y, B::Left, 1));
+            if shake > 0.0 {
+                for step in 1..=5 {
+                    let d = shake * f64::from(step) / 5.0;
+                    send(mouse(E::Moved, x + d, y + d / 2.0, B::None, 1));
+                    thread::sleep(Duration::from_millis(16));
+                }
+            }
+            thread::sleep(Duration::from_millis(60));
+            send(mouse(E::Released, x + shake, y + shake / 2.0, B::Left, 0));
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let path = format!("/{name}");
+            while Instant::now() < deadline && !server.asked(&path) {
+                thread::sleep(Duration::from_millis(20));
+            }
+            let opened = server.asked(&path);
+            println!(
+                "[click] {name} (moved {shake} px while pressed): {}",
+                if opened { "opened" } else { "DID NOT open" }
+            );
+            opened
+        };
+        let still = click("one", 130.0, 125.0, 0.0);
+        // Back to the start page for the second link.
+        go(&host, "s1", &tab, &start);
+        thread::sleep(Duration::from_millis(800));
+        let shaking = click("two", 130.0, 325.0, 5.0);
+        host.stop_live(Some("click"));
+        let _ = viewer.join();
+        host.set_toggle(false);
+        assert!(eventually(|| launch::running(&dir).is_none()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(still, "a still click opens a link");
+        let _ = shaking;
+    }
+
+    /// Private mode against the installed browser: every start gets a fresh
+    /// profile, and OFF deletes it. `cargo test -- --ignored private_mode`.
+    #[test]
+    #[ignore = "starts the Chrome or Edge installed on this machine"]
+    fn private_mode_deletes_its_profile() {
+        let root = std::env::temp_dir().join(format!("gespan-private-{}", uuid::Uuid::new_v4()));
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Private,
+            access: AccessMode::Always,
+            show_window: false,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(root.join("browser-profile"));
+        host.set_toggle(true);
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let opened = host.handle_request("s1", request("p1", "tabs.open", json!({})));
+        assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
+        let private = root.join("browser-private");
+        let profiles: Vec<_> = std::fs::read_dir(&private).unwrap().collect();
+        assert_eq!(profiles.len(), 1);
+        assert!(!root.join("browser-profile").exists());
+        host.set_toggle(false);
+        let left = || std::fs::read_dir(&private).map(|d| d.count()).unwrap_or(0);
+        assert!(eventually(|| left() == 0), "the private profile is deleted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

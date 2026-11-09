@@ -48,8 +48,9 @@ replaceFirst(
 // Every package that takes the workspace version, in both lockfiles, so
 // `--locked` builds keep working.
 const lockfiles = {
-  "Cargo.lock": ["gespan-models", "gespan-speech"],
+  "Cargo.lock": ["gespan-browser", "gespan-models", "gespan-speech"],
   "crates/gespan-gpui/Cargo.lock": [
+    "gespan-browser",
     "gespan-core",
     "gespan-first-launch",
     "gespan-gpui",

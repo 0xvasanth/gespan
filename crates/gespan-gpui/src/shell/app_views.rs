@@ -470,7 +470,7 @@ impl Shell {
                     card_run_submits::record(id, &prompt);
                     if !card_run_submits::captured() {
                         this.sessions[&id]
-                            .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                            .update(cx, |view, cx| view.user_quick_submit(prompt, settings, cx));
                     }
                     if this.navigation_revision == revision {
                         this.activate_session(id, window, cx);
@@ -837,7 +837,7 @@ impl Shell {
                     this.add(summary, cx);
                     this.sessions[&id].update(cx, |view, cx| {
                         if repair.is_some() {
-                            view.quick_submit(prompt, settings, cx);
+                            view.user_quick_submit(prompt, settings, cx);
                         } else {
                             view.seed_new_settings(settings, cx);
                             let item = Box::new(item);

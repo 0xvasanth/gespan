@@ -1,6 +1,7 @@
 //! One file per Settings page.
 mod appearance;
 mod archive;
+mod browser;
 mod chat;
 mod connections;
 mod diagnostics;
@@ -49,6 +50,7 @@ impl SettingsView {
             Section::Chat => self.chat_page(cx),
             Section::Providers => self.providers_page(cx),
             Section::Mcp => self.mcp_page(cx),
+            Section::Browser => self.browser_page(cx),
             Section::Skills => self.skills_page(cx),
             Section::Pilots => self.pilots_page(cx),
             Section::Inbox => self.inbox_page(cx),

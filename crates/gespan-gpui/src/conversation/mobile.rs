@@ -38,7 +38,8 @@ impl Conversation {
             || (!self.follow_ups.state.messages.is_empty() && !self.follow_ups.state.paused)
         {
             let composer = std::mem::replace(&mut self.attachments, attachments);
-            self.enqueue_follow_up(prompt, None, cx);
+            // The phone's user typed it.
+            self.enqueue_follow_up_inverted(prompt, None, false, true, cx);
             self.attachments = composer;
             if !self.busy {
                 self.pump_follow_ups(cx);
@@ -49,7 +50,7 @@ impl Conversation {
         }
         self.attachments = attachments;
         self.input.update(cx, |i, cx| i.set_text(prompt, cx));
-        self.send(cx);
+        self.send_typed(cx);
         cx.emit(SessionChanged);
     }
 

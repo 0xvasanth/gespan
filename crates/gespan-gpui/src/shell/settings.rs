@@ -970,6 +970,7 @@ mod tests {
             "settings-nav-chat",
             "settings-nav-providers",
             "settings-nav-mcp",
+            "settings-nav-browser",
             "settings-nav-skills",
             "settings-nav-pilots",
             "settings-nav-inbox",

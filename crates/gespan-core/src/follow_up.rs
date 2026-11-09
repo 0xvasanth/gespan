@@ -19,6 +19,10 @@ pub struct Message {
     pub at: usize,
     pub error: Option<String>,
     pub steer: bool,
+    /// The user typed this message in the composer (or the phone's). It is
+    /// never saved: a queue restored from disk sends as the app's own.
+    #[serde(skip)]
+    pub typed: bool,
 }
 impl Message {
     pub fn label(&self) -> String {

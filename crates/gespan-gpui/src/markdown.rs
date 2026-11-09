@@ -32,6 +32,30 @@ pub(crate) fn link_menu(url: &str, position: Point<Pixels>, window: &mut Window,
     );
 }
 
+thread_local! {
+    /// The thread whose markdown is being built, for its web links.
+    static LINK_THREAD: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Build markdown that belongs to thread `session`: its web links open in
+/// that thread's in-app browser. Markdown built outside (Inbox, Settings,
+/// notes, …) keeps opening them in the system browser.
+pub(crate) fn in_thread<R>(session: Option<i64>, build: impl FnOnce() -> R) -> R {
+    struct Restore(Option<i64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LINK_THREAD.with(|thread| thread.set(self.0));
+        }
+    }
+    let _restore = Restore(LINK_THREAD.with(|thread| thread.replace(session)));
+    build()
+}
+
+/// The thread of the markdown being built, captured by its link handlers.
+fn link_thread() -> Option<i64> {
+    LINK_THREAD.with(std::cell::Cell::get)
+}
+
 fn activate_link(event: &ClickEvent, selection: Option<&TextSelection>) -> bool {
     event.click_count() == 1
         && !event.modifiers().shift
@@ -462,6 +486,7 @@ fn inline_selected(
     let menu_links = links.clone();
     let clicked_urls = urls.clone();
     let text_id: SharedString = format!("{id}-text").into();
+    let thread = link_thread();
     let child = div()
         .id(id)
         .child(InteractiveText::new(text_id, styled).on_click(links, |_, _, _| {}))
@@ -482,7 +507,7 @@ fn inline_selected(
                         return;
                     }
                 }
-                open_link(&clicked_urls[ix], window, cx);
+                open_link(&clicked_urls[ix], thread, event, window, cx);
             }
         })
         .on_mouse_down(MouseButton::Right, move |event, window, cx| {
@@ -556,11 +581,12 @@ fn rich_inline(
                     .when(file, |d| {
                         let path = style.link.clone().unwrap_or_else(|| text.clone());
                         let menu_path = path.clone();
+                        let thread = link_thread();
                         d.cursor(gpui::CursorStyle::PointingHand)
                             .hover(|s| s.bg(content(0.13)))
                             .on_click(move |event, window, cx| {
                                 if activate_link(event, clicked_selection.as_ref()) {
-                                    open_link(&path, window, cx)
+                                    open_link(&path, thread, event, window, cx)
                                 }
                             })
                             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
@@ -622,6 +648,7 @@ fn rich_inline(
                     }
                 });
                 let clicked_selection = selected.clone();
+                let thread = link_thread();
                 let child = if let Some(selected) = selected {
                     selected.wrap(text.to_owned().into(), layout, child)
                 } else {
@@ -645,7 +672,7 @@ fn rich_inline(
                             if let Some(url) = &link
                                 && activate_link(event, clicked_selection.as_ref())
                             {
-                                open_link(url, window, cx);
+                                open_link(url, thread, event, window, cx);
                             }
                         })
                         .on_mouse_down(MouseButton::Right, move |event, window, cx| {
@@ -715,8 +742,19 @@ pub(crate) fn resolve_file_links(row: &mut MarkdownRow, base: &str) {
     }
 }
 
-fn open_link(url: &str, window: &mut Window, cx: &mut App) {
-    if url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:") {
+/// A clicked link: a web page in the thread's in-app browser (the system
+/// browser with Cmd/Ctrl, or outside a thread), mail in the mail app, a
+/// file in Gespan.
+fn open_link(
+    url: &str,
+    thread: Option<i64>,
+    event: &ClickEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if crate::browser::is_web(url) {
+        crate::browser::open_link_in(thread, url, event.modifiers().secondary(), window, cx);
+    } else if url.starts_with("mailto:") {
         cx.open_url(url);
     } else if !url.starts_with('#') && (!url.contains("://") || url.starts_with("file://")) {
         window.dispatch_action(Box::new(crate::file_editor::OpenPath(url.into())), cx);
@@ -1174,5 +1212,142 @@ mod rich_wrap_tests {
         let short = visual.debug_bounds("rich-prose-0-0").unwrap();
         assert!(short.size.width < column.size.width, "{short:?}");
         assert_eq!(short.size.height, px(24.));
+    }
+}
+
+/// Where a clicked link goes: a web page into the thread's in-app browser
+/// (markdown built in a thread), the system browser everywhere else and
+/// with Cmd/Ctrl; mail and files as before.
+#[cfg(test)]
+mod link_routing_tests {
+    use super::*;
+    use crate::markdown_model::InlineStyle;
+    use gpui::{Context, FocusHandle, Modifiers, TestAppContext};
+    use std::{cell::RefCell, rc::Rc};
+
+    struct Fixture {
+        thread: Option<i64>,
+        url: String,
+        focus: FocusHandle,
+        seen: Rc<RefCell<Vec<String>>>,
+    }
+    impl gpui::Render for Fixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let runs = vec![
+                InlineRun {
+                    text: "lib.rs".into(),
+                    style: InlineStyle {
+                        code: true,
+                        ..InlineStyle::default()
+                    },
+                },
+                InlineRun {
+                    text: "the link".into(),
+                    style: InlineStyle {
+                        link: Some(self.url.clone()),
+                        ..InlineStyle::default()
+                    },
+                },
+            ];
+            let (web, path) = (self.seen.clone(), self.seen.clone());
+            div()
+                .track_focus(&self.focus)
+                .w(px(400.))
+                .on_action(move |link: &crate::browser::OpenThreadLink, _, _| {
+                    web.borrow_mut()
+                        .push(format!("thread {:?}: {}", link.session, link.url));
+                })
+                .on_action(move |open: &crate::file_editor::OpenPath, _, _| {
+                    path.borrow_mut().push(format!("file: {}", open.0));
+                })
+                .child(in_thread(self.thread, || {
+                    rich_inline(
+                        &runs,
+                        "fixture".into(),
+                        Tone::Normal,
+                        None,
+                        Instant::now(),
+                        0,
+                        14.,
+                        None,
+                    )
+                }))
+        }
+    }
+
+    /// Click the link of markdown built in `thread`; what the app was asked
+    /// to do, and what the system opener got.
+    fn click(
+        thread: Option<i64>,
+        url: &str,
+        modifiers: Modifiers,
+        cx: &mut TestAppContext,
+    ) -> (Vec<String>, Option<String>) {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (url, recorded) = (url.to_owned(), seen.clone());
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    window.focus(&focus, cx);
+                    Fixture {
+                        thread,
+                        url,
+                        focus,
+                        seen: recorded,
+                    }
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let link = visual.debug_bounds("rich-prose-1-0").expect("the link");
+        visual.simulate_click(link.center(), modifiers);
+        visual.run_until_parked();
+        let seen = seen.borrow().clone();
+        (seen, cx.opened_url())
+    }
+
+    #[gpui::test]
+    fn a_web_link_in_a_thread_asks_for_the_threads_browser(cx: &mut TestAppContext) {
+        let (seen, opened) = click(Some(7), "https://example.com/", Modifiers::none(), cx);
+        assert_eq!(seen, ["thread Some(7): https://example.com/"]);
+        assert_eq!(opened, None);
+    }
+
+    #[gpui::test]
+    fn cmd_or_ctrl_click_in_a_thread_opens_the_system_browser(cx: &mut TestAppContext) {
+        let (seen, opened) = click(
+            Some(7),
+            "https://example.com/",
+            Modifiers::secondary_key(),
+            cx,
+        );
+        assert!(seen.is_empty(), "{seen:?}");
+        assert_eq!(opened.as_deref(), Some("https://example.com/"));
+    }
+
+    /// Settings, Inbox, notes: markdown outside a thread keeps the system
+    /// browser.
+    #[gpui::test]
+    fn a_web_link_outside_a_thread_opens_the_system_browser(cx: &mut TestAppContext) {
+        let (seen, opened) = click(None, "http://example.com/a", Modifiers::none(), cx);
+        assert!(seen.is_empty(), "{seen:?}");
+        assert_eq!(opened.as_deref(), Some("http://example.com/a"));
+    }
+
+    #[gpui::test]
+    fn a_mail_link_in_a_thread_still_opens_the_mail_app(cx: &mut TestAppContext) {
+        let (seen, opened) = click(Some(7), "mailto:me@example.com", Modifiers::none(), cx);
+        assert!(seen.is_empty(), "{seen:?}");
+        assert_eq!(opened.as_deref(), Some("mailto:me@example.com"));
+    }
+
+    #[gpui::test]
+    fn a_file_link_in_a_thread_still_opens_in_gespan(cx: &mut TestAppContext) {
+        let (seen, opened) = click(Some(7), "/repo/src/lib.rs", Modifiers::none(), cx);
+        assert_eq!(seen, ["file: /repo/src/lib.rs"]);
+        assert_eq!(opened, None);
     }
 }

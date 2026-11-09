@@ -189,7 +189,7 @@ impl Shell {
                     this.add(summary, cx);
                     this.sessions[&id].update(cx, |v, cx| {
                         v.quick_attach(launch.attachments, cx);
-                        v.quick_submit(launch.prompt, settings, cx)
+                        v.user_quick_submit(launch.prompt, settings, cx)
                     });
                     this.order.retain(|i| *i != id);
                     this.order.insert(0, id);

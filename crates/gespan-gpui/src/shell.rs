@@ -6,6 +6,8 @@ mod app_views;
 mod automation_runs;
 #[cfg(test)]
 mod automation_runs_tests;
+#[cfg(test)]
+mod browser_tabs_tests;
 mod classic_sidebar;
 #[cfg(test)]
 mod classic_surface_tests;
@@ -61,6 +63,8 @@ mod sidebar_peek;
 mod space_reorder;
 mod terminal_dock;
 mod terminal_panes;
+#[cfg(test)]
+mod thread_links_tests;
 use terminal_panes::terminal_drag_ghost;
 mod title_tabs;
 #[cfg(test)]
@@ -865,6 +869,18 @@ pub(crate) struct Shell {
     review_slide: Option<(i64, PaneSlide, Entity<crate::review::ReviewPane>)>,
     /// A session review card's Review, opened beside its pane next frame.
     pending_review: Option<(i64, crate::review::ReviewTab)>,
+    /// An agent's first tab in the thread the user is looking at, to show
+    /// beside it without taking the keys from where they are.
+    pending_browser: Option<(i64, crate::review::ReviewTab)>,
+    /// User tabs opened from a thread's link (and the link), waiting to show
+    /// beside their thread; one whose thread has no pane by then is closed
+    /// and its link goes to the system browser.
+    pending_links: Vec<(i64, crate::review::ReviewTab, String)>,
+    /// Links of a thread the in-app browser is opening (the first can wait
+    /// for the browser to start): a repeat click on one opens no second tab.
+    opening_links: HashSet<(i64, String)>,
+    /// The review panes this frame draws; the others' browser tabs stop.
+    drawn_reviews: Vec<gpui::EntityId>,
     pending_composer_focus: Option<i64>,
     review_focused: bool,
     review_drag: bool,
@@ -1282,6 +1298,10 @@ impl Shell {
             reviews: HashMap::new(),
             review_slide: None,
             pending_review: None,
+            pending_browser: None,
+            pending_links: Vec::new(),
+            opening_links: HashSet::new(),
+            drawn_reviews: Vec::new(),
             pending_composer_focus: None,
             review_focused: false,
             review_drag: false,
@@ -1676,6 +1696,23 @@ impl Shell {
                 cx.notify();
             },
         ));
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, opened: &crate::conversation::BrowserTabOpened, cx| {
+                // Once a thread, and only in the thread the user is looking at.
+                if this.viewing_session() == Some(id) && crate::browser::claim_auto_show(cx, id) {
+                    this.pending_browser = Some((
+                        id,
+                        crate::review::ReviewTab::Browser {
+                            session: id,
+                            tab: opened.0.clone(),
+                            own: false,
+                        },
+                    ));
+                    cx.notify();
+                }
+            },
+        ));
         self.observations
             .push(cx.observe(&view, move |this, _, cx| {
                 if this
@@ -1694,6 +1731,169 @@ impl Shell {
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
         }
+    }
+    /// After this frame, tell each review pane whether it was drawn: one
+    /// that was not (its thread is not on screen) stops its browser tab's
+    /// view, and starts it again once drawn.
+    fn track_drawn_reviews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.drawn_reviews.clear();
+        let this = cx.entity();
+        window.defer(cx, move |_, cx| {
+            this.update(cx, |this, cx| {
+                let drawn = std::mem::take(&mut this.drawn_reviews);
+                let reviews: Vec<_> = this
+                    .reviews
+                    .values()
+                    .cloned()
+                    .chain(this.review_slide.as_ref().map(|(_, _, r)| r.clone()))
+                    .collect();
+                for review in reviews {
+                    let shown = drawn.contains(&review.entity_id());
+                    review.update(cx, |r, cx| r.set_drawn(shown, cx));
+                }
+            });
+        });
+    }
+    /// F6 (or Cmd+Escape on macOS) in a browser tab: the keys go back to the thread's
+    /// composer, or to the window when the review fills the card.
+    fn leave_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_focused = false;
+        let chat_shown = self
+            .active_review(cx)
+            .is_none_or(|review| !review.read(cx).state.chat_hidden);
+        match self.viewing_session().and_then(|id| self.sessions.get(&id)) {
+            Some(view) if chat_shown => {
+                let focus = view.read(cx).input.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+            }
+            _ => window.focus(&self.focus, cx),
+        }
+        cx.notify();
+    }
+    /// A web link clicked in thread `session` (`None`: the thread the user
+    /// is looking at): a new tab of the thread's in-app browser, the user's
+    /// own, shown beside the thread. Needs no browser switch: that is about
+    /// agents only. When the in-app browser cannot open it, the system
+    /// browser does, and the thread says why. A chat with no pane in this
+    /// workspace (a Pilot's, Inbox Ask) has nowhere to show the page, so
+    /// its links go straight to the system browser (R29).
+    pub(crate) fn open_thread_link(
+        &mut self,
+        session: Option<i64>,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = session.or_else(|| self.viewing_session()) else {
+            cx.open_url(&url);
+            return;
+        };
+        if self.workspace.tab_of(session).is_none() {
+            cx.open_url(&url);
+            return;
+        }
+        let Some(host) = crate::browser::host(cx) else {
+            self.link_fallback(session, &url, "the in-app browser is not running", cx);
+            return;
+        };
+        // Already on its way: the first click's tab is the one to show.
+        if !self.opening_links.insert((session, url.clone())) {
+            return;
+        }
+        // Starting the browser can take a while: say so until the pane opens.
+        if let Some(view) = self.sessions.get(&session) {
+            view.update(cx, |view, cx| view.show_link_opening(cx));
+        }
+        let key = crate::browser::session_key(session);
+        let opening = url.clone();
+        let task = cx.background_executor().spawn(async move {
+            host.serialized(|| host.open_user_tab(&key, gespan_core::browser::WINDOW, &opening))
+        });
+        cx.spawn(async move |this, cx| {
+            let opened = task.await;
+            let _ = this.update(cx, |this, cx| {
+                crate::browser::reread(cx);
+                this.opening_links.remove(&(session, url.clone()));
+                let still_opening = this.opening_links.iter().any(|(s, _)| *s == session);
+                if !still_opening && let Some(view) = this.sessions.get(&session) {
+                    view.update(cx, |view, cx| view.clear_link_opening(cx));
+                }
+                match opened {
+                    Ok(tab) => {
+                        this.pending_links.push((
+                            session,
+                            crate::review::ReviewTab::Browser {
+                                session,
+                                tab: tab.0,
+                                own: true,
+                            },
+                            url,
+                        ));
+                        cx.notify();
+                    }
+                    Err(error) => this.link_fallback(session, &url, &error, cx),
+                }
+            });
+        })
+        .detach();
+    }
+    /// The threads some tab of the workspace shows.
+    fn shown_threads(&self) -> HashSet<i64> {
+        self.workspace
+            .open_sessions()
+            .into_iter()
+            .map(|pane| self.workspace.session_for_pane(pane))
+            .collect()
+    }
+    /// Threads of `before` ([`Self::shown_threads`]) that no tab shows any
+    /// more close the user's own browser tabs they opened from links: no
+    /// pane is left to show or close them. Their agents' tabs stay.
+    fn close_left_threads_browser_tabs(&self, before: HashSet<i64>, cx: &App) {
+        let shown = self.shown_threads();
+        let left: Vec<String> = before
+            .difference(&shown)
+            .map(|session| crate::browser::session_key(*session))
+            .collect();
+        if left.is_empty() {
+            return;
+        }
+        let Some(host) = crate::browser::host(cx) else {
+            return;
+        };
+        // Off the UI thread: closing waits for the browser.
+        cx.background_executor()
+            .spawn(async move {
+                for key in left {
+                    host.serialized(|| host.thread_closed(&key));
+                }
+            })
+            .detach();
+    }
+    /// The in-app browser could not open `url`: the system browser does, and
+    /// thread `session` says so for a moment.
+    fn link_fallback(&mut self, session: i64, url: &str, why: &str, cx: &mut Context<Self>) {
+        cx.open_url(url);
+        if let Some(view) = self.sessions.get(&session) {
+            let why = why.trim().trim_end_matches('.').to_owned();
+            view.update(cx, |view, cx| view.show_link_notice(why, cx));
+        }
+    }
+    /// The session of the pane the user is looking at.
+    fn viewing_session(&self) -> Option<i64> {
+        self.workspace
+            .active
+            .map(|pane| self.workspace.session_for_pane(pane))
+    }
+    /// The pane whose review already shows `tab`, a browser tab.
+    fn browser_tab_pane(&self, tab: &crate::review::ReviewTab, cx: &App) -> Option<i64> {
+        let crate::review::ReviewTab::Browser { tab, .. } = tab else {
+            return None;
+        };
+        self.reviews
+            .iter()
+            .find(|(pane, review)| {
+                self.workspace.tab_of(**pane).is_some() && review.read(cx).shows_browser_tab(tab)
+            })
+            .map(|(pane, _)| *pane)
     }
     /// SessionPane's reviewUndoLocked: another running session shares the checkout.
     fn sync_review_locks(&mut self, cx: &mut Context<Self>) {
@@ -3101,6 +3301,7 @@ impl Shell {
             r.set_visible(true, cx);
             r.set_deferred(deferred, cx);
         });
+        self.drawn_reviews.push(review.entity_id());
         let chat_hidden = state.chat_hidden;
         let header = if in_split {
             1.
@@ -3391,8 +3592,14 @@ impl Shell {
         terminal
     }
     fn observe_terminal(&mut self, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
-        self.observations
-            .push(cx.subscribe(terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
+        self.observations.push(
+            cx.subscribe(terminal, |this, _, event: &TerminalEvent, cx| {
+                if let TerminalEvent::OpenWebLink(url) = event {
+                    this.open_thread_link(None, url.clone(), cx);
+                }
+                cx.notify()
+            }),
+        );
     }
     /// A restored dock reopens its tabs as fresh shells once it is shown.
     fn ensure_terminals(&mut self, project: &str, cx: &mut Context<Self>) {
@@ -3900,10 +4107,12 @@ impl Shell {
     fn finish_close_pane(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.workspace.active;
         let before = self.active_leaves();
+        let threads = self.shown_threads();
         if !self.workspace.close_pane(id) {
             self.close(id, window, cx);
             return;
         }
+        self.close_left_threads_browser_tabs(threads, cx);
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);
@@ -8920,6 +9129,7 @@ fn enter_from(leaf: &LayoutLeaf) -> (Edge, Rect) {
 }
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_drawn_reviews(window, cx);
         self.keep_visible_idle_agents(cx);
         self.sync_ui_scale(window, cx);
         if self.pilot_panes_unsettled(cx) {
@@ -8947,8 +9157,34 @@ impl Render for Shell {
         if let Some((id, tab)) = self.pending_review.take()
             && self.workspace.tab_of(id).is_some()
         {
-            self.focus_pane(id, window, cx);
+            // One pane a browser tab: one already showing it takes focus.
+            let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
+            self.focus_pane(pane, window, cx);
             self.open_review(tab, window, cx);
+        }
+        for (id, tab, url) in std::mem::take(&mut self.pending_links) {
+            if self.workspace.tab_of(id).is_some() {
+                let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
+                self.focus_pane(pane, window, cx);
+                self.open_review(tab, window, cx);
+            } else {
+                // The thread left the workspace meanwhile: no pane would
+                // ever show or close the user's tab, so it closes now, and
+                // the system browser opens the link so the click isn't lost.
+                crate::review::close_own_browser_tab(&tab, cx);
+                cx.open_url(&url);
+            }
+        }
+        if let Some((id, tab)) = self.pending_browser.take()
+            && self.viewing_session() == Some(id)
+            && self.browser_tab_pane(&tab, cx).is_none()
+        {
+            let (focused, review_focused) = (window.focused(cx), self.review_focused);
+            self.open_review(tab, window, cx);
+            self.review_focused = review_focused;
+            if let Some(focused) = focused {
+                window.focus(&focused, cx);
+            }
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();
@@ -9205,6 +9441,11 @@ impl Render for Shell {
                 }
             }))
             .on_action(
+                cx.listener(|this, link: &crate::browser::OpenThreadLink, _, cx| {
+                    this.open_thread_link(link.session, link.url.clone(), cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, event: &crate::file_editor::OpenPath, window, cx| {
                     let cwd = this.git.read(cx).project().to_owned();
                     let (path, location) = crate::file_editor::file_location(&event.0, &cwd);
@@ -9300,6 +9541,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &NewClaude, _, cx| this.create(Kind::Claude, cx)))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| this.open_project(cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::browser_pane::LeaveBrowser, window, cx| {
+                    this.leave_browser(window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 // A pinned tab stays put: ⌘W only closes what sits inside
                 // it, a dock terminal, a review file or one pane of a split.
@@ -9336,9 +9582,11 @@ impl Render for Shell {
                     return;
                 }
                 // A focused review closes its tab first, as a focused file pane does.
-                if this.review_focused
-                    && let Some(review) = this.active_review(cx)
-                {
+                // A browser tab keeps its clicks to itself, so the keys being in
+                // the review counts too.
+                if let Some(review) = this.active_review(cx).filter(|review| {
+                    this.review_focused || review.read(cx).contains_focus(window, cx)
+                }) {
                     review.update(cx, |r, cx| r.close_active(cx));
                     return;
                 }

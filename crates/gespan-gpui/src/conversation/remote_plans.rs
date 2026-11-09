@@ -218,7 +218,7 @@ impl Conversation {
         self.remote_plans.reader = None;
         self.remote_plans.build_with = None;
         self.clear_submitted_mode(cx);
-        self.launch_prompt(gespan_core::plan::build_prompt(&plan.text), cx);
+        self.launch_prompt(gespan_core::plan::build_prompt(&plan.text), false, cx);
     }
     /// The model menu opened by Build with another model: switch, then build.
     pub(super) fn build_plan_with(&mut self, picked: &ModelPicked, cx: &mut Context<Self>) -> bool {
@@ -292,7 +292,7 @@ impl Conversation {
         self.remote_plans.reader = None;
         // Launch the host command directly: the composer draft and its local
         // attachments belong to the user's next message, not this approval.
-        self.launch_prompt(plan.prompt(), cx);
+        self.launch_prompt(plan.prompt(), false, cx);
     }
     pub(super) fn remote_plan_reader(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let reader = self.remote_plans.reader.as_ref()?;

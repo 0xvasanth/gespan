@@ -39,6 +39,8 @@ hostname = "0.4"
 igd-next = "0.18"
 natpmp = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+# The live pane decodes JPEG pictures straight to BGRA (already under `image`).
+zune-jpeg = "0.5"
 rquickjs = "0.14.0"
 semver = { version = "1", features = ["serde"] }
 minisign-verify = "0.3"
@@ -59,6 +61,7 @@ rayon = "1"
 gespan-redact = { path = "../gespan-redact" }
 gespan-mcp-config = { path = "../gespan-mcp-config" }
 mcp-hub = { path = "../mcp-hub" }
+gespan-browser = { path = "../gespan-browser" }
 herdr-link = { path = "../herdr-link" }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 
@@ -86,3 +89,4 @@ gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 gespan-tracker-client = { path = "../tracker-client", features = ["testing"] }
 tempfile = "3"
 gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }
+gespan-browser = { path = "../gespan-browser", features = ["testing"] }

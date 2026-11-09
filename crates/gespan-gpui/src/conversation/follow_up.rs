@@ -102,13 +102,15 @@ impl Conversation {
             .is_none_or(|prefs| prefs.follow_up == "steer")
             || !self.background.tasks.is_empty()
     }
+    /// Queues `prompt` as the app's own message (not typed by the user).
+    #[cfg(test)]
     pub(super) fn enqueue_follow_up(
         &mut self,
         prompt: String,
         mode: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        self.enqueue_follow_up_inverted(prompt, mode, false, cx);
+        self.enqueue_follow_up_inverted(prompt, mode, false, false, cx);
     }
     /// Whether a plain follow-up sent now steers the turn rather than queuing;
     /// `invert` flips the preference, as Cmd+Enter does.
@@ -122,20 +124,31 @@ impl Conversation {
         (prefers_steer != invert || !self.background.tasks.is_empty())
             && Kind::from_id(&self.summary.provider).can_steer()
     }
-    /// `invert` flips the follow-up preference for this message (Cmd+Enter).
+    /// Whether `message` must wait for its own turn instead of steering the
+    /// one running: a message the user did not type (an automation's or a
+    /// Flow's send, a queue restored from disk) never joins a turn that
+    /// carries the browser, which only the user's own messages may drive.
+    pub(super) fn app_message_held_back(&self, message: &Message, cx: &gpui::App) -> bool {
+        !message.typed && self.busy && crate::browser::turn_carries(cx, self.summary.id)
+    }
+    /// `invert` flips the follow-up preference for this message (Cmd+Enter);
+    /// `typed`: the user sent it, and it launches as theirs.
     pub(super) fn enqueue_follow_up_inverted(
         &mut self,
         prompt: String,
         mode: Option<String>,
         invert: bool,
+        typed: bool,
         cx: &mut Context<Self>,
     ) {
         let attachments = std::mem::take(&mut self.attachments);
         let mut message = self.message(prompt, attachments, mode, cx);
+        message.typed = typed;
         message.steer = message.can_steer()
             && self.steers_follow_up(invert, cx)
             // Held messages wait for Resume instead of joining a settling turn.
-            && !crate::hold::active(cx);
+            && !crate::hold::active(cx)
+            && !self.app_message_held_back(&message, cx);
         if invert && self.busy && message.steer {
             self.follow_ups.requested = Some(message.id.clone());
         }
@@ -331,7 +344,13 @@ impl Conversation {
             .and_then(|id| self.follow_ups.state.messages.iter().find(|m| &m.id == id))
             .or_else(|| {
                 self.busy
-                    .then(|| self.follow_ups.state.messages.iter().find(|m| m.steer))
+                    .then(|| {
+                        self.follow_ups
+                            .state
+                            .messages
+                            .iter()
+                            .find(|m| m.steer && !self.app_message_held_back(m, cx))
+                    })
                     .flatten()
             })
             .or_else(|| self.follow_ups.state.messages.first());
@@ -357,6 +376,7 @@ impl Conversation {
                 return;
             }
             if !message.steer
+                || self.app_message_held_back(&message, cx)
                 || !Kind::from_id(&self.summary.provider).can_steer()
                 || !message.can_steer()
                 || !self.follow_ups.ready
@@ -426,7 +446,7 @@ impl Conversation {
         self.settings.attachments = message.attachments;
         let previous_prepared = self.settings.prepared_prompt.take();
         self.settings.prepared_prompt = message.prepared_prompt;
-        self.launch_prompt(message.text, cx);
+        self.launch_prompt(message.text, message.typed, cx);
         self.settings.prepared_prompt = previous_prepared;
         self.attachments = composer_attachments;
         self.settings.attachments.clear();
@@ -446,7 +466,7 @@ impl Conversation {
         }
         // Resume the interrupted provider turn before releasing its outbox.
         self.follow_ups.resuming = true;
-        self.launch_prompt("Continue from where you left off.".into(), cx);
+        self.launch_prompt("Continue from where you left off.".into(), false, cx);
         if !self.busy {
             self.follow_ups.resuming = false;
         }
@@ -1027,7 +1047,7 @@ mod tests {
                 view.send(cx);
                 view.input
                     .update(cx, |input, cx| input.set_text("steering".into(), cx));
-                view.send_follow_up(true, cx);
+                view.send_follow_up(true, true, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -1062,7 +1082,7 @@ mod tests {
                 view.follow_ups.ready = true;
                 view.input
                     .update(cx, |input, cx| input.set_text("queued".into(), cx));
-                view.send_follow_up(true, cx);
+                view.send_follow_up(true, true, cx);
                 view.input
                     .update(cx, |input, cx| input.set_text("steering".into(), cx));
                 view.send(cx);

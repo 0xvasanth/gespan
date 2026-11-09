@@ -15,6 +15,7 @@ pub(crate) enum Section {
     Chat,
     Providers,
     Mcp,
+    Browser,
     Skills,
     Pilots,
     Inbox,
@@ -40,6 +41,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
             Section::Chat,
             Section::Providers,
             Section::Mcp,
+            Section::Browser,
             Section::Skills,
             Section::Pilots,
         ],
@@ -51,7 +53,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 14] = [
+    pub(crate) const ALL: [Section; 15] = [
         Section::General,
         Section::Diagnostics,
         Section::Connections,
@@ -61,6 +63,7 @@ impl Section {
         Section::Chat,
         Section::Providers,
         Section::Mcp,
+        Section::Browser,
         Section::Skills,
         Section::Pilots,
         Section::Inbox,
@@ -78,6 +81,7 @@ impl Section {
             Section::Chat => "chat",
             Section::Providers => "providers",
             Section::Mcp => "mcp",
+            Section::Browser => "browser",
             Section::Skills => "skills",
             Section::Pilots => "pilots",
             Section::Inbox => "inbox",
@@ -96,6 +100,7 @@ impl Section {
             Section::Chat => "Chat",
             Section::Providers => "Providers",
             Section::Mcp => "MCP",
+            Section::Browser => "Browser",
             Section::Skills => "Skills",
             Section::Pilots => "Pilots",
             Section::Inbox => "Inbox",
@@ -126,6 +131,9 @@ impl Section {
                 "Provider accounts, agent CLIs Gespan can drive, and the model new sessions start with."
             }
             Section::Mcp => "Find MCP servers across providers and manage their connections.",
+            Section::Browser => {
+                "Let agents open and use their own tabs in Gespan's built-in browser."
+            }
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
@@ -160,6 +168,9 @@ impl Section {
             Section::Mcp => {
                 "tools servers connections oauth authenticate login claude codex cursor opencode"
             }
+            Section::Browser => {
+                "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
+            }
             Section::Skills => "skill instructions prompt",
             Section::Pilots => "pilot resident agent mascot claim project title bar",
             Section::Inbox => {
@@ -180,6 +191,7 @@ impl Section {
             Section::Chat => "message-square",
             Section::Providers => "bot",
             Section::Mcp => "globe",
+            Section::Browser => "app-window",
             Section::Skills => "sparkles",
             Section::Pilots => "ghost",
             Section::Inbox => "inbox-hi",
@@ -220,6 +232,24 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Mcp,
         "MCP servers",
         "claude tools connections oauth authenticate login add remove",
+    ),
+    (
+        "browser-toggle",
+        Section::Browser,
+        "Let agents use the browser",
+        "browser chrome agents web switch on off beta",
+    ),
+    (
+        "browser-access",
+        Section::Browser,
+        "Thread access",
+        "browser threads access always on agents",
+    ),
+    (
+        "browser-uploads",
+        Section::Browser,
+        "Upload folders",
+        "browser upload files folders hidden dotfiles",
     ),
     (
         "pilots-enabled",
@@ -653,8 +683,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_section_count_is_14() {
-        assert_eq!(Section::ALL.len(), 14);
+    fn settings_section_count_is_15() {
+        assert_eq!(Section::ALL.len(), 15);
         let grouped: Vec<Section> = GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
         assert_eq!(grouped.len(), Section::ALL.len());
         for section in Section::ALL {

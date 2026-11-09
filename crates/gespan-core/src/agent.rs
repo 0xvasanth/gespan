@@ -124,6 +124,12 @@ pub struct Settings {
     pub pilot_sent_at: Option<u64>,
     #[serde(skip)]
     pub internal_message: bool,
+    /// The user typed or sent this turn's message themselves. Transport-only:
+    /// each launch sets it from what started that launch, whatever a thread's
+    /// saved or installed settings hold. Turns the app or an agent starts
+    /// (continuations, resumes, automations, Flows, agent sends) leave it off.
+    #[serde(skip)]
+    pub user_typed: bool,
     /// Re-run the conversation's failed last turn in place: its saved prompt
     /// is sent again and the reply replaces its error row.
     #[serde(skip)]

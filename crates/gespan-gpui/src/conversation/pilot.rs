@@ -247,7 +247,7 @@ impl Conversation {
         self.settings.pilot_sent_at = message.sent_at;
         self.settings.internal_message = message.internal;
         self.settings.attachments = message.attachments.iter().map(PathBuf::from).collect();
-        self.launch_prompt(message.text.clone(), cx);
+        self.launch_prompt(message.text.clone(), false, cx);
         true
     }
     pub(crate) fn pilot_rows<'a>(&self, cx: &'a App) -> &'a [gespan_core::transcript::Row] {
