@@ -92,6 +92,7 @@ mod send_morph;
 mod session_mark;
 mod session_review;
 mod settings;
+mod setup;
 mod shell;
 mod sound;
 mod syntax;
