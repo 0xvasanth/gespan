@@ -126,3 +126,53 @@ pub(crate) fn command(
     })
     .detach();
 }
+
+/// A web link clicked in a thread, for the shell to open in that thread's
+/// in-app browser. `session: None` is the thread the user is looking at (a
+/// link in the dock's terminal).
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = browser, no_json)]
+pub(crate) struct OpenThreadLink {
+    pub(crate) session: Option<i64>,
+    pub(crate) url: String,
+}
+
+/// An `http(s)` address: what the in-app browser opens. Everything else
+/// (`mailto:`, `file:`, `gespan://`, …) keeps its own handling.
+pub(crate) fn is_web(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// A web link the user clicked in a thread: in the thread's in-app browser,
+/// or the system browser for Cmd+click (Ctrl+click off macOS, `system`) and
+/// anything that is not `http(s)`. `thread: None` (no thread around the
+/// link) is the system browser as well.
+pub(crate) fn open_link_in(
+    thread: Option<i64>,
+    url: &str,
+    system: bool,
+    window: &mut gpui::Window,
+    cx: &mut App,
+) {
+    match thread {
+        Some(session) if !system && is_web(url) => window.dispatch_action(
+            Box::new(OpenThreadLink {
+                session: Some(session),
+                url: url.to_owned(),
+            }),
+            cx,
+        ),
+        _ => cx.open_url(url),
+    }
+}
+
+/// Read the host again after one of the app's own commands changed it.
+pub(crate) fn reread(cx: &mut App) {
+    if let Some(browser) = get(cx) {
+        browser.update(cx, |browser, cx| {
+            browser.state = browser.host.state();
+            cx.notify();
+        });
+    }
+}

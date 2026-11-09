@@ -93,6 +93,30 @@ impl Dimensions for GridSize {
 pub(crate) enum TerminalEvent {
     /// Title, foreground process or running state changed.
     Changed,
+    /// A plain click on a web link: the shell opens it in the in-app
+    /// browser of the thread the user is looking at.
+    OpenWebLink(String),
+}
+
+/// A clicked terminal link goes to the in-app browser of the thread on
+/// screen: a web page without Cmd (Ctrl off macOS), which keeps the system
+/// browser, as markdown links in a thread do.
+fn opens_in_thread(uri: &str, modifiers: &gpui::Modifiers) -> bool {
+    crate::browser::is_web(uri) && !modifiers.secondary()
+}
+
+#[cfg(test)]
+#[test]
+fn terminal_links_route_like_thread_links() {
+    let plain = gpui::Modifiers::none();
+    assert!(opens_in_thread("https://example.com/", &plain));
+    assert!(opens_in_thread("HTTP://localhost:3000", &plain));
+    assert!(!opens_in_thread(
+        "https://example.com/",
+        &gpui::Modifiers::secondary_key()
+    ));
+    assert!(!opens_in_thread("file:///tmp/a.txt", &plain));
+    assert!(!opens_in_thread("mailto:me@example.com", &plain));
 }
 
 /// Where the grid was painted, for mapping the pointer to cells.
@@ -740,7 +764,12 @@ impl Terminal {
             .as_ref()
             .is_some_and(|selection| !selection.is_empty());
         if !selected && self.link_at(event.position).as_ref() == Some(&link) {
-            cx.open_url(&link.uri);
+            if opens_in_thread(&link.uri, &event.modifiers) {
+                cx.emit(TerminalEvent::OpenWebLink(link.uri));
+            } else {
+                // Cmd+click (Ctrl+click off macOS), or not a web page.
+                cx.open_url(&link.uri);
+            }
         }
     }
     fn stop_selection(&mut self) {

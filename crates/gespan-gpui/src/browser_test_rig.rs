@@ -114,6 +114,24 @@ impl Rig {
         }
     }
 
+    /// The Gespan browser (Managed) on the fake, with the switch off and
+    /// nothing started: what a thread link meets in the app by default.
+    pub(crate) fn start_managed() -> Rig {
+        let viewport = Arc::new(Mutex::new((800i64, 600i64)));
+        let server = screencast_browser(viewport.clone());
+        let host = BrowserHost::for_tests(BrowserSettings {
+            mode: BrowserMode::Managed,
+            access: AccessMode::Always,
+            ..BrowserSettings::default()
+        });
+        host.set_profile_dir(server.profile_dir());
+        Rig {
+            server,
+            host,
+            viewport,
+        }
+    }
+
     /// The page moved: the browser sends a new picture of the tab it last
     /// started a screencast in.
     pub(crate) fn push_frame(&self, n: i64) {

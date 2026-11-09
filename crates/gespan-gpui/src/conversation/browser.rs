@@ -28,6 +28,8 @@ struct Tab {
     host: String,
     status: &'static str,
     open: bool,
+    /// The user opened it from a link, so it already shows.
+    user: bool,
 }
 
 #[derive(Default)]
@@ -38,6 +40,10 @@ pub(super) struct State {
     on: bool,
     menu: bool,
     anchor: AnchorSlot,
+    /// A link the in-app browser could not open went to the system browser;
+    /// the reason shows above the composer for a moment.
+    link_notice: Option<String>,
+    link_notice_clear: Option<gpui::Task<()>>,
 }
 
 impl State {
@@ -69,6 +75,7 @@ fn tabs_of(session: i64, state: Option<&BrowserState>) -> Vec<Tab> {
             host: browser_view::tab_host(&tab.tab.url),
             status: browser_view::tab_status(tab),
             open: tab.tab.state == TabState::Open,
+            user: tab.user_tab,
         })
         .collect()
 }
@@ -93,6 +100,7 @@ impl Conversation {
                 .iter()
                 .filter(|tab| {
                     tab.open
+                        && !tab.user
                         && !this
                             .browser
                             .tabs
@@ -117,7 +125,54 @@ impl Conversation {
         cx.emit(OpenSessionChanges(crate::review::ReviewTab::Browser {
             session: self.summary.id,
             tab,
+            own: false,
         }));
+    }
+
+    /// A link went to the system browser because the in-app one could not
+    /// open it: say why, for a few seconds.
+    pub(crate) fn show_link_notice(&mut self, why: String, cx: &mut Context<Self>) {
+        self.browser.link_notice = Some(format!(
+            "Opened in your system browser: the in-app browser couldn't open the link ({why})."
+        ));
+        self.browser.link_notice_clear = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(8))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.browser.link_notice = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    /// The text of the link notice, while it shows.
+    #[cfg(test)]
+    pub(crate) fn link_notice(&self) -> Option<&str> {
+        self.browser.link_notice.as_deref()
+    }
+
+    /// A thin line above the composer while a link notice shows.
+    pub(super) fn link_notice_line(&self) -> Option<AnyElement> {
+        let text = self.browser.link_notice.clone()?;
+        Some(
+            div()
+                .debug_selector(|| "browser-link-notice".into())
+                .mb(px(6.))
+                .px(px(12.))
+                .py(px(6.))
+                .rounded(px(10.))
+                .bg(content(0.05))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .text_size(px(12.))
+                .text_color(content(0.6))
+                .child(icon("globe", 13.).text_color(teal(0.9)))
+                .child(div().min_w_0().flex_1().child(text))
+                .into_any_element(),
+        )
     }
 
     /// The globe beside the composer's pills, while the thread has tabs

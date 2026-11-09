@@ -62,10 +62,14 @@ pub(crate) enum ReviewTab {
     },
     /// "Show in Gespan": one of the session's browser tabs, live. It lasts
     /// this run only: the tabs are gone when Gespan restarts. Closing it
-    /// only hides the tab; the agent keeps it.
+    /// only hides an agent's tab; the agent keeps it.
     Browser {
         session: i64,
         tab: String,
+        /// The user opened it (a link clicked in the thread): it closes
+        /// with its pane tab, as in a browser.
+        #[serde(default)]
+        own: bool,
     },
 }
 impl ReviewTab {
@@ -201,6 +205,30 @@ struct Source {
     _events: Subscription,
 }
 impl Source {
+    /// A browser tab the user opened closes with its pane tab; an agent's
+    /// only leaves the pane.
+    fn close_own_browser_tab(&self, cx: &gpui::App) {
+        let ReviewTab::Browser { tab, own: true, .. } = &self.tab else {
+            return;
+        };
+        let Some(host) = crate::browser::host(cx) else {
+            return;
+        };
+        let tab = gespan_core::browser::TabId(tab.clone());
+        // Off the UI thread: closing waits for the browser. A tab already
+        // gone (the page closed itself) has nothing left to close.
+        cx.background_executor()
+            .spawn(async move {
+                let open = host.state().tabs.iter().any(|entry| {
+                    entry.tab.tab == tab
+                        && entry.tab.state != gespan_core::browser::TabState::Closed
+                });
+                if open && let Err(error) = host.serialized(|| host.close_tab_by_user(&tab)) {
+                    log_error("close browser tab", &error);
+                }
+            })
+            .detach();
+    }
     fn cancel(&mut self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self._tasks.clear();
@@ -447,7 +475,7 @@ impl ReviewPane {
     }
     fn source(&mut self, tab: ReviewTab, cx: &mut Context<Self>) -> Source {
         let browser = match &tab {
-            ReviewTab::Browser { session, tab } => {
+            ReviewTab::Browser { session, tab, .. } => {
                 let (session, tab) = (*session, gespan_core::browser::TabId(tab.clone()));
                 Some(cx.new(|cx| BrowserPane::new(session, tab, cx)))
             }
@@ -554,6 +582,13 @@ impl ReviewPane {
                     ReviewTab::Changes { staged: b, .. }
                 ) if a == b
             ) && matches!(tab, ReviewTab::Changes { .. } | ReviewTab::Session { .. });
+            let mut tab = tab;
+            // "Show in Gespan" for a tab the user opened keeps it theirs.
+            if let (ReviewTab::Browser { own: was, .. }, ReviewTab::Browser { own, .. }) =
+                (&self.sources[ix].tab, &mut tab)
+            {
+                *own |= *was;
+            }
             self.sources[ix].tab = tab;
             if reload {
                 self.sources[ix].cancel();
@@ -673,6 +708,7 @@ impl ReviewPane {
         if self.sources.len() == 1 {
             self.preview_path = None;
             self.hovered_tab = None;
+            self.sources[0].close_own_browser_tab(cx);
             cx.emit(ReviewEvent::Empty);
             return;
         }
@@ -681,6 +717,7 @@ impl ReviewPane {
         }
         let mut removed = self.sources.remove(ix);
         removed.cancel();
+        removed.close_own_browser_tab(cx);
         self.git
             .update(cx, |git, _| git.review_cache.remember(&removed));
         if self.state.active >= ix && self.state.active > 0 {
@@ -713,6 +750,7 @@ impl ReviewPane {
         let source = self.sources.remove(keep);
         for mut removed in self.sources.drain(..) {
             removed.cancel();
+            removed.close_own_browser_tab(cx);
             self.git
                 .update(cx, |git, _| git.review_cache.remember(&removed));
         }
@@ -2079,6 +2117,7 @@ mod tests {
         let browser = |tab: &str| ReviewTab::Browser {
             session: 1,
             tab: tab.into(),
+            own: false,
         };
         let saved = vec![
             browser("t1"),
@@ -2124,6 +2163,7 @@ mod tests {
                 ReviewTab::Browser {
                     session: 1,
                     tab: "t_gone".into(),
+                    own: false,
                 },
                 file("a.txt"),
                 file("b.txt"),

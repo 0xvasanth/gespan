@@ -49,6 +49,7 @@ fn browser_tab(session: i64, tab: &TabId) -> ReviewTab {
     ReviewTab::Browser {
         session,
         tab: tab.0.clone(),
+        own: false,
     }
 }
 

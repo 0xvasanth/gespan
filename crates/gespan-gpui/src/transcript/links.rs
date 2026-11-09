@@ -48,8 +48,15 @@ impl Target {
             base: base.map(str::to_owned),
         })
     }
-    fn items(&self) -> Vec<MenuItem> {
+    fn items(&self, in_thread: bool) -> Vec<MenuItem> {
         match self {
+            // In a thread a web page opens in its in-app browser; the
+            // system browser stays one item away.
+            Self::Web(url) if in_thread && crate::browser::is_web(url) => vec![
+                MenuAction::new("open-web", "Open Link").into(),
+                MenuAction::new("open-system", "Open in System Browser").into(),
+                MenuAction::new("copy-link", "Copy Link Address").into(),
+            ],
             Self::Web(_) => vec![
                 MenuAction::new("open-web", "Open Link").into(),
                 MenuAction::new("copy-link", "Copy Link Address").into(),
@@ -100,7 +107,7 @@ impl TranscriptView {
         } else {
             "Link actions"
         };
-        let menu = cx.new(|cx| Menu::new(label, target.items(), window, cx));
+        let menu = cx.new(|cx| Menu::new(label, target.items(self.thread.is_some()), window, cx));
         let events = cx.subscribe_in(
             &menu,
             window,
@@ -128,7 +135,10 @@ impl TranscriptView {
         cx: &mut Context<Self>,
     ) {
         match (action, target) {
-            ("open-web", Target::Web(url)) => cx.open_url(url),
+            ("open-web", Target::Web(url)) => {
+                crate::browser::open_link_in(self.thread, url, false, window, cx)
+            }
+            ("open-system", Target::Web(url)) => cx.open_url(url),
             ("copy-link", Target::Web(url)) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))
             }

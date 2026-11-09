@@ -694,6 +694,7 @@ impl Conversation {
             let mut view = TranscriptView::new();
             view.identity(&summary.provider, Kind::from_id(&summary.provider).label());
             view.file_link_base = Some(summary.cwd.clone());
+            view.thread = Some(summary.id);
             view.set_review(review.clone().into());
             view
         });
@@ -3320,6 +3321,7 @@ impl Conversation {
             .children(self.orchestration_card(cx))
             .children(if self.is_remote() { None } else { self.usage_notice(false, cx) })
             .children(self.hold_notice(cx))
+            .children(self.link_notice_line())
             .child(self.background_shelf(window, cx))
             .child(self.message_queue(window, cx))
             .children(if self.is_remote() { None } else { self.sign_in_card(cx).or_else(|| self.auth_notice(cx)) })

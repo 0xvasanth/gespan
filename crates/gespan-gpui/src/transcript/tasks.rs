@@ -1066,13 +1066,15 @@ fn markdown_text(
         let rendered = if let markdown::Part::Code { fence, lines } = &row.part {
             view.code(fence.clone(), lines.clone(), fence.key as usize, None, cx)
         } else {
-            markdown::body(
-                &row,
-                format!("agent-md:{identity}:{index}").into(),
-                tone,
-                None,
-                Instant::now(),
-            )
+            markdown::in_thread(view.thread, || {
+                markdown::body(
+                    &row,
+                    format!("agent-md:{identity}:{index}").into(),
+                    tone,
+                    None,
+                    Instant::now(),
+                )
+            })
         };
         body = body.child(
             div()

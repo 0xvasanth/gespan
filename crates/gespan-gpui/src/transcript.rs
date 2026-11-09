@@ -604,6 +604,9 @@ pub(crate) struct TranscriptView {
     activity_list: bool,
     side_question: bool,
     pub(crate) file_link_base: Option<String>,
+    /// The thread this transcript shows: its web links open in the
+    /// thread's in-app browser.
+    pub(crate) thread: Option<i64>,
     expanded: HashSet<usize>,
     agent_panels: tasks::AgentPanels,
     /// User messages opened past their four-line clamp, by start.
@@ -2486,6 +2489,7 @@ impl TranscriptView {
             activity_list: false,
             side_question: false,
             file_link_base: None,
+            thread: None,
             expanded: HashSet::new(),
             agent_panels: Default::default(),
             expanded_prompts: HashSet::new(),
@@ -5217,25 +5221,31 @@ impl TranscriptView {
                 } else if let Part::LocalMedia { href, label } = &md.part {
                     self.local_media(href, label, ix)
                 } else {
-                    markdown::body_selected(
-                        md,
-                        format!("md-{ix}").into(),
-                        if reasoning {
-                            markdown::Tone::Reasoning
-                        } else if row.work {
-                            markdown::Tone::Work
-                        } else {
-                            markdown::Tone::Normal
-                        },
-                        self.reveals.get(&message_start).map(|r| &r.fades),
-                        self.frame_now,
-                        if reasoning {
-                            None
-                        } else {
-                            self.text_selection(row.key, message_start, !user && !error, cx)
-                        },
-                        Some(&prepared),
-                    )
+                    let thread = self.thread;
+                    let selection = if reasoning {
+                        None
+                    } else {
+                        self.text_selection(row.key, message_start, !user && !error, cx)
+                    };
+                    let fades = self.reveals.get(&message_start).map(|r| &r.fades);
+                    let now = self.frame_now;
+                    markdown::in_thread(thread, || {
+                        markdown::body_selected(
+                            md,
+                            format!("md-{ix}").into(),
+                            if reasoning {
+                                markdown::Tone::Reasoning
+                            } else if row.work {
+                                markdown::Tone::Work
+                            } else {
+                                markdown::Tone::Normal
+                            },
+                            fades,
+                            now,
+                            selection,
+                            Some(&prepared),
+                        )
+                    })
                     .into_any_element()
                 };
                 div()

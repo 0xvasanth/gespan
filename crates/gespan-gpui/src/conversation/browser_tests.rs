@@ -107,6 +107,7 @@ fn show_in_gespan_asks_for_the_tab_beside_the_thread(cx: &mut TestAppContext) {
         [crate::review::ReviewTab::Browser {
             session: id,
             tab: tab.0.clone(),
+            own: false,
         }]
     );
     assert!(

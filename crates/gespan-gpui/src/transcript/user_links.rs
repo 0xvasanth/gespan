@@ -216,7 +216,18 @@ impl TranscriptView {
                     .child(title),
             )
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| cx.open_url(&open_url))
+            .on_click({
+                let thread = self.thread;
+                move |event, window, cx| {
+                    crate::browser::open_link_in(
+                        thread,
+                        &open_url,
+                        event.modifiers().secondary(),
+                        window,
+                        cx,
+                    )
+                }
+            })
             .into_any_element()
     }
     /// `url`'s preview, starting its fetch on the background executor the
@@ -324,10 +335,18 @@ impl TranscriptView {
                 }
             }))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.hide_work_item_card(cx);
-                cx.open_url(&open_url);
-            }))
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    this.hide_work_item_card(cx);
+                    crate::browser::open_link_in(
+                        this.thread,
+                        &open_url,
+                        event.modifiers().secondary(),
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .into_any_element()
     }
     fn show_work_item_card(

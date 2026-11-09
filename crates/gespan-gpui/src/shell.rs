@@ -63,6 +63,8 @@ mod sidebar_peek;
 mod space_reorder;
 mod terminal_dock;
 mod terminal_panes;
+#[cfg(test)]
+mod thread_links_tests;
 use terminal_panes::terminal_drag_ghost;
 mod title_tabs;
 #[cfg(test)]
@@ -1695,6 +1697,7 @@ impl Shell {
                         crate::review::ReviewTab::Browser {
                             session: id,
                             tab: opened.0.clone(),
+                            own: false,
                         },
                     ));
                     cx.notify();
@@ -1757,6 +1760,61 @@ impl Shell {
             _ => window.focus(&self.focus, cx),
         }
         cx.notify();
+    }
+    /// A web link clicked in thread `session` (`None`: the thread the user
+    /// is looking at): a new tab of the thread's in-app browser, the user's
+    /// own, shown beside the thread. Needs no browser switch: that is about
+    /// agents only. When the in-app browser cannot open it, the system
+    /// browser does, and the thread says why.
+    pub(crate) fn open_thread_link(
+        &mut self,
+        session: Option<i64>,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = session.or_else(|| self.viewing_session()) else {
+            cx.open_url(&url);
+            return;
+        };
+        let Some(host) = crate::browser::host(cx) else {
+            self.link_fallback(session, &url, "the in-app browser is not running", cx);
+            return;
+        };
+        let key = crate::browser::session_key(session);
+        let opening = url.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { host.serialized(|| host.open_user_tab(&key, &opening)) });
+        cx.spawn(async move |this, cx| {
+            let opened = task.await;
+            let _ = this.update(cx, |this, cx| {
+                crate::browser::reread(cx);
+                match opened {
+                    Ok(tab) => {
+                        this.pending_review = Some((
+                            session,
+                            crate::review::ReviewTab::Browser {
+                                session,
+                                tab: tab.0,
+                                own: true,
+                            },
+                        ));
+                        cx.notify();
+                    }
+                    Err(error) => this.link_fallback(session, &url, &error, cx),
+                }
+            });
+        })
+        .detach();
+    }
+    /// The in-app browser could not open `url`: the system browser does, and
+    /// thread `session` says so for a moment.
+    fn link_fallback(&mut self, session: i64, url: &str, why: &str, cx: &mut Context<Self>) {
+        cx.open_url(url);
+        if let Some(view) = self.sessions.get(&session) {
+            let why = why.trim().trim_end_matches('.').to_owned();
+            view.update(cx, |view, cx| view.show_link_notice(why, cx));
+        }
     }
     /// The session of the pane the user is looking at.
     fn viewing_session(&self) -> Option<i64> {
@@ -3463,8 +3521,14 @@ impl Shell {
         terminal
     }
     fn observe_terminal(&mut self, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
-        self.observations
-            .push(cx.subscribe(terminal, |_, _, _: &TerminalEvent, cx| cx.notify()));
+        self.observations.push(
+            cx.subscribe(terminal, |this, _, event: &TerminalEvent, cx| {
+                if let TerminalEvent::OpenWebLink(url) = event {
+                    this.open_thread_link(None, url.clone(), cx);
+                }
+                cx.notify()
+            }),
+        );
     }
     /// A restored dock reopens its tabs as fresh shells once it is shown.
     fn ensure_terminals(&mut self, project: &str, cx: &mut Context<Self>) {
@@ -9291,6 +9355,11 @@ impl Render for Shell {
                 }
             }))
             .on_action(
+                cx.listener(|this, link: &crate::browser::OpenThreadLink, _, cx| {
+                    this.open_thread_link(link.session, link.url.clone(), cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, event: &crate::file_editor::OpenPath, window, cx| {
                     let cwd = this.git.read(cx).project().to_owned();
                     let (path, location) = crate::file_editor::file_location(&event.0, &cwd);
@@ -9386,11 +9455,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &NewClaude, _, cx| this.create(Kind::Claude, cx)))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| this.open_project(cx)))
-            .on_action(cx.listener(
-                |this, _: &crate::browser_pane::LeaveBrowser, window, cx| {
+            .on_action(
+                cx.listener(|this, _: &crate::browser_pane::LeaveBrowser, window, cx| {
                     this.leave_browser(window, cx)
-                },
-            ))
+                }),
+            )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 // A pinned tab stays put: ⌘W only closes what sits inside
                 // it, a dock terminal, a review file or one pane of a split.
