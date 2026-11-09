@@ -531,3 +531,89 @@ fn a_failed_open_replaces_the_opening_line_and_frees_the_link(cx: &mut TestAppCo
         })
         .unwrap();
 }
+
+/// Closing the thread's tab (the thread leaves the workspace) closes the
+/// user's own tabs it opened from links; its agent's tab stays the agent's.
+#[gpui::test]
+fn closing_the_threads_tab_closes_its_users_tabs(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    click_link(window, Modifiers::none(), cx);
+    let own = host_tabs(&rig.host, session)[0].0.clone();
+    let agent = rig.open_tab(session);
+    let (own_target, agent_target) = (target_of(&rig, &own), target_of(&rig, &agent));
+    window
+        .update(cx, |shell, window, cx| {
+            shell.close_tabs(&[session], None, window, cx)
+        })
+        .unwrap();
+    settle(window, cx);
+    window
+        .update(cx, |shell, _, _| {
+            assert!(shell.workspace.tab_of(session).is_none(), "the tab closed")
+        })
+        .unwrap();
+    assert!(
+        closed_in_browser(&rig, &own_target),
+        "the user's tab closed"
+    );
+    assert_eq!(
+        rig.host
+            .policy()
+            .read()
+            .lease(&own)
+            .map(|lease| lease.state),
+        Some(TabState::Closed)
+    );
+    assert!(
+        !rig.server
+            .received()
+            .iter()
+            .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == agent_target),
+        "the agent's tab stays"
+    );
+    assert_eq!(
+        rig.host
+            .policy()
+            .read()
+            .lease(&agent)
+            .map(|lease| lease.state),
+        Some(TabState::Open)
+    );
+}
+
+/// Closing another thread's tab leaves this thread's user tabs alone.
+#[gpui::test]
+fn closing_another_threads_tab_keeps_this_threads_users_tabs(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    click_link(window, Modifiers::none(), cx);
+    let own = host_tabs(&rig.host, session)[0].0.clone();
+    let other = window
+        .update(cx, |shell, window, cx| {
+            let summary = locked(&shell.store)
+                .unwrap()
+                .create("claude", "/work/gespan")
+                .unwrap();
+            let other = summary.id;
+            shell.add(summary, cx);
+            shell.open(other, window, cx);
+            other
+        })
+        .unwrap();
+    settle(window, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            shell.close_tabs(&[other], None, window, cx)
+        })
+        .unwrap();
+    settle(window, cx);
+    assert_eq!(
+        rig.host
+            .policy()
+            .read()
+            .lease(&own)
+            .map(|lease| lease.state),
+        Some(TabState::Open)
+    );
+}

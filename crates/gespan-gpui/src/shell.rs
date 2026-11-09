@@ -1828,6 +1828,38 @@ impl Shell {
         })
         .detach();
     }
+    /// The threads some tab of the workspace shows.
+    fn shown_threads(&self) -> HashSet<i64> {
+        self.workspace
+            .open_sessions()
+            .into_iter()
+            .map(|pane| self.workspace.session_for_pane(pane))
+            .collect()
+    }
+    /// Threads of `before` ([`Self::shown_threads`]) that no tab shows any
+    /// more close the user's own browser tabs they opened from links: no
+    /// pane is left to show or close them. Their agents' tabs stay.
+    fn close_left_threads_browser_tabs(&self, before: HashSet<i64>, cx: &App) {
+        let shown = self.shown_threads();
+        let left: Vec<String> = before
+            .difference(&shown)
+            .map(|session| crate::browser::session_key(*session))
+            .collect();
+        if left.is_empty() {
+            return;
+        }
+        let Some(host) = crate::browser::host(cx) else {
+            return;
+        };
+        // Off the UI thread: closing waits for the browser.
+        cx.background_executor()
+            .spawn(async move {
+                for key in left {
+                    host.serialized(|| host.thread_closed(&key));
+                }
+            })
+            .detach();
+    }
     /// The in-app browser could not open `url`: the system browser does, and
     /// thread `session` says so for a moment.
     fn link_fallback(&mut self, session: i64, url: &str, why: &str, cx: &mut Context<Self>) {
@@ -4057,10 +4089,12 @@ impl Shell {
     fn finish_close_pane(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.workspace.active;
         let before = self.active_leaves();
+        let threads = self.shown_threads();
         if !self.workspace.close_pane(id) {
             self.close(id, window, cx);
             return;
         }
+        self.close_left_threads_browser_tabs(threads, cx);
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);
