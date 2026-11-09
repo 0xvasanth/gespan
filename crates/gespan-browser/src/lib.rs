@@ -3536,6 +3536,16 @@ mod tests {
         );
         assert_eq!(host.connection().state, ConnectionState::Off);
         let result = action.join().unwrap();
+        // On Unix the shutdown fails the blocked send at once. Winsock
+        // documents that for closesocket, not shutdown, so on Windows the
+        // write may instead run into the link's 5 s write timeout; either
+        // way OFF itself did not wait (above) and the action is no success.
+        #[cfg(unix)]
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the stalled write outlived the shutdown: {:?}",
+            started.elapsed()
+        );
         assert!(
             matches!(
                 result,

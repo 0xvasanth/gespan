@@ -1263,9 +1263,11 @@ impl Link {
     }
 
     /// Arrange a write the browser will not read: `stall` stops the fake
-    /// reading, then an agent click far larger than any loopback socket
-    /// buffering (48 MiB; Linux autotuning tops out near 10) is sent on its
-    /// own thread. Returns once that thread is in the socket write.
+    /// reading, then an agent click far larger than the socket buffering is
+    /// sent on its own thread. Returns once that thread is in the socket
+    /// write. Both ends' buffers are pinned small (the fake's receive buffer
+    /// by `start_stalling`, this stream's send buffer here): left to
+    /// autotune, Windows loopback takes in even a 48 MiB frame.
     #[cfg(test)]
     pub(crate) fn start_stalled_write(
         &self,
@@ -1273,6 +1275,19 @@ impl Link {
         ctx: &RequestCtx,
         session: &CdpSessionId,
     ) -> thread::JoinHandle<Result<Value, CdpError>> {
+        use super::testing::{set_socket_buffer, SocketBuffer, STALL_SOCKET_BUFFER};
+        let send_buffer = {
+            let stream = self.inner.stream.lock().unwrap_or_else(|e| e.into_inner());
+            let stream = stream.as_ref().expect("link open");
+            set_socket_buffer(stream, SocketBuffer::Send, STALL_SOCKET_BUFFER)
+                .expect("size the link's send buffer")
+        };
+        let pad = 8 * 1024 * 1024;
+        let buffered = send_buffer + stall.receive_buffer();
+        assert!(
+            pad >= 8 * buffered,
+            "a {pad}-byte frame is too close to the {buffered} bytes the sockets buffer"
+        );
         stall.arm();
         let _version = self
             .request_system(Command::browser(Method::BrowserGetVersion, json!({})))
@@ -1293,7 +1308,7 @@ impl Link {
                         "type": "mousePressed",
                         "x": 1,
                         "y": 1,
-                        "pad": "x".repeat(48 * 1024 * 1024),
+                        "pad": "x".repeat(pad),
                     }),
                 ),
             )

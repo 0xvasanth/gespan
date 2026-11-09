@@ -134,7 +134,14 @@ impl FakeCdp {
     }
 
     fn launch_with(mode: Mode, consent_delay: Duration) -> FakeCdp {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        FakeCdp::launch_on(
+            TcpListener::bind("127.0.0.1:0").expect("bind loopback"),
+            mode,
+            consent_delay,
+        )
+    }
+
+    fn launch_on(listener: TcpListener, mode: Mode, consent_delay: Duration) -> FakeCdp {
         listener
             .set_nonblocking(true)
             .expect("nonblocking listener");
@@ -257,9 +264,22 @@ pub struct Stall {
     armed: Arc<AtomicBool>,
     stalled: mpsc::Receiver<()>,
     release: Option<mpsc::Sender<()>>,
+    receive_buffer: usize,
 }
 
+/// What [`FakeCdp::start_stalling`] asks for as the fake's socket receive
+/// buffer, and what a stall test asks for as the client's send buffer. Small
+/// and fixed, so a stall needs only a few MiB on every OS: left alone, the
+/// loopback buffers autotune (on Windows CI they took a whole 48 MiB frame).
+pub const STALL_SOCKET_BUFFER: usize = 32 * 1024;
+
 impl Stall {
+    /// The receive buffer the OS gave the fake's sockets (Linux doubles the
+    /// requested size).
+    pub fn receive_buffer(&self) -> usize {
+        self.receive_buffer
+    }
+
     /// The next `Browser.getVersion` the fake reads makes it stop reading
     /// (until [`Stall::release`]); send one, then call [`Stall::wait`].
     pub fn arm(&self) {
@@ -290,19 +310,136 @@ impl FakeCdp {
         let (release, release_rx) = mpsc::channel::<()>();
         let counter = AtomicU64::new(1);
         let trigger = armed.clone();
-        let server = FakeCdp::start_with(move |received| {
+        // Sized on the listener, before any connection: an accepted socket
+        // inherits it, and its TCP window is negotiated from it.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let receive_buffer =
+            set_socket_buffer(&listener, SocketBuffer::Receive, STALL_SOCKET_BUFFER)
+                .expect("size the fake's receive buffer");
+        let responder = move |received: &Received| {
             if received.method == "Browser.getVersion" && trigger.swap(false, Ordering::AcqRel) {
                 let _ = stalled_tx.send(());
                 let _ = release_rx.recv();
             }
             default_response(received, &counter)
-        });
+        };
+        let server = FakeCdp::launch_on(
+            listener,
+            Mode::Serve(Mutex::new(Box::new(responder))),
+            Duration::ZERO,
+        );
         let stall = Stall {
             armed,
             stalled,
             release: Some(release),
+            receive_buffer,
         };
         (server, stall)
+    }
+}
+
+/// A socket's kernel buffer, for [`set_socket_buffer`].
+#[derive(Clone, Copy, Debug)]
+pub enum SocketBuffer {
+    /// `SO_SNDBUF`
+    Send,
+    /// `SO_RCVBUF`
+    Receive,
+}
+
+#[cfg(unix)]
+use std::os::fd::AsRawFd as AsRawSock;
+#[cfg(windows)]
+use std::os::windows::io::AsRawSocket as AsRawSock;
+
+/// Set a socket's send or receive buffer and return the size the OS settled
+/// on. Setting it also turns off the OS's autotuning of that buffer, which
+/// is what makes a stalled write deterministic across platforms.
+pub fn set_socket_buffer(
+    socket: &impl AsRawSock,
+    which: SocketBuffer,
+    bytes: usize,
+) -> std::io::Result<usize> {
+    let requested = i32::try_from(bytes)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "buffer size too large"))?;
+    #[cfg(unix)]
+    {
+        let fd = socket.as_raw_fd();
+        let name = match which {
+            SocketBuffer::Send => libc::SO_SNDBUF,
+            SocketBuffer::Receive => libc::SO_RCVBUF,
+        };
+        let size = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let value: libc::c_int = requested;
+        // SAFETY: `fd` is an open socket borrowed for the call; the option
+        // value is a live `c_int` of the length passed.
+        let set = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                name,
+                (&value as *const libc::c_int).cast(),
+                size,
+            )
+        };
+        if set != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut actual: libc::c_int = 0;
+        let mut len = size;
+        // SAFETY: as above; `actual` and `len` outlive the call.
+        let got = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                name,
+                (&mut actual as *mut libc::c_int).cast(),
+                &mut len,
+            )
+        };
+        if got != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(usize::try_from(actual).unwrap_or(0))
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Networking::WinSock::{
+            getsockopt, setsockopt, WSAGetLastError, SOCKET, SOL_SOCKET, SO_RCVBUF, SO_SNDBUF,
+        };
+        let raw = socket.as_raw_socket() as SOCKET;
+        let name = match which {
+            SocketBuffer::Send => SO_SNDBUF,
+            SocketBuffer::Receive => SO_RCVBUF,
+        };
+        let size = std::mem::size_of::<i32>() as i32;
+        let value: i32 = requested;
+        // SAFETY: `raw` is an open socket borrowed for the call; the option
+        // value is a live `i32` of the length passed.
+        let set = unsafe { setsockopt(raw, SOL_SOCKET, name, (&value as *const i32).cast(), size) };
+        if set != 0 {
+            return Err(std::io::Error::from_raw_os_error(unsafe {
+                WSAGetLastError()
+            }));
+        }
+        let mut actual: i32 = 0;
+        let mut len = size;
+        // SAFETY: as above; `actual` and `len` outlive the call.
+        let got = unsafe {
+            getsockopt(
+                raw,
+                SOL_SOCKET,
+                name,
+                (&mut actual as *mut i32).cast(),
+                &mut len,
+            )
+        };
+        if got != 0 {
+            return Err(std::io::Error::from_raw_os_error(unsafe {
+                WSAGetLastError()
+            }));
+        }
+        Ok(usize::try_from(actual).unwrap_or(0))
     }
 }
 
