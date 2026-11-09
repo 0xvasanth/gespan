@@ -4,13 +4,13 @@
 use crate::theme::*;
 use gpui::{
     AnyElement, Div, ElementId, FontWeight, Hsla, Role, SharedString, Stateful, canvas, div,
-    prelude::*, px, rgb, rgba,
+    linear_color_stop, linear_gradient, prelude::*, px, rgb, rgba,
 };
 
 pub(crate) const WIDTH: f32 = 720.;
 pub(crate) const RADIUS: f32 = 24.;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-const BLUR: f32 = 24.;
+const BLUR: f32 = 40.;
 
 /// Violet 300 from the logo ramp: progress, radios and selected rings.
 pub(crate) fn violet() -> Hsla {
@@ -24,21 +24,14 @@ pub(crate) fn selected_fill() -> Hsla {
 pub(crate) fn selected_edge() -> Hsla {
     rgba(0xaf97fa8c).into()
 }
-/// The 1px glass edge.
+/// The 1px glass edge, the popovers' 10% hairline.
 pub(crate) fn glass_edge() -> Hsla {
-    if is_light() {
-        content(0.08)
-    } else {
-        rgba(0xffffff17).into()
-    }
+    content(if is_light() { 0.08 } else { 0.10 })
 }
-/// The quiet fill under lists and options.
+/// The frosted pane under lists and options: a thin ink tint, as the
+/// composer's surface is, so the card's blur shows through it.
 pub(crate) fn well() -> Hsla {
-    if is_light() {
-        content(0.03)
-    } else {
-        rgba(0xffffff09).into()
-    }
+    content(if is_light() { 0.03 } else { 0.04 })
 }
 /// Rules inside the card: the footer line and list separators.
 pub(crate) fn rule() -> Hsla {
@@ -57,12 +50,12 @@ pub(crate) fn faint() -> Hsla {
     content(0.45)
 }
 
-/// The frosted fill behind the card: bg-base at 72% under a 24pt blur. Light
-/// themes paint it opaque, as every other modal does.
+/// The frosted fill behind the card: a 6% ink tint under a 40pt blur, the
+/// composer's glass, so the shell reads through it. Light themes paint it
+/// opaque, as every other modal does.
 fn glass(radius: f32) -> impl IntoElement {
     let light = is_light();
-    let mut tint = background_base();
-    tint.a = 0.72;
+    let tint = content(0.06);
     let opaque = floating_fill();
     canvas(
         |_, _, _| {},
@@ -88,6 +81,20 @@ fn glass(radius: f32) -> impl IntoElement {
     .size_full()
 }
 
+/// The light falling across the glass: a faint white wash at the top that
+/// fades out a third of the way down.
+fn sheen() -> impl IntoElement {
+    div()
+        .absolute()
+        .inset_0()
+        .rounded(px(RADIUS - 1.))
+        .bg(linear_gradient(
+            180.,
+            linear_color_stop(white(0.07), 0.),
+            linear_color_stop(white(0.), 0.35),
+        ))
+}
+
 /// The 720pt card: glass, a hairline edge, the long soft drop and the
 /// 28/40/28 padding. `top` is 36 on Welcome, 28 elsewhere. Add the card's
 /// blocks with `.child`: the glass layers are out of flow, so they take no
@@ -104,6 +111,7 @@ pub(crate) fn card(top: f32, gap: f32) -> Div {
                 .blur_radius(px(64.)),
         ])
         .child(glass(RADIUS - 1.))
+        .when(!is_light(), |card| card.child(sheen()))
         .child(
             div()
                 .absolute()
@@ -111,7 +119,7 @@ pub(crate) fn card(top: f32, gap: f32) -> Div {
                 .left(px(RADIUS))
                 .right(px(RADIUS))
                 .h(px(1.))
-                .bg(if is_light() { white(0.95) } else { white(0.10) }),
+                .bg(if is_light() { white(0.95) } else { white(0.18) }),
         )
         .text_color(content(1.))
         .text_size(px(14.))
