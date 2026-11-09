@@ -17,9 +17,13 @@ pub(crate) mod git_actions;
 mod history;
 mod hold;
 mod orchestration_card;
+pub(crate) use browser::BrowserTabOpened;
 pub(crate) use hold::HoldChanged;
+mod browser;
 #[cfg(test)]
 mod browser_launch_tests;
+#[cfg(test)]
+mod browser_tests;
 #[cfg(test)]
 mod composer_card_tests;
 mod mobile;
@@ -177,6 +181,9 @@ pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
 /// The review card asked to open the session's recorded changes.
 pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
 pub(crate) struct Conversation {
+    /// The thread's browser tabs, for the globe beside the pills.
+    browser: browser::State,
+    _browser: Option<Subscription>,
     editing_last_turn: edit_last_turn::State,
     find: find::State,
     sign_in: sign_in::State,
@@ -714,7 +721,11 @@ impl Conversation {
                 }
             })
         });
+        let browser = browser::State::new(summary.id, cx);
+        let browser_observation = Self::observe_browser(cx);
         Self {
+            browser,
+            _browser: browser_observation,
             editing_last_turn: Default::default(),
             find: Default::default(),
             sign_in: Default::default(),
@@ -3304,6 +3315,7 @@ impl Conversation {
             .flex_col()
             .child(self.composer_anchor.probe())
             .children(menu)
+            .children(self.browser_menu(cx))
             .children(self.model_list_popover(cx))
             .children(self.orchestration_card(cx))
             .children(if self.is_remote() { None } else { self.usage_notice(false, cx) })
@@ -3533,7 +3545,8 @@ impl Conversation {
                                             )
                                             .child(pill_label(self.settings.access.label()))
                                             .child(icon("chevron-down", 12.)),
-                                    ),
+                                    )
+                                    .children(self.browser_pill(cx)),
                             )
                             .child(self.action(has_value, window, cx)),
                     )

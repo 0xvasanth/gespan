@@ -2698,6 +2698,7 @@ dependencies = [
  "chrono",
  "embed-resource",
  "gespan-board-store",
+ "gespan-browser",
  "gespan-core",
  "gespan-keep-awake",
  "gespan-models",

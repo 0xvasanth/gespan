@@ -11,6 +11,9 @@ mod assets;
 mod automations;
 mod board;
 mod browser;
+mod browser_pane;
+#[cfg(test)]
+mod browser_test_rig;
 mod changes;
 mod composer_completion;
 mod composer_motion;

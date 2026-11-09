@@ -441,6 +441,11 @@ pub(crate) fn file_tile(name: Option<&str>) -> Div {
     })
 }
 
+/// A browser tab's tile: the globe.
+pub(crate) fn browser_tile() -> Div {
+    neutral_tile(icon("globe", 14.).text_color(tile_ink()).into_any_element())
+}
+
 /// A terminal tab's tile: the agent CLI running in it on its brand colour,
 /// or a white prompt on a dark tile, like a terminal app's icon.
 pub(crate) fn terminal_tile(agent: Option<&str>) -> Div {

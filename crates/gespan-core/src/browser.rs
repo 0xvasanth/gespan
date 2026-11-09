@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 pub use gespan_browser::live;
 pub use gespan_browser::protocol::{
     AccessMode, BrowserChoice, BrowserKind, BrowserMode, BrowserSettings, BrowserState,
-    ConnectionState, TabOverview,
+    ConnectionState, TabId, TabOverview, TabState,
 };
 /// What the UI says about the connection and the browsers it offers.
 pub use gespan_browser::view;

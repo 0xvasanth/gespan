@@ -6,6 +6,8 @@ mod app_views;
 mod automation_runs;
 #[cfg(test)]
 mod automation_runs_tests;
+#[cfg(test)]
+mod browser_tabs_tests;
 mod classic_sidebar;
 #[cfg(test)]
 mod classic_surface_tests;
@@ -865,6 +867,9 @@ pub(crate) struct Shell {
     review_slide: Option<(i64, PaneSlide, Entity<crate::review::ReviewPane>)>,
     /// A session review card's Review, opened beside its pane next frame.
     pending_review: Option<(i64, crate::review::ReviewTab)>,
+    /// An agent's first tab in the thread the user is looking at, to show
+    /// beside it without taking the keys from where they are.
+    pending_browser: Option<(i64, crate::review::ReviewTab)>,
     pending_composer_focus: Option<i64>,
     review_focused: bool,
     review_drag: bool,
@@ -1282,6 +1287,7 @@ impl Shell {
             reviews: HashMap::new(),
             review_slide: None,
             pending_review: None,
+            pending_browser: None,
             pending_composer_focus: None,
             review_focused: false,
             review_drag: false,
@@ -1676,6 +1682,22 @@ impl Shell {
                 cx.notify();
             },
         ));
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, opened: &crate::conversation::BrowserTabOpened, cx| {
+                // Once a thread, and only in the thread the user is looking at.
+                if this.viewing_session() == Some(id) && crate::browser::claim_auto_show(cx, id) {
+                    this.pending_browser = Some((
+                        id,
+                        crate::review::ReviewTab::Browser {
+                            session: id,
+                            tab: opened.0.clone(),
+                        },
+                    ));
+                    cx.notify();
+                }
+            },
+        ));
         self.observations
             .push(cx.observe(&view, move |this, _, cx| {
                 if this
@@ -1694,6 +1716,24 @@ impl Shell {
         if crate::hold::active(cx) {
             self.refresh_session_mark(id, cx);
         }
+    }
+    /// The session of the pane the user is looking at.
+    fn viewing_session(&self) -> Option<i64> {
+        self.workspace
+            .active
+            .map(|pane| self.workspace.session_for_pane(pane))
+    }
+    /// The pane whose review already shows `tab`, a browser tab.
+    fn browser_tab_pane(&self, tab: &crate::review::ReviewTab, cx: &App) -> Option<i64> {
+        let crate::review::ReviewTab::Browser { tab, .. } = tab else {
+            return None;
+        };
+        self.reviews
+            .iter()
+            .find(|(pane, review)| {
+                self.workspace.tab_of(**pane).is_some() && review.read(cx).shows_browser_tab(tab)
+            })
+            .map(|(pane, _)| *pane)
     }
     /// SessionPane's reviewUndoLocked: another running session shares the checkout.
     fn sync_review_locks(&mut self, cx: &mut Context<Self>) {
@@ -8937,8 +8977,21 @@ impl Render for Shell {
         if let Some((id, tab)) = self.pending_review.take()
             && self.workspace.tab_of(id).is_some()
         {
-            self.focus_pane(id, window, cx);
+            // One pane a browser tab: one already showing it takes focus.
+            let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
+            self.focus_pane(pane, window, cx);
             self.open_review(tab, window, cx);
+        }
+        if let Some((id, tab)) = self.pending_browser.take()
+            && self.viewing_session() == Some(id)
+            && self.browser_tab_pane(&tab, cx).is_none()
+        {
+            let (focused, review_focused) = (window.focused(cx), self.review_focused);
+            self.open_review(tab, window, cx);
+            self.review_focused = review_focused;
+            if let Some(focused) = focused {
+                window.focus(&focused, cx);
+            }
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();

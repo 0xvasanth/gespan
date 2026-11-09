@@ -3,13 +3,18 @@
 //! most of them wait for the browser.
 use gespan_core::browser::{self as core, BrowserHost, BrowserState};
 use gpui::{App, AppContext, Entity, Global};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
+
+pub(crate) use core::session_key;
 
 /// The host's newest state, and the last command's error.
 pub(crate) struct Browser {
     host: Arc<BrowserHost>,
     pub(crate) state: BrowserState,
     pub(crate) error: Option<String>,
+    /// Sessions whose agent tab already showed beside the thread on its
+    /// own: that happens once a session, for as long as the app runs.
+    auto_shown: HashSet<i64>,
 }
 
 struct Shared(Entity<Browser>);
@@ -22,6 +27,17 @@ pub(crate) fn get(cx: &App) -> Option<Entity<Browser>> {
 /// The state now, when the module runs.
 pub(crate) fn state(cx: &App) -> Option<BrowserState> {
     get(cx).map(|browser| browser.read(cx).state.clone())
+}
+
+/// The host the app follows: the running module's, or a test's own.
+pub(crate) fn host(cx: &App) -> Option<Arc<BrowserHost>> {
+    get(cx).map(|browser| browser.read(cx).host.clone())
+}
+
+/// Whether `session`'s agent tab may still show beside the thread on its
+/// own; `true` only the first time it is asked for each session.
+pub(crate) fn claim_auto_show(cx: &mut App, session: i64) -> bool {
+    get(cx).is_some_and(|browser| browser.update(cx, |b, _| b.auto_shown.insert(session)))
 }
 
 /// Follow the running browser module. After `gespan_core::browser::start`;
@@ -75,6 +91,7 @@ fn adopt(host: Arc<BrowserHost>, cx: &mut App) -> Entity<Browser> {
         state: host.state(),
         host,
         error: None,
+        auto_shown: HashSet::new(),
     });
     cx.set_global(Shared(browser.clone()));
     browser
