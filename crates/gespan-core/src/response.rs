@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub enum TransferKind {
     Handoff,
     SecondOpinion,
+    /// A new session that continues this one from a chosen message.
+    Fork,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Target {
@@ -120,7 +122,84 @@ pub fn second_opinion(from: &str, rows: &[Row]) -> String {
     ];
     limit(&sections.join("\n\n"), 1800)
 }
+/// What a fork at one message carries into its new session.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Fork {
+    pub rows: Vec<Row>,
+    /// Forking at a prompt branches before it: the prompt returns to the
+    /// composer so it can be edited or sent to another model.
+    pub draft: Option<String>,
+}
+
+/// The conversation up to the message at row `at`. A response keeps its whole
+/// turn; a prompt keeps only what came before it. An index past the end means
+/// the last message.
+pub fn fork_at(rows: &[Row], at: usize) -> Fork {
+    let Some(last) = rows.len().checked_sub(1) else {
+        return Fork {
+            rows: Vec::new(),
+            draft: None,
+        };
+    };
+    let at = at.min(last);
+    let start = rows[..=at].iter().rposition(|r| r.first).unwrap_or(0);
+    if rows[start].is_prompt() {
+        let end = (start + 1..rows.len())
+            .find(|&i| rows[i].first)
+            .unwrap_or(rows.len());
+        return Fork {
+            rows: rows[..start].to_vec(),
+            draft: (rows[start].role == "user")
+                .then(|| rows[start..end].iter().map(|r| r.text.as_str()).collect()),
+        };
+    }
+    let end = (at + 1..rows.len())
+        .find(|&i| rows[i].is_prompt())
+        .unwrap_or(rows.len());
+    Fork {
+        rows: rows[..end].to_vec(),
+        draft: None,
+    }
+}
+
+/// A new session's settings when it continues `source` with its first `kept`
+/// rows: the same agent setup and the receipts of those turns, but none of the
+/// source's pending one-shot state. `turns` are keyed by row of the whole
+/// history, as the copied rows are.
+pub fn carried_settings(
+    source: &crate::agent::Settings,
+    turns: &std::collections::HashMap<usize, crate::agent::TurnInfo>,
+    kept: usize,
+) -> crate::agent::Settings {
+    crate::agent::Settings {
+        account: source.account.clone(),
+        revision: now_ms() * 1_000_000,
+        model: source.model.clone(),
+        effort: source.effort.clone(),
+        model_settings: source.model_settings.clone(),
+        fast: source.fast,
+        service_tier: source.service_tier.clone(),
+        thinking: source.thinking,
+        access: source.access,
+        worktree_cwd: source.worktree_cwd.clone(),
+        turns: turns
+            .iter()
+            .filter(|(turn, _)| **turn < kept)
+            .map(|(turn, info)| (*turn, info.clone()))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+/// An empty recap for a chat with nothing said yet, so the next agent is told
+/// not to invent prior work.
 pub fn handoff(rows: &[Row]) -> String {
+    if !rows
+        .iter()
+        .any(|r| matches!(r.role.as_str(), "user" | "assistant") && !r.text.trim().is_empty())
+    {
+        return String::new();
+    }
     let mut users = Vec::new();
     let mut user = String::new();
     for row in rows {
@@ -340,5 +419,106 @@ mod tests {
         assert!(review.contains("## User request\nCheck the footer"));
         assert!(review.contains("## What Codex reported"));
         assert!(!review.contains("Tool output"));
+    }
+
+    /// A small chat: two turns, the second with a tool call between replies
+    /// and a prompt split across two rows.
+    fn chat() -> Vec<Row> {
+        vec![
+            row("user", "Plan the footer", true),
+            row("assistant", "Here is the plan.", true),
+            row("user", "Build ", true),
+            row("user", "it now", false),
+            row("assistant", "Building.", true),
+            row("tool", "{\"name\":\"Edit\"}", true),
+            row("assistant", "Done.", true),
+        ]
+    }
+    #[test]
+    fn fork_at_a_response_keeps_everything_through_that_turn() {
+        let rows = chat();
+        let fork = fork_at(&rows, 1);
+        assert_eq!(fork.rows, rows[..2]);
+        assert_eq!(fork.draft, None);
+        // Any row inside the second turn keeps the whole turn, tool rows and all.
+        for at in 4..rows.len() {
+            assert_eq!(fork_at(&rows, at).rows, rows, "forking at row {at}");
+        }
+    }
+    #[test]
+    fn fork_at_the_last_message_copies_the_whole_chat() {
+        let rows = chat();
+        let fork = fork_at(&rows, rows.len() - 1);
+        assert_eq!(fork.rows, rows);
+        assert_eq!(fork.draft, None);
+        // A stale index past the end still means "the last message".
+        assert_eq!(fork_at(&rows, 99).rows, rows);
+    }
+    #[test]
+    fn fork_at_the_first_message_starts_empty_with_that_prompt_as_a_draft() {
+        let fork = fork_at(&chat(), 0);
+        assert!(fork.rows.is_empty());
+        assert_eq!(fork.draft.as_deref(), Some("Plan the footer"));
+    }
+    #[test]
+    fn fork_at_a_later_prompt_branches_before_it_with_the_whole_prompt() {
+        let rows = chat();
+        for at in [2, 3] {
+            let fork = fork_at(&rows, at);
+            assert_eq!(fork.rows, rows[..2], "forking at row {at}");
+            assert_eq!(fork.draft.as_deref(), Some("Build it now"));
+        }
+    }
+    #[test]
+    fn fork_of_an_empty_chat_is_empty() {
+        assert_eq!(
+            fork_at(&[], 0),
+            Fork {
+                rows: vec![],
+                draft: None
+            }
+        );
+    }
+    #[test]
+    fn a_handoff_from_an_empty_chat_has_no_recap() {
+        assert_eq!(handoff(&[]), "");
+        assert_eq!(handoff(&[row("tool", "{\"name\":\"Read\"}", true)]), "");
+        // The incoming agent is told there is no prior work to invent.
+        let prompt = wrap_handoff_prompt("claude", &handoff(&[]), "Start the footer");
+        assert!(prompt.contains("Do not invent prior work"));
+        assert!(!prompt.contains("<handoff>"));
+    }
+    #[test]
+    fn carried_settings_keep_the_agent_setup_and_the_copied_turns_only() {
+        let turn = |model: &str| crate::agent::TurnInfo {
+            provider: "claude".into(),
+            model: model.into(),
+            ..Default::default()
+        };
+        let source = crate::agent::Settings {
+            model: Some("opus".into()),
+            effort: Some("high".into()),
+            fast: true,
+            access: crate::agent::AccessMode::FullAccess,
+            worktree_cwd: Some("/work/tree".into()),
+            handoff: Some(crate::agent::Handoff {
+                from: "codex".into(),
+                brief: "old".into(),
+            }),
+            plan: true,
+            ..Default::default()
+        };
+        let turns = [(1, turn("first")), (4, turn("second"))].into();
+        let carried = carried_settings(&source, &turns, 2);
+        assert_eq!(carried.model.as_deref(), Some("opus"));
+        assert_eq!(carried.effort.as_deref(), Some("high"));
+        assert!(carried.fast);
+        assert_eq!(carried.access, source.access);
+        assert_eq!(carried.worktree_cwd.as_deref(), Some("/work/tree"));
+        assert_eq!(carried.turns.keys().collect::<Vec<_>>(), [&1]);
+        // One-shot state of the source chat does not leak into the new one.
+        assert!(carried.handoff.is_none());
+        assert!(!carried.plan);
+        assert!(carried.revision > source.revision);
     }
 }
