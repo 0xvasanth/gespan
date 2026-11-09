@@ -2048,6 +2048,22 @@ impl BrowserHost {
         size: live::PanelSize,
         sink: impl FnMut(live::LiveFrame),
     ) -> Result<live::LiveEnd, String> {
+        self.live_view_with(session, tab, view, size, || {}, sink)
+    }
+
+    /// [`Self::live_view`], calling `registered` once the view is known by
+    /// its name: from then on [`Self::stop_live`] and [`Self::resize_live`]
+    /// for it take effect. A pane that went away, or changed size, before
+    /// that learns of it here instead of losing the stop or the size.
+    pub fn live_view_with(
+        &self,
+        session: &str,
+        tab: &TabId,
+        view: &str,
+        size: live::PanelSize,
+        registered: impl FnOnce(),
+        sink: impl FnMut(live::LiveFrame),
+    ) -> Result<live::LiveEnd, String> {
         if !self.link.is_open() {
             return Err("Gespan is not connected to the browser.".into());
         }
@@ -2063,6 +2079,7 @@ impl BrowserHost {
             running.push(control.clone());
             previous
         };
+        registered();
         if let Some(previous) = previous {
             previous.stop();
             previous.wait_finished(Duration::from_secs(2));
@@ -2073,7 +2090,12 @@ impl BrowserHost {
                 .lease(tab)
                 .is_some_and(|lease| lease.state == TabState::Open && lease.owner == session)
         };
-        let outcome = live::run(&self.link, &target, size, &control, alive, sink);
+        // Stopped as it registered: the tab is left as it was.
+        let outcome = if control.stopped() {
+            Ok(live::LiveEnd::Stopped)
+        } else {
+            live::run(&self.link, &target, size, &control, alive, sink)
+        };
         control.finish();
         {
             let mut running = self.live.lock().unwrap_or_else(|e| e.into_inner());
@@ -4984,6 +5006,72 @@ mod tests {
             )
             .unwrap_err();
         assert!(other.contains("another thread"), "{other}");
+    }
+
+    #[test]
+    fn a_view_stopped_as_it_registers_never_touches_the_tab() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let before = server.received().len();
+        let ended = host.live_view_with(
+            "s1",
+            &tab,
+            "v1",
+            live::PanelSize::new(640, 480, 1.0),
+            || host.stop_live(Some("v1")),
+            |_| {},
+        );
+        assert_eq!(ended, Ok(live::LiveEnd::Stopped));
+        let sent: Vec<_> = server.received()[before..]
+            .iter()
+            .map(|r| r.method.clone())
+            .collect();
+        assert!(
+            !sent
+                .iter()
+                .any(|m| m == "Page.startScreencast" || m == "Emulation.setDeviceMetricsOverride"),
+            "{sent:?}"
+        );
+        // Over, it is no longer known by its name.
+        assert!(host.live_control("v1").is_none());
+    }
+
+    #[test]
+    fn a_size_given_as_the_view_registers_is_followed() {
+        let server = screencast_fake(0);
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        host.set_toggle(true);
+        assert!(wait_state(&host, ConnectionState::Connected));
+        host.turn_started("s1", "main", "/repo", Some(true));
+        let tab = opened_tab(&host, "s1", "https://example.com/");
+        let viewing = {
+            let (host, tab) = (host.clone(), tab.clone());
+            thread::spawn(move || {
+                host.live_view_with(
+                    "s1",
+                    &tab,
+                    "v1",
+                    live::PanelSize::new(640, 480, 1.0),
+                    || host.resize_live("v1", live::PanelSize::new(800, 600, 1.0)),
+                    |_| {},
+                )
+            })
+        };
+        assert!(server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Emulation.setDeviceMetricsOverride"
+                    && r.params["width"] == 800),
+            Duration::from_secs(5)
+        ));
+        host.stop_live(None);
+        assert_eq!(viewing.join().unwrap(), Ok(live::LiveEnd::Stopped));
     }
 
     /// A real Chrome at `exe` on a fresh profile, ready for Gespan to

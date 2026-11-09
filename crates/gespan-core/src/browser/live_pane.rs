@@ -6,7 +6,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use gespan_browser::live::{LiveEnd, LiveInput, LiveNav, MouseEvent, PanelSize};
@@ -14,11 +13,6 @@ use gespan_browser::protocol::TabId;
 use gespan_browser::BrowserHost;
 
 use super::{session_key, unpack_live, view, LivePicture};
-
-/// How long dropping a pane waits for its threads before it lets them
-/// finish on their own: a browser that stopped answering must not hold
-/// the UI.
-const JOIN_WAIT: Duration = Duration::from_secs(2);
 
 /// How the view ended, once it has.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +23,14 @@ pub enum Ended {
     TabGone,
     /// It could not start or broke.
     Failed(String),
+}
+
+/// Whether the host knows the view by its name yet, and the size the pane
+/// asked for before it did.
+#[derive(Default)]
+struct Sizing {
+    registered: bool,
+    pending: Option<PanelSize>,
 }
 
 #[derive(Default)]
@@ -53,16 +55,18 @@ struct Shared {
     /// The newest decoded picture the pane has not taken yet.
     latest: Mutex<Option<Result<LivePicture, String>>>,
     fresh: Condvar,
+    sizing: Mutex<Sizing>,
     /// The pane's threads still running.
     running: Arc<AtomicUsize>,
-    /// Signalled as each of them ends.
-    gone: Condvar,
-    gone_lock: Mutex<()>,
 }
 
 impl Shared {
+    fn stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
     fn over(&self) -> bool {
-        self.stopping.load(Ordering::Acquire)
+        self.stopping()
             || self
                 .ended
                 .lock()
@@ -82,17 +86,14 @@ struct Running(Arc<Shared>);
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let _gone = self.0.gone_lock.lock().unwrap_or_else(|e| e.into_inner());
         self.0.running.fetch_sub(1, Ordering::AcqRel);
-        self.0.gone.notify_all();
     }
 }
 
-/// One live view of a tab. Dropping it stops the view and waits for its
-/// threads.
+/// One live view of a tab. Dropping it stops the view at once, without
+/// waiting: its threads hold what they need and end on their own.
 pub struct LivePane {
     shared: Arc<Shared>,
-    threads: Vec<JoinHandle<()>>,
 }
 
 static NEXT_VIEW: AtomicU64 = AtomicU64::new(1);
@@ -111,6 +112,18 @@ impl LivePane {
         session: i64,
         tab: TabId,
         size: PanelSize,
+    ) -> Result<LivePane, String> {
+        LivePane::start_gated(host, session, tab, size, || {})
+    }
+
+    /// [`Self::start_with`], the view thread calling `gate` before it asks
+    /// the host for the view: tests hold it there.
+    fn start_gated(
+        host: Arc<BrowserHost>,
+        session: i64,
+        tab: TabId,
+        size: PanelSize,
+        gate: impl FnOnce() + Send + 'static,
     ) -> Result<LivePane, String> {
         let session = session_key(session);
         // The host refuses another thread's tab too; asking first keeps a
@@ -136,23 +149,30 @@ impl LivePane {
             input_error: Mutex::new(None),
             latest: Mutex::new(None),
             fresh: Condvar::new(),
+            sizing: Mutex::new(Sizing::default()),
             running: Arc::new(AtomicUsize::new(0)),
-            gone: Condvar::new(),
-            gone_lock: Mutex::new(()),
         });
         // Should a thread not start, dropping the pane stops the others.
-        let mut pane = LivePane {
-            shared: shared.clone(),
-            threads: Vec::with_capacity(3),
-        };
+        let pane = LivePane { shared };
         pane.spawn("browser-live-view", move |view| {
-            let outcome = view
-                .host
-                .live_view(&view.session, &view.tab, &view.view, size, |_| {
-                    if !view.started.swap(true, Ordering::AcqRel) {
-                        view.wake();
-                    }
-                });
+            // Dropped before the view even began: nothing to start.
+            let outcome = if view.stopping() {
+                Ok(LiveEnd::Stopped)
+            } else {
+                gate();
+                view.host.live_view_with(
+                    &view.session,
+                    &view.tab,
+                    &view.view,
+                    size,
+                    || registered(&view),
+                    |_| {
+                        if !view.started.swap(true, Ordering::AcqRel) {
+                            view.wake();
+                        }
+                    },
+                )
+            };
             let ended = match outcome {
                 Ok(LiveEnd::Stopped) => Ended::Stopped,
                 Ok(LiveEnd::TabGone) => Ended::TabGone,
@@ -167,7 +187,7 @@ impl LivePane {
     }
 
     fn spawn(
-        &mut self,
+        &self,
         name: &str,
         work: impl FnOnce(Arc<Shared>) + Send + 'static,
     ) -> Result<(), String> {
@@ -180,14 +200,8 @@ impl LivePane {
                 let _running = running;
                 work(shared);
             });
-        match spawned {
-            Ok(handle) => {
-                self.threads.push(handle);
-                Ok(())
-            }
-            // The closure, and the count it holds, went with the error.
-            Err(error) => Err(error.to_string()),
-        }
+        // On an error the closure, and the count it holds, went with it.
+        spawned.map(drop).map_err(|error| error.to_string())
     }
 
     /// The newest picture the pane has not drawn yet, waiting up to a
@@ -222,9 +236,16 @@ impl LivePane {
             .clone()
     }
 
-    /// The pane changed size.
+    /// The pane changed size. A size given before the view has begun is
+    /// kept until it has.
     pub fn resize(&self, size: PanelSize) {
-        self.shared.host.resize_live(&self.shared.view, size);
+        let shared = &self.shared;
+        let mut sizing = shared.sizing.lock().unwrap_or_else(|e| e.into_inner());
+        if sizing.registered {
+            shared.host.resize_live(&shared.view, size);
+        } else {
+            sizing.pending = Some(size);
+        }
     }
 
     /// Queue the user's input for the tab.
@@ -260,6 +281,17 @@ impl LivePane {
         self.shared.running.clone()
     }
 
+    /// Whether a size is still waiting for the view to begin.
+    #[cfg(test)]
+    fn size_pending(&self) -> bool {
+        self.shared
+            .sizing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending
+            .is_some()
+    }
+
     #[cfg(test)]
     fn view_name(&self) -> &str {
         &self.shared.view
@@ -267,9 +299,12 @@ impl LivePane {
 }
 
 impl Drop for LivePane {
+    /// Never waits (the UI drops panes): the view sees the stop at its next
+    /// look at it, the decoder and the sender when woken, and a view not
+    /// known to the host yet sees it as it registers ([`registered`]).
     fn drop(&mut self) {
         let shared = &self.shared;
-        shared.stopping.store(true, Ordering::Release);
+        shared.stopping.store(true, Ordering::SeqCst);
         shared
             .inputs
             .lock()
@@ -278,34 +313,20 @@ impl Drop for LivePane {
         shared.input_ready.notify_all();
         shared.host.stop_live(Some(&shared.view));
         shared.wake();
-        // Each thread ends within a moment of the stop: the view at its
-        // next look at it, the decoder and the sender when woken.
-        let deadline = Instant::now() + JOIN_WAIT;
-        let mut gone = shared.gone_lock.lock().unwrap_or_else(|e| e.into_inner());
-        while shared.running.load(Ordering::Acquire) > 0 {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            gone = shared
-                .gone
-                .wait_timeout(gone, left)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
-        }
-        drop(gone);
-        let late = shared.running.load(Ordering::Acquire);
-        if late > 0 {
-            tracing::warn!(
-                threads = late,
-                view = %shared.view,
-                "the live pane's threads are still ending; left to finish"
-            );
-            return;
-        }
-        for thread in self.threads.drain(..) {
-            let _ = thread.join();
-        }
+    }
+}
+
+/// The host knows the view by its name now: a stop or a size the pane gave
+/// before then, when the host could not take it, takes effect.
+fn registered(shared: &Shared) {
+    if shared.stopping() {
+        shared.host.stop_live(Some(&shared.view));
+        return;
+    }
+    let mut sizing = shared.sizing.lock().unwrap_or_else(|e| e.into_inner());
+    sizing.registered = true;
+    if let Some(size) = sizing.pending.take() {
+        shared.host.resize_live(&shared.view, size);
     }
 }
 
@@ -362,7 +383,7 @@ fn send_inputs(shared: &Shared) {
                     .unwrap_or_else(|e| e.into_inner());
             }
         };
-        if shared.stopping.load(Ordering::Acquire) {
+        if shared.stopping() {
             return;
         }
         let sent = shared.host.live_input(&shared.session, &shared.tab, &input);
@@ -432,7 +453,7 @@ mod tests {
     use mcp_hub::{Grant, Toolkit as _};
     use serde_json::json;
     use std::collections::BTreeSet;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
 
     fn moved(x: f64, buttons: u32) -> LiveInput {
         LiveInput::Mouse {
@@ -496,7 +517,7 @@ mod tests {
     /// A browser whose tabs stream `frames` real JPEG pictures, the next one
     /// after each acknowledgement, at the 640x480 panel the tests use (as
     /// 64x48 pictures, the same shape), and a PNG when the page is still.
-    fn screencast_browser(frames: i64) -> FakeCdp {
+    fn screencast_browser(frames: i64, stalled: Arc<AtomicBool>) -> FakeCdp {
         let counter = Arc::new(AtomicU64::new(1));
         let jpegs: Vec<String> = (1..=frames.max(1))
             .map(|n| encoded(image::ImageFormat::Jpeg, 64, 48, colour(n)))
@@ -504,6 +525,10 @@ mod tests {
         let png = encoded(image::ImageFormat::Png, 64, 48, [1, 2, 3]);
         let viewport = Arc::new(Mutex::new((800i64, 600i64)));
         FakeCdp::start_with(move |received| {
+            // A browser that stopped answering.
+            if stalled.load(Ordering::Acquire) {
+                return Response::Hold;
+            }
             let session = received.session.as_deref();
             let frame = |n: i64, size: (i64, i64)| {
                 Event::new(
@@ -568,11 +593,13 @@ mod tests {
         host: Arc<BrowserHost>,
         kit: Toolkit,
         tab: TabId,
+        stalled: Arc<AtomicBool>,
         _turns: Vec<Turn>,
     }
 
     fn rig(frames: i64) -> Rig {
-        let server = screencast_browser(frames);
+        let stalled = Arc::new(AtomicBool::new(false));
+        let server = screencast_browser(frames, stalled.clone());
         let host = host_on(&server.profile_dir(), AccessMode::Always);
         host.set_toggle(true);
         wait_for(&host, ConnectionState::Connected);
@@ -602,6 +629,7 @@ mod tests {
             host,
             kit,
             tab,
+            stalled,
             _turns: turns,
         }
     }
@@ -640,27 +668,29 @@ mod tests {
         let rig = rig(3);
         let pane = LivePane::start_with(rig.host.clone(), 1, rig.tab.clone(), panel()).unwrap();
         assert_eq!(pane.tab(), &rig.tab);
+        // The pane gets the newest picture when it asks, so one decoded
+        // while it was busy may be skipped, never shown out of order.
         let mut seqs = Vec::new();
-        while seqs.len() < 3 {
+        let still = loop {
             let picture = next_picture(&pane);
             // The page's viewport, whatever the picture's own size.
             assert_eq!((picture.width, picture.height), (640.0, 480.0));
             assert_eq!(picture.pixels.dimensions(), (64, 48));
-            if picture.seq <= 3 {
-                let [b, g, r, a] = picture.pixels.get_pixel(10, 10).0;
-                let [wr, wg, wb] = colour(picture.seq as i64);
-                assert!(
-                    b.abs_diff(wb) < 8 && g.abs_diff(wg) < 8 && r.abs_diff(wr) < 8 && a == 255,
-                    "picture {} is BGRA of its colour: {b} {g} {r} {a}",
-                    picture.seq
-                );
-            }
             assert!(seqs.last().is_none_or(|last| picture.seq > *last));
             seqs.push(picture.seq);
-        }
-        assert_eq!(seqs, [1, 2, 3]);
-        // The still page gets its lossless picture next, decoded the same.
-        let still = next_picture(&pane);
+            if picture.seq > 3 {
+                break picture;
+            }
+            let [b, g, r, a] = picture.pixels.get_pixel(10, 10).0;
+            let [wr, wg, wb] = colour(picture.seq as i64);
+            assert!(
+                b.abs_diff(wb) < 8 && g.abs_diff(wg) < 8 && r.abs_diff(wr) < 8 && a == 255,
+                "picture {} is BGRA of its colour: {b} {g} {r} {a}",
+                picture.seq
+            );
+        };
+        assert!(seqs.len() >= 2, "moving pictures came first: {seqs:?}");
+        // The still page gets its lossless picture last, decoded the same.
         assert_eq!(still.seq, 4);
         assert_eq!(still.pixels.get_pixel(0, 0).0, [3, 2, 1, 255]);
         assert_eq!(pane.ended(), None);
@@ -773,6 +803,27 @@ mod tests {
         assert!(pane.take_input_error().is_none());
     }
 
+    /// Wait up to five seconds for every thread of a dropped pane to end.
+    fn threads_end(threads: &AtomicUsize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while threads.load(Ordering::Acquire) > 0 {
+            assert!(
+                Instant::now() < deadline,
+                "{} pane threads still run",
+                threads.load(Ordering::Acquire)
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn count(server: &FakeCdp, method: &str) -> usize {
+        server
+            .received()
+            .iter()
+            .filter(|r| r.method == method)
+            .count()
+    }
+
     #[test]
     fn dropping_the_pane_stops_its_view_and_its_threads() {
         let rig = rig(1);
@@ -781,11 +832,9 @@ mod tests {
         let threads = pane.running_threads();
         assert_eq!(threads.load(Ordering::Acquire), 3);
         let view = pane.view_name().to_string();
-        let dropped = Instant::now();
         drop(pane);
-        assert!(dropped.elapsed() < Duration::from_secs(2));
-        // Every thread has ended by the time the drop returns.
-        assert_eq!(threads.load(Ordering::Acquire), 0);
+        // The threads end on their own, soon after.
+        threads_end(&threads);
         assert!(rig
             .server
             .received()
@@ -797,6 +846,109 @@ mod tests {
         let state = rig.host.state();
         assert!(view::session_tabs(&state, &session_key(1)).any(
             |t| t.tab.tab == rig.tab && t.tab.state == gespan_browser::protocol::TabState::Open
+        ));
+    }
+
+    #[test]
+    fn dropping_a_pane_never_waits_on_a_stalled_browser() {
+        let rig = rig(1);
+        let pane = LivePane::start_with(rig.host.clone(), 1, rig.tab.clone(), panel()).unwrap();
+        next_picture(&pane);
+        rig.stalled.store(true, Ordering::Release);
+        // The sender is stuck in this click: the browser never answers it.
+        pane.input(LiveInput::Mouse {
+            event: MouseEvent::Pressed,
+            x: 1.0,
+            y: 1.0,
+            button: MouseButton::Left,
+            buttons: 1,
+            click_count: 1,
+            modifiers: 0,
+        });
+        assert!(rig.server.wait_for(
+            |log| log.iter().any(|r| r.method == "Input.dispatchMouseEvent"),
+            Duration::from_secs(5)
+        ));
+        let threads = pane.running_threads();
+        let dropped = Instant::now();
+        drop(pane);
+        let took = dropped.elapsed();
+        assert!(took < Duration::from_millis(50), "the drop took {took:?}");
+        assert!(
+            threads.load(Ordering::Acquire) > 0,
+            "the sender is still stuck"
+        );
+    }
+
+    #[test]
+    fn a_pane_dropped_while_its_view_registers_stops_it() {
+        // The view thread is past its own look at the stop, the host does
+        // not know the view yet: the drop's stop finds nothing to stop.
+        let rig = rig(1);
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let pane =
+            LivePane::start_gated(rig.host.clone(), 1, rig.tab.clone(), panel(), move || {
+                let _ = held.recv();
+            })
+            .unwrap();
+        let threads = pane.running_threads();
+        drop(pane);
+        release.send(()).unwrap();
+        threads_end(&threads);
+        // It saw the stop as it registered, and never showed the tab.
+        assert_eq!(count(&rig.server, "Page.startScreencast"), 0);
+        assert_eq!(count(&rig.server, "Emulation.setDeviceMetricsOverride"), 0);
+    }
+
+    #[test]
+    fn starting_then_dropping_at_once_never_leaves_a_view_running() {
+        let rig = rig(1);
+        for _ in 0..200 {
+            let pane = LivePane::start_with(rig.host.clone(), 1, rig.tab.clone(), panel()).unwrap();
+            let threads = pane.running_threads();
+            drop(pane);
+            // A view left running would keep its thread, and the tab's
+            // pictures, going.
+            threads_end(&threads);
+        }
+        // Each screencast started was stopped, and its viewport given back.
+        let started = count(&rig.server, "Page.startScreencast");
+        assert!(count(&rig.server, "Page.stopScreencast") >= started);
+        assert!(count(&rig.server, "Emulation.clearDeviceMetricsOverride") >= started);
+    }
+
+    #[test]
+    fn a_size_given_before_the_view_begins_is_kept_for_it() {
+        let rig = rig(1);
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let pane =
+            LivePane::start_gated(rig.host.clone(), 1, rig.tab.clone(), panel(), move || {
+                let _ = held.recv();
+            })
+            .unwrap();
+        pane.resize(PanelSize::new(800, 600, 1.0));
+        assert!(
+            pane.size_pending(),
+            "the host has no view to give it to yet"
+        );
+        release.send(()).unwrap();
+        assert!(rig.server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Emulation.setDeviceMetricsOverride"
+                    && r.params["width"] == 800),
+            Duration::from_secs(5)
+        ));
+        assert!(!pane.size_pending());
+        // Sizes after that go straight to the view.
+        pane.resize(PanelSize::new(1000, 750, 1.0));
+        assert!(!pane.size_pending());
+        assert!(rig.server.wait_for(
+            |log| log
+                .iter()
+                .any(|r| r.method == "Emulation.setDeviceMetricsOverride"
+                    && r.params["width"] == 1000),
+            Duration::from_secs(5)
         ));
     }
 

@@ -408,7 +408,8 @@ impl LiveControl {
         *self.resize.lock().unwrap_or_else(|e| e.into_inner()) = Some(size);
     }
 
-    fn stopped(&self) -> bool {
+    /// [`Self::stop`] was called.
+    pub fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
     }
 
