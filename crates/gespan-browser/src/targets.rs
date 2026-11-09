@@ -493,6 +493,20 @@ pub fn adopt_tab(
     owner: &str,
     free: &FreeTab,
 ) -> Result<TabHandle, TabError> {
+    adopt_tab_with(link, sender, owner, free, |_| {})
+}
+
+/// [`adopt_tab`], with `mark` applied to the new lease as it is inserted,
+/// under the same lock: no revocation (the switch going off, say) can see
+/// the lease before it carries what `mark` sets, such as
+/// [`Lease::user_tab`].
+pub fn adopt_tab_with(
+    link: &Link,
+    sender: Sender<'_>,
+    owner: &str,
+    free: &FreeTab,
+    mark: impl FnOnce(&mut Lease),
+) -> Result<TabHandle, TabError> {
     let policy = link.policy();
     let tab = {
         let mut state = policy.write();
@@ -521,7 +535,11 @@ pub fn adopt_tab(
             &free.title,
         );
         state.unreserve_tab(owner);
-        state.insert_adopted_lease(lease)
+        let tab = state.insert_adopted_lease(lease);
+        if let Some(lease) = state.lease_mut(&tab) {
+            mark(lease);
+        }
+        tab
     };
     let attached = send(
         link,

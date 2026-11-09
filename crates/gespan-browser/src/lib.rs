@@ -1837,9 +1837,23 @@ impl BrowserHost {
     /// ([`policy::Lease::user_tab`]). It needs neither the switch nor the
     /// thread's access and gives the thread none: the switch decides only
     /// what agents get. Starts the Gespan browser when it is not running.
-    pub fn open_user_tab(self: &Arc<Self>, session: &str, url: &str) -> Result<TabId, String> {
+    ///
+    /// `window` is the app window the thread shows in: closing it closes
+    /// the user's tabs of its threads ([`Self::window_closed`]). In the
+    /// user's own browser (Attach) with the switch off this refuses:
+    /// Gespan never attaches to it for anything but agents the user let in.
+    pub fn open_user_tab(
+        self: &Arc<Self>,
+        session: &str,
+        window: &str,
+        url: &str,
+    ) -> Result<TabId, String> {
         let url = policy::check_url(url.trim()).map_err(|reason| reason.message().to_string())?;
-        self.open_tab_for(session, None, &url)
+        if !self.mode().launches() && !self.policy.read().toggle_on {
+            return Err("Gespan only opens links in its own browser.".into());
+        }
+        self.policy.write().note_window(session, window);
+        self.open_tab_for(session, window, &url, true)
     }
 
     /// A tab at `url` (already checked) that `session` holds, opened by the
@@ -1856,20 +1870,20 @@ impl BrowserHost {
         if !self.link.is_open() && !self.mode().launches() {
             return Err("Gespan is not connected to your browser.".into());
         }
-        self.open_tab_for(session, Some(window), url)
+        self.open_tab_for(session, window, url, false)
     }
 
-    /// [`Self::open_for_thread`] (`window` given: the click is the thread's
-    /// browser access) or [`Self::open_user_tab`] (no `window`: the user's
-    /// own tab, which grants nothing).
+    /// [`Self::open_for_thread`] (the click is the thread's browser access)
+    /// or [`Self::open_user_tab`] (`user_tab`: the user's own tab, which
+    /// grants nothing).
     fn open_tab_for(
         self: &Arc<Self>,
         session: &str,
-        window: Option<&str>,
+        window: &str,
         url: &str,
+        user_tab: bool,
     ) -> Result<TabId, String> {
         let url = url.to_string();
-        let user_tab = window.is_none();
         if !self.link.is_open() {
             if user_tab {
                 self.start_connect(false, true);
@@ -1910,24 +1924,30 @@ impl BrowserHost {
             url: url.clone(),
             title: String::new(),
         };
-        let granted_now = window.is_some_and(|window| self.grant_for_hand_over(session, window));
-        let handle = match targets::adopt_tab(&self.link, targets::Sender::System, session, &free) {
+        let granted_now = !user_tab && self.grant_for_hand_over(session, window);
+        // Gespan opened this tab for the thread, so ending the thread
+        // closes it like any agent tab instead of handing it back. Marked as
+        // the lease goes in, so the switch going off meanwhile already sees
+        // a user tab as the user's.
+        let adopted = targets::adopt_tab_with(
+            &self.link,
+            targets::Sender::System,
+            session,
+            &free,
+            |lease| {
+                lease.from_user = false;
+                lease.user_tab = user_tab;
+                lease.user_driven = user_tab;
+            },
+        );
+        let handle = match adopted {
             Ok(handle) => handle,
             Err(error) => {
-                if let Some(window) = window {
-                    self.undo_hand_over_grant(session, window, granted_now);
-                }
+                self.undo_hand_over_grant(session, window, granted_now);
                 targets::close_targets(&self.link, &[target]);
                 return Err(tab_error_message(error));
             }
         };
-        // Gespan opened this tab for the thread, so ending the thread
-        // closes it like any agent tab instead of handing it back.
-        if let Some(lease) = self.policy.write().lease_mut(&handle.tab) {
-            lease.from_user = false;
-            lease.user_tab = user_tab;
-            lease.user_driven = user_tab;
-        }
         self.adopted(&handle, session, &free, Actor::User);
         self.close_startup_pages();
         if url != "about:blank" {
@@ -2306,7 +2326,12 @@ impl BrowserHost {
         input: &live::LiveInput,
     ) -> Result<(), String> {
         let target = self.held_tab(session, tab)?;
-        self.mark_driver(tab, true);
+        // Only a real gesture is the user acting: a pointer resting over
+        // the pane (moves) or a scroll must not claim what an agent's
+        // click opens next.
+        if input.is_gesture() {
+            self.mark_driver(tab, true);
+        }
         if let Some(control) = self
             .live
             .lock()
@@ -2470,6 +2495,13 @@ impl BrowserHost {
     }
 
     pub fn window_closed(&self, window: &str) {
+        // The user's own tabs of the window's threads close with it: no pane
+        // is left to show or close them.
+        let closed = self.policy.write().close_user_tabs_of_window(window);
+        self.close_owned_targets(&closed.close);
+        for tab in &closed.tabs {
+            self.db.with(|conn| audit::lease_closed(conn, tab));
+        }
         let detach = self.policy.write().window_closed(window);
         if self.link.is_open() {
             targets::detach_sessions(&self.link, &detach);
@@ -3830,15 +3862,15 @@ mod tests {
     #[test]
     fn a_link_the_user_opens_starts_the_browser_with_the_switch_off_and_grants_agents_nothing() {
         let server = FakeCdp::start();
-        let dir = profile_for(&server);
-        let host = BrowserHost::for_tests(settings_for(&dir));
+        let (host, dir) = managed_host(&server, AccessMode::Always);
         assert!(!host.policy().read().toggle_on);
 
         let tab = host
-            .open_user_tab("s1", " https://example.com/docs ")
+            .open_user_tab("s1", "main", " https://example.com/docs ")
             .unwrap();
         assert!(host.link().is_open(), "the browser started for the user");
         assert_eq!(host.connection().state, ConnectionState::Connected);
+        assert!(host.connection().browser.unwrap().managed);
         assert!(!host.policy().read().toggle_on, "the switch stays off");
         assert!(!host.policy().read().granted("s1"));
         let lease = lease_of(&host, &tab);
@@ -3873,7 +3905,7 @@ mod tests {
             "javascript:alert(1)",
             "chrome://settings",
         ] {
-            assert!(host.open_user_tab("s1", url).is_err(), "{url}");
+            assert!(host.open_user_tab("s1", "main", url).is_err(), "{url}");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3887,7 +3919,9 @@ mod tests {
         let (host, dir) = managed_host(&server, AccessMode::Always);
         host.set_toggle(true);
         host.turn_started("s1", "main", "/repo", Some(true));
-        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
         assert!(host.connection().browser.unwrap().managed);
         let opened = host.handle_request("s1", request("r1", "tabs.open", json!({})));
         assert_eq!(opened.outcome, Outcome::Done, "{opened:?}");
@@ -3980,7 +4014,9 @@ mod tests {
         let (host, dir) = managed_host(&server, AccessMode::Always);
         host.set_toggle(true);
         host.turn_started("s1", "main", "/repo", Some(true));
-        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
         let opener = lease_of(&host, &own).target_id;
 
         // An agent acts in the user's tab (switch on, turn carries it)...
@@ -3990,14 +4026,40 @@ mod tests {
         let agents = adopted_lease(&host, "TAGENT");
         assert!(!agents.user_tab, "an agent-caused popup is the agent's");
 
-        // The user's own input in the pane makes the next popup theirs.
-        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+        // A pointer resting over the pane is no gesture: still the agent's.
+        host.live_input("s1", &own, &mouse(live::MouseEvent::Moved))
+            .unwrap();
+        host.live_input(
+            "s1",
+            &own,
+            &live::LiveInput::Wheel {
+                x: 10.,
+                y: 10.,
+                delta_x: 0.,
+                delta_y: 40.,
+                modifiers: 0,
+            },
+        )
+        .unwrap();
+        open_popup(&server, &opener, "THOVER");
+        let hovered = adopted_lease(&host, "THOVER");
+        assert!(!hovered.user_tab, "a hover does not make it the user's");
+
+        // The user's own press in the pane makes the next popup theirs.
+        host.live_input("s1", &own, &mouse(live::MouseEvent::Pressed))
             .unwrap();
         open_popup(&server, &opener, "TUSER");
         assert!(adopted_lease(&host, "TUSER").user_tab);
+        // So does the pane's Reload, after another agent action.
+        let _ = host.handle_request("s1", request("r2", "screenshot", json!({ "tab": own.0 })));
+        host.live_navigate("s1", &own, &live::LiveNav::Reload)
+            .unwrap();
+        open_popup(&server, &opener, "TNAV");
+        assert!(adopted_lease(&host, "TNAV").user_tab);
 
         host.set_toggle(false);
         assert_eq!(lease_of(&host, &agents.tab).state, TabState::Revoked);
+        assert_eq!(lease_of(&host, &hovered.tab).state, TabState::Revoked);
         assert!(server.wait_for(
             |all| all
                 .iter()
@@ -4009,6 +4071,121 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn mouse(event: live::MouseEvent) -> live::LiveInput {
+        live::LiveInput::Mouse {
+            event,
+            x: 10.,
+            y: 10.,
+            button: if event == live::MouseEvent::Moved {
+                live::MouseButton::None
+            } else {
+                live::MouseButton::Left
+            },
+            buttons: 0,
+            click_count: 1,
+            modifiers: 0,
+        }
+    }
+
+    #[test]
+    fn only_presses_keys_and_text_count_as_the_user_acting() {
+        assert!(mouse(live::MouseEvent::Pressed).is_gesture());
+        assert!(mouse(live::MouseEvent::Released).is_gesture());
+        assert!(!mouse(live::MouseEvent::Moved).is_gesture());
+        assert!(!live::LiveInput::Wheel {
+            x: 0.,
+            y: 0.,
+            delta_x: 0.,
+            delta_y: 1.,
+            modifiers: 0
+        }
+        .is_gesture());
+        assert!(live::LiveInput::Text { text: "a".into() }.is_gesture());
+    }
+
+    /// The user's own browser (Attach) with the switch off: a user's link
+    /// is refused (the app opens it in the system browser) and Gespan does
+    /// not attach to the browser for it.
+    #[test]
+    fn a_users_link_is_refused_in_an_attached_browser_with_the_switch_off() {
+        let server = FakeCdp::start();
+        let dir = profile_for(&server);
+        let host = BrowserHost::for_tests(settings_for(&dir));
+        assert!(host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .is_err());
+        thread::sleep(Duration::from_millis(100));
+        assert!(!host.link().is_open());
+        assert_ne!(host.connection().state, ConnectionState::Connected);
+        assert!(host.policy().read().leases().next().is_none());
+        assert!(server.received().is_empty(), "{:?}", server.received());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Closing an app window closes the user's own tabs of its threads; other
+    /// windows' tabs and agent tabs stay.
+    #[test]
+    fn closing_a_window_closes_its_users_tabs() {
+        let server = FakeCdp::start();
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        let gone = host
+            .open_user_tab("s1", "w2", "https://example.com/")
+            .unwrap();
+        let kept = host
+            .open_user_tab("s2", "main", "https://example.com/")
+            .unwrap();
+        let target = lease_of(&host, &gone).target_id;
+        host.window_closed("w2");
+        // Closed, and its row gone with the window's thread.
+        assert!(host
+            .policy()
+            .read()
+            .lease(&gone)
+            .is_none_or(|lease| lease.state == TabState::Closed));
+        assert_eq!(lease_of(&host, &kept).state, TabState::Open);
+        assert!(server.wait_for(
+            |all| all
+                .iter()
+                .any(|r| r.method == "Target.closeTarget"
+                    && r.params["targetId"] == target.0.as_str()),
+            Duration::from_secs(5),
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The switch going off while a user's tab is still attaching: the lease
+    /// is the user's from the moment it exists, so it is not revoked.
+    #[test]
+    fn switching_off_while_a_users_tab_opens_keeps_it_the_users() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let server = FakeCdp::start_with(move |received| {
+            if received.method == "Target.attachToTarget" {
+                if let Response::Result(value) = testing::default_response(received, &counter) {
+                    return Response::Delay(Duration::from_millis(400), value);
+                }
+            }
+            testing::default_response(received, &counter)
+        });
+        let (host, dir) = managed_host(&server, AccessMode::Always);
+        host.set_toggle(true);
+        let opener = host.clone();
+        let opening =
+            thread::spawn(move || opener.open_user_tab("s1", "main", "https://example.com/"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.policy().read().leases().next().is_none() {
+            assert!(Instant::now() < deadline, "the tab never started attaching");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let attaching = host.policy().read().leases().next().cloned().unwrap();
+        assert_eq!(attaching.state, TabState::Attaching);
+        assert!(attaching.user_tab, "the user's from the moment it exists");
+        host.set_toggle(false);
+        let tab = opening.join().unwrap().expect("the user's tab still opens");
+        assert_eq!(lease_of(&host, &tab).state, TabState::Open);
+        assert!(lease_of(&host, &tab).user_tab);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Security: with only pages an agent caused left (the user's own tab
     /// closed), switching off closes the link and the browser as before.
     #[test]
@@ -4017,7 +4194,9 @@ mod tests {
         let (host, dir) = managed_host(&server, AccessMode::Always);
         host.set_toggle(true);
         host.turn_started("s1", "main", "/repo", Some(true));
-        let own = host.open_user_tab("s1", "https://example.com/").unwrap();
+        let own = host
+            .open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
         let opener = lease_of(&host, &own).target_id;
         let _ = host.handle_request("s1", request("r1", "screenshot", json!({ "tab": own.0 })));
         open_popup(&server, &opener, "TAGENT");
@@ -4039,7 +4218,8 @@ mod tests {
         let host = BrowserHost::for_tests(settings_for(&dir));
         host.set_toggle(true);
         assert!(wait_state(&host, ConnectionState::Connected));
-        host.open_user_tab("s1", "https://example.com/").unwrap();
+        host.open_user_tab("s1", "main", "https://example.com/")
+            .unwrap();
         host.set_toggle(false);
         assert!(!host.link().is_open());
         assert_eq!(host.connection().state, ConnectionState::Off);
@@ -4055,7 +4235,7 @@ mod tests {
             ..BrowserSettings::default()
         });
         let error = host
-            .open_user_tab("s1", "https://example.com/")
+            .open_user_tab("s1", "main", "https://example.com/")
             .unwrap_err();
         assert!(!error.is_empty());
         assert!(!host.link().is_open());

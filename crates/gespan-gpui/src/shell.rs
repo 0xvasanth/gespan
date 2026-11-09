@@ -872,6 +872,9 @@ pub(crate) struct Shell {
     /// An agent's first tab in the thread the user is looking at, to show
     /// beside it without taking the keys from where they are.
     pending_browser: Option<(i64, crate::review::ReviewTab)>,
+    /// User tabs opened from a thread's link, waiting to show beside their
+    /// thread; one whose thread has no pane by then is closed.
+    pending_links: Vec<(i64, crate::review::ReviewTab)>,
     /// The review panes this frame draws; the others' browser tabs stop.
     drawn_reviews: Vec<gpui::EntityId>,
     pending_composer_focus: Option<i64>,
@@ -1292,6 +1295,7 @@ impl Shell {
             review_slide: None,
             pending_review: None,
             pending_browser: None,
+            pending_links: Vec::new(),
             drawn_reviews: Vec::new(),
             pending_composer_focus: None,
             review_focused: false,
@@ -1782,16 +1786,16 @@ impl Shell {
         };
         let key = crate::browser::session_key(session);
         let opening = url.clone();
-        let task = cx
-            .background_executor()
-            .spawn(async move { host.serialized(|| host.open_user_tab(&key, &opening)) });
+        let task = cx.background_executor().spawn(async move {
+            host.serialized(|| host.open_user_tab(&key, gespan_core::browser::WINDOW, &opening))
+        });
         cx.spawn(async move |this, cx| {
             let opened = task.await;
             let _ = this.update(cx, |this, cx| {
                 crate::browser::reread(cx);
                 match opened {
                     Ok(tab) => {
-                        this.pending_review = Some((
+                        this.pending_links.push((
                             session,
                             crate::review::ReviewTab::Browser {
                                 session,
@@ -9088,6 +9092,17 @@ impl Render for Shell {
             let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
             self.focus_pane(pane, window, cx);
             self.open_review(tab, window, cx);
+        }
+        for (id, tab) in std::mem::take(&mut self.pending_links) {
+            if self.workspace.tab_of(id).is_some() {
+                let pane = self.browser_tab_pane(&tab, cx).unwrap_or(id);
+                self.focus_pane(pane, window, cx);
+                self.open_review(tab, window, cx);
+            } else {
+                // The thread left the workspace meanwhile: no pane would
+                // ever show or close the user's tab, so it closes now.
+                crate::review::close_own_browser_tab(&tab, cx);
+            }
         }
         if let Some((id, tab)) = self.pending_browser.take()
             && self.viewing_session() == Some(id)

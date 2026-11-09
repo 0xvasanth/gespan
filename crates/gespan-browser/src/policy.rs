@@ -295,6 +295,17 @@ impl PolicyState {
         entry.token.clone()
     }
 
+    /// Remember which app window `session` shows in, keeping what a turn
+    /// already set (its working directory).
+    pub fn note_window(&mut self, session: &str, window: &str) {
+        match self.sessions.get_mut(session) {
+            Some(auth) => auth.window = window.to_string(),
+            None => {
+                self.prepare_session(session, window, "");
+            }
+        }
+    }
+
     pub fn token_for(&self, session: &str) -> Option<&str> {
         self.sessions.get(session).map(|auth| auth.token.as_str())
     }
@@ -652,6 +663,27 @@ impl PolicyState {
         }
         self.prune_leases(None);
         detach
+    }
+
+    /// App window `window` closed: the user's own tabs of its threads end
+    /// (their pages are for the caller to close).
+    pub fn close_user_tabs_of_window(&mut self, window: &str) -> Ended {
+        let sessions: HashSet<&String> = self
+            .sessions
+            .iter()
+            .filter(|(_, auth)| auth.window == window)
+            .map(|(id, _)| id)
+            .collect();
+        let mut ended = Ended::default();
+        for lease in self.leases.values_mut() {
+            if lease.user_tab && lease.is_live() && sessions.contains(&lease.owner) {
+                lease.state = TabState::Closed;
+                lease.busy = false;
+                ended.tabs.push(lease.tab.clone());
+                ended.close.push(lease.target_id.clone());
+            }
+        }
+        ended
     }
 
     /// Hand a tab to another session.

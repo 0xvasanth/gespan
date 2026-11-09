@@ -360,3 +360,78 @@ fn a_terminal_link_opens_in_the_thread_on_screen(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+fn closed_in_browser(rig: &Rig, target: &str) -> bool {
+    rig.received("Target.closeTarget", |params| params["targetId"] == target)
+}
+
+fn target_of(rig: &Rig, tab: &TabId) -> String {
+    rig.host
+        .policy()
+        .read()
+        .lease(tab)
+        .unwrap()
+        .target_id
+        .0
+        .clone()
+}
+
+/// The link's thread has no pane any more when its tab is ready: nothing
+/// would ever show or close the user's tab, so it closes at once.
+#[gpui::test]
+fn a_users_tab_whose_thread_has_no_pane_is_closed(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, _) = thread_with_link(rig.host.clone(), cx);
+    let gone = 9_999;
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(shell.workspace.tab_of(gone).is_none());
+            shell.open_thread_link(Some(gone), URL.into(), cx)
+        })
+        .unwrap();
+    settle(window, cx);
+    let lease = rig
+        .host
+        .policy()
+        .read()
+        .leases()
+        .find(|lease| lease.owner == session_key(gone))
+        .cloned()
+        .expect("the tab was opened");
+    assert!(lease.user_tab);
+    assert_eq!(lease.state, TabState::Closed);
+    assert!(
+        closed_in_browser(&rig, &lease.target_id.0),
+        "the orphan tab closed"
+    );
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(browser_tabs(shell, gone, cx).is_empty());
+        })
+        .unwrap();
+}
+
+/// Closing the window closes the user's own tabs shown in it; an agent's
+/// tab stays the agent's.
+#[gpui::test]
+fn closing_the_window_closes_its_users_tabs(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let (window, session) = thread_with_link(rig.host.clone(), cx);
+    click_link(window, Modifiers::none(), cx);
+    let own = host_tabs(&rig.host, session)[0].0.clone();
+    let agent = rig.open_tab(session);
+    let (own_target, agent_target) = (target_of(&rig, &own), target_of(&rig, &agent));
+    window.update(cx, |_, w, _| w.remove_window()).unwrap();
+    cx.run_until_parked();
+    assert!(
+        closed_in_browser(&rig, &own_target),
+        "the user's tab closed"
+    );
+    assert!(
+        !rig.server
+            .received()
+            .iter()
+            .any(|r| r.method == "Target.closeTarget" && r.params["targetId"] == agent_target),
+        "the agent's tab stays"
+    );
+}

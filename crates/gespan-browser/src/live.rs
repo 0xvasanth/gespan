@@ -176,6 +176,23 @@ pub enum LiveInput {
     Text { text: String },
 }
 
+impl LiveInput {
+    /// A press, release, key or typed text: the user acting in the page,
+    /// unlike a pointer move or a scroll.
+    pub fn is_gesture(&self) -> bool {
+        match self {
+            LiveInput::Mouse { event, .. } => {
+                matches!(event, MouseEvent::Pressed | MouseEvent::Released)
+            }
+            LiveInput::Wheel { .. } => false,
+            LiveInput::Key { event, .. } => {
+                matches!(event, KeyEvent::KeyDown | KeyEvent::RawKeyDown)
+            }
+            LiveInput::Text { .. } => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum MouseEvent {
     #[serde(rename = "mousePressed")]

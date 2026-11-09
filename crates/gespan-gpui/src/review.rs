@@ -204,30 +204,36 @@ struct Source {
     _tasks: Vec<Task<()>>,
     _events: Subscription,
 }
+/// Close `tab` in the browser when it is a browser tab the user opened;
+/// an agent's tab only ever leaves the pane.
+pub(crate) fn close_own_browser_tab(tab: &ReviewTab, cx: &gpui::App) {
+    let ReviewTab::Browser { tab, own: true, .. } = tab else {
+        return;
+    };
+    let Some(host) = crate::browser::host(cx) else {
+        return;
+    };
+    let tab = gespan_core::browser::TabId(tab.clone());
+    // Off the UI thread: closing waits for the browser. A tab already
+    // gone (the page closed itself) has nothing left to close.
+    cx.background_executor()
+        .spawn(async move {
+            let open = host.state().tabs.iter().any(|entry| {
+                entry.tab.tab == tab && entry.tab.state != gespan_core::browser::TabState::Closed
+            });
+            if open && let Err(error) = host.serialized(|| host.close_tab_by_user(&tab)) {
+                log_error("close browser tab", &error);
+            }
+        })
+        .detach();
+}
 impl Source {
-    /// A browser tab the user opened closes with its pane tab; an agent's
-    /// only leaves the pane.
-    fn close_own_browser_tab(&self, cx: &gpui::App) {
-        let ReviewTab::Browser { tab, own: true, .. } = &self.tab else {
-            return;
-        };
-        let Some(host) = crate::browser::host(cx) else {
-            return;
-        };
-        let tab = gespan_core::browser::TabId(tab.clone());
-        // Off the UI thread: closing waits for the browser. A tab already
-        // gone (the page closed itself) has nothing left to close.
-        cx.background_executor()
-            .spawn(async move {
-                let open = host.state().tabs.iter().any(|entry| {
-                    entry.tab.tab == tab
-                        && entry.tab.state != gespan_core::browser::TabState::Closed
-                });
-                if open && let Err(error) = host.serialized(|| host.close_tab_by_user(&tab)) {
-                    log_error("close browser tab", &error);
-                }
-            })
-            .detach();
+    /// A browser tab the user opened closes with its pane tab, once.
+    fn close_own_browser_tab(&mut self, cx: &gpui::App) {
+        close_own_browser_tab(&self.tab, cx);
+        if let ReviewTab::Browser { own, .. } = &mut self.tab {
+            *own = false;
+        }
     }
     fn cancel(&mut self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
@@ -463,6 +469,14 @@ impl ReviewPane {
             menu: None,
             _subscriptions: subscriptions,
         };
+        // The pane going away (its window closed, its thread left the
+        // workspace) takes the user's own browser tabs with it.
+        cx.on_release(|this: &mut Self, cx| {
+            for source in &mut this.sources {
+                source.close_own_browser_tab(cx);
+            }
+        })
+        .detach();
         // Browser tabs belong to the run that showed them.
         this.state.active = strip_browser_tabs(&mut this.state.tabs, this.state.active);
         let tabs = this.state.tabs.clone();

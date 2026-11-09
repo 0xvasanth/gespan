@@ -181,10 +181,20 @@ mod tests {
     #[test]
     fn the_users_own_tab_with_the_switch_off_gives_the_agent_nothing() {
         let server = FakeCdp::start();
-        let host = host_on(&server.profile_dir(), AccessMode::Always);
+        // The Gespan browser (Managed), as the app runs it.
+        let host = BrowserHost::for_tests(crate::browser::BrowserSettings {
+            mode: crate::browser::BrowserMode::Managed,
+            access: AccessMode::Always,
+            ..Default::default()
+        });
+        host.set_profile_dir(server.profile_dir());
         let kit = Toolkit::with_host(host.clone());
         let own = host
-            .open_user_tab(&session_key(1), "https://example.com/")
+            .open_user_tab(
+                &session_key(1),
+                crate::browser::WINDOW,
+                "https://example.com/",
+            )
             .unwrap();
         let turn = begin_turn_on(Some(host.clone()), &typed(1));
         assert!(!turn.carries_browser());
