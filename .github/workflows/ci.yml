@@ -77,6 +77,19 @@ jobs:
       - run: bunx tsc --noEmit
         working-directory: mobile
       - run: bunx vitest run --config mobile/vitest.config.ts
+      # The Android JNI entry point is behind cfg(target_os = "android"), so no
+      # other job compiles it; a broken one used to surface only in the EAS
+      # release build. Uses the NDK the runner image ships.
+      - name: Android native link compiles
+        run: |
+          set -euo pipefail
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          rustup target add aarch64-linux-android
+          export CC_aarch64_linux_android="$bin/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$bin/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          cargo check --locked -p gespan-mobile-link --target aarch64-linux-android
 
   host:
     needs: impact
