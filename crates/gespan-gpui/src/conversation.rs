@@ -236,6 +236,9 @@ pub(crate) struct Conversation {
     pending_tool: Option<String>,
     loading: bool,
     pub(crate) busy: bool,
+    /// The provider the running turn launched on. During a handoff it is the
+    /// incoming provider, while the pending switch still names the outgoing one.
+    pub(crate) turn_provider: Option<String>,
     /// The UI is idle; serialize the next launch behind the worker's last save.
     stopping: bool,
     /// Alive while this chat's turn is running, agent included.
@@ -838,6 +841,7 @@ impl Conversation {
             arcade: None,
             runner: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            turn_provider: None,
             title_cancel: None,
             branch_seed: None,
             branch_cancel: None,
@@ -1373,6 +1377,7 @@ impl Conversation {
         }
         .into();
         self.cancel = Arc::new(AtomicBool::new(false));
+        self.turn_provider = Some(self.summary.provider.clone());
         let summary = self.summary.clone();
         let store = self.store.clone();
         let cancel = self.cancel.clone();

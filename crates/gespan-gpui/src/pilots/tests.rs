@@ -5473,6 +5473,69 @@ fn switching_a_pilot_chat_provider_retries_its_failed_messages(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(errors(cx)[0].1, None);
 }
+// A provider switch on a chat with history hands off on the next turn.
+// `turn_provider` is the provider that turn launched on.
+fn switch_turn(s: &Setup, turn_provider: &str, cx: &mut TestAppContext) -> Entity<Conversation> {
+    let chat = cx.update(|cx| s.manager.read(cx).chats[&s.id].clone());
+    cx.update(|cx| {
+        chat.update(cx, |view, _| {
+            assert!(view.pilot_history_ready());
+            view.summary.provider = "claude".into();
+            view.settings.pending_provider_switch = Some(gespan_core::agent::ProviderSwitch {
+                from: "kiro".into(),
+                ..Default::default()
+            });
+            view.busy = true;
+            view.turn_provider = Some(turn_provider.into());
+        })
+    });
+    chat
+}
+fn queued_message(id: &str) -> Message {
+    Message {
+        sent_at: None,
+        id: id.into(),
+        text: format!("message {id}"),
+        internal: false,
+        error: None,
+        attachments: Vec::new(),
+        report: Vec::new(),
+    }
+}
+#[gpui::test]
+fn a_pilot_provider_switch_keeps_its_handoff_turn_running(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    // The handoff turn runs on Claude while the outgoing Kiro writes its
+    // recap. Its message is not delivered yet, so the host dispatches it
+    // again on every change.
+    let chat = switch_turn(&s, "claude", cx);
+    cx.update(|cx| {
+        chat.update(cx, |view, cx| {
+            let message = queued_message("after-switch");
+            for _ in 0..3 {
+                assert!(!view.pilot_dispatch(&message, cx));
+                assert!(
+                    view.busy,
+                    "a repeat dispatch must not stop the handoff turn"
+                );
+            }
+            assert!(view.settings.pending_provider_switch.is_some());
+        })
+    });
+}
+#[gpui::test]
+fn a_pilot_provider_switch_stops_the_outgoing_providers_turn(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    // Switched while Kiro was still replying: the next message stops Kiro so
+    // the queue goes to Claude.
+    let chat = switch_turn(&s, "kiro", cx);
+    cx.update(|cx| {
+        chat.update(cx, |view, cx| {
+            assert!(!view.pilot_dispatch(&queued_message("next"), cx));
+            assert!(!view.busy, "the outgoing provider's turn stops");
+        })
+    });
+}
 #[gpui::test]
 fn pilot_sessions_start_without_a_harness_uses_an_installed_provider(cx: &mut TestAppContext) {
     let s = setup(cx);

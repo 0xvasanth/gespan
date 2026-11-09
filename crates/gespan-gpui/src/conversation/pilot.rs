@@ -188,7 +188,16 @@ impl Conversation {
             self.load(cx);
             return false;
         }
-        if self.settings.pending_provider_switch.is_some() && self.busy {
+        // A switch stops the outgoing provider's turn so the queue goes to the
+        // new one. The handoff turn itself runs on the new provider while the
+        // switch is still pending, and this message is not delivered yet.
+        if self.busy
+            && self
+                .settings
+                .pending_provider_switch
+                .as_ref()
+                .is_some_and(|pending| self.turn_provider.as_deref() == Some(&pending.from))
+        {
             self.stop(cx);
         }
         if self.stopping
