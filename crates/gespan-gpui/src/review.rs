@@ -146,6 +146,21 @@ pub(crate) struct ReviewState {
     pub chat_hidden: bool,
 }
 
+/// Drop the saved browser tabs (they belong to the run that showed them)
+/// and say which tab is active after: the same one when it stays, else the
+/// nearest one before it, else the first.
+fn strip_browser_tabs(tabs: &mut Vec<ReviewTab>, active: usize) -> usize {
+    let browser = |tab: &ReviewTab| matches!(tab, ReviewTab::Browser { .. });
+    let kept_before = tabs.iter().take(active).filter(|tab| !browser(tab)).count();
+    let active_stays = tabs.get(active).is_some_and(|tab| !browser(tab));
+    tabs.retain(|tab| !browser(tab));
+    if active_stays {
+        kept_before
+    } else {
+        kept_before.saturating_sub(1)
+    }
+}
+
 pub(crate) enum ReviewEvent {
     Changed,
     Comment(String),
@@ -421,17 +436,7 @@ impl ReviewPane {
             _subscriptions: subscriptions,
         };
         // Browser tabs belong to the run that showed them.
-        if this
-            .state
-            .tabs
-            .iter()
-            .any(|tab| matches!(tab, ReviewTab::Browser { .. }))
-        {
-            this.state
-                .tabs
-                .retain(|tab| !matches!(tab, ReviewTab::Browser { .. }));
-            this.state.active = 0;
-        }
+        this.state.active = strip_browser_tabs(&mut this.state.tabs, this.state.active);
         let tabs = this.state.tabs.clone();
         for tab in tabs {
             let source = this.source(tab, cx);
@@ -2064,6 +2069,74 @@ fn tab_menu_items(tab: &ReviewTab, can_close_others: bool) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_browser_tabs_go_and_the_active_tab_stays_active() {
+        let file = |name: &str| ReviewTab::File {
+            cwd: "/repo".into(),
+            path: name.into(),
+        };
+        let browser = |tab: &str| ReviewTab::Browser {
+            session: 1,
+            tab: tab.into(),
+        };
+        let saved = vec![
+            browser("t1"),
+            file("a"),
+            browser("t2"),
+            file("b"),
+            file("c"),
+        ];
+        // The active file keeps the focus, wherever the browser tabs were.
+        for (active, want) in [(1, "a"), (3, "b"), (4, "c")] {
+            let mut tabs = saved.clone();
+            let active = strip_browser_tabs(&mut tabs, active);
+            assert_eq!(tabs, [file("a"), file("b"), file("c")]);
+            assert_eq!(tabs[active], file(want), "active {active}");
+        }
+        // An active browser tab gives way to the tab before it, or the first.
+        let mut tabs = saved.clone();
+        let active = strip_browser_tabs(&mut tabs, 2);
+        assert_eq!(tabs[active], file("a"));
+        let mut tabs = saved.clone();
+        assert_eq!(strip_browser_tabs(&mut tabs, 0), 0);
+        // Nothing to strip: unchanged, an active past the end too (the
+        // constructor clamps it to the tabs it has).
+        let mut tabs = vec![file("a"), file("b")];
+        assert_eq!(strip_browser_tabs(&mut tabs, 1), 1);
+        assert_eq!(tabs.len(), 2);
+        let mut tabs = vec![browser("t1")];
+        assert_eq!(strip_browser_tabs(&mut tabs, 0), 0);
+        assert!(tabs.is_empty());
+    }
+
+    #[gpui::test]
+    fn a_saved_pane_with_browser_tabs_reopens_on_the_tab_it_showed(cx: &mut gpui::TestAppContext) {
+        let repo = Repo::new();
+        let cwd = repo.cwd();
+        let git = cx.new(|cx| ProjectGit::new(cwd.clone(), cx));
+        let file = |name: &str| ReviewTab::File {
+            cwd: cwd.clone(),
+            path: repo.0.join(name).to_string_lossy().into_owned(),
+        };
+        let saved = ReviewState {
+            tabs: vec![
+                ReviewTab::Browser {
+                    session: 1,
+                    tab: "t_gone".into(),
+                },
+                file("a.txt"),
+                file("b.txt"),
+            ],
+            active: 2,
+            ..Default::default()
+        };
+        let pane = cx.new(|cx| ReviewPane::new(git, saved, cx));
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.state.tabs, [file("a.txt"), file("b.txt")]);
+            assert_eq!(pane.state.active, 1, "b.txt stays the active tab");
+        });
+    }
 
     #[test]
     fn failed_actions_log_their_action_and_error() {
