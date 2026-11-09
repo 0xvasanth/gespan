@@ -1483,6 +1483,18 @@ impl Pilots {
                     .items_center()
                     .gap_2()
                     .opacity(if active { 1. } else { 0.65 })
+                    .when(!original && !compact, |d| {
+                        let tip = SharedString::from(format!(
+                            "{}: {}",
+                            pilot.label(),
+                            if state == "needs-you" {
+                                "needs you"
+                            } else {
+                                state
+                            }
+                        ));
+                        d.tooltip(move |_, cx| cx.new(|_| StatusTooltip(tip.clone())).into())
+                    })
                     .when(active, |d| d.bg(content(0.1)))
                     .hover(|s| s.bg(content(0.08)).opacity(1.))
                     .child(
@@ -1491,6 +1503,29 @@ impl Pilots {
                             .relative()
                             .flex_shrink_0()
                             .child(avatar::avatar(&pilot.mascot, pilot.color, state, 16., true))
+                            .when(!original, |d| {
+                                d.child(
+                                    div()
+                                        .debug_selector({
+                                            let id = pilot.id.clone();
+                                            move || format!("pilot-status-dot-{id}")
+                                        })
+                                        .absolute()
+                                        .right(px(-3.))
+                                        .bottom(px(-3.))
+                                        .size(px(8.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(shell_fill())
+                                        .bg(if state == "working" {
+                                            rgb(pilot.color).into()
+                                        } else if state == "needs-you" {
+                                            accent_color()
+                                        } else {
+                                            content(0.3)
+                                        }),
+                                )
+                            })
                             .when(original, |d| {
                                 d.child(
                                     div()
@@ -1810,5 +1845,25 @@ impl gpui::Render for Pilots {
                 }),
             )
             .into_any_element()
+    }
+}
+
+/// The hover text on a Focused-rail Pilot row: its name and state.
+struct StatusTooltip(SharedString);
+impl Render for StatusTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut background = shell_fill();
+        background.a = 1.;
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(background)
+            .border_1()
+            .border_color(content(0.12))
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .text_color(content(0.85))
+            .child(self.0.clone())
     }
 }
