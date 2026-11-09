@@ -227,18 +227,20 @@ pub unsafe extern "C" fn gespan_link_free(output: *mut c_char) {
 }
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_expo_modules_gespanlink_GespanLinkModule_nativeCall(
-    mut env: jni::JNIEnv,
-    _: jni::objects::JObject,
-    input: jni::objects::JString,
-) -> jni::sys::jstring {
-    let output = env
-        .get_string(&input)
-        .map(|v| call(&String::from(v)))
-        .unwrap_or_else(|_| call(""));
-    env.new_string(output)
-        .map(|s| s.into_raw())
-        .unwrap_or(std::ptr::null_mut())
+pub extern "system" fn Java_expo_modules_gespanlink_GespanLinkModule_nativeCall<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _: jni::objects::JObject<'caller>,
+    input: jni::objects::JString<'caller>,
+) -> jni::objects::JString<'caller> {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<_> {
+            let output = input
+                .try_to_string(env)
+                .map(|v| call(&v))
+                .unwrap_or_else(|_| call(""));
+            jni::objects::JString::new(env, output)
+        })
+        .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }
 
 #[cfg(test)]
