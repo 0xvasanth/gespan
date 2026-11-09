@@ -84,6 +84,8 @@ impl Shell {
                 match result {
                     Ok((service, retries, sessions)) => {
                         this.automation_state.session_automations = sessions;
+                        // Their sessions move into the Automation runs folder.
+                        this.notify_sidebar(cx);
                         this.automation_state.service = Some(service);
                         for item in retries {
                             this.automation_state.event_retries.insert(item.key(), item);
@@ -476,6 +478,7 @@ impl Shell {
                         this.automation_state
                             .session_automations
                             .insert(id, due.automation.id.clone());
+                        this.notify_sidebar(cx);
                         this.automation_state.running.insert(
                             id,
                             Running {

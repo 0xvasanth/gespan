@@ -2627,4 +2627,350 @@ mod tests {
             assert_eq!(delivered, ["b agent needs your input"]);
         }
     }
+
+    mod fixed_folders {
+        use super::super::super::session_groups::RenameTarget;
+        use super::super::super::*;
+        use super::super::Row;
+        use gespan_core::pilot::{Launch, Pilot};
+        use gespan_core::session_groups::Entry;
+        use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+
+        const AUTOMATIONS: &str = "fixed:automations";
+
+        /// Both fixture sessions listed in the open project.
+        fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
+            let (window, a, b) = super::super::super::tests::window(cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    for id in [a, b] {
+                        shell.sessions[&id].update(cx, |session, _| {
+                            session.summary.cwd = shell.workspace.project.clone();
+                            session.summary.has_messages = true;
+                        });
+                    }
+                    shell.invalidate_chrome(cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            (window, a, b)
+        }
+
+        fn rows(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<Row> {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.refresh_sidebar_structure(cx);
+                    shell.sidebar_list.rows.clone()
+                })
+                .unwrap()
+        }
+
+        /// The fixed folder headers, as (id, name, sessions).
+        fn fixed(rows: &[Row]) -> Vec<(String, String, Vec<i64>)> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Group(Entry::Fixed { id, name, sessions }) => {
+                        Some((id.clone(), name.clone(), sessions.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn grouped(rows: &[Row]) -> Vec<i64> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::GroupedSession { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn loose(rows: &[Row]) -> Vec<i64> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Session(id) => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn mark_automation(window: &WindowHandle<Shell>, id: i64, cx: &mut TestAppContext) {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell
+                        .automation_state
+                        .session_automations
+                        .insert(id, "nightly".into());
+                    shell.invalidate_chrome(cx);
+                })
+                .unwrap();
+        }
+
+        fn launch(session_id: i64, cwd: &str) -> Launch {
+            Launch {
+                session_id,
+                cwd: cwd.into(),
+                title: "Child".into(),
+                harness: "codex".into(),
+                model: None,
+                origin_turn: 0,
+                notify_on_complete: false,
+                completed: false,
+                dismissed: false,
+            }
+        }
+
+        #[gpui::test]
+        fn automation_sessions_land_in_the_automation_runs_folder(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            mark_automation(&window, a, cx);
+            let rows = rows(&window, cx);
+            assert_eq!(
+                fixed(&rows),
+                [(AUTOMATIONS.into(), "Automation runs".into(), vec![a])]
+            );
+            assert_eq!(grouped(&rows), [a]);
+            assert_eq!(loose(&rows), [b], "a run is not also in the dated list");
+        }
+
+        #[gpui::test]
+        fn a_users_folder_or_pin_wins_over_the_automation_runs_folder(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            mark_automation(&window, a, cx);
+            mark_automation(&window, b, cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.update_groups(cx, |g| {
+                        g.create_folder(&[a], "work".into());
+                    });
+                })
+                .unwrap();
+            let rows = rows(&window, cx);
+            assert_eq!(
+                fixed(&rows),
+                [(AUTOMATIONS.into(), "Automation runs".into(), vec![b])]
+            );
+            assert!(rows.contains(&Row::Group(Entry::Folder {
+                id: "work".into(),
+                sessions: vec![a],
+            })));
+        }
+
+        #[gpui::test]
+        fn automation_runs_folder_fills_in_when_the_map_loads(cx: &mut TestAppContext) {
+            let (window, a, _) = setup(cx);
+            assert!(fixed(&rows(&window, cx)).is_empty());
+            window
+                .update(cx, |shell, _, cx| {
+                    locked(&shell.store)
+                        .unwrap()
+                        .set_automation_id(a, "nightly")
+                        .unwrap();
+                    // Open the automations again, as at startup.
+                    shell.automation_state.service = None;
+                    shell.automation_state.session_automations.clear();
+                    shell.initialize_automations(cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                fixed(&rows(&window, cx)),
+                [(AUTOMATIONS.into(), "Automation runs".into(), vec![a])]
+            );
+        }
+
+        #[gpui::test]
+        fn fixed_folder_collapse_is_remembered(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            mark_automation(&window, a, cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let header = visual
+                .debug_bounds("session-group-fixed:automations")
+                .expect("the Automation runs header is shown");
+            visual.simulate_click(header.center(), Default::default());
+            visual.run_until_parked();
+            let folded = rows(&window, cx);
+            assert_eq!(fixed(&folded).len(), 1, "a folded folder keeps its header");
+            assert!(grouped(&folded).is_empty());
+            assert_eq!(loose(&folded), [b]);
+
+            let (store, saved) = window
+                .update(cx, |shell, _, _| {
+                    (
+                        shell.store.clone(),
+                        serde_json::to_string(&shell.workspace).unwrap(),
+                    )
+                })
+                .unwrap();
+            assert!(
+                locked(&store)
+                    .unwrap()
+                    .groups("/work/gespan")
+                    .unwrap()
+                    .fixed_is_collapsed(AUTOMATIONS)
+            );
+            let summaries = locked(&store).unwrap().sessions().unwrap();
+            let reopened = cx.update(|cx| {
+                cx.open_window(Default::default(), |_, cx| {
+                    cx.new(|cx| {
+                        Shell::new(store, summaries, "/work/gespan".into(), Some(saved), cx)
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            for id in [a, b] {
+                reopened
+                    .update(cx, |shell, _, cx| {
+                        shell.ensure_session(id, cx);
+                        shell.sessions[&id].update(cx, |session, _| {
+                            session.summary.cwd = "/work/gespan".into();
+                            session.summary.has_messages = true;
+                        });
+                    })
+                    .unwrap();
+            }
+            mark_automation(&reopened, a, cx);
+            let listed = rows(&reopened, cx);
+            assert_eq!(
+                fixed(&listed),
+                [(AUTOMATIONS.into(), "Automation runs".into(), vec![a])]
+            );
+            assert!(grouped(&listed).is_empty(), "still folded after reopening");
+        }
+
+        #[gpui::test]
+        fn search_opens_collapsed_fixed_folders(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            mark_automation(&window, a, cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.update_groups(cx, |g| g.set_fixed_collapsed(AUTOMATIONS, true));
+                    assert_eq!(shell.sidebar_navigation_ids(cx), [b]);
+                    shell.query = "new".into();
+                    let mut ids = shell.sidebar_navigation_ids(cx);
+                    ids.sort();
+                    let mut both = vec![a, b];
+                    both.sort();
+                    assert_eq!(ids, both, "search opens folded fixed folders");
+                })
+                .unwrap();
+            assert_eq!(grouped(&rows(&window, cx)), [a]);
+        }
+
+        #[gpui::test]
+        fn pilot_folder_only_holds_this_projects_launches(cx: &mut TestAppContext) {
+            let (window, a, b) = setup(cx);
+            let pilots = window
+                .update(cx, |shell, _, _| shell.pilots.clone().unwrap())
+                .unwrap();
+            pilots.update(cx, |pilots, cx| {
+                pilots.roster.pilots.push(Pilot {
+                    id: "scout".into(),
+                    name: "Scout".into(),
+                    launches: vec![
+                        launch(a, "/work/gespan"),
+                        launch(b, "/work/another-project"),
+                    ],
+                    ..Default::default()
+                });
+                pilots.roster.pilots.push(Pilot {
+                    id: "elsewhere".into(),
+                    name: "Elsewhere".into(),
+                    launches: vec![launch(b, "/work/another-project")],
+                    ..Default::default()
+                });
+                cx.notify();
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let pilots = pilots.read(cx);
+                assert_eq!(
+                    pilots.launch_folders("/work/gespan"),
+                    [("scout".to_string(), "Scout".to_string(), vec![a])]
+                );
+                assert_eq!(
+                    pilots.launch_folders("/work/another-project"),
+                    [
+                        ("scout".to_string(), "Scout".to_string(), vec![b]),
+                        ("elsewhere".to_string(), "Elsewhere".to_string(), vec![b]),
+                    ]
+                );
+            });
+            let rows = rows(&window, cx);
+            assert_eq!(
+                fixed(&rows),
+                [("fixed:pilot:scout".into(), "Scout".into(), vec![a])]
+            );
+            assert_eq!(loose(&rows), [b]);
+        }
+
+        #[gpui::test]
+        fn classic_layout_has_no_fixed_folders(cx: &mut TestAppContext) {
+            let (window, a, _) = setup(cx);
+            mark_automation(&window, a, cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.workspace.classic_layout = true;
+                    shell.invalidate_chrome(cx);
+                })
+                .unwrap();
+            assert!(fixed(&rows(&window, cx)).is_empty());
+        }
+
+        #[gpui::test]
+        fn fixed_folder_has_no_rename_or_delete(cx: &mut TestAppContext) {
+            let (window, a, _) = setup(cx);
+            mark_automation(&window, a, cx);
+            let ids = |shell: &Shell| -> Vec<String> {
+                shell
+                    .fixed_folder_menu_items(AUTOMATIONS)
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        MenuItem::Action(action) => Some(action.id.to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            window
+                .update(cx, |shell, w, cx| {
+                    let before = ids(shell);
+                    assert_eq!(before, ["fixed-collapse"]);
+                    for id in &before {
+                        for word in ["rename", "delete", "dissolve", "ungroup"] {
+                            assert!(!id.contains(word), "{id} offers {word}");
+                        }
+                    }
+                    // Folder paths keyed by id stay inert for a fixed id.
+                    let groups = shell.project_groups();
+                    for action in ["rename", "ungroup"] {
+                        shell.run_menu(MenuTarget::Folder(AUTOMATIONS.into()), action, None, w, cx);
+                    }
+                    shell.start_rename(RenameTarget::Folder(AUTOMATIONS.into()), w, cx);
+                    assert!(shell.renaming.is_none());
+                    assert_eq!(shell.project_groups(), groups);
+
+                    shell.run_menu(
+                        MenuTarget::FixedFolder(AUTOMATIONS.into()),
+                        "fixed-collapse",
+                        None,
+                        w,
+                        cx,
+                    );
+                    assert!(shell.project_groups().fixed_is_collapsed(AUTOMATIONS));
+                    assert_eq!(ids(shell), ["fixed-expand"]);
+                    shell.run_menu(
+                        MenuTarget::FixedFolder(AUTOMATIONS.into()),
+                        "fixed-expand",
+                        None,
+                        w,
+                        cx,
+                    );
+                    assert!(!shell.project_groups().fixed_is_collapsed(AUTOMATIONS));
+                })
+                .unwrap();
+        }
+    }
 }

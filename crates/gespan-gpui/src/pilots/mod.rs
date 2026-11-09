@@ -490,6 +490,24 @@ impl Pilots {
     pub(crate) fn hidden_session(&self, id: i64) -> bool {
         self.is_pilot_session(id)
     }
+    /// Each Pilot's launches in `project`, in roster order, for the
+    /// sidebar's fixed folders: (Pilot id, name, session ids).
+    pub(crate) fn launch_folders(&self, project: &str) -> Vec<(String, String, Vec<i64>)> {
+        self.roster
+            .pilots
+            .iter()
+            .map(|pilot| {
+                let sessions: Vec<i64> = pilot
+                    .launches
+                    .iter()
+                    .filter(|launch| launch.cwd == project)
+                    .map(|launch| launch.session_id)
+                    .collect();
+                (pilot.id.clone(), pilot.label(), sessions)
+            })
+            .filter(|(_, _, sessions)| !sessions.is_empty())
+            .collect()
+    }
     pub(crate) fn set_preferences(
         &mut self,
         prefs: crate::settings::Preferences,

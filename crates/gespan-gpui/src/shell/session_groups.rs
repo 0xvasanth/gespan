@@ -9,13 +9,31 @@ use chrono::{Local, NaiveDateTime, TimeZone};
 use gespan_core::provider_boards::StateGroup;
 use gespan_core::{
     session_groups::{
-        Entry, Groups, WorkItem, build_list, format_reminder, navigation_ids,
+        Entry, FixedFolder, Groups, WorkItem, build_list, format_reminder, navigation_ids,
         parse_github_work_item, reminder_at, reminder_presets,
     },
     store::Reminder,
     tickets::{Resolved, TicketError, TicketRef, Tracker, parse_ticket},
 };
 use gpui::EventEmitter;
+
+/// Fixed folder ids start with this; they are never user folders.
+const FIXED_PREFIX: &str = "fixed:";
+const AUTOMATION_RUNS: &str = "fixed:automations";
+const PILOT_PREFIX: &str = "fixed:pilot:";
+
+/// Folds or opens a group header, keyed as the sidebar keys it.
+fn toggle_group(groups: &mut Groups, key: &str) {
+    match key {
+        "pinned" => groups.pinned_collapsed = !groups.pinned_collapsed,
+        "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
+        fixed if fixed.starts_with(FIXED_PREFIX) => {
+            let folded = groups.fixed_is_collapsed(fixed);
+            groups.set_fixed_collapsed(fixed, !folded);
+        }
+        folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
+    }
+}
 
 actions!(
     session_groups,
@@ -372,6 +390,7 @@ impl Shell {
 
     /// The project's sidebar entries, reminders first.
     pub(super) fn session_entries(&self, ids: &[i64], cx: &App) -> Vec<Entry> {
+        let fixed = self.fixed_folders(cx);
         let reminders: Vec<_> = self
             .reminders
             .iter()
@@ -382,8 +401,42 @@ impl Shell {
             |id| self.session_metadata(id, cx).summary.pinned,
             &self.project_groups(),
             &reminders,
-            &[],
+            &fixed,
         )
+    }
+    /// The automatic folders: one per Pilot with launches in this project,
+    /// then Automation runs. The focused sidebar only; the original layout
+    /// keeps its structure.
+    pub(super) fn fixed_folders(&self, cx: &App) -> Vec<FixedFolder> {
+        if self.workspace.classic_layout {
+            return Vec::new();
+        }
+        let mut folders: Vec<_> = self
+            .pilots
+            .as_ref()
+            .map(|pilots| pilots.read(cx).launch_folders(&self.workspace.project))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, name, session_ids)| FixedFolder {
+                id: format!("{PILOT_PREFIX}{id}"),
+                name,
+                session_ids,
+            })
+            .collect();
+        let runs: Vec<i64> = self
+            .automation_state
+            .session_automations
+            .keys()
+            .copied()
+            .collect();
+        if !runs.is_empty() {
+            folders.push(FixedFolder {
+                id: AUTOMATION_RUNS.into(),
+                name: "Automation runs".into(),
+                session_ids: runs,
+            });
+        }
+        folders
     }
     /// The sessions in the order the sidebar shows them, for stepping.
     pub(super) fn sidebar_navigation_ids(&self, cx: &App) -> Vec<i64> {
@@ -396,6 +449,7 @@ impl Shell {
                 !self.query.is_empty()
                     || match entry {
                         Entry::Folder { id, .. } => groups.folder(id).is_none_or(|f| !f.collapsed),
+                        Entry::Fixed { id, .. } => !groups.fixed_is_collapsed(id),
                         Entry::Pinned { .. } if self.workspace.classic_layout => {
                             !groups.pinned_collapsed
                         }
@@ -740,11 +794,36 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if folder.starts_with(FIXED_PREFIX) {
+            return;
+        }
         match action {
             "rename" => self.start_rename(RenameTarget::Folder(folder), window, cx),
             "ungroup" => self.update_groups(cx, |groups| groups.dissolve(&folder)),
             _ => {}
         }
+    }
+    /// A fixed folder cannot be renamed, recoloured or ungrouped: it only folds.
+    pub(super) fn fixed_folder_menu_items(&self, folder: &str) -> Vec<MenuItem> {
+        let item = if self.project_groups().fixed_is_collapsed(folder) {
+            MenuAction::new("fixed-expand", "Expand")
+        } else {
+            MenuAction::new("fixed-collapse", "Collapse")
+        };
+        vec![item.into()]
+    }
+    pub(super) fn run_fixed_folder_menu(
+        &mut self,
+        folder: String,
+        action: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let collapsed = match action {
+            "fixed-collapse" => true,
+            "fixed-expand" => false,
+            _ => return,
+        };
+        self.update_groups(cx, |groups| groups.set_fixed_collapsed(&folder, collapsed));
     }
 
     /// Opening a session whose reminder is due dismisses it.
@@ -982,7 +1061,15 @@ impl Shell {
         self.persist(cx);
     }
 
-    fn start_rename(&mut self, target: RenameTarget, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_rename(
+        &mut self,
+        target: RenameTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(&target, RenameTarget::Folder(f) if f.starts_with(FIXED_PREFIX)) {
+            return;
+        }
         self.close_preview(cx);
         let text = match &target {
             RenameTarget::Session(id) => self.session_metadata(*id, cx).display_title(),
@@ -1309,7 +1396,7 @@ impl Shell {
             Entry::Fixed { id, name, sessions } => (
                 id.clone(),
                 name.clone(),
-                "folder",
+                "zap",
                 None,
                 folders.fixed_is_collapsed(id),
                 sessions,
@@ -1325,11 +1412,25 @@ impl Shell {
             Entry::Pinned { .. } | Entry::Session(_) => return div().into_any(),
         };
         let expanded = searching || !collapsed;
+        // A Pilot's folder shows the Pilot instead of a glyph.
+        let avatar = key.strip_prefix(PILOT_PREFIX).and_then(|pilot| {
+            let pilots = self.pilots.as_ref()?.read(cx);
+            let pilot = pilots.roster.get(pilot)?;
+            Some(crate::pilots::avatar::avatar(
+                &pilot.mascot,
+                pilot.color,
+                "idle",
+                16.,
+                true,
+            ))
+        });
         let folder_id = key.strip_prefix("folder:").map(str::to_string);
         folder_id
             .as_ref()
             .and_then(|f| self.rename_row(&RenameTarget::Folder(f.clone()), cx))
-            .unwrap_or_else(|| self.group_row(&key, name, glyph, color, expanded, sessions, cx))
+            .unwrap_or_else(|| {
+                self.group_row(&key, name, glyph, avatar, color, expanded, sessions, cx)
+            })
     }
     #[allow(clippy::too_many_arguments)]
     fn group_row(
@@ -1337,6 +1438,7 @@ impl Shell {
         key: &str,
         name: String,
         glyph: &'static str,
+        avatar: Option<AnyElement>,
         color: Option<gpui::Hsla>,
         expanded: bool,
         sessions: &[i64],
@@ -1412,7 +1514,7 @@ impl Shell {
                         div()
                             .when(expanded, |d| d.invisible())
                             .group_hover(group.clone(), |s| s.invisible())
-                            .child(mark(16.)),
+                            .child(avatar.unwrap_or_else(|| mark(16.).into_any_element())),
                     )
                     .child(
                         div()
@@ -1484,21 +1586,24 @@ impl Shell {
                     return;
                 }
                 let key = toggle_key.clone();
-                this.update_groups(cx, |groups| match key.as_str() {
-                    "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
-                    folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
-                });
+                this.update_groups(cx, |groups| toggle_group(groups, &key));
             }))
-            .when(key.starts_with("folder:"), |d| {
-                d.on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        let folder = menu_key.trim_start_matches("folder:").to_string();
-                        let anchor = Anchor::Point(event.position);
-                        this.open_menu(MenuTarget::Folder(folder), anchor, window, cx);
-                    }),
-                )
-            })
+            .when(
+                key.starts_with("folder:") || key.starts_with(FIXED_PREFIX),
+                |d| {
+                    d.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            let target = match menu_key.strip_prefix("folder:") {
+                                Some(folder) => MenuTarget::Folder(folder.to_string()),
+                                None => MenuTarget::FixedFolder(menu_key.clone()),
+                            };
+                            let anchor = Anchor::Point(event.position);
+                            this.open_menu(target, anchor, window, cx);
+                        }),
+                    )
+                },
+            )
             .into_any()
     }
 
@@ -1669,11 +1774,7 @@ impl Shell {
                 if !this.query.is_empty() {
                     return;
                 }
-                this.update_groups(cx, |groups| match toggle_key.as_str() {
-                    "pinned" => groups.pinned_collapsed = !groups.pinned_collapsed,
-                    "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
-                    folder => groups.toggle_folder(folder.trim_start_matches("folder:")),
-                });
+                this.update_groups(cx, |groups| toggle_group(groups, &toggle_key));
             }))
             .when(key.starts_with("folder:"), |d| {
                 d.on_mouse_down(

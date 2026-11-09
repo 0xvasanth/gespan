@@ -181,7 +181,7 @@ pub enum Entry {
 
 /// buildSessionList: reminders lead, followed by fixed folders, folders, pins
 /// and loose sessions. A fixed folder only takes sessions that are not
-/// reminded, in a folder or pinned. Reminder membership only changes this view.
+/// reminded, in a folder, pinned or in an earlier fixed folder. Reminder membership only changes this view.
 pub fn build_list(
     visible: &[i64],
     pinned: impl Fn(i64) -> bool,
@@ -218,6 +218,7 @@ pub fn build_list(
             .copied()
             .filter(|&id| {
                 members.contains(&id)
+                    && !taken.contains(&id)
                     && !reminded_members.contains(&id)
                     && !foldered.contains(&id)
                     && !pinned(id)
@@ -741,6 +742,28 @@ mod tests {
         ];
         let list = build_list(&[1], |_| false, &Groups::default(), &[], &fixed);
         assert_eq!(list, vec![Entry::Session(1)]);
+    }
+
+    #[test]
+    fn a_session_in_two_fixed_folders_stays_in_the_first() {
+        let folder = |id: &str, session_ids: Vec<i64>| FixedFolder {
+            id: id.into(),
+            name: id.into(),
+            session_ids,
+        };
+        let fixed = [
+            folder("fixed:pilot:p", vec![1, 2]),
+            folder("fixed:automations", vec![2]),
+        ];
+        let list = build_list(&[1, 2], |_| false, &Groups::default(), &[], &fixed);
+        assert_eq!(
+            list,
+            vec![Entry::Fixed {
+                id: "fixed:pilot:p".into(),
+                name: "fixed:pilot:p".into(),
+                sessions: vec![1, 2],
+            }]
+        );
     }
 
     #[test]

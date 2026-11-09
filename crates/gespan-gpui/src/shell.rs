@@ -393,6 +393,8 @@ pub(crate) enum MenuTarget {
     AppTab(app_views::AppView),
     Session(i64),
     Folder(String),
+    /// An automatic folder such as Automation runs, by its `fixed:` id.
+    FixedFolder(String),
     /// The sidebar project header's menu.
     Header,
     /// The original project rail's local or remote folder menu.
@@ -1422,12 +1424,19 @@ impl Shell {
             let mut pilot_chrome = pilots.read(cx).overview_chrome();
             let mut pilot_error = pilots.read(cx).error.clone();
             let mut pilot_session = pilots.read(cx).routed_session();
+            let mut pilot_launches = pilots.read(cx).launch_folders(&this.workspace.project);
             this.observations
                 .push(cx.observe(&pilots, move |this, pilots, cx| {
                     let session = pilots.read(cx).routed_session();
                     if session != pilot_session {
                         pilot_session = session;
                         this.update_chat_visibility(cx);
+                    }
+                    // Any Pilot's launch here fills its sidebar folder.
+                    let launches = pilots.read(cx).launch_folders(&this.workspace.project);
+                    if launches != pilot_launches {
+                        pilot_launches = launches;
+                        this.notify_sidebar(cx);
                     }
                     let chrome = pilots.read(cx).overview_chrome();
                     if chrome != pilot_chrome {
@@ -6111,6 +6120,12 @@ impl Shell {
                 228.,
                 MenuStyle::Explorer,
             ),
+            MenuTarget::FixedFolder(folder) => (
+                "Folder actions".into(),
+                self.fixed_folder_menu_items(folder),
+                228.,
+                MenuStyle::Explorer,
+            ),
             MenuTarget::TerminalDock => {
                 let side = self
                     .workspace
@@ -6474,6 +6489,7 @@ impl Shell {
             }
             MenuTarget::Session(id) => self.run_session_menu(id, action, window, cx),
             MenuTarget::Folder(folder) => self.run_folder_menu(folder, action, window, cx),
+            MenuTarget::FixedFolder(folder) => self.run_fixed_folder_menu(folder, action, cx),
             MenuTarget::ProjectRailAdd => match action {
                 "open-project" => self.open_project(cx),
                 "open-remote-project" => self.open_remote_project(window, cx),
