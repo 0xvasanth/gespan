@@ -379,6 +379,35 @@ fn the_error_line_clears_once_a_picture_or_an_input_goes_through(cx: &mut TestAp
 }
 
 #[gpui::test]
+fn a_pane_shown_again_after_its_tab_closed_says_the_tab_is_gone(cx: &mut TestAppContext) {
+    let rig = Rig::start();
+    let tab = rig.open_tab(16);
+    let (pane, _window, mut visual) = pane_window(&rig, 16, tab.clone(), cx);
+    pull_until(&pane, &mut visual, |pane| pane.picture.is_some());
+    // Out of sight, the view stops; the tab closes meanwhile.
+    visual.update(|_, cx| pane.update(cx, |pane, cx| pane.set_shown(false, cx)));
+    visual.run_until_parked();
+    visual.update(|_, cx| assert!(!pane.read(cx).is_live()));
+    rig.host.close_tab_by_user(&tab).unwrap();
+    visual.update(|_, cx| pane.update(cx, |pane, cx| pane.set_shown(true, cx)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    pull_until(&pane, &mut visual, |pane| pane.ended.is_some());
+    visual.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.ended, Some(Ended::TabGone));
+        assert_eq!(
+            pane.ended_message(),
+            Some(("This tab closed or left the thread.".to_owned(), false))
+        );
+    });
+    assert!(
+        visual.debug_bounds("browser-pane-retry").is_none(),
+        "nothing to show again"
+    );
+}
+
+#[gpui::test]
 fn the_address_is_shown_and_never_typed_into(cx: &mut TestAppContext) {
     let rig = Rig::start();
     let tab = rig.open_tab(17);

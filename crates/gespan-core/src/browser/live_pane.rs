@@ -9,10 +9,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use gespan_browser::live::{LiveEnd, LiveInput, LiveNav, MouseEvent, PanelSize};
-use gespan_browser::protocol::TabId;
+use gespan_browser::protocol::{BrowserState, TabId, TabState};
 use gespan_browser::BrowserHost;
 
-use super::{session_key, unpack_live, view, LivePicture};
+use super::{session_key, unpack_live, LivePicture};
 
 /// How the view ended, once it has.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,9 +100,11 @@ static NEXT_VIEW: AtomicU64 = AtomicU64::new(1);
 
 impl LivePane {
     /// Start showing `tab`, one of `session`'s tabs, at `size`, on the
-    /// browser [`super::start`] started.
-    pub fn start(session: i64, tab: TabId, size: PanelSize) -> Result<LivePane, String> {
-        let host = super::host().ok_or("Browser access is not available.")?;
+    /// browser [`super::start`] started. Refused as [`Ended::TabGone`] when
+    /// the tab has closed, or [`Ended::Failed`] with why.
+    pub fn start(session: i64, tab: TabId, size: PanelSize) -> Result<LivePane, Ended> {
+        let host = super::host()
+            .ok_or_else(|| Ended::Failed("Browser access is not available.".into()))?;
         LivePane::start_with(host, session, tab, size)
     }
 
@@ -112,7 +114,7 @@ impl LivePane {
         session: i64,
         tab: TabId,
         size: PanelSize,
-    ) -> Result<LivePane, String> {
+    ) -> Result<LivePane, Ended> {
         LivePane::start_gated(host, session, tab, size, || {})
     }
 
@@ -124,13 +126,16 @@ impl LivePane {
         tab: TabId,
         size: PanelSize,
         gate: impl FnOnce() + Send + 'static,
-    ) -> Result<LivePane, String> {
+    ) -> Result<LivePane, Ended> {
         let session = session_key(session);
         // The host refuses another thread's tab too; asking first keeps a
         // pane from ever starting on one.
-        let state = host.state();
-        if !view::session_tabs(&state, &session).any(|shown| shown.tab.tab == tab) {
-            return Err("That tab belongs to another thread, or is gone.".into());
+        match holding(&host.state(), &session, &tab) {
+            Holding::Open => {}
+            Holding::Gone => return Err(Ended::TabGone),
+            Holding::Other => {
+                return Err(Ended::Failed("That tab belongs to another thread.".into()));
+            }
         }
         let shared = Arc::new(Shared {
             host,
@@ -176,13 +181,23 @@ impl LivePane {
             let ended = match outcome {
                 Ok(LiveEnd::Stopped) => Ended::Stopped,
                 Ok(LiveEnd::TabGone) => Ended::TabGone,
+                // The tab closed before the view could begin (a pane shown
+                // again after its tab closed out of sight): gone, not broken.
+                Err(_)
+                    if holding(&view.host.state(), &view.session, &view.tab) == Holding::Gone =>
+                {
+                    Ended::TabGone
+                }
                 Err(error) => Ended::Failed(error),
             };
             *view.ended.lock().unwrap_or_else(|e| e.into_inner()) = Some(ended);
             view.wake();
-        })?;
-        pane.spawn("browser-live-decode", |decoder| decode_pictures(&decoder))?;
-        pane.spawn("browser-live-input", |sender| send_inputs(&sender))?;
+        })
+        .map_err(Ended::Failed)?;
+        pane.spawn("browser-live-decode", |decoder| decode_pictures(&decoder))
+            .map_err(Ended::Failed)?;
+        pane.spawn("browser-live-input", |sender| send_inputs(&sender))
+            .map_err(Ended::Failed)?;
         Ok(pane)
     }
 
@@ -360,6 +375,27 @@ fn decode_pictures(shared: &Shared) {
         let picture = unpack_live(&packed);
         *shared.latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(picture);
         shared.fresh.notify_all();
+    }
+}
+
+/// Whose `tab` is, for `session`'s pane.
+#[derive(Debug, PartialEq)]
+enum Holding {
+    /// One of the session's tabs, open or opening.
+    Open,
+    /// Another session's.
+    Other,
+    /// Closed, crashed, taken back, or never there.
+    Gone,
+}
+
+fn holding(state: &BrowserState, session: &str, tab: &TabId) -> Holding {
+    match state.tabs.iter().find(|shown| shown.tab.tab == *tab) {
+        Some(shown) if shown.session_id != session => Holding::Other,
+        Some(shown) if matches!(shown.tab.state, TabState::Open | TabState::Attaching) => {
+            Holding::Open
+        }
+        _ => Holding::Gone,
     }
 }
 
@@ -750,9 +786,9 @@ mod tests {
     fn a_session_cannot_show_another_sessions_tab() {
         let rig = rig(1);
         let refused = LivePane::start_with(rig.host.clone(), 2, rig.tab.clone(), panel());
-        let error = refused
-            .err()
-            .expect("session 2 may not show session 1's tab");
+        let Some(Ended::Failed(error)) = refused.err() else {
+            panic!("session 2 may not show session 1's tab");
+        };
         assert!(error.contains("another thread"), "{error}");
         // Nothing reached the browser for it.
         std::thread::sleep(Duration::from_millis(200));
@@ -764,7 +800,33 @@ mod tests {
         // An unknown tab is refused the same way.
         let unknown =
             LivePane::start_with(rig.host.clone(), 1, TabId("t_00000000".into()), panel());
-        assert!(unknown.is_err());
+        assert_eq!(unknown.err(), Some(Ended::TabGone));
+    }
+
+    #[test]
+    fn a_pane_started_on_a_tab_that_closed_ends_as_tab_gone() {
+        let rig = rig(1);
+        rig.host.close_tab_by_user(&rig.tab).unwrap();
+        // Shown again after its tab closed out of sight: gone, with nothing
+        // to try again.
+        let refused = LivePane::start_with(rig.host.clone(), 1, rig.tab.clone(), panel());
+        assert_eq!(refused.err(), Some(Ended::TabGone));
+    }
+
+    #[test]
+    fn a_tab_that_closes_as_the_view_begins_ends_it_as_tab_gone() {
+        let rig = rig(1);
+        let (host, tab) = (rig.host.clone(), rig.tab.clone());
+        // Open when the pane asks, closed by the time the view starts.
+        let pane =
+            LivePane::start_gated(rig.host.clone(), 1, rig.tab.clone(), panel(), move || {
+                host.close_tab_by_user(&tab).unwrap();
+            })
+            .unwrap();
+        assert_eq!(
+            ended_within(&pane, Duration::from_secs(5)),
+            Some(Ended::TabGone)
+        );
     }
 
     #[test]

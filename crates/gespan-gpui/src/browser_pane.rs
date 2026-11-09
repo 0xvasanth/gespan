@@ -498,12 +498,12 @@ impl BrowserPane {
 
     fn start(&mut self, size: PanelSize, cx: &mut Context<Self>) {
         let started = crate::browser::host(cx)
-            .ok_or_else(|| "Browser access is not available.".to_owned())
+            .ok_or_else(|| Ended::Failed("Browser access is not available.".to_owned()))
             .and_then(|host| LivePane::start_with(host, self.session, self.tab.clone(), size));
         let live = match started {
             Ok(live) => Arc::new(live),
-            Err(error) => {
-                self.ended = Some(Ended::Failed(error));
+            Err(ended) => {
+                self.ended = Some(ended);
                 cx.notify();
                 return;
             }
