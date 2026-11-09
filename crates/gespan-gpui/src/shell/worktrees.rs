@@ -303,6 +303,8 @@ mod tests {
         let (window, _, active) = window(cx);
         window
             .update(cx, |shell, w, cx| {
+                // Only the classic layout's header menu still lists Settings.
+                shell.workspace.classic_layout = true;
                 shell.open_menu(
                     MenuTarget::Header,
                     Anchor::Slot(shell.project_anchor.clone()),
@@ -329,6 +331,7 @@ mod tests {
         window
             .update(visual, |shell, w, cx| {
                 assert!(shell.settings.is_none());
+                shell.workspace.classic_layout = false;
                 shell.open_menu(
                     MenuTarget::Header,
                     Anchor::Slot(shell.project_anchor.clone()),

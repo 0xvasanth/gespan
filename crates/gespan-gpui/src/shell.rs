@@ -830,6 +830,7 @@ pub(crate) struct Shell {
     backdrop: Option<(i64, bool)>,
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
+    project_settings_anchor: AnchorSlot,
     sidebar_options_anchor: AnchorSlot,
     history: VisitHistory,
     /// User navigation invalidates pending requests that would otherwise
@@ -1268,6 +1269,7 @@ impl Shell {
             backdrop: None,
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
+            project_settings_anchor: AnchorSlot::default(),
             sidebar_options_anchor: AnchorSlot::default(),
             history: VisitHistory::default(),
             navigation_revision: 0,
@@ -6276,21 +6278,32 @@ impl Shell {
                             surface: None,
                         })
                         .into(),
-                    MenuAction::new("project-settings", "Project settings")
-                        .icon("sliders")
-                        .flyout(self.project_settings_flyout(events, window, cx))
-                        .into(),
                     MenuAction::new("open-remote-project", "Open folder on a machine…")
                         .icon("globe")
                         .into(),
-                    MenuAction::new("settings", "Settings")
-                        .icon("settings")
-                        .shortcut(format!("{MOD},"))
-                        .into(),
                 ];
-                // Beside Project settings: both act on this project.
+                // The classic layout has no gear beside its project row, so
+                // its menu keeps Project settings and Settings.
+                if self.workspace.classic_layout {
+                    items.insert(
+                        3,
+                        MenuAction::new("project-settings", "Project settings")
+                            .icon("sliders")
+                            .flyout(self.project_settings_flyout(events, window, cx))
+                            .into(),
+                    );
+                    items.push(
+                        MenuAction::new("settings", "Settings")
+                            .icon("settings")
+                            .shortcut(format!("{MOD},"))
+                            .into(),
+                    );
+                }
+                // After Switch project (and Project settings in classic): both
+                // act on this project.
                 if let Some(editor) = editor {
-                    items.insert(4, editor);
+                    let at = if self.workspace.classic_layout { 4 } else { 3 };
+                    items.insert(at, editor);
                 }
                 (
                     format!("{} menu", self.project_label(&self.workspace.project)).into(),
@@ -7479,6 +7492,32 @@ impl Shell {
                                                 }
                                             })),
                                     ),
+                                )
+                                .child(
+                                    icon_button(
+                                        "sidebar-project-settings",
+                                        "Project settings",
+                                        "settings",
+                                    )
+                                    .debug_selector(|| "sidebar-project-settings".into())
+                                    .relative()
+                                    .child(self.project_settings_anchor.probe())
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            let target = MenuTarget::Project {
+                                                path: this.workspace.project.clone(),
+                                                rail: false,
+                                            };
+                                            if this.menu_open(&target) {
+                                                this.close_menu(cx);
+                                            } else {
+                                                let anchor = Anchor::Slot(
+                                                    this.project_settings_anchor.clone(),
+                                                );
+                                                this.open_menu(target, anchor, window, cx);
+                                            }
+                                        },
+                                    )),
                                 )
                                 .when(self.workspace.sidebar_search_visible, |d| {
                                     d.child(
@@ -10777,6 +10816,8 @@ mod tests {
         });
         window
             .update(cx, |shell, w, cx| {
+                // Classic keeps Project settings as a flyout of the header menu.
+                shell.workspace.classic_layout = true;
                 let anchor = Anchor::Slot(shell.project_anchor.clone());
                 shell.open_menu(MenuTarget::Header, anchor, w, cx);
             })

@@ -1515,6 +1515,83 @@ mod tests {
     }
 
     #[gpui::test]
+    fn header_menu_only_switches(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let button = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_click(button.center(), Default::default());
+        visual.run_until_parked();
+        let rows = window
+            .update(visual, |shell, _, cx| {
+                let open = shell.menu.as_ref().expect("the project menu opened");
+                assert!(open.target == MenuTarget::Header);
+                open.menu.read(cx).item_shape()
+            })
+            .unwrap();
+        for gone in ["Project settings", "Settings"] {
+            assert!(!rows.contains(&gone.to_string()), "{gone} left: {rows:?}");
+        }
+        for kept in [
+            "Switch worktree",
+            "Switch project",
+            "Open folder on a machine…",
+        ] {
+            assert!(rows.contains(&kept.to_string()), "{kept} missing: {rows:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn gear_opens_project_settings_beside_the_project_button(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let project = visual.debug_bounds("sidebar-project-button").unwrap();
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        let options = visual.debug_bounds("sidebar-options").unwrap();
+        assert!(project.right() <= gear.left());
+        assert!(gear.right() <= options.left());
+        assert!((gear.center().y - options.center().y).abs() <= px(1.));
+        assert!((gear.size.width - gear.size.height).abs() <= px(1.));
+        visual.simulate_click(gear.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                let open = shell.menu.as_ref().expect("the gear opened a menu");
+                assert!(
+                    open.target
+                        == MenuTarget::Project {
+                            path: shell.workspace.project.clone(),
+                            rail: false
+                        }
+                );
+            })
+            .unwrap();
+        // A second click on the gear closes it.
+        visual.simulate_click(gear.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| assert!(shell.menu.is_none()))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn classic_header_menu_keeps_project_settings_and_settings(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let rows = window
+            .update(visual, |shell, w, cx| {
+                shell.workspace.classic_layout = true;
+                let anchor = Anchor::Slot(shell.project_anchor.clone());
+                shell.open_menu(MenuTarget::Header, anchor, w, cx);
+                shell.menu.as_ref().unwrap().menu.read(cx).item_shape()
+            })
+            .unwrap();
+        assert!(rows.contains(&"Project settings".into()), "{rows:?}");
+        assert!(rows.contains(&"Settings".into()), "{rows:?}");
+    }
+
+    #[gpui::test]
     fn focused_new_session_leads_navigation_and_marks_blank_sessions(cx: &mut TestAppContext) {
         let (window, _, active) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);

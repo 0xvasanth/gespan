@@ -1014,8 +1014,8 @@ mod tests {
             let at = rows.iter().position(|row| row == "Open in editor");
             assert_eq!(
                 at.map(|ix| rows[ix - 1].as_str()),
-                Some("Project settings"),
-                "{name}: beside Project settings in {rows:?}"
+                Some("Switch project"),
+                "{name}: beside Switch project in {rows:?}"
             );
 
             pick(window, visual, "Open in editor");
