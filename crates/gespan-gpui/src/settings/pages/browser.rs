@@ -15,10 +15,10 @@ use gespan_core::browser::{AccessMode, BrowserSettings, BrowserState, view};
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, prelude::*, px};
 
 /// The group's description: what the browser is and where it shows.
-pub(super) const DESCRIPTION: &str = "Agents open their own tabs in Gespan's built-in browser, shown beside the thread. It keeps its own profile in Gespan's data folder, so sites you sign in to there stay signed in.";
+pub(super) const DESCRIPTION: &str = "Agents open their own tabs in Gespan's built-in browser, shown beside the thread. It keeps its own profile in Gespan's data folder, so sites you sign in to there stay signed in. Links you click in a thread open here too; with the switch on, agents use the same sign-ins and can work in the tabs you opened from that thread.";
 
 /// The switch's description.
-pub(super) const SWITCH_HELP: &str = "Gespan remembers this switch, and nothing starts until an agent needs the browser. Turning it off stops every browser action and leaves the agents' tabs open.";
+pub(super) const SWITCH_HELP: &str = "Gespan remembers this switch, and nothing starts until an agent needs the browser. Turning it off stops every agent action and closes the agents' tabs; pages you opened from links stay open.";
 
 /// Thread access's description.
 pub(super) const ACCESS_HELP: &str = "While the switch is on, every thread you type in can use the browser. Turns an agent or automation starts, Pilot habit runs, orchestration and remote threads never can.";
@@ -44,6 +44,26 @@ pub(super) fn problem_line(state: &BrowserState) -> Option<String> {
         Some(detail) if detail != message => format!("{message} {detail}"),
         _ => message,
     })
+}
+
+/// The problem line's button: Retry, when trying again can help (a browser
+/// installed since, a start that failed once), as the connection offers it.
+fn problem_actions(state: &BrowserState, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
+    if view::connection_view(state).action != Some(view::Action::Retry) {
+        return Vec::new();
+    }
+    vec![
+        secondary_button("browser-retry", "Retry", false, false)
+            .debug_selector(|| "settings-browser-retry".into())
+            .child("Retry")
+            .on_click(cx.listener(|_, _, _, cx| {
+                crate::browser::command(cx, |host| {
+                    host.connect();
+                    Ok(())
+                })
+            }))
+            .into_any_element(),
+    ]
 }
 
 /// The switch's label and its Beta badge.
@@ -161,7 +181,7 @@ impl SettingsView {
                 false,
                 "Browser",
                 Some(problem.into()),
-                Vec::new(),
+                problem_actions(state, cx),
             ));
         }
         rows.push(self.row(
@@ -543,6 +563,16 @@ mod tests {
     fn the_page_text_describes_only_the_in_app_browser() {
         assert!(DESCRIPTION.contains("built-in browser"), "{DESCRIPTION}");
         assert!(DESCRIPTION.contains("beside the thread"), "{DESCRIPTION}");
+        // Off closes the agents' tabs (and the browser when none of the
+        // user's is left): the old "leaves the agents' tabs open" is wrong.
+        let switch = SWITCH_HELP.to_lowercase();
+        assert!(!switch.contains("leaves the agents"), "{SWITCH_HELP}");
+        assert!(!switch.contains("tabs open"), "{SWITCH_HELP}");
+        assert!(switch.contains("closes the agents' tabs"), "{SWITCH_HELP}");
+        assert!(
+            switch.contains("pages you opened from links stay open"),
+            "{SWITCH_HELP}"
+        );
         for text in [DESCRIPTION, SWITCH_HELP, ACCESS_HELP] {
             let lower = text.to_lowercase();
             for gone in [
@@ -555,6 +585,49 @@ mod tests {
                 assert!(!lower.contains(gone), "{gone:?} in {text}");
             }
         }
+    }
+
+    /// The page tells the user that their link tabs share the browser with
+    /// the agents: the same sign-ins, and the tabs of the thread.
+    #[test]
+    fn the_page_says_agents_share_the_users_sign_ins_and_tabs() {
+        let text = DESCRIPTION.to_lowercase();
+        assert!(
+            text.contains("links you click in a thread open here"),
+            "{text}"
+        );
+        assert!(text.contains("with the switch on"), "{text}");
+        assert!(text.contains("same sign-ins"), "{text}");
+        assert!(
+            text.contains("can work in the tabs you opened from that thread"),
+            "{text}"
+        );
+    }
+
+    /// The problem line offers Retry, in both layouts, and Retry tries to
+    /// start the browser again: one installed since then starts.
+    #[gpui::test]
+    fn retry_on_the_problem_line_starts_a_browser_installed_since(cx: &mut TestAppContext) {
+        let rig = crate::browser_test_rig::Rig::start_managed();
+        let host = rig.host.clone();
+        let empty = tempfile::tempdir().unwrap();
+        host.set_profile_dir(empty.path().to_path_buf());
+        host.set_executable_for_tests(empty.path().join("no-such-browser"));
+        let (window, mut visual) = page(host.clone(), cx);
+        click(&mut visual, "settings-toggle-browser-toggle");
+        host.connect();
+        settle(&mut visual, &host, ConnectionState::StalePort);
+        for boxy in [false, true] {
+            set_layout(window, &mut visual, boxy);
+            assert!(shown(&mut visual, "settings-browser-retry"), "boxy {boxy}");
+        }
+        // A browser is there now (the fake one, on the kept profile).
+        host.set_profile_dir(rig.server.profile_dir());
+        click(&mut visual, "settings-browser-retry");
+        settle(&mut visual, &host, ConnectionState::Connected);
+        assert!(!shown(&mut visual, "settings-row-browser-connection"));
+        assert!(!shown(&mut visual, "settings-browser-retry"));
+        host.set_toggle(false);
     }
 
     /// Wait for the host's connection thread, then show what it left.
