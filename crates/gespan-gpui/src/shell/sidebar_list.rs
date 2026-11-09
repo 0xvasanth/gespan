@@ -168,19 +168,6 @@ fn push_machine_rows(rows: &mut Vec<Row>, cx: &App) -> bool {
     true
 }
 
-fn age_label(updated_at: u64, now: u64) -> &'static str {
-    let today = chrono::DateTime::from_timestamp_millis(now.min(i64::MAX as u64) as i64)
-        .map(|t| t.with_timezone(&chrono::Local).date_naive());
-    let day = chrono::DateTime::from_timestamp_millis(updated_at.min(i64::MAX as u64) as i64)
-        .map(|t| t.with_timezone(&chrono::Local).date_naive());
-    match today.zip(day).map(|(today, day)| (today - day).num_days()) {
-        Some(days) if days <= 0 => "Today",
-        Some(1) => "Yesterday",
-        Some(2..=6) => "Last 7 days",
-        _ => "Older",
-    }
-}
-
 // Match sidebar-session-scroll: 40px below, and 28px above scrolled Focused rows.
 // Mask only the edge bands so the virtual list never needs a full-pane copy.
 fn sidebar_edge_mask(
@@ -331,7 +318,6 @@ impl Shell {
             return;
         }
         let groups = self.project_groups();
-        let now = gespan_core::time::now_ms();
         let mut rows = vec![Row::Navigation, Row::Project, Row::NewThread, Row::Pilots];
         if push_machine_rows(&mut rows, cx) {
             rows.push(Row::Gap);
@@ -392,31 +378,17 @@ impl Shell {
         if folders {
             rows.push(Row::Gap);
         }
-        let mut previous = None;
-        let mut first = true;
-        for entry in entries {
-            let Entry::Session(id) = entry else {
-                continue;
-            };
-            if self.rails.children.contains(id) {
-                continue;
-            }
-            let label = age_label(self.session_metadata(*id, cx).summary.updated_at, now);
-            if previous != Some(label) {
-                rows.push(Row::Heading { label, first });
-                previous = Some(label);
-                first = false;
-            }
-            rows.push(Row::Session(*id));
-        }
-        if first {
-            rows.push(Row::Heading {
-                label: "Sessions",
-                first: true,
-            });
-            if entries.is_empty() {
-                rows.push(Row::Empty);
-            }
+        // One list under one heading; each row shows its own last-use time.
+        rows.push(Row::Heading {
+            label: "Sessions",
+            first: true,
+        });
+        rows.extend(entries.iter().filter_map(|entry| match entry {
+            Entry::Session(id) if !self.rails.children.contains(id) => Some(Row::Session(*id)),
+            _ => None,
+        }));
+        if entries.is_empty() {
+            rows.push(Row::Empty);
         }
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
@@ -1284,8 +1256,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use super::{Row, age_label};
-    use chrono::TimeZone;
+    use super::Row;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -2088,23 +2059,50 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn sidebar_dates_use_local_calendar_days_and_match_the_tauri_sections() {
-        let ms = |day, hour, minute| {
-            chrono::Local
-                .with_ymd_and_hms(2026, 10, day, hour, minute, 0)
-                .single()
-                .unwrap()
-                .timestamp_millis() as u64
-        };
-        let now = ms(20, 0, 5);
-        assert_eq!(age_label(ms(20, 0, 1), now), "Today");
-        assert_eq!(age_label(ms(19, 23, 59), now), "Yesterday");
-        assert_eq!(age_label(ms(14, 0, 0), now), "Last 7 days");
-        assert_eq!(age_label(ms(13, 23, 59), now), "Older");
-        assert_eq!(age_label(0, now), "Older");
-        // A local calendar day remains Yesterday across daylight-saving changes.
-        assert_eq!(age_label(ms(25, 0, 1), ms(26, 0, 5)), "Yesterday");
+    #[gpui::test]
+    fn sessions_of_any_age_share_one_sessions_heading(cx: &mut TestAppContext) {
+        let (window, a, b) = super::super::tests::window(cx);
+        let day = 24 * 60 * 60 * 1000;
+        let rows = window
+            .update(cx, |shell, _, cx| {
+                // One chat used just now, the other a month ago.
+                let now = gespan_core::time::now_ms();
+                for (id, updated_at) in [(a, now), (b, now - 30 * day)] {
+                    shell.sessions[&id].update(cx, |session, _| {
+                        session.summary.cwd = "/work/gespan".into();
+                        session.summary.updated_at = updated_at;
+                        session.summary.has_messages = true;
+                    });
+                    if let Some(summary) = shell.session_summaries.get_mut(&id) {
+                        summary.cwd = "/work/gespan".into();
+                        summary.updated_at = updated_at;
+                        summary.has_messages = true;
+                    }
+                }
+                shell.sidebar_list.invalidate_structure();
+                shell.refresh_sidebar_structure(cx);
+                shell.sidebar_list.rows.clone()
+            })
+            .unwrap();
+        let headings: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Heading { label, .. } => Some(*label),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, ["Sessions"]);
+        let heading = rows
+            .iter()
+            .position(|row| matches!(row, Row::Heading { .. }))
+            .unwrap();
+        for id in [a, b] {
+            let at = rows
+                .iter()
+                .position(|row| matches!(row, Row::Session(s) if *s == id))
+                .unwrap_or_else(|| panic!("session {id} is listed"));
+            assert!(at > heading, "session {id} sits under Sessions");
+        }
     }
 
     mod machines {
