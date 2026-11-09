@@ -1,6 +1,7 @@
 crates/gespan-gpui/src/settings/pages/general.rs
   s_7c257aa153458a::t_e5913d74de5edf 129-144
   s_7c257aa153458a::t_bf0ceb86b45c50 103
+  s_7c257aa153458a::t_a04aa71695b557 49
 crates/gespan-gpui/src/settings/model.rs
   s_7c257aa153458a::t_07dd5261ccd7b3 54,244,246-249,682-691,693-694
   s_7c257aa153458a::t_3d31096ed9b15d 115,739-741
