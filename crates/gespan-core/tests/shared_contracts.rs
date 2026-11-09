@@ -104,7 +104,6 @@ fn storage_keys_are_gespan() {
     .join("\n");
     for key in [
         "gespan:pilot-roster",
-        "gespan.railPilotsPinned",
         "gespan.pilotsEnabled",
         "gespan.pilotMenuBarIcon",
     ] {
