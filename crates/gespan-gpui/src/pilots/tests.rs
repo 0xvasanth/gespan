@@ -5656,3 +5656,41 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("pilot-document-plan").is_none());
     assert!(visual.debug_bounds("pilot-document-summary").is_some());
 }
+#[gpui::test]
+fn stopping_a_watch_from_the_chip_drops_only_that_report(cx: &mut TestAppContext) {
+    use gespan_core::watching::Source;
+    let s = setup(cx);
+    let (a, b) = delegated_pair(&s, cx);
+    let chat = cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.refresh_cards(cx);
+            m.chat().expect("the Pilot's chat is open")
+        })
+    });
+    let watched = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            chat.read(cx)
+                .watches()
+                .into_iter()
+                .map(|w| w.source)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(watched(cx), [Source::Session(a), Source::Session(b)]);
+
+    // The chip's Stop watching button, through the chat's event.
+    cx.update(|cx| chat.update(cx, |_, cx| cx.emit(crate::conversation::StopWatching(a))));
+    cx.run_until_parked();
+    assert!(launch_of(&s, a, cx).dismissed);
+    assert!(!launch_of(&s, b, cx).dismissed);
+    assert_eq!(watched(cx), [Source::Session(b)]);
+
+    set_child(&s, a, false, cx);
+    set_child(&s, b, false, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    let reports = delegated_reports(&s, cx);
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert!(reports[0].contains(&format!("Session {b}:")));
+    assert!(!reports[0].contains(&format!("Session {a}:")));
+}

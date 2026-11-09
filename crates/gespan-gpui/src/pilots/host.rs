@@ -1347,6 +1347,26 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
     }
     /// Takes a session the Pilot stopped, archived or deleted out of every report not handed
     /// over yet, so it never reports; a report left naming no session is dropped.
+    /// The user stopped waiting on a delegated session from the watch chip:
+    /// it no longer reports back, as if the Pilot had dismissed it.
+    pub(super) fn stop_watching(&mut self, pilot: &str, session: i64, cx: &mut Context<Self>) {
+        let Some(pilot) = self.roster.get_mut(pilot) else {
+            return;
+        };
+        let mut changed = false;
+        for launch in &mut pilot.launches {
+            if launch.session_id == session && !launch.dismissed {
+                launch.dismissed = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        self.dismiss_reports(session, cx);
+        self.save(cx);
+        self.refresh_cards(cx);
+    }
     fn dismiss_reports(&mut self, session: i64, cx: &mut Context<Self>) {
         let ids: Vec<String> = self.roster.pilots.iter().map(|p| p.id.clone()).collect();
         for id in ids {

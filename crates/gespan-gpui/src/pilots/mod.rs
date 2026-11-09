@@ -870,6 +870,13 @@ impl Pilots {
                         this.queue_changed(&source, &event.id, event.remove, cx)
                     },
                 ));
+                let source = id.clone();
+                this.observations.push(cx.subscribe(
+                    &view,
+                    move |this, _, event: &crate::conversation::StopWatching, cx| {
+                        this.stop_watching(&source, event.0, cx)
+                    },
+                ));
                 let transcript = view.read(cx).transcript.clone();
                 let target = view.clone();
                 let source = id.clone();

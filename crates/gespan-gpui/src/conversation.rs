@@ -34,6 +34,7 @@ mod sign_in;
 #[cfg(test)]
 mod submission_tests;
 mod title;
+mod watching;
 use crate::{
     composer_motion::ComposerMotion,
     git_picker::{GitPicker, Mode as GitMode, Picked as GitPicked},
@@ -71,6 +72,7 @@ use std::{
     },
     time::Instant,
 };
+pub(crate) use watching::StopWatching;
 // Keep empty and docked composers aligned with the transcript column. Below
 // this width the empty session drops its title.
 const COMPOSER_COLUMN: f32 = COLUMN;
@@ -203,6 +205,7 @@ pub(crate) struct Conversation {
     folder_selected: bool,
     follow_ups: follow_up::FollowUps,
     background: background_tasks::BackgroundTasks,
+    watching: watching::Watching,
     attachments: Vec<std::path::PathBuf>,
     pending_attachments: Vec<std::path::PathBuf>,
     attachment_photos: std::collections::HashMap<
@@ -740,6 +743,7 @@ impl Conversation {
             folder_selected: false,
             follow_ups: Default::default(),
             background: Default::default(),
+            watching: Default::default(),
             attachments: Vec::new(),
             pending_attachments: Vec::new(),
             attachment_photos: Default::default(),
@@ -3675,6 +3679,7 @@ impl Conversation {
                             )
                         },
                     )
+                    .children(self.watch_chip(cx))
                     .when(show_context, |d| {
                         d.child(
                             div()
