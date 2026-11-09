@@ -119,6 +119,7 @@ pub(crate) struct PilotSetting {
 
 pub(crate) enum SettingsEvent {
     WhatsNew,
+    RunSetup,
     CheckAppUpdates,
     CheckHarnessUpdates,
     ManageInboxProvider(String),

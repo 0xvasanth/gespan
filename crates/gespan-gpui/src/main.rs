@@ -92,6 +92,7 @@ mod send_morph;
 mod session_mark;
 mod session_review;
 mod settings;
+mod setup;
 mod shell;
 mod sound;
 mod syntax;
@@ -471,6 +472,19 @@ fn main() {
     });
     // A project folder renamed since the last run takes its sessions along.
     let saved = workspace::follow_moved_projects(&db, saved);
+    // A fresh install (no saved workspace, no sessions) opens on first-run
+    // setup, which picks the first project instead of the launch folder.
+    let first_run = setup::rules::first_run(
+        saved.as_deref(),
+        db.sessions().map(|s| !s.is_empty()).unwrap_or(true),
+    );
+    let saved = if first_run {
+        Some(setup::rules::with_pending_setup(saved))
+    } else {
+        saved
+    };
+    // Until setup picks a project, the launch folder gets no thread.
+    let setup_pending = setup::rules::setup_pending(saved.as_deref());
     let existing_project = if use_gespan {
         saved
             .as_deref()
@@ -536,7 +550,7 @@ fn main() {
             .unwrap();
     }
     let mut sessions = db.sessions().expect("read native sessions");
-    if sessions.is_empty() {
+    if sessions.is_empty() && !setup_pending {
         sessions.push(db.create("codex", &cwd).expect("create initial session"));
     }
     // Gather compact sidebar state before entering the platform event loop.

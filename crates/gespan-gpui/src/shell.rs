@@ -13,6 +13,9 @@ mod classic_sidebar;
 mod classic_surface_tests;
 mod classic_surfaces;
 mod file_panes;
+mod first_run;
+#[cfg(test)]
+mod first_run_tests;
 mod flow_runs;
 #[cfg(test)]
 mod flow_view_tests;
@@ -747,6 +750,10 @@ pub(crate) struct Shell {
     action_dialog: Option<actions::ActionDialog>,
     /// A short note about an action, such as where it was saved.
     action_notice: Option<SharedString>,
+    /// First-run setup, while it shows.
+    setup: Option<first_run::SetupOverlay>,
+    /// The folder this window was launched from, setup's first suggestion.
+    setup_launch: String,
     /// Counts notes shown, so only the latest one's timer clears it.
     action_notice_seq: u64,
     actions_anchor: AnchorSlot,
@@ -1201,6 +1208,8 @@ impl Shell {
             ticket_drafts: HashMap::new(),
             action_dialog: None,
             action_notice: None,
+            setup: None,
+            setup_launch: cwd.clone(),
             action_notice_seq: 0,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
@@ -5144,7 +5153,11 @@ impl Shell {
         cx.notify();
     }
     fn ensure_project_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace.active.is_some() || self.pilot_active(cx) {
+        // First-run setup picks the project; the launch folder gets no thread.
+        if self.workspace.active.is_some()
+            || self.pilot_active(cx)
+            || self.workspace.setup.is_some()
+        {
             return;
         }
         if let Some(id) = self.order.iter().copied().find(|id| {
@@ -9429,7 +9442,12 @@ impl Render for Shell {
             .relative()
             .role(Role::Application)
             .aria_label("Gespan")
-            .key_context("Workspace")
+            // While setup shows, no Workspace shortcut reaches the shell.
+            .key_context(if self.setup_shows() {
+                "Setup"
+            } else {
+                "Workspace"
+            })
             .track_focus(&self.focus)
             .capture_key_up(cx.listener(|this, _, _, _| this.archive_shortcut_held = false))
             .on_action(cx.listener(|this, _: &ArchiveSession, window, cx| {
@@ -9944,6 +9962,7 @@ impl Render for Shell {
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
             .children(self.search_modal(window, cx))
+            .children(self.setup_overlay(window, cx))
             .children(self.remote_project_modal(window, cx))
             .children(self.notice_modals(window, cx))
             .children(self.folder_picker_popover(window, cx))

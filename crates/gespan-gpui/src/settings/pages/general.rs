@@ -264,6 +264,13 @@ impl SettingsView {
                                 })),
                         )
                         .child(
+                            secondary_button("run-setup", "Run setup again", false, false)
+                                .child("Run setup again")
+                                .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.emit(crate::settings::SettingsEvent::RunSetup)
+                                })),
+                        )
+                        .child(
                             secondary_button(
                                 "check-harness-updates",
                                 "Check harness updates",

@@ -178,6 +178,9 @@ pub(crate) struct Workspace {
     pub classic_sidebar_tabs: HashMap<String, String>,
     pub classic_sidebar_tab_order: Vec<String>,
     pub new_layout_prompt_dismissed: bool,
+    /// The first-run setup card to resume on; `None` once setup is done, and
+    /// for every install saved before setup existed.
+    pub setup: Option<crate::setup::SetupStep>,
     pub preferences: crate::settings::Preferences,
     pub session_filters: gespan_core::session_filters::Filters,
     pub project_appearance: HashMap<String, gespan_core::project_appearance::ProjectAppearance>,
@@ -524,6 +527,7 @@ impl Default for Workspace {
             classic_sidebar_tabs: HashMap::new(),
             classic_sidebar_tab_order: Vec::new(),
             new_layout_prompt_dismissed: false,
+            setup: None,
             preferences: crate::settings::Preferences::default(),
             session_filters: Default::default(),
             project_appearance: Default::default(),
@@ -790,6 +794,17 @@ impl Workspace {
         }
         state.add_project(&state.project.clone());
         state
+    }
+    /// Ends first-run setup on the project picked. The launch folder, added
+    /// as a project on every start, goes again unless it was picked or has
+    /// sessions.
+    pub(crate) fn finish_setup(&mut self, chosen: &str, launch: &str, launch_has_sessions: bool) {
+        self.setup = None;
+        self.add_project(chosen);
+        self.project = chosen.into();
+        if launch != chosen && !launch_has_sessions {
+            self.projects.retain(|p| p != launch);
+        }
     }
     pub fn add_project(&mut self, path: &str) {
         self.archived_projects.retain(|p| p != path);
