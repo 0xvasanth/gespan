@@ -200,6 +200,7 @@ impl Shell {
                 app_views::AppView::Automations => self.open_automations(window, cx),
                 app_views::AppView::Flows => self.open_flows(window, cx),
                 app_views::AppView::Board => self.open_board(window, cx),
+                app_views::AppView::Runs => self.show_runs(window, cx),
             },
             TitleTab::Session(id) => {
                 let focus = self.workspace.tab_focus(*id);

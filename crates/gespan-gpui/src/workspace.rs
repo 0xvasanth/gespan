@@ -13,6 +13,7 @@ pub(crate) enum AppView {
     Automations,
     Flows,
     Board,
+    Runs,
 }
 impl AppView {
     pub fn label(self) -> &'static str {
@@ -22,6 +23,7 @@ impl AppView {
             Self::Automations => "Automations",
             Self::Flows => "Flows",
             Self::Board => "Board",
+            Self::Runs => "Runs",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -31,6 +33,7 @@ impl AppView {
             Self::Automations => "zap",
             Self::Flows => "git-merge",
             Self::Board => "kanban",
+            Self::Runs => "clock",
         }
     }
 }

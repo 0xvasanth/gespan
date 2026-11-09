@@ -1019,6 +1019,7 @@ impl Shell {
             .children(
                 [
                     ("Inbox", "inbox"),
+                    ("Runs", "clock"),
                     ("Automations", "zap"),
                     ("Board", "kanban"),
                     ("Notes", "note"),
@@ -1128,6 +1129,7 @@ impl Shell {
                                 this.open_settings(crate::settings::Section::General, window, cx)
                             }
                             "Inbox" => this.open_inbox(window, cx),
+                            "Runs" => this.show_runs(window, cx),
                             "Notes" => this.open_notes(window, cx),
                             "Automations" => this.open_automations(window, cx),
                             "Flows" => this.open_flows(window, cx),
@@ -1359,6 +1361,7 @@ mod tests {
     fn nav_order(visual: &mut gpui::VisualTestContext) -> Vec<&'static str> {
         let mut found: Vec<_> = [
             ("Inbox", "sidebar-navigation-Inbox"),
+            ("Runs", "sidebar-navigation-Runs"),
             ("Automations", "sidebar-navigation-Automations"),
             ("Board", "sidebar-navigation-Board"),
             ("Notes", "sidebar-navigation-Notes"),
@@ -1393,7 +1396,7 @@ mod tests {
         let label = visual
             .debug_bounds("sidebar-all-projects")
             .expect("the block is labelled");
-        let mut expected = vec!["Inbox", "Automations", "Board", "Notes"];
+        let mut expected = vec!["Inbox", "Runs", "Automations", "Board", "Notes"];
         let flows = cx_flows_visible(window, visual);
         if flows {
             expected.push("Flows");

@@ -13,6 +13,8 @@ pub(super) struct Running {
 pub(super) struct State {
     pub service: Option<ServiceHandle>,
     pub open_requested: Option<u64>,
+    /// Runs asked for before the service opened, at this navigation.
+    pub runs_requested: Option<(u64, crate::runs::RunsFilter)>,
     opening: bool,
     pub(super) polling: bool,
     recovered: bool,
@@ -33,6 +35,7 @@ impl Default for State {
         Self {
             service: None,
             open_requested: None,
+            runs_requested: None,
             opening: false,
             polling: false,
             recovered: false,
@@ -113,6 +116,11 @@ impl Shell {
                             this.ensure_background_inbox(window, cx);
                         }
                         this.poll_automations(cx);
+                        let runs = this
+                            .automation_state
+                            .runs_requested
+                            .take()
+                            .filter(|(revision, _)| *revision == this.navigation_revision);
                         if this
                             .automation_state
                             .open_requested
@@ -120,6 +128,8 @@ impl Shell {
                             .is_some_and(|revision| revision == this.navigation_revision)
                         {
                             this.open_automations(window, cx);
+                        } else if let Some((_, filter)) = runs {
+                            this.open_runs(filter, window, cx);
                         } else if this.navigation_revision == 0
                             && this.active_app_view.is_none()
                             && this.settings.is_none()
@@ -633,9 +643,7 @@ impl Shell {
                     tracing::warn!(%error, "automation run result was not saved");
                     this.error = Some(format!("Could not save automation result: {error}"));
                 }
-                if let Some(view) = &this.automations {
-                    view.update(cx, |view, cx| view.refresh(cx));
-                }
+                this.refresh_run_views(cx);
                 cx.notify();
             });
         }));

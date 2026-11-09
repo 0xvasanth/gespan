@@ -1052,3 +1052,69 @@ fn muting_automation_runs_for_the_project_or_notifications_silences_the_alert(
     assert_eq!(runs(&data.db, &id).len(), 3);
     assert_eq!(run_alerts(&window, cx).len(), 1);
 }
+
+#[gpui::test]
+fn runs_asked_for_before_the_service_opens_show_once_it_does(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    window
+        .update(cx, |shell, window, cx| {
+            // As at startup: the service has not opened yet.
+            shell.automation_state.service = None;
+            shell.open_runs(
+                crate::runs::RunsFilter {
+                    status: Some("failed"),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            assert_eq!(shell.active_app_view, None, "nothing to list yet");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
+            let runs = shell.runs.as_ref().expect("Runs opened").read(cx);
+            assert_eq!(runs.filter().status, Some("failed"));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let id = scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    assert_eq!(sessions(&window, &id, cx), 1);
+    let run = runs(&data.db, &id).remove(0);
+    let session = run.session_id.clone().expect("the run started a session");
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_runs(Default::default(), window, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let native = window
+        .update(cx, |shell, _, cx| {
+            let view = shell.runs.clone().expect("Runs opened");
+            let rows = view.read(cx).rows();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].can_open());
+            view.update(cx, |view, cx| view.open_thread(&run.id, cx));
+            locked(&shell.store)
+                .unwrap()
+                .resolve_existing_session_id(&session)
+                .expect("the session exists")
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |shell, _| {
+            assert_eq!(shell.active_app_view, None, "Runs gives way to the thread");
+            assert_eq!(shell.workspace.active, Some(native));
+        })
+        .unwrap();
+}

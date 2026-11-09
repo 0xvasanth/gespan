@@ -1161,10 +1161,13 @@ mod nav_tint_tests {
             }
             assert_eq!(nav_tile_ink("Search"), nav_tint("Search").unwrap());
             // Pages without a tint keep the tile's own ink.
-            assert_eq!(
-                nav_tile_ink(AppView::Flows.label()),
-                crate::tab_tile::tile_ink()
-            );
+            for view in [AppView::Flows, AppView::Runs] {
+                assert_eq!(
+                    nav_tile_ink(view.label()),
+                    crate::tab_tile::tile_ink(),
+                    "{theme}: {view:?}"
+                );
+            }
         }
     }
 

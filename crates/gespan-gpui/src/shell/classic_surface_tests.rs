@@ -10,6 +10,7 @@ enum Surface {
     Automations,
     Flows,
     Board,
+    Runs,
     Search,
     Pilot,
 }
@@ -33,6 +34,13 @@ impl Surface {
                 shell.workspace.preferences.board = true;
                 shell.open_board(window, cx);
             }
+            Self::Runs => {
+                shell.automation_state.service = Some(Arc::new(Mutex::new(
+                    gespan_core::automations::Service::open(std::path::Path::new(":memory:"))
+                        .unwrap(),
+                )));
+                shell.open_runs(Default::default(), window, cx);
+            }
             Self::Search => shell.open_app_search(window, cx),
             Self::Pilot => {
                 let project = shell.workspace.project.clone();
@@ -50,9 +58,12 @@ impl Surface {
 
     fn close(self, shell: &mut Shell, session: i64, window: &mut Window, cx: &mut Context<Shell>) {
         match self {
-            Self::Inbox | Self::Notes | Self::Automations | Self::Flows | Self::Board => {
-                shell.close_app_view(window, cx)
-            }
+            Self::Inbox
+            | Self::Notes
+            | Self::Automations
+            | Self::Flows
+            | Self::Board
+            | Self::Runs => shell.close_app_view(window, cx),
             Self::Search => shell.close_app_search(window, cx),
             // Returning to a conversation is the same route used by the
             // original project rail and by opening a Pilot's launched session.
@@ -756,6 +767,7 @@ fn original_app_surfaces_keep_icon_rail_and_remember_closed_sessions(cx: &mut Te
         Surface::Automations,
         Surface::Flows,
         Surface::Board,
+        Surface::Runs,
         Surface::Search,
         Surface::Pilot,
     ] {
@@ -882,6 +894,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
             Surface::Automations,
             Surface::Flows,
             Surface::Board,
+            Surface::Runs,
             Surface::Search,
             Surface::Pilot,
         ] {
@@ -904,6 +917,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
                 Surface::Automations => Some(app_views::AppView::Automations),
                 Surface::Flows => Some(app_views::AppView::Flows),
                 Surface::Board => Some(app_views::AppView::Board),
+                Surface::Runs => Some(app_views::AppView::Runs),
                 _ => None,
             };
             if let Some(app) = app {
@@ -951,6 +965,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             Surface::Automations,
             Surface::Flows,
             Surface::Board,
+            Surface::Runs,
         ] {
             window
                 .update(visual, |shell, window, cx| surface.open(shell, window, cx))
@@ -965,6 +980,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
                     app_views::AppView::Automations,
                     app_views::AppView::Flows,
                     app_views::AppView::Board,
+                    app_views::AppView::Runs,
                 ] {
                     assert_eq!(
                         shell
@@ -990,6 +1006,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             app_views::AppView::Automations,
             app_views::AppView::Flows,
             app_views::AppView::Board,
+            app_views::AppView::Runs,
         ] {
             let selector = Box::leak(format!("app-title-tab-{}", app.label()).into_boxed_str());
             let tab = visual.debug_bounds(selector).unwrap();
@@ -1008,7 +1025,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
         let close = visual.debug_bounds("close-app-tab-Inbox").unwrap();
         visual.simulate_click(close.center(), Default::default());
         visual.run_until_parked();
-        for _ in 0..4 {
+        for _ in 0..5 {
             visual.simulate_keystrokes("secondary-w");
             visual.run_until_parked();
         }
