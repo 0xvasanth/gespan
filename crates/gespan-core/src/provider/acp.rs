@@ -239,6 +239,16 @@ impl Protocol {
             let read = self.cursor_tick(false);
             self.acp.notices.extend(read);
         }
+        // An agent waiting on an approval or question is silent; the
+        // silence counts from the user's answer.
+        if self.acp.stage == Stage::Prompt
+            && self.acp.deadline.is_some()
+            && (!self.approvals.is_empty() || !self.questions.is_empty())
+        {
+            if let Some(idle) = self.acp.prompt_idle {
+                self.acp.deadline = Some(Instant::now() + idle);
+            }
+        }
         if self
             .acp
             .deadline
@@ -843,12 +853,17 @@ impl Protocol {
         let mut events = Vec::new();
         if let Some(method) = v["method"].as_str() {
             // Anything the agent sends for this session shows the prompt is
-            // still being worked on.
+            // still being worked on. A notification must name the session:
+            // process-level ones (Kiro's `_kiro/...`) say nothing of the turn.
+            let session = v["params"]["sessionId"]
+                .as_str()
+                .or_else(|| v["params"]["notification"]["sessionId"].as_str());
             if self.acp.stage == Stage::Prompt
                 && self.acp.deadline.is_some()
-                && v["params"]["sessionId"]
-                    .as_str()
-                    .is_none_or(|id| id == self.acp.session)
+                && match session {
+                    Some(id) => id == self.acp.session,
+                    None => v.get("id").is_some(),
+                }
             {
                 if let Some(idle) = self.acp.prompt_idle {
                     self.acp.deadline = Some(Instant::now() + idle);
@@ -2247,17 +2262,54 @@ mod tests {
             deadline_override(Some(Duration::from_millis(150)));
             let mut out = Vec::new();
             let (mut p, _) = prompting(kind, &mut out);
-            std::thread::sleep(Duration::from_millis(75));
-            // Another session's output is not this turn making progress.
-            p.frame(json!({"method":"session/update","params":{"sessionId":"other","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"x"}}}}), &mut out).unwrap();
-            p.acp_tick(&mut out).unwrap();
-            std::thread::sleep(Duration::from_millis(100));
+            // Neither another session's output nor a process-level
+            // notification is this turn making progress.
+            for _ in 0..4 {
+                p.frame(json!({"method":"session/update","params":{"sessionId":"other","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"x"}}}}), &mut out).unwrap();
+                p.frame(
+                    json!({"method":"_kiro/mcp/server_initialized","params":{"serverName":"gespan"}}),
+                    &mut out,
+                )
+                .unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+            }
             assert_eq!(
                 p.acp_tick(&mut out).unwrap_err(),
                 format!("{}: session/prompt timed out", kind.label())
             );
             deadline_override(None);
         }
+    }
+    #[test]
+    fn a_prompt_waiting_for_you_does_not_time_out() {
+        deadline_override(Some(Duration::from_millis(150)));
+        let mut out = Vec::new();
+        let (mut p, _) = prompting(Kind::Kiro, &mut out);
+        p.request.settings.access = AccessMode::Supervised;
+        let events = p.frame(json!({"id":7,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"t","kind":"execute","title":"rm -rf target"},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}), &mut out).unwrap();
+        assert!(matches!(events.as_slice(), [Event::Approval(_)]));
+        // The agent is silent while the card waits for the user.
+        for _ in 0..6 {
+            std::thread::sleep(Duration::from_millis(50));
+            p.acp_tick(&mut out).unwrap();
+        }
+        p.respond(
+            Control {
+                id: "7".into(),
+                decision: Decision::Allow,
+            },
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        // The silence counts again from the answer.
+        p.acp_tick(&mut out).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            p.acp_tick(&mut out).unwrap_err(),
+            "Kiro CLI: session/prompt timed out"
+        );
+        deadline_override(None);
     }
     #[test]
     fn other_stages_keep_fixed_deadlines() {
@@ -2294,7 +2346,7 @@ mod tests {
     }
     #[test]
     fn kiro_retries_a_dropped_connection_once() {
-        retry_override(Some(Duration::from_millis(100)));
+        retry_override(Some(Duration::from_millis(500)));
         let mut out = Vec::new();
         let (mut p, prompt) = prompting(Kind::Kiro, &mut out);
         p.frame(chunk("Partial"), &mut out).unwrap();
@@ -2304,7 +2356,7 @@ mod tests {
         // The retry waits before it goes out.
         p.acp_tick(&mut out).unwrap();
         assert!(out.is_empty());
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(550));
         p.acp_tick(&mut out).unwrap();
         let retry = last(&mut out);
         assert_eq!(retry["method"], "session/prompt");
@@ -2328,7 +2380,7 @@ mod tests {
         let prompt = last(&mut out);
         assert_eq!(prompt["method"], "session/prompt");
         p.frame(dropped(&prompt["id"]), &mut out).unwrap();
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(550));
         p.acp_tick(&mut out).unwrap();
         assert_eq!(last(&mut out)["method"], "session/prompt");
         retry_override(None);
