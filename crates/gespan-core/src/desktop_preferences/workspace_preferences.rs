@@ -126,18 +126,18 @@ impl DesktopPreferences {
             reconcile_preference(target, baseline, next, field, json!(value));
         }
         for (field, key, default, min, max, scale) in [
-            ("theme_hue", "themeHue", 240., 0., 360., 1.),
+            ("theme_hue", "themeHue", 0., 0., 360., 1.),
             ("theme_saturation", "themeSaturation", 0., 0., 100., 1.),
             (
                 "theme_dark_lightness",
                 "themeDarkLightness",
-                9.,
+                0.,
                 0.,
                 30.,
                 1.,
             ),
-            ("sidebar_opacity", "sidebarOpacity", 0.85, 0.15, 1., 100.),
-            ("sidebar_blur", "sidebarBlur", 24., 1., 64., 1.),
+            ("sidebar_opacity", "sidebarOpacity", 0.9, 0.15, 1., 100.),
+            ("sidebar_blur", "sidebarBlur", 7., 1., 64., 1.),
             ("ui_scale", "uiScale", 1., 0.5, 2., 100.),
         ] {
             let mut number = self.number(key).unwrap_or(default).clamp(min, max);

@@ -174,7 +174,9 @@ fn interface_scale_slider_applies_only_on_release(cx: &mut TestAppContext) {
             track.center().y,
         )
     };
-    let saved = window.update(visual, |view, _, _| view.prefs.ui_scale).unwrap();
+    let saved = window
+        .update(visual, |view, _, _| view.prefs.ui_scale)
+        .unwrap();
     let changes = std::rc::Rc::new(std::cell::Cell::new(0));
     let count = changes.clone();
     let entity = window.root(visual).unwrap();
@@ -187,7 +189,9 @@ fn interface_scale_slider_applies_only_on_release(cx: &mut TestAppContext) {
     });
     let state = |visual: &mut VisualTestContext| {
         window
-            .update(visual, |view, _, _| (view.prefs.ui_scale, view.shown_ui_scale()))
+            .update(visual, |view, _, _| {
+                (view.prefs.ui_scale, view.shown_ui_scale())
+            })
             .unwrap()
     };
 
@@ -216,7 +220,9 @@ fn other_sliders_still_apply_while_dragging(cx: &mut TestAppContext) {
     visual.run_until_parked();
     visual.refresh().unwrap();
     let track = visual.debug_bounds("settings-slider-hue").unwrap();
-    let before = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    let before = window
+        .update(visual, |view, _, _| view.prefs.theme_hue)
+        .unwrap();
     visual.simulate_mouse_down(
         point(track.left() + px(6.), track.center().y),
         MouseButton::Left,
@@ -228,7 +234,9 @@ fn other_sliders_still_apply_while_dragging(cx: &mut TestAppContext) {
         Default::default(),
     );
     visual.run_until_parked();
-    let during = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    let during = window
+        .update(visual, |view, _, _| view.prefs.theme_hue)
+        .unwrap();
     assert_ne!(during, before, "hue is live mid-drag");
 }
 
@@ -311,7 +319,7 @@ fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppCont
 fn blur_slider_covers_the_saved_range() {
     assert_eq!(SliderKind::Blur.range(), (1, 64));
     let mut prefs = Preferences::default();
-    assert_eq!(SliderKind::Blur.get(&prefs), 24);
+    assert_eq!(SliderKind::Blur.get(&prefs), 7);
     SliderKind::Blur.set(&mut prefs, 60);
     assert_eq!(prefs.sidebar_blur, 60);
 }

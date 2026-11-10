@@ -730,6 +730,36 @@ mod tests {
     }
 
     #[test]
+    fn color_and_translucency_default_to_neutral_black_glass() {
+        use crate::settings::preferences::Preferences;
+        let defaults = Preferences::default();
+        assert_eq!(
+            (
+                defaults.theme_hue,
+                defaults.theme_saturation,
+                defaults.theme_dark_lightness,
+                defaults.sidebar_opacity,
+                defaults.sidebar_blur,
+            ),
+            (0, 0, 0, 90, 7)
+        );
+        assert!(defaults.inset_glass && defaults.body_glass);
+        // Restore defaults on Appearance lands on the same values.
+        let mut changed = Preferences {
+            theme_hue: 240,
+            theme_saturation: 40,
+            theme_dark_lightness: 9,
+            sidebar_opacity: 85,
+            sidebar_blur: 24,
+            inset_glass: false,
+            body_glass: false,
+            ..Preferences::default()
+        };
+        changed.restore_appearance();
+        assert_eq!(changed, defaults);
+    }
+
+    #[test]
     fn board_is_on_until_turned_off() {
         assert!(crate::settings::preferences::Preferences::default().board);
     }

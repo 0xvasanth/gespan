@@ -366,7 +366,8 @@ pub fn open(
         let run_id = audit::next_run_id(conn).map_err(|e| e.to_string())?;
         let _ = audit::close_stale_leases(conn, run_id);
         let stored = audit::load_settings(conn).ok().flatten();
-        let settings = embedder.fix_settings(stored.clone().unwrap_or_default());
+        let settings =
+            embedder.fix_settings(stored.clone().unwrap_or_else(BrowserSettings::first_run));
         if stored.is_some_and(|stored| stored != settings) {
             // What an earlier build stored is fixed in the database too.
             let _ = audit::save_settings(conn, &settings);

@@ -423,7 +423,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = open(dir.path()).unwrap();
         let settings = first.state().settings;
-        assert!(!first.state().toggle_on);
+        assert!(first.state().toggle_on, "a fresh install starts with it on");
         assert_eq!(settings.mode, BrowserMode::Managed);
         assert!(!settings.show_window, "headless");
         assert_eq!(settings.browser, BrowserChoice::Auto);
@@ -726,14 +726,14 @@ pub(crate) mod tests {
         assert!(!other.path().join("browser").exists());
 
         let now = state().expect("started");
-        assert!(!now.toggle_on, "the switch starts off");
+        assert!(now.toggle_on, "a fresh install starts with the switch on");
         assert_eq!(now.settings.mode, BrowserMode::Managed);
         assert!(!now.settings.show_window);
 
         // Settings reach the database and every subscriber.
         let host = host().expect("started");
         host.set_settings(BrowserSettings {
-            access: AccessMode::Always,
+            access: AccessMode::Ask,
             ..now.settings.clone()
         });
         let mut latest = None;
@@ -742,10 +742,11 @@ pub(crate) mod tests {
         }
         assert_eq!(
             latest.expect("a state update").settings.access,
-            AccessMode::Always
+            AccessMode::Ask
         );
 
-        // The global path: the switch is off, so no turn carries the browser.
+        // The global path: with the switch off, no turn carries the browser.
+        host.set_toggle(false);
         let turn = begin_turn(&TurnFacts {
             user_typed: true,
             full_access: true,
