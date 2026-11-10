@@ -196,7 +196,18 @@ fn worktree_groups(sessions: &[Listed]) -> Vec<(String, Vec<i64>)> {
         .collect()
 }
 
-// Match sidebar-session-scroll: 40px below, and 28px above scrolled Focused rows.
+/// Height of the fade the sidebar list paints over its bottom edge, where it
+/// meets the project spaces bar. Rows under it are blurred into the shell.
+const SIDEBAR_BOTTOM_FADE_PX: f32 = 40.;
+pub(super) const SIDEBAR_BOTTOM_FADE: Pixels = px(SIDEBAR_BOTTOM_FADE_PX);
+/// Height of the fade over the top edge once the list has scrolled.
+const SIDEBAR_TOP_FADE: Pixels = px(28.);
+/// Space after the last row, so at the end of the list the last row clears
+/// the bottom fade instead of staying under it. Mid-list, rows still pass
+/// beneath the fade.
+pub(super) const SIDEBAR_TRAILING_INSET: Pixels = px(SIDEBAR_BOTTOM_FADE_PX + 4.);
+
+// Match sidebar-session-scroll: a fade below, and above scrolled Focused rows.
 // Mask only the edge bands so the virtual list never needs a full-pane copy.
 fn sidebar_edge_mask(
     state: ListState,
@@ -207,9 +218,9 @@ fn sidebar_edge_mask(
         |_, _, _| {},
         move |bounds, _, window, _| {
             let offset = state.logical_scroll_top();
-            let bottom_height = px(40.).min(bounds.size.height);
+            let bottom_height = SIDEBAR_BOTTOM_FADE.min(bounds.size.height);
             let top_height = if offset.item_ix > 0 || offset.offset_in_item > px(0.) {
-                px(28.).min((bounds.size.height - bottom_height).max(px(0.)))
+                SIDEBAR_TOP_FADE.min((bounds.size.height - bottom_height).max(px(0.)))
             } else {
                 px(0.)
             };
@@ -467,7 +478,8 @@ impl Shell {
                     self.sidebar_list.state.clone(),
                     cx.processor(|this, ix, _, cx| this.sidebar_list_row(ix, cx)),
                 )
-                .size_full(),
+                .size_full()
+                .pb(SIDEBAR_TRAILING_INSET),
             )
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
@@ -1906,6 +1918,87 @@ mod tests {
                     (offset.item_ix, offset.offset_in_item)
                 );
                 assert!(shell.session_row_bounds[&(first - 1)].get().is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_last_session_clears_the_bottom_fade_at_the_end_of_the_list(cx: &mut TestAppContext) {
+        use super::{SIDEBAR_BOTTOM_FADE, SIDEBAR_TRAILING_INSET};
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        // A list that fits doesn't scroll: the inset adds no reachable space.
+        window
+            .update(visual, |shell, _, _| {
+                shell.sidebar_list.state.scroll_to_end()
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        window
+            .update(visual, |shell, _, _| {
+                let top = shell.sidebar_list.state.logical_scroll_top();
+                assert_eq!((top.item_ix, top.offset_in_item), (0, px(0.)));
+            })
+            .unwrap();
+
+        let (newest, oldest) = window
+            .update(visual, |shell, window, cx| {
+                let mut summaries = Vec::new();
+                {
+                    let store = locked(&shell.store).unwrap();
+                    for i in 0..60 {
+                        let mut summary = store.create("codex", "/work/long-list").unwrap();
+                        summary.title = format!("Session {i}");
+                        summary.has_messages = true;
+                        summaries.push(summary);
+                    }
+                }
+                let newest = summaries.last().unwrap().id;
+                let oldest = summaries[0].id;
+                for summary in summaries {
+                    shell.order.push(summary.id);
+                    shell.session_summaries.insert(summary.id, summary);
+                }
+                shell.workspace.open(newest);
+                shell.select_project("/work/long-list".into(), window, cx);
+                (newest, oldest)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let list = visual.debug_bounds("sidebar-sessions").unwrap();
+        let fade_top = list.bottom() - SIDEBAR_BOTTOM_FADE;
+        window
+            .update(visual, |shell, _, cx| {
+                // Mid-list, rows still run on under the fade.
+                let under = shell
+                    .session_row_bounds
+                    .values()
+                    .filter_map(|slot| slot.get())
+                    .any(|row| row.bottom() > fade_top);
+                assert!(under, "rows pass beneath the fade while scrolling");
+                assert!(shell.session_row_bounds[&newest].get().is_some());
+                shell.sidebar_list.state.scroll_to_end();
+                shell.sidebar_frame.update(cx, |_, cx| cx.notify());
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        window
+            .update(visual, |shell, _, _| {
+                let last = shell.session_row_bounds[&oldest]
+                    .get()
+                    .expect("the oldest session is on screen at the end");
+                assert!(
+                    last.bottom() <= fade_top,
+                    "the last row {last:?} must sit above the fade from {fade_top:?}"
+                );
+                // And no further: the gap under it is the inset, not more.
+                assert!(
+                    list.bottom() - last.bottom() <= SIDEBAR_TRAILING_INSET + px(1.),
+                    "{last:?} in {list:?}"
+                );
             })
             .unwrap();
     }

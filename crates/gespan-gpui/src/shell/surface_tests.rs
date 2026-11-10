@@ -974,7 +974,24 @@ mod real_keys {
         let (window, _) = setup(cx, false);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
-        assert!(visual.debug_bounds("pilot-intro").is_some());
+        let card = visual.debug_bounds("pilot-intro").unwrap();
+        let list = visual.debug_bounds("sidebar-sessions").unwrap();
+        let row = visual.debug_bounds("sidebar-new-thread").unwrap();
+        // Centred in the sidebar, on the same edges as the rows around it.
+        let (left, right) = (card.left() - list.left(), list.right() - card.right());
+        assert!(left > gpui::px(0.), "{card:?} is inset from {list:?}");
+        assert!(
+            (left - right).abs() < gpui::px(0.5),
+            "{left:?} vs {right:?}"
+        );
+        assert!(
+            (card.left() - row.left()).abs() < gpui::px(0.5),
+            "{card:?} vs {row:?}"
+        );
+        assert!(
+            (card.right() - row.right()).abs() < gpui::px(0.5),
+            "{card:?} vs {row:?}"
+        );
         assert!(visual.debug_bounds("new-pilot").is_none());
         tap(visual, "pilot-intro-create");
         assert!(visual.debug_bounds("pilot-intro").is_none());
