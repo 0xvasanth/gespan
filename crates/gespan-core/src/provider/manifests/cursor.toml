@@ -1,11 +1,12 @@
 id = "cursor"
-version = 4
+version = 5
 min_engine_version = 1
 label = "Cursor"
 binary = "cursor-agent"
 install_name = "Cursor CLI"
 login_hint = "agent login"
 family = "acp"
+usage = "cursor"
 discovery_timeout = 15
 
 [login]

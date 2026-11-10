@@ -420,6 +420,16 @@ impl Accounts {
             .get(&(kind, id.to_owned()))
             .filter(|_| !gone)
     }
+    /// The plan the account's usage report names, for its badge when the
+    /// sign-in itself does not say.
+    pub(crate) fn usage_plan(&self, kind: Kind, id: &str) -> Option<String> {
+        self.usage
+            .get(&Key::new(kind, self.profile(id), None))?
+            .snapshot
+            .as_ref()?
+            .plan
+            .clone()
+    }
     /// React's `accountStatus`: a tone, a word, and an optional detail.
     pub(crate) fn status(&self, kind: Kind, id: &str) -> Status {
         self.usage

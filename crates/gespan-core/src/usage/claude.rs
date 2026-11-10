@@ -279,6 +279,12 @@ fn keychain_service(config: Option<&std::path::Path>) -> String {
 #[cfg(target_os = "macos")]
 /// The raw Keychain secret, or None when there is no item (or it cannot be read).
 fn keychain(config: Option<&std::path::Path>) -> Option<String> {
+    keychain_secret(&keychain_service(config))
+}
+/// The generic password Keychain keeps under `service`, read with
+/// `/usr/bin/security` so the item's own access list applies.
+#[cfg(target_os = "macos")]
+pub(super) fn keychain_secret(service: &str) -> Option<String> {
     use crate::process;
     use std::{
         process::{Command, Stdio},
@@ -287,10 +293,9 @@ fn keychain(config: Option<&std::path::Path>) -> Option<String> {
         time::Instant,
     };
 
-    let service = keychain_service(config);
     let mut command = Command::new("/usr/bin/security");
     command
-        .args(["find-generic-password", "-s", &service, "-w"])
+        .args(["find-generic-password", "-s", service, "-w"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

@@ -159,7 +159,7 @@ const CURSOR: Spec = Spec {
         sign_out: Some(&["logout"]),
     }),
     accounts: Some(Accounts { profile: None }),
-    usage: None,
+    usage: Some(&crate::usage::Cursor),
     features: Features {
         steer: Some(None),
         ..STANDARD
