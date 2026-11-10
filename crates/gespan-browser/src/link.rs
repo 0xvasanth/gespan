@@ -760,7 +760,7 @@ impl Wire {
         drop(policy);
         let bytes = std::mem::take(&mut writer.socket.get_mut().buf);
         #[cfg(test)]
-        inner.about_to_write(id);
+        inner.about_to_write(id, bytes.len());
         // Still under the writer lock, so frames never interleave; a browser
         // that stops reading stalls this for up to the write timeout.
         let written = encoded.map_err(|e| e.to_string()).and_then(|()| {
@@ -857,22 +857,23 @@ struct LinkInner {
     aborted: AtomicBool,
     #[cfg(test)]
     write_log: Mutex<Vec<(u64, Instant)>>,
-    /// Told the id of every agent or system frame just before its bytes go
-    /// to the socket, so a test can act while a write is under way.
+    /// Told the id and encoded size of every agent or system frame just
+    /// before its bytes go to the socket, so a test can act while a write is
+    /// under way.
     #[cfg(test)]
-    before_write: Mutex<Option<mpsc::Sender<u64>>>,
+    before_write: Mutex<Option<mpsc::Sender<(u64, usize)>>>,
 }
 
 #[cfg(test)]
 impl LinkInner {
-    fn about_to_write(&self, id: u64) {
+    fn about_to_write(&self, id: u64, len: usize) {
         if let Some(tx) = self
             .before_write
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
         {
-            let _ = tx.send(id);
+            let _ = tx.send((id, len));
         }
     }
 }
@@ -1316,9 +1317,22 @@ impl Link {
                 ),
             )
         });
-        about_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the action reached its write");
+        // Wait for the action's own frame, the only one at least `pad` long.
+        // Any frame the host writes while the action thread is still building
+        // its padded command also passes the hook, and it fits the empty
+        // socket buffers at once: checking after that one saw a finished
+        // write, not a stall. Encoding the pad takes a second or more in a
+        // debug build, hence the long wait.
+        let wait_until = Instant::now() + Duration::from_secs(30);
+        loop {
+            let left = wait_until.saturating_duration_since(Instant::now());
+            let (_, len) = about_rx
+                .recv_timeout(left)
+                .expect("the action reached its write");
+            if len >= pad {
+                break;
+            }
+        }
         *self
             .inner
             .before_write
@@ -1350,7 +1364,7 @@ impl Link {
     }
 
     #[cfg(test)]
-    fn on_before_write(&self, tx: mpsc::Sender<u64>) {
+    fn on_before_write(&self, tx: mpsc::Sender<(u64, usize)>) {
         *self
             .inner
             .before_write
