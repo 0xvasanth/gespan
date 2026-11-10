@@ -316,7 +316,25 @@ fn read_sync(
         }
         // Another file, or one that shrank: what we remember no longer
         // describes it, so start over from its end.
-        Some(_) => Ok(Sync::nothing(Some(end_checkpoint(kind, path)?))),
+        Some(cp) => {
+            let end = end_checkpoint(kind, path)?;
+            if cp.path != path {
+                tracing::warn!(
+                    old_path = %cp.path.display(),
+                    new_path = %path.display(),
+                    new_len = end.len,
+                    "session file changed since the last sync; importing nothing"
+                );
+            } else {
+                tracing::warn!(
+                    path = %path.display(),
+                    old_len = cp.len,
+                    new_len = size,
+                    "session file shrank since the last sync; importing nothing"
+                );
+            }
+            Ok(Sync::nothing(Some(end)))
+        }
         None => {
             let region = read_from(path, 0)?;
             let parsed = parse(kind, &region, None);
@@ -763,6 +781,7 @@ mod tests {
     fn reads_only_past_the_checkpoint() {
         let home = tempfile::tempdir().unwrap();
         let path = claude_path(home.path());
+        append(&path, b"not json at all\n\xff\xfe invalid utf-8\n");
         append(
             &path,
             &jsonl(&[
@@ -780,6 +799,17 @@ mod tests {
                 user("u2", Some("a1"), json!("new")),
                 reply("a2", "u2", "m2", "new reply"),
             ]),
+        );
+        // Without the uuid to stop at, only the byte offset keeps the old
+        // turns out, so a re-read from the start would show them.
+        let blind = Checkpoint {
+            last_uuid: None,
+            ..cp.clone()
+        };
+        let from_offset = sync(Kind::Claude, home.path(), SID, Some(&blind), None);
+        assert_eq!(
+            pairs(&from_offset),
+            vec![(TurnRole::User, "new"), (TurnRole::Assistant, "new reply")]
         );
         let sync = sync(Kind::Claude, home.path(), SID, Some(&cp), None);
         assert_eq!(
