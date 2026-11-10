@@ -297,7 +297,7 @@ impl Conversation {
     }
 
     fn target(&self) -> outside_sync::Target {
-        outside_sync::Target::of(&self.store, &self.summary, &self.account.id)
+        outside_sync::Target::of(&self.store, &self.summary, &self.account.id, false)
             .expect("a local session syncs")
     }
 
@@ -771,11 +771,24 @@ fn remote_and_unsupported_sessions_never_sync() {
     let chat = Conversation::new("targets", true);
     let mut remote = chat.summary.clone();
     remote.cwd = "remote://machine/work/gespan".into();
-    assert!(outside_sync::Target::of(&chat.store, &remote, &chat.account.id).is_none());
+    assert!(outside_sync::Target::of(&chat.store, &remote, &chat.account.id, false).is_none());
     let mut cursor = chat.summary.clone();
     cursor.provider = "cursor".into();
-    assert!(outside_sync::Target::of(&chat.store, &cursor, &chat.account.id).is_none());
+    assert!(outside_sync::Target::of(&chat.store, &cursor, &chat.account.id, false).is_none());
     let target = chat.target();
     assert_eq!(target.kind, Kind::Codex);
     assert_eq!(target.home, chat.home());
+}
+
+/// A Pilot's Codex keeps its rollouts under `codex-pilots`, not the
+/// account's home, so searching the account's home would find nothing on
+/// every send.
+#[test]
+fn pilot_codex_sessions_do_not_sync() {
+    let chat = Conversation::new("pilot-codex", true);
+    assert!(outside_sync::Target::of(&chat.store, &chat.summary, &chat.account.id, true).is_none());
+    let claude = Conversation::of(Kind::Claude, "pilot-claude", true);
+    let target = outside_sync::Target::of(&claude.store, &claude.summary, &claude.account.id, true)
+        .expect("a Pilot's Claude reads the account's own home");
+    assert_eq!(target.home, claude.home());
 }

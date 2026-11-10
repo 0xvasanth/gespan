@@ -211,7 +211,12 @@ fn run_turn_using(
         .unwrap_or_default();
     let mut usage_limit = None;
     let mut signed_out = false;
-    let sync_target = outside_sync::Target::of(&store, &summary, &settings.account.id);
+    let sync_target = outside_sync::Target::of(
+        &store,
+        &summary,
+        &settings.account.id,
+        settings.pilot.is_some(),
+    );
     // Picked-up terminal turns start here; the view gets them with the prompt.
     let mut picked_start = None;
     let mut sync_held = false;

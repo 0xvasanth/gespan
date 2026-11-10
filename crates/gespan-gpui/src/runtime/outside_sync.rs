@@ -15,13 +15,19 @@ pub(super) struct Target {
 
 impl Target {
     /// `None` for remote projects, agents without a readable session file,
-    /// or an account whose home can't be found.
-    pub(super) fn of(store: &Database, summary: &Session, account: &str) -> Option<Self> {
+    /// an account whose home can't be found, or a Pilot's Codex, whose
+    /// rollouts live under `codex-pilots` rather than the account's home.
+    pub(super) fn of(
+        store: &Database,
+        summary: &Session,
+        account: &str,
+        pilot: bool,
+    ) -> Option<Self> {
         if summary.cwd.starts_with("remote://") {
             return None;
         }
         let kind = Kind::parse(&summary.provider)?;
-        if !matches!(kind, Kind::Claude | Kind::Codex) {
+        if !matches!(kind, Kind::Claude | Kind::Codex) || (pilot && kind == Kind::Codex) {
             return None;
         }
         let data = match locked(store) {
