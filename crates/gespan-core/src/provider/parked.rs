@@ -537,8 +537,10 @@ pub(super) fn settle_cancelled(mut wire: Wire, mut protocol: Protocol) {
     let binding = Binding::request(&protocol.request);
     let epoch = *epochs().lock().unwrap().entry(binding.clone()).or_default();
     process::mark_idle(wire.child.id(), true);
+    let settling = Settling::start(binding.clone());
     thread::spawn(move || {
         let settle = move || {
+            let _settling = settling;
             let started = Instant::now();
             // This is the existing idle-child retention period after Stop,
             // not a deadline on an active provider conversation.
@@ -691,6 +693,59 @@ pub(super) fn forget_session(kind: Kind, session: &str, account: &str, cwd: &Pat
     };
     if !retired.is_empty() {
         thread::spawn(move || drop(retired));
+    }
+}
+
+/// Whether an agent of this session may still be writing its session file
+/// with no turn running: one Hold parked, which may still run background
+/// work, or one Stop left finishing its turn.
+pub(super) fn has_live(kind: Kind, session: &str, account: &str, cwd: &Path) -> bool {
+    let binding = Binding {
+        kind,
+        session: Some(session.into()),
+        account: account.into(),
+        cwd: cwd.into(),
+    };
+    let settling = settling()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&binding)
+        .is_some_and(|count| *count > 0);
+    settling
+        || idle_pool()
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.held && Binding::request(&p.protocol.request) == binding)
+}
+
+/// Stopped agents still reading to their turn's end, per binding.
+fn settling() -> &'static Mutex<HashMap<Binding, usize>> {
+    static SETTLING: OnceLock<Mutex<HashMap<Binding, usize>>> = OnceLock::new();
+    SETTLING.get_or_init(Default::default)
+}
+
+/// Counts one stopped agent as settling until dropped.
+struct Settling(Binding);
+impl Settling {
+    fn start(binding: Binding) -> Self {
+        *settling()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(binding.clone())
+            .or_default() += 1;
+        Self(binding)
+    }
+}
+impl Drop for Settling {
+    fn drop(&mut self) {
+        let mut settling = settling().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = settling.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                settling.remove(&self.0);
+            }
+        }
     }
 }
 
@@ -1136,6 +1191,77 @@ for line in sys.stdin:
         );
         assert!(!parked(deleted));
         unpin_idle_agents();
+        idle_pool().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn held_and_settling_agents_still_write_their_session() {
+        const CHILD: &str = "GESPAN_PARKED_LIVE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The idle limit and pool are process-wide; run alone.
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "provider::parked::tests::held_and_settling_agents_still_write_their_session",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        fn spawn(session: &str) -> (Wire, Protocol) {
+            let mut request = start_request(Kind::Codex, "/bin/cat");
+            request.provider_id = Some(session.into());
+            let mut command = Command::new(&request.binary);
+            command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            process::isolate(&mut command);
+            let wire = Wire::spawn(&mut command, &request, false).unwrap();
+            (wire, Protocol::new(request))
+        }
+        let live =
+            |session: &str, account: &str, cwd: &Path| has_live(Kind::Codex, session, account, cwd);
+        let account = crate::accounts::DEFAULT;
+        let cwd = std::env::temp_dir();
+
+        // A warm agent that finished its turn is not writing.
+        configure(1);
+        let (wire, protocol) = spawn("idle");
+        put(wire, protocol);
+        assert!(!live("idle", account, &cwd));
+
+        // Hold parks an agent that may still run background work.
+        let (wire, protocol) = spawn("held");
+        put_held(wire, protocol);
+        assert!(live("held", account, &cwd));
+        assert!(!live("held", "another", &cwd), "another account's");
+        assert!(!live("held", account, Path::new("/elsewhere")));
+        assert!(!live("other", account, &cwd));
+        forget_session(Kind::Codex, "held", account, &cwd);
+        assert!(!live("held", account, &cwd));
+
+        // Stop leaves the agent finishing its turn in the background.
+        let (wire, mut protocol) = spawn("stopped");
+        protocol.active_turn = Some("turn".into());
+        settle_cancelled(wire, protocol);
+        assert!(live("stopped", account, &cwd), "still settling");
+        // Forgetting the session ends the settling.
+        forget_session(Kind::Codex, "stopped", account, &cwd);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while live("stopped", account, &cwd) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!live("stopped", account, &cwd), "settling ended");
+        configure(0);
         idle_pool().lock().unwrap().clear();
     }
 }

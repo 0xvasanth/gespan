@@ -85,22 +85,60 @@ pub(super) fn before_turn(
         target,
         turn,
         transcript,
-        |store, session, start, rows| locked(store)?.write_rows(session, start, rows),
-        provider::forget_session,
+        Effects {
+            save_rows: |store: &Database, session, start, rows: &[Row]| {
+                locked(store)?.write_rows(session, start, rows)
+            },
+            forget: provider::forget_session,
+            still_writing: provider::agent_still_writing,
+        },
     )
 }
 
-/// `before_turn` with its two effects passed in: saving the picked-up rows,
-/// and dropping the warm agent.
-pub(super) fn before_turn_with(
+/// What `before_turn` does outside the session file, passed in so tests can
+/// watch it.
+pub(super) struct Effects<S, F, W> {
+    /// Saves the picked-up rows.
+    pub(super) save_rows: S,
+    /// Drops the session's warm agent.
+    pub(super) forget: F,
+    /// Whether Gespan's own agent for the session may still be writing.
+    pub(super) still_writing: W,
+}
+
+pub(super) fn before_turn_with<S, F, W>(
     store: &Database,
     target: &Target,
     turn: &Turn,
     transcript: &mut Transcript,
-    save_rows: impl FnOnce(&Database, i64, usize, &[Row]) -> Result<(), String>,
-    forget: impl FnOnce(Kind, &str, &str, &Path),
-) -> Synced {
+    effects: Effects<S, F, W>,
+) -> Synced
+where
+    S: FnOnce(&Database, i64, usize, &[Row]) -> Result<(), String>,
+    F: FnOnce(Kind, &str, &str, &Path),
+    W: FnOnce(Kind, &str, &str, &Path) -> bool,
+{
+    let Effects {
+        save_rows,
+        forget,
+        still_writing,
+    } = effects;
     let stored = stored_checkpoint(store, turn.session);
+    if still_writing(target.kind, turn.provider_id, turn.account, turn.cwd) {
+        // Stop left it finishing its turn, or Hold parked it with background
+        // work: what it wrote is Gespan's own, and dropping it would end
+        // that work.
+        if let Some(checkpoint) = outside_turns::checkpoint_at_end(
+            target.kind,
+            &target.home,
+            turn.provider_id,
+            stored.as_ref(),
+        ) {
+            save_checkpoint(store, turn.session, &checkpoint);
+        }
+        tracing::info!("terminal sync skipped: Gespan's own agent is still writing");
+        return Synced::default();
+    }
     let own = OwnTurn::last(&transcript.rows);
     let mut sync = outside_turns::sync(
         target.kind,

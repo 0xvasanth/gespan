@@ -304,6 +304,16 @@ impl Conversation {
     /// The pre-turn sync alone, on the stored rows, with every warm-agent
     /// drop recorded instead of made.
     fn sync_now(&self) -> (outside_sync::Synced, Transcript, Vec<Forgot>) {
+        let (synced, transcript, forgot, _) = self.sync_while(false);
+        (synced, transcript, forgot)
+    }
+
+    /// `sync_now` with Gespan's own agent for the session reported as still
+    /// writing (held or settling) or not, and the bindings it was asked about.
+    fn sync_while(
+        &self,
+        still_writing: bool,
+    ) -> (outside_sync::Synced, Transcript, Vec<Forgot>, Vec<Forgot>) {
         let mut transcript = locked(&self.store).unwrap().load(self.summary.id).unwrap();
         let turn = outside_sync::Turn {
             session: self.summary.id,
@@ -312,17 +322,26 @@ impl Conversation {
             cwd: std::path::Path::new(&self.summary.cwd),
         };
         let mut forgot = Vec::new();
+        let mut asked = Vec::new();
         let synced = outside_sync::before_turn_with(
             &self.store,
             &self.target(),
             &turn,
             &mut transcript,
-            |store, session, start, rows| locked(store)?.write_rows(session, start, rows),
-            |kind, id, account, cwd| {
-                forgot.push((kind, id.to_owned(), account.to_owned(), cwd.to_owned()))
+            outside_sync::Effects {
+                save_rows: |store: &Database, session, start, rows: &[Row]| {
+                    locked(store)?.write_rows(session, start, rows)
+                },
+                forget: |kind, id: &str, account: &str, cwd: &std::path::Path| {
+                    forgot.push((kind, id.to_owned(), account.to_owned(), cwd.to_owned()))
+                },
+                still_writing: |kind, id: &str, account: &str, cwd: &std::path::Path| {
+                    asked.push((kind, id.to_owned(), account.to_owned(), cwd.to_owned()));
+                    still_writing
+                },
             },
         );
-        (synced, transcript, forgot)
+        (synced, transcript, forgot, asked)
     }
 
     /// Lines appended as the agent writes them, without a send.
@@ -549,6 +568,43 @@ fn own_turn_flushed_late_then_a_terminal_turn_imports_only_the_terminal_turn() {
     assert_eq!(chat.view, rows);
 }
 
+/// After Stop the agent finishes its turn in the background, and Hold parks
+/// one that may keep working: what they write is Gespan's own.
+#[test]
+fn writes_by_gespans_own_held_or_stopped_agent_are_not_imported() {
+    let mut chat = Conversation::new("still-writing", true);
+    chat.send("Fix the login");
+    chat.agent_writes(&[
+        codex_said("user_message", "<background task finished>"),
+        codex_said("agent_message", "The build passed."),
+    ]);
+    let (synced, transcript, forgot, asked) = chat.sync_while(true);
+    let binding = (
+        Kind::Codex,
+        THREAD.to_owned(),
+        chat.account.id.clone(),
+        PathBuf::from(&chat.summary.cwd),
+    );
+    assert_eq!(transcript.rows.len(), 2, "nothing imported");
+    assert!(forgot.is_empty(), "the held agent and its work are kept");
+    assert_eq!(synced, outside_sync::Synced::default());
+    assert_eq!(
+        asked,
+        std::slice::from_ref(&binding),
+        "asked about this agent"
+    );
+    assert_eq!(chat.rows().len(), 2);
+    assert_eq!(
+        chat.checkpoint().unwrap().len,
+        std::fs::metadata(chat.rollout()).unwrap().len(),
+        "its writes are behind the checkpoint"
+    );
+    // Once it is gone, they are not read back as outside either.
+    let (synced, _, forgot, _) = chat.sync_while(false);
+    assert_eq!(synced, outside_sync::Synced::default());
+    assert!(forgot.is_empty());
+}
+
 #[test]
 fn a_failed_save_still_drops_the_warm_agent() {
     let mut chat = Conversation::new("failed-save", true);
@@ -568,8 +624,11 @@ fn a_failed_save_still_drops_the_warm_agent() {
         &chat.target(),
         &turn,
         &mut transcript,
-        |_, _, _, _| Err("disk full".into()),
-        |_, _, _, _| forgot += 1,
+        outside_sync::Effects {
+            save_rows: |_: &Database, _, _, _: &[Row]| Err("disk full".into()),
+            forget: |_, _: &str, _: &str, _: &std::path::Path| forgot += 1,
+            still_writing: |_, _: &str, _: &str, _: &std::path::Path| false,
+        },
     );
     assert_eq!(
         synced,
