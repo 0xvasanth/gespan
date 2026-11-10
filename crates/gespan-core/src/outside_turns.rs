@@ -4,6 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+mod codex;
+pub use codex::parse_codex;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnRole {
     User,
@@ -37,10 +40,7 @@ struct Entry {
 /// Reads turns from a region of a Claude Code session file. Only the live
 /// branch is returned, and only entries after `after_uuid` when given.
 pub fn parse_claude(region: &[u8], after_uuid: Option<&str>) -> Parsed {
-    let consumed = region
-        .iter()
-        .rposition(|b| *b == b'\n')
-        .map_or(0, |i| i + 1);
+    let consumed = complete_len(region);
 
     let mut parents: HashMap<String, String> = HashMap::new();
     let mut entries: Vec<Entry> = Vec::new();
@@ -123,6 +123,15 @@ pub fn parse_claude(region: &[u8], after_uuid: Option<&str>) -> Parsed {
         consumed: consumed as u64,
         grew,
     }
+}
+
+/// Length of the region up to and including its last newline; anything after
+/// it is a line still being written.
+fn complete_len(region: &[u8]) -> usize {
+    region
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1)
 }
 
 fn str_field(value: &Value, key: &str) -> Option<String> {
