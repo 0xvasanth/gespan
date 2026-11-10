@@ -129,13 +129,11 @@ impl Pilots {
         let (mascot, color) = self.roster.next_look();
         let mut ink = shell_fill();
         ink.a = 1.;
-        div()
+        let card = div()
             .id("pilot-intro")
             .debug_selector(|| "pilot-intro".into())
             .role(Role::Group)
             .aria_label("Meet Pilots")
-            .mx_2()
-            .mb_2()
             .overflow_hidden()
             .rounded_lg()
             .bg(content(0.03))
@@ -223,8 +221,11 @@ impl Pilots {
                             this.create(projects.clone(), window, cx);
                         })),
                 ),
-            )
-            .into_any_element()
+            );
+        // The card is a sidebar list item's root, where a margin narrows it
+        // without moving it over. Padding on a wrapper insets it evenly, on
+        // the same 8px edges as the rows around it.
+        div().px_2().pb_2().child(card).into_any_element()
     }
 }
 
