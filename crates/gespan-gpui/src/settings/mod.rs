@@ -194,6 +194,10 @@ impl SliderKind {
             SliderKind::InterfaceScale => (0, UI_SCALE_PERCENTS.len() as u32 - 1),
         }
     }
+    /// Whether the value is saved on release rather than on every step.
+    fn holds_until_release(self) -> bool {
+        matches!(self, SliderKind::InterfaceScale)
+    }
     fn get(self, p: &Preferences) -> u32 {
         match self {
             SliderKind::Hue => p.theme_hue,
@@ -246,6 +250,9 @@ pub(crate) struct SettingsView {
     targets: RefCell<HashMap<&'static str, AnchorSlot>>,
     slider_tracks: RefCell<HashMap<SliderKind, AnchorSlot>>,
     slider_drag: Option<SliderKind>,
+    /// A slider position held until release, for sliders whose value is too
+    /// disruptive to apply mid-drag (the interface scale zooms the window).
+    slider_pending: Option<(SliderKind, u32)>,
     select_open: Option<&'static str>,
     select_active: usize,
     select_focus: FocusHandle,
@@ -416,6 +423,7 @@ impl SettingsView {
             targets: Default::default(),
             slider_tracks: Default::default(),
             slider_drag: None,
+            slider_pending: None,
             select_open: None,
             select_active: 0,
             select_focus: cx.focus_handle(),
@@ -1194,13 +1202,13 @@ impl Render for SettingsView {
                     if event.pressed_button == Some(MouseButton::Left) {
                         this.slide(kind, event.position.x, cx);
                     } else {
-                        this.slider_drag = None;
+                        this.end_slide(cx);
                     }
                 }
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.slider_drag = None),
+                cx.listener(|this, _, _, cx| this.end_slide(cx)),
             )
             .children(if self.section == Section::Skills {
                 page

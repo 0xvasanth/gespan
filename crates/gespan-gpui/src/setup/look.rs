@@ -264,6 +264,12 @@ mod tests {
     }
 
     #[gpui::test]
+    fn look_card_has_no_layout_row(cx: &mut TestAppContext) {
+        let opened = open(SetupStep::Look, "/Users/a/code", cx);
+        assert!(!super::super::test_support::has(&opened, "setup-layout", cx));
+    }
+
+    #[gpui::test]
     fn glass_switch_toggles_inset_glass(cx: &mut TestAppContext) {
         let opened = open(SetupStep::Look, "/Users/a/code", cx);
         let before = opened.card.read_with(cx, |c, _| c.prefs.inset_glass);

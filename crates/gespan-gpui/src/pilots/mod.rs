@@ -60,7 +60,7 @@ use std::{
 pub(crate) struct Changed;
 pub(crate) struct TabOpened(pub String);
 pub(crate) struct ShowDetails(pub String);
-/// The rail asked to turn Pilots off, as Settings › Pilots › Show pilots does.
+/// The sidebar asked to turn Pilots off, as Settings › Appearance › Sidebar › Pilots does.
 pub(crate) struct HidePilots;
 pub(crate) use notifications::{NotificationChanged, NotificationFinished};
 #[derive(Clone, PartialEq)]

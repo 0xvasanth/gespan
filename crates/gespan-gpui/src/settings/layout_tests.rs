@@ -156,6 +156,82 @@ fn interface_scale_slider_steps_through_every_percent(cx: &mut TestAppContext) {
     assert_eq!(seen, UI_SCALE_PERCENTS);
 }
 
+#[gpui::test]
+fn interface_scale_slider_applies_only_on_release(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual
+        .debug_bounds("settings-slider-interface-scale")
+        .unwrap();
+    let travel = track.size.width.as_f32() - 12.;
+    let last = (UI_SCALE_PERCENTS.len() - 1) as f32;
+    let at = |ix: usize| {
+        point(
+            track.left() + px(6. + travel * ix as f32 / last),
+            track.center().y,
+        )
+    };
+    let saved = window.update(visual, |view, _, _| view.prefs.ui_scale).unwrap();
+    let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = changes.clone();
+    let entity = window.root(visual).unwrap();
+    let _subscription = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &SettingsEvent, _| {
+            if matches!(event, SettingsEvent::Changed(_)) {
+                count.set(count.get() + 1);
+            }
+        })
+    });
+    let state = |visual: &mut VisualTestContext| {
+        window
+            .update(visual, |view, _, _| (view.prefs.ui_scale, view.shown_ui_scale()))
+            .unwrap()
+    };
+
+    visual.simulate_mouse_down(at(3), MouseButton::Left, Default::default());
+    visual.simulate_mouse_move(at(9), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    // Mid-drag the slider shows the pending step, but the window is not zoomed.
+    assert_eq!(state(visual), (saved, UI_SCALE_PERCENTS[9]));
+    assert_eq!(changes.get(), 0, "no preference change mid-drag");
+    visual.simulate_mouse_move(at(7), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(state(visual), (saved, UI_SCALE_PERCENTS[7]));
+    assert_eq!(changes.get(), 0);
+
+    visual.simulate_mouse_up(at(7), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(state(visual), (UI_SCALE_PERCENTS[7], UI_SCALE_PERCENTS[7]));
+    assert_eq!(changes.get(), 1, "one change on release");
+}
+
+#[gpui::test]
+fn other_sliders_still_apply_while_dragging(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual.debug_bounds("settings-slider-hue").unwrap();
+    let before = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    visual.simulate_mouse_down(
+        point(track.left() + px(6.), track.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    visual.simulate_mouse_move(
+        point(track.right() - px(6.), track.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    visual.run_until_parked();
+    let during = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    assert_ne!(during, before, "hue is live mid-drag");
+}
+
 #[test]
 fn interface_scale_slider_maps_positions_to_percents() {
     let kind = SliderKind::InterfaceScale;

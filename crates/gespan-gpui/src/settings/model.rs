@@ -139,7 +139,7 @@ impl Section {
     }
     fn keywords(self) -> &'static str {
         match self {
-            Section::General => "version update sounds notifications notes board",
+            Section::General => "version update sounds notifications",
             Section::Diagnostics => {
                 "diagnostics crash report issue bug email github logs folder copy failures counters errors"
             }
@@ -409,7 +409,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "sidebar-notes",
         Section::Appearance,
         "Notes",
-        "notebook markdown rail scratchpad sidebar show hide",
+        "notebook markdown scratchpad sidebar show hide",
     ),
     (
         "sidebar-board",
@@ -420,8 +420,8 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "sidebar-activity",
         Section::Appearance,
-        "Working agents",
-        "activity live running sessions rail card sidebar show hide",
+        "Activity",
+        "working agents activity live running sessions card sidebar show hide",
     ),
     (
         "sidebar-automations",

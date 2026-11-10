@@ -327,7 +327,7 @@ impl SettingsView {
                 Some("Zoom the whole interface. You can also use Ctrl+=, Ctrl+-, and Ctrl+0 (Cmd on macOS).".into()),
                 vec![self.slider(
                     SliderKind::InterfaceScale,
-                    format!("{}%", p.ui_scale),
+                    format!("{}%", self.shown_ui_scale()),
                     false,
                     cx,
                 )],

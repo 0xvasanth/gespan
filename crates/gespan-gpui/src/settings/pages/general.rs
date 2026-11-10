@@ -50,7 +50,7 @@ impl SettingsView {
         if cfg!(target_os = "macos") {
             workspace.push(self.row(
                 Some("quick-composer"),
-                false,
+                true,
                 "Quick composer",
                 Some(format!(
                     "Press {} from any app. Return starts a session in the background; ⌘Return opens it. Change the shortcut in Keybindings.",
@@ -68,7 +68,7 @@ impl SettingsView {
         }
         workspace.push(self.row(
             Some("keep-awake"),
-            false,
+            !cfg!(target_os = "macos"),
             "Keep screen awake",
             Some("Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents. Closing the lid or locking the screen yourself still does.".into()),
             vec![self.segmented(
