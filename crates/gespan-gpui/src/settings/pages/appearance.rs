@@ -1,9 +1,6 @@
 //! AppearancePage, ChatBackgroundCard, workspace themes and AccentColorPicker.
 use crate::popover::{Align, Anchor, Side, popover};
-use crate::settings::{
-    SettingsEvent, SettingsView, SliderKind, preferences::UI_SCALE_PERCENTS,
-    widgets::secondary_button,
-};
+use crate::settings::{SettingsEvent, SettingsView, SliderKind, widgets::secondary_button};
 use crate::theme::*;
 use crate::window_blur::BLUR_ADJUSTABLE;
 use gpui::{
@@ -98,7 +95,6 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let p = self.prefs.clone();
-        let inset = !self.ctx.classic;
         let light = p.theme == "light"
             || (p.theme == "system"
                 && matches!(
@@ -232,29 +228,26 @@ impl SettingsView {
                 ),
             ];
         page.push(self.group(None, false, "Color", None, None, color));
-        let opaque = light || (inset && !p.inset_glass) || !GLASS_PLATFORM;
-        let mut translucency = Vec::new();
-        if inset {
-            translucency.push(self.row(
-                Some("inset-glass"),
-                true,
+        let opaque = light || !p.inset_glass || !GLASS_PLATFORM;
+        let mut translucency = vec![self.row(
+            Some("inset-glass"),
+            true,
+            "Transparent window",
+            Some(transparent_window_description(GLASS_PLATFORM, light).into()),
+            vec![self.toggle(
+                "inset-glass",
                 "Transparent window",
-                Some(transparent_window_description(GLASS_PLATFORM, light).into()),
-                vec![self.toggle(
-                    "inset-glass",
-                    "Transparent window",
-                    p.inset_glass,
-                    light || !GLASS_PLATFORM,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.inset_glass = on),
-                )],
-            ));
-        }
+                p.inset_glass,
+                light || !GLASS_PLATFORM,
+                cx,
+                |this, on, cx| this.update(cx, |p| p.inset_glass = on),
+            )],
+        )];
         translucency.extend([self.row(
             Some("sidebar-opacity"),
-            !inset,
+            false,
             "Sidebar opacity",
-            Some("Applies to the project rail and the other glass panes.".into()),
+            Some("Applies to the sidebar and the other glass panes.".into()),
             vec![self.slider(
                 SliderKind::SidebarOpacity,
                 format!("{}%", p.sidebar_opacity),
@@ -304,29 +297,27 @@ impl SettingsView {
             translucency,
         ));
         page.push(self.chat_background_card(cx));
-        let scale_options = UI_SCALE_PERCENTS
-            .iter()
-            .map(|percent| {
-                (
-                    percent.to_string(),
-                    SharedString::from(format!("{percent}%")),
-                    None,
-                )
-            })
-            .collect();
-        let mut layout = vec![
+        let layout = vec![
             self.row(
-                Some("inset-layout"),
+                Some("new-layout-style"),
                 true,
-                "Layout",
-                Some("Classic keeps everything in one sidebar. Focused adds a project switcher, workspace tabs and a right panel.".into()),
+                "Workspace style",
+                Some(if cfg!(target_os = "macos") {
+                    "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them.".into()
+                } else {
+                    "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them.".into()
+                }),
                 vec![self.segmented(
-                    "inset-layout",
-                    "Layout",
-                    if inset { "focused" } else { "classic" },
-                    &[("classic", "Classic"), ("focused", "Focused")],
+                    "new-layout-style",
+                    "Workspace style",
+                    if self.ctx.new_layout_boxy {
+                        "boxy"
+                    } else {
+                        "rounded"
+                    },
+                    &[("rounded", "Rounded"), ("boxy", "Boxy")],
                     cx,
-                    |_, value, cx| cx.emit(SettingsEvent::NewLayout(value == "focused")),
+                    |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
                 )],
             ),
             self.row(
@@ -334,62 +325,28 @@ impl SettingsView {
                 false,
                 "Interface scale",
                 Some("Zoom the whole interface. You can also use Ctrl+=, Ctrl+-, and Ctrl+0 (Cmd on macOS).".into()),
-                vec![self.select(
-                    "interface-scale",
-                    "Interface scale",
-                    &p.ui_scale.to_string(),
-                    scale_options,
-                    None,
+                vec![self.slider(
+                    SliderKind::InterfaceScale,
+                    format!("{}%", self.shown_ui_scale()),
+                    false,
                     cx,
-                    |this, v, cx| {
-                        if let Ok(v) = v.parse() {
-                            this.update(cx, |p| p.ui_scale = v)
-                        }
-                    },
                 )],
             ),
             self.row(
-                Some("show-excluded-files"),
+                Some("tab-animations"),
                 false,
-                "Show excluded files",
-                Some("Show files and folders Git excludes, such as build output and dependencies, in the explorer.".into()),
+                "Tab animations",
+                Some("Animate tabs as they open and close.".into()),
                 vec![self.toggle(
-                    "show-excluded-files",
-                    "Show excluded files",
-                    p.show_excluded_files,
+                    "tab-animations",
+                    "Tab animations",
+                    p.tab_animations,
                     false,
                     cx,
-                    |this, on, cx| this.update(cx, |p| p.show_excluded_files = on),
+                    |this, on, cx| this.update(cx, |p| p.tab_animations = on),
                 )],
             ),
         ];
-        if inset {
-            layout.insert(
-                1,
-                self.row(
-                    Some("new-layout-style"),
-                    false,
-                    "Workspace style",
-                    Some(if cfg!(target_os = "macos") {
-                        "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them.".into()
-                    } else {
-                        "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them.".into()
-                    }),
-                    vec![self.segmented(
-                        "new-layout-style",
-                        "Workspace style",
-                        if self.ctx.new_layout_boxy {
-                            "boxy"
-                        } else {
-                            "rounded"
-                        },
-                        &[("rounded", "Rounded"), ("boxy", "Boxy")],
-                        cx,
-                        |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
-                    )],
-                ),
-            );
-        }
         page.push(self.group(None, false, "Layout", None, None, layout));
         page.push(self.sidebar_group(cx));
         page
@@ -400,31 +357,26 @@ impl SettingsView {
     fn sidebar_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let v = self.ctx.sidebar;
         let p = &self.prefs;
-        // (id for Shell::change_sidebar_option, label, on, disabled)
-        let rows: [(&'static str, &'static str, bool, bool); 7] = [
-            ("sidebar-search", "Search", v.search, false),
-            ("sidebar-notes", "Notes", v.notes, !p.notes),
-            ("sidebar-automations", "Automations", v.automations, false),
-            ("sidebar-inbox", "Inbox", v.inbox, false),
-            ("sidebar-pilots", "Pilots", p.pilots, false),
-            (
-                "sidebar-activity",
-                "Activity",
-                v.activity,
-                !p.working_agents,
-            ),
-            ("compact-session-cards", "Compact view", v.compact, false),
+        // (id for Shell::change_sidebar_option, label, on)
+        let rows: [(&'static str, &'static str, bool); 7] = [
+            ("sidebar-notes", "Notes", p.notes),
+            ("sidebar-board", "Board", p.board),
+            ("sidebar-automations", "Automations", v.automations),
+            ("sidebar-inbox", "Inbox", v.inbox),
+            ("sidebar-pilots", "Pilots", p.pilots),
+            ("sidebar-activity", "Activity", p.working_agents),
+            ("compact-session-cards", "Compact view", v.compact),
         ];
         let rows = rows
             .into_iter()
             .enumerate()
-            .map(|(ix, (id, label, on, disabled))| {
+            .map(|(ix, (id, label, on))| {
                 self.row(
                     Some(id),
                     ix == 0,
                     label,
                     None,
-                    vec![self.toggle(id, label, on, disabled, cx, move |_, _, cx| {
+                    vec![self.toggle(id, label, on, false, cx, move |_, _, cx| {
                         cx.emit(SettingsEvent::SidebarOption(id))
                     })],
                 )

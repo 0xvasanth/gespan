@@ -38,6 +38,13 @@ pub(super) struct State {
     pending_method: &'static str,
     pending_params: Value,
     deadline: Option<Instant>,
+    /// A pending prompt's deadline, pushed out again by each message from
+    /// the agent: a turn times out only after this long in silence.
+    prompt_idle: Option<Duration>,
+    /// When a Kiro turn whose connection dropped sends its prompt again.
+    retry_at: Option<Instant>,
+    /// This turn already retried a dropped connection.
+    retried: bool,
     cancelling: bool,
     background: HashMap<String, BackgroundDispatch>,
     background_poll: Option<Instant>,
@@ -70,6 +77,31 @@ thread_local! {
     /// Lets process tests reach a request deadline without waiting for it.
     pub(super) static DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+thread_local! {
+    /// Lets tests retry a dropped Kiro turn without waiting for it.
+    static RETRY_WAIT_OVERRIDE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// How long a Kiro turn whose connection dropped waits before its one retry.
+fn kiro_retry_wait() -> Duration {
+    let wait = Duration::from_secs(3);
+    #[cfg(test)]
+    let wait = RETRY_WAIT_OVERRIDE.with(|o| o.get()).unwrap_or(wait);
+    wait
+}
+
+/// Kiro's answer to a prompt whose model connection dropped. Its other
+/// "try again in a moment" errors do not count.
+fn kiro_dropped_connection(error: &Value) -> bool {
+    error["data"]["errorType"] == "ServerConnectionResetError"
+        || error["message"].as_str().is_some_and(|message| {
+            message
+                .to_lowercase()
+                .contains("your connection was interrupted")
+        })
 }
 
 /// An explicit sign-in failure on Kiro's stderr, or `None`. Kiro logs ordinary
@@ -160,6 +192,7 @@ impl Protocol {
     pub(super) fn acp_cancel(&mut self, stdin: &mut impl Write) -> Result<(), String> {
         self.acp.cancelling = true;
         self.acp.deadline = None;
+        self.acp.retry_at = None;
         self.acp.background.clear();
         if matches!(
             self.request.kind,
@@ -199,11 +232,22 @@ impl Protocol {
         )
     }
 
-    /// ACP deadlines apply to individual requests, never to a quiet stream.
+    /// ACP deadlines apply to individual requests; a prompt's only to a
+    /// silent agent.
     pub(super) fn acp_tick(&mut self, stdin: &mut impl Write) -> Result<Vec<Event>, String> {
         if self.request.kind == Kind::Cursor && self.acp.stage == Stage::Prompt {
             let read = self.cursor_tick(false);
             self.acp.notices.extend(read);
+        }
+        // An agent waiting on an approval or question is silent; the
+        // silence counts from the user's answer.
+        if self.acp.stage == Stage::Prompt
+            && self.acp.deadline.is_some()
+            && (!self.approvals.is_empty() || !self.questions.is_empty())
+        {
+            if let Some(idle) = self.acp.prompt_idle {
+                self.acp.deadline = Some(Instant::now() + idle);
+            }
         }
         if self
             .acp
@@ -217,6 +261,19 @@ impl Protocol {
                 true,
                 stdin,
             )?;
+        }
+        if self
+            .acp
+            .retry_at
+            .is_some_and(|retry| Instant::now() >= retry)
+        {
+            self.acp.retry_at = None;
+            if !self.acp.cancelling {
+                // The new attempt's reply starts a message of its own.
+                self.acp.message += 1;
+                let params = self.acp.pending_params.clone();
+                self.acp_send(Stage::Prompt, self.acp.pending_method, params, stdin)?;
+            }
         }
         if self
             .acp
@@ -307,6 +364,7 @@ impl Protocol {
         #[cfg(test)]
         let wait = wait.map(|wait| DEADLINE_OVERRIDE.with(|o| o.get()).unwrap_or(wait));
         self.acp.deadline = wait.map(|wait| Instant::now() + wait);
+        self.acp.prompt_idle = wait.filter(|_| stage == Stage::Prompt);
         write_json(
             stdin,
             json!({"jsonrpc":"2.0","id":self.acp.sequence,"method":method,"params":params}),
@@ -315,6 +373,8 @@ impl Protocol {
     pub(super) fn acp_resume_warm(&mut self, stdin: &mut impl Write) -> Result<(), String> {
         self.acp.message = 0;
         self.acp.cancelling = false;
+        self.acp.retried = false;
+        self.acp.retry_at = None;
         self.acp.options.clear();
         self.acp.settings_applied = false;
         self.acp.spent_effort = false;
@@ -682,6 +742,22 @@ impl Protocol {
                 return self.acp_probe_next(stdin);
             }
             Stage::ListModels => return self.acp_session(stdin),
+            // Kiro fails a turn whose model connection dropped; the same
+            // prompt on the same session usually goes through.
+            Stage::Prompt
+                if kind == Kind::Kiro
+                    && !timed_out
+                    && !self.acp.retried
+                    && kiro_dropped_connection(error) =>
+            {
+                tracing::info!(error = %detail, "Kiro dropped its connection; retrying the turn once");
+                self.acp.retried = true;
+                self.acp.retry_at = Some(Instant::now() + kiro_retry_wait());
+                self.acp
+                    .notices
+                    .push(Event::Status("Reconnecting to Kiro…".into()));
+                return Ok(());
+            }
             Stage::Authenticate if matches!(kind, Kind::Cursor | Kind::Grok) => {
                 return self.acp_session(stdin);
             }
@@ -776,6 +852,23 @@ impl Protocol {
     ) -> Result<Vec<Event>, String> {
         let mut events = Vec::new();
         if let Some(method) = v["method"].as_str() {
+            // Anything the agent sends for this session shows the prompt is
+            // still being worked on. A notification must name the session:
+            // process-level ones (Kiro's `_kiro/...`) say nothing of the turn.
+            let session = v["params"]["sessionId"]
+                .as_str()
+                .or_else(|| v["params"]["notification"]["sessionId"].as_str());
+            if self.acp.stage == Stage::Prompt
+                && self.acp.deadline.is_some()
+                && match session {
+                    Some(id) => id == self.acp.session,
+                    None => v.get("id").is_some(),
+                }
+            {
+                if let Some(idle) = self.acp.prompt_idle {
+                    self.acp.deadline = Some(Instant::now() + idle);
+                }
+            }
             if v.get("id").is_some() {
                 if method == "cursor/ask_question"
                     || method == "_x.ai/ask_user_question"
@@ -929,6 +1022,7 @@ impl Protocol {
         }
         if let Some(error) = v.get("error").filter(|error| !error.is_null()) {
             self.acp_failure(error, false, stdin)?;
+            events.append(&mut self.acp.notices);
             return Ok(events);
         }
         let Some(result) = v.get("result") else {
@@ -2107,6 +2201,271 @@ mod tests {
                 if probe { "probe" } else { "turn" }
             );
         }
+    }
+    /// A turn of `kind` with its `session/prompt` sent; returns that request.
+    fn prompting(kind: Kind, out: &mut Vec<u8>) -> (Protocol, Value) {
+        let mut p = protocol(kind);
+        p.acp_session(out).unwrap();
+        let new = last(out);
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), out)
+            .unwrap();
+        let mut request = last(out);
+        while request["method"] != "session/prompt" {
+            p.frame(json!({"id":request["id"],"result":{}}), out)
+                .unwrap();
+            request = last(out);
+        }
+        (p, request)
+    }
+    fn deadline_override(wait: Option<Duration>) {
+        DEADLINE_OVERRIDE.with(|o| o.set(wait));
+    }
+    #[test]
+    fn a_prompt_that_keeps_streaming_never_times_out() {
+        let deadline = Duration::from_millis(500);
+        for kind in [Kind::Kiro, Kind::Hermes] {
+            deadline_override(Some(deadline));
+            let mut out = Vec::new();
+            let (mut p, prompt) = prompting(kind, &mut out);
+            let updates = [
+                json!({"sessionUpdate":"agent_message_chunk","content":{"text":"Working"}}),
+                json!({"sessionUpdate":"tool_call","toolCallId":"t","kind":"execute","title":"cargo test","status":"in_progress"}),
+                json!({"sessionUpdate":"agent_thought_chunk","content":{"text":"Still going"}}),
+            ];
+            // Three deadlines' worth of a turn that keeps reporting progress.
+            let started = Instant::now();
+            for update in updates.iter().cycle().take(15) {
+                std::thread::sleep(Duration::from_millis(100));
+                p.frame(
+                    json!({"method":"session/update","params":{"sessionId":"s","update":update}}),
+                    &mut out,
+                )
+                .unwrap();
+                p.acp_tick(&mut out)
+                    .unwrap_or_else(|e| panic!("{}: {e}", kind.label()));
+            }
+            assert!(started.elapsed() >= deadline * 3);
+            let events = p
+                .frame(
+                    json!({"id":prompt["id"],"result":{"stopReason":"end_turn"}}),
+                    &mut out,
+                )
+                .unwrap();
+            assert!(events.contains(&Event::Done), "{}", kind.label());
+            assert!(p.done);
+            deadline_override(None);
+        }
+    }
+    #[test]
+    fn a_silent_prompt_still_times_out() {
+        for kind in [Kind::Kiro, Kind::Hermes] {
+            deadline_override(Some(Duration::from_millis(150)));
+            let mut out = Vec::new();
+            let (mut p, _) = prompting(kind, &mut out);
+            // Neither another session's output nor a process-level
+            // notification is this turn making progress.
+            for _ in 0..4 {
+                p.frame(json!({"method":"session/update","params":{"sessionId":"other","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"x"}}}}), &mut out).unwrap();
+                p.frame(
+                    json!({"method":"_kiro/mcp/server_initialized","params":{"serverName":"gespan"}}),
+                    &mut out,
+                )
+                .unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert_eq!(
+                p.acp_tick(&mut out).unwrap_err(),
+                format!("{}: session/prompt timed out", kind.label())
+            );
+            deadline_override(None);
+        }
+    }
+    #[test]
+    fn a_prompt_waiting_for_you_does_not_time_out() {
+        deadline_override(Some(Duration::from_millis(150)));
+        let mut out = Vec::new();
+        let (mut p, _) = prompting(Kind::Kiro, &mut out);
+        p.request.settings.access = AccessMode::Supervised;
+        let events = p.frame(json!({"id":7,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"t","kind":"execute","title":"rm -rf target"},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}), &mut out).unwrap();
+        assert!(matches!(events.as_slice(), [Event::Approval(_)]));
+        // The agent is silent while the card waits for the user.
+        for _ in 0..6 {
+            std::thread::sleep(Duration::from_millis(50));
+            p.acp_tick(&mut out).unwrap();
+        }
+        p.respond(
+            Control {
+                id: "7".into(),
+                decision: Decision::Allow,
+            },
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        // The silence counts again from the answer.
+        p.acp_tick(&mut out).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            p.acp_tick(&mut out).unwrap_err(),
+            "Kiro CLI: session/prompt timed out"
+        );
+        deadline_override(None);
+    }
+    #[test]
+    fn other_stages_keep_fixed_deadlines() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        for (kind, error) in [
+            (Kind::Kiro, format!("Kiro CLI did not start. {help}")),
+            (Kind::Hermes, "Hermes Agent: session/new timed out".into()),
+        ] {
+            deadline_override(Some(Duration::from_millis(150)));
+            let mut out = Vec::new();
+            let mut p = protocol(kind);
+            p.acp_session(&mut out).unwrap();
+            assert_eq!(last(&mut out)["method"], "session/new");
+            // Kiro lists its models while `session/new` is still pending.
+            for _ in 0..2 {
+                std::thread::sleep(Duration::from_millis(100));
+                p.frame(json!({"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"config_option_update","configOptions":[]}}}), &mut out).unwrap();
+            }
+            assert_eq!(p.acp_tick(&mut out).unwrap_err(), error);
+            deadline_override(None);
+        }
+    }
+    /// Kiro's answer to a prompt whose model connection dropped.
+    fn dropped(id: &Value) -> Value {
+        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,
+            "message":"Your connection was interrupted. Please try again in a moment. (Request ID: 6f1c)",
+            "data":{"errorType":"ServerConnectionResetError","retryErrorType":"TRANSIENT"}}})
+    }
+    fn retry_override(wait: Option<Duration>) {
+        RETRY_WAIT_OVERRIDE.with(|o| o.set(wait));
+    }
+    fn chunk(text: &str) -> Value {
+        json!({"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"text":text}}}})
+    }
+    #[test]
+    fn kiro_retries_a_dropped_connection_once() {
+        retry_override(Some(Duration::from_millis(500)));
+        let mut out = Vec::new();
+        let (mut p, prompt) = prompting(Kind::Kiro, &mut out);
+        p.frame(chunk("Partial"), &mut out).unwrap();
+        let events = p.frame(dropped(&prompt["id"]), &mut out).unwrap();
+        assert_eq!(events, [Event::Status("Reconnecting to Kiro…".into())]);
+        assert!(!p.done);
+        // The retry waits before it goes out.
+        p.acp_tick(&mut out).unwrap();
+        assert!(out.is_empty());
+        std::thread::sleep(Duration::from_millis(550));
+        p.acp_tick(&mut out).unwrap();
+        let retry = last(&mut out);
+        assert_eq!(retry["method"], "session/prompt");
+        assert_eq!(retry["params"], prompt["params"]);
+        assert_eq!(retry["params"]["sessionId"], "s");
+        assert_ne!(retry["id"], prompt["id"]);
+        // The new attempt's answer starts its own reply and ends the turn.
+        let events = p.frame(chunk("Done"), &mut out).unwrap();
+        assert_eq!(events[0], Event::BeginAssistant);
+        let events = p
+            .frame(
+                json!({"id":retry["id"],"result":{"stopReason":"end_turn"}}),
+                &mut out,
+            )
+            .unwrap();
+        assert!(events.contains(&Event::Done));
+        assert!(p.done);
+        // A turn on the warm process gets its own retry.
+        p.done = false;
+        p.acp_resume_warm(&mut out).unwrap();
+        let prompt = last(&mut out);
+        assert_eq!(prompt["method"], "session/prompt");
+        p.frame(dropped(&prompt["id"]), &mut out).unwrap();
+        std::thread::sleep(Duration::from_millis(550));
+        p.acp_tick(&mut out).unwrap();
+        assert_eq!(last(&mut out)["method"], "session/prompt");
+        retry_override(None);
+    }
+    #[test]
+    fn kiro_surfaces_a_second_drop() {
+        retry_override(Some(Duration::ZERO));
+        let mut out = Vec::new();
+        let (mut p, prompt) = prompting(Kind::Kiro, &mut out);
+        p.frame(dropped(&prompt["id"]), &mut out).unwrap();
+        p.acp_tick(&mut out).unwrap();
+        let sent = lines(&mut out);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "session/prompt");
+        let error = p.frame(dropped(&sent[0]["id"]), &mut out).unwrap_err();
+        assert_eq!(error, "Kiro CLI: Your connection was interrupted. Please try again in a moment. (Request ID: 6f1c)");
+        p.acp_tick(&mut out).unwrap();
+        assert!(out.is_empty(), "exactly two prompts are sent");
+        retry_override(None);
+    }
+    #[test]
+    fn kiro_does_not_retry_other_errors() {
+        retry_override(Some(Duration::ZERO));
+        for message in [
+            "The model 'opus' is not available. Please select a different model and try again.",
+            // Kiro's other "try again in a moment" errors are not a dropped connection.
+            "The cloud session is not responding yet. Please try again in a moment.",
+            "The previous workflow execution is still finishing. Try again in a moment.",
+        ] {
+            let mut out = Vec::new();
+            let (mut p, prompt) = prompting(Kind::Kiro, &mut out);
+            let error = p
+                .frame(
+                    json!({"id":prompt["id"],"error":{"code":-32000,"message":message}}),
+                    &mut out,
+                )
+                .unwrap_err();
+            assert_eq!(error, format!("Kiro CLI: {message}"));
+            p.acp_tick(&mut out).unwrap();
+            assert!(out.is_empty(), "{message}");
+        }
+        // A silent prompt is not a dropped connection either.
+        deadline_override(Some(Duration::ZERO));
+        let mut out = Vec::new();
+        let (mut p, _) = prompting(Kind::Kiro, &mut out);
+        assert_eq!(
+            p.acp_tick(&mut out).unwrap_err(),
+            "Kiro CLI: session/prompt timed out"
+        );
+        assert!(out.is_empty());
+        deadline_override(None);
+        retry_override(None);
+    }
+    #[test]
+    fn other_providers_do_not_retry_dropped_connections() {
+        retry_override(Some(Duration::ZERO));
+        for kind in [Kind::Hermes, Kind::Grok, Kind::Devin] {
+            let mut out = Vec::new();
+            let (mut p, prompt) = prompting(kind, &mut out);
+            let error = p.frame(dropped(&prompt["id"]), &mut out).unwrap_err();
+            assert!(
+                error.starts_with(&format!(
+                    "{}: Your connection was interrupted",
+                    kind.label()
+                )),
+                "{error}"
+            );
+            p.acp_tick(&mut out).unwrap();
+            assert!(out.is_empty(), "{}", kind.label());
+        }
+        retry_override(None);
+    }
+    #[test]
+    fn cancel_during_retry_wait_sends_no_second_prompt() {
+        retry_override(Some(Duration::from_millis(50)));
+        let mut out = Vec::new();
+        let (mut p, prompt) = prompting(Kind::Kiro, &mut out);
+        p.frame(dropped(&prompt["id"]), &mut out).unwrap();
+        p.acp_cancel(&mut out).unwrap();
+        assert!(p.done);
+        assert_eq!(last(&mut out)["method"], "session/cancel");
+        std::thread::sleep(Duration::from_millis(100));
+        p.acp_tick(&mut out).unwrap();
+        assert!(out.is_empty(), "no prompt goes out after Stop");
+        retry_override(None);
     }
     #[test]
     fn kiro_replaces_a_missing_session_on_load() {

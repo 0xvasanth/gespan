@@ -31,17 +31,6 @@ impl Shell {
             .map_or_else(|| self.session_working_copy(id, cx), String::as_str);
         path_key(scope) == path_key(self.working_copy())
     }
-    /// The new layouts list every worktree's sessions, grouped by worktree;
-    /// only the original layout's working copy picker narrows the list.
-    pub(super) fn in_sidebar_worktree_scope(&self, id: i64, cx: &App) -> bool {
-        !self.workspace.classic_layout
-            || self
-                .worktree_focus
-                .get(&self.workspace.project)
-                .is_none_or(|focus| {
-                    path_key(self.session_working_copy(id, cx)) == path_key(&focus.path)
-                })
-    }
     /// The heading a worktree's group takes in the sidebar: its branch, or
     /// its folder's name when the branch is not known yet.
     pub(super) fn worktree_label(&self, path: &str) -> String {

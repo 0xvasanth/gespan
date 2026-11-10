@@ -80,9 +80,7 @@ impl Shell {
     }
 
     pub(super) fn live_agents_preview(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let agents = if self.workspace.preferences.working_agents
-            && self.workspace.sidebar_activity_visible
-        {
+        let agents = if self.workspace.preferences.working_agents {
             self.live_agents(cx)
         } else {
             Vec::new()

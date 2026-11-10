@@ -31,7 +31,6 @@ impl DesktopPreferences {
             ("claude_hooks", "claudeHooks", true),
             ("pilots", "pilotsEnabled", true),
             ("board", "boardEnabled", true),
-            ("rail_pilots_pinned", "railPilotsPinned", false),
             ("pilot_menu_bar_icon", "pilotMenuBarIcon", true),
         ] {
             reconcile_preference(
@@ -90,12 +89,6 @@ impl DesktopPreferences {
                 "diffPalette",
                 &["default", "colorblind", "high-contrast"][..],
                 "default",
-            ),
-            (
-                "collapsed_project_rail",
-                "collapsedProjectRailMode",
-                &["compact"][..],
-                "compact",
             ),
             (
                 "chat_background_scope",
@@ -351,51 +344,13 @@ impl DesktopPreferences {
         next: &mut Map<String, Value>,
     ) {
         let old = baseline.get("workspace").unwrap_or(&Value::Null);
-        // A fresh desktop import names the actual navigation layout. Old
-        // native sidecars used classic_layout solely for the boxy frame and
-        // migrate in Workspace::restore instead.
-        if !target.contains_key("classic_layout") {
-            target.insert("new_layout_boxy".into(), json!(false));
-        }
         let mut source = Map::new();
-        reconcile_preference(
-            target,
-            old,
-            &mut source,
-            "new_layout_prompt_dismissed",
-            json!(self.flag("newLayoutPromptDismissed").unwrap_or(false)),
-        );
-        reconcile_preference(
-            target,
-            old,
-            &mut source,
-            "classic_layout",
-            json!(!self.flag("insetLayout").unwrap_or(false)),
-        );
         reconcile_preference(
             target,
             old,
             &mut source,
             "sidebar_visible",
             json!(self.flag("sessionSidebarOpen").unwrap_or(true)),
-        );
-        reconcile_preference(
-            target,
-            old,
-            &mut source,
-            "project_rail_open",
-            json!(self.flag("projectRailOpen").unwrap_or(true)),
-        );
-        reconcile_preference(
-            target,
-            old,
-            &mut source,
-            "project_rail_width",
-            json!(self
-                .number("projectRailWidth")
-                .unwrap_or(220.)
-                .clamp(176., 360.)
-                .round()),
         );
         reconcile_preference(
             target,
@@ -486,20 +441,11 @@ impl DesktopPreferences {
             "gespan.sidebarLayout",
             "gespan.favoriteModels",
             "gespan.recentModels",
-            "gespan.projectGroups",
-            "gespan.projectGroupAssignments",
             "gespan.projectLocations",
-            "gespan.projectSidebarTabs.v1",
-            "gespan.sidebarTabOrder",
-            "gespan.projectRailOpen",
-            "gespan.projectRailWidth",
-            "gespan.projectRailPinned",
             "gespan.projectRailOrder",
-            "gespan.railPilotsPinned",
             "gespan.transcriptZen",
             "gespan.projectNotifications.v1",
             "gespan.notificationProjects.v2",
-            "gespan.newLayoutPromptDismissed",
             "gespan.linkedSessionSeen",
         ]
         .into_iter()
@@ -684,11 +630,7 @@ mod tests {
             ("gespan.sounds", "0"),
             ("gespan.colorScheme", "light"),
             ("gespan.workspaceTheme", "tidepool"),
-            ("gespan.insetLayout", "1"),
             ("gespan.sessionSidebarOpen", "0"),
-            ("gespan.projectRailOpen", "1"),
-            ("gespan.projectRailWidth", "248"),
-            ("gespan.collapsedProjectRailMode", "hidden"),
             ("gespan.sidebarOpacity", "0.42"),
             ("gespan.uiScale", "1.4"),
             ("gespan.chatBackgroundSessionOpacity", "0.31"),
@@ -724,12 +666,7 @@ mod tests {
         assert_eq!(settings["default_models"]["claude"], "claude-opus-4-8");
         assert_eq!(settings["keybindings"]["App: Search"], "cmd-j");
         assert!(settings["keybindings"]["App: Settings"].is_null());
-        assert_eq!(workspace["classic_layout"], false);
         assert_eq!(workspace["sidebar_visible"], false);
-        assert_eq!(workspace["new_layout_boxy"], false);
-        assert_eq!(workspace["project_rail_open"], true);
-        assert_eq!(workspace["project_rail_width"], 248.);
-        assert_eq!(settings["collapsed_project_rail"], "compact");
         assert_eq!(
             workspace["right_panel_tabs"],
             json!(["changes", "files", "graph"])
@@ -822,7 +759,7 @@ mod tests {
             ),
             ("gespan.modelPickerTab", "codex"),
             ("gespan.fileViewMode", "source"),
-            ("gespan.projectSidebarTabs.v1", r#"{"/work":"sessions"}"#),
+            ("gespan.projectLocations", r#"{"/work":"/tmp/work"}"#),
         ]);
         let mut workspace = json!({});
         source.apply_workspace(&mut workspace);
@@ -840,8 +777,8 @@ mod tests {
         assert_eq!(workspace["preferences"]["model_picker_tab"], "codex");
         assert_eq!(workspace["preferences"]["file_view_mode"], "source");
         assert_eq!(
-            workspace["desktop_preferences_metadata"]["gespan.projectSidebarTabs.v1"],
-            r#"{"/work":"sessions"}"#
+            workspace["desktop_preferences_metadata"]["gespan.projectLocations"],
+            r#"{"/work":"/tmp/work"}"#
         );
         workspace["preferences"]["model_picker_tab"] = json!("favorites");
         workspace["preferences"]["file_view_mode"] = json!("preview");
@@ -851,12 +788,38 @@ mod tests {
     }
 
     #[test]
-    fn absent_desktop_inset_setting_uses_the_desktop_classic_default() {
-        let mut workspace = json!({});
-        source(&[]).apply_workspace(&mut workspace);
-        assert_eq!(workspace["classic_layout"], true);
-        let mut isolated = json!({"classic_layout":false});
-        DesktopPreferences::default().apply_workspace(&mut isolated);
-        assert_eq!(isolated["classic_layout"], false);
+    fn importing_desktop_view_preferences_never_writes_layout_or_rail_keys() {
+        let preferences = source(&[
+            ("gespan.insetLayout", "0"),
+            ("gespan.newLayoutPromptDismissed", "1"),
+            ("gespan.projectRailOpen", "0"),
+            ("gespan.projectRailWidth", "300"),
+            ("gespan.projectRailPinned", "1"),
+            ("gespan.railPilotsPinned", "1"),
+            ("gespan.collapsedProjectRailMode", "hidden"),
+            ("gespan.sessionSidebarOpen", "0"),
+        ]);
+        let mut workspace = json!({"new_layout_boxy": true});
+        preferences.apply_workspace(&mut workspace);
+        for key in [
+            "classic_layout",
+            "new_layout_prompt_dismissed",
+            "project_rail_open",
+            "project_rail_width",
+        ] {
+            assert!(workspace.get(key).is_none(), "{key} was written");
+        }
+        for key in ["rail_pilots_pinned", "collapsed_project_rail"] {
+            assert!(
+                workspace["preferences"].get(key).is_none(),
+                "{key} was written"
+            );
+        }
+        assert_eq!(workspace["new_layout_boxy"], true);
+        assert_eq!(workspace["sidebar_visible"], false);
+
+        let mut fresh = json!({});
+        preferences.apply_workspace(&mut fresh);
+        assert!(fresh.get("new_layout_boxy").is_none());
     }
 }

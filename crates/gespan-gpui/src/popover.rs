@@ -750,7 +750,7 @@ pub(crate) enum MenuStyle {
     Explorer,
     /// TabGroupMenu: the project context menu. Icons at 55%, hover only.
     Group,
-    /// SidebarWorktreeSwitcher: the sidebar project header's menu.
+    /// The sidebar project header's menu: the project picker.
     Switcher,
     /// The composer's plus menu: an icon, title and one-line hint per row.
     Composer,

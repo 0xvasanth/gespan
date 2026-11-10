@@ -173,45 +173,24 @@ mod tests {
             .update(cx, |shell, _, cx| {
                 let entities = shell.sessions.len();
                 assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
-                // The new layouts list every worktree whatever is focused.
-                shell.worktree_focus.insert(
-                    "/work/project".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/feature".into(),
-                        branch: Some("feature".into()),
-                    },
-                );
-                assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
-                // The original layout's working copy picker still narrows it.
-                shell.workspace.classic_layout = true;
-                shell.worktree_focus.insert(
-                    "/work/project".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/feature".into(),
-                        branch: Some("feature".into()),
-                    },
-                );
-                assert_eq!(
-                    shell
-                        .sidebar_session_ids(cx)
-                        .into_iter()
-                        .collect::<HashSet<_>>(),
-                    feature
-                );
-                shell.worktree_focus.insert(
-                    "/work/project".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/project".into(),
-                        branch: None,
-                    },
-                );
-                assert_eq!(
-                    shell
-                        .sidebar_session_ids(cx)
-                        .into_iter()
-                        .collect::<HashSet<_>>(),
-                    main
-                );
+                // The sidebar lists every worktree whatever is focused.
+                for path in ["/work/feature", "/work/project"] {
+                    shell.worktree_focus.insert(
+                        "/work/project".into(),
+                        crate::worktree_switcher::WorktreeFocus {
+                            path: path.into(),
+                            branch: None,
+                        },
+                    );
+                    assert_eq!(
+                        shell
+                            .sidebar_session_ids(cx)
+                            .into_iter()
+                            .collect::<HashSet<_>>(),
+                        main.union(&feature).copied().collect::<HashSet<_>>(),
+                        "{path}"
+                    );
+                }
                 shell.worktree_focus.clear();
                 assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
                 assert_eq!(
@@ -224,7 +203,7 @@ mod tests {
                         .workspace
                         .projects
                         .contains(&"/work/unlisted-other-project".into()),
-                    "a session cwd must not invent a project rail entry"
+                    "a session cwd must not invent a project entry"
                 );
             })
             .unwrap();
@@ -263,7 +242,10 @@ mod tests {
             } else {
                 "/work/other"
             };
-            let mut session = store.create("codex", cwd).unwrap();
+            // The oldest chat comes from another provider, so hiding the
+            // rest narrows the list to it.
+            let provider = if i == 999 { "claude" } else { "codex" };
+            let mut session = store.create(provider, cwd).unwrap();
             session.title = format!("Saved conversation {i}");
             session.has_messages = true;
             summaries.push(session);
@@ -295,14 +277,15 @@ mod tests {
                     shell.tab_copy(oldest, cx).headline,
                     "Saved conversation 999"
                 );
-                shell.query = "saved conversation 999".into();
+                shell.workspace.session_filters.hidden_providers = vec!["codex".into()];
                 assert_eq!(shell.sidebar_session_ids(cx), [oldest]);
                 assert_eq!(
                     shell.sessions.len(),
                     1,
                     "filtering old history must remain metadata-only"
                 );
-                shell.query.clear();
+                shell.workspace.session_filters.hidden_providers.clear();
+                assert_eq!(shell.sidebar_session_ids(cx).len(), 1000);
                 shell.run_session_menu(oldest, "pin", window, cx);
                 assert!(shell.session_metadata(oldest, cx).summary.pinned);
                 assert_eq!(

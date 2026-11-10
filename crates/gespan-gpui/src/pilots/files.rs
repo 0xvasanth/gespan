@@ -248,6 +248,44 @@ impl Pilots {
         })
         .detach();
     }
+    /// Confirm, then put the pilot's soul and name back to the defaults.
+    pub(super) fn reset_pilot(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.roster.get(id).map(|m| m.label()) else {
+            return;
+        };
+        let prompt = window.prompt(
+            gpui::PromptLevel::Warning,
+            &format!("Reset {name} to its defaults?"),
+            Some("Its soul goes back to the default and its name too. Changes to its soul can't be recovered. Its conversation, projects, memory and habits are kept."),
+            &["Cancel", "Reset"],
+            cx,
+        );
+        let id = id.to_string();
+        let handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            if prompt.await.ok() != Some(1) {
+                return;
+            }
+            let reset = this.update(cx, |this, cx| this.reset_defaults(&id, cx));
+            let Ok(reset) = reset else { return };
+            let result = reset.await;
+            let _ = this.update(cx, |this, cx| this.changed(cx));
+            if let Err(e) = result
+                && let Ok(ack) = handle.update(cx, |_, window, cx| {
+                    window.prompt(
+                        gpui::PromptLevel::Critical,
+                        &format!("Couldn't reset {name}"),
+                        Some(&e),
+                        &["OK"],
+                        cx,
+                    )
+                })
+            {
+                let _ = ack.await;
+            }
+        })
+        .detach();
+    }
     pub(super) fn delete_pilot(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = window.prompt(
             gpui::PromptLevel::Warning,

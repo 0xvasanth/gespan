@@ -186,11 +186,10 @@ impl Shell {
             .get(&self.workspace.project)
             .is_some_and(|d| d.open && !d.terminals.is_empty())
     }
-    /// The new layout can host the terminal as the right panel's last tab
-    /// instead of the dock, wherever that panel can open.
+    /// The terminal can be the right panel's last tab instead of the dock,
+    /// wherever that panel can open.
     pub(super) fn terminal_in_panel(&self, cx: &App) -> bool {
         self.workspace.preferences.terminal_placement() == "panel"
-            && !self.workspace.classic_layout
             && !self.workspace.project.starts_with("remote://")
             && !self.pilot_active(cx)
             && self.git.read(cx).available()
@@ -300,12 +299,6 @@ impl Shell {
         let Some(dock) = self.workspace.docks.get(&project).cloned() else {
             return div().into_any_element();
         };
-        // The boxy frame's title bar sits over the panel; clear it as the
-        // other tabs do.
-        let top_inset = self
-            .right_panel
-            .as_ref()
-            .map_or(0., |p| p.read(cx).top_inset());
         // The panel's tab row stays above the shell, so the other tools are a
         // click away.
         let tabs = self
@@ -320,15 +313,6 @@ impl Shell {
             .size_full()
             .flex()
             .flex_col()
-            .when(top_inset > 0., |d| {
-                d.child(
-                    div()
-                        .h(px(top_inset))
-                        .flex_shrink_0()
-                        .border_b_1()
-                        .border_color(crate::right_panel::stroke()),
-                )
-            })
             .children(tabs)
             .child(self.dock_header(&dock, true, window, cx))
             .child(
@@ -1220,7 +1204,6 @@ mod tests {
         window
             .update(cx, |shell, window, cx| {
                 cx.set_reduce_motion(true);
-                shell.workspace.classic_layout = false;
                 shell.workspace.new_layout_boxy = true;
                 shell.layout_changed(cx);
                 shell.workspace.preferences.set_terminal_placement("panel");
@@ -1358,7 +1341,6 @@ mod tests {
         window
             .update(cx, |shell, window, cx| {
                 cx.set_reduce_motion(true);
-                shell.workspace.classic_layout = false;
                 shell.workspace.new_layout_boxy = true;
                 shell.layout_changed(cx);
                 shell.workspace.preferences.terminal_in_panel = true;

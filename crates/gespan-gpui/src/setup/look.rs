@@ -1,11 +1,10 @@
-//! The look card: theme, layout, accent and glass, each applied live behind
+//! The look card: theme, accent and glass, each applied live behind
 //! the card as it is picked. Built to the Look board of the design canvas.
 use super::{SetupStep, card::SetupCard, ui};
 use crate::settings::ACCENTS;
 use crate::theme::*;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, Hsla, Role, SharedString, Window, div, linear_color_stop,
-    linear_gradient, prelude::*, px, rgb, rgba,
+    AnyElement, Context, Div, FontWeight, Role, SharedString, Window, div, prelude::*, px, rgb,
 };
 
 const THEMES: [(&str, &str); 3] = [("system", "System"), ("dark", "Dark"), ("light", "Light")];
@@ -38,11 +37,10 @@ pub(super) fn render(
                     22.,
                 )),
         )
-        .child(row("Theme", true).child(theme_control(&card.prefs.theme, cx)))
-        .child(row("Layout", false).child(layout_cards(card.classic, cx)))
-        .child(row("Accent color", true).child(accents(card.prefs.accent_color.as_deref(), cx)))
+        .child(row("Theme").child(theme_control(&card.prefs.theme, cx)))
+        .child(row("Accent color").child(accents(card.prefs.accent_color.as_deref(), cx)))
         .child(
-            row("Glass", true)
+            row("Glass")
                 .child(
                     div()
                         .flex_1()
@@ -75,21 +73,14 @@ pub(super) fn render(
 }
 
 /// A labelled row: the 120pt semibold label column, then the control.
-/// Layout's label sits at the top with 8pt above it; the rest centre.
-fn row(label: &'static str, centred: bool) -> Div {
-    div()
-        .w_full()
-        .flex()
-        .gap(px(16.))
-        .when(centred, |d| d.items_center())
-        .child(
-            div()
-                .w(px(120.))
-                .flex_shrink_0()
-                .when(!centred, |d| d.pt(px(8.)))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(label),
-        )
+fn row(label: &'static str) -> Div {
+    div().w_full().flex().gap(px(16.)).items_center().child(
+        div()
+            .w(px(120.))
+            .flex_shrink_0()
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(label),
+    )
 }
 
 fn theme_control(current: &str, cx: &mut Context<SetupCard>) -> impl IntoElement {
@@ -127,173 +118,6 @@ fn theme_control(current: &str, cx: &mut Context<SetupCard>) -> impl IntoElement
                     cx.listener(move |card, _, _, cx| card.set_prefs(|p| p.theme = id.into(), cx)),
                 )
         }))
-}
-
-fn layout_cards(classic: bool, cx: &mut Context<SetupCard>) -> impl IntoElement {
-    let option = |id: &'static str,
-                  on: bool,
-                  pick: bool,
-                  sketch: Div,
-                  name: &'static str,
-                  line: &'static str,
-                  cx: &mut Context<SetupCard>| {
-        div()
-            .id(id)
-            .debug_selector(move || id.into())
-            .role(Role::RadioButton)
-            .aria_label(name)
-            .aria_selected(on)
-            .cursor_pointer()
-            .flex_1()
-            .flex_basis(px(0.))
-            .min_w_0()
-            .p(px(12.))
-            .rounded(px(12.))
-            .border_1()
-            .border_color(if on {
-                ui::selected_edge()
-            } else {
-                ui::glass_edge()
-            })
-            .bg(if on { ui::selected_fill() } else { ui::well() })
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(sketch)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .line_height(px(18.))
-                    .text_color(ui::muted())
-                    .child(line),
-            )
-            .on_click(cx.listener(move |card, _, _, cx| card.set_layout(pick, cx)))
-    };
-    div()
-        .id("setup-layout")
-        .role(Role::RadioGroup)
-        .aria_label("Layout")
-        // Without a zero basis and min width the wrapped lines size the
-        // cards, and they run past the card's right edge.
-        .flex_1()
-        .flex_basis(px(0.))
-        .min_w_0()
-        .flex()
-        .gap(px(10.))
-        .child(option(
-            "setup-layout-focused",
-            !classic,
-            false,
-            focused_sketch(),
-            "Focused",
-            "One sidebar: All projects on top, the open project below.",
-            cx,
-        ))
-        .child(option(
-            "setup-layout-classic",
-            classic,
-            true,
-            classic_sketch(),
-            "Classic",
-            "A rail of project icons beside the session list.",
-            cx,
-        ))
-}
-
-/// The 74pt miniature window both layout sketches draw into.
-fn sketch() -> Div {
-    div()
-        .h(px(74.))
-        .rounded(px(8.))
-        .bg(shell_fill())
-        .flex()
-        .gap(px(6.))
-        .p(px(6.))
-}
-
-/// A 4pt sidebar line in the sketch.
-fn bar(width: f32, color: Hsla) -> Div {
-    div().h(px(4.)).w(px(width)).rounded(px(2.)).bg(color)
-}
-
-/// The sketch's main pane: #060606 on dark, the app's pane fill otherwise.
-fn sketch_pane() -> Div {
-    div().flex_1().rounded(px(5.)).bg(if is_light() {
-        pane_fill()
-    } else {
-        rgb(0x060606).into()
-    })
-}
-
-fn focused_sketch() -> Div {
-    let line = content(0.2);
-    sketch()
-        .child(
-            div()
-                .w(px(56.))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .pt(px(2.))
-                .child(bar(30., rgb(0xc0affc).into()))
-                .child(bar(44., line))
-                .child(bar(38., line))
-                .child(div().h(px(1.)).w(px(50.)).my(px(2.)).bg(content(0.12)))
-                .child(
-                    div()
-                        .h(px(8.))
-                        .w(px(50.))
-                        .rounded(px(2.))
-                        .border_1()
-                        .border_color(content(0.25)),
-                )
-                .child(bar(40., line)),
-        )
-        .child(
-            // The canvas's violet glow from the top right corner; GPUI has
-            // no radial gradient, so a diagonal linear one stands in.
-            sketch_pane()
-                .overflow_hidden()
-                .child(div().size_full().rounded(px(5.)).bg(linear_gradient(
-                    225.,
-                    linear_color_stop(rgba(0x8f64f659), 0.),
-                    linear_color_stop(rgba(0x8f64f600), 0.6),
-                ))),
-        )
-}
-
-fn classic_sketch() -> Div {
-    let line = content(0.2);
-    let tile = |color: u32| div().size(px(10.)).rounded(px(3.)).bg(rgb(color));
-    sketch()
-        .child(
-            div()
-                .w(px(14.))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(4.))
-                .pt(px(2.))
-                .child(tile(0xe8c547))
-                .child(tile(0x459bf7))
-                .child(tile(0xf9a8c9)),
-        )
-        .child(
-            div()
-                .w(px(46.))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .pt(px(2.))
-                .child(bar(40., line))
-                .child(bar(34., line))
-                .child(bar(38., line)),
-        )
-        .child(sketch_pane())
 }
 
 fn accents(current: Option<&str>, cx: &mut Context<SetupCard>) -> impl IntoElement {
@@ -398,22 +222,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn layout_pick_emits_classic(cx: &mut TestAppContext) {
-        let opened = open(SetupStep::Look, "/Users/a/code", cx);
-        click(&opened, "setup-layout-classic", cx);
-        assert_eq!(last(&opened), Some(SetupEvent::Layout { classic: true }));
-        let count = opened.events.borrow().len();
-        click(&opened, "setup-layout-classic", cx);
-        assert_eq!(
-            opened.events.borrow().len(),
-            count,
-            "re-picking Classic emits nothing"
-        );
-        click(&opened, "setup-layout-focused", cx);
-        assert_eq!(last(&opened), Some(SetupEvent::Layout { classic: false }));
-    }
-
-    #[gpui::test]
     fn accent_pick_uses_the_app_preset(cx: &mut TestAppContext) {
         let opened = open(SetupStep::Look, "/Users/a/code", cx);
         let (green, _) = crate::settings::ACCENTS
@@ -453,6 +261,16 @@ mod tests {
                 "{selector}"
             );
         }
+    }
+
+    #[gpui::test]
+    fn look_card_has_no_layout_row(cx: &mut TestAppContext) {
+        let opened = open(SetupStep::Look, "/Users/a/code", cx);
+        assert!(!super::super::test_support::has(
+            &opened,
+            "setup-layout",
+            cx
+        ));
     }
 
     #[gpui::test]

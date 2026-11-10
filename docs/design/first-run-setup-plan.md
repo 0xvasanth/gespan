@@ -1,5 +1,8 @@
 # First-run setup Implementation Plan
 
+> **Update (2026-11-09):** the Look card's Layout row (Focused/Classic) was dropped along with
+> the classic layout; Look now covers theme, accent and glass only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Show new users a card they can't close: Welcome, Coding agents, Look and Project. Only the project is required. The card lands them in a new thread in that project.

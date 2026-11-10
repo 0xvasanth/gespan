@@ -87,10 +87,8 @@ impl Shell {
             .title_order
             .iter()
             .filter(|tab| match tab {
-                TitleTab::Search => !self.workspace.preferences.search_panel,
                 TitleTab::App(view) => {
-                    !self.workspace.classic_layout
-                        && (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
+                    (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
                         && (*view != app_views::AppView::Board || self.workspace.preferences.board)
                         && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
                 }
@@ -112,8 +110,7 @@ impl Shell {
                     project,
                     worktree,
                 } => {
-                    !self.workspace.classic_layout
-                        && *project == self.workspace.project
+                    *project == self.workspace.project
                         && path_key(worktree) == path_key(self.working_copy())
                         && self.workspace.preferences.pilots
                         && self
@@ -129,9 +126,6 @@ impl Shell {
     pub(super) fn active_title_tab(&self, cx: &App) -> Option<TitleTab> {
         if let Some(view) = self.active_app_view {
             return Some(TitleTab::App(view));
-        }
-        if self.search_page() {
-            return Some(TitleTab::Search);
         }
         self.pilots
             .as_ref()
@@ -153,9 +147,6 @@ impl Shell {
     }
 
     pub(super) fn remember_title_tab(&mut self, tab: TitleTab) {
-        if self.workspace.classic_layout && matches!(tab, TitleTab::Pilot { .. }) {
-            return;
-        }
         if !self.workspace.title_order.contains(&tab) {
             self.workspace.title_order.push(tab.clone());
         }
@@ -193,7 +184,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match tab {
-            TitleTab::Search => self.open_app_search(window, cx),
             TitleTab::App(view) => match view {
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),
@@ -244,16 +234,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.classic_layout {
-            if self
-                .pilots
-                .as_ref()
-                .is_some_and(|m| m.read(cx).active.as_deref() == Some(id))
-            {
-                self.classic_rail_back(window, cx);
-            }
-            return;
-        }
         self.close_title_tabs(&[self.pilot_tab(id.into())], None, window, cx);
     }
 
@@ -373,10 +353,6 @@ impl Shell {
                 && self.active_app_view == Some(*view)
             {
                 self.leave_app_views(cx);
-            }
-            if *tab == TitleTab::Search {
-                self.leave_app_search(cx);
-                self.saved_search = None;
             }
             if let TitleTab::Session(id) = tab {
                 self.workspace.close(*id);

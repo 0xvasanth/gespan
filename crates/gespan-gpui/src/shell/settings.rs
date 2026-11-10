@@ -91,33 +91,11 @@ impl Shell {
                     )
                 })
                 .collect(),
-            pilots: self
-                .pilots
-                .as_ref()
-                .map(|m| {
-                    m.read(cx)
-                        .roster
-                        .pilots
-                        .iter()
-                        .map(|m| crate::settings::PilotSetting {
-                            id: m.id.clone(),
-                            name: m.label(),
-                            mascot: m.mascot.clone(),
-                            color: m.color,
-                            projects: m.projects.iter().map(|p| self.project_label(p)).collect(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
             catalogs,
-            classic: self.workspace.classic_layout,
             new_layout_boxy: self.workspace.new_layout_boxy,
             sidebar: crate::settings::SidebarVisibility {
-                search: self.workspace.sidebar_search_visible,
-                notes: self.workspace.sidebar_notes_visible,
                 automations: self.workspace.sidebar_automations_visible,
                 inbox: self.workspace.sidebar_inbox_visible,
-                activity: self.workspace.sidebar_activity_visible,
                 compact: self.workspace.compact_session_cards,
             },
             cwd: self.workspace.project.clone(),
@@ -202,12 +180,6 @@ impl Shell {
                     }
                     this.set_preferences(*prefs.clone(), window, cx)
                 }
-                SettingsEvent::NewLayout(on) => {
-                    if this.workspace.classic_layout == *on {
-                        this.toggle_layout(cx);
-                    }
-                    this.sync_settings(cx);
-                }
                 SettingsEvent::NewLayoutBoxy(boxy) => {
                     this.workspace.new_layout_boxy = *boxy;
                     this.layout_changed(cx);
@@ -215,6 +187,19 @@ impl Shell {
                 }
                 SettingsEvent::SidebarOption(id) => {
                     this.change_sidebar_option(id, cx);
+                    // A feature that is off has no view left to stay on.
+                    let prefs = &this.workspace.preferences;
+                    let closed = match this.active_app_view {
+                        Some(app_views::AppView::Board) => !prefs.board,
+                        Some(app_views::AppView::Notes) => !prefs.notes,
+                        _ => false,
+                    };
+                    if closed {
+                        this.close_app_view(window, cx);
+                        if let Some(settings) = &this.settings {
+                            window.focus(&settings.focus_handle(cx), cx);
+                        }
+                    }
                     this.sync_settings(cx);
                 }
                 SettingsEvent::OpenSession(id) => {
@@ -251,21 +236,6 @@ impl Shell {
                     cx,
                 ),
                 SettingsEvent::ChooseBackground => this.choose_chat_background(cx),
-                SettingsEvent::ResetPilot(id) => {
-                    if let Some(m) = this.pilots.clone() {
-                        let reset = m.update(cx, |m, cx| m.reset_defaults(id, cx));
-                        cx.spawn(async move |this, cx| {
-                            let result = reset.await;
-                            let _ = this.update(cx, |this, cx| {
-                                if let Some(settings) = &this.settings {
-                                    settings.update(cx, |s, cx| s.management_finished(result, cx));
-                                }
-                                this.sync_settings(cx);
-                            });
-                        })
-                        .detach();
-                    }
-                }
                 SettingsEvent::MobileRefresh => this.sync_settings(cx),
                 SettingsEvent::MobileConfigure {
                     enabled,
@@ -301,7 +271,7 @@ impl Shell {
             }
         }));
         self.settings = Some(view.clone());
-        // Settings has its own complete rail, even when the project rail was hidden.
+        // Settings has its own complete nav, even when the sidebar was hidden.
         self.settings_nav_visible = true;
         self.sidebar_slide = None;
         self.sidebar_fraction = 1.;
@@ -470,16 +440,6 @@ impl Shell {
     pub(super) fn apply_preferences(&mut self, cx: &mut Context<Self>) {
         self.refresh_notification_permission();
         self.configure_quick_composer(cx);
-        // Switching search styles closes an open search of the other style.
-        if self
-            .app_search
-            .as_ref()
-            .is_some_and(|s| s.panel != self.workspace.preferences.search_panel)
-        {
-            self.leave_app_search(cx);
-            self.update_chat_visibility(cx);
-            self.invalidate_chrome(cx);
-        }
         gespan_core::cli::initialize(&self.workspace.preferences.binary_paths);
         self.keep_visible_idle_agents(cx);
         gespan_core::provider::configure_idle_agents(
@@ -985,7 +945,6 @@ mod tests {
             "settings-nav-mcp",
             "settings-nav-browser",
             "settings-nav-skills",
-            "settings-nav-pilots",
             "settings-nav-inbox",
             "settings-nav-archive",
             "settings-nav-worktrees",

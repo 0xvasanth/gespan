@@ -12,9 +12,6 @@ pub(crate) enum SetupEvent {
     Step(SetupStep),
     /// A Look pick, applied live behind the card.
     Preferences(Box<Preferences>),
-    Layout {
-        classic: bool,
-    },
     DefaultAgent(Kind),
     SignIn(Kind),
     Rescan,
@@ -34,7 +31,6 @@ pub(crate) struct Agent {
 pub(crate) struct SetupCard {
     pub(super) step: SetupStep,
     pub(super) prefs: Preferences,
-    pub(super) classic: bool,
     /// The folder Gespan was launched from, and the home folder, for the
     /// "Opened from" suggestion.
     pub(super) launch: String,
@@ -63,7 +59,6 @@ impl SetupCard {
     pub(crate) fn new(
         step: SetupStep,
         prefs: Preferences,
-        classic: bool,
         launch: String,
         home: String,
         cx: &mut Context<Self>,
@@ -72,7 +67,6 @@ impl SetupCard {
         let mut card = Self {
             step,
             prefs,
-            classic,
             launch,
             home,
             folder: None,
@@ -142,14 +136,6 @@ impl SetupCard {
         change(&mut self.prefs);
         cx.emit(SetupEvent::Preferences(Box::new(self.prefs.clone())));
         cx.notify();
-    }
-
-    pub(super) fn set_layout(&mut self, classic: bool, cx: &mut Context<Self>) {
-        if self.classic != classic {
-            self.classic = classic;
-            cx.emit(SetupEvent::Layout { classic });
-            cx.notify();
-        }
     }
 
     pub(super) fn pick_agent(&mut self, kind: Kind, cx: &mut Context<Self>) {

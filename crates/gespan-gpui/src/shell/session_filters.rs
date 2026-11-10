@@ -40,7 +40,6 @@ impl Shell {
                     session.summary.cwd == self.workspace.project
                         && session.summary.has_messages
                         && session.summary.provider == kind.id()
-                        && self.in_sidebar_worktree_scope(*id, cx)
                 })
             })
             .collect();

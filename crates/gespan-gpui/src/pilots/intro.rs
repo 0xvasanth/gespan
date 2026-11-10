@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// Gap between the mascots lining up at the back.
 const CROWD_STEP: f32 = 17.;
-const HIDE_HINT: &str = "Hide pilots from the rail. Turn them back on in Settings › Pilots.";
+const HIDE_HINT: &str = "Hide pilots. Turn them back on in Settings › Appearance › Sidebar.";
 const STAGE_HEIGHT: f32 = 48.;
 const MARCH: Duration = Duration::from_millis(700);
 const MARCH_STAGGER: Duration = Duration::from_millis(70);

@@ -17,8 +17,6 @@ pub(crate) struct Preferences {
     pub notes: bool,
     pub board: bool,
     pub quick_composer: bool,
-    /// Global search floats as a command panel instead of opening a page.
-    pub search_panel: bool,
     pub working_agents: bool,
     pub close_to_tray: bool,
     /// Running an action shows the terminal it runs in.
@@ -51,7 +49,6 @@ pub(crate) struct Preferences {
     pub chat_background_scope: String,
     pub chat_background_empty: u32,
     pub chat_background_session: u32,
-    pub collapsed_project_rail: String,
     pub ui_scale: u32,
     pub show_excluded_files: bool,
     // Chat
@@ -104,7 +101,6 @@ pub(crate) struct Preferences {
     pub provider_efforts: HashMap<String, String>,
     // Pilots
     pub pilots: bool,
-    pub rail_pilots_pinned: bool,
     pub pilot_menu_bar_icon: bool,
     // Archive
     pub show_archived: bool,
@@ -133,7 +129,6 @@ impl Default for Preferences {
             notes: true,
             board: true,
             quick_composer: true,
-            search_panel: false,
             working_agents: true,
             close_to_tray: true,
             action_opens_terminal: true,
@@ -156,7 +151,6 @@ impl Default for Preferences {
             chat_background_scope: "all".into(),
             chat_background_empty: 24,
             chat_background_session: 24,
-            collapsed_project_rail: "compact".into(),
             ui_scale: 100,
             show_excluded_files: false,
             transcript_layout: "chat".into(),
@@ -193,7 +187,6 @@ impl Default for Preferences {
             default_access: None,
             provider_efforts: HashMap::new(),
             pilots: true,
-            rail_pilots_pinned: false,
             pilot_menu_bar_icon: true,
             show_archived: false,
             dictation_model: gespan_speech::catalog::PARAKEET_V2_EN.id.into(),
@@ -282,7 +275,6 @@ impl Preferences {
         self.chat_background_effect = d.chat_background_effect;
         self.chat_background = d.chat_background;
         self.ui_scale = d.ui_scale;
-        self.collapsed_project_rail = d.collapsed_project_rail;
     }
 }
 

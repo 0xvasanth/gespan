@@ -212,10 +212,8 @@ impl Shell {
             self.leave_app_views(cx);
         }
         self.active_app_view = Some(view);
-        if !self.workspace.classic_layout {
-            self.remember_title_tab(TitleTab::App(view));
-            self.reveal_active_tab(cx);
-        }
+        self.remember_title_tab(TitleTab::App(view));
+        self.reveal_active_tab(cx);
         self.update_chat_visibility(cx);
         self.sync_right_panel(cx);
         self.invalidate_chrome(cx);

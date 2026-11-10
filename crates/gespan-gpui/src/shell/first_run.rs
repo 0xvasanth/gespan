@@ -41,9 +41,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let prefs = self.workspace.preferences.clone();
-        let classic = self.workspace.classic_layout;
         let launch = self.setup_launch.clone();
-        let view = cx.new(|cx| SetupCard::new(step, prefs, classic, launch, home(), cx));
+        let view = cx.new(|cx| SetupCard::new(step, prefs, launch, home(), cx));
         let mut subscriptions = vec![cx.subscribe_in(&view, window, Self::on_setup_event)];
         subscriptions.push(
             cx.observe_global::<crate::installed_providers::InstalledProviders>(|this, cx| {
@@ -119,11 +118,6 @@ impl Shell {
             SetupEvent::Preferences(prefs) => {
                 self.set_preferences(*prefs.clone(), window, cx);
                 window.focus(&view.focus_handle(cx), cx);
-            }
-            SetupEvent::Layout { classic } => {
-                if self.workspace.classic_layout != *classic {
-                    self.toggle_layout(cx);
-                }
             }
             SetupEvent::DefaultAgent(kind) => {
                 self.workspace.preferences.use_by_default(*kind);

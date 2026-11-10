@@ -93,20 +93,64 @@ impl SettingsView {
                 )],
             ),
         ];
-        let editor = vec![self.row(
-            Some("format-on-save"),
-            true,
-            "Format on save",
-            Some("Format supported files with Prettier before saving.".into()),
-            vec![self.toggle(
-                "format-on-save",
-                "Format on save",
-                p.format_on_save,
+        let editor = vec![
+            self.row(
+                Some("file-tabs"),
+                true,
+                "File tabs",
+                Some("Choose where files open.".into()),
+                vec![self.segmented(
+                    "file-tabs",
+                    "File tabs",
+                    &p.file_tabs,
+                    &[("pane", "Beside chat"), ("workspace", "Top bar")],
+                    cx,
+                    |this, v, cx| this.update(cx, |p| p.file_tabs = v.into()),
+                )],
+            ),
+            self.row(
+                Some("file-word-wrap"),
                 false,
-                cx,
-                |this, on, cx| this.update(cx, |p| p.format_on_save = on),
-            )],
-        )];
+                "Word wrap",
+                Some("Wrap long lines to fit the editor.".into()),
+                vec![self.toggle(
+                    "file-word-wrap",
+                    "Word wrap",
+                    p.file_word_wrap,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.file_word_wrap = on),
+                )],
+            ),
+            self.row(
+                Some("show-excluded-files"),
+                false,
+                "Show excluded files",
+                Some("Show files and folders Git excludes, such as build output and dependencies, in the explorer.".into()),
+                vec![self.toggle(
+                    "show-excluded-files",
+                    "Show excluded files",
+                    p.show_excluded_files,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.show_excluded_files = on),
+                )],
+            ),
+            self.row(
+                Some("format-on-save"),
+                false,
+                "Format on save",
+                Some("Format supported files with Prettier before saving.".into()),
+                vec![self.toggle(
+                    "format-on-save",
+                    "Format on save",
+                    p.format_on_save,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.format_on_save = on),
+                )],
+            ),
+        ];
         let review = vec![self.row(
             Some("diff-view"),
             true,
