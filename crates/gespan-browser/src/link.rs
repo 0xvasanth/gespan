@@ -759,13 +759,14 @@ impl Wire {
             .push((id, Instant::now()));
         drop(policy);
         let bytes = std::mem::take(&mut writer.socket.get_mut().buf);
-        #[cfg(test)]
-        inner.about_to_write(id, bytes.len());
         // Still under the writer lock, so frames never interleave; a browser
         // that stops reading stalls this for up to the write timeout.
         let written = encoded.map_err(|e| e.to_string()).and_then(|()| {
             let stream = &mut writer.socket.get_mut().stream;
             self.writing.store(true, Ordering::Release);
+            // After the flag, so a test told of this write sees it under way.
+            #[cfg(test)]
+            inner.about_to_write(id, bytes.len());
             let result = stream
                 .write_all(&bytes)
                 .and_then(|()| stream.flush())
@@ -857,9 +858,9 @@ struct LinkInner {
     aborted: AtomicBool,
     #[cfg(test)]
     write_log: Mutex<Vec<(u64, Instant)>>,
-    /// Told the id and encoded size of every agent or system frame just
-    /// before its bytes go to the socket, so a test can act while a write is
-    /// under way.
+    /// Told the id and encoded size of every agent or system frame once its
+    /// write is flagged under way and just before its bytes go to the
+    /// socket, so a test can act while a write is under way.
     #[cfg(test)]
     before_write: Mutex<Option<mpsc::Sender<(u64, usize)>>>,
 }
