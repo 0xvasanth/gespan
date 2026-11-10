@@ -16,6 +16,10 @@ pub(super) fn read(profile: &Profile, kind: Kind) -> Option<Identity> {
     match kind {
         Kind::Claude => claude_identity(dir, super::claude_oauth_token()),
         Kind::Codex => codex_identity(dir),
+        // Both keep one sign-in per machine, so only the default account
+        // has one to read.
+        Kind::Cursor if dir.is_none() => parse_cursor_identity(&read_json(&cursor_config()?)?),
+        Kind::Kiro if dir.is_none() => kiro_identity(profile),
         _ => None,
     }
 }
@@ -109,6 +113,49 @@ fn parse_codex_identity(auth: &Value) -> Option<Identity> {
             .and_then(|auth| text(auth, "chatgpt_plan_type"))
             .map(|plan| capitalize(&plan)),
         organization,
+    })
+}
+
+/// Where Cursor's CLI keeps `cli-config.json`, by the rule the CLI itself
+/// follows: `CURSOR_CONFIG_DIR`, then `$XDG_CONFIG_HOME/cursor`, then
+/// `~/.cursor`.
+fn cursor_config() -> Option<PathBuf> {
+    let set = |var: &str| {
+        std::env::var_os(var)
+            .filter(|v| !v.to_string_lossy().trim().is_empty())
+            .map(PathBuf::from)
+    };
+    let dir = set("CURSOR_CONFIG_DIR")
+        .or_else(|| set("XDG_CONFIG_HOME").map(|dir| dir.join("cursor")))
+        .or_else(|| home().map(|home| home.join(".cursor")))?;
+    Some(dir.join("cli-config.json"))
+}
+
+/// Parse the `authInfo` block `agent login` writes to `cli-config.json`.
+fn parse_cursor_identity(config: &Value) -> Option<Identity> {
+    let auth = config.get("authInfo")?;
+    let identity = Identity {
+        email: text(auth, "email"),
+        name: text(auth, "displayName"),
+        ..Default::default()
+    };
+    (identity.email.is_some() || identity.name.is_some()).then_some(identity)
+}
+
+fn kiro_identity(profile: &Profile) -> Option<Identity> {
+    let output =
+        super::login::cli_output(Kind::Kiro, &["whoami", "--format", "json"], profile).ok()?;
+    parse_kiro_identity(&serde_json::from_str(output.trim()).ok()?)
+}
+
+/// Parse `kiro-cli whoami --format json`: the email, and the sign-in
+/// provider ("Google", "GitHub", ...) as the badge beside the account.
+fn parse_kiro_identity(whoami: &Value) -> Option<Identity> {
+    let email = text(whoami, "email")?;
+    Some(Identity {
+        email: Some(email),
+        organization: text(whoami, "provider"),
+        ..Default::default()
     })
 }
 
@@ -224,6 +271,56 @@ mod tests {
             parse_codex_identity(&json!({ "OPENAI_API_KEY": "sk-x" })),
             None
         );
+    }
+
+    #[test]
+    fn cursor_reads_auth_info_and_ignores_the_rest_of_its_config() {
+        let config = json!({
+            "model": { "modelId": "auto" },
+            "authInfo": {
+                "email": "ada@example.com",
+                "displayName": "Ada Lovelace",
+                "userId": 509651823,
+                "authId": "google-oauth2|1"
+            }
+        });
+        assert_eq!(
+            parse_cursor_identity(&config),
+            identity(Some("ada@example.com"), Some("Ada Lovelace"), None, None)
+        );
+    }
+
+    #[test]
+    fn cursor_without_auth_info_is_signed_out() {
+        assert_eq!(parse_cursor_identity(&json!({ "version": 1 })), None);
+        // `agent logout` can leave the block behind with nothing in it.
+        assert_eq!(
+            parse_cursor_identity(&json!({ "authInfo": { "email": " ", "userId": 1 } })),
+            None
+        );
+    }
+
+    #[test]
+    fn kiro_reads_whoami_email_and_sign_in_provider() {
+        let whoami = json!({
+            "accountType": "SocialGoogle",
+            "provider": "Google",
+            "email": "ada@example.com"
+        });
+        assert_eq!(
+            parse_kiro_identity(&whoami),
+            identity(Some("ada@example.com"), None, None, Some("Google"))
+        );
+        assert_eq!(
+            parse_kiro_identity(&json!({ "email": "ada@example.com" })),
+            identity(Some("ada@example.com"), None, None, None)
+        );
+    }
+
+    #[test]
+    fn kiro_without_an_email_is_signed_out() {
+        assert_eq!(parse_kiro_identity(&json!({ "provider": "Google" })), None);
+        assert_eq!(parse_kiro_identity(&json!({})), None);
     }
 
     #[test]

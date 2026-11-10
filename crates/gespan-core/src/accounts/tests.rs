@@ -366,3 +366,117 @@ sys.exit(2)
     assert_eq!(result, Err("Sign-in cancelled".into()));
     assert_eq!(signed_in(Kind::Kiro, &Profile::default()), Some(false));
 }
+
+/// Cursor's one account: Gespan tells a missing CLI from a signed-out one,
+/// signs in and out through `agent login`/`logout`, and names the account
+/// from the config the CLI wrote.
+#[cfg(unix)]
+#[test]
+fn cursor_account_reports_missing_signed_out_and_signed_in() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::{atomic::AtomicBool, Arc},
+    };
+    struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (key, value) in &self.0 {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+    let keys = ["GESPAN_CURSOR_BINARY", "CURSOR_CONFIG_DIR"];
+    let _restore = Restore(keys.map(|k| (k, std::env::var_os(k))).to_vec());
+    let fixture = tempfile::tempdir().unwrap();
+    let config = fixture.path().join("config");
+    unsafe {
+        std::env::set_var("CURSOR_CONFIG_DIR", &config);
+    }
+    let account = Profile::default();
+
+    unsafe {
+        std::env::set_var("GESPAN_CURSOR_BINARY", fixture.path().join("missing"));
+    }
+    assert_eq!(
+        sign_in_state(Kind::Cursor, &account),
+        SignInState::NotInstalled
+    );
+    assert_eq!(account.identity(Kind::Cursor), None);
+
+    // Like the real CLI: status answers in JSON and exits 1 when signed out;
+    // login writes `authInfo` into the config, logout clears it.
+    let binary = fixture.path().join("cursor-agent");
+    std::fs::write(
+        &binary,
+        r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+config = pathlib.Path(os.environ['CURSOR_CONFIG_DIR'])/'cli-config.json'
+signed_in = config.exists() and 'authInfo' in json.loads(config.read_text())
+if sys.argv[1:] == ['status', '--format', 'json']:
+    print(json.dumps({'status': 'authenticated' if signed_in else 'unauthenticated', 'isAuthenticated': signed_in}))
+    sys.exit(0 if signed_in else 1)
+if sys.argv[1:] == ['login']:
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({'authInfo': {'email': 'ada@fixture.test', 'displayName': 'Ada'}}))
+    sys.exit(0)
+if sys.argv[1:] == ['logout']:
+    config.write_text(json.dumps({'version': 1}))
+    sys.exit(0)
+sys.exit(2)
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    unsafe {
+        std::env::set_var("GESPAN_CURSOR_BINARY", &binary);
+    }
+    assert_eq!(
+        sign_in_state(Kind::Cursor, &account),
+        SignInState::SignedOut
+    );
+    assert_eq!(account.identity(Kind::Cursor), None);
+
+    let auth = |action| {
+        authenticate(
+            Kind::Cursor,
+            &account,
+            action,
+            Arc::new(AtomicBool::new(false)),
+        )
+    };
+    auth(AuthAction::SignIn).unwrap();
+    assert_eq!(sign_in_state(Kind::Cursor, &account), SignInState::SignedIn);
+    let identity = account.identity(Kind::Cursor).unwrap();
+    assert_eq!(identity.email.as_deref(), Some("ada@fixture.test"));
+    assert_eq!(identity.name.as_deref(), Some("Ada"));
+
+    auth(AuthAction::SignOut).unwrap();
+    assert_eq!(
+        sign_in_state(Kind::Cursor, &account),
+        SignInState::SignedOut
+    );
+    assert_eq!(account.identity(Kind::Cursor), None);
+}
+
+#[test]
+fn cursor_and_kiro_keep_one_labelled_account() {
+    let mut book = Book::default();
+    for kind in [Kind::Cursor, Kind::Kiro] {
+        assert!(providers().any(|k| k == kind), "{kind:?}");
+        assert!(!supports_profiles(kind), "{kind:?}");
+        // A second account would share the first one's sign-in.
+        assert!(book.add(kind, "Work").is_err());
+        book.rename(kind, DEFAULT, "Personal").unwrap();
+        let rows = book.list(kind);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Personal");
+        assert!(Profile::new("account-x", Path::new("/tmp"))
+            .directory(kind)
+            .is_err());
+    }
+}

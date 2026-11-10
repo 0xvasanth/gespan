@@ -158,7 +158,7 @@ const CURSOR: Spec = Spec {
         sign_in: &["login"],
         sign_out: Some(&["logout"]),
     }),
-    accounts: None,
+    accounts: Some(Accounts { profile: None }),
     usage: None,
     features: Features {
         steer: Some(None),
@@ -342,7 +342,7 @@ const KIRO: Spec = Spec {
         sign_in: &["login"],
         sign_out: Some(&["logout"]),
     }),
-    accounts: None,
+    accounts: Some(Accounts { profile: None }),
     usage: Some(&crate::usage::Kiro),
     features: STANDARD,
     discovery_timeout: Some(30),

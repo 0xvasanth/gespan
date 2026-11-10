@@ -1,5 +1,5 @@
 id = "cursor"
-version = 3
+version = 4
 min_engine_version = 1
 label = "Cursor"
 binary = "cursor-agent"
@@ -11,6 +11,10 @@ discovery_timeout = 15
 [login]
 sign_in = ["login"]
 sign_out = ["logout"]
+
+# One account, told apart by label only: the CLI keeps a single sign-in
+# per machine whatever config directory it is given.
+[accounts]
 
 [features]
 side_threads = true
