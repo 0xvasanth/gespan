@@ -942,6 +942,26 @@ mod card_tests {
             .is_empty());
     }
     #[test]
+    fn marker_survives_the_shared_block_store() {
+        let mut t = Transcript::default();
+        crate::outside_turns::append_rows(
+            &mut t,
+            &[crate::outside_turns::OutsideTurn {
+                role: crate::outside_turns::TurnRole::User,
+                text: "from the cli".into(),
+            }],
+        );
+        let saved = merge(&[], 0, &t.rows).unwrap();
+        assert_eq!(saved[0]["role"], "system");
+        assert_eq!(saved[0]["interjection"]["customType"], "terminal");
+        let rows = project(&saved).unwrap();
+        let roles: Vec<_> = rows.iter().map(|r| r.role.as_str()).collect();
+        assert_eq!(roles, ["interjection", "user"]);
+        let note: crate::transcript::Interjection = super::super::parse(&rows[0].text).unwrap();
+        assert_eq!(note.custom_type, "terminal");
+        assert_eq!(rows[1].text, "from the cli");
+    }
+    #[test]
     fn new_native_cards_keep_their_identity_and_reload_as_cards() {
         let mut row = metadata_row(
             "pilot-card",

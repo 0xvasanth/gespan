@@ -27,6 +27,31 @@ pub struct OutsideTurn {
     pub text: String,
 }
 
+/// The marker's `custom_type`; `Interjection::label` shows it as "From terminal".
+pub const MARKER_TYPE: &str = "terminal";
+
+/// Append picked-up turns to `transcript` behind one "From terminal" marker.
+/// Rows already in the transcript are never touched; an empty slice adds nothing.
+pub fn append_rows(transcript: &mut crate::transcript::Transcript, turns: &[OutsideTurn]) {
+    if turns.is_empty() {
+        return;
+    }
+    let marker = crate::transcript::Interjection {
+        text: String::new(),
+        custom_type: MARKER_TYPE.into(),
+        severity: None,
+    };
+    transcript.begin("interjection");
+    transcript.append(&serde_json::to_string(&marker).expect("marker serializes"));
+    for turn in turns {
+        transcript.begin(match turn.role {
+            TurnRole::User => "user",
+            TurnRole::Assistant => "assistant",
+        });
+        transcript.append(&turn.text);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed {
     pub turns: Vec<OutsideTurn>,
@@ -445,7 +470,42 @@ fn end_checkpoint(kind: Kind, path: &Path) -> io::Result<Checkpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcript::{Interjection, Transcript};
     use serde_json::json;
+
+    fn turn(role: TurnRole, text: &str) -> OutsideTurn {
+        OutsideTurn {
+            role,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn marked_group_precedes_turns() {
+        let mut t = Transcript::default();
+        t.begin("user");
+        t.append("earlier");
+        let turns = [
+            turn(TurnRole::User, "fix it"),
+            turn(TurnRole::Assistant, "done"),
+        ];
+        append_rows(&mut t, &turns);
+        let roles: Vec<_> = t.rows.iter().map(|r| r.role.as_str()).collect();
+        assert_eq!(roles, ["user", "interjection", "user", "assistant"]);
+        assert_eq!(t.rows[0].text, "earlier");
+        let note: Interjection = serde_json::from_str(&t.rows[1].text).unwrap();
+        assert_eq!(note.custom_type, "terminal");
+        assert_eq!(note.label(), "From terminal");
+        assert_eq!(t.rows[2].text, "fix it");
+        assert_eq!(t.rows[3].text, "done");
+    }
+
+    #[test]
+    fn empty_turns_append_nothing() {
+        let mut t = Transcript::default();
+        append_rows(&mut t, &[]);
+        assert!(t.rows.is_empty());
+    }
 
     fn jsonl(entries: &[Value]) -> Vec<u8> {
         let mut out = Vec::new();

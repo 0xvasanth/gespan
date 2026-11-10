@@ -16,6 +16,7 @@ impl Interjection {
         match self.custom_type.as_str() {
             "advisor" => "Advisor",
             "custom" => "Notice",
+            "terminal" => "From terminal",
             label => label,
         }
     }
