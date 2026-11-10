@@ -1086,6 +1086,13 @@ impl Menu {
         }
         cx.emit(event);
     }
+    /// The first embedded view of type `T`, such as a panel the menu hosts.
+    pub(crate) fn custom_view<T: 'static>(&self) -> Option<Entity<T>> {
+        self.items.iter().find_map(|item| match item {
+            MenuItem::Custom(view, _) => view.clone().downcast::<T>().ok(),
+            _ => None,
+        })
+    }
     /// Each action's label and note's text, for tests to read what is shown.
     #[cfg(test)]
     pub(crate) fn item_texts(&self) -> Vec<String> {
