@@ -1,0 +1,19 @@
+crates/gespan-browser/src/link.rs
+  s_bf3ffee719195f::t_32c01dcdaa777d 767-769,861-863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0dcf0a0c53572993eb6c6ca1c7193907abb33ab6",
+  "prompts": {},
+  "sessions": {
+    "s_bf3ffee719195f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bb55984-3644-4a98-a17a-8090f338608d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
