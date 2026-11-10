@@ -40,6 +40,7 @@ pub use gespan_tracker_client::provider_boards;
 pub mod remote;
 pub mod resources;
 pub mod response;
+pub mod resume_outside;
 pub mod scm;
 pub mod session_filters;
 pub mod session_groups;

@@ -8,6 +8,7 @@ mod automation_runs;
 mod automation_runs_tests;
 #[cfg(test)]
 mod browser_tabs_tests;
+mod continue_outside;
 mod file_panes;
 mod first_run;
 #[cfg(test)]
@@ -402,6 +403,8 @@ pub(crate) enum MenuTarget {
     Actions,
     /// The title bar corner's Open in editor menu, for this folder.
     OpenInEditor(String),
+    /// A session's Continue outside panel, opened from under its composer.
+    ContinueOutside(i64),
     /// The Inbox row's right-click menu in the sidebar.
     InboxNav,
     /// The title strip's new-tab button, when terminals open in the title bar.
@@ -729,6 +732,9 @@ pub(crate) struct Shell {
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
     editor_menu: open_in_editor::EditorMenu,
+    /// A composer asked for its Continue outside panel, opened next render.
+    pending_continue: Option<(i64, AnchorSlot)>,
+    terminal_app: continue_outside::OpenTerminalApp,
     new_tab_anchor: AnchorSlot,
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
@@ -1156,6 +1162,8 @@ impl Shell {
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
             editor_menu: Default::default(),
+            pending_continue: None,
+            terminal_app: continue_outside::default_terminal_app(),
             new_tab_anchor: AnchorSlot::default(),
             action_terminals: HashMap::new(),
             action_listing: None,
@@ -1680,6 +1688,7 @@ impl Shell {
             }));
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
+        self.observe_continue_outside(&view, id, cx);
         self.sessions.insert(id, view);
         self.orchestration_view_added(id, cx);
         // Restored after a restart, a held session has no view state of its own.
@@ -5855,6 +5864,12 @@ impl Shell {
                 232.,
                 MenuStyle::Explorer,
             ),
+            MenuTarget::ContinueOutside(id) => (
+                "Continue outside Gespan".into(),
+                self.continue_outside_items(*id, events, window, cx),
+                440.,
+                MenuStyle::Explorer,
+            ),
             MenuTarget::NewTab => (
                 "New tab".into(),
                 vec![
@@ -6118,6 +6133,9 @@ impl Shell {
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
             MenuTarget::Actions => self.run_actions_menu(action, window, cx),
             MenuTarget::OpenInEditor(path) => self.run_open_in_editor_menu(path, action, cx),
+            MenuTarget::ContinueOutside(id) => {
+                self.run_continue_outside_menu(id, action, window, cx)
+            }
             MenuTarget::InboxNav => self.run_inbox_nav_menu(action, window, cx),
             MenuTarget::NewTab => match action {
                 "terminal" => self.new_title_terminal(window, cx),
@@ -9428,6 +9446,9 @@ impl Render for Shell {
                     .when(matches!(open.target, MenuTarget::OpenInEditor(_)), |p| {
                         p.align(Align::End)
                     })
+                    .when(matches!(open.target, MenuTarget::ContinueOutside(_)), |p| {
+                        p.side(Side::Top).align(Align::End)
+                    })
             }))
             .children(self.drag_ghost(cx))
             .children(self.background_modal(window, cx))
@@ -9442,6 +9463,7 @@ impl Render for Shell {
             .children(self.remote_project_modal(window, cx))
             .children(self.notice_modals(window, cx))
             .children(self.folder_picker_popover(window, cx))
+            .children(self.open_pending_continue(window, cx))
             .children(crate::accounts::get(cx))
             .children(
                 self.settings

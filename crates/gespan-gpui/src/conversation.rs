@@ -4,6 +4,8 @@ mod attachment_drop;
 mod background_tasks;
 mod btw;
 mod commands;
+mod continue_outside;
+pub(crate) use continue_outside::ContinueOutside;
 pub(crate) mod composer_card;
 pub(crate) mod composer_features;
 mod composer_shelf;
@@ -320,6 +322,7 @@ pub(crate) struct Conversation {
     session_edits_generation: u64,
     branch_anchor: AnchorSlot,
     context_anchor: AnchorSlot,
+    continue_anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
     composer_motion: ComposerMotion,
     narrow: bool,
@@ -853,6 +856,7 @@ impl Conversation {
             session_edits_generation: 0,
             branch_anchor: AnchorSlot::default(),
             context_anchor: AnchorSlot::default(),
+            continue_anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
             composer_motion: ComposerMotion::default(),
             narrow: false,
@@ -3789,6 +3793,7 @@ impl Conversation {
                         },
                     )
                     .children(self.watch_chip(cx))
+                    .children(self.continue_chip(cx))
                     .when(show_context, |d| {
                         d.child(
                             div()
