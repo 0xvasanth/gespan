@@ -266,7 +266,11 @@ mod tests {
     #[gpui::test]
     fn look_card_has_no_layout_row(cx: &mut TestAppContext) {
         let opened = open(SetupStep::Look, "/Users/a/code", cx);
-        assert!(!super::super::test_support::has(&opened, "setup-layout", cx));
+        assert!(!super::super::test_support::has(
+            &opened,
+            "setup-layout",
+            cx
+        ));
     }
 
     #[gpui::test]
