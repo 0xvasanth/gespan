@@ -1429,6 +1429,17 @@ impl BrowserSettings {
         }
     }
 
+    /// What an install that never saved browser settings starts with: the
+    /// switch on and every regular thread allowed, as turning the switch on
+    /// in Settings sets them. A saved choice always wins over this.
+    pub fn first_run() -> BrowserSettings {
+        BrowserSettings {
+            enabled: true,
+            access: AccessMode::Always,
+            ..BrowserSettings::default()
+        }
+    }
+
     /// The browser Gespan starts gets a window of its own; off, it runs
     /// headless and its tabs show only in Gespan.
     pub fn starts_with_window(&self) -> bool {

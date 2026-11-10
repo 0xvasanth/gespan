@@ -319,7 +319,7 @@ fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppCont
 fn blur_slider_covers_the_saved_range() {
     assert_eq!(SliderKind::Blur.range(), (1, 64));
     let mut prefs = Preferences::default();
-    assert_eq!(SliderKind::Blur.get(&prefs), 24);
+    assert_eq!(SliderKind::Blur.get(&prefs), 7);
     SliderKind::Blur.set(&mut prefs, 60);
     assert_eq!(prefs.sidebar_blur, 60);
 }

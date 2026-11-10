@@ -332,10 +332,36 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     /// A browser module of the test's own on `dir`, as the app would open
-    /// it there. Turning the switch on starts nothing: the in-app browser
+    /// it there, with the switch turned off first so each test turns it on
+    /// itself. Turning the switch on starts nothing: the in-app browser
     /// starts only when an agent needs it.
     fn host_on(dir: &Path) -> Arc<BrowserHost> {
-        gespan_core::browser::open(dir).unwrap()
+        let host = gespan_core::browser::open(dir).unwrap();
+        host.set_toggle(false);
+        host
+    }
+
+    #[gpui::test]
+    fn a_fresh_install_starts_with_the_browser_on(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let host = gespan_core::browser::open(dir.path()).unwrap();
+        let fresh = host.state();
+        assert!(fresh.toggle_on, "no saved settings: the switch starts on");
+        assert_eq!(fresh.settings.access, AccessMode::Always);
+        assert_eq!(
+            fresh.connection.state,
+            ConnectionState::Idle,
+            "nothing starts yet"
+        );
+        let (_, mut visual) = page(host.clone(), cx);
+        assert!(state(&mut visual).toggle_on);
+
+        // Turning it off is a saved choice the next launch keeps.
+        click(&mut visual, "settings-toggle-browser-toggle");
+        assert!(!host.state().toggle_on);
+        let restarted = gespan_core::browser::open(dir.path()).unwrap();
+        assert!(!restarted.state().toggle_on);
+        assert_eq!(restarted.connection().state, ConnectionState::Off);
     }
 
     /// What Settings used to offer for the browser, all gone: the mode
@@ -665,8 +691,8 @@ mod tests {
         let host = host_on(dir.path());
         assert_eq!(
             host.state().settings.access,
-            AccessMode::Ask,
-            "stored default"
+            AccessMode::Always,
+            "a fresh install allows every regular thread"
         );
         let (_, mut visual) = page(host.clone(), cx);
         assert!(shown(&mut visual, "settings-row-browser-access"));

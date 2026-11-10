@@ -874,13 +874,19 @@ mod composer_tests {
                 | ((c.g * 255.).round() as u32) << 8
                 | (c.b * 255.).round() as u32
         };
+        // The desktop app's colours, which were the defaults before the
+        // neutral black ones.
         let mut preferences = crate::settings::Preferences {
             theme: "dark".into(),
+            theme_hue: 240,
+            theme_dark_lightness: 9,
+            sidebar_opacity: 85,
+            sidebar_blur: 24,
             ..Default::default()
         };
         configure_project(&preferences, None, false, false);
         if GLASS_PLATFORM {
-            // At the defaults: #0d0d0d at 80% around a #060606 card at 40%.
+            // At those values: #0d0d0d at 80% around a #060606 card at 40%.
             assert_eq!(hex(shell_fill()), 0x0d0d0d);
             assert!((shell_fill().a - 0.8).abs() < 0.001, "{:?}", shell_fill());
             assert_eq!(hex(inset_pane_fill()), 0x060606);

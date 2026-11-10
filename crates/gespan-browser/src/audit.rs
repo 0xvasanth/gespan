@@ -362,6 +362,47 @@ pub fn load_settings(conn: &Connection) -> rusqlite::Result<Option<BrowserSettin
     Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
 }
 
+/// The browser settings row as a start finds it.
+#[derive(Debug, PartialEq)]
+pub enum StoredSettings {
+    Saved(BrowserSettings),
+    /// Nothing was ever saved: a fresh install.
+    Missing,
+    /// A row is there but cannot be read or parsed.
+    Unreadable,
+}
+
+impl StoredSettings {
+    /// What a start begins from. Only a fresh install gets
+    /// [`BrowserSettings::first_run`]; a row that cannot be read starts from
+    /// the restrictive defaults, so a damaged database never turns the
+    /// browser on.
+    pub fn start_from(&self) -> BrowserSettings {
+        match self {
+            StoredSettings::Saved(settings) => settings.clone(),
+            StoredSettings::Missing => BrowserSettings::first_run(),
+            StoredSettings::Unreadable => BrowserSettings::default(),
+        }
+    }
+}
+
+pub fn stored_settings(conn: &Connection) -> StoredSettings {
+    let text = conn
+        .query_row(
+            "SELECT value FROM browser_settings WHERE key = ?1",
+            params![SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional();
+    match text {
+        Ok(None) => StoredSettings::Missing,
+        Ok(Some(text)) => serde_json::from_str(&text)
+            .map(StoredSettings::Saved)
+            .unwrap_or(StoredSettings::Unreadable),
+        Err(_) => StoredSettings::Unreadable,
+    }
+}
+
 pub fn save_settings(conn: &Connection, settings: &BrowserSettings) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
@@ -707,6 +748,35 @@ mod tests {
         clear(&conn).unwrap();
         assert!(events(&conn, 10).unwrap().is_empty());
         assert_eq!(open_lease_count(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn only_a_missing_settings_row_starts_with_the_browser_on() {
+        let conn = conn();
+        assert_eq!(stored_settings(&conn), StoredSettings::Missing);
+        let fresh = stored_settings(&conn).start_from();
+        assert!(fresh.enabled);
+        assert_eq!(fresh.access, crate::protocol::AccessMode::Always);
+
+        // A damaged row falls back to off and Ask, never to the fresh-install
+        // default.
+        conn.execute(
+            "INSERT INTO browser_settings (key, value) VALUES (?1, 'not json')",
+            params![SETTINGS_KEY],
+        )
+        .unwrap();
+        assert_eq!(stored_settings(&conn), StoredSettings::Unreadable);
+        let damaged = stored_settings(&conn).start_from();
+        assert!(!damaged.enabled);
+        assert_eq!(damaged.access, crate::protocol::AccessMode::Ask);
+
+        // A saved choice is kept as it is.
+        let off = BrowserSettings {
+            enabled: false,
+            ..BrowserSettings::first_run()
+        };
+        save_settings(&conn, &off).unwrap();
+        assert_eq!(stored_settings(&conn).start_from(), off);
     }
 
     #[test]
