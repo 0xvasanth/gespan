@@ -1,0 +1,24 @@
+crates/gespan-core/src/outside_turns.rs
+  s_6549201e50b654::t_d1bed4abc17655 30-54,473,476-508
+  s_6549201e50b654::t_b7dc34ba7d33e0 509
+crates/gespan-core/src/store/shared/blocks.rs
+  s_6549201e50b654::t_d1bed4abc17655 945-964
+crates/gespan-core/src/transcript.rs
+  s_6549201e50b654::t_61f754c4048142 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5616d471cd93a2c1499d17be30d832a49869c97d",
+  "prompts": {},
+  "sessions": {
+    "s_6549201e50b654": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c1a5de22-c6e1-4b13-9ec9-6d4a9964a0ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
