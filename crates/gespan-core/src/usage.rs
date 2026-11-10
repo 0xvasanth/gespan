@@ -2,6 +2,7 @@
 //! Blocking probes belong on a worker. Credentials are read only, never rotated.
 pub(crate) mod claude;
 mod codex;
+mod cursor;
 mod devin;
 mod kiro;
 mod opencode;
@@ -9,7 +10,8 @@ mod pi;
 
 /// Each provider's usage source, named by its row in the provider spec.
 pub(crate) use {
-    claude::Claude, codex::Codex, devin::Devin, kiro::Kiro, opencode::OpenCode, pi::Pi,
+    claude::Claude, codex::Codex, cursor::Cursor, devin::Devin, kiro::Kiro, opencode::OpenCode,
+    pi::Pi,
 };
 
 pub use claude::live_windows as claude_live_windows;
@@ -614,6 +616,7 @@ mod has_usage_tests {
         for kind in [
             Kind::Codex,
             Kind::Claude,
+            Kind::Cursor,
             Kind::Devin,
             Kind::Kiro,
             Kind::OpenCode,
@@ -621,7 +624,7 @@ mod has_usage_tests {
         ] {
             assert!(has_usage(kind), "{kind:?}");
         }
-        for kind in [Kind::Cursor, Kind::Antigravity, Kind::Hermes] {
+        for kind in [Kind::Antigravity, Kind::Hermes] {
             assert!(!has_usage(kind), "{kind:?}");
         }
     }

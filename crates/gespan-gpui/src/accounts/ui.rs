@@ -324,7 +324,8 @@ impl Accounts {
                     && !self.revealed.contains(&key);
                 let org = identity
                     .and_then(|i| i.organization.as_ref().or(i.plan.as_ref()))
-                    .cloned();
+                    .cloned()
+                    .or_else(|| self.usage_plan(kind, &id));
                 let mut controls = div()
                     .w(px(96.))
                     .flex_shrink_0()

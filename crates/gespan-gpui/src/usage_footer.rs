@@ -1226,7 +1226,7 @@ mod tests {
         cx.update(bind);
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
-                cx.new(|cx| UsageFooter::new(Kind::Cursor, cx))
+                cx.new(|cx| UsageFooter::new(Kind::Hermes, cx))
             })
             .unwrap()
         });
