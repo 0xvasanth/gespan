@@ -63,12 +63,9 @@ impl SidebarPeek {
 }
 
 impl Shell {
-    /// Only the Focused layout's collapsed sidebar peeks, rounded or boxy.
+    /// The collapsed sidebar peeks, rounded or boxy.
     fn peek_available(&self) -> bool {
-        !self.workspace.classic_layout
-            && !self.workspace.sidebar_visible
-            && self.sidebar_slide.is_none()
-            && self.settings.is_none()
+        !self.workspace.sidebar_visible && self.sidebar_slide.is_none() && self.settings.is_none()
     }
 
     /// Whether the sidebar must paint uncached: inherited opacity is not part

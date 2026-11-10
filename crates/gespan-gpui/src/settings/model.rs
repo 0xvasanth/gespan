@@ -17,7 +17,6 @@ pub(crate) enum Section {
     Mcp,
     Browser,
     Skills,
-    Pilots,
     Inbox,
     Archive,
     Worktrees,
@@ -43,7 +42,6 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
             Section::Mcp,
             Section::Browser,
             Section::Skills,
-            Section::Pilots,
         ],
     ),
     (
@@ -53,7 +51,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 15] = [
+    pub(crate) const ALL: [Section; 14] = [
         Section::General,
         Section::Diagnostics,
         Section::Connections,
@@ -65,7 +63,6 @@ impl Section {
         Section::Mcp,
         Section::Browser,
         Section::Skills,
-        Section::Pilots,
         Section::Inbox,
         Section::Archive,
         Section::Worktrees,
@@ -83,7 +80,6 @@ impl Section {
             Section::Mcp => "mcp",
             Section::Browser => "browser",
             Section::Skills => "skills",
-            Section::Pilots => "pilots",
             Section::Inbox => "inbox",
             Section::Archive => "archive",
             Section::Worktrees => "worktrees",
@@ -102,7 +98,6 @@ impl Section {
             Section::Mcp => "MCP",
             Section::Browser => "Browser",
             Section::Skills => "Skills",
-            Section::Pilots => "Pilots",
             Section::Inbox => "Inbox",
             Section::Archive => "Archive",
             Section::Worktrees => "Worktrees",
@@ -111,15 +106,13 @@ impl Section {
     pub(crate) fn description(self) -> &'static str {
         match self {
             Section::General => {
-                "The build you are running, how Gespan reaches you, and the panels it shows."
+                "The build you are running, how Gespan reaches you, and how it runs."
             }
             Section::Diagnostics => {
                 "Report a problem, your logs, and the failures counted on this machine."
             }
             Section::Connections => "Connect your machines and run agents remotely through SSH.",
-            Section::Appearance => {
-                "Theme, tint, translucency, workspace layout, and conversation backgrounds."
-            }
+            Section::Appearance => "Theme, tint, translucency, workspace style, and the sidebar.",
             Section::Keybindings => {
                 "Every shortcut the workspace handles, from the app menu and the key handler."
             }
@@ -137,7 +130,6 @@ impl Section {
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
-            Section::Pilots => "The resident agent beside your tabs, and which projects have one.",
             Section::Inbox => {
                 "Manage Inbox services and notification preferences for each project."
             }
@@ -147,7 +139,7 @@ impl Section {
     }
     fn keywords(self) -> &'static str {
         match self {
-            Section::General => "version update sounds notifications notes board rail",
+            Section::General => "version update sounds notifications",
             Section::Diagnostics => {
                 "diagnostics crash report issue bug email github logs folder copy failures counters errors"
             }
@@ -155,7 +147,7 @@ impl Section {
                 "ssh remote host machine server environment always on herdr machines remote agents"
             }
             Section::Appearance => {
-                "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
+                "theme dark light color accent glass blur zoom scale wallpaper sidebar"
             }
             Section::Keybindings => "shortcut hotkey keyboard binding",
             Section::Dictation => "voice microphone speech parakeet",
@@ -172,7 +164,6 @@ impl Section {
                 "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
             }
             Section::Skills => "skill instructions prompt",
-            Section::Pilots => "pilot resident agent mascot claim project title bar",
             Section::Inbox => {
                 "github gitlab linear jira atlassian azure devops connect token integration"
             }
@@ -193,7 +184,6 @@ impl Section {
             Section::Mcp => "globe",
             Section::Browser => "app-window",
             Section::Skills => "sparkles",
-            Section::Pilots => "ghost",
             Section::Inbox => "inbox-hi",
             Section::Archive => "archive",
             Section::Worktrees => "folder-tree",
@@ -251,23 +241,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "Upload folders",
         "browser upload files folders hidden dotfiles",
     ),
+    #[cfg(target_os = "macos")]
     (
-        "pilots-enabled",
-        Section::Pilots,
-        "Show pilots",
-        "pilot agent rail hide",
-    ),
-    (
-        "rail-pilots-pinned",
-        Section::Pilots,
-        "Pin pilots to the icon rail",
-        "pilot rail compact collapsed icons top divider project picker",
-    ),
-    (
-        "pilot-list",
-        Section::Pilots,
-        "Your pilots",
-        "pilot reset soul name projects sessions sidebar visibility hidden show",
+        "pilot-menu-bar-icon",
+        Section::General,
+        "Menu bar icon",
+        "menu bar icon tray pilot quick composer chat macos hide",
     ),
     (
         "dictation-model",
@@ -312,28 +291,10 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "notify alert toast permission reminder background",
     ),
     (
-        "notes",
-        Section::General,
-        "Notes",
-        "notebook markdown rail scratchpad",
-    ),
-    (
-        "board",
-        Section::General,
-        "Board",
-        "kanban cards columns tasks tickets track",
-    ),
-    (
         "quick-composer",
         Section::General,
         "Quick composer",
         "spotlight global shortcut hotkey floating prompt anywhere",
-    ),
-    (
-        "working-agents",
-        Section::General,
-        "Working agents",
-        "live running sessions rail card",
     ),
     (
         "keep-awake",
@@ -355,19 +316,19 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "file-tabs",
-        Section::General,
+        Section::Chat,
         "File tabs",
         "editor open top workspace normal session pane beside chat",
     ),
     (
         "file-word-wrap",
-        Section::General,
+        Section::Chat,
         "Word wrap",
         "files editor long lines horizontal scroll wrapping",
     ),
     (
         "tab-animations",
-        Section::General,
+        Section::Appearance,
         "Tab animations",
         "motion open close resize transition",
     ),
@@ -439,16 +400,52 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "translucent transparency body window",
     ),
     (
-        "inset-layout",
+        "new-layout-style",
         Section::Appearance,
-        "Layout",
-        "classic focused new preview sidebar navigation tabs inset workspace card rounded floating linear frame",
+        "Workspace style",
+        "rounded boxy card frame full height layout",
     ),
     (
-        "sidebar-search",
+        "sidebar-notes",
         Section::Appearance,
-        "Sidebar",
-        "search notes automations inbox pilots activity compact view entries show hide",
+        "Notes",
+        "notebook markdown scratchpad sidebar show hide",
+    ),
+    (
+        "sidebar-board",
+        Section::Appearance,
+        "Board",
+        "kanban cards columns tasks tickets track sidebar show hide",
+    ),
+    (
+        "sidebar-activity",
+        Section::Appearance,
+        "Activity",
+        "working agents activity live running sessions card sidebar show hide",
+    ),
+    (
+        "sidebar-automations",
+        Section::Appearance,
+        "Automations",
+        "sidebar entries show hide",
+    ),
+    (
+        "sidebar-inbox",
+        Section::Appearance,
+        "Inbox",
+        "sidebar entries show hide",
+    ),
+    (
+        "sidebar-pilots",
+        Section::Appearance,
+        "Pilots",
+        "sidebar entries show hide",
+    ),
+    (
+        "compact-session-cards",
+        Section::Appearance,
+        "Compact view",
+        "sidebar session cards density show hide",
     ),
     (
         "interface-scale",
@@ -458,7 +455,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "show-excluded-files",
-        Section::Appearance,
+        Section::Chat,
         "Show excluded files",
         "explorer gitignore ignored hidden files tree",
     ),
@@ -688,9 +685,19 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn settings_section_count_is_15() {
-        assert_eq!(Section::ALL.len(), 15);
+    fn menu_bar_icon_is_in_general() {
+        let results = search("menu bar", "");
+        let hit = results
+            .iter()
+            .find(|r| r.setting == Some("pilot-menu-bar-icon"));
+        assert_eq!(hit.map(|r| r.section), Some(Section::General));
+    }
+
+    #[test]
+    fn settings_section_count_is_14() {
+        assert_eq!(Section::ALL.len(), 14);
         let grouped: Vec<Section> = GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
         assert_eq!(grouped.len(), Section::ALL.len());
         for section in Section::ALL {
@@ -714,11 +721,11 @@ mod tests {
     }
 
     #[test]
-    fn kanban_finds_the_board_setting_in_general() {
+    fn kanban_finds_the_board_setting_in_the_sidebar_group() {
         assert!(
             search("kanban", "")
                 .iter()
-                .any(|r| r.setting == Some("board") && r.section == Section::General)
+                .any(|r| r.setting == Some("sidebar-board") && r.section == Section::Appearance)
         );
     }
 
@@ -728,15 +735,62 @@ mod tests {
     }
 
     #[test]
-    fn the_retired_collapsed_project_rail_is_not_searchable() {
-        for query in ["collapsed project rail", "collapsed rail"] {
-            assert!(
-                search(query, "")
-                    .iter()
-                    .all(|r| r.setting != Some("collapsed-project-rail")),
-                "{query}"
-            );
+    fn moved_rows_are_found_on_their_new_pages() {
+        for (query, id, section) in [
+            ("file tabs", "file-tabs", Section::Chat),
+            ("word wrap", "file-word-wrap", Section::Chat),
+            ("show excluded files", "show-excluded-files", Section::Chat),
+            ("tab animations", "tab-animations", Section::Appearance),
+        ] {
+            let hit = search(query, "")
+                .into_iter()
+                .find(|r| r.setting == Some(id));
+            assert_eq!(hit.map(|r| r.section), Some(section), "{query}");
         }
+        for id in ["file-tabs", "file-word-wrap", "show-excluded-files"] {
+            let entries: Vec<_> = INDEX.iter().filter(|e| e.0 == id).collect();
+            assert_eq!(entries.len(), 1, "{id} is indexed once");
+            assert_eq!(entries[0].1, Section::Chat, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_workspace_style_row_is_searchable() {
+        for query in ["boxy", "workspace style"] {
+            let hit = search(query, "")
+                .into_iter()
+                .find(|r| r.setting == Some("new-layout-style"));
+            assert_eq!(hit.map(|r| r.section), Some(Section::Appearance), "{query}");
+        }
+    }
+
+    #[test]
+    fn retired_rows_are_not_searchable() {
+        for id in [
+            "inset-layout",
+            "rail-pilots-pinned",
+            "pilots-enabled",
+            "notes",
+            "board",
+            "working-agents",
+            "search-panel",
+        ] {
+            assert!(INDEX.iter().all(|e| e.0 != id), "{id} is still indexed");
+        }
+    }
+
+    #[test]
+    fn section_copy_names_what_each_page_now_holds() {
+        assert_eq!(
+            Section::General.description(),
+            "The build you are running, how Gespan reaches you, and how it runs."
+        );
+        assert_eq!(
+            Section::Appearance.description(),
+            "Theme, tint, translucency, workspace style, and the sidebar."
+        );
+        assert!(!Section::General.keywords().contains("rail"));
+        assert!(!Section::Appearance.keywords().contains("rail"));
     }
 
     #[test]

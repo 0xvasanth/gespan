@@ -60,7 +60,7 @@ use std::{
 pub(crate) struct Changed;
 pub(crate) struct TabOpened(pub String);
 pub(crate) struct ShowDetails(pub String);
-/// The rail asked to turn Pilots off, as Settings › Pilots › Show pilots does.
+/// The sidebar asked to turn Pilots off, as Settings › Appearance › Sidebar › Pilots does.
 pub(crate) struct HidePilots;
 pub(crate) use notifications::{NotificationChanged, NotificationFinished};
 #[derive(Clone, PartialEq)]
@@ -110,7 +110,6 @@ pub(crate) struct Pilots {
     pub(crate) error: Option<String>,
     notice_region: AnchorSlot,
     pub(crate) details: Entity<overview::Overview>,
-    original_chrome: bool,
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
     overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
@@ -368,7 +367,6 @@ impl Pilots {
             error: roster_error,
             notice_region,
             details,
-            original_chrome: false,
             overview_tab: OverviewTab::Sessions,
             overview_previous: OverviewTab::Sessions,
             overview_reveal: None,
@@ -521,15 +519,6 @@ impl Pilots {
         }
         cx.notify();
     }
-    pub(crate) fn set_original_chrome(&mut self, original: bool, cx: &mut Context<Self>) {
-        if self.original_chrome == original {
-            return;
-        }
-        self.original_chrome = original;
-        self.details
-            .update(cx, |view, cx| view.set_original_chrome(original, cx));
-        cx.notify();
-    }
     /// The session the details panel shows as a page, if any.
     pub(crate) fn routed_session(&self) -> Option<i64> {
         match self.route {
@@ -557,73 +546,6 @@ impl Pilots {
         if let Some(id) = self.active.clone() {
             cx.emit(ShowDetails(id));
         }
-    }
-    /// The title bar's Pilot title, used by the original full-width Pilot view.
-    pub(crate) fn original_title(&self, inset: f32, cx: &App) -> AnyElement {
-        let Some(pilot) = self.current() else {
-            return div().flex_1().min_w_0().into_any_element();
-        };
-        let state = self
-            .chats
-            .get(&pilot.id)
-            .map(|chat| chat.read(cx).pilot_status())
-            .unwrap_or("idle");
-        let status = match state {
-            "working" => "Working",
-            "needs-you" => "Needs you",
-            _ => "Idle",
-        };
-        div()
-            .id("original-pilot-title")
-            .debug_selector(|| "original-pilot-title".into())
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .pl(px(inset))
-            .pr_4()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(avatar::avatar(
-                &pilot.mascot,
-                pilot.color,
-                state,
-                16.,
-                state == "idle",
-            ))
-            .child(
-                div()
-                    .debug_selector(|| "original-pilot-name".into())
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(13.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(content(1.))
-                    .child(pilot.label()),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "original-pilot-status".into())
-                    .flex_shrink_0()
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .text_color(if state == "needs-you" {
-                        accent_color()
-                    } else {
-                        content(0.45)
-                    })
-                    .child(status),
-            )
-            .into_any_element()
-    }
-    pub(crate) fn open_current_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.active.clone() else {
-            return;
-        };
-        self.settings = Some(SettingsSection::General);
-        window.focus(&self.settings_focus, cx);
-        self.reload_files(&id, cx);
-        cx.notify();
     }
     pub(crate) fn current(&self) -> Option<&Pilot> {
         self.active.as_deref().and_then(|id| self.roster.get(id))
@@ -1308,24 +1230,6 @@ impl Pilots {
         .detach();
     }
     pub(crate) fn rail(&mut self, project: Option<String>, cx: &mut Context<Self>) -> AnyElement {
-        self.rail_impl(project, false, false, cx)
-    }
-    /// Original navigation lists every Pilot, before the projects; the inset
-    /// layout continues to list only the current project's Pilots.
-    pub(crate) fn project_navigation_rail(
-        &mut self,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.rail_impl(None, true, compact, cx)
-    }
-    fn rail_impl(
-        &mut self,
-        project: Option<String>,
-        original: bool,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
         if !self.prefs.pilots {
             return div().into_any_element();
         }
@@ -1340,65 +1244,31 @@ impl Pilots {
         for pilot in &roster {
             self.rail_bounds.entry(pilot.id.clone()).or_default();
         }
-        let count = roster.len();
-        let has = count > 0;
-        // With no Pilot yet, the card stands in for the section; the icon rail
-        // has no room for it. A project without Pilots of its own, when others
-        // exist, offers one under the label instead.
+        let has = !roster.is_empty();
+        // With no Pilot yet, the card stands in for the section. A project
+        // without Pilots of its own, when others exist, offers one under the
+        // label instead.
         if self.roster.pilots.is_empty() {
-            return if compact {
-                div().into_any_element()
-            } else {
-                self.intro_card(project.into_iter().collect(), cx)
-            };
+            return self.intro_card(project.into_iter().collect(), cx);
         }
         let add_project = project.clone();
-        let heading = if original {
-            div()
-                .h(px(30.))
-                .pl(px(10.))
-                .pr_3()
-                .pt_1()
-                .pb(px(6.))
-                .flex()
-                .items_center()
-                .gap_1()
-                .when(compact, |d| d.px(px(14.)))
-                .when(!compact, |d| {
-                    d.child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .px_1()
-                            .text_size(px(12.))
-                            .line_height(px(20.))
-                            .text_color(content(0.5))
-                            .child("Pilots"),
-                    )
-                })
-        } else {
-            section_label("Pilots")
-        }
-        .when(has, |d| {
+        let heading = section_label("Pilots").when(has, |d| {
             d.child(
                 icon_button("new-pilot", "New pilot", "plus")
                     .debug_selector(|| "sidebar-pilot-button".into())
                     .size(px(20.))
                     // Centred on the sidebar's trailing column, with the
                     // session filter and the navigation hints and counts.
-                    .when(!original, |d| d.mr(px(-3.)))
+                    .mr(px(-3.))
                     .on_click(cx.listener(move |this, _, w, cx| {
                         this.create(add_project.clone().into_iter().collect(), w, cx)
                     })),
             )
         });
         div()
-            .when(!original, |d| d.px_2().pb_3())
-            .when(original && !compact, |d| d.pb_2())
-            .when(compact, |d| {
-                d.w_full().flex().flex_col().items_center().gap(px(6.))
-            })
-            .when(!compact, |d| d.child(heading))
+            .px_2()
+            .pb_3()
+            .child(heading)
             .when(!has, |d| {
                 d.child(
                     div()
@@ -1407,9 +1277,6 @@ impl Pilots {
                         .role(Role::Button)
                         .aria_label("New pilot")
                         .h(px(32.))
-                        .when(original, |d| {
-                            d.ml(px(6.)).mr_2().font_weight(gpui::FontWeight::MEDIUM)
-                        })
                         .px_2()
                         .rounded_md()
                         .flex()
@@ -1425,7 +1292,7 @@ impl Pilots {
                         })),
                 )
             })
-            .children(roster.into_iter().enumerate().map(|(index, pilot)| {
+            .children(roster.into_iter().map(|pilot| {
                 let active = self.active.as_deref() == Some(&pilot.id);
                 let state = self
                     .chats
@@ -1474,9 +1341,6 @@ impl Pilots {
                     .role(Role::Button)
                     .aria_label(label)
                     .h(px(32.))
-                    .when(original && !compact, |d| d.ml(px(6.)).mr_2())
-                    .when(original && !compact && index + 1 < count, |d| d.mb_px())
-                    .when(compact, |d| d.w(px(32.)))
                     .px_2()
                     .rounded_md()
                     .relative()
@@ -1484,7 +1348,7 @@ impl Pilots {
                     .items_center()
                     .gap_2()
                     .opacity(if active { 1. } else { 0.65 })
-                    .when(!original && !compact, |d| {
+                    .map(|d| {
                         let tip = SharedString::from(format!(
                             "{}: {}",
                             pilot.label(),
@@ -1504,63 +1368,40 @@ impl Pilots {
                             .relative()
                             .flex_shrink_0()
                             .child(avatar::avatar(&pilot.mascot, pilot.color, state, 16., true))
-                            .when(!original, |d| {
-                                d.child(
-                                    div()
-                                        .debug_selector({
-                                            let id = pilot.id.clone();
-                                            move || format!("pilot-status-dot-{id}")
-                                        })
-                                        .absolute()
-                                        .right(px(-3.))
-                                        .bottom(px(-3.))
-                                        .size(px(8.))
-                                        .rounded_full()
-                                        .border_1()
-                                        .border_color(shell_fill())
-                                        .bg(if state == "working" {
-                                            rgb(pilot.color).into()
-                                        } else if state == "needs-you" {
-                                            accent_color()
-                                        } else {
-                                            content(0.3)
-                                        }),
-                                )
-                            })
-                            .when(original, |d| {
-                                d.child(
-                                    div()
-                                        .absolute()
-                                        .right(px(-2.))
-                                        .top(px(-2.))
-                                        .size(px(6.))
-                                        .rounded_full()
-                                        .border_1()
-                                        .border_color(rgb(crate::right_panel::BACKGROUND_BASE))
-                                        .bg(if state == "working" {
-                                            rgb(pilot.color).into()
-                                        } else if state == "needs-you" {
-                                            accent_color()
-                                        } else {
-                                            content(0.3)
-                                        }),
-                                )
-                            }),
+                            .child(
+                                div()
+                                    .debug_selector({
+                                        let id = pilot.id.clone();
+                                        move || format!("pilot-status-dot-{id}")
+                                    })
+                                    .absolute()
+                                    .right(px(-3.))
+                                    .bottom(px(-3.))
+                                    .size(px(8.))
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(shell_fill())
+                                    .bg(if state == "working" {
+                                        rgb(pilot.color).into()
+                                    } else if state == "needs-you" {
+                                        accent_color()
+                                    } else {
+                                        content(0.3)
+                                    }),
+                            ),
                     )
-                    .when(!compact, |d| {
-                        d.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .when(unread > 0, |d| d.pr(px(24.)))
-                                .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
-                                .text_size(px(14.))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .child(pilot.label()),
-                        )
-                    })
-                    .when(unread > 0 && !compact, |d| {
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .when(unread > 0, |d| d.pr(px(24.)))
+                            .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
+                            .text_size(px(14.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(pilot.label()),
+                    )
+                    .when(unread > 0, |d| {
                         d.child(
                             div()
                                 .absolute()
@@ -1577,42 +1418,21 @@ impl Pilots {
                                             let id = pilot.id.clone();
                                             move || format!("pilot-rail-unread-{id}")
                                         })
-                                        .when(!original, |d| d.size(px(6.)))
-                                        .when(original, |d| {
-                                            d.h(px(16.))
-                                                .min_w(px(16.))
-                                                .px_1()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_size(px(10.))
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(rgb(0xffffff))
-                                                .child(if unread > 99 {
-                                                    "99+".into()
-                                                } else {
-                                                    unread.to_string()
-                                                })
-                                        })
+                                        .size(px(6.))
                                         .rounded_full()
                                         .bg(accent_color()),
                                 ),
                         )
                     })
-                    .when(!compact, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .right_1()
-                                .top(px(4.))
-                                .invisible()
-                                .group_hover("pilot-rail-row", |s| s.visible())
-                                .child(
-                                    icon_button(
-                                        "pilot-options",
-                                        "Pilot options",
-                                        "more-horizontal",
-                                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .right_1()
+                            .top(px(4.))
+                            .invisible()
+                            .group_hover("pilot-rail-row", |s| s.visible())
+                            .child(
+                                icon_button("pilot-options", "Pilot options", "more-horizontal")
                                     .debug_selector({
                                         let id = pilot.id.clone();
                                         move || format!("pilot-rail-options-{id}")
@@ -1620,15 +1440,12 @@ impl Pilots {
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
-                                    .on_click(cx.listener(
-                                        move |this, _, w, cx| {
-                                            cx.stop_propagation();
-                                            this.open_options(&options, None, w, cx);
-                                        },
-                                    )),
-                                ),
-                        )
-                    })
+                                    .on_click(cx.listener(move |this, _, w, cx| {
+                                        cx.stop_propagation();
+                                        this.open_options(&options, None, w, cx);
+                                    })),
+                            ),
+                    )
                     .child(slot.probe())
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if std::mem::take(&mut this.skip_click) {
@@ -1821,7 +1638,7 @@ impl gpui::Render for Pilots {
                             d
                         }
                     })
-                    .when(!self.original_chrome, |d| d.child(self.topbar(&pilot, cx))),
+                    .child(self.topbar(&pilot, cx)),
             )
             .children(self.settings_modal(&pilot, window, cx))
             .children(self.picker_surface(cx))

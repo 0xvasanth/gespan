@@ -213,7 +213,7 @@ mod tests {
                         .workspace
                         .projects
                         .contains(&"/work/unlisted-other-project".into()),
-                    "a session cwd must not invent a project rail entry"
+                    "a session cwd must not invent a project entry"
                 );
             })
             .unwrap();
@@ -252,7 +252,10 @@ mod tests {
             } else {
                 "/work/other"
             };
-            let mut session = store.create("codex", cwd).unwrap();
+            // The oldest chat comes from another provider, so hiding the
+            // rest narrows the list to it.
+            let provider = if i == 999 { "claude" } else { "codex" };
+            let mut session = store.create(provider, cwd).unwrap();
             session.title = format!("Saved conversation {i}");
             session.has_messages = true;
             summaries.push(session);
@@ -284,14 +287,15 @@ mod tests {
                     shell.tab_copy(oldest, cx).headline,
                     "Saved conversation 999"
                 );
-                shell.query = "saved conversation 999".into();
+                shell.workspace.session_filters.hidden_providers = vec!["codex".into()];
                 assert_eq!(shell.sidebar_session_ids(cx), [oldest]);
                 assert_eq!(
                     shell.sessions.len(),
                     1,
                     "filtering old history must remain metadata-only"
                 );
-                shell.query.clear();
+                shell.workspace.session_filters.hidden_providers.clear();
+                assert_eq!(shell.sidebar_session_ids(cx).len(), 1000);
                 shell.run_session_menu(oldest, "pin", window, cx);
                 assert!(shell.session_metadata(oldest, cx).summary.pinned);
                 assert_eq!(

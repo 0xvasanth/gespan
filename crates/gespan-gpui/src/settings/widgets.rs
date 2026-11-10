@@ -1,6 +1,6 @@
 //! The Settings building blocks: PageHeader, Group, Row, Toggle,
 //! Segmented, Slider, Select and SecondaryButton, at their Tailwind metrics.
-use super::{SettingsView, SliderKind};
+use super::{SettingsView, SliderKind, UI_SCALE_PERCENTS};
 use crate::{
     popover::{Align, Anchor, AnchorSlot, Side, popover},
     theme::*,
@@ -251,10 +251,7 @@ impl SettingsView {
                 "sounds"
                     | "notifications"
                     | "tab-animations"
-                    | "notes"
-                    | "board"
                     | "quick-composer"
-                    | "working-agents"
                     | "action-opens-terminal"
                     | "close-to-tray"
                     | "main-pane-glass"
@@ -268,12 +265,10 @@ impl SettingsView {
                     | "show-remaining-usage"
                     | "mask-emails"
                     | "claude-hooks"
-                    | "pilots-enabled"
-                    | "rail-pilots-pinned"
                     | "pilot-menu-bar-icon"
                     | "show-archived"
-                    | "sidebar-search"
                     | "sidebar-notes"
+                    | "sidebar-board"
                     | "sidebar-automations"
                     | "sidebar-inbox"
                     | "sidebar-pilots"
@@ -469,7 +464,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (min, max) = kind.range();
-        let value = kind.get(&self.prefs);
+        let value = self.slider_value(kind);
         let fraction = if max > min {
             (value.saturating_sub(min)) as f32 / (max - min) as f32
         } else {
@@ -544,8 +539,39 @@ impl SettingsView {
         let travel = (bounds.size.width.as_f32() - 12.).max(1.);
         let fraction = ((x - bounds.left()).as_f32() - 6.).clamp(0., travel) / travel;
         let value = min + ((max - min) as f32 * fraction).round() as u32;
-        if kind.get(&self.prefs) != value {
+        if kind.holds_until_release() {
+            if self.slider_value(kind) != value {
+                self.slider_pending = Some((kind, value));
+                cx.notify();
+            }
+        } else if kind.get(&self.prefs) != value {
             self.update(cx, |p| kind.set(p, value));
+        }
+    }
+
+    /// The position a slider shows: the held one while dragging, else the saved one.
+    pub(super) fn slider_value(&self, kind: SliderKind) -> u32 {
+        match self.slider_pending {
+            Some((pending, value)) if pending == kind => value,
+            _ => kind.get(&self.prefs),
+        }
+    }
+
+    /// The scale the Interface scale slider shows, in percent.
+    pub(super) fn shown_ui_scale(&self) -> u32 {
+        let last = UI_SCALE_PERCENTS.len() - 1;
+        UI_SCALE_PERCENTS[(self.slider_value(SliderKind::InterfaceScale) as usize).min(last)]
+    }
+
+    /// Mouse released: the drag ends and a held slider position is saved.
+    pub(super) fn end_slide(&mut self, cx: &mut Context<Self>) {
+        self.slider_drag = None;
+        if let Some((kind, value)) = self.slider_pending.take() {
+            if kind.get(&self.prefs) != value {
+                self.update(cx, |p| kind.set(p, value));
+            } else {
+                cx.notify();
+            }
         }
     }
 

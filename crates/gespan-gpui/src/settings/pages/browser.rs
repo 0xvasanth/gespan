@@ -391,7 +391,6 @@ mod tests {
     fn set_layout(window: WindowHandle<SettingsView>, visual: &mut VisualTestContext, boxy: bool) {
         window
             .update(visual, |view, _, cx| {
-                view.ctx.classic = false;
                 view.ctx.new_layout_boxy = boxy;
                 cx.notify();
             })

@@ -1021,9 +1021,7 @@ impl SettingsView {
                         .shadow_2xl()
                         .border_1()
                         .border_color(content(0.07))
-                        .child(pairing_backdrop(
-                            self.ctx.classic || self.ctx.new_layout_boxy,
-                        ))
+                        .child(pairing_backdrop(self.ctx.new_layout_boxy))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             div()
@@ -1088,12 +1086,12 @@ fn pairing_icon_action(
 }
 
 /// The modal's stationary glass backdrop, below the scrolling content.
-fn pairing_backdrop(classic: bool) -> impl IntoElement {
+fn pairing_backdrop(boxy: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
             let light = content(1.).l < 0.5;
-            let fill = if classic || light {
+            let fill = if boxy || light {
                 let mut fill = shell_fill();
                 fill.a = if light { 1. } else { 0.55 };
                 fill

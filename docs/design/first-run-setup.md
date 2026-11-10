@@ -1,5 +1,8 @@
 # First-run setup: design and implementation notes
 
+> **Update (2026-11-09):** the Look card's Layout row (Focused/Classic) was dropped along with
+> the classic layout; Look now covers theme, accent and glass only.
+
 Design canvas: https://claude.ai/artifact/LU1nZ6sAwGRHbQcePB6tn6 (boards: How setup works,
 0. Welcome, 1. Coding agents, 2. Look, 3. Project, After setup, Resume/skip/no agents).
 

@@ -46,15 +46,13 @@ pub(crate) struct ArchivedSession {
 pub(crate) struct SettingsContext {
     /// The desktop's shared remote connection and SSH setup service.
     pub remote: Option<std::sync::Arc<gespan_core::remote::Connections>>,
-    pub pilots: Vec<PilotSetting>,
-    pub classic: bool,
     pub new_layout_boxy: bool,
     pub sidebar: SidebarVisibility,
     /// The selected project, or empty outside one.
     pub cwd: String,
     pub project_label: String,
     pub archived: Vec<ArchivedSession>,
-    /// Projects archived from the rail, as (path, label).
+    /// Projects archived from the sidebar, as (path, label).
     pub archived_projects: Vec<(String, String)>,
     /// Projects the Worktrees, Providers and Inbox pages offer.
     pub projects: Vec<(String, String)>,
@@ -71,15 +69,13 @@ pub(crate) struct SettingsContext {
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
 }
-/// Which sidebar entries the workspace shows. Pilots is the `pilots`
-/// preference and travels with the preferences instead.
+/// Which sidebar entries the workspace shows. Notes, Board, Pilots and
+/// Activity are the `notes`, `board`, `pilots` and `working_agents`
+/// preferences and travel with the preferences instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SidebarVisibility {
-    pub search: bool,
-    pub notes: bool,
     pub automations: bool,
     pub inbox: bool,
-    pub activity: bool,
     pub compact: bool,
 }
 impl PartialEq for SettingsContext {
@@ -89,9 +85,7 @@ impl PartialEq for SettingsContext {
             (None, Some(_)) | (Some(_), None) => return false,
             _ => {}
         }
-        self.pilots == other.pilots
-            && self.classic == other.classic
-            && self.new_layout_boxy == other.new_layout_boxy
+        self.new_layout_boxy == other.new_layout_boxy
             && self.sidebar == other.sidebar
             && self.cwd == other.cwd
             && self.project_label == other.project_label
@@ -108,15 +102,6 @@ impl PartialEq for SettingsContext {
             && self.mobile_invite == other.mobile_invite
     }
 }
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PilotSetting {
-    pub id: String,
-    pub name: String,
-    pub mascot: String,
-    pub color: u32,
-    pub projects: Vec<String>,
-}
-
 pub(crate) enum SettingsEvent {
     WhatsNew,
     RunSetup,
@@ -125,8 +110,6 @@ pub(crate) enum SettingsEvent {
     ManageInboxProvider(String),
     ToggleLinearTeam(String),
     Changed(Box<Preferences>),
-    /// The Appearance page's Layout picker: true for Focused, false for Classic.
-    NewLayout(bool),
     NewLayoutBoxy(bool),
     /// The Appearance page's Sidebar switches; the id is the one
     /// `Shell::change_sidebar_option` takes.
@@ -145,7 +128,6 @@ pub(crate) enum SettingsEvent {
         /// A merged branch to delete too, at the commit that was checked.
         delete_branch: Option<(String, String)>,
     },
-    ResetPilot(String),
     /// Read mobile access again: the router and pairing change on their own.
     MobileRefresh,
     MobileConfigure {
@@ -173,6 +155,8 @@ pub(crate) enum SliderKind {
     Blur,
     BackgroundEmpty,
     BackgroundSession,
+    /// Positions index `UI_SCALE_PERCENTS`.
+    InterfaceScale,
 }
 impl SliderKind {
     fn id(self) -> &'static str {
@@ -184,6 +168,7 @@ impl SliderKind {
             SliderKind::Blur => "blur",
             SliderKind::BackgroundEmpty => "background-empty",
             SliderKind::BackgroundSession => "background-session",
+            SliderKind::InterfaceScale => "interface-scale",
         }
     }
     fn label(self) -> &'static str {
@@ -195,6 +180,7 @@ impl SliderKind {
             SliderKind::Blur => "Blur radius",
             SliderKind::BackgroundEmpty => "Empty chat background visibility",
             SliderKind::BackgroundSession => "Session background visibility",
+            SliderKind::InterfaceScale => "Interface scale",
         }
     }
     fn range(self) -> (u32, u32) {
@@ -205,7 +191,12 @@ impl SliderKind {
             SliderKind::SidebarOpacity => (15, 100),
             SliderKind::Blur => (1, 64),
             SliderKind::BackgroundEmpty | SliderKind::BackgroundSession => (5, 65),
+            SliderKind::InterfaceScale => (0, UI_SCALE_PERCENTS.len() as u32 - 1),
         }
+    }
+    /// Whether the value is saved on release rather than on every step.
+    fn holds_until_release(self) -> bool {
+        matches!(self, SliderKind::InterfaceScale)
     }
     fn get(self, p: &Preferences) -> u32 {
         match self {
@@ -216,6 +207,7 @@ impl SliderKind {
             SliderKind::Blur => p.sidebar_blur,
             SliderKind::BackgroundEmpty => p.chat_background_empty,
             SliderKind::BackgroundSession => p.chat_background_session,
+            SliderKind::InterfaceScale => scale_step(p.ui_scale),
         }
     }
     fn set(self, p: &mut Preferences, value: u32) {
@@ -227,8 +219,21 @@ impl SliderKind {
             SliderKind::Blur => p.sidebar_blur = value,
             SliderKind::BackgroundEmpty => p.chat_background_empty = value,
             SliderKind::BackgroundSession => p.chat_background_session = value,
+            SliderKind::InterfaceScale => {
+                let last = UI_SCALE_PERCENTS.len() - 1;
+                p.ui_scale = UI_SCALE_PERCENTS[(value as usize).min(last)];
+            }
         }
     }
+}
+
+/// The step of `UI_SCALE_PERCENTS` closest to a saved scale.
+fn scale_step(percent: u32) -> u32 {
+    UI_SCALE_PERCENTS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, step)| step.abs_diff(percent))
+        .map_or(0, |(ix, _)| ix as u32)
 }
 
 pub(crate) struct SettingsView {
@@ -245,6 +250,9 @@ pub(crate) struct SettingsView {
     targets: RefCell<HashMap<&'static str, AnchorSlot>>,
     slider_tracks: RefCell<HashMap<SliderKind, AnchorSlot>>,
     slider_drag: Option<SliderKind>,
+    /// A slider position held until release, for sliders whose value is too
+    /// disruptive to apply mid-drag (the interface scale zooms the window).
+    slider_pending: Option<(SliderKind, u32)>,
     select_open: Option<&'static str>,
     select_active: usize,
     select_focus: FocusHandle,
@@ -415,6 +423,7 @@ impl SettingsView {
             targets: Default::default(),
             slider_tracks: Default::default(),
             slider_drag: None,
+            slider_pending: None,
             select_open: None,
             select_active: 0,
             select_focus: cx.focus_handle(),
@@ -529,12 +538,12 @@ impl SettingsView {
     pub(crate) fn sidebar_switches(&self) -> [bool; 7] {
         let v = self.ctx.sidebar;
         [
-            v.search,
-            v.notes,
+            self.prefs.notes,
+            self.prefs.board,
             v.automations,
             v.inbox,
             self.prefs.pilots,
-            v.activity,
+            self.prefs.working_agents,
             v.compact,
         ]
     }
@@ -655,8 +664,6 @@ impl SettingsView {
     fn restore_defaults(&mut self, cx: &mut Context<Self>) {
         self.accent_custom_open = false;
         self.update(cx, |p| p.restore_appearance());
-        // onInsetLayout(INSET_LAYOUT_DEFAULT): React's default is the classic layout.
-        cx.emit(SettingsEvent::NewLayout(false));
     }
     /// Jump to a search result, on this page or another.
     fn go(&mut self, result: model::SearchResult, cx: &mut Context<Self>) {
@@ -701,7 +708,7 @@ impl SettingsView {
     }
 
     /// The breadcrumb and Restore defaults: in the inset title bar, or the
-    /// page's own 40px header row in the classic layout. Search joins them
+    /// page's own 40px header row in the boxy frame. Search joins them
     /// only while the settings nav, its usual home, is collapsed.
     pub(crate) fn header(
         &mut self,
@@ -1195,13 +1202,13 @@ impl Render for SettingsView {
                     if event.pressed_button == Some(MouseButton::Left) {
                         this.slide(kind, event.position.x, cx);
                     } else {
-                        this.slider_drag = None;
+                        this.end_slide(cx);
                     }
                 }
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.slider_drag = None),
+                cx.listener(|this, _, _, cx| this.end_slide(cx)),
             )
             .children(if self.section == Section::Skills {
                 page

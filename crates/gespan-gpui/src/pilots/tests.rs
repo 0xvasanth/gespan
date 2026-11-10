@@ -122,7 +122,7 @@ fn saved_desktop_pilot_opens_in_actual_manager_without_replacing_its_conversatio
 }
 
 #[gpui::test]
-fn settings_reset_restores_only_pilot_soul_and_name(cx: &mut TestAppContext) {
+fn reset_restores_only_pilot_soul_and_name(cx: &mut TestAppContext) {
     let s = setup(cx);
     pilot::files::save(&s.root, &s.id, None, "SOUL.md", "# Custom soul", None).unwrap();
     pilot::files::save(&s.root, &s.id, None, "MEMORY.md", "Keep this memory", None).unwrap();
@@ -145,6 +145,111 @@ fn settings_reset_restores_only_pilot_soul_and_name(cx: &mut TestAppContext) {
     let files = pilot::files::load(&s.root, &s.id, None).unwrap();
     assert_eq!(files.soul.as_deref(), Some(pilot::DEFAULT_SOUL));
     assert_eq!(files.memory, "Keep this memory");
+}
+
+#[gpui::test]
+fn reset_to_defaults_is_in_the_pilot_menu(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager
+                .update(cx, |m, cx| m.create(vec![s.project.clone()], w, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let other = cx.update(|cx| s.manager.read(cx).current().unwrap().id.clone());
+    assert_ne!(other, s.id);
+    for id in [&s.id, &other] {
+        pilot::files::save(&s.root, id, None, "SOUL.md", "# Custom soul", None).unwrap();
+    }
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            for id in [&s.id, &other] {
+                m.roster.get_mut(id).unwrap().name = "Custom name".into();
+            }
+            m.save(cx);
+        })
+    });
+    cx.run_until_parked();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager
+                .update(cx, |m, cx| m.open_options(&s.id, None, w, cx))
+        })
+        .unwrap();
+    let menu = cx.update(|cx| s.manager.read(cx).menu.as_ref().unwrap().1.clone());
+    let texts = cx.update(|cx| menu.read(cx).item_texts());
+    assert!(
+        texts.contains(&"Reset to defaults…".to_string()),
+        "{texts:?}"
+    );
+    assert!(texts.contains(&"Delete pilot…".to_string()));
+    cx.update(|cx| menu.update(cx, |_, cx| cx.emit(MenuEvent::Picked("reset".into(), None))));
+    cx.run_until_parked();
+    let (title, _) = cx.pending_prompt().expect("the reset asks first");
+    let name = cx.update(|cx| s.manager.read(cx).roster.get(&s.id).unwrap().label());
+    assert_eq!(title, format!("Reset {name} to its defaults?"));
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    let soul = |id: &str| {
+        pilot::files::load(&s.root, id, None)
+            .unwrap()
+            .soul
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        soul(&s.id),
+        "# Custom soul",
+        "cancel leaves the pilot alone"
+    );
+    // Confirming resets only the chosen pilot.
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager
+                .update(cx, |m, cx| m.open_options(&s.id, None, w, cx))
+        })
+        .unwrap();
+    let menu = cx.update(|cx| s.manager.read(cx).menu.as_ref().unwrap().1.clone());
+    cx.update(|cx| menu.update(cx, |_, cx| cx.emit(MenuEvent::Picked("reset".into(), None))));
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    assert_eq!(soul(&s.id), pilot::DEFAULT_SOUL);
+    assert_eq!(soul(&other), "# Custom soul");
+    cx.update(|cx| {
+        let m = s.manager.read(cx);
+        assert!(m.roster.get(&s.id).unwrap().name.is_empty());
+        assert_eq!(m.roster.get(&other).unwrap().name, "Custom name");
+    });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn a_failed_reset_tells_the_user_why(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(cx);
+    pilot::files::save(&s.root, &s.id, None, "SOUL.md", "# Custom soul", None).unwrap();
+    let dir = s.root.join(&s.id);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.reset_pilot(&s.id, w, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Reset");
+    cx.run_until_parked();
+    let shown = cx.pending_prompt();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (title, detail) = shown.expect("a failed reset must be shown to the user");
+    assert!(title.starts_with("Couldn't reset "), "{title}");
+    assert!(!detail.is_empty());
+    cx.simulate_prompt_answer("OK");
+    cx.run_until_parked();
+    let soul = pilot::files::load(&s.root, &s.id, None).unwrap().soul;
+    assert_eq!(soul.as_deref(), Some("# Custom soul"));
 }
 
 #[gpui::test]

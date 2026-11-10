@@ -13,7 +13,6 @@ mod keybindings;
 mod mcp;
 mod mcp_catalog;
 mod mobile;
-mod pilots;
 mod providers;
 mod skills;
 mod worktrees;
@@ -52,7 +51,6 @@ impl SettingsView {
             Section::Mcp => self.mcp_page(cx),
             Section::Browser => self.browser_page(cx),
             Section::Skills => self.skills_page(cx),
-            Section::Pilots => self.pilots_page(cx),
             Section::Inbox => self.inbox_page(cx),
             Section::Archive => self.archive_page(cx),
             Section::Worktrees => self.worktrees_page(cx),

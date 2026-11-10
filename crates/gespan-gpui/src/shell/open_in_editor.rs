@@ -1,6 +1,6 @@
 //! Open in editor: the focused session's worktree or folder, opened in an
-//! installed editor. The original layout's title bar has a button for it; the
-//! new layouts keep it in the sidebar's project menu.
+//! installed editor. The sidebar's project menu offers it, and so does the
+//! boxy corner while the project has no git.
 use super::*;
 use gespan_core::external_editor::{self, ExternalEditor};
 
@@ -140,21 +140,12 @@ impl Shell {
         };
         self.workspace.right_panel_width >= CORNER_BUTTONS_WIDTH + OPEN_IN_EDITOR_WIDTH + padding
     }
-    /// Original layout: the strip's end keeps the button `pl-1.5 pr-3` clear
-    /// of the edge, where the new layouts have their corner.
-    pub(super) fn classic_editor_room(&self, cx: &App) -> f32 {
-        if self.workspace.classic_layout && self.open_in_editor_folder(cx).is_some() {
-            6. + 24. + 12.
-        } else {
-            0.
-        }
-    }
     pub(super) fn open_in_editor_button(
         &self,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         let path = self.open_in_editor_folder(cx)?;
-        if !self.workspace.classic_layout && self.open_in_editor_room(cx) == 0. {
+        if self.open_in_editor_room(cx) == 0. {
             return None;
         }
         let open = self
@@ -186,12 +177,9 @@ impl Shell {
                 })),
         )
     }
-    /// The project menu's row, in the new layouts, whose title bar corner has
-    /// no button for it.
+    /// The project menu's row for opening the project in an editor, for
+    /// layouts whose title bar corner has no button for it.
     pub(super) fn project_menu_editor_row(&self, cx: &App) -> Option<MenuItem> {
-        if self.workspace.classic_layout {
-            return None;
-        }
         let path = self.open_in_editor_folder(cx)?;
         Some(
             MenuAction::new(PROJECT_MENU_EDITOR_ROW, "Open in editor")
@@ -437,22 +425,12 @@ mod tests {
         }
     }
 
-    /// The new rounded layout, the new boxy one and the original layout.
-    const LAYOUTS: [(&str, bool, bool); 3] = [
-        ("new", false, false),
-        ("new boxy", false, true),
-        ("original", true, false),
-    ];
+    /// The rounded and boxy workspace styles.
+    const LAYOUTS: [(&str, bool); 2] = [("rounded", false), ("boxy", true)];
 
-    fn set_layout(
-        window: WindowHandle<Shell>,
-        visual: &mut VisualTestContext,
-        classic: bool,
-        boxy: bool,
-    ) {
+    fn set_layout(window: WindowHandle<Shell>, visual: &mut VisualTestContext, boxy: bool) {
         window
             .update(visual, |shell, _, cx| {
-                shell.workspace.classic_layout = classic;
                 shell.workspace.new_layout_boxy = boxy;
                 shell.invalidate_chrome(cx);
                 cx.notify();
@@ -463,84 +441,26 @@ mod tests {
     }
 
     #[gpui::test]
-    fn button_holds_the_title_bar_corner_in_every_layout(cx: &mut TestAppContext) {
+    fn the_corner_holds_only_the_panel_toggle_in_both_styles(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        for (name, classic, boxy) in LAYOUTS {
-            set_layout(window, visual, classic, boxy);
-            if !classic {
-                // The new layouts' corner is the panel toggle alone.
-                assert!(
-                    visual.debug_bounds("titlebar-open-in-editor").is_none(),
-                    "{name}"
-                );
-                assert!(
-                    visual.debug_bounds("titlebar-file-search").is_none(),
-                    "{name}"
-                );
-                let viewport = window
-                    .update(visual, |_, w, _| w.viewport_size().width)
-                    .unwrap();
-                let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
-                assert_eq!(toggle.right(), viewport - px(12.), "{name}");
-                continue;
-            }
-            let button = visual
-                .debug_bounds("titlebar-open-in-editor")
-                .unwrap_or_else(|| panic!("{name}: no Open in editor button"));
-            let strip = visual.debug_bounds("title-tab-strip").unwrap();
-            let (viewport, right_drawn) = window
-                .update(visual, |shell, w, _| {
-                    (w.viewport_size().width, shell.right_drawn)
-                })
-                .unwrap();
-            assert_eq!(button.size.width, px(24.), "{name}");
+        for (name, boxy) in LAYOUTS {
+            set_layout(window, visual, boxy);
+            // The corner is the panel toggle alone.
             assert!(
-                button.top() >= px(0.) && button.bottom() <= px(TITLE_BAR_HEIGHT),
-                "{name}: in the title bar"
-            );
-            assert!(
-                strip.right() <= button.left(),
-                "{name}: the tabs make room for it"
-            );
-            // The strip ends with it, `pr-3` clear of the column's edge.
-            assert_eq!(
-                button.right(),
-                viewport - px(right_drawn) - px(12.),
+                visual.debug_bounds("titlebar-open-in-editor").is_none(),
                 "{name}"
             );
-        }
-    }
-
-    #[gpui::test]
-    fn button_toggles_the_menu_for_the_focused_folder(cx: &mut TestAppContext) {
-        cx.update(|cx| cx.set_reduce_motion(true));
-        let (window, _, _) = window(cx);
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        // Only the original layout's title bar keeps the button.
-        for (name, classic, boxy) in LAYOUTS.into_iter().filter(|(_, classic, _)| *classic) {
-            set_layout(window, visual, classic, boxy);
-            let button = visual.debug_bounds("titlebar-open-in-editor").unwrap();
-            visual.simulate_click(button.center(), Default::default());
-            visual.run_until_parked();
-            window
-                .update(visual, |shell, _, _| {
-                    let target = shell.menu.as_ref().map(|menu| menu.target.clone());
-                    assert!(
-                        target == Some(MenuTarget::OpenInEditor("/work/gespan".into())),
-                        "{name}: the menu opens for the focused folder"
-                    );
-                })
+            assert!(
+                visual.debug_bounds("titlebar-file-search").is_none(),
+                "{name}"
+            );
+            let viewport = window
+                .update(visual, |_, w, _| w.viewport_size().width)
                 .unwrap();
-            visual.refresh().unwrap();
-            visual.simulate_click(button.center(), Default::default());
-            visual.run_until_parked();
-            window
-                .update(visual, |shell, _, _| {
-                    assert!(shell.menu.is_none(), "{name}: a second press closes it")
-                })
-                .unwrap();
+            let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+            assert_eq!(toggle.right(), viewport - px(12.), "{name}");
         }
     }
 
@@ -587,10 +507,13 @@ mod tests {
     }
 
     fn open_editor_menu(window: WindowHandle<Shell>, visual: &mut VisualTestContext) {
-        // The original layout's title bar keeps the button.
-        set_layout(window, visual, true, false);
-        let button = visual.debug_bounds("titlebar-open-in-editor").unwrap();
-        visual.simulate_click(button.center(), Default::default());
+        // As the project menu's Open in editor row opens it.
+        window
+            .update(visual, |shell, w, cx| {
+                let at = Anchor::Point(Point::default());
+                shell.open_editor_menu("/work/gespan".into(), at, w, cx)
+            })
+            .unwrap();
         visual.run_until_parked();
         assert!(menu_texts(window, visual).is_some(), "the menu opened");
     }
@@ -919,7 +842,7 @@ mod tests {
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         for boxy in [false, true] {
-            set_layout(window, visual, false, boxy);
+            set_layout(window, visual, boxy);
             for open in [false, true] {
                 window
                     .update(visual, |shell, w, cx| {
@@ -1001,8 +924,8 @@ mod tests {
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         let launches = stub_launcher(window, visual);
-        for (name, classic, boxy) in LAYOUTS.into_iter().filter(|(_, classic, _)| !classic) {
-            set_layout(window, visual, classic, boxy);
+        for (name, boxy) in LAYOUTS {
+            set_layout(window, visual, boxy);
             launches.lock().unwrap().clear();
             window
                 .update(visual, |shell, _, _| {
@@ -1060,7 +983,7 @@ mod tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         let launches = stub_launcher(window, visual);
         for boxy in [false, true] {
-            set_layout(window, visual, false, boxy);
+            set_layout(window, visual, boxy);
             launches.lock().unwrap().clear();
             window
                 .update(visual, |shell, _, cx| {
@@ -1096,7 +1019,7 @@ mod tests {
                     Arc::new(|_, _| Err("Stub Editor is no longer installed.".into()));
             })
             .unwrap();
-        set_layout(window, visual, false, false);
+        set_layout(window, visual, false);
         open_project_menu(window, visual);
         pick(window, visual, "Open in editor");
         pick(window, visual, "Stub Editor");
@@ -1111,31 +1034,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_project_menu_has_no_editor_row_without_a_folder_or_in_the_original_layout(
-        cx: &mut TestAppContext,
-    ) {
+    fn the_project_menu_has_no_editor_row_without_a_folder(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        // The original layout keeps its title bar button instead.
-        set_layout(window, visual, true, false);
-        assert!(visual.debug_bounds("titlebar-open-in-editor").is_some());
-        // Its sidebar has no project button; the menu itself still gets no row.
-        assert!(visual.debug_bounds("sidebar-project-button").is_none());
-        let rows = window
-            .update(visual, |shell, w, cx| {
-                let anchor = Anchor::Slot(shell.project_anchor.clone());
-                shell.open_menu(MenuTarget::Header, anchor, w, cx);
-                shell.menu.as_ref().unwrap().menu.read(cx).item_shape()
-            })
-            .unwrap();
-        assert!(!rows.contains(&"Open in editor".into()), "{rows:?}");
-        window
-            .update(visual, |shell, _, cx| shell.close_menu(cx))
-            .unwrap();
-
         // Settings have no folder of their own.
-        set_layout(window, visual, false, false);
+        set_layout(window, visual, false);
         window
             .update(visual, |shell, w, cx| {
                 shell.open_settings(crate::settings::Section::General, w, cx);

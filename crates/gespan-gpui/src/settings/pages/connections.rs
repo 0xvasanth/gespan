@@ -489,7 +489,7 @@ impl SettingsView {
                                     this.connections.notice = if this.connections.updating.take().is_some() {
                                         format!("{} was updated and reconnected.", machine.name)
                                     } else {
-                                        format!("{} is connected. To work on it, click + next to Projects in the project rail and choose Open folder on a machine.", machine.name)
+                                        format!("{} is connected. To work on it, open the project menu in the sidebar and choose Open folder on a machine.", machine.name)
                                     };
                                     this.connections.status.insert(machine.id.clone(), "Connected".into());
                                     for key in [TARGET, NAME, PORT] { this.clear_connection_field(key, cx); }

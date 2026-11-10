@@ -768,59 +768,6 @@ impl Pilots {
             self.reload_roadmap(cx);
         }
     }
-    /// PilotSidebarHeader lives in the base page, so routed pages replace its
-    /// tabs and close control together with the overview body.
-    pub(super) fn original_overview_header(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let owner = self.owner.clone();
-        div()
-            .id("original-pilot-overview-header")
-            .debug_selector(|| "original-pilot-overview-header".into())
-            .h(px(40.))
-            .flex_shrink_0()
-            // PilotSidebarHeader's pl-4 and OverviewTabs' -ml-2 combine
-            // into an 8px inset, keeping the tab icons aligned with actions.
-            .pl(px(8.))
-            // The window's top-right corner: clear of client-drawn controls.
-            .pr(px(12. + crate::shell::corner_controls_width(window)))
-            .border_b_1()
-            .border_color(content(0.07))
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .child(self.overview_controls(true, true, window, cx))
-            .child(
-                div()
-                    .id("original-hide-pilot-overview")
-                    .debug_selector(|| "original-hide-pilot-overview".into())
-                    .role(Role::Button)
-                    .aria_label("Hide overview")
-                    .aria_toggled(gpui::Toggled::True)
-                    .size(px(24.))
-                    .flex_shrink_0()
-                    .rounded_md()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(content(1.))
-                    .hover(|s| s.bg(content(0.1)))
-                    .child(icon("sidebar-right", 14.).text_color(content(1.)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        let owner = owner.clone();
-                        cx.spawn(async move |_, cx| {
-                            let _ = owner.update_in(cx, |shell, window, cx| {
-                                shell.close_pilot_overview(window, cx)
-                            });
-                        })
-                        .detach();
-                    })),
-            )
-            .into_any_element()
-    }
     /// The new layouts' Pilot header: its tabs in a row at the top of the
     /// panel, as a project's Explorer, Changes and History head its panel,
     /// so the title bar keeps only the session tabs and the panel toggle.
@@ -840,16 +787,14 @@ impl Pilots {
             .border_color(crate::right_panel::stroke())
             .flex()
             .items_center()
-            .child(self.overview_controls(expand_label, false, window, cx))
+            .child(self.overview_controls(expand_label, window, cx))
             .into_any_element()
     }
     /// The Pilot's tabs. `expand_label` unfolds the selected tab's name when
-    /// there is room for it; `drag` lets the gaps move the window, for the
-    /// original layout where they sit in its top corner.
+    /// there is room for it.
     pub(crate) fn overview_controls(
         &self,
         expand_label: bool,
-        drag: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -921,11 +866,7 @@ impl Pilots {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.select_overview(tab, cx)))
             }))
-            .child(if drag {
-                crate::shell::titlebar_drag_area().flex_1().min_w_0()
-            } else {
-                div().flex_1().min_w_0()
-            })
+            .child(div().flex_1().min_w_0())
             .when(self.overview_tab == OverviewTab::Habits, |d| {
                 d.child(
                     icon_button("pilot-new-habit", "New habit", "plus")
@@ -2037,6 +1978,9 @@ impl Pilots {
                     MenuAction::new("background", "Background image")
                         .icon("image-add")
                         .into(),
+                    MenuAction::new("reset", "Reset to defaults…")
+                        .icon("rotate-ccw")
+                        .into(),
                     MenuAction::new("delete", "Delete pilot…")
                         .icon("trash")
                         .danger()
@@ -2054,6 +1998,7 @@ impl Pilots {
             if let MenuEvent::Picked(action, _) = event {
                 match action.as_ref() {
                     "background" => this.open_background(&target, w, cx),
+                    "reset" => this.reset_pilot(&target, w, cx),
                     "delete" => this.delete_pilot(&target, w, cx),
                     _ => {}
                 }

@@ -21,17 +21,9 @@ use gpui::EventEmitter;
 const FIXED_PREFIX: &str = "fixed:";
 const AUTOMATION_RUNS: &str = "fixed:automations";
 
-/// The open or closed chevron that replaces a folder's glyph keeps Automation
-/// runs yellow; every other folder's chevron stays plain.
-fn chevron_tint(key: &str) -> Option<gpui::Hsla> {
-    fixed_folder_tint(key, false)
-}
-
-/// Automation runs wears the Automations entry's yellow zap. Only the
-/// Focused row tints its glyph; the classic row paints a folder's colour as
-/// the header fill.
-fn fixed_folder_tint(id: &str, classic: bool) -> Option<gpui::Hsla> {
-    (id == AUTOMATION_RUNS && !classic).then(|| crate::theme::nav_tint("Automations"))?
+/// Automation runs wears the Automations entry's yellow zap.
+fn fixed_folder_tint(id: &str) -> Option<gpui::Hsla> {
+    (id == AUTOMATION_RUNS).then(|| crate::theme::nav_tint("Automations"))?
 }
 const PILOT_PREFIX: &str = "fixed:pilot:";
 
@@ -421,13 +413,9 @@ impl Shell {
     /// Pilot with sessions in this project, then Automation runs. The stored
     /// folder a Pilot files its sessions in (`pilot-<id>`) shows as that
     /// Pilot's fixed folder, after its launches, so it is not a user folder
-    /// here; the stored data is untouched. The focused sidebar only; the
-    /// original layout keeps its structure.
+    /// here; the stored data is untouched.
     pub(super) fn sidebar_groups(&self, cx: &App) -> (Groups, Vec<FixedFolder>) {
         let mut groups = self.project_groups();
-        if self.workspace.classic_layout {
-            return (groups, Vec::new());
-        }
         let mut folders = Vec::new();
         let pilots = self
             .pilots
@@ -473,19 +461,13 @@ impl Shell {
         let entries: Vec<_> = self
             .session_entries(&ids, cx)
             .into_iter()
-            .filter(|entry| {
-                !self.query.is_empty()
-                    || match entry {
-                        Entry::Folder { id, .. } => groups.folder(id).is_none_or(|f| !f.collapsed),
-                        Entry::Fixed { id, .. } => !groups.fixed_is_collapsed(id),
-                        Entry::Pinned { .. } if self.workspace.classic_layout => {
-                            !groups.pinned_collapsed
-                        }
-                        _ => true,
-                    }
+            .filter(|entry| match entry {
+                Entry::Folder { id, .. } => groups.folder(id).is_none_or(|f| !f.collapsed),
+                Entry::Fixed { id, .. } => !groups.fixed_is_collapsed(id),
+                _ => true,
             })
             .collect();
-        navigation_ids(&entries, !self.query.is_empty())
+        navigation_ids(&entries)
     }
 
     fn session_menu_ids(&self, id: i64, cx: &App) -> Vec<i64> {
@@ -1114,11 +1096,7 @@ impl Shell {
                 content(0.35),
                 cx,
             );
-            input.set_font_size(if self.workspace.classic_layout {
-                13.
-            } else {
-                14.
-            });
+            input.set_font_size(14.);
             input
         });
         let len = text.len();
@@ -1186,85 +1164,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let renaming = self.renaming.as_ref().filter(|r| r.target == *target)?;
-        if self.workspace.classic_layout {
-            let folder = match target {
-                RenameTarget::Folder(id) => self.project_groups().folder(id).cloned(),
-                _ => None,
-            };
-            let mut outline = crate::theme::accent_color();
-            outline.a = 0.4;
-            let input = div()
-                .flex_1()
-                .min_w_0()
-                .h(px(if folder.is_some() { 21.875 } else { 25.875 }))
-                .px_2()
-                .flex()
-                .items_center()
-                .rounded_sm()
-                .bg(content(0.1))
-                .border_1()
-                .border_color(outline)
-                .text_size(px(13.))
-                .line_height(px(17.875))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(content(1.))
-                .child(renaming.input.clone());
-            let row = div()
-                .key_context("SessionRename")
-                .on_action(cx.listener(|this, _: &CancelRename, window, cx| {
-                    this.finish_rename(false, window, cx)
-                }))
-                .w_full()
-                .flex()
-                .items_center()
-                .gap_1p5()
-                .text_color(content(1.));
-            return Some(if let Some(folder) = folder {
-                row.px_2()
-                    .py(px(6.))
-                    .rounded_t_md()
-                    .bg(self.classic_group_fill(&Entry::Folder {
-                        id: folder.id.clone(),
-                        sessions: Vec::new(),
-                    }))
-                    .child(
-                        div()
-                            .size(px(16.))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("chevron-down", 14.).text_color(content(0.5))),
-                    )
-                    .child(input)
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(11.))
-                            .line_height(px(16.5))
-                            .text_color(content(0.45))
-                            .child(folder.session_ids.len().to_string()),
-                    )
-                    .into_any_element()
-            } else {
-                let (active, approval) = match target {
-                    RenameTarget::Session(id) => (
-                        self.workspace.active == Some(*id),
-                        self.session_metadata(*id, cx).needs_approval(),
-                    ),
-                    _ => (false, false),
-                };
-                row.px(px(10.))
-                    .py_2()
-                    .rounded_md()
-                    .when(active, |d| d.bg(content(0.1)))
-                    .when(approval, |d| {
-                        d.bg(gpui::Hsla::from(rgb(0xfbbf24)).opacity(0.1))
-                    })
-                    .child(input)
-                    .into_any_element()
-            });
-        }
         Some(
             div()
                 .key_context("SessionRename")
@@ -1381,7 +1280,6 @@ impl Shell {
 
     /// A virtualized group renders its header separately from its member cards.
     pub(super) fn sidebar_group_header(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
-        let searching = !self.query.is_empty();
         let folders = self.project_groups();
         let (key, name, glyph, color, collapsed, sessions): (
             String,
@@ -1425,21 +1323,13 @@ impl Shell {
                 id.clone(),
                 name.clone(),
                 "zap",
-                fixed_folder_tint(id, self.workspace.classic_layout),
+                fixed_folder_tint(id),
                 folders.fixed_is_collapsed(id),
-                sessions,
-            ),
-            Entry::Pinned { sessions } if self.workspace.classic_layout => (
-                "pinned".into(),
-                "Pinned".into(),
-                "pin",
-                None,
-                folders.pinned_collapsed,
                 sessions,
             ),
             Entry::Pinned { .. } | Entry::Session(_) => return div().into_any(),
         };
-        let expanded = searching || !collapsed;
+        let expanded = !collapsed;
         // A Pilot's folder shows the Pilot instead of a glyph.
         let avatar = key.strip_prefix(PILOT_PREFIX).and_then(|pilot| {
             let pilots = self.pilots.as_ref()?.read(cx);
@@ -1472,9 +1362,6 @@ impl Shell {
         sessions: &[i64],
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.workspace.classic_layout {
-            return self.classic_group_row(key, name, glyph, color, expanded, sessions, cx);
-        }
         let approval = sessions
             .iter()
             .any(|id| self.session_metadata(*id, cx).needs_approval());
@@ -1559,7 +1446,7 @@ impl Shell {
                                     },
                                     16.,
                                 )
-                                .when_some(chevron_tint(key), |chevron, tint| {
+                                .when_some(fixed_folder_tint(key), |chevron, tint| {
                                     chevron.text_color(tint)
                                 }),
                             ),
@@ -1615,9 +1502,6 @@ impl Shell {
                     .strip_prefix("folder:")
                     .map(|id| RenameTarget::Folder(id.into()));
                 window.focus(&this.sidebar_focus, cx);
-                if !this.query.is_empty() {
-                    return;
-                }
                 let key = toggle_key.clone();
                 this.update_groups(cx, |groups| toggle_group(groups, &key));
             }))
@@ -1638,276 +1522,6 @@ impl Shell {
                 },
             )
             .into_any()
-    }
-
-    /// Original FolderRow and its enclosing tinted shell. The count and label
-    /// retain their original alignment in collapsed and expanded states.
-    #[allow(clippy::too_many_arguments)]
-    fn classic_group_row(
-        &self,
-        key: &str,
-        name: String,
-        glyph: &'static str,
-        color: Option<gpui::Hsla>,
-        expanded: bool,
-        sessions: &[i64],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let approval = sessions
-            .iter()
-            .any(|id| self.session_metadata(*id, cx).needs_approval());
-        let busy = sessions
-            .iter()
-            .any(|id| self.session_metadata(*id, cx).responding());
-        let busy_mark = sessions
-            .iter()
-            .find(|id| self.session_metadata(**id, cx).responding())
-            .and_then(|id| self.session_marks.get(id))
-            .cloned();
-        let done = sessions.iter().any(|id| self.unseen_finished.contains(id));
-        let group = SharedString::from(format!("classic-group-row-{key}"));
-        let toggle_key = key.to_owned();
-        let menu_key = key.to_owned();
-        let folder_id = key.strip_prefix("folder:").map(str::to_owned);
-        let bounds = folder_id
-            .as_ref()
-            .and_then(|id| self.folder_bounds.get(id))
-            .cloned();
-        let drop_target = folder_id.as_ref().is_some_and(|id| {
-            self.sidebar_drop == Some(ListDrop::Folder(id.clone()))
-                || self
-                    .folder_drag
-                    .as_ref()
-                    .is_some_and(|drag| drag.active && drag.over.as_ref() == Some(id))
-        });
-        let mut fill = color.unwrap_or_else(|| content(0.05));
-        if color.is_some() {
-            fill.a = 0.18;
-        }
-        div()
-            .id(SharedString::from(format!("session-group-{key}")))
-            .debug_selector({
-                let key = key.to_owned();
-                move || format!("session-group-{key}")
-            })
-            .group(group.clone())
-            .role(Role::Button)
-            .aria_label(name.clone())
-            .aria_expanded(expanded)
-            .cursor_pointer()
-            .relative()
-            .h(px(32.))
-            .px_2()
-            .rounded_t_md()
-            .when(!expanded, |d| d.rounded_b_md())
-            .bg(fill)
-            .flex()
-            .items_center()
-            .gap_1p5()
-            .text_color(content(if expanded { 1. } else { 0.8 }))
-            .hover(|s| s.bg(fill.blend(content(0.1))).text_color(content(1.)))
-            .when(drop_target, |d| {
-                let mut accent = crate::theme::accent_color();
-                accent.a = 0.2;
-                d.bg(fill.blend(accent))
-            })
-            .when(
-                folder_id.as_ref().is_some_and(|id| {
-                    self.folder_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.active && &drag.id == id)
-                }),
-                |d| d.opacity(0.4),
-            )
-            .child(
-                div()
-                    .size(px(16.))
-                    .flex_shrink_0()
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .when(expanded && glyph == "folder", |d| d.invisible())
-                            .group_hover(group.clone(), |s| s.invisible())
-                            .child(icon(glyph, 14.).text_color(content(1.))),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .invisible()
-                            .when(expanded && glyph == "folder", |d| d.visible())
-                            .group_hover(group.clone(), |s| s.visible())
-                            .child(
-                                icon(
-                                    if expanded {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                    14.,
-                                )
-                                .text_color(content(1.)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(13.))
-                    .line_height(px(17.875))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(content(1.))
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(11.))
-                    .line_height(px(16.5))
-                    .text_color(content(0.45))
-                    .when(!expanded && approval, |d| {
-                        d.child(icon("circle-alert", 12.).text_color(rgb(0xfbbf24)))
-                    })
-                    .when(!expanded && !approval && busy, |d| d.children(busy_mark))
-                    .when(!expanded && !approval && !busy && done, |d| {
-                        d.child(icon("check", 12.).text_color(rgb(0x34d399)))
-                    })
-                    .child(sessions.len().to_string()),
-            )
-            .children(bounds.map(|slot| slot.probe().into_any_element()))
-            .when_some(folder_id, |d, id| {
-                d.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                        this.skip_folder_click = false;
-                        this.folder_drag = Some(FolderDrag {
-                            id: id.clone(),
-                            start: event.position,
-                            active: false,
-                            over: None,
-                        });
-                    }),
-                )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if std::mem::take(&mut this.skip_folder_click) {
-                    return;
-                }
-                this.sidebar_target = toggle_key
-                    .strip_prefix("folder:")
-                    .map(|id| RenameTarget::Folder(id.into()));
-                window.focus(&this.sidebar_focus, cx);
-                if !this.query.is_empty() {
-                    return;
-                }
-                this.update_groups(cx, |groups| toggle_group(groups, &toggle_key));
-            }))
-            .when(key.starts_with("folder:"), |d| {
-                d.on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        this.open_menu(
-                            MenuTarget::Folder(menu_key.trim_start_matches("folder:").to_owned()),
-                            Anchor::Point(event.position),
-                            window,
-                            cx,
-                        );
-                    }),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn classic_group_fill(&self, entry: &Entry) -> gpui::Hsla {
-        let color = match entry {
-            Entry::Reminders { .. } => Some(rgb(REMINDERS_COLOR).into()),
-            Entry::Folder { id, .. } => self.project_groups().folder(id).and_then(|folder| {
-                folder
-                    .custom_color
-                    .as_deref()
-                    .and_then(|color| color.strip_prefix('#'))
-                    .and_then(|color| u32::from_str_radix(color, 16).ok())
-                    .map(|color| rgb(color).into())
-                    .or_else(|| folder.color_index.and_then(folder_color))
-            }),
-            _ => None,
-        };
-        color
-            .map(|mut color| {
-                color.a = 0.18;
-                color
-            })
-            .unwrap_or_else(|| content(0.05))
-    }
-
-    pub(super) fn classic_group_member(
-        &self,
-        entry: &Entry,
-        id: i64,
-        first: bool,
-        last: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let folder = matches!(entry, Entry::Folder { .. });
-        div()
-            .bg(self.classic_group_fill(entry))
-            .px_1()
-            .when(first, |d| d.pt_1())
-            .when(last && !folder, |d| d.pb_1().rounded_b_md())
-            .when(!last, |d| d.pb_px())
-            .child(self.classic_session_card_at_depth(id, false, true, cx))
-            .into_any_element()
-    }
-
-    pub(super) fn classic_folder_new_session(
-        &self,
-        id: &str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let entry = Entry::Folder {
-            id: id.to_owned(),
-            sessions: Vec::new(),
-        };
-        let folder = id.to_owned();
-        div()
-            .bg(self.classic_group_fill(&entry))
-            .pt_1()
-            .rounded_b_md()
-            .child(
-                div().border_t_1().border_color(content(0.08)).p_1().child(
-                    div()
-                        .id(SharedString::from(format!("new-session-in-folder-{id}")))
-                        .role(Role::Button)
-                        .aria_label("New session")
-                        .cursor_pointer()
-                        .border_1()
-                        .border_color(content(0.))
-                        .rounded_md()
-                        .px(px(10.))
-                        .py(px(6.))
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .text_size(px(13.))
-                        .line_height(px(17.875))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(content(0.45))
-                        .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                        .child(icon("plus", 12.))
-                        .child("New session")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.create_in_folder(folder.clone(), cx);
-                        })),
-                ),
-            )
-            .into_any_element()
     }
 
     fn open_link_dialog(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -2626,19 +2240,15 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 
     #[test]
-    fn automation_runs_takes_the_automations_yellow_only_in_the_focused_sidebar() {
+    fn automation_runs_takes_the_automations_yellow() {
         let yellow = crate::theme::nav_tint("Automations");
         assert!(yellow.is_some());
-        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, false), yellow);
-        // Classic paints a folder's colour as its header fill, so it stays plain.
-        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS, true), None);
-        // The chevron shown when the folder is open or hovered follows suit.
-        assert_eq!(chevron_tint(AUTOMATION_RUNS), yellow);
-        assert_eq!(chevron_tint("folder:user-folder"), None);
-        assert_eq!(chevron_tint("reminders"), None);
+        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS), yellow);
+        assert_eq!(fixed_folder_tint("folder:user-folder"), None);
+        assert_eq!(fixed_folder_tint("reminders"), None);
         // A Pilot's folder shows the Pilot, never the zap's colour.
         assert_eq!(
-            fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot"), false),
+            fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot")),
             None
         );
     }
@@ -2774,18 +2384,6 @@ mod tests {
         assert!(row(visual, a).is_none());
         assert!(row(visual, b).is_none());
         assert!(row(visual, child).is_none());
-        window
-            .update(visual, |shell, _, cx| {
-                shell.query = "new".into();
-                shell.notify_sidebar(cx);
-            })
-            .unwrap();
-        visual.refresh().unwrap();
-        assert_eq!(
-            row(visual, a).unwrap().size.height,
-            px(28.),
-            "search opens a collapsed folder with the same compact layout"
-        );
     }
 
     #[gpui::test]
@@ -2847,50 +2445,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_original_layouts_sessions_plus_starts_a_session_in_this_project(
-        cx: &mut TestAppContext,
-    ) {
-        let (window, _, _) = setup(cx);
-        // The original layout has no New row, so its plus stays.
-        window
-            .update(cx, |shell, _, cx| {
-                shell.workspace.classic_layout = true;
-                shell.layout_changed(cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-        cx.refresh().unwrap();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        assert!(visual.debug_bounds("sidebar-new-thread").is_none());
-        let new = visual.debug_bounds("sidebar-new-session").unwrap();
-        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
-        // Just before the filter, on the same line.
-        assert!(new.right() <= filter.left(), "{new:?} {filter:?}");
-        assert!((new.center().y - filter.center().y).abs() <= px(1.));
-        let (before, project) = window
-            .update(visual, |shell, _, _| {
-                (
-                    shell.session_summaries.len(),
-                    shell.workspace.project.clone(),
-                )
-            })
-            .unwrap();
-        visual.simulate_click(new.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, _| {
-                assert_eq!(shell.session_summaries.len(), before + 1);
-                let newest = shell
-                    .session_summaries
-                    .values()
-                    .max_by_key(|s| s.id)
-                    .unwrap();
-                assert_eq!(newest.cwd, project);
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
     fn an_empty_session_list_shows_a_card_that_says_how_to_start_one(cx: &mut TestAppContext) {
         let (window, _, _) = setup(cx);
         cx.refresh().unwrap();
@@ -2898,7 +2452,8 @@ mod tests {
         assert!(visual.debug_bounds("sidebar-sessions-empty").is_none());
         window
             .update(visual, |shell, _, cx| {
-                shell.query = "nothing matches this".into();
+                // Only working sessions, and none is working.
+                shell.workspace.session_filters.status.working = true;
                 shell.notify_sidebar(cx);
             })
             .unwrap();
@@ -2917,10 +2472,10 @@ mod tests {
         assert!(sidebar.contains(&card.origin) && card.right() <= sidebar.right());
         assert!(card.contains(&hint.center()), "{hint:?} in {card:?}");
         assert!(card.size.height >= px(40.), "two lines, not a bare label");
-        // Clearing the search brings the sessions back.
+        // Clearing the filter brings the sessions back.
         window
             .update(visual, |shell, _, cx| {
-                shell.query.clear();
+                shell.workspace.session_filters.status.working = false;
                 shell.notify_sidebar(cx);
             })
             .unwrap();
@@ -3021,13 +2576,6 @@ mod tests {
                     g.set_color(&folder, Some(3));
                 });
                 assert!(shell.sidebar_navigation_ids(cx).is_empty());
-                shell.query = "new".into();
-                assert_eq!(
-                    shell.sidebar_navigation_ids(cx).len(),
-                    2,
-                    "search opens folded groups"
-                );
-                shell.query.clear();
                 folder
             })
             .unwrap();

@@ -122,7 +122,7 @@ impl Shell {
         if !drag.active {
             drag.active = true;
             self.hovered_space = None;
-            // Escape reaches the workspace to cancel, as in the project rail.
+            // Escape reaches the workspace to cancel.
             window.focus(&self.focus, cx);
         }
         self.space_reorder.skip_click = true;
@@ -240,7 +240,6 @@ mod tests {
         visual.simulate_resize(size(px(1400.), px(900.)));
         window
             .update(&mut visual, |shell, _, cx| {
-                shell.workspace.classic_layout = false;
                 shell.workspace.projects = PROJECTS.map(str::to_owned).to_vec();
                 shell.workspace.project = "/work/a".into();
                 shell.spaces_start = 0;
@@ -371,7 +370,6 @@ mod tests {
             .update(visual, |shell, window, cx| {
                 let target = MenuTarget::Project {
                     path: "/work/c".into(),
-                    rail: false,
                 };
                 shell.run_menu(target.clone(), "move:start", None, window, cx);
                 assert_eq!(shell.workspace.projects[0], "/work/c");

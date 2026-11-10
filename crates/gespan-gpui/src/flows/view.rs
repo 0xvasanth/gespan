@@ -429,7 +429,7 @@ impl FlowsView {
                 match picked {
                     ProjectPicked::Project(path) => this.new_project = path.clone(),
                     ProjectPicked::New => this.browse_project(cx),
-                    ProjectPicked::Remote | ProjectPicked::Pilot(_) => {}
+                    ProjectPicked::Remote => {}
                 }
                 window.focus(&this.focus, cx);
                 cx.notify();

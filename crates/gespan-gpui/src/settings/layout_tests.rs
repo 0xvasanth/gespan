@@ -38,12 +38,10 @@ fn window(section: Section, cx: &mut TestAppContext) -> WindowHandle<SettingsVie
 fn appearance_prefs(
     window: WindowHandle<SettingsView>,
     visual: &mut VisualTestContext,
-    classic: bool,
     change: impl FnOnce(&mut Preferences),
 ) {
     window
         .update(visual, |view, _, cx| {
-            view.ctx.classic = classic;
             change(&mut view.prefs);
             cx.notify();
         })
@@ -62,10 +60,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
     visual.simulate_resize(size(px(1200.), px(2400.)));
     const TOGGLE: &str = "settings-toggle-inset-glass";
 
-    appearance_prefs(window, visual, true, |p| p.theme = "dark".into());
-    assert!(visual.debug_bounds(TOGGLE).is_none(), "classic has no row");
-
-    appearance_prefs(window, visual, false, |_| {});
+    appearance_prefs(window, visual, |p| p.theme = "dark".into());
     let toggle = visual.debug_bounds(TOGGLE).unwrap();
     visual.simulate_click(toggle.center(), Default::default());
     visual.run_until_parked();
@@ -76,7 +71,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
     assert_eq!(saved, !crate::theme::GLASS_PLATFORM);
 
     // With the window opaque, the glass controls under it do nothing.
-    appearance_prefs(window, visual, false, |p| {
+    appearance_prefs(window, visual, |p| {
         p.inset_glass = false;
         p.body_glass = true;
     });
@@ -90,7 +85,7 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
         .unwrap();
 
     // Light mode keeps the dark-mode choice and won't change it.
-    appearance_prefs(window, visual, false, |p| {
+    appearance_prefs(window, visual, |p| {
         p.theme = "light".into();
         p.inset_glass = true;
     });
@@ -103,10 +98,203 @@ fn transparent_window_is_an_inset_row_and_turning_it_off_disables_glass_controls
 }
 
 #[gpui::test]
+fn restore_defaults_keeps_the_focused_layout(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |view, _, cx| {
+            view.ctx.new_layout_boxy = true;
+            cx.notify();
+        })
+        .unwrap();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    let entity = window.root(visual).unwrap();
+    let _subscription = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &SettingsEvent, _| {
+            log.borrow_mut().push(match event {
+                SettingsEvent::Changed(_) => "changed",
+                SettingsEvent::NewLayoutBoxy(_) => "workspace style",
+                _ => "other",
+            })
+        })
+    });
+    window
+        .update(visual, |view, _, cx| view.restore_defaults(cx))
+        .unwrap();
+    visual.run_until_parked();
+    // The style lives in the workspace, so only the shell could change it, and
+    // only by hearing a layout event.
+    assert_eq!(*seen.borrow(), ["changed"], "no layout event");
+}
+
+#[gpui::test]
+fn interface_scale_slider_steps_through_every_percent(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual
+        .debug_bounds("settings-slider-interface-scale")
+        .unwrap();
+    // The thumb travels the track less its own 12px width.
+    let travel = track.size.width.as_f32() - 12.;
+    let last = (UI_SCALE_PERCENTS.len() - 1) as f32;
+    let mut seen = Vec::new();
+    for ix in 0..UI_SCALE_PERCENTS.len() {
+        let x = track.left() + px(6. + travel * ix as f32 / last);
+        visual.simulate_click(point(x, track.center().y), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        seen.push(
+            window
+                .update(visual, |view, _, _| view.prefs.ui_scale)
+                .unwrap(),
+        );
+    }
+    assert_eq!(seen, UI_SCALE_PERCENTS);
+}
+
+#[gpui::test]
+fn interface_scale_slider_applies_only_on_release(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual
+        .debug_bounds("settings-slider-interface-scale")
+        .unwrap();
+    let travel = track.size.width.as_f32() - 12.;
+    let last = (UI_SCALE_PERCENTS.len() - 1) as f32;
+    let at = |ix: usize| {
+        point(
+            track.left() + px(6. + travel * ix as f32 / last),
+            track.center().y,
+        )
+    };
+    let saved = window.update(visual, |view, _, _| view.prefs.ui_scale).unwrap();
+    let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = changes.clone();
+    let entity = window.root(visual).unwrap();
+    let _subscription = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &SettingsEvent, _| {
+            if matches!(event, SettingsEvent::Changed(_)) {
+                count.set(count.get() + 1);
+            }
+        })
+    });
+    let state = |visual: &mut VisualTestContext| {
+        window
+            .update(visual, |view, _, _| (view.prefs.ui_scale, view.shown_ui_scale()))
+            .unwrap()
+    };
+
+    visual.simulate_mouse_down(at(3), MouseButton::Left, Default::default());
+    visual.simulate_mouse_move(at(9), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    // Mid-drag the slider shows the pending step, but the window is not zoomed.
+    assert_eq!(state(visual), (saved, UI_SCALE_PERCENTS[9]));
+    assert_eq!(changes.get(), 0, "no preference change mid-drag");
+    visual.simulate_mouse_move(at(7), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(state(visual), (saved, UI_SCALE_PERCENTS[7]));
+    assert_eq!(changes.get(), 0);
+
+    visual.simulate_mouse_up(at(7), MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(state(visual), (UI_SCALE_PERCENTS[7], UI_SCALE_PERCENTS[7]));
+    assert_eq!(changes.get(), 1, "one change on release");
+}
+
+#[gpui::test]
+fn other_sliders_still_apply_while_dragging(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let track = visual.debug_bounds("settings-slider-hue").unwrap();
+    let before = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    visual.simulate_mouse_down(
+        point(track.left() + px(6.), track.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    visual.simulate_mouse_move(
+        point(track.right() - px(6.), track.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    visual.run_until_parked();
+    let during = window.update(visual, |view, _, _| view.prefs.theme_hue).unwrap();
+    assert_ne!(during, before, "hue is live mid-drag");
+}
+
+#[test]
+fn interface_scale_slider_maps_positions_to_percents() {
+    let kind = SliderKind::InterfaceScale;
+    assert_eq!(kind.range(), (0, UI_SCALE_PERCENTS.len() as u32 - 1));
+    let mut prefs = Preferences::default();
+    assert_eq!(UI_SCALE_PERCENTS[kind.get(&prefs) as usize], prefs.ui_scale);
+    kind.set(&mut prefs, 0);
+    assert_eq!(prefs.ui_scale, 50);
+    kind.set(&mut prefs, 15);
+    assert_eq!(prefs.ui_scale, 200);
+    // A saved scale off the list lands on the nearest step.
+    prefs.ui_scale = 117;
+    assert_eq!(UI_SCALE_PERCENTS[kind.get(&prefs) as usize], 120);
+    prefs.ui_scale = 5000;
+    assert_eq!(kind.get(&prefs), 15);
+}
+
+#[gpui::test]
+fn editor_group_lists_the_moved_rows(cx: &mut TestAppContext) {
+    let window = window(Section::Chat, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let ys: Vec<_> = [
+        "settings-row-file-tabs",
+        "settings-row-file-word-wrap",
+        "settings-row-show-excluded-files",
+        "settings-row-format-on-save",
+    ]
+    .into_iter()
+    .map(|selector| {
+        visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is on the Chat page"))
+            .origin
+            .y
+    })
+    .collect();
+    assert!(ys.windows(2).all(|w| w[0] < w[1]), "{ys:?}");
+}
+
+#[gpui::test]
+fn the_general_page_no_longer_holds_editor_rows(cx: &mut TestAppContext) {
+    let window = window(Section::General, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for selector in [
+        "settings-row-file-tabs",
+        "settings-row-file-word-wrap",
+        "settings-row-tab-animations",
+    ] {
+        assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+    }
+}
+
+#[gpui::test]
 fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    appearance_prefs(window, visual, true, |p| p.theme = "dark".into());
+    appearance_prefs(window, visual, |p| p.theme = "dark".into());
     assert_eq!(
         visual.debug_bounds("settings-row-blur").is_some(),
         crate::window_blur::BLUR_ADJUSTABLE
@@ -129,33 +317,31 @@ fn blur_slider_covers_the_saved_range() {
 }
 
 #[gpui::test]
-fn workspace_style_is_only_offered_under_the_new_layout(cx: &mut TestAppContext) {
+fn workspace_style_is_always_offered_and_the_layout_row_is_gone(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    for classic in [false, true, false] {
+    for boxy in [false, true] {
         window
             .update(visual, |view, _, cx| {
-                view.ctx.classic = classic;
-                view.ctx.new_layout_boxy = true;
+                view.ctx.new_layout_boxy = boxy;
                 cx.notify();
             })
             .unwrap();
         visual.run_until_parked();
-        assert_eq!(
+        assert!(
             visual
                 .debug_bounds("settings-new-layout-style-boxy")
-                .is_some(),
-            !classic
-        );
-        assert_eq!(
-            visual
-                .debug_bounds("settings-new-layout-style-rounded")
-                .is_some(),
-            !classic
+                .is_some()
         );
         assert!(
             visual
-                .debug_bounds("settings-collapsed-project-rail-hidden")
+                .debug_bounds("settings-new-layout-style-rounded")
+                .is_some()
+        );
+        assert!(visual.debug_bounds("settings-row-inset-layout").is_none());
+        assert!(
+            visual
+                .debug_bounds("settings-inset-layout-classic")
                 .is_none()
         );
     }
@@ -230,59 +416,6 @@ fn skills_document_has_its_own_full_height_pane_and_compact_actions(cx: &mut Tes
     assert_eq!(left.size.width, px(700.));
     assert_eq!(right.size.width, px(700.));
     assert!(visual.debug_bounds("skill-document").unwrap().size.height > px(200.));
-}
-
-#[gpui::test]
-fn pilot_mascot_is_beside_name_and_reset_stays_visible(cx: &mut TestAppContext) {
-    let window = window(Section::Pilots, cx);
-    window
-        .update(cx, |view, _, cx| {
-            view.ctx.pilots = vec![PilotSetting {
-                id: "layout-pilot".into(),
-                name: "Big Boss".into(),
-                mascot: "ghost".into(),
-                color: 0xee99bb,
-                projects: vec!["gespan".into(), "pilot-web".into()],
-            }];
-            cx.notify();
-        })
-        .unwrap();
-    let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    visual.run_until_parked();
-    let mascot = visual.debug_bounds("settings-pilot-mascot").unwrap();
-    let reset = visual.debug_bounds("settings-pilot-reset").unwrap();
-    assert_eq!(mascot.size, size(px(16.), px(16.)));
-    let name = visual.debug_bounds("settings-pilot-name").unwrap();
-    assert!(mascot.right() < name.left());
-    assert!(mascot.left() < px(200.));
-    assert!(name.right() <= reset.left());
-    assert!(reset.left() > px(800.));
-    assert!(reset.right() <= px(1200.));
-    assert!((mascot.top() - reset.top()).abs() < px(8.));
-    // Filing a Pilot's sessions in its folder is no longer a setting.
-    assert!(
-        visual
-            .debug_bounds("settings-toggle-pilot-sidebar-show")
-            .is_none()
-    );
-    assert!(
-        visual
-            .debug_bounds("settings-toggle-pilot-sidebar-folders")
-            .is_none()
-    );
-    visual.simulate_click(reset.center(), Default::default());
-    visual.run_until_parked();
-    assert!(visual.debug_bounds("settings-management-dialog").is_some());
-    window
-        .update(visual, |view, window, cx| {
-            view.close_management(window, cx);
-            cx.notify();
-        })
-        .unwrap();
-    visual.simulate_resize(size(px(700.), px(800.)));
-    visual.run_until_parked();
-    let reset = visual.debug_bounds("settings-pilot-reset").unwrap();
-    assert!(reset.right() <= px(700.));
 }
 
 #[gpui::test]

@@ -264,9 +264,8 @@ pub fn build_list(
     entries
 }
 
-/// sessionListNavigationIds: the sessions as shown, folded groups skipped
-/// unless a search has opened them.
-pub fn navigation_ids(entries: &[Entry], expand_collapsed: bool) -> Vec<i64> {
+/// sessionListNavigationIds: the sessions as shown, folded groups skipped.
+pub fn navigation_ids(entries: &[Entry]) -> Vec<i64> {
     let mut ids = Vec::new();
     for entry in entries {
         match entry {
@@ -275,7 +274,7 @@ pub fn navigation_ids(entries: &[Entry], expand_collapsed: bool) -> Vec<i64> {
                 collapsed,
                 sessions,
             } => {
-                if !collapsed || expand_collapsed {
+                if !collapsed {
                     ids.extend(sessions);
                 }
             }
@@ -632,8 +631,7 @@ mod tests {
         );
         groups.reminders_collapsed = true;
         let list = build_list(&visible, |id| id == 5, &groups, &[(3, 10)], &[]);
-        assert_eq!(navigation_ids(&list, false), vec![2, 5, 1, 4, 6]);
-        assert_eq!(navigation_ids(&list, true), vec![3, 2, 5, 1, 4, 6]);
+        assert_eq!(navigation_ids(&list), vec![2, 5, 1, 4, 6]);
     }
 
     #[test]
@@ -678,7 +676,7 @@ mod tests {
                 Entry::Session(1),
             ]
         );
-        assert_eq!(navigation_ids(&list, false), vec![4, 2, 3, 1]);
+        assert_eq!(navigation_ids(&list), vec![4, 2, 3, 1]);
     }
 
     #[test]

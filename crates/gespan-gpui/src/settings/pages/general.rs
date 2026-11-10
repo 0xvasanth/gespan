@@ -46,79 +46,11 @@ impl SettingsView {
                 },
             ),
         ];
-        let mut workspace = vec![
-            self.row(
-                Some("file-tabs"),
-                true,
-                "File tabs",
-                Some("Choose where files open.".into()),
-                vec![self.segmented(
-                    "file-tabs",
-                    "File tabs",
-                    &p.file_tabs,
-                    &[("pane", "Beside chat"), ("workspace", "Top bar")],
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.file_tabs = v.into()),
-                )],
-            ),
-            self.row(
-                Some("file-word-wrap"),
-                false,
-                "Word wrap",
-                Some("Wrap long lines to fit the editor.".into()),
-                vec![self.toggle(
-                    "file-word-wrap",
-                    "Word wrap",
-                    p.file_word_wrap,
-                    false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.file_word_wrap = on),
-                )],
-            ),
-            self.row(
-                Some("tab-animations"),
-                false,
-                "Tab animations",
-                Some("Animate tabs as they open and close.".into()),
-                vec![self.toggle(
-                    "tab-animations",
-                    "Tab animations",
-                    p.tab_animations,
-                    false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.tab_animations = on),
-                )],
-            ),
-            self.row(
-                Some("notes"),
-                false,
-                "Notes",
-                Some("Show Notes in project navigation. Mention saved notes with @note.".into()),
-                vec![
-                    self.toggle("notes", "Notes", p.notes, false, cx, |this, on, cx| {
-                        this.update(cx, |p| p.notes = on)
-                    }),
-                ],
-            ),
-            self.row(
-                Some("board"),
-                false,
-                "Board",
-                Some(
-                    "A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
-                        .into(),
-                ),
-                vec![
-                    self.toggle("board", "Board", p.board, false, cx, |this, on, cx| {
-                        this.update(cx, |p| p.board = on)
-                    }),
-                ],
-            ),
-        ];
+        let mut workspace = Vec::new();
         if cfg!(target_os = "macos") {
             workspace.push(self.row(
                 Some("quick-composer"),
-                false,
+                true,
                 "Quick composer",
                 Some(format!(
                     "Press {} from any app. Return starts a session in the background; ⌘Return opens it. Change the shortcut in Keybindings.",
@@ -135,39 +67,8 @@ impl SettingsView {
             ));
         }
         workspace.push(self.row(
-            Some("search-panel"),
-            false,
-            "Search as command panel",
-            Some(
-                "Open search as a floating panel over your work instead of a page with its own tab."
-                    .into(),
-            ),
-            vec![self.toggle(
-                "search-panel",
-                "Search as command panel",
-                p.search_panel,
-                false,
-                cx,
-                |this, on, cx| this.update(cx, |p| p.search_panel = on),
-            )],
-        ));
-        workspace.push(self.row(
-            Some("working-agents"),
-            false,
-            "Working agents",
-            Some("Show active chats across projects. Finished chats stay until opened.".into()),
-            vec![self.toggle(
-                "working-agents",
-                "Working agents",
-                p.working_agents,
-                false,
-                cx,
-                |this, on, cx| this.update(cx, |p| p.working_agents = on),
-            )],
-        ));
-        workspace.push(self.row(
             Some("keep-awake"),
-            false,
+            !cfg!(target_os = "macos"),
             "Keep screen awake",
             Some("Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents. Closing the lid or locking the screen yourself still does.".into()),
             vec![self.segmented(
@@ -199,7 +100,7 @@ impl SettingsView {
             Some("terminal-placement"),
             false,
             "Terminal",
-            Some("Where new terminals open: docked below the chat, as a tab in the right panel (Focused layout), or as their own tabs in the title bar.".into()),
+            Some("Where new terminals open: docked below the chat, as a tab in the right panel, or as their own tabs in the title bar.".into()),
             vec![self.segmented(
                 "terminal-placement",
                 "Terminal",
@@ -222,6 +123,22 @@ impl SettingsView {
                     false,
                     cx,
                     |this, on, cx| this.update(cx, |p| p.close_to_tray = on),
+                )],
+            ));
+        }
+        if cfg!(target_os = "macos") {
+            workspace.push(self.row(
+                Some("pilot-menu-bar-icon"),
+                false,
+                "Menu bar icon",
+                Some("Chat with a Pilot or open the quick composer from the macOS menu bar. Turn this off to hide the icon.".into()),
+                vec![self.toggle(
+                    "pilot-menu-bar-icon",
+                    "Menu bar icon",
+                    p.pilot_menu_bar_icon,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.pilot_menu_bar_icon = on),
                 )],
             ));
         }
