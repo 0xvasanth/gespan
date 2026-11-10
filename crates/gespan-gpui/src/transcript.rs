@@ -121,6 +121,14 @@ pub(crate) fn finished_marker(note: &gespan_core::transcript::Interjection) -> O
     })
 }
 
+/// The "From terminal" row that opens turns picked up from the agent's CLI.
+fn terminal_marker(row: &Row) -> bool {
+    row.first
+        && row.role == "interjection"
+        && serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text)
+            .is_ok_and(|note| note.custom_type == gespan_core::outside_turns::MARKER_TYPE)
+}
+
 struct Message {
     start: usize,
     display_start: usize,
@@ -2913,12 +2921,7 @@ impl TranscriptView {
     /// prompt instead. Returns the picked-up rows, empty if there are none.
     fn skip_picked_up_rows(&mut self, start: usize) -> std::ops::Range<usize> {
         let at = self.live_start;
-        let marked = self.source.get(at).is_some_and(|row| {
-            row.first
-                && row.role == "interjection"
-                && serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text)
-                    .is_ok_and(|note| note.custom_type == gespan_core::outside_turns::MARKER_TYPE)
-        });
+        let marked = self.source.get(at).is_some_and(terminal_marker);
         if !self.streaming || start > at || !marked {
             return at..at;
         }
@@ -3903,12 +3906,18 @@ impl TranscriptView {
                     }
                 }
             }
+            // Picked-up terminal turns follow the reply they continue: the
+            // marker closes that reply's group, actions and all, and the
+            // marker and any reply before the next prompt get none.
+            let closes_group = (end == turn_end
+                || self.source.get(end).is_some_and(terminal_marker))
+                && !self.source[turn.min(at)..end].iter().any(terminal_marker);
             if !self.document
                 && !self.source[at].is_prompt()
                 && self.source[at].role != "pilot-card"
                 && self.source[at].role != gespan_core::transcript::attachments::ROLE
                 && !reaction
-                && end == turn_end
+                && closes_group
                 && !(self.pilot && self.pilot_next_run_continues(turn, turn_end))
             {
                 if !self.pilot
@@ -7481,6 +7490,150 @@ mod scroll_tests {
                     assert_eq!(view.active_turn(), Some(6));
                 })
                 .unwrap();
+        }
+    }
+
+    fn marker_row() -> Row {
+        row(
+            "interjection",
+            &serde_json::to_string(&gespan_core::transcript::Interjection {
+                text: String::new(),
+                custom_type: gespan_core::outside_turns::MARKER_TYPE.into(),
+                severity: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    /// Where the previous reply's actions, the "From terminal" marker and
+    /// the first picked-up turn sit among the rows.
+    fn marker_layout(view: &TranscriptView, reply: usize, marker: usize, terminal: usize) {
+        let actions: Vec<_> = view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row.body, Body::Actions { turn, .. } if turn == reply))
+            .map(|(ix, row)| (ix, view.messages[row.message].start))
+            .collect();
+        let divider = view
+            .rows
+            .iter()
+            .position(|row| {
+                matches!(&row.body, Body::Interjection(note) if note.label() == "From terminal")
+            })
+            .expect("the From terminal marker is drawn");
+        assert_eq!(view.messages[view.rows[divider].message].start, marker);
+        let picked = view
+            .rows
+            .iter()
+            .position(|row| view.messages[row.message].start == terminal)
+            .expect("the picked-up turn is drawn");
+        assert_eq!(
+            actions,
+            [(actions[0].0, reply)],
+            "the previous reply's actions show once, in its own message"
+        );
+        assert!(
+            actions[0].0 < divider && divider < picked,
+            "the reply's actions at {}, then the marker at {divider}, then the terminal turn at {picked}",
+            actions[0].0
+        );
+        assert!(
+            !view.rows.iter().any(|row| {
+                view.messages[row.message].start == marker
+                    && matches!(row.body, Body::Actions { .. })
+            }),
+            "the marker has no actions of its own"
+        );
+    }
+
+    /// The send that picks up terminal turns patches them in behind the
+    /// marker, ahead of the prompt the view already painted.
+    #[gpui::test]
+    fn a_live_send_draws_the_terminal_marker_after_the_previous_reply(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let window = cx.update(|cx| {
+                cx.open_window(WindowOptions::default(), |_, cx| {
+                    cx.new(|_| TranscriptView::new())
+                })
+                .unwrap()
+            });
+            window
+                .update(cx, |view, _, cx| {
+                    if pilot {
+                        view.pilot_mode("bot", 0x336699, "Pilot");
+                    }
+                    view.patch(
+                        0,
+                        vec![
+                            row("user", "Hi"),
+                            row("assistant", "Hello! What would you like to work on?"),
+                        ],
+                        cx,
+                    );
+                    view.streaming(true, cx);
+                    if !pilot {
+                        view.submit_prompt(
+                            "What word?",
+                            &gespan_core::agent::Settings::default(),
+                            cx,
+                        );
+                    }
+                    view.patch(
+                        2,
+                        vec![
+                            marker_row(),
+                            row("user", "Remember the word mango"),
+                            row("assistant", "noted mango"),
+                            row("user", "What word?"),
+                            row("assistant", ""),
+                        ],
+                        cx,
+                    );
+                    marker_layout(view, 1, 2, 3);
+                    view.patch(6, vec![row("assistant", "mango")], cx);
+                    view.streaming(false, cx);
+                    marker_layout(view, 1, 2, 3);
+                })
+                .unwrap();
+        }
+    }
+
+    /// A reloaded chat closes the previous reply, actions and all, before
+    /// the marker, as the live view does.
+    #[gpui::test]
+    fn a_loaded_chat_draws_the_terminal_marker_after_the_previous_reply(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            // The picked-up turns can open with the agent's reply alone.
+            for opens_with_reply in [false, true] {
+                let window = cx.update(|cx| {
+                    cx.open_window(WindowOptions::default(), |_, cx| {
+                        cx.new(|_| TranscriptView::new())
+                    })
+                    .unwrap()
+                });
+                window
+                    .update(cx, |view, _, cx| {
+                        if pilot {
+                            view.pilot_mode("bot", 0x336699, "Pilot");
+                        }
+                        let mut rows = vec![
+                            row("user", "Hi"),
+                            row("assistant", "Hello! What would you like to work on?"),
+                            marker_row(),
+                            row("user", "Remember the word mango"),
+                            row("assistant", "noted mango"),
+                            row("user", "What word?"),
+                            row("assistant", "mango"),
+                        ];
+                        if opens_with_reply {
+                            rows.remove(3);
+                        }
+                        view.patch(0, rows, cx);
+                        marker_layout(view, 1, 2, 3);
+                    })
+                    .unwrap();
+            }
         }
     }
 
