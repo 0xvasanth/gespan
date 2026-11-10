@@ -6,7 +6,10 @@ pub(crate) mod login;
 mod transfer;
 pub use identity::Identity;
 pub use login::arguments as login_arguments;
-pub use login::{authenticate, authenticate_with, signed_in, AuthAction, Interaction, LoginPrompt};
+pub use login::{
+    authenticate, authenticate_with, sign_in_state, signed_in, AuthAction, Interaction,
+    LoginPrompt, SignInState,
+};
 mod processes;
 #[cfg(test)]
 mod tests;

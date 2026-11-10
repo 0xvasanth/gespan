@@ -90,6 +90,8 @@ pub(crate) struct Cached {
     pub attempted: Option<Instant>,
     pub generation: u64,
     pub queued: bool,
+    /// What the CLI's status says, asked only when usage could not be read.
+    pub sign_in: Option<accounts::SignInState>,
 }
 impl Cached {
     /// A provider's own mid-turn reading is fresher than any probe, and it
@@ -102,6 +104,66 @@ impl Cached {
             .get_or_insert_with(Snapshot::default)
             .merge_live(windows, now);
         self.error = None;
+    }
+    /// Usage when there is some; otherwise the sign-in, so a provider that
+    /// reports no usage, or a CLI that is missing or signed out, still says
+    /// where it stands.
+    pub(crate) fn status(&self, now: i64) -> Status {
+        if let Some(snapshot) = &self.snapshot
+            && let Some(headroom) = snapshot.headroom(now)
+        {
+            if headroom <= 0. {
+                return Status {
+                    tone: Tone::Exhausted,
+                    label: "Exhausted".into(),
+                    detail: snapshot
+                        .exhausted_reset()
+                        .filter(|at| *at > now)
+                        .map(|at| format!("back in {}", usage::duration(at - now))),
+                };
+            }
+            if headroom <= 20. {
+                return Status {
+                    tone: Tone::Low,
+                    label: "Running low".into(),
+                    detail: Some(format!("{headroom:.0}% left")),
+                };
+            }
+            return Status::plain(Tone::Ready, "Ready");
+        }
+        if self.fetching || (self.snapshot.is_none() && self.error.is_none()) {
+            return Status::checking();
+        }
+        let unavailable = self.error.as_ref().is_some_and(|e| e.unavailable);
+        match self.sign_in {
+            Some(accounts::SignInState::NotInstalled) => {
+                return Status::plain(Tone::Unknown, "Not installed");
+            }
+            Some(accounts::SignInState::SignedOut) => {
+                return Status::plain(Tone::SignedOut, "Signed out");
+            }
+            Some(accounts::SignInState::SignedIn) if unavailable => {
+                return Status::plain(Tone::Ready, "Signed in");
+            }
+            _ => {}
+        }
+        Status {
+            tone: Tone::Unknown,
+            label: self
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_else(|| "Usage unavailable".into()),
+            detail: None,
+        }
+    }
+    /// The CLI said it is signed out or not there, and no usage says otherwise.
+    pub(crate) fn signed_out(&self) -> bool {
+        self.snapshot.is_none()
+            && matches!(
+                self.sign_in,
+                Some(accounts::SignInState::SignedOut | accounts::SignInState::NotInstalled)
+            )
     }
     pub(crate) fn complete(&mut self, result: Result<Snapshot, FetchError>) {
         self.fetching = false;
@@ -125,12 +187,25 @@ pub(crate) enum Tone {
     Low,
     Exhausted,
     Checking,
+    SignedOut,
     Unknown,
 }
 pub(crate) struct Status {
     pub tone: Tone,
     pub label: String,
     pub detail: Option<String>,
+}
+impl Status {
+    fn checking() -> Self {
+        Self::plain(Tone::Checking, "Checking…")
+    }
+    fn plain(tone: Tone, label: &str) -> Self {
+        Self {
+            tone,
+            label: label.into(),
+            detail: None,
+        }
+    }
 }
 #[derive(Clone)]
 pub(crate) enum AccountEvent {
@@ -334,56 +409,23 @@ impl Accounts {
     pub(crate) fn selected(&self, kind: Kind, project: &str) -> Profile {
         self.profile(&self.book.selected(kind, project))
     }
+    /// Who the account is signed in as, unless its CLI says it is signed out
+    /// or missing: a config file can outlive its sign-in.
+    pub(crate) fn identity_shown(&self, kind: Kind, id: &str) -> Option<&accounts::Identity> {
+        let gone = self
+            .usage
+            .get(&Key::new(kind, self.profile(id), None))
+            .is_some_and(Cached::signed_out);
+        self.identities
+            .get(&(kind, id.to_owned()))
+            .filter(|_| !gone)
+    }
     /// React's `accountStatus`: a tone, a word, and an optional detail.
     pub(crate) fn status(&self, kind: Kind, id: &str) -> Status {
-        let key = Key::new(kind, self.profile(id), None);
-        let checking = Status {
-            tone: Tone::Checking,
-            label: "Checking…".into(),
-            detail: None,
-        };
-        let Some(state) = self.usage.get(&key) else {
-            return checking;
-        };
-        let now = usage::now_ms();
-        if let Some(snapshot) = &state.snapshot
-            && let Some(headroom) = snapshot.headroom(now)
-        {
-            if headroom <= 0. {
-                return Status {
-                    tone: Tone::Exhausted,
-                    label: "Exhausted".into(),
-                    detail: snapshot
-                        .exhausted_reset()
-                        .filter(|at| *at > now)
-                        .map(|at| format!("back in {}", usage::duration(at - now))),
-                };
-            }
-            if headroom <= 20. {
-                return Status {
-                    tone: Tone::Low,
-                    label: "Running low".into(),
-                    detail: Some(format!("{headroom:.0}% left")),
-                };
-            }
-            return Status {
-                tone: Tone::Ready,
-                label: "Ready".into(),
-                detail: None,
-            };
-        }
-        if state.fetching || (state.snapshot.is_none() && state.error.is_none()) {
-            return checking;
-        }
-        Status {
-            tone: Tone::Unknown,
-            label: state
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| "Usage unavailable".into()),
-            detail: None,
-        }
+        self.usage
+            .get(&Key::new(kind, self.profile(id), None))
+            .map(|state| state.status(usage::now_ms()))
+            .unwrap_or_else(Status::checking)
     }
     pub(crate) fn refresh(&mut self, key: Key, force: bool, cx: &mut Context<Self>) {
         if cfg!(test) {
@@ -412,10 +454,16 @@ impl Accounts {
         let generation = state.generation;
         let request = key.clone();
         let work = cx.background_executor().spawn(async move {
-            usage::fetch_for(request.kind, &request.profile, request.model().as_deref())
+            let result =
+                usage::fetch_for(request.kind, &request.profile, request.model().as_deref());
+            // Without usage the row falls back to the CLI's own sign-in status.
+            let sign_in = result
+                .is_err()
+                .then(|| accounts::sign_in_state(request.kind, &request.profile));
+            (result, sign_in)
         });
         cx.spawn(async move |this, cx| {
-            let result = work.await;
+            let (result, sign_in) = work.await;
             let _ = this.update(cx, |this, cx| {
                 if key.profile.id != accounts::DEFAULT
                     && !this.book.exists(key.kind, &key.profile.id)
@@ -444,6 +492,7 @@ impl Accounts {
                 }
                 let refreshed = result.is_ok();
                 state.complete(result);
+                state.sign_in = sign_in;
                 if refreshed
                     && let Some(action) = this.reset_actions.get_mut(&key)
                     && !action.applying()
@@ -966,6 +1015,83 @@ impl Drop for Accounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gespan_core::accounts::SignInState;
+
+    fn probed(result: Result<Snapshot, FetchError>, sign_in: Option<SignInState>) -> Cached {
+        let mut state = Cached::default();
+        state.complete(result);
+        state.sign_in = sign_in;
+        state
+    }
+    fn label(state: &Cached) -> (String, bool, bool) {
+        let status = state.status(usage::now_ms());
+        (
+            status.label,
+            status.tone == Tone::Ready,
+            status.tone == Tone::SignedOut,
+        )
+    }
+    fn no_usage() -> FetchError {
+        FetchError {
+            message: "No subscription usage is available for Cursor.".into(),
+            unavailable: true,
+        }
+    }
+
+    #[test]
+    fn a_provider_without_usage_shows_its_sign_in() {
+        let signed_in = probed(Err(no_usage()), Some(SignInState::SignedIn));
+        assert_eq!(label(&signed_in), ("Signed in".into(), true, false));
+        let signed_out = probed(Err(no_usage()), Some(SignInState::SignedOut));
+        assert_eq!(label(&signed_out), ("Signed out".into(), false, true));
+        let missing = probed(Err(no_usage()), Some(SignInState::NotInstalled));
+        assert_eq!(label(&missing), ("Not installed".into(), false, false));
+        // A CLI that does not say keeps the usage reader's own words.
+        let silent = probed(Err(no_usage()), Some(SignInState::Unknown));
+        assert_eq!(
+            label(&silent).0,
+            "No subscription usage is available for Cursor."
+        );
+    }
+
+    #[test]
+    fn usage_wins_over_sign_in_and_a_failed_read_is_not_called_signed_in() {
+        let snapshot = Snapshot {
+            windows: vec![usage::Window::new(40., 300, None)],
+            ..Default::default()
+        };
+        assert_eq!(
+            label(&probed(Ok(snapshot), None)),
+            ("Ready".into(), true, false)
+        );
+        // Signed in, but the usage read itself failed: say so, not "Signed in".
+        let offline = FetchError {
+            message: "Kiro usage report was unexpected.".into(),
+            unavailable: false,
+        };
+        assert_eq!(
+            label(&probed(Err(offline), Some(SignInState::SignedIn))).0,
+            "Kiro usage report was unexpected."
+        );
+        // Signed out beats the reader's sign-in hint, whatever it says.
+        let hint = FetchError {
+            message: "Sign in with kiro-cli login, then refresh usage.".into(),
+            unavailable: true,
+        };
+        assert_eq!(
+            label(&probed(Err(hint), Some(SignInState::SignedOut))).0,
+            "Signed out"
+        );
+        // A config left behind by a sign-out does not name the account.
+        assert!(probed(Err(no_usage()), Some(SignInState::SignedOut)).signed_out());
+        assert!(probed(Err(no_usage()), Some(SignInState::NotInstalled)).signed_out());
+        assert!(!probed(Err(no_usage()), Some(SignInState::SignedIn)).signed_out());
+        assert!(!probed(Err(no_usage()), None).signed_out());
+        let mut checking = probed(Err(no_usage()), Some(SignInState::SignedIn));
+        checking.fetching = true;
+        assert_eq!(label(&checking).0, "Checking…");
+        assert_eq!(label(&Cached::default()).0, "Checking…");
+    }
     #[test]
     fn usage_cache_preserves_stale_data_on_errors_and_separates_accounts_and_pi_billing() {
         let snapshot = Snapshot {

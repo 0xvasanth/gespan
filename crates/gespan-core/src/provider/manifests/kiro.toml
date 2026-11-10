@@ -1,5 +1,5 @@
 id = "kiro"
-version = 3
+version = 4
 min_engine_version = 1
 label = "Kiro CLI"
 binary = "kiro-cli"
@@ -13,6 +13,10 @@ discovery_timeout = 30
 [login]
 sign_in = ["login"]
 sign_out = ["logout"]
+
+# One account, told apart by label only: the CLI keeps a single sign-in
+# per machine whatever config directory it is given.
+[accounts]
 
 [features]
 side_threads = true

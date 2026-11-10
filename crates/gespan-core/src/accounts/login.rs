@@ -242,11 +242,32 @@ fn append_bounded(text: &mut String, bytes: &[u8]) {
         text.drain(..cut);
     }
 }
+/// Where a provider's sign-in stands, as its CLI reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignInState {
+    NotInstalled,
+    SignedOut,
+    SignedIn,
+    /// The CLI has no status command, or did not answer plainly.
+    Unknown,
+}
+/// Like [`signed_in`], telling a missing CLI apart from a silent one.
+pub fn sign_in_state(kind: Kind, profile: &Profile) -> SignInState {
+    if !provider::resolve(kind).is_some_and(|binary| binary.exists()) {
+        return SignInState::NotInstalled;
+    }
+    match signed_in(kind, profile) {
+        Some(true) => SignInState::SignedIn,
+        Some(false) => SignInState::SignedOut,
+        None => SignInState::Unknown,
+    }
+}
 /// What the CLI's own status command says, when it says it plainly.
 pub fn signed_in(kind: Kind, profile: &Profile) -> Option<bool> {
     let args: &[&str] = match kind {
         Kind::Claude => &["auth", "status"],
         Kind::Codex => &["login", "status"],
+        Kind::Cursor => &["status", "--format", "json"],
         Kind::Kiro => &["whoami"],
         _ => return None,
     };
@@ -254,15 +275,20 @@ pub fn signed_in(kind: Kind, profile: &Profile) -> Option<bool> {
     read_status(kind, success, &output)
 }
 fn read_status(kind: Kind, success: bool, output: &str) -> Option<bool> {
+    let json_flag = |key: &str| {
+        let start = output.find('{')?;
+        serde_json::from_str::<serde_json::Value>(&output[start..])
+            .ok()?
+            .get(key)?
+            .as_bool()
+    };
+    let says_signed_out = output.to_ascii_lowercase().contains("not logged in");
     match kind {
-        Kind::Claude => {
-            let start = output.find('{')?;
-            serde_json::from_str::<serde_json::Value>(&output[start..])
-                .ok()?
-                .get("loggedIn")?
-                .as_bool()
-        }
-        _ if output.to_ascii_lowercase().contains("not logged in") => Some(false),
+        Kind::Claude => json_flag("loggedIn"),
+        // Older builds without `--format` print text, which counts only when
+        // it says signed out: they exit 0 for an unknown flag too.
+        Kind::Cursor => json_flag("isAuthenticated").or(says_signed_out.then_some(false)),
+        _ if says_signed_out => Some(false),
         _ if success => Some(true),
         _ => None,
     }
@@ -476,5 +502,29 @@ mod tests {
         );
         // A failing status command that says nothing clear does not block.
         assert_eq!(read_status(Kind::Kiro, false, "network error"), None);
+    }
+    #[test]
+    fn cursor_status_trusts_its_json_over_the_exit_code() {
+        let signed_in = r#"{"status":"authenticated","isAuthenticated":true,"hasAccessToken":true,"message":"Logged in (user details not available)","userInfo":{"userId":1}}"#;
+        assert_eq!(read_status(Kind::Cursor, true, signed_in), Some(true));
+        // The JSON decides even when the CLI exits non-zero, and a banner
+        // printed before it does not hide it.
+        let signed_out = "Checking…\n{\"status\":\"unauthenticated\",\"isAuthenticated\":false,\"message\":\"Not logged in\"}";
+        assert_eq!(read_status(Kind::Cursor, false, signed_out), Some(false));
+        // An older CLI without `--format` answers in text.
+        assert_eq!(
+            read_status(Kind::Cursor, false, "Not logged in. Run agent login."),
+            Some(false)
+        );
+        // Text that does not say signed out is not taken as signed in, even
+        // with a clean exit.
+        assert_eq!(
+            read_status(Kind::Cursor, true, "error: unknown option '--format'"),
+            None
+        );
+        assert_eq!(
+            read_status(Kind::Cursor, true, r#"{"status":"authenticated"}"#),
+            None
+        );
     }
 }

@@ -308,7 +308,7 @@ impl Accounts {
                 let id = account.id.clone();
                 let rename_id = id.clone();
                 let key = (kind, id.clone());
-                let identity = self.identities.get(&key);
+                let identity = self.identity_shown(kind, &id);
                 let status = self.status(kind, &id);
                 let subtitle = identity
                     .and_then(|i| i.email.clone().or(i.name.clone()))
@@ -533,7 +533,7 @@ impl Accounts {
     }
     /// ProviderAccountSubtitle: "Pro · email", the email blurred until clicked.
     pub(crate) fn subtitle(&self, kind: Kind, id: &str, cx: &mut Context<Self>) -> Option<Div> {
-        let identity = self.identities.get(&(kind, id.to_owned()))?;
+        let identity = self.identity_shown(kind, id)?;
         if identity.plan.is_none() && identity.email.is_none() {
             return None;
         }
@@ -606,10 +606,7 @@ impl Accounts {
             let active = account.id == selected;
             let id = account.id.clone();
             let project = project.to_owned();
-            let org = self
-                .identities
-                .get(&(kind, id.clone()))
-                .and_then(organization_tag);
+            let org = self.identity_shown(kind, &id).and_then(organization_tag);
             let windows = self
                 .usage
                 .get(&Key::new(kind, self.profile(&id), None))
@@ -841,6 +838,7 @@ pub(crate) fn status_label(status: &Status) -> Div {
         Tone::Ready => (tinted(0x34d399, 1.), content(0.6)),
         Tone::Low => (tinted(0xfbbf24, 1.), tinted(0xfbbf24, 0.9)),
         Tone::Exhausted => (tinted(0xf87171, 1.), tinted(0xf87171, 0.9)),
+        Tone::SignedOut => (tinted(0xfbbf24, 1.), content(0.5)),
         Tone::Checking | Tone::Unknown => (content(0.25), content(0.35)),
     };
     div()
