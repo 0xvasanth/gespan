@@ -38,6 +38,9 @@ pub(super) struct State {
     pending_method: &'static str,
     pending_params: Value,
     deadline: Option<Instant>,
+    /// A pending prompt's deadline, pushed out again by each message from
+    /// the agent: a turn times out only after this long in silence.
+    prompt_idle: Option<Duration>,
     cancelling: bool,
     background: HashMap<String, BackgroundDispatch>,
     background_poll: Option<Instant>,
@@ -199,7 +202,8 @@ impl Protocol {
         )
     }
 
-    /// ACP deadlines apply to individual requests, never to a quiet stream.
+    /// ACP deadlines apply to individual requests; a prompt's only to a
+    /// silent agent.
     pub(super) fn acp_tick(&mut self, stdin: &mut impl Write) -> Result<Vec<Event>, String> {
         if self.request.kind == Kind::Cursor && self.acp.stage == Stage::Prompt {
             let read = self.cursor_tick(false);
@@ -307,6 +311,7 @@ impl Protocol {
         #[cfg(test)]
         let wait = wait.map(|wait| DEADLINE_OVERRIDE.with(|o| o.get()).unwrap_or(wait));
         self.acp.deadline = wait.map(|wait| Instant::now() + wait);
+        self.acp.prompt_idle = wait.filter(|_| stage == Stage::Prompt);
         write_json(
             stdin,
             json!({"jsonrpc":"2.0","id":self.acp.sequence,"method":method,"params":params}),
@@ -776,6 +781,18 @@ impl Protocol {
     ) -> Result<Vec<Event>, String> {
         let mut events = Vec::new();
         if let Some(method) = v["method"].as_str() {
+            // Anything the agent sends for this session shows the prompt is
+            // still being worked on.
+            if self.acp.stage == Stage::Prompt
+                && self.acp.deadline.is_some()
+                && v["params"]["sessionId"]
+                    .as_str()
+                    .is_none_or(|id| id == self.acp.session)
+            {
+                if let Some(idle) = self.acp.prompt_idle {
+                    self.acp.deadline = Some(Instant::now() + idle);
+                }
+            }
             if v.get("id").is_some() {
                 if method == "cursor/ask_question"
                     || method == "_x.ai/ask_user_question"
@@ -2106,6 +2123,99 @@ mod tests {
                 "{} {left:?}",
                 if probe { "probe" } else { "turn" }
             );
+        }
+    }
+    /// A turn of `kind` with its `session/prompt` sent; returns that request.
+    fn prompting(kind: Kind, out: &mut Vec<u8>) -> (Protocol, Value) {
+        let mut p = protocol(kind);
+        p.acp_session(out).unwrap();
+        let new = last(out);
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), out)
+            .unwrap();
+        let mut request = last(out);
+        while request["method"] != "session/prompt" {
+            p.frame(json!({"id":request["id"],"result":{}}), out)
+                .unwrap();
+            request = last(out);
+        }
+        (p, request)
+    }
+    fn deadline_override(wait: Option<Duration>) {
+        DEADLINE_OVERRIDE.with(|o| o.set(wait));
+    }
+    #[test]
+    fn a_prompt_that_keeps_streaming_never_times_out() {
+        let deadline = Duration::from_millis(500);
+        for kind in [Kind::Kiro, Kind::Hermes] {
+            deadline_override(Some(deadline));
+            let mut out = Vec::new();
+            let (mut p, prompt) = prompting(kind, &mut out);
+            let updates = [
+                json!({"sessionUpdate":"agent_message_chunk","content":{"text":"Working"}}),
+                json!({"sessionUpdate":"tool_call","toolCallId":"t","kind":"execute","title":"cargo test","status":"in_progress"}),
+                json!({"sessionUpdate":"agent_thought_chunk","content":{"text":"Still going"}}),
+            ];
+            // Three deadlines' worth of a turn that keeps reporting progress.
+            let started = Instant::now();
+            for update in updates.iter().cycle().take(15) {
+                std::thread::sleep(Duration::from_millis(100));
+                p.frame(
+                    json!({"method":"session/update","params":{"sessionId":"s","update":update}}),
+                    &mut out,
+                )
+                .unwrap();
+                p.acp_tick(&mut out)
+                    .unwrap_or_else(|e| panic!("{}: {e}", kind.label()));
+            }
+            assert!(started.elapsed() >= deadline * 3);
+            let events = p
+                .frame(
+                    json!({"id":prompt["id"],"result":{"stopReason":"end_turn"}}),
+                    &mut out,
+                )
+                .unwrap();
+            assert!(events.contains(&Event::Done), "{}", kind.label());
+            assert!(p.done);
+            deadline_override(None);
+        }
+    }
+    #[test]
+    fn a_silent_prompt_still_times_out() {
+        for kind in [Kind::Kiro, Kind::Hermes] {
+            deadline_override(Some(Duration::from_millis(150)));
+            let mut out = Vec::new();
+            let (mut p, _) = prompting(kind, &mut out);
+            std::thread::sleep(Duration::from_millis(75));
+            // Another session's output is not this turn making progress.
+            p.frame(json!({"method":"session/update","params":{"sessionId":"other","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"x"}}}}), &mut out).unwrap();
+            p.acp_tick(&mut out).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            assert_eq!(
+                p.acp_tick(&mut out).unwrap_err(),
+                format!("{}: session/prompt timed out", kind.label())
+            );
+            deadline_override(None);
+        }
+    }
+    #[test]
+    fn other_stages_keep_fixed_deadlines() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        for (kind, error) in [
+            (Kind::Kiro, format!("Kiro CLI did not start. {help}")),
+            (Kind::Hermes, "Hermes Agent: session/new timed out".into()),
+        ] {
+            deadline_override(Some(Duration::from_millis(150)));
+            let mut out = Vec::new();
+            let mut p = protocol(kind);
+            p.acp_session(&mut out).unwrap();
+            assert_eq!(last(&mut out)["method"], "session/new");
+            // Kiro lists its models while `session/new` is still pending.
+            for _ in 0..2 {
+                std::thread::sleep(Duration::from_millis(100));
+                p.frame(json!({"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"config_option_update","configOptions":[]}}}), &mut out).unwrap();
+            }
+            assert_eq!(p.acp_tick(&mut out).unwrap_err(), error);
+            deadline_override(None);
         }
     }
     #[test]
