@@ -281,6 +281,7 @@ impl Store {
             updated_at: crate::time::now_ms(),
             archived: false,
             pinned: false,
+            created_at: 0,
             work_item: None,
         };
         self.save_remote_session(&RemoteSession {
@@ -358,6 +359,7 @@ impl Store {
             updated_at: value["updatedAt"].as_u64().unwrap_or(0),
             archived: value["archived"].as_bool().unwrap_or(false),
             pinned: value["pinned"].as_bool().unwrap_or(false),
+            created_at: 0,
             work_item: host
                 .get("linkedWorkItem")
                 .filter(|v| !v.is_null())

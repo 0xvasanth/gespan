@@ -173,34 +173,24 @@ mod tests {
             .update(cx, |shell, _, cx| {
                 let entities = shell.sessions.len();
                 assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
-                shell.worktree_focus.insert(
-                    "/work/project".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/feature".into(),
-                        branch: Some("feature".into()),
-                    },
-                );
-                assert_eq!(
-                    shell
-                        .sidebar_session_ids(cx)
-                        .into_iter()
-                        .collect::<HashSet<_>>(),
-                    feature
-                );
-                shell.worktree_focus.insert(
-                    "/work/project".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/project".into(),
-                        branch: None,
-                    },
-                );
-                assert_eq!(
-                    shell
-                        .sidebar_session_ids(cx)
-                        .into_iter()
-                        .collect::<HashSet<_>>(),
-                    main
-                );
+                // The sidebar lists every worktree whatever is focused.
+                for path in ["/work/feature", "/work/project"] {
+                    shell.worktree_focus.insert(
+                        "/work/project".into(),
+                        crate::worktree_switcher::WorktreeFocus {
+                            path: path.into(),
+                            branch: None,
+                        },
+                    );
+                    assert_eq!(
+                        shell
+                            .sidebar_session_ids(cx)
+                            .into_iter()
+                            .collect::<HashSet<_>>(),
+                        main.union(&feature).copied().collect::<HashSet<_>>(),
+                        "{path}"
+                    );
+                }
                 shell.worktree_focus.clear();
                 assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
                 assert_eq!(

@@ -1345,27 +1345,81 @@ fn legacy_classic(saved: &serde_json::Value) -> bool {
         == Some(true)
 }
 
-/// Rewrites every place the saved workspace names the project `from`.
-fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
-    use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
-    use serde_json::Value;
-    // Only fields that exist are touched: indexing would add nulls that the
-    // workspace cannot read back.
-    fn field<'a>(state: &'a mut Value, path: &[&str]) -> Option<&'a mut Value> {
-        path.iter()
-            .try_fold(state, |value, key| value.get_mut(*key))
+/// Only fields that exist are touched: indexing would add nulls that the
+/// workspace cannot read back.
+fn field<'a>(state: &'a mut serde_json::Value, path: &[&str]) -> Option<&'a mut serde_json::Value> {
+    path.iter()
+        .try_fold(state, |value, key| value.get_mut(*key))
+}
+
+/// A linked Git worktree is never a project of its own: one saved as a
+/// project, or holding sessions, folds into its main checkout, and its
+/// sessions keep running in the worktree. This runs before the workspace is
+/// restored. `root` finds a worktree's main checkout.
+pub(crate) fn fold_worktree_projects(
+    store: &gespan_core::store::Store,
+    saved: Option<String>,
+    root: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let mut state = saved
+        .as_deref()
+        .and_then(|saved| serde_json::from_str::<serde_json::Value>(saved).ok());
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(state) = &state {
+        for value in std::iter::once(&state["project"])
+            .chain(state["projects"].as_array().into_iter().flatten())
+            .chain(state["archived_projects"].as_array().into_iter().flatten())
+        {
+            if let Some(path) = value.as_str() {
+                paths.push(path.into());
+            }
+        }
     }
+    paths.extend(
+        store
+            .sessions()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.cwd),
+    );
+    let mut seen = HashSet::new();
+    paths.retain(|path| {
+        !path.is_empty() && !path.starts_with("remote://") && seen.insert(path.clone())
+    });
+    let mut folded = false;
+    for path in paths {
+        let Some(root) = root(&path) else {
+            continue;
+        };
+        if let Err(error) = store.fold_worktree_sessions(&path, &root) {
+            tracing::warn!(%error, worktree = %path, "cannot move a worktree's sessions to its project");
+            continue;
+        }
+        tracing::info!(worktree = %path, project = %root, "listing a worktree under its project");
+        if let Some(state) = &mut state {
+            rename_saved_project(state, &path, &root);
+            folded = true;
+        }
+    }
+    let Some(state) = state.filter(|_| folded) else {
+        return saved;
+    };
+    let folded = state.to_string();
+    if let Err(error) = store.save_ui_state(&folded) {
+        tracing::warn!(%error, "cannot save the workspace after folding worktrees");
+    }
+    Some(folded)
+}
+
+/// Renames the project `from` to `to` wherever the saved workspace keys or
+/// lists projects. Paths inside the folder are left as they are.
+fn rename_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
+    use gespan_core::files::path_key;
+    use serde_json::Value;
     let same = |path: &str| path_key(path) == path_key(from);
     let rebase = |value: &mut Value| {
         if value.as_str().is_some_and(same) {
             *value = Value::String(to.into());
-        }
-    };
-    let rebase_inside = |value: &mut Value| {
-        if value.as_str().is_some_and(same) {
-            *value = Value::String(to.into());
-        } else if let Some(path) = value.as_str().filter(|path| is_equal_or_inside(path, from)) {
-            *value = Value::String(rebase_path(path, from, to));
         }
     };
     if let Some(project) = field(state, &["project"]) {
@@ -1397,6 +1451,21 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
             map.entry(to).or_insert(value);
         }
     }
+}
+
+/// Rewrites every place the saved workspace names the project `from`.
+fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
+    use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
+    use serde_json::Value;
+    rename_saved_project(state, from, to);
+    let same = |path: &str| path_key(path) == path_key(from);
+    let rebase_inside = |value: &mut Value| {
+        if value.as_str().is_some_and(same) {
+            *value = Value::String(to.into());
+        } else if let Some(path) = value.as_str().filter(|path| is_equal_or_inside(path, from)) {
+            *value = Value::String(rebase_path(path, from, to));
+        }
+    };
     for list in [&["recent_files", to][..], &["docks", to, "terminals"]] {
         if let Some(paths) = field(state, list).and_then(Value::as_array_mut) {
             paths.iter_mut().for_each(rebase_inside);
@@ -1438,6 +1507,54 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn worktree_projects_and_sessions_fold_into_their_main_checkout_at_launch() {
+        let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let tree = "/work/app-worktrees/fix";
+        let in_tree = store.create("claude", tree).unwrap();
+        // A worktree that only holds sessions, never opened as a project.
+        let other = store.create("codex", "/work/app-worktrees/other").unwrap();
+        let clone = store.create("claude", "/work/app-copy").unwrap();
+        let saved = serde_json::json!({
+            "project": tree,
+            "projects": ["/work/notes", tree, "/work/app", "/work/app-copy"],
+            "archived_projects": [],
+            "collapsed": [tree],
+            "project_appearance": {tree: {"name": "Fix"}},
+        })
+        .to_string();
+        let root = |path: &str| {
+            path.starts_with("/work/app-worktrees/")
+                .then(|| "/work/app".to_owned())
+        };
+        let folded = super::fold_worktree_projects(&store, Some(saved), root).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&folded).unwrap();
+        assert_eq!(state["project"], "/work/app");
+        // The root keeps the worktree's place once, an independent clone stays.
+        assert_eq!(
+            state["projects"],
+            serde_json::json!(["/work/notes", "/work/app", "/work/app-copy"])
+        );
+        assert_eq!(state["collapsed"], serde_json::json!(["/work/app"]));
+        assert_eq!(state["project_appearance"]["/work/app"]["name"], "Fix");
+        assert_eq!(store.ui_state().unwrap().as_deref(), Some(folded.as_str()));
+        let sessions = store.sessions().unwrap();
+        let cwd = |id| sessions.iter().find(|s| s.id == id).unwrap().cwd.clone();
+        assert_eq!(cwd(in_tree.id), "/work/app");
+        assert_eq!(cwd(other.id), "/work/app");
+        assert_eq!(cwd(clone.id), "/work/app-copy");
+        let worktrees = store.session_worktrees().unwrap();
+        assert_eq!(worktrees[&in_tree.id].as_deref(), Some(tree));
+        assert_eq!(
+            worktrees[&other.id].as_deref(),
+            Some("/work/app-worktrees/other")
+        );
+        assert_eq!(worktrees[&clone.id], None);
+        // A second launch has nothing left to fold and leaves the state alone.
+        let again = super::fold_worktree_projects(&store, Some(folded.clone()), root);
+        assert_eq!(again.as_deref(), Some(folded.as_str()));
+        assert_eq!(super::fold_worktree_projects(&store, None, root), None);
+    }
     #[test]
     fn a_running_workspace_follows_a_renamed_project_and_keeps_this_runs_state() {
         let mut state = Workspace::default();

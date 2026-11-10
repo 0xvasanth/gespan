@@ -22,6 +22,8 @@ enum Row {
         first: bool,
     },
     Session(i64),
+    /// A worktree's group under Sessions, by its working copy's path.
+    Worktree(String),
     GroupedSession {
         id: i64,
         first: bool,
@@ -158,6 +160,40 @@ fn push_machine_rows(rows: &mut Vec<Row>, cx: &App) -> bool {
         );
     }
     true
+}
+
+/// A session in the sidebar's worktree grouping.
+struct Listed {
+    id: i64,
+    /// When the session started, or zero where the store does not say.
+    created_at: u64,
+    path: String,
+}
+
+/// Sessions by the worktree they run in, each group keeping the list's order.
+/// The worktree where the newest session started comes first. Stores that do
+/// not record a start time hand out growing ids, so the id breaks ties.
+fn worktree_groups(sessions: &[Listed]) -> Vec<(String, Vec<i64>)> {
+    use gespan_core::files::path_key;
+    let mut groups: Vec<(String, Vec<i64>, (u64, i64))> = Vec::new();
+    for session in sessions {
+        let started = (session.created_at, session.id);
+        match groups
+            .iter_mut()
+            .find(|(path, ..)| path_key(path) == path_key(&session.path))
+        {
+            Some((_, ids, newest)) => {
+                ids.push(session.id);
+                *newest = (*newest).max(started);
+            }
+            None => groups.push((session.path.clone(), vec![session.id], started)),
+        }
+    }
+    groups.sort_by_key(|(.., newest)| std::cmp::Reverse(*newest));
+    groups
+        .into_iter()
+        .map(|(path, ids, _)| (path, ids))
+        .collect()
 }
 
 // Match sidebar-session-scroll: 40px below, and 28px above scrolled Focused rows.
@@ -368,10 +404,30 @@ impl Shell {
             label: "Sessions",
             first: true,
         });
-        rows.extend(entries.iter().filter_map(|entry| match entry {
-            Entry::Session(id) if !self.rails.children.contains(id) => Some(Row::Session(*id)),
-            _ => None,
-        }));
+        let sessions: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Session(id) if !self.rails.children.contains(id) => Some(Listed {
+                    id: *id,
+                    created_at: self.session_metadata(*id, cx).summary.created_at,
+                    path: self.session_working_copy(*id, cx).to_owned(),
+                }),
+                _ => None,
+            })
+            .collect();
+        let worktrees = worktree_groups(&sessions);
+        // A project that only works in its own folder needs no group headings.
+        let grouped = worktrees.len() > 1
+            || worktrees.first().is_some_and(|(path, _)| {
+                gespan_core::files::path_key(path)
+                    != gespan_core::files::path_key(&self.workspace.project)
+            });
+        for (path, ids) in worktrees {
+            if grouped {
+                rows.push(Row::Worktree(path));
+            }
+            rows.extend(ids.into_iter().map(Row::Session));
+        }
         if entries.is_empty() {
             rows.push(Row::Empty);
         }
@@ -458,6 +514,22 @@ impl Shell {
                 .when(first, |d| d.child(self.sidebar_filter_button(cx)))
                 .into_any(),
             Row::Session(id) => self.session_card(id, cx),
+            Row::Worktree(path) => {
+                let label = self.worktree_label(&path);
+                div()
+                    .debug_selector(|| "sidebar-worktree-group".into())
+                    .h(px(24.))
+                    .mt_1()
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .text_size(px(12.))
+                    .text_color(content(0.5))
+                    .child(icon("git-branch", 12.))
+                    .child(div().min_w_0().truncate().child(label))
+                    .into_any()
+            }
             Row::GroupedSession { id, first, last } => {
                 return div()
                     .px_2()
@@ -1265,28 +1337,24 @@ mod tests {
     }
 
     #[gpui::test]
-    fn header_menu_only_switches(cx: &mut TestAppContext) {
+    fn the_project_button_opens_the_project_picker_with_no_worktree_rows(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         let button = visual.debug_bounds("sidebar-project-button").unwrap();
         visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
-        let (ids, editor) = window
+        window
             .update(visual, |shell, _, cx| {
-                let open = shell.menu.as_ref().expect("the project menu opened");
+                let open = shell.menu.as_ref().expect("the project picker opened");
                 assert!(open.target == MenuTarget::Header);
-                let editor = shell.project_menu_editor_row(cx).map(|item| match item {
-                    MenuItem::Action(action) => action.id.to_string(),
-                    _ => unreachable!("the editor row is an action"),
-                });
-                (open.menu.read(cx).action_ids(), editor)
+                // No Switch worktree, Switch project or editor rows: the
+                // picker itself, with its search field focused.
+                assert!(open.menu.read(cx).action_ids().is_empty());
+                assert_eq!(open.menu.read(cx).item_shape(), Vec::<String>::new());
             })
             .unwrap();
-        let mut expected = vec!["switch-worktree".to_string(), "switch-project".into()];
-        expected.extend(editor);
-        expected.push("open-remote-project".into());
-        assert_eq!(ids, expected);
+        assert!(visual.debug_bounds("project-picker").is_some());
     }
 
     #[gpui::test]
@@ -1840,6 +1908,146 @@ mod tests {
                 assert!(shell.session_row_bounds[&(first - 1)].get().is_none());
             })
             .unwrap();
+    }
+
+    #[test]
+    fn worktree_groups_keep_the_list_order_and_lead_with_the_newest_start() {
+        let listed = |id, created_at, path: &str| super::Listed {
+            id,
+            created_at,
+            path: path.into(),
+        };
+        // The Gespan store's ids carry no order; its start times do.
+        let sessions = [
+            listed(900, 40, "/work/app"),
+            listed(15, 90, "/work/app-worktrees/fix"),
+            listed(700, 20, "/work/app"),
+            listed(42, 70, "/work/app-worktrees/old"),
+            listed(3, 10, "/work/app-worktrees/fix/"),
+        ];
+        assert_eq!(
+            super::worktree_groups(&sessions),
+            [
+                ("/work/app-worktrees/fix".to_owned(), vec![15, 3]),
+                ("/work/app-worktrees/old".to_owned(), vec![42]),
+                ("/work/app".to_owned(), vec![900, 700]),
+            ]
+        );
+        // Without start times, the newest id leads.
+        let untimed = [
+            listed(4, 0, "/work/app"),
+            listed(9, 0, "/work/app-worktrees/fix"),
+        ];
+        assert_eq!(
+            super::worktree_groups(&untimed)
+                .into_iter()
+                .map(|(_, ids)| ids)
+                .collect::<Vec<_>>(),
+            [vec![9], vec![4]]
+        );
+        assert!(super::worktree_groups(&[]).is_empty());
+    }
+
+    /// Both test sessions, with messages, in the project; `worktree` puts the
+    /// first one in a linked worktree.
+    fn grouped_rows(
+        window: &gpui::WindowHandle<Shell>,
+        cx: &mut TestAppContext,
+        ids: [i64; 2],
+        started: [u64; 2],
+        worktree: Option<&str>,
+    ) -> Vec<Row> {
+        window
+            .update(cx, |shell, _, cx| {
+                for (id, created_at) in ids.into_iter().zip(started) {
+                    shell.sessions[&id].update(cx, |session, _| {
+                        session.summary.cwd = "/work/gespan".into();
+                        session.summary.has_messages = true;
+                        session.summary.created_at = created_at;
+                    });
+                    if let Some(summary) = shell.session_summaries.get_mut(&id) {
+                        summary.cwd = "/work/gespan".into();
+                        summary.has_messages = true;
+                        summary.created_at = created_at;
+                    }
+                }
+                shell
+                    .session_worktrees
+                    .insert(ids[0], worktree.map(str::to_owned));
+                shell.sidebar_list.invalidate_structure();
+                shell.refresh_sidebar_structure(cx);
+                let start = shell
+                    .sidebar_list
+                    .rows
+                    .iter()
+                    .position(|row| {
+                        matches!(
+                            row,
+                            Row::Heading {
+                                label: "Sessions",
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap();
+                shell.sidebar_list.rows[start + 1..].to_vec()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn sessions_group_by_worktree_and_a_focused_worktree_hides_none(cx: &mut TestAppContext) {
+        let (window, a, b) = super::super::tests::window(cx);
+        let tree = "/work/gespan-worktrees/feature";
+        // The old project dropdown's worktree choice no longer narrows the list.
+        window
+            .update(cx, |shell, _, _| {
+                shell.worktree_focus.insert(
+                    "/work/gespan".into(),
+                    crate::worktree_switcher::WorktreeFocus {
+                        path: "/work/gespan".into(),
+                        branch: Some("main".into()),
+                    },
+                );
+            })
+            .unwrap();
+        let (tree_group, folder_group) = (
+            vec![Row::Worktree(tree.into()), Row::Session(a)],
+            vec![Row::Worktree("/work/gespan".into()), Row::Session(b)],
+        );
+        // The worktree where the newest session started leads, whatever the ids.
+        let rows = grouped_rows(&window, cx, [a, b], [200, 100], Some(tree));
+        assert_eq!(rows, [tree_group.clone(), folder_group.clone()].concat());
+        let rows = grouped_rows(&window, cx, [a, b], [100, 200], Some(tree));
+        assert_eq!(rows, [folder_group, tree_group].concat());
+        let label = window
+            .update(cx, |shell, _, _| shell.worktree_label(tree))
+            .unwrap();
+        assert_eq!(
+            label, "feature",
+            "the folder name until the branch is known"
+        );
+    }
+
+    #[gpui::test]
+    fn sessions_in_the_project_folder_alone_take_no_worktree_headings(cx: &mut TestAppContext) {
+        let (window, a, b) = super::super::tests::window(cx);
+        let rows = grouped_rows(&window, cx, [a, b], [100, 200], None);
+        assert!(
+            !rows.iter().any(|row| matches!(row, Row::Worktree(_))),
+            "{rows:?}"
+        );
+        let mut sessions: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Session(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        sessions.sort();
+        let mut both = vec![a, b];
+        both.sort();
+        assert_eq!(sessions, both);
     }
 
     #[gpui::test]

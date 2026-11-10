@@ -45,9 +45,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let (editor, path) = (editor.to_owned(), path.to_owned());
+        // The editor menu's launcher, so both menus start editors one way.
+        let open = self.editor_menu.launcher.open.clone();
         let work = cx
             .background_executor()
-            .spawn(async move { external_editor::open(&editor, &path) });
+            .spawn(async move { open(&editor, &path) });
         cx.spawn(async move |this, cx| {
             if let Err(error) = work.await {
                 let _ = this.update(cx, |this, cx| {
