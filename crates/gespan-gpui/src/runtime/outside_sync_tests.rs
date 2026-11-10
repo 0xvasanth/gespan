@@ -5,6 +5,7 @@ use gespan_core::outside_turns::{Checkpoint, checkpoint_key};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 const THREAD: &str = "sync-thread";
+const CLAUDE_SESSION: &str = "sync-session";
 
 struct Fixture(PathBuf);
 impl Drop for Fixture {
@@ -49,8 +50,47 @@ for line in sys.stdin:
         break
 "#;
 
+/// A mock Claude Code (`stream-json`) that writes its session file under
+/// `CLAUDE_CONFIG_DIR`, chaining each entry to the last by `parentUuid`.
+const CLAUDE_MOCK: &str = r#"#!/usr/bin/env python3
+import json, os, sys, uuid
+home = os.environ['CLAUDE_CONFIG_DIR']
+path = os.path.join(home, 'projects', '-work-app', 'sync-session.jsonl')
+def send(value):
+    print(json.dumps(value), flush=True)
+def last_uuid():
+    try:
+        lines = [l for l in open(path).read().splitlines() if l.strip()]
+        return json.loads(lines[-1]).get('uuid') if lines else None
+    except (OSError, ValueError):
+        return None
+def record(role, content):
+    entry = {'type': role, 'uuid': uuid.uuid4().hex, 'parentUuid': last_uuid(), 'isSidechain': False,
+             'message': {'role': role, 'content': content}}
+    if role == 'assistant':
+        entry['message']['id'] = 'msg-' + entry['uuid']
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'a') as out:
+        out.write(json.dumps(entry) + '\n')
+for line in sys.stdin:
+    value = json.loads(line)
+    if value.get('type') == 'control_request':
+        send({'type': 'control_response', 'response': {'subtype': 'success', 'request_id': value['request_id']}})
+    elif value.get('type') == 'user':
+        content = value['message']['content']
+        if not isinstance(content, str):
+            content = ''.join(b.get('text', '') for b in content if b.get('type') == 'text')
+        send({'type': 'system', 'subtype': 'init', 'session_id': 'sync-session'})
+        record('user', content)
+        record('assistant', [{'type': 'text', 'text': 'Done'}])
+        send({'type': 'assistant', 'message': {'id': 'm1', 'role': 'assistant', 'content': [{'type': 'text', 'text': 'Done'}]}})
+        send({'type': 'result', 'subtype': 'success', 'result': 'Done', 'session_id': 'sync-session'})
+        break
+"#;
+
 struct Conversation {
     fixture: Fixture,
+    kind: Kind,
     store: Database,
     summary: Session,
     account: gespan_core::accounts::Profile,
@@ -61,6 +101,10 @@ struct Conversation {
 
 impl Conversation {
     fn new(name: &str, shared: bool) -> Self {
+        Self::of(Kind::Codex, name, shared)
+    }
+
+    fn of(kind: Kind, name: &str, shared: bool) -> Self {
         let fixture = Fixture(std::env::temp_dir().join(format!(
             "gespan-outside-sync-{name}-{}-{}",
             std::process::id(),
@@ -71,7 +115,12 @@ impl Conversation {
         )));
         std::fs::create_dir_all(&fixture.0).unwrap();
         let binary = fixture.0.join("mock-provider");
-        std::fs::write(&binary, MOCK).unwrap();
+        let mock = if kind == Kind::Claude {
+            CLAUDE_MOCK
+        } else {
+            MOCK
+        };
+        std::fs::write(&binary, mock).unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = fixture.0.join("sessions.db");
         let store = if shared {
@@ -82,12 +131,15 @@ impl Conversation {
         .unwrap();
         // A non-default account keeps the agent's home inside the fixture.
         let mut book = store.provider_accounts().unwrap();
-        let id = book.add(Kind::Codex, "Work").unwrap().id;
+        let id = book.add(kind, "Work").unwrap().id;
         store.save_provider_accounts(&book).unwrap();
         let account = gespan_core::accounts::Profile::new(&id, &fixture.0);
-        let summary = store.create("codex", fixture.0.to_str().unwrap()).unwrap();
+        let summary = store
+            .create(kind.id(), fixture.0.to_str().unwrap())
+            .unwrap();
         Self {
             fixture,
+            kind,
             store: Arc::new(Mutex::new(store)),
             summary,
             account,
@@ -97,24 +149,61 @@ impl Conversation {
     }
 
     fn home(&self) -> PathBuf {
-        self.account.home(Kind::Codex).unwrap()
+        self.account.home(self.kind).unwrap()
     }
 
+    fn provider_id(&self) -> &'static str {
+        if self.kind == Kind::Claude {
+            CLAUDE_SESSION
+        } else {
+            THREAD
+        }
+    }
+
+    /// The agent's own session file.
     fn rollout(&self) -> PathBuf {
-        self.home()
-            .join("sessions/2026/11/11/rollout-2026-11-11T00-00-00-sync-thread.jsonl")
+        if self.kind == Kind::Claude {
+            self.home()
+                .join(format!("projects/-work-app/{CLAUDE_SESSION}.jsonl"))
+        } else {
+            self.home()
+                .join("sessions/2026/11/11/rollout-2026-11-11T00-00-00-sync-thread.jsonl")
+        }
     }
 
     fn settings(&self) -> Settings {
         Settings {
             account: self.account.clone(),
+            // The visual bridge is keyed by session id, which parallel
+            // fixtures share.
+            text_only: true,
             ..Settings::default()
         }
     }
 
-    /// What `codex resume` appends when the user continues in a terminal.
+    /// What `codex resume` or `claude --resume` appends when the user
+    /// continues in a terminal.
     fn continue_in_terminal(&self, prompt: &str, reply: &str) {
         use std::io::Write;
+        if self.kind == Kind::Claude {
+            let text = std::fs::read_to_string(self.rollout()).unwrap();
+            let last: serde_json::Value =
+                serde_json::from_str(text.lines().last().unwrap()).unwrap();
+            let parent = last["uuid"].as_str().unwrap().to_owned();
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(self.rollout())
+                .unwrap();
+            let n = text.lines().count();
+            let (user, reply_id) = (format!("t-user-{n}"), format!("t-reply-{n}"));
+            let asked = serde_json::json!({"type":"user","uuid":user,"parentUuid":parent,
+                "isSidechain":false,"message":{"role":"user","content":prompt}});
+            let answered = serde_json::json!({"type":"assistant","uuid":reply_id,"parentUuid":user,
+                "isSidechain":false,"message":{"id":format!("t-msg-{n}"),"role":"assistant",
+                "content":[{"type":"text","text":reply}]}});
+            writeln!(file, "{asked}\n{answered}").unwrap();
+            return;
+        }
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(self.rollout())
@@ -187,7 +276,7 @@ impl Conversation {
         };
         worker.join().unwrap();
         // The next send resumes the thread, as the reloaded session would.
-        self.summary.provider_id = Some(THREAD.into());
+        self.summary.provider_id = Some(self.provider_id().into());
         status
     }
 
@@ -209,21 +298,51 @@ impl Conversation {
 
     fn target(&self) -> outside_sync::Target {
         outside_sync::Target::of(&self.store, &self.summary, &self.account.id)
-            .expect("a local Codex session syncs")
+            .expect("a local session syncs")
     }
 
-    /// The pre-turn sync alone, on the stored rows.
-    fn sync_now(&self) -> (outside_sync::Synced, Transcript) {
+    /// The pre-turn sync alone, on the stored rows, with every warm-agent
+    /// drop recorded instead of made.
+    fn sync_now(&self) -> (outside_sync::Synced, Transcript, Vec<Forgot>) {
         let mut transcript = locked(&self.store).unwrap().load(self.summary.id).unwrap();
         let turn = outside_sync::Turn {
             session: self.summary.id,
-            provider_id: THREAD,
+            provider_id: self.provider_id(),
             account: &self.account.id,
             cwd: std::path::Path::new(&self.summary.cwd),
         };
-        let synced = outside_sync::before_turn(&self.store, &self.target(), &turn, &mut transcript);
-        (synced, transcript)
+        let mut forgot = Vec::new();
+        let synced = outside_sync::before_turn_with(
+            &self.store,
+            &self.target(),
+            &turn,
+            &mut transcript,
+            |store, session, start, rows| locked(store)?.write_rows(session, start, rows),
+            |kind, id, account, cwd| {
+                forgot.push((kind, id.to_owned(), account.to_owned(), cwd.to_owned()))
+            },
+        );
+        (synced, transcript, forgot)
     }
+
+    /// Lines appended as the agent writes them, without a send.
+    fn agent_writes(&self, entries: &[serde_json::Value]) {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.rollout())
+            .unwrap();
+        for entry in entries {
+            writeln!(file, "{entry}").unwrap();
+        }
+    }
+}
+
+/// A recorded `forget_session` call: kind, provider id, account, cwd.
+type Forgot = (Kind, String, String, PathBuf);
+
+fn codex_said(kind: &str, message: &str) -> serde_json::Value {
+    serde_json::json!({"type":"event_msg","payload":{"type":kind,"message":message}})
 }
 
 fn shape(rows: &[Row]) -> Vec<(String, String)> {
@@ -323,44 +442,233 @@ fn own_turn_is_never_imported_after_it_completes() {
 fn growth_drops_the_warm_agent_and_none_keeps_it() {
     let mut chat = Conversation::new("growth", true);
     chat.send("Fix the login");
+    let warm = (
+        Kind::Codex,
+        THREAD.to_owned(),
+        chat.account.id.clone(),
+        PathBuf::from(&chat.summary.cwd),
+    );
 
-    let (synced, transcript) = chat.sync_now();
+    let (synced, transcript, forgot) = chat.sync_now();
     assert_eq!(synced, outside_sync::Synced::default(), "nothing outside");
+    assert!(forgot.is_empty(), "the warm agent is kept");
     assert_eq!(transcript.rows.len(), 2);
 
     chat.continue_in_terminal("ran it in the terminal", "ok");
-    let (synced, transcript) = chat.sync_now();
+    let (synced, transcript, forgot) = chat.sync_now();
     assert_eq!(
         synced,
         outside_sync::Synced {
             picked: Some(2),
-            forgot: true
+            forgot: true,
+            held: false,
         }
+    );
+    assert_eq!(
+        forgot,
+        std::slice::from_ref(&warm),
+        "the agent keyed by this session goes"
     );
     assert_eq!(transcript.rows.len(), 5);
     assert_eq!(chat.rows(), transcript.rows, "picked-up rows are saved");
 
     // A terminal turn with no visible text still makes the warm agent stale.
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(chat.rollout())
-        .unwrap();
-    let tool_only = serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[]}});
-    writeln!(file, "{tool_only}").unwrap();
-    drop(file);
-    let (synced, transcript) = chat.sync_now();
+    chat.agent_writes(&[serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[]}})]);
+    let (synced, transcript, forgot) = chat.sync_now();
     assert_eq!(
         synced,
         outside_sync::Synced {
             picked: None,
-            forgot: true
+            forgot: true,
+            held: false,
         }
     );
+    assert_eq!(forgot, [warm]);
     assert_eq!(transcript.rows.len(), 5, "nothing to show");
 
-    let (synced, _) = chat.sync_now();
+    let (synced, _, forgot) = chat.sync_now();
     assert_eq!(synced, outside_sync::Synced::default(), "read once");
+    assert!(forgot.is_empty());
+}
+
+#[test]
+fn own_last_turn_flushed_late_imports_nothing_and_keeps_the_warm_agent() {
+    let mut chat = Conversation::new("late-flush", true);
+    chat.send("Fix the login");
+    // The agent wrote its own turn again after reporting it done.
+    chat.agent_writes(&[
+        codex_said("user_message", "Fix the login"),
+        codex_said("agent_message", "Done"),
+    ]);
+    let (synced, transcript, forgot) = chat.sync_now();
+    assert_eq!(synced, outside_sync::Synced::default());
+    assert!(forgot.is_empty(), "nothing outside: the warm agent is kept");
+    assert_eq!(transcript.rows.len(), 2);
+    assert_eq!(
+        chat.checkpoint().unwrap().len,
+        std::fs::metadata(chat.rollout()).unwrap().len(),
+        "the echo is behind the checkpoint now"
+    );
+
+    chat.agent_writes(&[codex_said("agent_message", "Done")]);
+    assert_eq!(chat.send("Now add a test"), "Ready");
+    assert_eq!(
+        shape(&chat.rows()),
+        pairs(&[
+            ("user", "Fix the login"),
+            ("assistant", "Done"),
+            ("user", "Now add a test"),
+            ("assistant", "Done"),
+        ])
+    );
+}
+
+#[test]
+fn own_turn_flushed_late_then_a_terminal_turn_imports_only_the_terminal_turn() {
+    let mut chat = Conversation::new("late-then-terminal", true);
+    chat.send("Fix the login");
+    chat.agent_writes(&[
+        codex_said("user_message", "Fix the login"),
+        codex_said("agent_message", "Done"),
+    ]);
+    chat.continue_in_terminal("ran it in the terminal", "ok");
+    assert_eq!(chat.send("Now add a test"), "Ready");
+    let rows = chat.rows();
+    assert_eq!(
+        shape(&rows),
+        pairs(&[
+            ("user", "Fix the login"),
+            ("assistant", "Done"),
+            ("interjection", "From terminal"),
+            ("user", "ran it in the terminal"),
+            ("assistant", "ok"),
+            ("user", "Now add a test"),
+            ("assistant", "Done"),
+        ])
+    );
+    assert_eq!(chat.view, rows);
+}
+
+#[test]
+fn a_failed_save_still_drops_the_warm_agent() {
+    let mut chat = Conversation::new("failed-save", true);
+    chat.send("Fix the login");
+    chat.continue_in_terminal("ran it in the terminal", "ok");
+    let before = chat.checkpoint();
+    let mut transcript = locked(&chat.store).unwrap().load(chat.summary.id).unwrap();
+    let turn = outside_sync::Turn {
+        session: chat.summary.id,
+        provider_id: THREAD,
+        account: &chat.account.id,
+        cwd: std::path::Path::new(&chat.summary.cwd),
+    };
+    let mut forgot = 0;
+    let synced = outside_sync::before_turn_with(
+        &chat.store,
+        &chat.target(),
+        &turn,
+        &mut transcript,
+        |_, _, _, _| Err("disk full".into()),
+        |_, _, _, _| forgot += 1,
+    );
+    assert_eq!(
+        synced,
+        outside_sync::Synced {
+            picked: None,
+            forgot: true,
+            held: true,
+        }
+    );
+    assert_eq!(forgot, 1, "the file grew from outside either way");
+    assert_eq!(transcript.rows.len(), 2, "unsaved rows are not shown");
+    assert_eq!(chat.checkpoint(), before);
+}
+
+#[test]
+fn unsaved_terminal_turns_are_read_again_on_the_next_send() {
+    let mut chat = Conversation::new("unsaved", false);
+    chat.send("Fix the login");
+    chat.continue_in_terminal("ran it in the terminal", "ok");
+    let before = chat.checkpoint();
+    // The store refuses the marker row, as a full disk would.
+    let db = rusqlite::Connection::open(chat.fixture.0.join("sessions.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_marker BEFORE INSERT ON native_rows WHEN NEW.role='interjection'
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    )
+    .unwrap();
+
+    assert_eq!(chat.send("Now add a test"), "Ready", "the send still goes");
+    let rows = chat.rows();
+    assert_eq!(
+        shape(&rows),
+        pairs(&[
+            ("user", "Fix the login"),
+            ("assistant", "Done"),
+            ("user", "Now add a test"),
+            ("assistant", "Done"),
+        ])
+    );
+    assert_eq!(chat.view, rows);
+    assert_eq!(chat.checkpoint(), before, "neither checkpoint moved");
+
+    db.execute_batch("DROP TRIGGER refuse_marker;").unwrap();
+    assert_eq!(chat.send("And the docs"), "Ready");
+    let rows = chat.rows();
+    // Gespan's own second turn is in the re-read too; it is dropped as an
+    // echo, so the terminal turns show after it.
+    assert_eq!(
+        shape(&rows),
+        pairs(&[
+            ("user", "Fix the login"),
+            ("assistant", "Done"),
+            ("user", "Now add a test"),
+            ("assistant", "Done"),
+            ("interjection", "From terminal"),
+            ("user", "ran it in the terminal"),
+            ("assistant", "ok"),
+            ("user", "And the docs"),
+            ("assistant", "Done"),
+        ])
+    );
+    assert_eq!(chat.view, rows);
+}
+
+#[test]
+fn claude_terminal_turns_show_once_before_the_new_prompt() {
+    let mut chat = Conversation::of(Kind::Claude, "claude", true);
+    assert_eq!(chat.send("Fix the login"), "Ready");
+    assert_eq!(
+        chat.checkpoint().map(|cp| cp.path),
+        Some(chat.rollout()),
+        "the account's own Claude home is read"
+    );
+    chat.continue_in_terminal("ran it in the terminal", "ok");
+
+    assert_eq!(chat.send("Now add a test"), "Ready");
+    let rows = chat.rows();
+    assert_eq!(
+        shape(&rows),
+        pairs(&[
+            ("user", "Fix the login"),
+            ("assistant", "Done"),
+            ("interjection", "From terminal"),
+            ("user", "ran it in the terminal"),
+            ("assistant", "ok"),
+            ("user", "Now add a test"),
+            ("assistant", "Done"),
+        ])
+    );
+    assert_eq!(chat.view, rows);
+
+    assert_eq!(chat.send("And the docs"), "Ready");
+    let rows = chat.rows();
+    assert_eq!(rows.len(), 9);
+    assert_eq!(
+        rows.iter().filter(|row| row.role == "interjection").count(),
+        1
+    );
+    assert_eq!(chat.view, rows);
 }
 
 #[test]

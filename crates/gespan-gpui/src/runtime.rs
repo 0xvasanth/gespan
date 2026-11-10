@@ -214,6 +214,7 @@ fn run_turn_using(
     let sync_target = outside_sync::Target::of(&store, &summary, &settings.account.id);
     // Picked-up terminal turns start here; the view gets them with the prompt.
     let mut picked_start = None;
+    let mut sync_held = false;
     let result = (|| {
         if let Some(reason) = locked(&store)?.edit_recovery_reason(summary.id)? {
             return Err(reason);
@@ -257,7 +258,9 @@ fn run_turn_using(
                 account: &settings.account.id,
                 cwd: std::path::Path::new(cwd),
             };
-            picked_start = outside_sync::before_turn(&store, target, &turn, &mut transcript).picked;
+            let synced = outside_sync::before_turn(&store, target, &turn, &mut transcript);
+            picked_start = synced.picked;
+            sync_held = synced.held;
         }
         turn_start = replay.map_or(transcript.rows.len(), |replay| replay.prompt);
         settings.operator_enabled |= settings.operator;
@@ -1302,7 +1305,11 @@ fn run_turn_using(
         result
     })();
     // Whatever the outcome, Gespan's own turn is never read back as outside.
-    if history_loaded && let (Some(target), Some(id)) = (&sync_target, provider_id.as_deref()) {
+    // Unless unsaved terminal turns must be read again next send.
+    if history_loaded
+        && !sync_held
+        && let (Some(target), Some(id)) = (&sync_target, provider_id.as_deref())
+    {
         outside_sync::after_turn(&store, target, summary.id, id);
     }
     let cancelled = ended_by_user(&cancel, &result);

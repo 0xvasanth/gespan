@@ -269,9 +269,53 @@ fn codex_file(home: &Path, id: &str) -> Option<PathBuf> {
     None
 }
 
-/// The checkpoint to store once a turn Gespan ran has finished.
-pub fn checkpoint_at_end(kind: Kind, home: &Path, provider_id: &str) -> Option<Checkpoint> {
-    let path = session_file(kind, home, provider_id)?;
+/// The session's file, taken from `known` while that is still this session's
+/// file in `home`, so a send doesn't search every session the agent has.
+fn locate(
+    kind: Kind,
+    home: &Path,
+    provider_id: &str,
+    known: Option<&Checkpoint>,
+) -> Option<PathBuf> {
+    if let Some(known) = known.filter(|known| {
+        known.path.starts_with(home)
+            && names_session(kind, &known.path, provider_id)
+            && known.path.is_file()
+    }) {
+        return Some(known.path.clone());
+    }
+    session_file(kind, home, provider_id)
+}
+
+/// Whether `path` is named as `provider_id`'s session file.
+fn names_session(kind: Kind, path: &Path, provider_id: &str) -> bool {
+    match kind {
+        Kind::Claude => {
+            !provider_id.is_empty()
+                && provider_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                && path
+                    .file_name()
+                    .is_some_and(|name| *name == *format!("{provider_id}.jsonl"))
+        }
+        Kind::Codex => {
+            use crate::accounts::transfer::codex::{rollout_matches, validate_thread_id};
+            validate_thread_id(provider_id).is_ok() && rollout_matches(path, provider_id)
+        }
+        _ => false,
+    }
+}
+
+/// The checkpoint to store once a turn Gespan ran has finished. `known` is
+/// the stored checkpoint, whose file is reused while it still matches.
+pub fn checkpoint_at_end(
+    kind: Kind,
+    home: &Path,
+    provider_id: &str,
+    known: Option<&Checkpoint>,
+) -> Option<Checkpoint> {
+    let path = locate(kind, home, provider_id, known)?;
     match end_checkpoint(kind, &path) {
         Ok(checkpoint) => Some(checkpoint),
         Err(error) => {
@@ -293,7 +337,7 @@ pub fn sync(
     checkpoint: Option<&Checkpoint>,
     last_prompt: Option<&str>,
 ) -> Sync {
-    let Some(path) = session_file(kind, home, provider_id) else {
+    let Some(path) = locate(kind, home, provider_id, checkpoint) else {
         return Sync::nothing(None);
     };
     match read_sync(kind, &path, checkpoint, last_prompt) {
@@ -849,7 +893,7 @@ mod tests {
                 reply("a1", "u1", "m1", "old reply"),
             ]),
         );
-        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID).unwrap();
+        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID, None).unwrap();
         assert_eq!(cp.last_uuid.as_deref(), Some("a1"));
         assert_eq!(cp.len, fs::metadata(&path).unwrap().len());
 
@@ -890,7 +934,7 @@ mod tests {
             &path,
             &jsonl(&[codex_user("old"), codex_agent("old reply")]),
         );
-        let cp = checkpoint_at_end(Kind::Codex, home.path(), SID).unwrap();
+        let cp = checkpoint_at_end(Kind::Codex, home.path(), SID, None).unwrap();
         append(
             &path,
             &jsonl(&[codex_user("new"), codex_agent("new reply")]),
@@ -907,7 +951,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = claude_path(home.path());
         append(&path, &jsonl(&[user("u1", None, json!("one"))]));
-        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID).unwrap();
+        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID, None).unwrap();
         let mut line = jsonl(&[reply("a1", "u1", "m1", "two")]);
         let tail = line.split_off(20);
         append(&path, &line);
@@ -925,7 +969,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = claude_path(home.path());
         append(&path, &jsonl(&[user("u1", None, json!("hi"))]));
-        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID).unwrap();
+        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID, None).unwrap();
         let sync = sync(Kind::Claude, home.path(), SID, Some(&cp), None);
         assert!(sync.turns.is_empty());
         assert!(!sync.grew);
@@ -1064,13 +1108,79 @@ mod tests {
         let none = sync(Kind::Cursor, home.path(), SID, None, Some("x"));
         assert!(none.turns.is_empty() && !none.grew && none.checkpoint.is_none());
         assert!(session_file(Kind::Cursor, home.path(), SID).is_none());
-        assert!(checkpoint_at_end(Kind::Cursor, home.path(), SID).is_none());
+        assert!(checkpoint_at_end(Kind::Cursor, home.path(), SID, None).is_none());
 
         let missing = sync(Kind::Claude, home.path(), SID, None, Some("x"));
         assert!(missing.turns.is_empty() && !missing.grew && missing.checkpoint.is_none());
-        assert!(checkpoint_at_end(Kind::Claude, home.path(), SID).is_none());
+        assert!(checkpoint_at_end(Kind::Claude, home.path(), SID, None).is_none());
         let none = sync(Kind::Codex, home.path(), SID, None, None);
         assert!(none.checkpoint.is_none());
+    }
+
+    /// A known file is read in place: the sessions folder isn't searched.
+    #[cfg(unix)]
+    #[test]
+    fn a_known_file_is_used_without_searching_for_it() {
+        use std::os::unix::fs::PermissionsExt;
+        for kind in [Kind::Claude, Kind::Codex] {
+            let home = tempfile::tempdir().unwrap();
+            let (path, folder) = if kind == Kind::Claude {
+                let path = claude_path(home.path());
+                append(&path, &jsonl(&[user("u1", None, json!("old"))]));
+                (path, home.path().join("projects"))
+            } else {
+                let path = codex_path(home.path(), "sessions");
+                append(&path, &jsonl(&[codex_user("old")]));
+                (path, home.path().join("sessions"))
+            };
+            let known = checkpoint_at_end(kind, home.path(), SID, None).unwrap();
+            if kind == Kind::Claude {
+                append(&path, &jsonl(&[user("u2", Some("u1"), json!("new"))]));
+            } else {
+                append(&path, &jsonl(&[codex_user("new")]));
+            }
+            // Listing the folder fails; opening a path through it still works.
+            fs::set_permissions(&folder, fs::Permissions::from_mode(0o300)).unwrap();
+            let searchable = fs::read_dir(&folder).is_ok();
+            let searched = session_file(kind, home.path(), SID);
+            let synced = sync(kind, home.path(), SID, Some(&known), None);
+            let end = checkpoint_at_end(kind, home.path(), SID, Some(&known));
+            let blind = checkpoint_at_end(kind, home.path(), SID, None);
+            fs::set_permissions(&folder, fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(pairs(&synced), vec![(TurnRole::User, "new")], "{kind:?}");
+            assert_eq!(end.unwrap().len, fs::metadata(&path).unwrap().len());
+            if !searchable {
+                // Root lists anything; elsewhere a search finds nothing.
+                assert_eq!(searched, None, "{kind:?}");
+                assert_eq!(blind, None, "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_known_file_of_another_session_or_home_is_not_reused() {
+        let home = tempfile::tempdir().unwrap();
+        let path = codex_path(home.path(), "sessions");
+        append(&path, &jsonl(&[codex_user("hi")]));
+        let other = tempfile::tempdir().unwrap();
+        let elsewhere = codex_path(other.path(), "sessions");
+        append(&elsewhere, &jsonl(&[codex_user("hi"), codex_agent("yo")]));
+        let foreign = Checkpoint {
+            path: elsewhere,
+            len: 0,
+            last_uuid: None,
+        };
+        let end = checkpoint_at_end(Kind::Codex, home.path(), SID, Some(&foreign)).unwrap();
+        assert_eq!(end.path, path, "another home's file is never read");
+        let renamed = path.with_file_name("rollout-x-other.jsonl");
+        fs::copy(&path, &renamed).unwrap();
+        let wrong = Checkpoint {
+            path: renamed,
+            len: 0,
+            last_uuid: None,
+        };
+        let end = checkpoint_at_end(Kind::Codex, home.path(), SID, Some(&wrong)).unwrap();
+        assert_eq!(end.path, path, "another session's file is never read");
     }
 
     #[test]
@@ -1119,7 +1229,7 @@ mod tests {
                 json!({"type":"last-prompt","lastPrompt":"hi"}),
             ]),
         );
-        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID).unwrap();
+        let cp = checkpoint_at_end(Kind::Claude, home.path(), SID, None).unwrap();
         assert_eq!(cp.last_uuid.as_deref(), Some("a1"));
         assert_eq!(cp.len, fs::metadata(&path).unwrap().len());
     }

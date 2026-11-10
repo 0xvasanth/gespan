@@ -2,7 +2,7 @@
 //! picked up before Gespan sends so the chat shows them and the agent
 //! resumes with them. Best effort: nothing here ever fails a turn.
 use super::{Database, Session, locked};
-use gespan_core::outside_turns::{self, Checkpoint};
+use gespan_core::outside_turns::{self, Checkpoint, OutsideTurn, TurnRole};
 use gespan_core::provider::{self, Kind};
 use gespan_core::transcript::{Row, Transcript};
 use std::path::{Path, PathBuf};
@@ -53,6 +53,9 @@ pub(super) struct Synced {
     pub(super) picked: Option<usize>,
     /// The warm agent was dropped because the file grew from outside.
     pub(super) forgot: bool,
+    /// Picked-up turns could not be saved: no checkpoint may move this turn,
+    /// so the next send reads them again.
+    pub(super) held: bool,
 }
 
 /// The session about to send, as its warm agent is keyed.
@@ -71,35 +74,67 @@ pub(super) fn before_turn(
     turn: &Turn,
     transcript: &mut Transcript,
 ) -> Synced {
+    before_turn_with(
+        store,
+        target,
+        turn,
+        transcript,
+        |store, session, start, rows| locked(store)?.write_rows(session, start, rows),
+        provider::forget_session,
+    )
+}
+
+/// `before_turn` with its two effects passed in: saving the picked-up rows,
+/// and dropping the warm agent.
+pub(super) fn before_turn_with(
+    store: &Database,
+    target: &Target,
+    turn: &Turn,
+    transcript: &mut Transcript,
+    save_rows: impl FnOnce(&Database, i64, usize, &[Row]) -> Result<(), String>,
+    forget: impl FnOnce(Kind, &str, &str, &Path),
+) -> Synced {
     let stored = stored_checkpoint(store, turn.session);
-    let last_prompt = last_prompt(&transcript.rows);
-    let sync = outside_turns::sync(
+    let own = OwnTurn::last(&transcript.rows);
+    let mut sync = outside_turns::sync(
         target.kind,
         &target.home,
         turn.provider_id,
         stored.as_ref(),
-        last_prompt.as_deref(),
+        own.prompt.as_deref(),
     );
+    if !sync.turns.is_empty() {
+        // An agent can flush its last entries for Gespan's own turn after
+        // reporting it done, past the checkpoint taken then.
+        let picked = sync.turns.len();
+        sync.turns = own.without_echoes(std::mem::take(&mut sync.turns));
+        if sync.turns.is_empty() {
+            tracing::info!(picked, "terminal sync read only Gespan's own last turn");
+            sync.grew = false;
+        }
+    }
     let mut synced = Synced::default();
+    if sync.grew {
+        // The warm agent's context is stale, and its next write could fork
+        // the session file.
+        forget(target.kind, turn.provider_id, turn.account, turn.cwd);
+        synced.forgot = true;
+    }
     if !sync.turns.is_empty() {
         let old = transcript.rows.len();
         outside_turns::append_rows(transcript, &sync.turns);
-        let saved = locked(store)
-            .and_then(|mut store| store.write_rows(turn.session, old, &transcript.rows[old..]));
-        if let Err(error) = saved {
-            // Unsaved, they are left for the next send to pick up again.
+        if let Err(error) = save_rows(store, turn.session, old, &transcript.rows[old..]) {
+            // Keep the old checkpoint, and skip this turn's own, so the next
+            // send reads these turns again. That read also holds Gespan's own
+            // turn from this send, after them; it is dropped as an echo, but
+            // the terminal turns then show after it rather than before.
             tracing::warn!(%error, "could not save terminal turns");
             transcript.rows.truncate(old);
+            synced.held = true;
             return synced;
         }
         tracing::info!(turns = sync.turns.len(), "picked up terminal turns");
         synced.picked = Some(old);
-    }
-    if sync.grew {
-        // The warm agent's context is stale, and its next write could fork
-        // the session file.
-        provider::forget_session(target.kind, turn.provider_id, turn.account, turn.cwd);
-        synced.forgot = true;
     }
     // No checkpoint means no file or a failed read: keep what we had.
     if let Some(checkpoint) = &sync.checkpoint {
@@ -111,8 +146,9 @@ pub(super) fn before_turn(
 /// Moves the checkpoint past the turn Gespan just ran, so it is never read
 /// back as outside.
 pub(super) fn after_turn(store: &Database, target: &Target, session: i64, provider_id: &str) {
+    let known = stored_checkpoint(store, session);
     if let Some(checkpoint) =
-        outside_turns::checkpoint_at_end(target.kind, &target.home, provider_id)
+        outside_turns::checkpoint_at_end(target.kind, &target.home, provider_id, known.as_ref())
     {
         save_checkpoint(store, session, &checkpoint);
     }
@@ -139,19 +175,76 @@ fn save_checkpoint(store: &Database, session: i64, checkpoint: &Checkpoint) {
     }
 }
 
-/// The text of the last user prompt, across its continuation rows.
-fn last_prompt(rows: &[Row]) -> Option<String> {
-    let start = rows
-        .iter()
-        .rposition(|row| row.role == "user" && row.first)?;
-    Some(
-        rows[start..]
+/// Gespan's own latest turn: the prompt and the reply texts it shows.
+#[derive(Debug, Default)]
+struct OwnTurn {
+    prompt: Option<String>,
+    replies: Vec<String>,
+}
+
+impl OwnTurn {
+    fn last(rows: &[Row]) -> Self {
+        let Some(start) = rows.iter().rposition(|row| row.role == "user" && row.first) else {
+            return Self::default();
+        };
+        let mut groups: Vec<(&str, String)> = Vec::new();
+        for row in &rows[start..] {
+            match groups.last_mut() {
+                Some((role, text)) if !row.first && *role == row.role => text.push_str(&row.text),
+                _ => groups.push((&row.role, row.text.clone())),
+            }
+        }
+        let mut groups = groups.into_iter();
+        Self {
+            prompt: groups.next().map(|(_, text)| text),
+            replies: groups
+                .filter(|(role, _)| *role == "assistant")
+                .map(|(_, text)| text.trim().to_owned())
+                .collect(),
+        }
+    }
+
+    fn echoes(&self, turn: &OutsideTurn) -> bool {
+        let text = turn.text.trim();
+        match turn.role {
+            TurnRole::User => self.prompt.as_deref().map(str::trim) == Some(text),
+            TurnRole::Assistant => self.replies.iter().any(|reply| reply == text),
+        }
+    }
+
+    /// Drops this turn where it starts or ends `turns`: its prompt, if read,
+    /// and the replies after it. A matching prompt that got a different reply
+    /// is the user asking again in the terminal, and stays.
+    fn without_echoes(&self, mut turns: Vec<OutsideTurn>) -> Vec<OutsideTurn> {
+        let lead = self.echo_len(&turns);
+        turns.drain(..lead);
+        if let Some(last_prompt) = turns.iter().rposition(|t| t.role == TurnRole::User)
+            && self.echo_len(&turns[last_prompt..]) == turns.len() - last_prompt
+        {
+            turns.truncate(last_prompt);
+        }
+        turns
+    }
+
+    /// How many turns at the start of `turns` repeat this one.
+    fn echo_len(&self, turns: &[OutsideTurn]) -> usize {
+        let prompt = usize::from(
+            turns
+                .first()
+                .is_some_and(|t| t.role == TurnRole::User && self.echoes(t)),
+        );
+        let replies = turns[prompt..]
             .iter()
-            .enumerate()
-            .take_while(|(ix, row)| row.role == "user" && (*ix == 0 || !row.first))
-            .map(|(_, row)| row.text.as_str())
-            .collect(),
-    )
+            .take_while(|t| t.role == TurnRole::Assistant && self.echoes(t))
+            .count();
+        let end = prompt + replies;
+        let complete = end == turns.len() || turns[end].role == TurnRole::User;
+        if prompt == 1 && !complete {
+            // Asked again and answered differently: not an echo.
+            return 0;
+        }
+        end
+    }
 }
 
 #[cfg(test)]
@@ -167,23 +260,76 @@ mod tests {
         }
     }
 
-    #[test]
-    fn last_prompt_joins_continuation_rows_of_the_last_user_message() {
-        let rows = [
-            row("user", "first", true),
-            row("assistant", "reply", true),
-            row("user", "a long ", true),
-            row("user", "prompt", false),
-            row("attachments", "[]", true),
-            row("assistant", "done", true),
-        ];
-        assert_eq!(last_prompt(&rows).as_deref(), Some("a long prompt"));
+    fn said(role: TurnRole, text: &str) -> OutsideTurn {
+        OutsideTurn {
+            role,
+            text: text.into(),
+        }
     }
 
     #[test]
-    fn last_prompt_stops_at_the_next_message() {
-        let rows = [row("user", "one", true), row("user", "two", true)];
-        assert_eq!(last_prompt(&rows).as_deref(), Some("two"));
-        assert_eq!(last_prompt(&[row("assistant", "hi", true)]), None);
+    fn own_turn_joins_continuation_rows_and_collects_every_reply() {
+        let rows = [
+            row("user", "first", true),
+            row("assistant", "old reply", true),
+            row("user", "a long ", true),
+            row("user", "prompt", false),
+            row("attachments", "[]", true),
+            row("assistant", "Looking", true),
+            row("tool", "{}", true),
+            row("assistant", "Done ", true),
+            row("assistant", "here", false),
+        ];
+        let own = OwnTurn::last(&rows);
+        assert_eq!(own.prompt.as_deref(), Some("a long prompt"));
+        assert_eq!(own.replies, ["Looking", "Done here"]);
+        assert!(
+            OwnTurn::last(&[row("assistant", "hi", true)])
+                .prompt
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn echoes_of_the_own_turn_are_dropped_at_either_end_only() {
+        use TurnRole::{Assistant, User};
+        let own = OwnTurn {
+            prompt: Some("Fix it".into()),
+            replies: vec!["Done".into()],
+        };
+        let terminal = [said(User, "ran it"), said(Assistant, "ok")];
+        // Flushed late: before the terminal turn.
+        let turns = [
+            &[said(User, " Fix it "), said(Assistant, "Done")][..],
+            &terminal,
+        ]
+        .concat();
+        assert_eq!(own.without_echoes(turns), terminal);
+        // Only the reply flushed late.
+        let turns = [&[said(Assistant, "Done")][..], &terminal].concat();
+        assert_eq!(own.without_echoes(turns), terminal);
+        // Read again after it, when a failed save held the checkpoint back.
+        let turns = [
+            &terminal[..],
+            &[said(User, "Fix it"), said(Assistant, "Done")],
+        ]
+        .concat();
+        assert_eq!(own.without_echoes(turns), terminal);
+        // Nothing but the echo.
+        assert!(own.without_echoes(vec![said(User, "Fix it")]).is_empty());
+        // Asked again in the terminal and answered differently: kept.
+        let again = vec![
+            said(User, "Fix it"),
+            said(Assistant, "Fixed it differently"),
+        ];
+        assert_eq!(own.without_echoes(again.clone()), again);
+        // A repeat in the middle is the user's own.
+        let middle = [
+            &terminal[..],
+            &[said(User, "Fix it"), said(Assistant, "Done")],
+            &terminal,
+        ]
+        .concat();
+        assert_eq!(own.without_echoes(middle.clone()), middle);
     }
 }
