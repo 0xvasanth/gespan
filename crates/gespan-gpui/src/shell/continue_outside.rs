@@ -44,6 +44,14 @@ impl Outside {
     pub(super) fn line(&self) -> Option<String> {
         self.resume.line(&self.cwd, ShellStyle::native())
     }
+    /// The agent's own session id, whatever else the panel can offer.
+    fn session_id(&self) -> Option<&str> {
+        match &self.resume {
+            Resume::Command { args, .. } => args.last().map(String::as_str),
+            Resume::IdOnly(id) => Some(id),
+            Resume::NotStarted => None,
+        }
+    }
 }
 
 /// What the panel says for `outside`, kept apart from drawing so each case
@@ -65,6 +73,16 @@ pub(super) fn panel_copy(outside: &Outside) -> PanelCopy {
     let folder = gespan_core::files::leaf_name(&outside.cwd);
     let subtitle = format!("{agent} · {folder}");
     match &outside.resume {
+        // A folder name no shell quoting keeps literal: the id, to run by hand.
+        Resume::Command { .. } if outside.line().is_none() => PanelCopy {
+            title: "Continue outside Gespan",
+            subtitle,
+            code: outside.session_id().map(str::to_owned),
+            note: format!(
+                "This folder's name can't go into a command safely. Open a terminal in {folder} and resume {agent} with this session ID."
+            ),
+            runnable: false,
+        },
         Resume::Command { .. } => PanelCopy {
             title: "Continue in your terminal",
             subtitle,
@@ -121,11 +139,10 @@ impl OutsidePanel {
     }
     /// The whole line for a command, the id alone otherwise.
     pub(super) fn copy(&mut self, cx: &mut Context<Self>) {
-        let text = match &self.outside.resume {
-            Resume::Command { .. } => self.outside.line(),
-            Resume::IdOnly(id) => Some(id.clone()),
-            Resume::NotStarted => None,
-        };
+        let text = self
+            .outside
+            .line()
+            .or_else(|| self.outside.session_id().map(str::to_owned));
         let Some(text) = text else {
             return;
         };
@@ -419,11 +436,18 @@ impl Shell {
     /// Starts the system terminal off the UI thread; the panel stays open
     /// until it settles so a failure can show in it.
     pub(super) fn resume_in_terminal_app(&mut self, id: i64, cx: &mut Context<Self>) {
-        let Some(line) = self.continue_outside(id, cx).and_then(|o| o.line()) else {
+        let Some(outside) = self.continue_outside(id, cx) else {
+            return;
+        };
+        let style = ShellStyle::native();
+        let (Some(line), Some(command)) = (outside.line(), outside.resume.command_line(style))
+        else {
             return;
         };
         let open = self.terminal_app.clone();
-        let work = cx.background_executor().spawn(async move { open(&line) });
+        let work = cx
+            .background_executor()
+            .spawn(async move { open(&outside.cwd, &line, &command) });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| this.finish_terminal_app(result, cx));
@@ -496,9 +520,10 @@ impl Shell {
     }
 }
 
-/// Opens a system terminal running a line. Tests swap in a stub so nothing
-/// real launches.
-pub(super) type OpenTerminalApp = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+/// Opens a system terminal in a folder (`cwd`, `line`, `command`, as
+/// `resume_outside::open_in_terminal` takes them). Tests swap in a stub so
+/// nothing real launches.
+pub(super) type OpenTerminalApp = Arc<dyn Fn(&str, &str, &str) -> Result<(), String> + Send + Sync>;
 
 pub(super) fn default_terminal_app() -> OpenTerminalApp {
     Arc::new(resume_outside::open_in_terminal)
@@ -522,6 +547,20 @@ mod tests {
         assert_eq!(copy.code, Some(format!("claude --resume {ID}")));
         assert!(copy.note.contains("cd gespan"), "{}", copy.note);
         assert!(copy.runnable);
+    }
+
+    #[test]
+    fn a_folder_no_quoting_keeps_literal_offers_the_id_to_run_by_hand() {
+        let cwd = if cfg!(windows) {
+            r"C:\work\%USERNAME%"
+        } else {
+            "/work/a\nb"
+        };
+        let outside = Outside::new("claude", Some(ID), cwd.into());
+        let copy = panel_copy(&outside);
+        assert_eq!(copy.code.as_deref(), Some(ID), "the id, not a command");
+        assert!(!copy.runnable, "no dock or terminal app");
+        assert!(copy.note.contains("can't go into a command safely"));
     }
 
     #[test]
@@ -737,7 +776,7 @@ mod tests {
         window
             .update(visual, |shell, _, _| {
                 let launched = launched.clone();
-                shell.terminal_app = Arc::new(move |line| {
+                shell.terminal_app = Arc::new(move |_, line, _| {
                     launched.lock().unwrap().push(line.to_owned());
                     Err("No terminal app found. Copy the command instead.".into())
                 });
@@ -774,7 +813,7 @@ mod tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         window
             .update(visual, |shell, _, _| {
-                shell.terminal_app = Arc::new(|_| Ok(()))
+                shell.terminal_app = Arc::new(|_, _, _| Ok(()))
             })
             .unwrap();
         open_continue_menu(window, visual, active);
