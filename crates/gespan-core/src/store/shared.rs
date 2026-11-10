@@ -2,7 +2,7 @@
 //! persistent native_* tables, or history conversion on open.
 mod accounts;
 pub(super) mod blocks;
-mod claude_shell;
+pub(crate) mod claude_shell;
 mod edit;
 mod settings;
 #[cfg(test)]

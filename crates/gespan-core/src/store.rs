@@ -15,7 +15,7 @@ pub use session_metadata::{MobileSessionMetadata, SessionSidebarMetadata};
 mod session_preview;
 pub use session_preview::SessionPreviewData;
 mod edit;
-mod shared;
+pub(crate) mod shared;
 /// Desktop blocks as native rows, for tests outside the store.
 #[cfg(test)]
 pub(crate) use shared::blocks::project as project_desktop_blocks;
