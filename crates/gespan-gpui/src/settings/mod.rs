@@ -52,7 +52,7 @@ pub(crate) struct SettingsContext {
     pub cwd: String,
     pub project_label: String,
     pub archived: Vec<ArchivedSession>,
-    /// Projects archived from the rail, as (path, label).
+    /// Projects archived from the sidebar, as (path, label).
     pub archived_projects: Vec<(String, String)>,
     /// Projects the Worktrees, Providers and Inbox pages offer.
     pub projects: Vec<(String, String)>,

@@ -21,12 +21,6 @@ use gpui::EventEmitter;
 const FIXED_PREFIX: &str = "fixed:";
 const AUTOMATION_RUNS: &str = "fixed:automations";
 
-/// The open or closed chevron that replaces a folder's glyph keeps Automation
-/// runs yellow; every other folder's chevron stays plain.
-fn chevron_tint(key: &str) -> Option<gpui::Hsla> {
-    fixed_folder_tint(key)
-}
-
 /// Automation runs wears the Automations entry's yellow zap.
 fn fixed_folder_tint(id: &str) -> Option<gpui::Hsla> {
     (id == AUTOMATION_RUNS).then(|| crate::theme::nav_tint("Automations"))?
@@ -473,7 +467,7 @@ impl Shell {
                 _ => true,
             })
             .collect();
-        navigation_ids(&entries, false)
+        navigation_ids(&entries)
     }
 
     fn session_menu_ids(&self, id: i64, cx: &App) -> Vec<i64> {
@@ -1452,7 +1446,7 @@ impl Shell {
                                     },
                                     16.,
                                 )
-                                .when_some(chevron_tint(key), |chevron, tint| {
+                                .when_some(fixed_folder_tint(key), |chevron, tint| {
                                     chevron.text_color(tint)
                                 }),
                             ),
@@ -2250,10 +2244,8 @@ mod tests {
         let yellow = crate::theme::nav_tint("Automations");
         assert!(yellow.is_some());
         assert_eq!(fixed_folder_tint(AUTOMATION_RUNS), yellow);
-        // The chevron shown when the folder is open or hovered follows suit.
-        assert_eq!(chevron_tint(AUTOMATION_RUNS), yellow);
-        assert_eq!(chevron_tint("folder:user-folder"), None);
-        assert_eq!(chevron_tint("reminders"), None);
+        assert_eq!(fixed_folder_tint("folder:user-folder"), None);
+        assert_eq!(fixed_folder_tint("reminders"), None);
         // A Pilot's folder shows the Pilot, never the zap's colour.
         assert_eq!(
             fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot")),

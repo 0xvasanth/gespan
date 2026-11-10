@@ -5706,10 +5706,10 @@ impl Shell {
             6. + 24. + self.open_in_editor_room(cx) + 12. + controls
         }
     }
-    /// Classic: the strip's room after its tabs, wherever the toggle
-    /// overhangs an open right panel.
+    /// The strip's room after its tabs. Boxy runs the title bar over the
+    /// right panel; otherwise the toggle overhangs an open panel.
     fn strip_trail(&self, cx: &App) -> f32 {
-        if self.titlebar_over_panel() {
+        if self.workspace.boxy_layout() {
             return self.toggle_room(cx);
         }
         (self.toggle_room(cx) - self.right_drawn).max(0.)

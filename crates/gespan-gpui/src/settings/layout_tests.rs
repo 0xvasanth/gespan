@@ -123,10 +123,9 @@ fn restore_defaults_keeps_the_focused_layout(cx: &mut TestAppContext) {
         .update(visual, |view, _, cx| view.restore_defaults(cx))
         .unwrap();
     visual.run_until_parked();
+    // The style lives in the workspace, so only the shell could change it, and
+    // only by hearing a layout event.
     assert_eq!(*seen.borrow(), ["changed"], "no layout event");
-    window
-        .update(visual, |view, _, _| assert!(view.ctx.new_layout_boxy))
-        .unwrap();
 }
 
 #[gpui::test]

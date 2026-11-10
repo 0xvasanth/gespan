@@ -177,8 +177,8 @@ impl Shell {
                 })),
         )
     }
-    /// The project menu's row, in the new layouts, whose title bar corner has
-    /// no button for it.
+    /// The project menu's row for opening the project in an editor, for
+    /// layouts whose title bar corner has no button for it.
     pub(super) fn project_menu_editor_row(&self, cx: &App) -> Option<MenuItem> {
         let path = self.open_in_editor_folder(cx)?;
         Some(

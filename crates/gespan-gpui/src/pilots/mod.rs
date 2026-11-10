@@ -1245,8 +1245,9 @@ impl Pilots {
             self.rail_bounds.entry(pilot.id.clone()).or_default();
         }
         let has = !roster.is_empty();
-        // With no Pilot yet, the card stands in for the section. A project without Pilots of its own, when others
-        // exist, offers one under the label instead.
+        // With no Pilot yet, the card stands in for the section. A project
+        // without Pilots of its own, when others exist, offers one under the
+        // label instead.
         if self.roster.pilots.is_empty() {
             return self.intro_card(project.into_iter().collect(), cx);
         }

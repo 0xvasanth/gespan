@@ -125,7 +125,7 @@ pub(crate) struct Workspace {
     pub tab_workspaces: HashMap<i64, String>,
     pub active: Option<i64>,
     pub projects: Vec<String>,
-    /// Projects archived from the rail, newest first. Their chats stay in
+    /// Projects archived from the sidebar, newest first. Their chats stay in
     /// history; adding the project again takes it out of this list.
     pub archived_projects: Vec<String>,
     pub project: String,
@@ -1337,7 +1337,6 @@ pub(crate) fn follow_moved_projects(
     Some(rebased)
 }
 
-/// Rewrites every place the saved workspace names the project `from`.
 /// Whether a save came from the retired classic layout.
 fn legacy_classic(saved: &serde_json::Value) -> bool {
     saved
@@ -1346,6 +1345,7 @@ fn legacy_classic(saved: &serde_json::Value) -> bool {
         == Some(true)
 }
 
+/// Rewrites every place the saved workspace names the project `from`.
 fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
     use gespan_core::files::{is_equal_or_inside, path_key, rebase_path};
     use serde_json::Value;

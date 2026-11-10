@@ -428,11 +428,6 @@ impl Shell {
         // The toggle alone; the panel heads itself with its tabs.
         6. + 24. + 12. + controls
     }
-    /// Boxy: the title bar runs over the open right panel, which starts below
-    /// it.
-    pub(super) fn titlebar_over_panel(&self) -> bool {
-        self.workspace.boxy_layout()
-    }
     fn corner_tabs_shown(&self) -> bool {
         self.workspace.right_panel_open && !self.app_view_open() && self.settings.is_none()
     }

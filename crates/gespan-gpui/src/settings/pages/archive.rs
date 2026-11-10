@@ -162,7 +162,7 @@ impl SettingsView {
                 None,
                 true,
                 "Archived projects",
-                Some("Archive a project from the rail to keep its chats without listing it in the sidebar.".into()),
+                Some("Archive a project from its menu in the sidebar to keep its chats without listing it in the sidebar.".into()),
                 None,
                 projects,
             ),

@@ -400,6 +400,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "translucent transparency body window",
     ),
     (
+        "new-layout-style",
+        Section::Appearance,
+        "Workspace style",
+        "rounded boxy card frame full height layout",
+    ),
+    (
         "sidebar-notes",
         Section::Appearance,
         "Notes",
@@ -749,11 +755,24 @@ mod tests {
     }
 
     #[test]
+    fn the_workspace_style_row_is_searchable() {
+        for query in ["boxy", "workspace style"] {
+            let hit = search(query, "")
+                .into_iter()
+                .find(|r| r.setting == Some("new-layout-style"));
+            assert_eq!(hit.map(|r| r.section), Some(Section::Appearance), "{query}");
+        }
+    }
+
+    #[test]
     fn retired_rows_are_not_searchable() {
         for id in [
             "inset-layout",
             "rail-pilots-pinned",
             "pilots-enabled",
+            "notes",
+            "board",
+            "working-agents",
             "search-panel",
         ] {
             assert!(INDEX.iter().all(|e| e.0 != id), "{id} is still indexed");

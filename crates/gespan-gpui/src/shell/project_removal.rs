@@ -59,7 +59,7 @@ impl Shell {
         .detach();
     }
 
-    /// Closes the project's tabs and drops it from the rail. Its chats stay in
+    /// Closes the project's tabs and drops it from the sidebar. Its chats stay in
     /// history, and opening the folder again (or a new chat there) restores it.
     pub(super) fn archive_project(
         &mut self,
