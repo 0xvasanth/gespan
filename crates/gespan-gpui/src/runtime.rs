@@ -18,6 +18,9 @@ mod handoff;
 mod handoff_tests;
 #[cfg(test)]
 mod new_worktree_tests;
+mod outside_sync;
+#[cfg(all(test, unix))]
+mod outside_sync_tests;
 mod persistence;
 #[cfg(all(test, unix))]
 mod pilot_checkpoint_tests;
@@ -208,6 +211,9 @@ fn run_turn_using(
         .unwrap_or_default();
     let mut usage_limit = None;
     let mut signed_out = false;
+    let sync_target = outside_sync::Target::of(&store, &summary, &settings.account.id);
+    // Picked-up terminal turns start here; the view gets them with the prompt.
+    let mut picked_start = None;
     let result = (|| {
         if let Some(reason) = locked(&store)?.edit_recovery_reason(summary.id)? {
             return Err(reason);
@@ -238,6 +244,21 @@ fn run_turn_using(
             None
         };
         history_loaded = true;
+        // A replay reuses a stored prompt: terminal turns would land between
+        // it and its reply. A provider switch's id belongs to the old agent.
+        if replay.is_none()
+            && settings.pending_provider_switch.is_none()
+            && let (Some(target), Some(id)) = (&sync_target, provider_id.as_deref())
+        {
+            let cwd = settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd);
+            let turn = outside_sync::Turn {
+                session: summary.id,
+                provider_id: id,
+                account: &settings.account.id,
+                cwd: std::path::Path::new(cwd),
+            };
+            picked_start = outside_sync::before_turn(&store, target, &turn, &mut transcript).picked;
+        }
         turn_start = replay.map_or(transcript.rows.len(), |replay| replay.prompt);
         settings.operator_enabled |= settings.operator;
         let mut persisted = settings.clone();
@@ -273,6 +294,8 @@ fn run_turn_using(
             start
         };
         let started_at = transcript.rows[start].sent_at;
+        // The view painted the prompt at the old end: patch from there.
+        let shown = picked_start.unwrap_or(start);
         // Show the working receipt while connecting, before the first token.
         transcript.begin("assistant");
         // Keep the already painted prompt in the failure replay even if saving
@@ -315,8 +338,8 @@ fn run_turn_using(
                 follow_up_delivered: Vec::new(),
                 follow_up_errors: Vec::new(),
                 delivered: settings.pilot_message_id.clone(),
-                start,
-                rows: transcript.rows[start..].to_vec(),
+                start: shown,
+                rows: transcript.rows[shown..].to_vec(),
                 provider_id: None,
                 model: None,
                 config_model: None,
@@ -1278,6 +1301,10 @@ fn run_turn_using(
         }
         result
     })();
+    // Whatever the outcome, Gespan's own turn is never read back as outside.
+    if history_loaded && let (Some(target), Some(id)) = (&sync_target, provider_id.as_deref()) {
+        outside_sync::after_turn(&store, target, summary.id, id);
+    }
     let cancelled = ended_by_user(&cancel, &result);
     let handoff = prepared_handoff.map(|mut ready| {
         if handoff_accepted {
@@ -1308,7 +1335,7 @@ fn run_turn_using(
     // unseen by the UI. Replay the turn on failure before sending an error or
     // settled tools; starting after those missing rows would abort in patch().
     let mut final_start = if result.is_err() {
-        turn_start
+        picked_start.map_or(turn_start, |picked| picked.min(turn_start))
     } else {
         transcript.rows.len()
     };
