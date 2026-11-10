@@ -6,12 +6,13 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::provider::Kind;
 
 mod codex;
+mod raw;
 pub use codex::parse_codex;
+use raw::{ClaudeLine, Content};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnRole {
@@ -76,20 +77,19 @@ pub fn parse_claude(region: &[u8], after_uuid: Option<&str>) -> Parsed {
     let mut parents: HashMap<String, String> = HashMap::new();
     let mut entries: Vec<Entry> = Vec::new();
     for line in region[..consumed].split(|b| *b == b'\n') {
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+        let Ok(line) = serde_json::from_slice::<ClaudeLine>(line) else {
             continue;
         };
-        let uuid = str_field(&value, "uuid");
+        let uuid = line.uuid.get().map(str::to_string);
         if let Some(uuid) = &uuid {
             // A compact boundary has no parent but points back at the last
             // entry before the compaction.
-            let parent =
-                str_field(&value, "parentUuid").or_else(|| str_field(&value, "logicalParentUuid"));
+            let parent = line.parent_uuid.get().or(line.logical_parent_uuid.get());
             if let Some(parent) = parent {
-                parents.insert(uuid.clone(), parent);
+                parents.insert(uuid.clone(), parent.to_string());
             }
         }
-        if let Some(entry) = turn_entry(&value, uuid) {
+        if let Some(entry) = turn_entry(&line, uuid) {
             entries.push(entry);
         }
     }
@@ -165,25 +165,17 @@ fn complete_len(region: &[u8]) -> usize {
         .map_or(0, |i| i + 1)
 }
 
-fn str_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key)?.as_str().map(str::to_string)
-}
-
-fn flag(value: &Value, key: &str) -> bool {
-    value.get(key).and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn turn_entry(value: &Value, uuid: Option<String>) -> Option<Entry> {
-    let role = match value.get("type")?.as_str()? {
+fn turn_entry(line: &ClaudeLine, uuid: Option<String>) -> Option<Entry> {
+    let role = match line.kind.get()? {
         "user" => TurnRole::User,
         "assistant" => TurnRole::Assistant,
         _ => return None,
     };
-    if flag(value, "isSidechain") || flag(value, "isMeta") || flag(value, "isCompactSummary") {
+    if line.is_sidechain.0 || line.is_meta.0 || line.is_compact_summary.0 {
         return None;
     }
-    let message = value.get("message")?;
-    let mut text = visible_text(message.get("content"));
+    let message = line.message.as_ref()?;
+    let mut text = visible_text(&message.content, "text");
     if role == TurnRole::User && is_command_text(&text) {
         // Kept as an entry: it still links the chain and counts as growth.
         text.clear();
@@ -191,7 +183,7 @@ fn turn_entry(value: &Value, uuid: Option<String>) -> Option<Entry> {
     Some(Entry {
         uuid,
         role,
-        message_id: str_field(message, "id"),
+        message_id: message.id.get().map(str::to_string),
         text,
     })
 }
@@ -213,19 +205,20 @@ fn is_command_text(text: &str) -> bool {
     TAGS.iter().any(|tag| text.starts_with(tag)) || text.starts_with("[Request interrupted by user")
 }
 
-/// The text blocks of a message, ignoring thinking, tool calls and tool results.
-fn visible_text(content: Option<&Value>) -> String {
+/// The `block` blocks of a message (or its plain string), ignoring thinking,
+/// tool calls and tool results.
+fn visible_text(content: &Content, block: &str) -> String {
     match content {
-        Some(Value::String(text)) => text.trim().to_string(),
-        Some(Value::Array(blocks)) => blocks
+        Content::Text(text) => text.trim().to_string(),
+        Content::Blocks(blocks) => blocks
             .iter()
-            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .filter(|b| b.kind.get() == Some(block))
+            .filter_map(|b| b.text.get())
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join("\n\n"),
-        _ => String::new(),
+        Content::Other => String::new(),
     }
 }
 
@@ -349,9 +342,10 @@ pub fn checkpoint_at_end(
 
 /// Reads what the agent's own CLI added to a session since `checkpoint`.
 ///
-/// Without a checkpoint, the turn typed as `last_prompt` is searched for and
-/// only what follows its reply is imported; no match, or more than one, means
-/// nothing is imported. Best effort: any failure imports nothing.
+/// Without a checkpoint, the turn typed as `last_prompt` is searched for in
+/// the file's last few MiB and only what follows its reply is imported; no
+/// match, or more than one, means nothing is imported. Best effort: any
+/// failure imports nothing.
 pub fn sync(
     kind: Kind,
     home: &Path,
@@ -427,7 +421,7 @@ fn read_sync(
             Ok(Sync::nothing(Some(end)))
         }
         None => {
-            let region = read_from(path, 0)?;
+            let (start, region) = read_tail(path, size, NO_CHECKPOINT_WINDOW)?;
             let parsed = parse(kind, &region, None);
             let consumed = parsed.consumed as usize;
             let turns = after_last_prompt(parsed.turns, last_prompt);
@@ -436,7 +430,7 @@ fn read_sync(
                 turns,
                 checkpoint: Some(Checkpoint {
                     path: path.to_path_buf(),
-                    len: parsed.consumed,
+                    len: start + parsed.consumed,
                     last_uuid: last_uuid_in(kind, &region[..consumed]),
                 }),
             })
@@ -449,6 +443,26 @@ fn parse(kind: Kind, region: &[u8], after_uuid: Option<&str>) -> Parsed {
         Kind::Claude => parse_claude(region, after_uuid),
         _ => parse_codex(region),
     }
+}
+
+/// How far back a session without a checkpoint is searched for its last
+/// prompt, so its first send doesn't read a long history.
+const NO_CHECKPOINT_WINDOW: u64 = 4 * 1024 * 1024;
+
+/// The last `window` bytes of a `size`-byte file, starting at the first line
+/// that begins inside them, and the offset they start at.
+fn read_tail(path: &Path, size: u64, window: u64) -> io::Result<(u64, Vec<u8>)> {
+    if size <= window {
+        return Ok((0, read_from(path, 0)?));
+    }
+    // One byte early, so a line starting right at the window is kept.
+    let from = size - window - 1;
+    let bytes = read_from(path, from)?;
+    let skip = bytes
+        .iter()
+        .position(|b| *b == b'\n')
+        .map_or(bytes.len(), |i| i + 1);
+    Ok((from + skip as u64, bytes[skip..].to_vec()))
 }
 
 fn read_from(path: &Path, from: u64) -> io::Result<Vec<u8>> {
@@ -486,7 +500,10 @@ fn last_uuid_in(kind: Kind, complete_lines: &[u8]) -> Option<String> {
     complete_lines
         .rsplit(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
-        .find_map(|line| str_field(&serde_json::from_slice::<Value>(line).ok()?, "uuid"))
+        .find_map(|line| {
+            let line = serde_json::from_slice::<raw::UuidOnly>(line).ok()?;
+            line.uuid.get().map(str::to_string)
+        })
 }
 
 /// A checkpoint at the end of the file's last complete line, reading only as
@@ -537,7 +554,7 @@ fn end_checkpoint(kind: Kind, path: &Path) -> io::Result<Checkpoint> {
 mod tests {
     use super::*;
     use crate::transcript::{Interjection, Transcript};
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn turn(role: TurnRole, text: &str) -> OutsideTurn {
         OutsideTurn {
@@ -685,6 +702,20 @@ mod tests {
         )]);
         let parsed = parse_claude(&only, None);
         assert!(parsed.turns.is_empty());
+        assert!(parsed.grew);
+    }
+
+    #[test]
+    fn fields_of_an_unexpected_type_are_ignored_not_fatal() {
+        let region = jsonl(&[
+            json!({"type":"user","uuid":"u1","parentUuid":7,"isMeta":"no","isSidechain":null,
+                "message":{"id":3,"content":[{"type":"text","text":"hi \"there\""},"stray",
+                    {"type":"text","text":5},{"type":"tool_result","content":[{"type":"text","text":"out"}]}]}}),
+            json!({"type":"assistant","uuid":"a1","parentUuid":"u1",
+                "message":{"id":"m1","content":{"unexpected":true}}}),
+        ]);
+        let parsed = parse_claude(&region, None);
+        assert_eq!(texts(&parsed), vec![(TurnRole::User, "hi \"there\"")]);
         assert!(parsed.grew);
     }
 
@@ -1157,6 +1188,97 @@ mod tests {
             pairs(&sync),
             vec![(TurnRole::User, "outside"), (TurnRole::Assistant, "R2")]
         );
+    }
+
+    /// Bookkeeping lines that fill a file past the no-checkpoint window.
+    fn filler(path: &Path, bytes: usize) {
+        let pad = "x".repeat(64 * 1024);
+        let line = json!({"type":"progress","data":pad}).to_string();
+        let mut out = Vec::new();
+        while out.len() < bytes {
+            out.extend_from_slice(line.as_bytes());
+            out.push(b'\n');
+        }
+        append(path, &out);
+    }
+
+    #[test]
+    fn without_a_checkpoint_only_the_tail_of_a_big_file_is_searched() {
+        for kind in [Kind::Claude, Kind::Codex] {
+            let home = tempfile::tempdir().unwrap();
+            let path = if kind == Kind::Claude {
+                claude_path(home.path())
+            } else {
+                codex_path(home.path(), "sessions")
+            };
+            if kind == Kind::Claude {
+                append(
+                    &path,
+                    &jsonl(&[
+                        user("u0", None, json!("early")),
+                        reply("a0", "u0", "m0", "R0"),
+                    ]),
+                );
+            } else {
+                append(&path, &jsonl(&[codex_user("early"), codex_agent("R0")]));
+            }
+            filler(&path, NO_CHECKPOINT_WINDOW as usize + 512 * 1024);
+            if kind == Kind::Claude {
+                append(
+                    &path,
+                    &jsonl(&[
+                        user("u1", Some("a0"), json!("late")),
+                        reply("a1", "u1", "m1", "R1"),
+                        user("u2", Some("a1"), json!("outside")),
+                        reply("a2", "u2", "m2", "R2"),
+                    ]),
+                );
+            } else {
+                append(
+                    &path,
+                    &jsonl(&[
+                        codex_user("late"),
+                        codex_agent("R1"),
+                        codex_user("outside"),
+                        codex_agent("R2"),
+                    ]),
+                );
+            }
+            let size = fs::metadata(&path).unwrap().len();
+
+            let found = sync(kind, home.path(), SID, None, Some("late"));
+            assert_eq!(
+                pairs(&found),
+                vec![(TurnRole::User, "outside"), (TurnRole::Assistant, "R2")],
+                "{kind:?}"
+            );
+            let cp = found.checkpoint.unwrap();
+            assert_eq!(cp.len, size, "{kind:?}");
+            if kind == Kind::Claude {
+                assert_eq!(cp.last_uuid.as_deref(), Some("a2"));
+            }
+
+            // A prompt only before the window is not searched for.
+            let early = sync(kind, home.path(), SID, None, Some("early"));
+            assert!(early.turns.is_empty() && !early.grew, "{kind:?}");
+            assert_eq!(early.checkpoint.unwrap().len, size, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_tail_window_starts_at_a_line_start() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("f.jsonl");
+        fs::write(&path, b"aaaa\nbbbb\ncccc\n").unwrap();
+        // The window begins exactly where a line does: that line is kept.
+        let (start, tail) = read_tail(&path, 15, 10).unwrap();
+        assert_eq!((start, tail.as_slice()), (5, &b"bbbb\ncccc\n"[..]));
+        // It begins inside a line: the rest of that line is skipped.
+        let (start, tail) = read_tail(&path, 15, 8).unwrap();
+        assert_eq!((start, tail.as_slice()), (10, &b"cccc\n"[..]));
+        // The whole file fits.
+        let (start, tail) = read_tail(&path, 15, 64).unwrap();
+        assert_eq!((start, tail.len()), (0, 15));
     }
 
     #[test]

@@ -1,7 +1,6 @@
 //! Turns from a region of a Codex rollout file.
-use serde_json::Value;
-
-use super::{complete_len, OutsideTurn, Parsed, TurnRole};
+use super::raw::CodexLine;
+use super::{complete_len, visible_text, OutsideTurn, Parsed, TurnRole};
 
 /// Reads turns from a region of a Codex rollout file. The `event_msg` entries
 /// are preferred; `response_item` messages are the fallback when the region
@@ -14,14 +13,13 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
     let mut grew = false;
 
     for line in region[..consumed].split(|b| *b == b'\n') {
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+        let Ok(line) = serde_json::from_slice::<CodexLine>(line) else {
             continue;
         };
-        let Some(payload) = value.get("payload") else {
+        let Some(payload) = &line.payload else {
             continue;
         };
-        let kind = payload.get("type").and_then(Value::as_str);
-        match (value.get("type").and_then(Value::as_str), kind) {
+        match (line.kind.get(), payload.kind.get()) {
             (Some("event_msg"), Some(kind @ ("user_message" | "agent_message"))) => {
                 grew = true;
                 saw_event = true;
@@ -30,26 +28,26 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
                 } else {
                     TurnRole::Assistant
                 };
-                let text = payload
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .unwrap_or_default();
+                let text = payload.message.get().map(str::trim).unwrap_or_default();
                 push(&mut events, role, text);
             }
             (Some("event_msg"), Some("thread_rolled_back")) => {
-                let n = payload.get("num_turns").and_then(Value::as_u64);
-                roll_back(&mut events, n.unwrap_or(0));
-                roll_back(&mut items, n.unwrap_or(0));
+                let n = payload.num_turns.as_ref().and_then(|n| n.0).unwrap_or(0);
+                roll_back(&mut events, n);
+                roll_back(&mut items, n);
             }
             (Some("response_item"), Some("message")) => {
-                let (role, block) = match payload.get("role").and_then(Value::as_str) {
+                let (role, block) = match payload.role.get() {
                     Some("user") => (TurnRole::User, "input_text"),
                     Some("assistant") => (TurnRole::Assistant, "output_text"),
                     _ => continue,
                 };
                 grew = true;
-                let text = block_text(payload.get("content"), block);
+                // Codex's message content is always a list of blocks.
+                let text = match &payload.content {
+                    super::raw::Content::Blocks(_) => visible_text(&payload.content, block),
+                    _ => String::new(),
+                };
                 if role == TurnRole::User && is_injected(&text) {
                     continue;
                 }
@@ -91,24 +89,10 @@ fn is_injected(text: &str) -> bool {
     text.starts_with('<') || text.starts_with("# AGENTS.md")
 }
 
-fn block_text(content: Option<&Value>, block: &str) -> String {
-    let Some(Value::Array(blocks)) = content else {
-        return String::new();
-    };
-    blocks
-        .iter()
-        .filter(|b| b.get("type").and_then(Value::as_str) == Some(block))
-        .filter_map(|b| b.get("text").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn jsonl(entries: &[Value]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -221,6 +205,21 @@ mod tests {
             rollback(5),
         ]);
         assert!(parse_codex(&region).turns.is_empty());
+    }
+
+    #[test]
+    fn fields_of_an_unexpected_type_are_ignored_not_fatal() {
+        let region = jsonl(&[
+            event("user_message", "one"),
+            json!({"type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":"x"}}),
+            json!({"type":"event_msg","payload":{"type":"agent_message","message":{"text":"no"}}}),
+            event("agent_message", "reply"),
+        ]);
+        let parsed = parse_codex(&region);
+        assert_eq!(
+            texts(&parsed),
+            vec![(TurnRole::User, "one"), (TurnRole::Assistant, "reply")]
+        );
     }
 
     #[test]
