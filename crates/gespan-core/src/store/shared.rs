@@ -506,7 +506,8 @@ impl Store {
         shared.extras.borrow_mut().insert(key.into(), value.into());
         Ok(())
     }
-    /// The columns `shared_session` reads, in its order.
+    /// The columns `shared_session` reads, in its order: twelve of them, so a
+    /// query's own extra columns start at index 12.
     fn shared_session_columns(&self) -> String {
         [
             "id",
@@ -528,6 +529,7 @@ impl Store {
                 ("pinned", "0"),
                 ("linked_work_item_json", "NULL"),
                 ("sidebar_hidden", "0"),
+                ("created_at", "0"),
             ]
             .into_iter()
             .map(|(name, default)| self.shared_field(name, default)),
@@ -550,6 +552,7 @@ impl Store {
                 has_messages: sql(row.get(6))?,
                 archived: sql(row.get(7))?,
                 pinned: sql(row.get(8))?,
+                created_at: sql(row.get::<_, i64>(11))?.max(0) as u64,
                 work_item: sql(row.get::<_, Option<String>>(9))?.and_then(|raw| parse(&raw).ok()),
             },
             original,
@@ -571,7 +574,7 @@ impl Store {
         let mut rows = sql(query.query([]))?;
         let mut result = Vec::new();
         while let Some(row) = sql(rows.next())? {
-            result.push((self.shared_session(row)?.0, sql(row.get(11))?));
+            result.push((self.shared_session(row)?.0, sql(row.get(12))?));
         }
         Ok(result)
     }
@@ -668,6 +671,7 @@ impl Store {
                 updated_at: now as u64,
                 archived: false,
                 pinned: false,
+                created_at: now as u64,
                 work_item: None,
             },
             true,

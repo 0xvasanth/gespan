@@ -89,7 +89,7 @@ use crate::{
     pane_motion::PaneSlide,
     pickers::{ProjectPicked, ProjectPicker},
     popover::{
-        Align, Anchor, AnchorSlot, Flyout, Menu, MenuAction, MenuEvent, MenuItem, MenuStyle, Side,
+        Align, Anchor, AnchorSlot, Menu, MenuAction, MenuEvent, MenuItem, MenuStyle, Side,
         menu_popover, popover,
     },
     resource_pressure::{ResourceMonitor, StopSession},
@@ -5195,8 +5195,17 @@ impl Shell {
         });
         cx.spawn(async move |this, cx| match picker.await {
             Ok(Ok(Some(paths))) => {
-                if let Some(path) = paths.first() {
-                    let path = path.to_string_lossy().into_owned();
+                if let Some(path) = paths.first().cloned() {
+                    // A linked worktree opens its main checkout: its sessions
+                    // are listed there.
+                    let path = cx
+                        .background_executor()
+                        .spawn(async move {
+                            gespan_core::git::linked_worktree_root(&path).unwrap_or(path)
+                        })
+                        .await
+                        .to_string_lossy()
+                        .into_owned();
                     let _ = this.update_in(cx, |this, window, cx| {
                         this.remember_project_location(&path, cx);
                         this.workspace.add_project(&path);
@@ -6276,7 +6285,8 @@ impl Shell {
                     MenuStyle::Switcher,
                 )
             }
-            // SidebarWorktreeSwitcher's menu under the project row's dropdown.
+            // The project row's dropdown is the project picker itself. Worktrees
+            // are picked in the composer, never here.
             MenuTarget::Header => {
                 let picker = cx.new(|cx| {
                     ProjectPicker::new(&self.workspace.projects, &self.workspace.project, cx)
@@ -6305,50 +6315,10 @@ impl Shell {
                     },
                 ));
                 let focus = picker.read(cx).search_focus(cx);
-                let branch = self
-                    .worktree_focus
-                    .get(&self.workspace.project)
-                    .and_then(|focus| focus.branch.clone())
-                    .or_else(|| {
-                        crate::conversation::git_branch(std::path::Path::new(
-                            &self.workspace.project,
-                        ))
-                    });
-                let worktree = MenuAction::new("switch-worktree", "Switch worktree")
-                    .icon("folder-tree")
-                    .flyout(self.worktree_flyout(events, window, cx));
-                let editor = self.project_menu_editor_row(cx);
-                let mut items: Vec<MenuItem> = vec![
-                    match branch {
-                        Some(branch) => worktree.value(branch),
-                        None => worktree,
-                    }
-                    .into(),
-                    MenuItem::Separator,
-                    MenuAction::new("switch-project", "Switch project")
-                        .icon("folder")
-                        .flyout(Flyout {
-                            view: picker.into(),
-                            width: 286.,
-                            padding: 0.,
-                            height: None,
-                            max_height: Some(380.),
-                            focus: Some(focus),
-                            surface: None,
-                        })
-                        .into(),
-                    MenuAction::new("open-remote-project", "Open folder on a machine…")
-                        .icon("globe")
-                        .into(),
-                ];
-                // After Switch project: it acts on this project.
-                if let Some(editor) = editor {
-                    items.insert(3, editor);
-                }
                 (
-                    format!("{} menu", self.project_label(&self.workspace.project)).into(),
-                    items,
-                    240.,
+                    "Switch project".into(),
+                    vec![MenuItem::Custom(picker.into(), focus)],
+                    286.,
                     MenuStyle::Switcher,
                 )
             }
@@ -6447,7 +6417,8 @@ impl Shell {
                     MenuAction::new("reveal", REVEAL_LABEL)
                         .icon("folder-open")
                         .into(),
-                    self.external_editor_menu(path).into(),
+                    self.external_editor_menu(&self.project_editor_folder(path, *rail, cx))
+                        .into(),
                     MenuItem::Separator,
                     self.project_notification_menu(path).into(),
                     MenuItem::Separator,
@@ -6530,18 +6501,8 @@ impl Shell {
                     self.projects_frame.update(cx, |_, cx| cx.notify());
                 }
             }
-            MenuTarget::Header => {
-                if action == "open-remote-project" {
-                    self.open_remote_project(window, cx);
-                } else if action == open_in_editor::PROJECT_MENU_EDITOR_ROW
-                    && let Some(path) = self.open_in_editor_folder(cx)
-                {
-                    // The editor menu takes the row's place.
-                    let at = row.map_or_else(Point::default, |r| Point::new(r.left(), r.top()));
-                    self.open_editor_menu(path, Anchor::Point(at), window, cx);
-                }
-            }
-            MenuTarget::Project { path, .. } => {
+            MenuTarget::Header => {}
+            MenuTarget::Project { path, rail } => {
                 if action == "pin" {
                     self.toggle_project_rail_pin(&path, cx);
                 } else if action == "project-group:new" {
@@ -6584,7 +6545,8 @@ impl Shell {
                     .strip_prefix("external-editor:")
                     .filter(|editor| *editor != "none")
                 {
-                    self.open_in_external_editor(editor, &path, cx);
+                    let folder = self.project_editor_folder(&path, rail, cx);
+                    self.open_in_external_editor(editor, &folder, cx);
                 } else if action.starts_with("mute:") {
                     self.run_project_notification_menu(&path, action, window, cx);
                 }
@@ -7450,24 +7412,6 @@ impl Shell {
                                         .min_w_0()
                                         .truncate()
                                         .child(self.project_label(&self.workspace.project)),
-                                )
-                                .when_some(
-                                    self.worktree_focus.get(&self.workspace.project),
-                                    |d, focus| {
-                                        d.child(
-                                            div()
-                                                .min_w_0()
-                                                .truncate()
-                                                .font_weight(FontWeight::NORMAL)
-                                                .text_color(content(0.45))
-                                                .child(
-                                                    focus
-                                                        .branch
-                                                        .clone()
-                                                        .unwrap_or_else(|| "detached".into()),
-                                                ),
-                                        )
-                                    },
                                 )
                                 .child(div().flex_1())
                                 .child(icon("chevron-down", 14.))
@@ -10780,7 +10724,7 @@ mod tests {
             .unwrap();
     }
     #[gpui::test]
-    fn header_menu_switches_projects_from_its_picker_flyout(cx: &mut TestAppContext) {
+    fn header_menu_switches_projects_from_its_picker(cx: &mut TestAppContext) {
         let (window, _, _) = window(cx);
         cx.update(|cx| {
             input::bind(cx);
@@ -10794,9 +10738,8 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
-        // Switch worktree is first; skip the separator to Switch project, open
-        // its picker (which focuses the search field), and take the next project.
-        cx.simulate_keystrokes(window.into(), "down right down enter");
+        // The menu is the picker, its search field focused: take the next project.
+        cx.simulate_keystrokes(window.into(), "down enter");
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {

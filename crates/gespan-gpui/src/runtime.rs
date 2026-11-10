@@ -1884,6 +1884,7 @@ mod tests {
             updated_at: 0,
             archived: false,
             pinned: false,
+            created_at: 0,
             work_item: None,
         }
     }

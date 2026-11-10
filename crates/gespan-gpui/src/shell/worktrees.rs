@@ -1,7 +1,7 @@
 //! Project workspace selection, independent of the project's identity. Existing
 //! conversations keep their execution directory and running provider process.
 use super::*;
-use crate::worktree_switcher::{Event, TabSession, WorktreeFocus, WorktreeSwitcher};
+use crate::worktree_switcher::WorktreeFocus;
 use gespan_core::files::path_key;
 
 impl Shell {
@@ -31,12 +31,33 @@ impl Shell {
             .map_or_else(|| self.session_working_copy(id, cx), String::as_str);
         path_key(scope) == path_key(self.working_copy())
     }
+    /// The new layouts list every worktree's sessions, grouped by worktree;
+    /// only the original layout's working copy picker narrows the list.
     pub(super) fn in_sidebar_worktree_scope(&self, id: i64, cx: &App) -> bool {
-        self.worktree_focus
-            .get(&self.workspace.project)
-            .is_none_or(|focus| {
-                path_key(self.session_working_copy(id, cx)) == path_key(&focus.path)
-            })
+        !self.workspace.classic_layout
+            || self
+                .worktree_focus
+                .get(&self.workspace.project)
+                .is_none_or(|focus| {
+                    path_key(self.session_working_copy(id, cx)) == path_key(&focus.path)
+                })
+    }
+    /// The heading a worktree's group takes in the sidebar: its branch, or
+    /// its folder's name when the branch is not known yet.
+    pub(super) fn worktree_label(&self, path: &str) -> String {
+        let project = &self.workspace.project;
+        let tree = crate::git_cache::get(project).and_then(|git| {
+            git.worktrees
+                .into_iter()
+                .find(|tree| path_key(&tree.path) == path_key(path))
+        });
+        if let Some(branch) = tree.as_ref().and_then(|tree| tree.branch.clone()) {
+            return branch;
+        }
+        if path_key(path) == path_key(project) {
+            return "Project folder".into();
+        }
+        crate::workspace::project_name(path)
     }
     /// A chat that made its own worktree takes its tab there, and the window
     /// follows it when it is the chat on screen, so it is never shown under
@@ -121,92 +142,6 @@ impl Shell {
             self.workspace.tab_workspaces.insert(tab, path.clone());
         }
         self.worktree_returns.insert((project, path), id);
-    }
-    pub(super) fn worktree_flyout(
-        &self,
-        events: &mut Vec<Subscription>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Flyout {
-        let project = self.workspace.project.clone();
-        let ids = self
-            .order
-            .iter()
-            .copied()
-            .filter(|id| self.session_metadata(*id, cx).summary.cwd == project)
-            .collect();
-        let sessions = self
-            .workspace
-            .tabs
-            .iter()
-            .flat_map(|tab| {
-                self.workspace
-                    .layout(*tab)
-                    .leaf_ids()
-                    .into_iter()
-                    .filter_map(|id| {
-                        if !self.session_summaries.contains_key(&id) {
-                            return None;
-                        }
-                        let session = self.session_metadata(id, cx);
-                        (session.summary.cwd == project).then(|| TabSession {
-                            id,
-                            tab: *tab,
-                            cwd: self.session_working_copy(id, cx).to_owned(),
-                            workspace: self.workspace.tab_workspaces.get(tab).cloned(),
-                            busy: session.busy,
-                        })
-                    })
-            })
-            .collect();
-        let focus = self.worktree_focus.get(&project).cloned();
-        let view = cx.new(|cx| {
-            WorktreeSwitcher::new(
-                project.clone(),
-                focus,
-                sessions,
-                ids,
-                self.store.clone(),
-                cx,
-            )
-        });
-        events.push(
-            cx.subscribe_in(&view, window, move |this, _, event: &Event, window, cx| {
-                match event {
-                    Event::Metadata(paths) => {
-                        for (id, path) in paths {
-                            this.session_worktrees.insert(*id, path.clone());
-                            if let Some(session) = this.sessions.get(id) {
-                                let path = session.update(cx, |session, cx| {
-                                    session.restore_worktree(path.clone(), None, cx)
-                                });
-                                this.session_worktrees.insert(*id, path);
-                            }
-                        }
-                        this.sync_git(cx);
-                        this.invalidate_chrome(cx);
-                    }
-                    Event::Selected(focus) if this.workspace.project == project => {
-                        this.close_menu(cx);
-                        this.select_worktree(focus.clone(), window, cx);
-                    }
-                    Event::Selected(_) | Event::Dismissed => {
-                        this.close_menu(cx);
-                        this.focus_workspace(window, cx);
-                    }
-                }
-                cx.notify();
-            }),
-        );
-        Flyout {
-            focus: Some(view.read(cx).focus(cx)),
-            view: view.into(),
-            width: 280.,
-            padding: 0.,
-            height: None,
-            max_height: Some(360.),
-            surface: None,
-        }
     }
     pub(super) fn select_worktree(
         &mut self,
@@ -294,7 +229,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    fn settings_entry_and_project_dropdown_worktree_actions_open_native_surfaces(
+    fn settings_entry_opens_settings_and_the_project_dropdown_has_no_worktree_row(
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
@@ -322,45 +257,19 @@ mod tests {
         window
             .update(visual, |shell, _, _| assert!(shell.settings.is_none()))
             .unwrap();
-        // Worktree actions live in the project dropdown.
+        // Worktrees are picked in the composer: the project dropdown is the
+        // project picker and nothing else.
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         visual.simulate_click(project.center(), Default::default());
         visual.run_until_parked();
-        let row = visual.debug_bounds("menu-action-switch-worktree").unwrap();
-        visual.simulate_click(row.center(), Default::default());
-        visual.run_until_parked();
-        let panel = visual
-            .debug_bounds("worktree-switcher")
-            .expect("worktree flyout opens");
-        assert!((panel.size.width - px(278.)).abs() < px(1.));
-        assert_eq!(
-            visual
-                .debug_bounds("worktree-switcher-search")
-                .unwrap()
-                .size
-                .height,
-            px(44.)
-        );
-        visual.simulate_input("a-copy");
-        visual.run_until_parked();
+        assert!(visual.debug_bounds("menu-action-switch-worktree").is_none());
+        assert!(visual.debug_bounds("worktree-switcher").is_none());
         window
             .update(visual, |shell, _, cx| {
-                assert!(shell.menu.is_some());
-                assert!(
-                    shell.sessions[&active]
-                        .read(cx)
-                        .input
-                        .read(cx)
-                        .content
-                        .is_empty(),
-                    "typing belongs to the flyout"
-                );
+                let open = shell.menu.as_ref().expect("the project picker opened");
+                assert!(open.target == MenuTarget::Header);
+                assert!(open.menu.read(cx).action_ids().is_empty());
             })
-            .unwrap();
-        visual.simulate_keystrokes("escape");
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, _| assert!(shell.menu.is_none()))
             .unwrap();
     }
 
@@ -391,21 +300,18 @@ mod tests {
             .update(cx, |shell, w, cx| {
                 shell.sessions[&existing]
                     .update(cx, |session, _| session.summary.has_messages = true);
-                shell.open_menu(
-                    MenuTarget::Header,
-                    Anchor::Slot(shell.project_anchor.clone()),
+                // The project folder as the selected working copy.
+                shell.select_worktree(
+                    Some(WorktreeFocus {
+                        path: project.into(),
+                        branch: Some("main".into()),
+                    }),
                     w,
                     cx,
                 );
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let row = visual.debug_bounds("menu-action-switch-worktree").unwrap();
-        visual.simulate_click(row.center(), Default::default());
-        visual.run_until_parked();
-        let row = visual.debug_bounds("working-copy-1").unwrap();
-        visual.simulate_click(row.center(), Default::default());
         visual.run_until_parked();
         window
             .update(visual, |shell, _, cx| {
@@ -476,7 +382,14 @@ mod tests {
                 shell.select_worktree(Some(feature.clone()), w, cx);
                 assert_eq!(shell.workspace.project, project);
                 assert_eq!(shell.workspace.active, Some(feature_session));
-                assert_eq!(shell.sidebar_session_ids(cx), [feature_session]);
+                // The sidebar lists every worktree's sessions, grouped.
+                assert_eq!(
+                    shell
+                        .sidebar_session_ids(cx)
+                        .into_iter()
+                        .collect::<HashSet<_>>(),
+                    HashSet::from([main_session, feature_session])
+                );
                 assert_eq!(shell.terminal_cwd(cx), feature.path);
                 shell.select_worktree(None, w, cx);
                 assert_eq!(shell.workspace.active, Some(main_session));

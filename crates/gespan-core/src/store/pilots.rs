@@ -42,6 +42,7 @@ impl Store {
                         has_messages: row.get(5)?,
                         archived: row.get(6)?,
                         pinned: row.get(7)?,
+                        created_at: 0,
                         work_item: row
                             .get::<_, Option<String>>(8)?
                             .and_then(|raw| serde_json::from_str(&raw).ok()),

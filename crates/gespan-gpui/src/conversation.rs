@@ -4642,49 +4642,6 @@ fn pill_label(label: impl Into<SharedString>) -> impl IntoElement {
         .child(label.into())
 }
 
-/// The checked-out branch (or short detached commit) for `cwd`, read from the
-/// repository's HEAD, including linked worktrees whose `.git` is a file.
-pub(crate) fn git_branch(cwd: &Path) -> Option<String> {
-    let root = cwd.ancestors().find(|d| d.join(".git").exists())?;
-    let dot = root.join(".git");
-    let git = if dot.is_dir() {
-        dot
-    } else {
-        let link = std::fs::read_to_string(&dot).ok()?;
-        root.join(link.strip_prefix("gitdir:")?.trim())
-    };
-    let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
-    let head = head.trim();
-    Some(match head.strip_prefix("ref: refs/heads/") {
-        Some(branch) => branch.to_owned(),
-        None => head.chars().take(7).collect(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::git_branch;
-    #[test]
-    fn reads_branch_from_repositories_and_linked_worktrees() {
-        let root = std::env::temp_dir().join(format!("gespan-branch-{}", std::process::id()));
-        let repo = root.join("repo");
-        let nested = repo.join("src/deep");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/x\n").unwrap();
-        assert_eq!(git_branch(&nested).as_deref(), Some("feature/x"));
-
-        let linked = root.join("linked");
-        let meta = repo.join(".git/worktrees/linked");
-        std::fs::create_dir_all(&linked).unwrap();
-        std::fs::create_dir_all(&meta).unwrap();
-        std::fs::write(linked.join(".git"), format!("gitdir: {}\n", meta.display())).unwrap();
-        std::fs::write(meta.join("HEAD"), "0123456789abcdef\n").unwrap();
-        assert_eq!(git_branch(&linked).as_deref(), Some("0123456"));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
 #[cfg(test)]
 pub(super) mod menu_tests {
     use super::*;

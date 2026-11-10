@@ -173,6 +173,17 @@ mod tests {
             .update(cx, |shell, _, cx| {
                 let entities = shell.sessions.len();
                 assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
+                // The new layouts list every worktree whatever is focused.
+                shell.worktree_focus.insert(
+                    "/work/project".into(),
+                    crate::worktree_switcher::WorktreeFocus {
+                        path: "/work/feature".into(),
+                        branch: Some("feature".into()),
+                    },
+                );
+                assert_eq!(shell.sidebar_session_ids(cx).len(), 7);
+                // The original layout's working copy picker still narrows it.
+                shell.workspace.classic_layout = true;
                 shell.worktree_focus.insert(
                     "/work/project".into(),
                     crate::worktree_switcher::WorktreeFocus {

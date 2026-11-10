@@ -472,6 +472,12 @@ fn main() {
     });
     // A project folder renamed since the last run takes its sessions along.
     let saved = workspace::follow_moved_projects(&db, saved);
+    // A worktree saved as a project, or holding sessions, lists under its
+    // main checkout instead.
+    let saved = workspace::fold_worktree_projects(&db, saved, |path| {
+        gespan_core::git::linked_worktree_root(std::path::Path::new(path))
+            .map(|root| root.to_string_lossy().into_owned())
+    });
     // A fresh install (no saved workspace, no sessions) opens on first-run
     // setup, which picks the first project instead of the launch folder.
     let first_run = setup::rules::first_run(

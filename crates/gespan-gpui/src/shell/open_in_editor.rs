@@ -1,12 +1,10 @@
 //! Open in editor: the focused session's worktree or folder, opened in an
 //! installed editor. The original layout's title bar has a button for it; the
-//! new layouts keep it in the sidebar's project menu.
+//! new layouts keep it in the project settings menu.
 use super::*;
 use gespan_core::external_editor::{self, ExternalEditor};
 
 pub(super) const EDITOR_ITEM_PREFIX: &str = "editor:";
-/// The project menu's Open in editor row.
-pub(super) const PROJECT_MENU_EDITOR_ROW: &str = "open-in-editor";
 /// The button and the gap before the next corner control.
 pub(super) const OPEN_IN_EDITOR_WIDTH: f32 = 24. + CORNER_CONTROL_GAP;
 
@@ -186,19 +184,15 @@ impl Shell {
                 })),
         )
     }
-    /// The project menu's row, in the new layouts, whose title bar corner has
-    /// no button for it.
-    pub(super) fn project_menu_editor_row(&self, cx: &App) -> Option<MenuItem> {
-        if self.workspace.classic_layout {
-            return None;
+    /// The folder the project settings menu opens in an editor. The sidebar's
+    /// gear acts on what is on screen, so a session in a worktree opens that
+    /// worktree; a rail project's menu opens the project.
+    pub(super) fn project_editor_folder(&self, path: &str, rail: bool, cx: &App) -> String {
+        if rail || path != self.workspace.project {
+            return path.into();
         }
-        let path = self.open_in_editor_folder(cx)?;
-        Some(
-            MenuAction::new(PROJECT_MENU_EDITOR_ROW, "Open in editor")
-                .icon("app-window")
-                .value(project_name(&path))
-                .into(),
-        )
+        self.open_in_editor_folder(cx)
+            .unwrap_or_else(|| path.into())
     }
     /// Opens the editor menu for `path` with a fresh scan and no old error.
     pub(super) fn open_editor_menu(
@@ -968,35 +962,51 @@ mod tests {
         launches
     }
 
-    /// Clicks the sidebar's project name and returns its menu's rows.
-    fn open_project_menu(
+    /// Clicks the gear beside the sidebar's project button and returns its
+    /// menu's rows.
+    fn open_project_settings(
         window: WindowHandle<Shell>,
         visual: &mut VisualTestContext,
     ) -> Vec<String> {
-        let button = visual.debug_bounds("sidebar-project-button").unwrap();
-        visual.simulate_click(button.center(), Default::default());
+        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
+        visual.simulate_click(gear.center(), Default::default());
         visual.run_until_parked();
         window
             .update(visual, |shell, _, cx| {
-                let open = shell.menu.as_ref().expect("the project menu opened");
-                assert!(open.target == MenuTarget::Header);
+                let open = shell
+                    .menu
+                    .as_ref()
+                    .expect("the project settings menu opened");
+                assert!(matches!(
+                    open.target,
+                    MenuTarget::Project { rail: false, .. }
+                ));
                 open.menu.read(cx).item_shape()
             })
             .unwrap()
     }
 
-    fn pick(window: WindowHandle<Shell>, visual: &mut VisualTestContext, label: &str) {
+    /// Runs the gear menu's editor row for `editor`, as picking it would.
+    fn launch_from_menu(
+        window: WindowHandle<Shell>,
+        visual: &mut VisualTestContext,
+        rail: bool,
+        editor: &str,
+    ) {
         window
             .update(visual, |shell, w, cx| {
-                let menu = shell.menu.as_ref().unwrap().menu.clone();
-                menu.update(cx, |menu, cx| menu.pick_label(label, w, cx));
+                let target = MenuTarget::Project {
+                    path: shell.workspace.project.clone(),
+                    rail,
+                };
+                shell.run_menu(target, &format!("external-editor:{editor}"), None, w, cx);
             })
             .unwrap();
         visual.run_until_parked();
     }
 
     #[gpui::test]
-    fn the_project_menu_opens_the_project_in_an_editor_in_the_new_layouts(cx: &mut TestAppContext) {
+    fn the_project_settings_menu_opens_the_project_in_an_editor(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
@@ -1004,143 +1014,47 @@ mod tests {
         for (name, classic, boxy) in LAYOUTS.into_iter().filter(|(_, classic, _)| !classic) {
             set_layout(window, visual, classic, boxy);
             launches.lock().unwrap().clear();
+            let rows = open_project_settings(window, visual);
+            assert!(rows.contains(&"Open in editor".into()), "{name}: {rows:?}");
             window
-                .update(visual, |shell, _, _| {
-                    shell.workspace.last_external_editor = None
-                })
+                .update(visual, |shell, _, cx| shell.close_menu(cx))
                 .unwrap();
-
-            let rows = open_project_menu(window, visual);
-            let at = rows.iter().position(|row| row == "Open in editor");
-            assert_eq!(
-                at.map(|ix| rows[ix - 1].as_str()),
-                Some("Switch project"),
-                "{name}: beside Switch project in {rows:?}"
-            );
-
-            pick(window, visual, "Open in editor");
-            // The project menu gives way to the editor menu for this folder,
-            // filled from a fresh scan.
-            let texts = menu_texts(window, visual).unwrap_or_else(|| panic!("{name}"));
-            assert_eq!(texts, ["Stub Editor", REVEAL_LABEL, "Copy path"], "{name}");
-            window
-                .update(visual, |shell, _, _| {
-                    assert!(
-                        shell.menu.as_ref().map(|m| &m.target)
-                            == Some(&MenuTarget::OpenInEditor("/work/gespan".into())),
-                        "{name}"
-                    );
-                })
-                .unwrap();
-
-            pick(window, visual, "Stub Editor");
+            launch_from_menu(window, visual, false, "stub");
             assert_eq!(
                 *launches.lock().unwrap(),
                 [("stub".to_owned(), "/work/gespan".to_owned())],
                 "{name}: opened once, on the project"
             );
-            window
-                .update(visual, |shell, _, _| {
-                    assert!(shell.menu.is_none(), "{name}: a started editor closes it");
-                    assert_eq!(
-                        shell.workspace.last_external_editor.as_deref(),
-                        Some("stub"),
-                        "{name}: and leads the menu next time"
-                    );
-                    assert_eq!(shell.error, None, "{name}");
-                })
-                .unwrap();
         }
     }
 
     #[gpui::test]
-    fn the_project_menu_opens_the_focused_worktree(cx: &mut TestAppContext) {
+    fn the_sidebar_gear_opens_the_focused_sessions_worktree(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, active) = window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         let launches = stub_launcher(window, visual);
-        for boxy in [false, true] {
-            set_layout(window, visual, false, boxy);
-            launches.lock().unwrap().clear();
-            window
-                .update(visual, |shell, _, cx| {
-                    shell.sessions[&active].update(cx, |chat, _| {
-                        chat.settings.worktree_cwd =
-                            Some("/work/gespan/.worktrees/feature-login".into());
-                    });
-                })
-                .unwrap();
-            open_project_menu(window, visual);
-            pick(window, visual, "Open in editor");
-            pick(window, visual, "Stub Editor");
-            assert_eq!(
-                *launches.lock().unwrap(),
-                [(
+        set_layout(window, visual, false, false);
+        window
+            .update(visual, |shell, _, cx| {
+                shell.sessions[&active].update(cx, |chat, _| {
+                    chat.settings.worktree_cwd =
+                        Some("/work/gespan/.worktrees/feature-login".into());
+                });
+            })
+            .unwrap();
+        launch_from_menu(window, visual, false, "stub");
+        // A rail project's menu is about the project, whatever is on screen.
+        launch_from_menu(window, visual, true, "stub");
+        assert_eq!(
+            *launches.lock().unwrap(),
+            [
+                (
                     "stub".to_owned(),
                     "/work/gespan/.worktrees/feature-login".to_owned()
-                )],
-                "boxy {boxy}: the session's worktree, not the project root"
-            );
-        }
-    }
-
-    #[gpui::test]
-    fn a_failed_launch_from_the_project_menu_stays_in_its_editor_menu(cx: &mut TestAppContext) {
-        cx.update(|cx| cx.set_reduce_motion(true));
-        let (window, _, _) = window(cx);
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        stub_launcher(window, visual);
-        window
-            .update(visual, |shell, _, _| {
-                shell.editor_menu.launcher.open =
-                    Arc::new(|_, _| Err("Stub Editor is no longer installed.".into()));
-            })
-            .unwrap();
-        set_layout(window, visual, false, false);
-        open_project_menu(window, visual);
-        pick(window, visual, "Open in editor");
-        pick(window, visual, "Stub Editor");
-        let texts = menu_texts(window, visual).expect("still open");
-        assert_eq!(texts[0], "Stub Editor is no longer installed.");
-        window
-            .update(visual, |shell, _, _| {
-                assert_eq!(shell.workspace.last_external_editor, None);
-                assert_eq!(shell.error, None, "shown in the menu, not the banner");
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
-    fn the_project_menu_has_no_editor_row_without_a_folder_or_in_the_original_layout(
-        cx: &mut TestAppContext,
-    ) {
-        cx.update(|cx| cx.set_reduce_motion(true));
-        let (window, _, _) = window(cx);
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        // The original layout keeps its title bar button instead.
-        set_layout(window, visual, true, false);
-        assert!(visual.debug_bounds("titlebar-open-in-editor").is_some());
-        // Its sidebar has no project button; the menu itself still gets no row.
-        assert!(visual.debug_bounds("sidebar-project-button").is_none());
-        let rows = window
-            .update(visual, |shell, w, cx| {
-                let anchor = Anchor::Slot(shell.project_anchor.clone());
-                shell.open_menu(MenuTarget::Header, anchor, w, cx);
-                shell.menu.as_ref().unwrap().menu.read(cx).item_shape()
-            })
-            .unwrap();
-        assert!(!rows.contains(&"Open in editor".into()), "{rows:?}");
-        window
-            .update(visual, |shell, _, cx| shell.close_menu(cx))
-            .unwrap();
-
-        // Settings have no folder of their own.
-        set_layout(window, visual, false, false);
-        window
-            .update(visual, |shell, w, cx| {
-                shell.open_settings(crate::settings::Section::General, w, cx);
-                assert!(shell.project_menu_editor_row(cx).is_none());
-            })
-            .unwrap();
+                ),
+                ("stub".to_owned(), "/work/gespan".to_owned()),
+            ],
+        );
     }
 }

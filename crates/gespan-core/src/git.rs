@@ -502,6 +502,24 @@ pub fn worktree_branch(root: &Path, worktree: &Path) -> Option<String> {
         .and_then(|tree| tree.branch)
 }
 
+/// The main checkout the linked worktree at `path` belongs to, so a worktree
+/// is never a project of its own. `None` for a main checkout, a folder inside
+/// a worktree, a bare repository's worktree, or a folder outside Git.
+pub fn linked_worktree_root(path: &Path) -> Option<PathBuf> {
+    if crate::files::remote::is_remote(path) || !path.is_dir() {
+        return None;
+    }
+    let trees = worktrees(path).ok()?;
+    let (main, linked) = trees.split_first()?;
+    let root = Path::new(&main.path);
+    (root.join(".git").is_dir()
+        && !same_tree(root, path)
+        && linked
+            .iter()
+            .any(|tree| same_tree(Path::new(&tree.path), path)))
+    .then(|| root.to_path_buf())
+}
+
 /// Renames the branch of the app-created worktree at `worktree` from the
 /// placeholder `from` to `gespan/<fragment>` once the first message names the
 /// work. A name already taken gets
@@ -1542,6 +1560,39 @@ mod tests {
         assert_eq!(branch_of(&cwd, &tree).as_deref(), Some(branch.as_str()));
     }
 
+    #[test]
+    fn a_linked_worktree_resolves_to_its_main_checkout() {
+        let (temp, cwd) = repo();
+        let tree = PathBuf::from(create_named_worktree(&cwd, "feature").unwrap().path);
+        let root = linked_worktree_root(&tree).expect("a linked worktree has a root");
+        assert!(same_tree(&root, &cwd), "{root:?} is not {cwd:?}");
+        assert_eq!(linked_worktree_root(&cwd), None, "the main checkout");
+        let inside = tree.join("src");
+        std::fs::create_dir(&inside).unwrap();
+        assert_eq!(linked_worktree_root(&inside), None, "a folder inside");
+        let plain = temp.path().join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        assert_eq!(linked_worktree_root(&plain), None, "outside Git");
+        assert_eq!(linked_worktree_root(&temp.path().join("gone")), None);
+    }
+    #[test]
+    fn a_bare_repositorys_worktree_has_no_root_to_fold_into() {
+        let (temp, cwd) = repo();
+        let bare = temp.path().join("bare.git");
+        git(
+            temp.path(),
+            &[
+                "clone",
+                "--bare",
+                cwd.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let tree = temp.path().join("bare-tree");
+        git(&bare, &["worktree", "add", tree.to_str().unwrap(), "main"]).unwrap();
+        assert_eq!(linked_worktree_root(&tree), None);
+    }
     #[test]
     fn branches_the_user_owns_are_never_renamed() {
         let (_temp, cwd) = repo();

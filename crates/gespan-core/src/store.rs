@@ -48,6 +48,10 @@ pub struct Session {
     pub has_messages: bool,
     /// Unix milliseconds; zero means an older session has no recorded time.
     pub updated_at: u64,
+    /// Unix milliseconds the session started, where the store records it;
+    /// zero otherwise, and the id orders sessions instead.
+    #[serde(default)]
+    pub created_at: u64,
     pub archived: bool,
     pub pinned: bool,
     pub work_item: Option<crate::session_groups::WorkItem>,
@@ -77,6 +81,7 @@ fn local_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
         updated_at: r.get::<_, i64>(6)?.max(0) as u64,
         archived: r.get(7)?,
         pinned: r.get(8)?,
+        created_at: 0,
         work_item: r
             .get::<_, Option<String>>(9)?
             .and_then(|text| serde_json::from_str(&text).ok()),
@@ -628,6 +633,7 @@ impl Store {
             updated_at,
             archived: false,
             pinned: false,
+            created_at: 0,
             work_item: None,
         })
     }
@@ -1262,6 +1268,29 @@ impl Store {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+    /// Lists the sessions saved in the linked worktree `worktree` under its
+    /// main checkout `root`, each still running in the worktree. Returns the
+    /// sessions it moved.
+    pub fn fold_worktree_sessions(&self, worktree: &str, root: &str) -> Result<Vec<i64>, String> {
+        let ids: Vec<i64> = self
+            .sessions()?
+            .into_iter()
+            .filter(|session| session.id >= 0 && session.cwd == worktree)
+            .map(|session| session.id)
+            .collect();
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        for id in &ids {
+            let mut settings = self.agent_settings(*id)?.unwrap_or_default();
+            if settings.worktree_cwd.is_none() {
+                settings.worktree_cwd = Some(worktree.into());
+                self.save_agent_settings(*id, &settings)?;
+            }
+        }
+        self.rebase_project(worktree, root)?;
+        Ok(ids)
+    }
     #[cfg(test)]
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
@@ -1313,6 +1342,86 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sessions_from_the_gespan_store_carry_their_start_time() {
+        let store = super::Store::open_gespan(std::path::Path::new(":memory:")).unwrap();
+        let before = crate::time::now_ms();
+        let first = store.create("claude", "/work/app").unwrap();
+        let second = store.create("claude", "/work/app").unwrap();
+        assert!(
+            first.created_at >= before,
+            "a new session knows when it started"
+        );
+        let listed = store.sessions().unwrap();
+        let started = |id| listed.iter().find(|s| s.id == id).unwrap().created_at;
+        assert_eq!(started(first.id), first.created_at, "and it reads back");
+        assert!(started(second.id) >= started(first.id));
+    }
+    #[test]
+    fn a_worktrees_sessions_fold_under_its_root_and_keep_running_there() {
+        let store = super::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let tree = store.create("claude", "/work/app-worktrees/fix").unwrap();
+        let nested = store.create("codex", "/work/app-worktrees/fix").unwrap();
+        // A session that already picked another worktree keeps it.
+        let picked = crate::agent::Settings {
+            worktree_cwd: Some("/work/app-worktrees/other".into()),
+            model: Some("opus".into()),
+            ..Default::default()
+        };
+        store.save_agent_settings(nested.id, &picked).unwrap();
+        let root = store.create("claude", "/work/app").unwrap();
+        let elsewhere = store
+            .create("claude", "/work/app-worktrees/fix/sub")
+            .unwrap();
+        let mut moved = store
+            .fold_worktree_sessions("/work/app-worktrees/fix", "/work/app")
+            .unwrap();
+        moved.sort();
+        assert_eq!(moved, [tree.id, nested.id]);
+        let cwd = |id| {
+            store
+                .sessions()
+                .unwrap()
+                .into_iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .cwd
+        };
+        assert_eq!(cwd(tree.id), "/work/app");
+        assert_eq!(cwd(nested.id), "/work/app");
+        assert_eq!(cwd(root.id), "/work/app");
+        assert_eq!(cwd(elsewhere.id), "/work/app-worktrees/fix/sub");
+        let worktree = |id| {
+            store
+                .agent_settings(id)
+                .unwrap()
+                .unwrap_or_default()
+                .worktree_cwd
+        };
+        assert_eq!(
+            worktree(tree.id).as_deref(),
+            Some("/work/app-worktrees/fix")
+        );
+        assert_eq!(
+            worktree(nested.id).as_deref(),
+            Some("/work/app-worktrees/other")
+        );
+        assert_eq!(
+            store
+                .agent_settings(nested.id)
+                .unwrap()
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("opus")
+        );
+        assert_eq!(worktree(root.id), None);
+        // Nothing left to move the second time.
+        assert!(store
+            .fold_worktree_sessions("/work/app-worktrees/fix", "/work/app")
+            .unwrap()
+            .is_empty());
+    }
     #[test]
     fn create_from_seeds_a_new_session_with_rows_and_settings() {
         let mut store = super::Store::open(std::path::Path::new(":memory:")).unwrap();
