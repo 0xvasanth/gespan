@@ -264,6 +264,7 @@ mod tests {
         OutsideTurn {
             role,
             text: text.into(),
+            sent_at: None,
         }
     }
 

@@ -949,6 +949,7 @@ mod card_tests {
             &[crate::outside_turns::OutsideTurn {
                 role: crate::outside_turns::TurnRole::User,
                 text: "from the cli".into(),
+                sent_at: Some(77),
             }],
         );
         let saved = merge(&[], 0, &t.rows).unwrap();
@@ -957,6 +958,7 @@ mod card_tests {
         let rows = project(&saved).unwrap();
         let roles: Vec<_> = rows.iter().map(|r| r.role.as_str()).collect();
         assert_eq!(roles, ["interjection", "user"]);
+        assert_eq!(rows[1].sent_at, Some(77), "the turn keeps its own time");
         let note: crate::transcript::Interjection = super::super::parse(&rows[0].text).unwrap();
         assert_eq!(note.custom_type, "terminal");
         assert_eq!(rows[1].text, "from the cli");

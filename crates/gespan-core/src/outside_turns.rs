@@ -26,6 +26,8 @@ pub enum TurnRole {
 pub struct OutsideTurn {
     pub role: TurnRole,
     pub text: String,
+    /// When the agent wrote it, in Unix milliseconds, if the entry says.
+    pub sent_at: Option<u64>,
 }
 
 /// The marker's `custom_type`; `Interjection::label` shows it as "From terminal".
@@ -42,13 +44,19 @@ pub fn append_rows(transcript: &mut crate::transcript::Transcript, turns: &[Outs
         custom_type: MARKER_TYPE.into(),
         severity: None,
     };
-    transcript.begin("interjection");
+    let at = transcript.begin("interjection");
+    if let Some(sent_at) = turns[0].sent_at {
+        transcript.rows[at].sent_at = Some(sent_at);
+    }
     transcript.append(&serde_json::to_string(&marker).expect("marker serializes"));
     for turn in turns {
-        transcript.begin(match turn.role {
+        let at = transcript.begin(match turn.role {
             TurnRole::User => "user",
             TurnRole::Assistant => "assistant",
         });
+        if let Some(sent_at) = turn.sent_at {
+            transcript.rows[at].sent_at = Some(sent_at);
+        }
         transcript.append(&turn.text);
     }
 }
@@ -67,6 +75,7 @@ struct Entry {
     role: TurnRole,
     message_id: Option<String>,
     text: String,
+    sent_at: Option<u64>,
 }
 
 /// Reads turns from a region of a Claude Code session file. Only the live
@@ -144,6 +153,7 @@ pub fn parse_claude(region: &[u8], after_uuid: Option<&str>) -> Parsed {
             turns.push(OutsideTurn {
                 role: entry.role,
                 text: entry.text.clone(),
+                sent_at: entry.sent_at,
             });
         }
         last_id = entry.message_id.as_deref();
@@ -185,7 +195,14 @@ fn turn_entry(line: &ClaudeLine, uuid: Option<String>) -> Option<Entry> {
         role,
         message_id: message.id.get().map(str::to_string),
         text,
+        sent_at: unix_ms(line.timestamp.get()),
     })
+}
+
+/// An entry's RFC 3339 `timestamp` in Unix milliseconds.
+fn unix_ms(timestamp: Option<&str>) -> Option<u64> {
+    let at = chrono::DateTime::parse_from_rfc3339(timestamp?).ok()?;
+    u64::try_from(at.timestamp_millis()).ok()
 }
 
 /// What Claude Code writes as a user entry for a slash command, `!` bash
@@ -560,7 +577,55 @@ mod tests {
         OutsideTurn {
             role,
             text: text.into(),
+            sent_at: None,
         }
+    }
+
+    #[test]
+    fn rows_carry_the_time_each_turn_was_written() {
+        let mut t = Transcript::default();
+        let before = crate::time::now_ms();
+        let turns = [
+            OutsideTurn {
+                sent_at: Some(1_000),
+                ..turn(TurnRole::User, "fix it")
+            },
+            OutsideTurn {
+                sent_at: Some(2_000),
+                ..turn(TurnRole::Assistant, "done")
+            },
+            turn(TurnRole::User, "no time"),
+        ];
+        append_rows(&mut t, &turns);
+        let at: Vec<_> = t.rows.iter().map(|r| r.sent_at).collect();
+        assert_eq!(at[..3], [Some(1_000), Some(1_000), Some(2_000)]);
+        assert!(at[3].is_some_and(|at| at >= before), "falls back to now");
+    }
+
+    #[test]
+    fn entry_timestamps_are_read_and_a_split_reply_keeps_its_first() {
+        let stamp = |mut entry: Value, at: &str| {
+            entry["timestamp"] = json!(at);
+            entry
+        };
+        let region = jsonl(&[
+            stamp(user("u1", None, json!("go")), "2026-11-11T10:00:00.000Z"),
+            stamp(
+                reply("a1", "u1", "m1", "First."),
+                "2026-11-11T10:00:01.500Z",
+            ),
+            stamp(
+                reply("a2", "a1", "m1", "Second."),
+                "2026-11-11T10:00:09.000Z",
+            ),
+            stamp(reply("a3", "a2", "m2", "Other."), "not a time"),
+        ]);
+        let at: Vec<_> = parse_claude(&region, None)
+            .turns
+            .iter()
+            .map(|t| t.sent_at)
+            .collect();
+        assert_eq!(at, [Some(1_794_391_200_000), Some(1_794_391_201_500), None]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Turns from a region of a Codex rollout file.
 use super::raw::CodexLine;
-use super::{complete_len, visible_text, OutsideTurn, Parsed, TurnRole};
+use super::{complete_len, unix_ms, visible_text, OutsideTurn, Parsed, TurnRole};
 
 /// Reads turns from a region of a Codex rollout file. The `event_msg` entries
 /// are preferred; `response_item` messages are the fallback when the region
@@ -19,6 +19,7 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
         let Some(payload) = &line.payload else {
             continue;
         };
+        let at = unix_ms(line.timestamp.get());
         match (line.kind.get(), payload.kind.get()) {
             (Some("event_msg"), Some(kind @ ("user_message" | "agent_message"))) => {
                 grew = true;
@@ -29,7 +30,7 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
                     TurnRole::Assistant
                 };
                 let text = payload.message.get().map(str::trim).unwrap_or_default();
-                push(&mut events, role, text);
+                push(&mut events, role, text, at);
             }
             (Some("event_msg"), Some("thread_rolled_back")) => {
                 let n = payload.num_turns.as_ref().and_then(|n| n.0).unwrap_or(0);
@@ -51,7 +52,7 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
                 if role == TurnRole::User && is_injected(&text) {
                     continue;
                 }
-                push(&mut items, role, &text);
+                push(&mut items, role, &text, at);
             }
             _ => {}
         }
@@ -64,11 +65,12 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
     }
 }
 
-fn push(turns: &mut Vec<OutsideTurn>, role: TurnRole, text: &str) {
+fn push(turns: &mut Vec<OutsideTurn>, role: TurnRole, text: &str, sent_at: Option<u64>) {
     if !text.is_empty() {
         turns.push(OutsideTurn {
             role,
             text: text.to_string(),
+            sent_at,
         });
     }
 }
@@ -220,6 +222,30 @@ mod tests {
             texts(&parsed),
             vec![(TurnRole::User, "one"), (TurnRole::Assistant, "reply")]
         );
+    }
+
+    #[test]
+    fn line_timestamps_are_read() {
+        let mut asked = event("user_message", "fix it");
+        asked["timestamp"] = json!("2026-11-11T10:00:00.250Z");
+        let mut answered = item("assistant", "output_text", "Fixed.");
+        answered["timestamp"] = json!("2026-11-11T12:00:00+02:00");
+        let at = |region: Vec<u8>| -> Vec<_> {
+            parse_codex(&region)
+                .turns
+                .iter()
+                .map(|t| t.sent_at)
+                .collect()
+        };
+        assert_eq!(at(jsonl(&[asked])), [Some(1_794_391_200_250)]);
+        assert_eq!(
+            at(jsonl(&[answered, event("agent_message", "x")])),
+            [None],
+            "events win; this one has no timestamp"
+        );
+        let mut answered = item("assistant", "output_text", "Fixed.");
+        answered["timestamp"] = json!("2026-11-11T12:00:00+02:00");
+        assert_eq!(at(jsonl(&[answered])), [Some(1_794_391_200_000)]);
     }
 
     #[test]

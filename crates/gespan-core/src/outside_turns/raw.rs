@@ -227,6 +227,8 @@ pub(super) struct ClaudeLine<'a> {
     pub(super) is_compact_summary: Flag,
     #[serde(borrow, default)]
     pub(super) message: Option<ClaudeMessage<'a>>,
+    #[serde(borrow, default)]
+    pub(super) timestamp: Str<'a>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +253,8 @@ pub(super) struct CodexLine<'a> {
     pub(super) kind: Str<'a>,
     #[serde(borrow, default)]
     pub(super) payload: Option<CodexPayload<'a>>,
+    #[serde(borrow, default)]
+    pub(super) timestamp: Str<'a>,
 }
 
 #[derive(Debug, Deserialize)]
