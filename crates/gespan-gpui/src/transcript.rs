@@ -2907,6 +2907,32 @@ impl TranscriptView {
     }
 
     /// Patch the store's window from `start`, a row of `source_rows`.
+    /// Turns picked up from the agent's own CLI arrive in a turn's first
+    /// patch, behind a marker and ahead of Gespan's prompt, where the live
+    /// turn was to start. They are history: the live turn starts at that
+    /// prompt instead. Returns the picked-up rows, empty if there are none.
+    fn skip_picked_up_rows(&mut self, start: usize) -> std::ops::Range<usize> {
+        let at = self.live_start;
+        let marked = self.source.get(at).is_some_and(|row| {
+            row.first
+                && row.role == "interjection"
+                && serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text)
+                    .is_ok_and(|note| note.custom_type == gespan_core::outside_turns::MARKER_TYPE)
+        });
+        if !self.streaming || start > at || !marked {
+            return at..at;
+        }
+        match (at..self.source.len()).rfind(|&ix| {
+            let row = &self.source[ix];
+            row.first && row.is_prompt()
+        }) {
+            Some(prompt) => {
+                self.live_start = prompt;
+                at..prompt
+            }
+            None => at..at,
+        }
+    }
     pub(crate) fn patch(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
         self.patch_view(self.base + start, rows, cx);
     }
@@ -2933,6 +2959,7 @@ impl TranscriptView {
             }
             self.source_bytes = self.source_bytes.saturating_add(bytes);
         }
+        let picked = self.skip_picked_up_rows(start);
         self.visuals.retain(|&start, _| {
             self.source
                 .get(start)
@@ -2981,7 +3008,7 @@ impl TranscriptView {
                 });
         }
         if self.streaming {
-            for prompt in known..self.source.len() {
+            for prompt in known.max(picked.end)..self.source.len() {
                 if self.source[prompt].first && self.source[prompt].is_prompt() {
                     let turn = (prompt + 1..self.source.len())
                         .find(|&at| self.source[at].first)
@@ -3035,7 +3062,7 @@ impl TranscriptView {
         // history that loads or replays does not.
         if self.pilot && self.streaming && self.visible && !cx.reduce_motion() {
             let now = Instant::now();
-            for ix in start.max(known)..self.source.len() {
+            for ix in start.max(known).max(picked.end)..self.source.len() {
                 let row = &self.source[ix];
                 if !row.first || !matches!(row.role.as_str(), "user" | "assistant") {
                     continue;
@@ -7375,6 +7402,86 @@ mod scroll_tests {
                 );
             })
             .unwrap();
+    }
+
+    /// Terminal turns picked up before a send arrive in the turn's first
+    /// patch, ahead of Gespan's own prompt. The live turn is that prompt's.
+    #[gpui::test]
+    fn picked_up_terminal_turns_are_history_not_the_live_turn(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let window = cx.update(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            point(px(0.), px(0.)),
+                            size(px(900.), px(600.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    |_, cx| cx.new(|_| TranscriptView::new()),
+                )
+                .unwrap()
+            });
+            window
+                .update(cx, |view, _, cx| {
+                    if pilot {
+                        view.pilot_mode("bot", 0x336699, "Pilot");
+                    }
+                    view.patch(
+                        0,
+                        vec![row("user", "Fix the login"), row("assistant", "Done")],
+                        cx,
+                    );
+                    view.streaming(true, cx);
+                    assert_eq!(view.live_start, 2);
+                    view.patch(
+                        2,
+                        vec![
+                            row(
+                                "interjection",
+                                &serde_json::to_string(&gespan_core::transcript::Interjection {
+                                    text: String::new(),
+                                    custom_type: gespan_core::outside_turns::MARKER_TYPE.into(),
+                                    severity: None,
+                                })
+                                .unwrap(),
+                            ),
+                            row("user", "ran it in the terminal"),
+                            row("assistant", "ok"),
+                            row("user", "Now add a test"),
+                            row("assistant", ""),
+                        ],
+                        cx,
+                    );
+                    assert_eq!(view.live_start, 5, "pilot {pilot}: the new prompt is live");
+                    assert_eq!(view.active_turn(), Some(6), "pilot {pilot}");
+                    view.record_provider_turn("turn-1".into());
+                    let metrics = gespan_core::agent::TurnMetrics {
+                        output_tokens: 9,
+                        ..Default::default()
+                    };
+                    view.metrics(metrics);
+                    let live = view.turns.get(&6).expect("the new turn's receipt");
+                    assert_eq!(live.provider_turn_id.as_deref(), Some("turn-1"));
+                    assert_eq!(live.metrics, Some(metrics));
+                    assert!(
+                        !view.turns.contains_key(&4),
+                        "pilot {pilot}: the terminal turn gets no live receipt"
+                    );
+                    for picked in 2..5 {
+                        assert!(
+                            !view.entrances.contains_key(&picked),
+                            "pilot {pilot}: row {picked} does not slide in"
+                        );
+                    }
+                    assert!(view.answer_visible(4), "the terminal reply is shown whole");
+                    // A later patch of the same turn keeps the live prompt.
+                    view.patch(6, vec![row("assistant", "Adding it")], cx);
+                    assert_eq!(view.live_start, 5);
+                    assert_eq!(view.active_turn(), Some(6));
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
