@@ -107,12 +107,6 @@ fn look_picks_apply_to_the_shell_live(cx: &mut TestAppContext) {
         .update(cx, |shell, _, _| shell.workspace.preferences.theme.clone())
         .unwrap();
     assert_eq!(theme, "light");
-    emit(window, SetupEvent::Layout { classic: true }, cx);
-    assert!(
-        window
-            .update(cx, |shell, _, _| shell.workspace.classic_layout)
-            .unwrap()
-    );
 }
 
 #[gpui::test]

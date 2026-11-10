@@ -152,7 +152,7 @@ pub(super) fn render(
 }
 
 /// "Using defaults: …" naming what the skipped cards left as it was: the
-/// agent for Agents; theme, layout and glass for Look. `None` when nothing
+/// agent for Agents; theme and glass for Look. `None` when nothing
 /// was skipped.
 fn defaults_line(card: &SetupCard) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
@@ -167,11 +167,6 @@ fn defaults_line(card: &SetupCard) -> Option<String> {
             "system" => "System theme",
             "light" => "Light theme",
             _ => "Dark theme",
-        });
-        parts.push(if card.classic {
-            "Classic layout"
-        } else {
-            "Focused layout"
         });
         parts.push(if card.prefs.inset_glass {
             "glass on"
@@ -497,22 +492,20 @@ mod tests {
 
             card.skipped = vec![SetupStep::Look];
             card.prefs.theme = "system".into();
-            card.classic = false;
             card.prefs.inset_glass = true;
             assert_eq!(
                 defaults_line(card).as_deref(),
-                Some("Using defaults: System theme, Focused layout, glass on")
+                Some("Using defaults: System theme, glass on")
             );
 
             card.default_agent = Some(Kind::Claude);
             card.skipped = vec![SetupStep::Agents, SetupStep::Look];
             card.prefs.theme = "light".into();
-            card.classic = true;
             card.prefs.inset_glass = false;
             assert_eq!(
                 defaults_line(card),
                 Some(format!(
-                    "Using defaults: {}, Light theme, Classic layout, glass off",
+                    "Using defaults: {}, Light theme, glass off",
                     Kind::Claude.label()
                 ))
             );

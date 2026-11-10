@@ -32,14 +32,7 @@ pub(crate) fn open(step: SetupStep, launch: &str, cx: &mut TestAppContext) -> Op
             },
             |_, cx| {
                 cx.new(|cx| {
-                    SetupCard::new(
-                        step,
-                        Preferences::default(),
-                        false,
-                        launch,
-                        "/Users/a".into(),
-                        cx,
-                    )
+                    SetupCard::new(step, Preferences::default(), launch, "/Users/a".into(), cx)
                 })
             },
         )

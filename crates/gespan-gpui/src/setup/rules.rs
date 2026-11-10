@@ -87,10 +87,10 @@ mod tests {
     fn pending_setup_is_written_into_saved_state() {
         let ws = Workspace::restore(Some(&with_pending_setup(None)), &[], "/w");
         assert_eq!(ws.setup, Some(SetupStep::Welcome));
-        let kept = with_pending_setup(Some(r#"{"new_layout_prompt_dismissed":true}"#.into()));
+        let kept = with_pending_setup(Some(r#"{"new_layout_boxy":true}"#.into()));
         let ws = Workspace::restore(Some(&kept), &[], "/w");
         assert_eq!(ws.setup, Some(SetupStep::Welcome));
-        assert!(ws.new_layout_prompt_dismissed);
+        assert!(ws.new_layout_boxy);
     }
 
     #[test]
@@ -106,6 +106,17 @@ mod tests {
     fn a_saved_workspace_without_setup_counts_as_done() {
         let ws = Workspace::restore(Some(r#"{"classic_layout":true}"#), &[], "/w");
         assert_eq!(ws.setup, None);
+    }
+
+    #[test]
+    fn a_save_from_before_the_classic_layout_went_skips_setup() {
+        // Keys the workspace no longer has still mark an existing install.
+        let old = r#"{"classic_layout":true,"new_layout_prompt_dismissed":true}"#;
+        assert!(!first_run(Some(old), false));
+        assert!(!setup_pending(Some(old)));
+        assert_eq!(Workspace::restore(Some(old), &[], "/w").setup, None);
+        // Only no save and no sessions is a fresh install.
+        assert!(first_run(None, false));
     }
 
     #[test]
