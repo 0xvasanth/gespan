@@ -55,8 +55,9 @@ pub fn resume(kind: Kind, provider_id: Option<&str>) -> Resume {
     let Some(id) = provider_id.map(str::trim).filter(|id| !id.is_empty()) else {
         return Resume::NotStarted;
     };
-    // An id the CLI would read as a flag cannot go in as an argument.
-    if id.starts_with('-') {
+    // The id comes from the agent's own output: anything but a plain token
+    // (or one the CLI would read as a flag) is offered to copy, never run.
+    if !plain_id(id) {
         return Resume::IdOnly(id.to_owned());
     }
     let flags: &[&str] = match kind {
@@ -85,19 +86,28 @@ pub fn resume(kind: Kind, provider_id: Option<&str>) -> Resume {
     }
 }
 
+/// Session ids as the checked CLIs write them: UUIDs, `sess_…`, `ses_…`,
+/// and the Pi family's session paths.
+fn plain_id(id: &str) -> bool {
+    id.len() <= 512
+        && !id.starts_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:/@+-~".contains(c))
+}
+
 impl Resume {
     /// The command alone, for a terminal already in the session's folder.
+    /// `None` when there is no command or a word cannot be quoted safely.
     pub fn command_line(&self, style: ShellStyle) -> Option<String> {
         let Self::Command { program, args } = self else {
             return None;
         };
-        Some(
-            std::iter::once(*program)
-                .chain(args.iter().map(String::as_str))
-                .map(|word| quote(word, style))
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
+        let words = std::iter::once(*program)
+            .chain(args.iter().map(String::as_str))
+            .map(|word| quote(word, style))
+            .collect::<Option<Vec<_>>>()?;
+        Some(words.join(" "))
     }
     /// The command for a terminal Gespan opens, which shares Gespan's own
     /// environment: any inherited session marker `present` reports is
@@ -134,16 +144,23 @@ impl Resume {
     /// finds its sessions by folder, then the command.
     pub fn line(&self, cwd: &str, style: ShellStyle) -> Option<String> {
         let command = self.command_line(style)?;
+        let cwd = quote(cwd, style)?;
         Some(match style {
-            ShellStyle::Posix => format!("cd {} && {command}", quote(cwd, style)),
-            ShellStyle::Cmd => format!("cd /d {} && {command}", quote(cwd, style)),
+            ShellStyle::Posix => format!("cd {cwd} && {command}"),
+            ShellStyle::Cmd => format!("cd /d {cwd} && {command}"),
         })
     }
 }
 
-/// `word` as one shell word: bare when it is plainly safe, quoted otherwise.
-pub fn quote(word: &str, style: ShellStyle) -> String {
-    match style {
+/// `word` as one shell word: bare when it is plainly safe, quoted otherwise,
+/// and `None` when no quoting keeps it literal. Control characters are never
+/// passed on; in `cmd`, `%` and `!` expand even inside quotes and `"` ends
+/// them, so a word holding any of those gets no command.
+pub fn quote(word: &str, style: ShellStyle) -> Option<String> {
+    if word.chars().any(char::is_control) {
+        return None;
+    }
+    Some(match style {
         ShellStyle::Posix => {
             let safe = !word.is_empty()
                 && word
@@ -162,13 +179,13 @@ pub fn quote(word: &str, style: ShellStyle) -> String {
                     .all(|c| c.is_ascii_alphanumeric() || r"_@+=:,./\-".contains(c));
             if safe {
                 word.to_owned()
+            } else if word.contains(['%', '!', '"']) {
+                return None;
             } else {
-                // Windows paths cannot hold `"`; double one anyway so the
-                // quoting never ends early.
-                format!("\"{}\"", word.replace('"', "\"\""))
+                format!("\"{word}\"")
             }
         }
-    }
+    })
 }
 
 /// The operating systems a system terminal is opened on.
@@ -204,13 +221,17 @@ const LINUX_TERMINALS: &[(&str, &[&str])] = &[
     ("xterm", &["-e"]),
 ];
 
-/// The program and arguments that open a new system terminal window running
-/// `line`, which already moves into the session's folder. On Linux the first
-/// terminal `installed` finds is used, `$TERMINAL` (`terminal_env`) first.
-/// The window stays open in a shell once the agent exits.
+/// The program and arguments that open a new system terminal window in the
+/// session's folder running the agent: `line` (which moves into the folder
+/// first) on macOS and Linux, `command` alone on Windows, whose `start` opens
+/// the window in the launcher's own folder instead, since `cmd /C` would
+/// split a line at its `&&`. On Linux the first terminal `installed` finds
+/// is used, `$TERMINAL` (`terminal_env`) first. The window stays open in a
+/// shell once the agent exits.
 pub fn terminal_launch(
     os: Os,
     line: &str,
+    command: &str,
     terminal_env: Option<&str>,
     installed: impl Fn(&str) -> bool,
 ) -> Option<(String, Vec<String>)> {
@@ -236,7 +257,7 @@ pub fn terminal_launch(
                 "\"\"".into(),
                 "cmd".into(),
                 "/K".into(),
-                line.into(),
+                command.into(),
             ],
         )),
         Os::Linux => {
@@ -258,14 +279,20 @@ pub fn terminal_launch(
     }
 }
 
-/// Opens a new system terminal window running `line`.
-pub fn open_in_terminal(line: &str) -> Result<(), String> {
+/// Opens a new system terminal window in `cwd` running the agent; `line` and
+/// `command` as [`terminal_launch`] takes them.
+pub fn open_in_terminal(cwd: &str, line: &str, command: &str) -> Result<(), String> {
     let terminal_env = std::env::var("TERMINAL").ok();
-    let (program, args) = terminal_launch(Os::native(), line, terminal_env.as_deref(), |name| {
-        resolve_gui_binary(name).is_some()
-    })
+    let (program, args) = terminal_launch(
+        Os::native(),
+        line,
+        command,
+        terminal_env.as_deref(),
+        |name| resolve_gui_binary(name).is_some(),
+    )
     .ok_or_else(|| "No terminal app found. Copy the command instead.".to_string())?;
     let mut command = Command::new(&program);
+    command.current_dir(cwd);
     #[cfg(windows)]
     {
         // cmd parses its own command line; Rust's quoting would wrap the
@@ -371,6 +398,37 @@ mod tests {
     }
 
     #[test]
+    fn only_plain_ids_go_into_a_command() {
+        // The id is the agent's own output; anything shell-like is copy-only.
+        for id in [
+            "x\"&calc&\"",
+            "$(touch /tmp/x)",
+            "a b",
+            "%COMSPEC%",
+            "id;rm",
+            "a\nb",
+        ] {
+            assert_eq!(
+                resume(Kind::Claude, Some(id)),
+                Resume::IdOnly(id.into()),
+                "{id:?}"
+            );
+        }
+        // Real ids from each checked CLI stay commands.
+        for id in [
+            ID,
+            "sess_d521fa54-b3a8-462d-b2ca-8d1b2e5d053c",
+            "ses_3f2a9c",
+            "/Users/me/.pi/sessions/2026-11-11.jsonl",
+        ] {
+            assert!(
+                matches!(resume(Kind::Kiro, Some(id)), Resume::Command { .. }),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
     fn folders_with_spaces_and_quotes_stay_one_word() {
         let resume = resume(Kind::Claude, Some(ID));
         assert_eq!(
@@ -439,16 +497,41 @@ mod tests {
 
     #[test]
     fn quoting_handles_empty_and_odd_words() {
-        assert_eq!(quote("", ShellStyle::Posix), "''");
-        assert_eq!(quote("", ShellStyle::Cmd), "\"\"");
-        assert_eq!(quote("a;rm -rf /", ShellStyle::Posix), "'a;rm -rf /'");
-        assert_eq!(quote("a\"b", ShellStyle::Cmd), "\"a\"\"b\"");
+        assert_eq!(quote("", ShellStyle::Posix).as_deref(), Some("''"));
+        assert_eq!(quote("", ShellStyle::Cmd).as_deref(), Some("\"\""));
+        assert_eq!(
+            quote("a;rm -rf /", ShellStyle::Posix).as_deref(),
+            Some("'a;rm -rf /'")
+        );
+        // `&`, `|` and `^` are literal inside cmd's quotes.
+        assert_eq!(
+            quote("a&b|c^d", ShellStyle::Cmd).as_deref(),
+            Some("\"a&b|c^d\"")
+        );
+    }
+
+    #[test]
+    fn words_no_quoting_keeps_literal_get_no_command() {
+        // cmd expands %VAR% and !VAR! inside quotes, and a " ends them.
+        for word in ["C:\\%PATH%", "C:\\a!b!", "a\"b"] {
+            assert_eq!(quote(word, ShellStyle::Cmd), None, "{word}");
+        }
+        // A newline would run whatever follows it once pasted.
+        for style in [ShellStyle::Posix, ShellStyle::Cmd] {
+            assert_eq!(quote("/work/a\nrm -rf ~", style), None);
+        }
+        let resume = resume(Kind::Claude, Some(ID));
+        assert_eq!(resume.line(r"C:\work\%USERNAME%", ShellStyle::Cmd), None);
+        assert_eq!(resume.line("/work/a\nb", ShellStyle::Posix), None);
+        // The same folder is fine where it is literal.
+        assert!(resume.line("/work/100%", ShellStyle::Posix).is_some());
     }
 
     #[test]
     fn mac_opens_terminal_app_with_the_line_escaped_for_applescript() {
         let line = r#"cd '/work/a "b" \c' && claude --resume x"#;
-        let (program, args) = terminal_launch(Os::Mac, line, None, |_| false).unwrap();
+        let (program, args) =
+            terminal_launch(Os::Mac, line, "claude --resume x", None, |_| false).unwrap();
         assert_eq!(program, "/usr/bin/osascript");
         assert_eq!(
             args[1],
@@ -458,17 +541,20 @@ mod tests {
     }
 
     #[test]
-    fn windows_opens_a_console_that_stays_open() {
-        let (program, args) =
-            terminal_launch(Os::Windows, "cd /d C:\\w && codex resume x", None, |_| {
-                false
-            })
-            .unwrap();
+    fn windows_opens_a_console_in_the_folder_running_the_command_alone() {
+        // The outer `cmd /C` would split a `cd … && …` line at its `&&`, so
+        // the window starts in the folder and runs only the command.
+        let (program, args) = terminal_launch(
+            Os::Windows,
+            "cd /d C:\\w && codex resume x",
+            "codex resume x",
+            None,
+            |_| false,
+        )
+        .unwrap();
         assert_eq!(program, "cmd");
-        assert_eq!(
-            args.join(" "),
-            r#"/C start "" cmd /K cd /d C:\w && codex resume x"#
-        );
+        assert_eq!(args.join(" "), r#"/C start "" cmd /K codex resume x"#);
+        assert!(!args.iter().any(|a| a.contains("&&")));
     }
 
     #[test]
@@ -476,26 +562,35 @@ mod tests {
         let line = "cd /w && claude --resume x";
         let script = format!("{line}; exec \"${{SHELL:-sh}}\"");
         let (program, args) =
-            terminal_launch(Os::Linux, line, Some("foot"), |name| name == "foot").unwrap();
+            terminal_launch(Os::Linux, line, "claude --resume x", Some("foot"), |name| {
+                name == "foot"
+            })
+            .unwrap();
         assert_eq!(program, "foot");
         assert_eq!(args, ["-e", "sh", "-c", script.as_str()]);
 
         // An uninstalled $TERMINAL falls through to the known list.
-        let (program, args) = terminal_launch(Os::Linux, line, Some("nope"), |name| {
-            matches!(name, "konsole" | "xterm")
-        })
-        .unwrap();
+        let (program, args) =
+            terminal_launch(Os::Linux, line, "claude --resume x", Some("nope"), |name| {
+                matches!(name, "konsole" | "xterm")
+            })
+            .unwrap();
         assert_eq!(program, "konsole");
         assert_eq!(args[0], "-e");
 
-        let (program, args) =
-            terminal_launch(Os::Linux, line, None, |name| name == "gnome-terminal").unwrap();
+        let (program, args) = terminal_launch(Os::Linux, line, "claude --resume x", None, |name| {
+            name == "gnome-terminal"
+        })
+        .unwrap();
         assert_eq!(program, "gnome-terminal");
         assert_eq!(args[..3], ["--", "sh", "-c"]);
     }
 
     #[test]
     fn linux_without_any_terminal_has_no_launch() {
-        assert_eq!(terminal_launch(Os::Linux, "x", Some(""), |_| false), None);
+        assert_eq!(
+            terminal_launch(Os::Linux, "x", "x", Some(""), |_| false),
+            None
+        );
     }
 }
