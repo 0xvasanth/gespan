@@ -639,6 +639,74 @@ mod tests {
         }
     }
 
+    /// Closing the last file in a file pane that has a tab of its own drops
+    /// the pane's files a frame before its tab closes. The strip draws that
+    /// frame with a tab that has no panes left, and must not crash on it.
+    #[gpui::test]
+    fn closing_the_last_file_of_a_file_pane_tab_closes_the_tab(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, session) = window(cx);
+        let path =
+            std::env::temp_dir().join(format!("gespan-pane-last-file-{}.txt", std::process::id()));
+        std::fs::write(&path, "text\n").unwrap();
+        let review = window
+            .update(cx, |shell, w, cx| {
+                shell.open_review(
+                    ReviewTab::File {
+                        cwd: shell.workspace.project.clone(),
+                        path: path.to_string_lossy().into_owned(),
+                    },
+                    w,
+                    cx,
+                );
+                shell.reviews[&session].clone()
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // Drag the file pane onto the strip: it becomes a tab of its own.
+        let grip = visual.debug_bounds("drag-file-pane").unwrap().center();
+        let tab = visual
+            .debug_bounds(Box::leak(format!("title-tab-{session}").into_boxed_str()))
+            .unwrap();
+        let drop = point(tab.left() + px(8.), tab.center().y);
+        visual.simulate_mouse_down(grip, MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(drop, MouseButton::Left, Default::default());
+        visual.simulate_mouse_up(drop, MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        let pane = window
+            .update(visual, |shell, _, cx| {
+                let pane = shell.workspace.active.unwrap();
+                assert!(pane < 0);
+                assert_eq!(
+                    shell.visible_tabs(cx),
+                    [TitleTab::Session(pane), TitleTab::Session(session)]
+                );
+                pane
+            })
+            .unwrap();
+
+        window
+            .update(visual, |_, _, cx| {
+                review.update(cx, |r, cx| r.close_tab(0, cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+
+        window
+            .update(visual, |shell, _, cx| {
+                assert!(shell.workspace.tab_of(pane).is_none());
+                assert_eq!(shell.visible_tabs(cx), [TitleTab::Session(session)]);
+            })
+            .unwrap();
+        assert!(
+            visual
+                .debug_bounds(Box::leak(format!("title-tab-{pane}").into_boxed_str()))
+                .is_none()
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
     #[gpui::test]
     fn file_pane_grip_detaches_and_redocks_without_recreating_dirty_editors(
         cx: &mut TestAppContext,
