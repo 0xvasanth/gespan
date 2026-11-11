@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-12
+
+### Added
+
+- **Automations can wake a Pilot:** an automation's "Do" choice can now
+  deliver its run to a Pilot instead of starting a session. The prompt waits
+  on the Pilot's chat while it is busy, then wakes it.
+- **More automation events:** GitHub automations can run on a pull request
+  comment, a failed check, a review request, a merged pull request or an
+  assigned issue, and GitLab automations on a merge request comment.
+- **Close an approval notice without deciding:** each approval or question
+  notice has a close button that hides it and leaves the agent waiting. While
+  closed requests are still waiting, the title bar counts them; click the
+  count to bring their notices back.
+
+### Changed
+
+- **Readable approval requests:** approval cards and notices show a Bash
+  command as real multi-line text with its folder, an edit as a small diff,
+  and an MCP call as its server and arguments, instead of raw JSON.
+- **Stop keeps the queue moving:** Stop ends only the running turn, and the
+  next queued message starts once it has wound down.
+- Notices now start just below the tab bar, so they never cover its controls.
+
+### Security
+
+- A comment on a pull or merge request runs an automation only when its
+  author can write to the repository, unless the trigger's "by" field names
+  that author.
+
+### Fixed
+
+- Closing the last file of a file pane that had its own tab no longer crashes
+  the tab strip.
+- Long inline code in a table cell wraps inside its column instead of running
+  over the next one.
+
 ## [0.1.1] - 2026-11-11
 
 ### Added
@@ -2249,7 +2286,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/0xvasanth/gespan/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/0xvasanth/gespan/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xvasanth/gespan/compare/v0.0.12...v0.1.0
 [0.0.12]: https://github.com/0xvasanth/gespan/compare/v0.0.11...v0.0.12
