@@ -201,6 +201,35 @@ pub fn gitlab_work_item_thread(
     gitlab_work_item_thread_for(&config, &repo, &kind, number)
 }
 
+/// The access level `username` has on project `repo`, counting access
+/// inherited from groups: 30 (Developer) and above can push. A user who is
+/// not a member has none.
+pub fn gitlab_member_access(app: PathBuf, repo: String, username: String) -> Result<i64, String> {
+    let config = require_config(&app)?;
+    let repo = validate_repo(&repo)?;
+    let path = format!(
+        "/projects/{}/members/all?query={}&per_page=20",
+        encode_path_component(&repo),
+        encode_path_component(username.trim())
+    );
+    parse_member_access(&gitlab_get(&config, &path)?.value, &username)
+}
+
+fn parse_member_access(value: &Value, username: &str) -> Result<i64, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "GitLab did not return project members".to_string())?;
+    Ok(rows
+        .iter()
+        .filter(|row| {
+            string_field(row, "username")
+                .is_some_and(|name| name.eq_ignore_ascii_case(username.trim()))
+        })
+        .filter_map(|row| row.get("access_level").and_then(Value::as_i64))
+        .max()
+        .unwrap_or(0))
+}
+
 /// The username of the account the saved token belongs to.
 pub fn gitlab_current_user(app: PathBuf) -> Result<String, String> {
     let config = require_config(&app)?;
@@ -1059,4 +1088,23 @@ fn expand_home(input: &str) -> PathBuf {
             .join(rest);
     }
     PathBuf::from(input)
+}
+
+#[cfg(test)]
+mod member_access_tests {
+    use super::*;
+
+    #[test]
+    fn a_members_access_is_their_highest_level_and_a_stranger_has_none() {
+        // The shape `/projects/:id/members/all?query=` returns: a search can
+        // match more than the user asked for.
+        let rows = serde_json::json!([
+            {"id": 1, "username": "alice", "access_level": 30},
+            {"id": 1, "username": "alice", "access_level": 40},
+            {"id": 2, "username": "alice-bot", "access_level": 50}
+        ]);
+        assert_eq!(parse_member_access(&rows, "Alice").unwrap(), 40);
+        assert_eq!(parse_member_access(&rows, "mallory").unwrap(), 0);
+        assert!(parse_member_access(&serde_json::json!({}), "alice").is_err());
+    }
 }

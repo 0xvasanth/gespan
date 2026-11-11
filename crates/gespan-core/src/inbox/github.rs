@@ -53,6 +53,9 @@ pub struct GitHubWorkItemComment {
     pub id: String,
     pub kind: String,
     pub author: String,
+    /// How the author relates to the repository, as GitHub says:
+    /// `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE`...
+    pub author_association: String,
     pub author_avatar_url: String,
     pub body: String,
     pub created_at: String,
@@ -343,6 +346,7 @@ query InboxIssueThread($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id
           author { login }
+          authorAssociation
           body
           createdAt
           url
@@ -381,6 +385,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id
           author { login }
+          authorAssociation
           body
           createdAt
           url
@@ -392,6 +397,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id
           author { login }
+          authorAssociation
           body
           state
           submittedAt
@@ -409,6 +415,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
             nodes {
               id
               author { login }
+              authorAssociation
               body
               createdAt
               url
@@ -741,6 +748,8 @@ struct GithubGraphqlComment {
     id: String,
     #[serde(default)]
     author: Option<GithubGraphqlActor>,
+    #[serde(default, rename = "authorAssociation")]
+    author_association: String,
     #[serde(default)]
     body: String,
     #[serde(default)]
@@ -763,6 +772,8 @@ struct GithubGraphqlReview {
     id: String,
     #[serde(default)]
     author: Option<GithubGraphqlActor>,
+    #[serde(default, rename = "authorAssociation")]
+    author_association: String,
     #[serde(default)]
     body: String,
     #[serde(default)]
@@ -936,6 +947,7 @@ fn github_mapped_comment(
     Some(GitHubWorkItemComment {
         id: github_comment_id(kind, &comment.id, &author, &created_at),
         kind: kind.to_string(),
+        author_association: comment.author_association.trim().to_uppercase(),
         author_avatar_url: github_avatar_url(&author),
         author,
         body: comment.body,
@@ -972,6 +984,7 @@ fn github_review_comment(review: GithubGraphqlReview) -> Option<GitHubWorkItemCo
     Some(GitHubWorkItemComment {
         id: github_comment_id("review", &review.id, &author, &created_at),
         kind: "review".into(),
+        author_association: review.author_association.trim().to_uppercase(),
         author_avatar_url: github_avatar_url(&author),
         author,
         body: review.body,
@@ -1350,6 +1363,29 @@ fn git_diff_full_context(root: &Path, base: &str, head: &str) -> Result<(String,
     }
 }
 
+/// `user`'s permission on `repo`: `admin`, `maintain`, `write`, `triage`,
+/// `read` or `none`. Only a login GitHub could have issued is asked about.
+pub(super) fn git_github_permission_for(
+    root: &Path,
+    repo: &str,
+    user: &str,
+) -> Result<String, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let user = user.trim();
+    if user.is_empty()
+        || user.len() > 39
+        || !user.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(format!(
+            "{user:?} is not a GitHub account that can be looked up"
+        ));
+    }
+    let path = format!("repos/{owner}/{name}/collaborators/{user}/permission");
+    // `role_name` tells maintain and triage apart; `permission` folds them.
+    let permission = gh_checked(root, &["api", &path, "--jq", ".role_name // .permission"])?;
+    Ok(permission.trim().to_lowercase())
+}
+
 /// The login of the account `gh` is signed in with.
 pub(super) fn git_github_login_for(root: &Path) -> Result<String, String> {
     let login = gh_checked(root, &["api", "user", "--jq", ".login"])?;
@@ -1545,6 +1581,45 @@ mod automation_event_tests {
         assert_eq!(states[0].merged_by, "octocat");
         assert_eq!(states[0].item.state, "merged");
         assert!(states[0].checks.is_empty() && states[0].head_oid.is_empty());
+    }
+
+    #[test]
+    fn a_comments_author_association_comes_through_upper_cased() {
+        let comment: GithubGraphqlComment = serde_json::from_str(
+            r#"{"id":"IC_1","author":{"login":"alice"},"authorAssociation":"collaborator",
+                "body":"Hi","createdAt":"2026-11-11T10:00:00Z","url":"u","isMinimized":false}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            github_issue_comment(comment).unwrap().author_association,
+            "COLLABORATOR"
+        );
+        let review: GithubGraphqlReview = serde_json::from_str(
+            r#"{"id":"R_1","author":{"login":"bob"},"authorAssociation":"NONE","body":"",
+                "state":"APPROVED","submittedAt":"2026-11-11T10:00:00Z","url":"u"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            github_review_comment(review).unwrap().author_association,
+            "NONE"
+        );
+        // Every query that lists comments asks for it.
+        for query in [GITHUB_PR_THREAD_QUERY, GITHUB_ISSUE_THREAD_QUERY] {
+            assert_eq!(
+                query.matches("author { login }").count(),
+                query.matches("authorAssociation").count()
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_real_github_login_is_looked_up_for_its_permission() {
+        let root = std::env::temp_dir();
+        for login in ["", "cubic-dev-ai[bot]", "../admin", "a b", &"x".repeat(40)] {
+            let error = git_github_permission_for(&root, "acme/app", login).unwrap_err();
+            assert!(error.contains("not a GitHub account"), "{login:?}: {error}");
+        }
+        assert!(git_github_permission_for(&root, "not a repo", "alice").is_err());
     }
 
     #[test]

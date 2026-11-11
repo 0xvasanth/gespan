@@ -228,6 +228,15 @@ fn occurred(source: &Item, at: &str, url: &str, occurrence: Occurrence) -> Item 
     }
 }
 
+/// The repository permissions that can push. Anything else, including a
+/// permission that could not be looked up, cannot.
+pub fn can_write(permission: &str) -> bool {
+    matches!(
+        permission.trim().to_ascii_lowercase().as_str(),
+        "admin" | "maintain" | "write"
+    )
+}
+
 fn same_account(author: &str, me: &str) -> bool {
     let me = me.trim().trim_start_matches('@');
     !me.is_empty() && author.trim().eq_ignore_ascii_case(me)
@@ -277,6 +286,7 @@ pub fn comment_items(pr: &Item, comments: &[Comment], me: &str) -> Vec<Item> {
                     author: comment.author.trim().into(),
                     body: body.chars().take(MAX_OCCURRENCE_TEXT).collect(),
                     mine: same_account(&comment.author, me),
+                    trusted: can_write(&comment.permission),
                 },
             ))
         })
@@ -320,6 +330,7 @@ pub fn check_failed_items(pr: &Item, checks: &Checks) -> Vec<Item> {
                         format!("Check \"{label}\" failed on commit {short}.")
                     },
                     mine: false,
+                    trusted: true,
                 },
             )
         })
@@ -343,6 +354,7 @@ pub fn review_requested_item(pr: &Item, head: &str) -> Item {
             author: String::new(),
             body: "Your review was requested.".into(),
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -369,6 +381,7 @@ pub fn merged_item(pr: &Item, at: &str, by: &str) -> Item {
                 format!("Merged by @{}.", by.trim())
             },
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -386,6 +399,7 @@ pub fn assigned_item(issue: &Item, me: &str) -> Item {
             author: String::new(),
             body: format!("Assigned to @{}.", me.trim().trim_start_matches('@')),
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -395,11 +409,16 @@ pub fn assigned_item(issue: &Item, me: &str) -> Item {
 /// watched for comments only, and only once its account is known.
 pub struct LiveEvents {
     service: Service,
+    /// Permissions already looked up, by forge, repository and username.
+    access: HashMap<(String, String, String), String>,
 }
 
 impl LiveEvents {
     pub fn new(service: Service) -> Self {
-        Self { service }
+        Self {
+            service,
+            access: HashMap::new(),
+        }
     }
     fn local(project: &str) -> Result<&Path, String> {
         let path = Path::new(project);
@@ -412,6 +431,59 @@ impl LiveEvents {
     }
 }
 
+impl LiveEvents {
+    /// Sets `comment.permission` from a lookup, once per author. A lookup
+    /// that fails leaves it empty, so the comment is not trusted.
+    fn mark_permission(&mut self, item: &Item, comment: &mut Comment) {
+        let author = comment.author.trim().to_lowercase();
+        if author.is_empty() {
+            return;
+        }
+        let key = (
+            item.provider.clone(),
+            item.repo.to_lowercase(),
+            author.clone(),
+        );
+        if let Some(permission) = self.access.get(&key) {
+            comment.permission = permission.clone();
+            return;
+        }
+        let found = match item.provider.as_str() {
+            "gitlab" => super::gitlab::gitlab_member_access(
+                self.service.data_dir.clone(),
+                item.repo.clone(),
+                author,
+            )
+            .map(gitlab_permission),
+            _ => Self::local(&item.project_path).and_then(|project| {
+                super::github::git_github_permission_for(
+                    &super::gh_root(project),
+                    &item.repo,
+                    &author,
+                )
+            }),
+        };
+        let permission = found.unwrap_or_else(|error| {
+            tracing::warn!(%error, repo = %item.repo, "a comment author's permission was not found");
+            String::new()
+        });
+        comment.permission = permission.clone();
+        self.access.insert(key, permission);
+    }
+}
+
+/// A GitLab access level as a permission: Developer (30) and above can push.
+pub fn gitlab_permission(level: i64) -> String {
+    match level {
+        50.. => "admin",
+        40..=49 => "maintain",
+        30..=39 => "write",
+        10..=29 => "read",
+        _ => "none",
+    }
+    .into()
+}
+
 impl EventSource for LiveEvents {
     fn login(&mut self, provider: &str, project: &str) -> Result<String, String> {
         match provider {
@@ -420,7 +492,17 @@ impl EventSource for LiveEvents {
         }
     }
     fn comments(&mut self, item: &Item) -> Result<Vec<Comment>, String> {
-        Ok(self.service.thread(item)?.comments)
+        let mut comments = self.service.thread(item)?.comments;
+        // Each author's own permission on the repository is looked up: how
+        // they relate to it (an organisation member, a read-only
+        // collaborator) does not say whether they can push.
+        for comment in &mut comments {
+            self.mark_permission(item, comment);
+            for reply in &mut comment.replies {
+                self.mark_permission(item, reply);
+            }
+        }
+        Ok(comments)
     }
     fn open_pull_requests(
         &mut self,
@@ -496,6 +578,7 @@ mod tests {
             id: id.into(),
             kind: kind.into(),
             author: author.into(),
+            permission: "write".into(),
             body: body.into(),
             created_at: "2026-11-11T10:00:00Z".into(),
             url: format!("https://example.com/c/{id}"),
@@ -521,6 +604,8 @@ mod tests {
         approved.state = "APPROVED".into();
         let mut silent = said("r2", "review", "carol", "  ");
         silent.state = "COMMENTED".into();
+        let mut stranger = said("c9", "comment", "mallory", "Hi");
+        stranger.permission = "read".into();
         let comments = [
             said("c1", "comment", "alice", "Looks good"),
             thread,
@@ -528,23 +613,37 @@ mod tests {
             silent,
             said("", "comment", "alice", "No id"),
             said("c2", "comment", "Gespan-Bot", "Pushed a fix"),
+            stranger,
         ];
         let items = comment_items(&pr("github", 7, ""), &comments, "@gespan-bot");
         let seen: Vec<_> = items
             .iter()
             .map(|item| {
                 let o = item.occurrence.as_ref().unwrap();
-                (o.id.as_str(), o.author.as_str(), o.body.as_str(), o.mine)
+                (
+                    o.id.as_str(),
+                    o.author.as_str(),
+                    o.body.as_str(),
+                    o.mine,
+                    o.trusted,
+                )
             })
             .collect();
         assert_eq!(
             seen,
             [
-                ("c1", "alice", "Looks good", false),
-                ("t1", "alice", "On src/login.rs:42:\nRename this", false),
-                ("t2", "bob", "Agreed", false),
-                ("r1", "carol", "Approved these changes.", false),
-                ("c2", "Gespan-Bot", "Pushed a fix", true),
+                ("c1", "alice", "Looks good", false, true),
+                (
+                    "t1",
+                    "alice",
+                    "On src/login.rs:42:\nRename this",
+                    false,
+                    true
+                ),
+                ("t2", "bob", "Agreed", false, true),
+                ("r1", "carol", "Approved these changes.", false, true),
+                ("c2", "Gespan-Bot", "Pushed a fix", true, true),
+                ("c9", "mallory", "Hi", false, false),
             ]
         );
         let first = &items[0];
@@ -861,6 +960,41 @@ mod tests {
         elsewhere.project_path = "/other".into();
         watch_events(&watches, &[elsewhere], &HashMap::new(), &mut fake);
         assert!(fake.asked.is_empty());
+    }
+
+    #[test]
+    fn an_author_whose_permission_cannot_be_found_is_not_trusted_and_not_asked_again() {
+        let mut live = LiveEvents::new(Service {
+            data_dir: std::env::temp_dir(),
+            cwd: std::env::temp_dir(),
+        });
+        // A project on another machine cannot be asked through this machine's
+        // gh, and a bot's login is not one GitHub's permission lookup takes.
+        let item = Item {
+            provider: "github".into(),
+            repo: "acme/app".into(),
+            project_path: "remote://box/work/app".into(),
+            ..Default::default()
+        };
+        let mut comment = said("c1", "comment", "alice", "Hi");
+        comment.permission.clear();
+        comment.author_association = "OWNER".into();
+        live.mark_permission(&item, &mut comment);
+        assert_eq!(comment.permission, "");
+        assert!(
+            !comment_items(&pr("github", 7, ""), &[comment.clone()], "")[0]
+                .occurrence
+                .as_ref()
+                .unwrap()
+                .trusted
+        );
+        // The answer is kept for the refresh, so the next comment by the same
+        // author is not looked up again.
+        assert_eq!(
+            live.access
+                .get(&("github".into(), "acme/app".into(), "alice".into())),
+            Some(&String::new())
+        );
     }
 
     #[test]
