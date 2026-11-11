@@ -1873,6 +1873,7 @@ mod tests {
         assert!(late.is_closed());
         link.open(&server.url, Duration::from_secs(5)).unwrap();
         let fresh = link.subscribe(EventFilter::all());
+        assert!(server.wait_for_connections(2, Duration::from_secs(5)));
         server.emit("Page.loadEventFired", json!({}), Some("S1"));
         assert!(fresh.recv_timeout(Duration::from_secs(2)).is_some());
         assert!(late.try_recv().is_none());

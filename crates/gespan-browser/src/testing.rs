@@ -177,7 +177,8 @@ impl FakeCdp {
             .clone()
     }
 
-    /// Queue an event for the current (or next) connection.
+    /// Queue an event for the newest connection (or the next one, if none
+    /// is up yet). An older connection still winding down never takes it.
     pub fn emit(&self, method: &str, params: Value, session: Option<&str>) {
         self.shared
             .outbox
@@ -227,6 +228,19 @@ impl FakeCdp {
     /// How many WebSocket connections completed the upgrade so far.
     pub fn connections(&self) -> usize {
         self.shared.connections.load(Ordering::Acquire)
+    }
+
+    /// Wait until at least `count` connections completed the upgrade on the
+    /// fake's side. A client can finish its handshake a moment before that.
+    pub fn wait_for_connections(&self, count: usize, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while self.connections() < count {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(3));
+        }
+        true
     }
 
     /// A fresh profile folder whose `DevToolsActivePort` points at this
@@ -535,16 +549,21 @@ fn handle_connection(mut stream: TcpStream, shared: Arc<Shared>) {
                 Ok(socket) => socket,
                 Err(_) => return,
             };
-            shared.connections.fetch_add(1, Ordering::AcqRel);
+            let generation = shared.connections.fetch_add(1, Ordering::AcqRel) + 1;
             shared.client_closed.store(false, Ordering::Release);
             shared.close_requested.store(false, Ordering::Release);
-            serve(socket, responder, &shared);
+            serve(socket, responder, &shared, generation);
             shared.client_closed.store(true, Ordering::Release);
         }
     }
 }
 
-fn serve(mut socket: WebSocket<TcpStream>, responder: &Mutex<Responder>, shared: &Shared) {
+fn serve(
+    mut socket: WebSocket<TcpStream>,
+    responder: &Mutex<Responder>,
+    shared: &Shared,
+    generation: usize,
+) {
     let _ = socket
         .get_ref()
         .set_read_timeout(Some(Duration::from_millis(5)));
@@ -562,13 +581,18 @@ fn serve(mut socket: WebSocket<TcpStream>, responder: &Mutex<Responder>, shared:
                 return;
             }
         }
-        // Events queued by the test.
+        // Events queued by the test go to the newest connection only. A
+        // connection the client already closed would take an event and then
+        // fail to write it, so a reconnected client would never see it.
         loop {
-            let next = shared
-                .outbox
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .pop_front();
+            let next = {
+                let mut outbox = shared.outbox.lock().unwrap_or_else(|e| e.into_inner());
+                if shared.connections.load(Ordering::Acquire) == generation {
+                    outbox.pop_front()
+                } else {
+                    None
+                }
+            };
             let Some(event) = next else { break };
             if write_frame(&mut socket, event_frame(&event)).is_err() {
                 return;
@@ -730,5 +754,68 @@ impl PageServer {
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .any(|p| p == path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connect(fake: &FakeCdp) -> WebSocket<TcpStream> {
+        let addr = fake
+            .url
+            .trim_start_matches("ws://")
+            .split('/')
+            .next()
+            .expect("host:port")
+            .to_string();
+        let stream = TcpStream::connect(addr).expect("connect");
+        let (socket, _) = tungstenite::client(fake.url.as_str(), stream).expect("handshake");
+        socket
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .expect("read timeout");
+        socket
+    }
+
+    fn next_event(socket: &mut WebSocket<TcpStream>, within: Duration) -> Option<String> {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            match socket.read() {
+                Ok(Message::Text(text)) => return Some(text.to_string()),
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(error))
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+
+    // A reconnecting client used to lose events: the connection it had
+    // just left was still polling the shared outbox and took them.
+    #[test]
+    fn events_go_to_the_newest_connection_while_an_older_one_lingers() {
+        let fake = FakeCdp::start();
+        let mut old = connect(&fake);
+        assert!(fake.wait_for_connections(1, Duration::from_secs(5)));
+        let mut new = connect(&fake);
+        assert!(fake.wait_for_connections(2, Duration::from_secs(5)));
+        for n in 0..20 {
+            fake.emit("Page.loadEventFired", json!({ "n": n }), Some("S1"));
+            let got = next_event(&mut new, Duration::from_secs(2))
+                .unwrap_or_else(|| panic!("event {n} never reached the newest connection"));
+            assert!(got.contains(&format!("\"n\":{n}")), "{got}");
+        }
+        assert_eq!(next_event(&mut old, Duration::from_millis(100)), None);
+    }
+
+    #[test]
+    fn an_event_queued_before_anyone_connects_waits_for_the_first_connection() {
+        let fake = FakeCdp::start();
+        fake.emit("Page.loadEventFired", json!({}), None);
+        let mut socket = connect(&fake);
+        let got = next_event(&mut socket, Duration::from_secs(2)).expect("queued event");
+        assert!(got.contains("Page.loadEventFired"), "{got}");
     }
 }
