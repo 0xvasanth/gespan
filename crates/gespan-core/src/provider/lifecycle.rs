@@ -172,6 +172,7 @@ impl Protocol {
             title,
             detail: String::new(),
             can_remember: false,
+            tool: None,
         }));
         Ok(())
     }

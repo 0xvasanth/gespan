@@ -1,6 +1,7 @@
 //! Pending approval/question cards and request-level announcement bookkeeping.
 use crate::theme::*;
 use gespan_core::agent::{Approval, Decision};
+use gespan_core::tool::approval_view::{approval_view, ApprovalView, Body};
 use gpui::{Context, EventEmitter, Role, div, prelude::*, px};
 use serde_json::Value;
 use std::{
@@ -45,20 +46,102 @@ pub(crate) struct PendingInput {
 impl PendingInput {
     /// What a card shows for `approval`. Only the id goes back with a decision,
     /// so none of this cleanup reaches what runs.
+    #[cfg(test)]
     pub(crate) fn approval(approval: &Approval) -> Self {
-        let detail = approval_detail(&approval.detail);
+        Self::approval_in(approval, None)
+    }
+
+    /// The card for `approval` in a session whose folder is `cwd`. A request
+    /// that names its tool reads like the chat's card; one that doesn't shows
+    /// its detail as sent.
+    pub(crate) fn approval_in(approval: &Approval, cwd: Option<&str>) -> Self {
         let alerts = approval_alerts(&approval.detail);
+        let (label, detail, omitted) = match &approval.tool {
+            Some(tool) => {
+                let home = gespan_core::accounts::home();
+                let home = home.as_deref().and_then(|home| home.to_str());
+                let view = approval_view(Some(tool), &approval.detail, cwd, home);
+                let shown = toast_text(&approval.title, &view);
+                let omitted = [shown.folder, approval_omitted(&approval.detail)]
+                    .into_iter()
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (shown.label, shown.detail, omitted)
+            }
+            None => (
+                approval.title.clone(),
+                approval_detail(&approval.detail),
+                approval_omitted(&approval.detail),
+            ),
+        };
         Self {
             request_id: approval.id.clone(),
             kind: InputKind::Approval,
-            label: mark_hidden(&approval.title),
             needs_review: !alerts.is_empty()
-                || approval.title.contains(distorts_text)
+                || label.contains(distorts_text)
                 || overflows_detail(&detail),
+            label: mark_hidden(&label),
             detail,
-            omitted: approval_omitted(&approval.detail),
+            omitted,
             alerts,
         }
+    }
+}
+
+/// A notice's question, monospace detail and folder line, read from the
+/// same view as the chat's card. Its text has hidden characters marked.
+#[derive(Debug, PartialEq, Eq)]
+struct ToastText {
+    /// The provider's question, with the agent's own description after it.
+    label: String,
+    detail: String,
+    folder: String,
+}
+
+fn toast_text(title: &str, view: &ApprovalView) -> ToastText {
+    let title = match &view.mcp {
+        Some(mcp) => format!("Allow {} on {}?", mcp.tool, mcp.server),
+        None => title.to_owned(),
+    };
+    let label = match &view.summary {
+        Some(summary) => format!("{title} {summary}"),
+        None => title,
+    };
+    let fields = || {
+        view.fields
+            .iter()
+            .map(|field| {
+                if field.value.contains('\n') {
+                    format!("{}:\n{}", field.key, field.value)
+                } else {
+                    format!("{}: {}", field.key, field.value)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let detail = match &view.body {
+        Body::Command(command) | Body::Text(command) => command.clone(),
+        Body::Target { verb, target } => format!("{verb} {target}"),
+        Body::Url(url) => format!("Fetch {url}"),
+        Body::Change { path, preview } => match preview {
+            Some(p) if p.additions + p.deletions > 0 => {
+                format!("{path}  +{} −{}", p.additions, p.deletions)
+            }
+            _ => path.clone(),
+        },
+        // An MCP or unknown tool: its arguments are what's being approved.
+        Body::None => fields(),
+    };
+    ToastText {
+        label,
+        detail: mark_hidden(&detail.replace("\r\n", "\n")),
+        folder: view
+            .cwd
+            .as_ref()
+            .map(|cwd| mark_hidden(&format!("in {cwd}")))
+            .unwrap_or_default(),
     }
 }
 
@@ -90,7 +173,7 @@ fn distorts_text(c: char) -> bool {
 /// `text` with each hidden character replaced by a tag such as `[U+202E]`.
 /// Removing them would show something other than what runs: `r\u{200B}m` is
 /// not `rm`. The card is display only, so what runs keeps them.
-fn mark_hidden(text: &str) -> String {
+pub(crate) fn mark_hidden(text: &str) -> String {
     let mut marked = String::with_capacity(text.len());
     for c in text.chars() {
         if distorts_text(c) {
@@ -212,7 +295,7 @@ fn approval_omitted(detail: &str) -> String {
 }
 
 /// Warnings a card leads with, because the scrolling detail could hide them.
-fn approval_alerts(detail: &str) -> Vec<String> {
+pub(crate) fn approval_alerts(detail: &str) -> Vec<String> {
     let sandbox = sandbox_override(detail)
         .filter(turns_sandbox_off)
         .map(|value| {
@@ -858,6 +941,7 @@ mod detail_tests {
             title: "Allow \u{202E}Bash?".into(),
             detail: raw.clone(),
             can_remember: true,
+            tool: None,
         };
         let card = PendingInput::approval(&approval);
         assert_eq!(card.request_id, "request-1");
@@ -873,6 +957,7 @@ mod detail_tests {
             title: "Allow Bash?".into(),
             detail: detail.to_owned(),
             can_remember: true,
+            tool: None,
         })
     }
 
@@ -899,6 +984,7 @@ mod detail_tests {
             title: "Allow \u{202E}Bash?".into(),
             detail: "ls".into(),
             can_remember: true,
+            tool: None,
         });
         assert!(card.needs_review);
     }
@@ -918,6 +1004,83 @@ mod detail_tests {
     fn long_words_cannot_wrap_past_the_card_unnoticed() {
         // 7 rows once wrapped, though it would fit 6 rows if it broke anywhere.
         assert!(card_for(&vec!["x".repeat(30); 7].join(" ")).needs_review);
+    }
+
+    fn tool_card(name: &str, input: serde_json::Value, cwd: Option<&str>) -> PendingInput {
+        let mut tool = gespan_core::tool::ToolCall::new("t", name);
+        tool.input = input.to_string();
+        PendingInput::approval_in(
+            &Approval {
+                id: "request".into(),
+                title: format!("Allow {name}?"),
+                detail: serde_json::to_string_pretty(&input).unwrap(),
+                can_remember: true,
+                tool: Some(tool),
+            },
+            cwd,
+        )
+    }
+
+    #[test]
+    fn a_named_command_reads_as_its_description_command_and_folder() {
+        let card = tool_card(
+            "Bash",
+            serde_json::json!({
+                "command": "cd \"/srv/scratch\" && python3 -c 'print(1)\nprint(2)'",
+                "description": "Print two numbers",
+                "timeout": 1000,
+            }),
+            Some("/repo"),
+        );
+        assert_eq!(card.label, "Allow Bash? Print two numbers");
+        assert_eq!(card.detail, "python3 -c 'print(1)\nprint(2)'");
+        assert_eq!(card.omitted, "in /srv/scratch\n+ timeout");
+        assert!(card.alerts.is_empty());
+        assert!(!card.needs_review, "short enough to allow from the notice");
+    }
+
+    #[test]
+    fn mcp_and_edit_requests_read_without_json() {
+        let mcp = tool_card(
+            "mcp__github__create_issue",
+            serde_json::json!({"labels": ["bug"], "title": "Crash"}),
+            None,
+        );
+        assert_eq!(mcp.label, "Allow create_issue on github?");
+        assert_eq!(mcp.detail, "labels: bug\ntitle: Crash");
+        assert!(!mcp.detail.contains(['{', '"']));
+        assert!(!mcp.needs_review);
+
+        let edit = tool_card(
+            "Edit",
+            serde_json::json!({"file_path": "/repo/src/a.rs", "old_string": "a", "new_string": "b\nc"}),
+            Some("/repo"),
+        );
+        assert_eq!(edit.detail, "src/a.rs  +2 −1");
+    }
+
+    #[test]
+    fn a_named_request_keeps_the_notice_safety_rules() {
+        // Too long to show whole: Allow moves to the chat.
+        let body = (1..=8).map(|n| format!("step {n}")).collect::<Vec<_>>().join("\n");
+        let long = tool_card("mcp__s__t", serde_json::json!({"body": body}), None);
+        assert!(long.needs_review);
+        // A hidden character in the description is marked and needs the chat.
+        let sneaky = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "description": "List\u{202E}files"}),
+            None,
+        );
+        assert_eq!(sneaky.label, "Allow Bash? List[U+202E]files");
+        assert!(sneaky.needs_review);
+        // So does a sandbox override, as before.
+        let unsandboxed = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "dangerouslyDisableSandbox": true}),
+            None,
+        );
+        assert!(unsandboxed.needs_review);
+        assert_eq!(unsandboxed.alerts.len(), 1);
     }
 
     #[test]
@@ -955,6 +1118,7 @@ mod render_tests {
             title: "Run a command".into(),
             detail: detail.to_owned(),
             can_remember: true,
+            tool: None,
         })
     }
 
