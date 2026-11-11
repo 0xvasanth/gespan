@@ -1078,7 +1078,11 @@ impl Shell {
         }
         let label = self.notification_state.approvals.read(cx).waiting_label();
         let amber = gpui::rgb(0xffb900);
-        let badge = if count > 9 { "9+".to_owned() } else { count.to_string() };
+        let badge = if count > 9 {
+            "9+".to_owned()
+        } else {
+            count.to_string()
+        };
         Some(
             div()
                 .id("waiting-requests")
@@ -1753,7 +1757,10 @@ mod waiting_tests {
             .unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
-        assert!(visual.debug_bounds("waiting-requests").is_none(), "nothing closed");
+        assert!(
+            visual.debug_bounds("waiting-requests").is_none(),
+            "nothing closed"
+        );
         let close = visual
             .debug_bounds("approval-toast-close-0")
             .expect("the request has a notice");
@@ -1761,7 +1768,10 @@ mod waiting_tests {
         visual.refresh().unwrap();
         visual.refresh().unwrap();
 
-        assert!(visual.debug_bounds("approval-toast-close-0").is_none(), "closed");
+        assert!(
+            visual.debug_bounds("approval-toast-close-0").is_none(),
+            "closed"
+        );
         let button = visual
             .debug_bounds("waiting-requests")
             .expect("the title bar counts it");
@@ -1777,14 +1787,22 @@ mod waiting_tests {
         window
             .read_with(visual, |shell, cx| {
                 // The decision is still the user's to make.
-                assert!(shell.notification_chats(cx).iter().any(|v| v.read(cx).needs_approval()));
+                assert!(
+                    shell
+                        .notification_chats(cx)
+                        .iter()
+                        .any(|v| v.read(cx).needs_approval())
+                );
             })
             .unwrap();
 
         visual.simulate_click(button.center(), Default::default());
         visual.refresh().unwrap();
         visual.refresh().unwrap();
-        assert!(visual.debug_bounds("approval-toast-close-0").is_some(), "back");
+        assert!(
+            visual.debug_bounds("approval-toast-close-0").is_some(),
+            "back"
+        );
         assert!(visual.debug_bounds("waiting-requests").is_none());
     }
 }
