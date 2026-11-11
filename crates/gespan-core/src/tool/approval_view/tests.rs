@@ -58,10 +58,19 @@ fn claude_bash_reads_as_its_description_command_and_folder() {
         unreachable!()
     };
     assert!(body.contains("\n  return o[n]\n"), "real line breaks");
-    assert!(!body.contains("\\n") && !body.contains("\\\""), "no escapes");
+    assert!(
+        !body.contains("\\n") && !body.contains("\\\""),
+        "no escapes"
+    );
+    let full = "/private/tmp/claude-501/-Users-dev-code-app--claude-worktrees-import-f1d65c/ce7a5034/scratchpad";
     assert_eq!(
         shown.cwd.as_deref(),
         Some("/private/tmp/…/ce7a5034/scratchpad")
+    );
+    assert_eq!(
+        shown.cwd_full.as_deref(),
+        Some(full),
+        "the whole folder on opening"
     );
     assert_eq!(keys(&shown), ["timeout"]);
     assert_eq!(field(&shown, "timeout").as_deref(), Some("120000"));
@@ -71,7 +80,10 @@ fn claude_bash_reads_as_its_description_command_and_folder() {
 #[test]
 fn a_command_without_a_leading_cd_keeps_the_whole_command() {
     let shown = view("Bash", json!({"command": "cargo test -p gespan-core"}));
-    assert_eq!(shown.body, Body::Command("cargo test -p gespan-core".into()));
+    assert_eq!(
+        shown.body,
+        Body::Command("cargo test -p gespan-core".into())
+    );
     assert_eq!(shown.cwd, None);
     assert_eq!(shown.summary, None);
     assert!(shown.fields.is_empty());
@@ -117,7 +129,10 @@ fn acp_execute_calls_from_kiro_and_cursor_read_as_commands() {
     let shown = approval_view(Some(&kiro), "", Some(SESSION), Some(HOME));
     assert_eq!(shown.body, Body::Command("ls -la src".into()));
 
-    let mut cursor = call("Terminal", json!({"command": "bun run check", "cwd": "/srv/app"}));
+    let mut cursor = call(
+        "Terminal",
+        json!({"command": "bun run check", "cwd": "/srv/app"}),
+    );
     cursor.display = Some(json!({"title": "Terminal", "kind": "execute"}));
     let shown = approval_view(Some(&cursor), "", Some(SESSION), Some(HOME));
     assert_eq!(shown.body, Body::Command("bun run check".into()));
@@ -145,7 +160,19 @@ fn edits_show_the_file_and_its_change() {
         .lines
         .iter()
         .any(|line| line.kind == LineKind::Del && line.text == "let a = 1;"));
-    assert_eq!(keys(&shown), ["replace_all"], "texts are in the diff");
+    assert_eq!(keys(&shown), ["new_string", "old_string", "replace_all"]);
+    let folded: Vec<&str> = shown
+        .fields
+        .iter()
+        .filter(|field| field.folded)
+        .map(|field| field.key.as_str())
+        .collect();
+    assert_eq!(folded.len(), 2, "the texts wait for the card to open");
+    assert!(folded.contains(&"old_string") && folded.contains(&"new_string"));
+    assert_eq!(
+        field(&shown, "new_string").as_deref(),
+        Some("let a = 2;\nlet b = 3;")
+    );
 }
 
 #[test]
@@ -161,7 +188,8 @@ fn writes_preview_their_content_and_paths_outside_the_session_use_home() {
     let preview = preview.as_ref().unwrap();
     assert!(preview.content_only);
     assert_eq!(preview.lines[0].text, "# Todo");
-    assert!(shown.fields.is_empty());
+    assert_eq!(keys(&shown), ["content"]);
+    assert!(shown.fields[0].folded);
 }
 
 #[test]
@@ -191,7 +219,11 @@ fn reads_and_searches_show_their_path_or_pattern() {
         }
     );
     assert_eq!(keys(&grep), ["path"], "the folder searched stays visible");
-    assert_eq!(field(&grep, "path").as_deref(), Some("crates"), "and reads short");
+    assert_eq!(
+        field(&grep, "path").as_deref(),
+        Some("crates"),
+        "and reads short"
+    );
 
     let glob = view(
         "Glob",
@@ -213,7 +245,10 @@ fn web_fetch_shows_the_url_and_its_prompt() {
         json!({"url": "https://docs.rs/gpui", "prompt": "Summarize the API"}),
     );
     assert_eq!(shown.body, Body::Url("https://docs.rs/gpui".into()));
-    assert_eq!(field(&shown, "prompt").as_deref(), Some("Summarize the API"));
+    assert_eq!(
+        field(&shown, "prompt").as_deref(),
+        Some("Summarize the API")
+    );
     assert_eq!(keys(&shown), ["prompt"]);
 }
 
@@ -266,10 +301,20 @@ fn unknown_tools_fall_back_to_readable_arguments() {
     );
     assert_eq!(shown.body, Body::None);
     assert_eq!(keys(&shown), ["cell", "notebook_path"]);
-    assert_eq!(field(&shown, "notebook_path").as_deref(), Some("/tmp/a.ipynb"));
-    let inside = view("NotebookEdit", json!({"notebook_path": "/Users/dev/code/app/a.ipynb", "note": "/not/a/path field"}));
+    assert_eq!(
+        field(&shown, "notebook_path").as_deref(),
+        Some("/tmp/a.ipynb")
+    );
+    let inside = view(
+        "NotebookEdit",
+        json!({"notebook_path": "/Users/dev/code/app/a.ipynb", "note": "/not/a/path field"}),
+    );
     assert_eq!(field(&inside, "notebook_path").as_deref(), Some("a.ipynb"));
-    assert_eq!(field(&inside, "note").as_deref(), Some("/not/a/path field"), "only path arguments");
+    assert_eq!(
+        field(&inside, "note").as_deref(),
+        Some("/not/a/path field"),
+        "only path arguments"
+    );
     assert_eq!(
         field(&shown, "cell").as_deref(),
         Some("id: 3\nsource:\n  print(1)\n  print(2)")
@@ -311,7 +356,10 @@ fn text_only_approvals_unescape_json_and_keep_plain_text() {
     assert_eq!(quoted.body, Body::Text("line one\nline two".into()));
 
     let plain = approval_view(None, "  The agent wants to continue.\r\n ", None, None);
-    assert_eq!(plain.body, Body::Text("The agent wants to continue.".into()));
+    assert_eq!(
+        plain.body,
+        Body::Text("The agent wants to continue.".into())
+    );
 
     let empty = approval_view(None, "   ", None, None);
     assert_eq!((empty.body, empty.fields.len()), (Body::None, 0));
@@ -355,6 +403,10 @@ fn leading_cd_splits_only_a_plain_cd_joined_by_and() {
         "cd /x && ",
         "cd /x y && ls",
         "cd $(pwd) && ls",
+        "cd \"$HOME/x\" && ls",
+        "cd \"/a\\\"b\" && ls",
+        "cd /a\\ b && ls",
+        "cd \"`pwd`\" && ls",
         "cd /x\nls",
         "cdx /x && ls",
         "echo cd /x && ls",
@@ -365,31 +417,70 @@ fn leading_cd_splits_only_a_plain_cd_joined_by_and() {
 }
 
 #[test]
-fn short_paths_are_relative_home_based_or_cut_in_the_middle() {
+fn short_paths_are_relative_or_home_based_and_never_cut() {
     let short = |path| short_path(path, Some(SESSION), Some(HOME));
     assert_eq!(short("/Users/dev/code/app/src/lib.rs"), "src/lib.rs");
     assert_eq!(short("/Users/dev/code/app"), ".");
     assert_eq!(short("/Users/dev/.zshrc"), "~/.zshrc");
     assert_eq!(short("/Users/dev"), "~");
-    assert_eq!(short("/Users/devops/x"), "/Users/devops/x", "not a home prefix");
+    assert_eq!(
+        short("/Users/devops/x"),
+        "/Users/devops/x",
+        "not a home prefix"
+    );
     assert_eq!(short("file:///etc/hosts"), "/etc/hosts");
     let long = "/var/folders/xy/very-long-generated-folder-name-0123456789/T/build/out.log";
-    let cut = short(long);
+    assert_eq!(short(long), long, "paths are never cut");
+}
+
+#[test]
+fn a_long_folder_is_cut_in_the_middle_unless_it_steps_through_dots() {
+    let long = "/var/folders/xy/very-long-generated-folder-name-0123456789/T/build/out.log";
+    let cut = middle_ellipsis(long);
     assert!(cut.chars().count() <= MAX_PATH_CHARS, "{cut}");
-    assert!(cut.starts_with("/var/") && cut.ends_with("build/out.log"), "{cut}");
-    // Long middle parts: the root stays, so the path still says where it is.
+    assert!(
+        cut.starts_with("/var/") && cut.ends_with("build/out.log"),
+        "{cut}"
+    );
     let scratch = "/private/tmp/claude-501/-private-tmp-claude-501--Users-dev-Developer-work-app--worktrees-f1d65c/ce7a5034-9016-4e32-a664-46eee6b1abea/scratchpad";
-    assert_eq!(short(scratch), "/private/tmp/…/scratchpad");
+    assert_eq!(middle_ellipsis(scratch), "/private/tmp/…/scratchpad");
     let one_part = format!("/{}", "x".repeat(80));
-    let cut = short(&one_part);
+    let cut = middle_ellipsis(&one_part);
     assert_eq!(cut.chars().count(), MAX_PATH_CHARS - 1);
     assert!(cut.contains('…'));
+    // The cut would hide the `..` that leaves the folder it seems to name.
+    let escape = "/Users/dev/code/app/very-long-generated-folder-name-0123456789/../../../../etc";
+    assert_eq!(middle_ellipsis(escape), escape);
+    assert_eq!(middle_ellipsis("/short/../path"), "/short/../path");
+}
+
+#[test]
+fn a_cd_into_an_expanded_folder_stays_part_of_the_command() {
+    let shown = view("Bash", json!({"command": "cd \"$HOME/x\" && rm -rf build"}));
+    assert_eq!(
+        shown.body,
+        Body::Command("cd \"$HOME/x\" && rm -rf build".into())
+    );
+    assert_eq!(shown.cwd, None);
+}
+
+#[test]
+fn an_acp_title_that_looks_like_mcp_keeps_its_command() {
+    // Cursor and Kiro name calls by free text; "evil:rm" is not an MCP tool.
+    let mut call = call("evil:rm", json!({"command": "rm -rf ~"}));
+    call.display = Some(json!({"title": "evil:rm", "kind": "execute"}));
+    let shown = approval_view(Some(&call), "", Some(SESSION), Some(HOME));
+    assert_eq!(shown.mcp, None);
+    assert_eq!(shown.body, Body::Command("rm -rf ~".into()));
 }
 
 #[test]
 fn collapse_keeps_short_text_and_counts_what_it_hides() {
     assert_eq!(collapse("one\ntwo", 3, 80), None);
-    let many = (1..=10).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+    let many = (1..=10)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let cut = collapse(&many, 4, 80).unwrap();
     assert_eq!(cut.text, "line 1\nline 2\nline 3\nline 4");
     assert_eq!(cut.hidden_lines, 6);

@@ -21,6 +21,7 @@ impl Conversation {
                     request_id: question.id().to_owned(),
                     kind: InputKind::Question,
                     label: question.notification_label().to_owned(),
+                    summary: String::new(),
                     detail: String::new(),
                     omitted: String::new(),
                     alerts: Vec::new(),

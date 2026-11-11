@@ -23,13 +23,10 @@ const COMMAND_FIELDS: &[&str] = &[
     "exitCode",
     "durationMs",
 ];
-/// An edit's path and texts, which its diff already shows.
+/// An edit's path, which its own row shows.
+const EDIT_PATH_FIELDS: &[&str] = &["file_path", "path", "filePath", "target_file", "targetFile"];
+/// An edit's texts, which its short diff stands in for until the card opens.
 const EDIT_FIELDS: &[&str] = &[
-    "file_path",
-    "path",
-    "filePath",
-    "target_file",
-    "targetFile",
     "old_string",
     "new_string",
     "oldText",
@@ -51,8 +48,10 @@ pub struct ApprovalView {
     /// An MCP tool's server and tool, which its name runs together.
     pub mcp: Option<McpTool>,
     pub body: Body,
-    /// Where a command runs, shortened for reading.
+    /// Where a command runs, cut in the middle when long.
     pub cwd: Option<String>,
+    /// The whole folder, when `cwd` had to be cut. Shown once the card opens.
+    pub cwd_full: Option<String>,
     /// The arguments the body does not show.
     pub fields: Vec<Field>,
 }
@@ -68,6 +67,9 @@ pub struct Field {
     pub key: String,
     /// Strings as they are, with real line breaks; anything nested indented.
     pub value: String,
+    /// Shown only once the card opens: an edit's texts, which its short
+    /// diff stands in for until then.
+    pub folded: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,7 +78,10 @@ pub enum Body {
     /// The shell command, unwrapped from a launcher such as `bash -lc`.
     Command(String),
     /// A read, list or search: what it does, and its file, folder or pattern.
-    Target { verb: String, target: String },
+    Target {
+        verb: String,
+        target: String,
+    },
     Url(String),
     /// An Edit or Write: the file and, when the call carries it, the change.
     Change {
@@ -104,12 +109,16 @@ pub fn approval_view(
 fn tool_view(call: &ToolCall, cwd: Option<&str>, home: Option<&str>) -> ApprovalView {
     let input = arguments(call);
     let shown = call.presentation_in(cwd);
-    let mcp = mcp_tool(&call.name);
+    // Only a name the provider gives a tool is read as MCP. ACP providers
+    // (Cursor, Kiro, ...) name a call by a free-text title with its own kind,
+    // which must not pass for one.
+    let mcp = mcp_tool(&call.name).filter(|_| call.display.is_none());
     let mut view = ApprovalView {
         summary: None,
         mcp: mcp.clone(),
         body: Body::None,
         cwd: None,
+        cwd_full: None,
         fields: Vec::new(),
     };
     if let Some(command) = shown.command.as_deref().filter(|_| mcp.is_none()) {
@@ -124,9 +133,12 @@ fn tool_view(call: &ToolCall, cwd: Option<&str>, home: Option<&str>) -> Approval
         let same = |dir: &str| {
             cwd.is_some_and(|cwd| cwd.trim_end_matches('/') == dir.trim_end_matches('/'))
         };
-        view.cwd = dir
-            .filter(|dir| !same(dir))
-            .map(|dir| short_path(&dir, cwd, home));
+        if let Some(dir) = dir.filter(|dir| !same(dir)) {
+            let full = short_path(&dir, cwd, home);
+            let cut = middle_ellipsis(&full);
+            view.cwd_full = (cut != full).then_some(full);
+            view.cwd = Some(cut);
+        }
         view.fields = fields(&input, COMMAND_FIELDS, cwd, home);
         return view;
     }
@@ -145,7 +157,10 @@ fn tool_view(call: &ToolCall, cwd: Option<&str>, home: Option<&str>) -> Approval
                     path: short_path(path, cwd, home),
                     preview: call.edit_preview().filter(EditPreview::shows_change),
                 };
-                view.fields = fields(&input, EDIT_FIELDS, cwd, home);
+                view.fields = fields(&input, EDIT_PATH_FIELDS, cwd, home);
+                for field in &mut view.fields {
+                    field.folded = EDIT_FIELDS.contains(&field.key.as_str());
+                }
                 return view;
             }
             "Read" | "List" | "Find" | "Search" if !shown.target.is_empty() => {
@@ -231,6 +246,7 @@ fn detail_view(detail: &str) -> ApprovalView {
         mcp: None,
         body: Body::None,
         cwd: None,
+        cwd_full: None,
         fields: Vec::new(),
     };
     let detail = detail.trim();
@@ -287,6 +303,7 @@ fn fields(input: &Value, skip: &[&str], cwd: Option<&str>, home: Option<&str>) -
                 Some(path) if is_path_field(key, path) => short_path(path, cwd, home),
                 _ => pretty(value, 0),
             },
+            folded: false,
         })
         .collect()
 }
@@ -393,6 +410,11 @@ pub fn split_leading_cd(command: &str) -> Option<(String, &str)> {
                 if bytes.get(at + 1) != Some(&b'&') {
                     return None;
                 }
+                // Only a folder the card can show exactly as the shell reads
+                // it: no expansion, substitution or escapes.
+                if command[..at].contains(['$', '`', '\\']) {
+                    return None;
+                }
                 let args = shlex::split(&command[..at])?;
                 let rest = command[at + 2..].trim();
                 return match args.as_slice() {
@@ -407,8 +429,8 @@ pub fn split_leading_cd(command: &str) -> Option<(String, &str)> {
     None
 }
 
-/// `path` relative to the session folder, under `~` for the home folder, and
-/// cut in the middle when it is still long.
+/// `path` relative to the session folder, or under `~` for the home folder.
+/// Never cut: a path's every part can matter.
 pub fn short_path(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
     let path = path.strip_prefix("file://").unwrap_or(path);
     let trimmed = |dir: &str| dir.trim_end_matches(['/', '\\']).to_owned();
@@ -424,7 +446,7 @@ pub fn short_path(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
                 .filter(|rest| !rest.is_empty())
                 .map(str::to_owned)
         });
-    let shown = relative.unwrap_or_else(|| {
+    relative.unwrap_or_else(|| {
         home.map(trimmed)
             .filter(|dir| !dir.is_empty())
             .and_then(|home| {
@@ -436,12 +458,17 @@ pub fn short_path(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
                     .map(|rest| format!("~{rest}"))
             })
             .unwrap_or_else(|| path.to_owned())
-    });
-    middle_ellipsis(&shown)
+    })
 }
 
-fn middle_ellipsis(path: &str) -> String {
-    if path.chars().count() <= MAX_PATH_CHARS {
+/// A long folder cut in the middle for a one-line row. A path that steps
+/// through `.` or `..` stays whole, since the cut could hide where it goes.
+pub fn middle_ellipsis(path: &str) -> String {
+    if path.chars().count() <= MAX_PATH_CHARS
+        || path
+            .split(['/', '\\'])
+            .any(|part| part == ".." || part == ".")
+    {
         return path.to_owned();
     }
     let parts: Vec<&str> = path.split('/').collect();
@@ -506,22 +533,6 @@ pub fn collapse(text: &str, max_lines: usize, max_chars: usize) -> Option<Collap
         text: shown.join("\n"),
         hidden_lines: hidden,
     })
-}
-
-/// Rough height of `view` in text rows, to decide whether it collapses.
-pub fn rows(view: &ApprovalView) -> usize {
-    let text_rows = |text: &str| text.lines().count().max(1);
-    let body = match &view.body {
-        Body::None => 0,
-        Body::Command(text) | Body::Text(text) => text_rows(text),
-        Body::Target { .. } | Body::Url(_) => 1,
-        Body::Change { preview, .. } => 1 + preview.as_ref().map_or(0, |p| p.lines.len()),
-    };
-    body + view
-        .fields
-        .iter()
-        .map(|field| text_rows(&field.value))
-        .sum::<usize>()
 }
 
 #[cfg(test)]

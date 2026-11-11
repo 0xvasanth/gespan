@@ -46,7 +46,11 @@ mod kind;
 /// The call a Claude or Codex approval is about, for a readable card. Claude
 /// sends the tool's name and input; Codex names an item it already announced,
 /// or sends the command and its directory with the request.
-fn approval_tool(kind: &str, request: &Value, tools: &HashMap<String, ToolCall>) -> Option<ToolCall> {
+fn approval_tool(
+    kind: &str,
+    request: &Value,
+    tools: &HashMap<String, ToolCall>,
+) -> Option<ToolCall> {
     if kind == "claude" {
         let name = request["tool_name"].as_str()?;
         let mut call = ToolCall::new(request["tool_use_id"].as_str().unwrap_or(""), name);
@@ -56,7 +60,9 @@ fn approval_tool(kind: &str, request: &Value, tools: &HashMap<String, ToolCall>)
     if let Some(known) = request["itemId"].as_str().and_then(|id| tools.get(id)) {
         return Some(known.clone());
     }
-    let command = request.get("command").filter(|c| c.is_string() || c.is_array())?;
+    let command = request
+        .get("command")
+        .filter(|c| c.is_string() || c.is_array())?;
     let mut call = ToolCall::new(request["itemId"].as_str().unwrap_or(""), "commandExecution");
     let mut input = json!({ "command": command });
     if let Some(cwd) = request.get("cwd").filter(|cwd| cwd.is_string()) {
@@ -2176,13 +2182,20 @@ cat >/dev/null"#,
         let Event::Approval(approval) = &events[0] else {
             panic!("expected an approval")
         };
-        assert_eq!(approval.tool.as_ref().unwrap().name, "mcp__github__create_issue");
+        assert_eq!(
+            approval.tool.as_ref().unwrap().name,
+            "mcp__github__create_issue"
+        );
 
         // Codex: a command it announced as an item, then one it didn't.
         let mut codex = protocol(Kind::Codex);
         codex.frame(json!({"method":"item/started","params":{"item":{"id":"c1","type":"commandExecution","command":"/bin/zsh -lc 'cargo build'","cwd":"/work"}}}), &mut out).unwrap();
         let events = codex.frame(json!({"id":"p1","method":"item/commandExecution/requestApproval","params":{"itemId":"c1","reason":"Build it"}}), &mut out).unwrap();
-        let Event::Approval(approval) = events.iter().find(|e| matches!(e, Event::Approval(_))).unwrap() else {
+        let Event::Approval(approval) = events
+            .iter()
+            .find(|e| matches!(e, Event::Approval(_)))
+            .unwrap()
+        else {
             unreachable!()
         };
         let tool = approval.tool.as_ref().expect("the announced item");

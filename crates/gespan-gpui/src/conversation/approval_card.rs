@@ -5,7 +5,7 @@ use crate::notifications::approvals::{approval_alerts, mark_hidden};
 use crate::theme::*;
 use gespan_core::agent::Approval;
 use gespan_core::tool::approval_view::{
-    approval_view, collapse, ApprovalView, Body, Collapsed, Field,
+    ApprovalView, Body, Collapsed, Field, approval_view, collapse,
 };
 use gespan_core::tool::edit_preview::{EditPreview, LineKind};
 use gpui::{AnyElement, App, ClickEvent, Div, Role, Window, div, prelude::*, px};
@@ -67,20 +67,31 @@ impl Card {
             _ => None,
         }
         .map_or(0, |cut| cut.hidden_lines);
+        let all_lines = |field: &Field| field.value.lines().count().max(1);
+        let folded: usize = self
+            .view
+            .fields
+            .iter()
+            .filter(|field| field.folded)
+            .map(all_lines)
+            .sum();
         let fields: usize = self
             .view
             .fields
             .iter()
+            .filter(|field| !field.folded)
             .enumerate()
             .map(|(index, field)| {
                 if index >= FIELD_ROWS {
-                    field.value.lines().count().max(1)
+                    all_lines(field)
                 } else {
                     collapse(&field.value, FIELD_LINES, LINE_CHARS).map_or(0, |c| c.hidden_lines)
                 }
             })
             .sum();
-        let hidden = body + fields;
+        // A folder cut in the middle shows whole once the card opens.
+        let folder = usize::from(self.view.cwd_full.is_some());
+        let hidden = body + folded + fields + folder;
         (hidden > 0).then_some(hidden)
     }
 
@@ -89,7 +100,11 @@ impl Card {
         let hidden = self.hidden_lines();
         let collapsed = !expanded && hidden.is_some();
         let fields: Vec<&Field> = if collapsed {
-            view.fields.iter().take(FIELD_ROWS).collect()
+            view.fields
+                .iter()
+                .filter(|field| !field.folded)
+                .take(FIELD_ROWS)
+                .collect()
         } else {
             view.fields.iter().collect()
         };
@@ -131,25 +146,32 @@ impl Card {
                 )
             })
             .child(self.body(collapsed))
-            .when_some(view.cwd.as_ref(), |d, cwd| {
-                d.child(
-                    div()
-                        .debug_selector(|| "approval-cwd".into())
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .text_size(px(11.5))
-                        .text_color(content(0.5))
-                        .child(icon("folder", 12.).text_color(content(0.4)))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(crate::fonts::monospace())
-                                .child(cwd.clone()),
-                        ),
-                )
-            })
+            .when_some(
+                if collapsed {
+                    view.cwd.as_ref()
+                } else {
+                    view.cwd_full.as_ref().or(view.cwd.as_ref())
+                },
+                |d, cwd| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "approval-cwd".into())
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(11.5))
+                            .text_color(content(0.5))
+                            .child(icon("folder", 12.).text_color(content(0.4)))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .font_family(crate::fonts::monospace())
+                                    .child(cwd.clone()),
+                            ),
+                    )
+                },
+            )
             .when(!fields.is_empty(), |d| {
                 d.child(
                     div()
@@ -200,7 +222,14 @@ impl Card {
                         .text_color(content(0.55))
                         .hover(|s| s.bg(content(0.06)).text_color(content(0.9)))
                         .child(label)
-                        .child(icon(if expanded { "chevron-up" } else { "chevron-down" }, 12.))
+                        .child(icon(
+                            if expanded {
+                                "chevron-up"
+                            } else {
+                                "chevron-down"
+                            },
+                            12.,
+                        ))
                         .on_click(on_toggle),
                 )
                 .into_any_element(),
@@ -235,6 +264,7 @@ fn mark_view(view: &mut ApprovalView) {
     let mark = |text: &mut String| *text = mark_hidden(text);
     view.summary.as_mut().map(mark);
     view.cwd.as_mut().map(mark);
+    view.cwd_full.as_mut().map(mark);
     if let Some(mcp) = view.mcp.as_mut() {
         mark(&mut mcp.server);
         mark(&mut mcp.tool);
@@ -334,7 +364,6 @@ fn field_row(field: &Field, collapsed: bool) -> Div {
             div()
                 .w(px(112.))
                 .flex_shrink_0()
-                .truncate()
                 .text_color(content(0.5))
                 .child(field.key.clone()),
         )
@@ -381,7 +410,6 @@ fn change(path: &str, preview: Option<&EditPreview>) -> AnyElement {
             div()
                 .min_w_0()
                 .flex_1()
-                .truncate()
                 .font_family(crate::fonts::monospace())
                 .text_size(px(12.))
                 .font_weight(gpui::FontWeight::MEDIUM)

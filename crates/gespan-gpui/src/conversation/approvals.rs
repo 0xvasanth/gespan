@@ -222,11 +222,16 @@ mod tests {
             assert!(visual.debug_bounds(part).is_some(), "{part} is shown");
         }
         let collapsed = visual.debug_bounds("approval-command").unwrap();
-        let toggle = visual.debug_bounds("approval-expand").expect("long enough to fold");
+        let toggle = visual
+            .debug_bounds("approval-expand")
+            .expect("long enough to fold");
         visual.simulate_click(toggle.center(), Default::default());
         visual.refresh().unwrap();
         let opened = visual.debug_bounds("approval-command").unwrap();
-        assert!(opened.size.height > collapsed.size.height, "the rest of the command shows");
+        assert!(
+            opened.size.height > collapsed.size.height,
+            "the rest of the command shows"
+        );
         assert!(
             visual.debug_bounds("approval-expand").is_some(),
             "an open card can be closed again"
@@ -239,10 +244,58 @@ mod tests {
         window
             .read_with(visual, |view, _| {
                 assert_eq!(view.approvals.front().unwrap().id, "short");
-                assert!(!view.approval_ui.expanded.get(), "each request starts closed");
+                assert!(
+                    !view.approval_ui.expanded.get(),
+                    "each request starts closed"
+                );
             })
             .unwrap();
-        assert!(visual.debug_bounds("approval-expand").is_none(), "nothing to fold");
+        assert!(
+            visual.debug_bounds("approval-expand").is_none(),
+            "nothing to fold"
+        );
+    }
+
+    #[gpui::test]
+    fn an_edit_shows_its_diff_and_opens_to_its_whole_texts(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let input = serde_json::json!({
+            "file_path": "/tmp/src/a.rs",
+            "old_string": "let a = 1;",
+            "new_string": "let a = 2;",
+        });
+        let mut tool = gespan_core::tool::ToolCall::new("edit", "Edit");
+        tool.input = input.to_string();
+        window
+            .update(cx, |view, _, cx| {
+                view.approvals.push_back(Approval {
+                    id: "edit".into(),
+                    title: "Allow Edit?".into(),
+                    detail: input.to_string(),
+                    can_remember: true,
+                    tool: Some(tool),
+                });
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("approval-file").is_some());
+        assert!(visual.debug_bounds("approval-diff").is_some());
+        assert!(
+            visual.debug_bounds("approval-fields").is_none(),
+            "texts wait"
+        );
+        let toggle = visual
+            .debug_bounds("approval-expand")
+            .expect("the texts can be read");
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("approval-fields").is_some(),
+            "the whole texts"
+        );
     }
 
     #[gpui::test]

@@ -72,14 +72,10 @@ pub(super) const KIRO_AUTH_HELP: &str = "Run `kiro-cli login` (check with `kiro-
 /// flag and exits, and only then is a bare `acp` launched instead.
 const KIRO_LAUNCH: [&[&str]; 2] = [&["acp", "--agent-engine=v3"], &["acp"]];
 
-
 /// A permission request's call, for one the session hasn't announced yet:
 /// its title, kind and locations describe it, and `rawInput` is what runs.
 fn acp_approval_tool(tool: &Value, id: &str, kind: Option<&str>) -> ToolCall {
-    let mut call = ToolCall::new(
-        id,
-        tool["title"].as_str().or(kind).unwrap_or("Tool"),
-    );
+    let mut call = ToolCall::new(id, tool["title"].as_str().or(kind).unwrap_or("Tool"));
     if let Some(input) = tool.get("rawInput").or_else(|| tool.get("raw_input")) {
         call.input = input
             .as_str()
@@ -939,7 +935,9 @@ impl Protocol {
                                 .unwrap_or("this tool")
                         ),
                     };
-                    let approved = known.cloned().unwrap_or_else(|| acp_approval_tool(tool, call_id, kind));
+                    let approved = known
+                        .cloned()
+                        .unwrap_or_else(|| acp_approval_tool(tool, call_id, kind));
                     let detail = known
                         .map(|call| format!("{}\n{}\n{}", call.name, call.input, call.output))
                         .unwrap_or_else(|| serde_json::to_string_pretty(tool).unwrap_or_default());
@@ -2320,19 +2318,28 @@ mod tests {
             };
             let tool = approval.tool.as_ref().expect("the requested call");
             assert_eq!(tool.id, "t1");
-            assert_eq!(tool.presentation().command.as_deref(), Some("git status"), "{kind:?}");
+            assert_eq!(
+                tool.presentation().command.as_deref(),
+                Some("git status"),
+                "{kind:?}"
+            );
             assert_eq!(tool.display.as_ref().unwrap()["kind"], "execute");
 
             // Announced first: the session's own record of it, with its kind.
             p.frame(json!({"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"t2","kind":"edit","title":"Edit main.rs","rawInput":{"path":"/work/main.rs","oldText":"a","newText":"b"}}}}), &mut out).unwrap();
             let events = p.frame(json!({"id":8,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"t2"},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}), &mut out).unwrap();
-            let Some(Event::Approval(approval)) = events.iter().find(|e| matches!(e, Event::Approval(_))) else {
+            let Some(Event::Approval(approval)) =
+                events.iter().find(|e| matches!(e, Event::Approval(_)))
+            else {
                 panic!("{kind:?}: {events:?}")
             };
             let tool = approval.tool.as_ref().unwrap();
             assert_eq!(tool.name, "Edit main.rs");
             assert_eq!(tool.presentation().action, "Edit", "{kind:?}");
-            assert!(tool.edit_preview().is_some_and(|p| p.shows_change()), "{kind:?}");
+            assert!(
+                tool.edit_preview().is_some_and(|p| p.shows_change()),
+                "{kind:?}"
+            );
         }
     }
     #[test]
