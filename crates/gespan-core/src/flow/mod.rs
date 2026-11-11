@@ -2,6 +2,7 @@
 pub mod contract;
 pub mod definition;
 pub mod diagram;
+pub mod pilot_schema;
 pub mod run;
 pub mod runner;
 pub mod starter;
