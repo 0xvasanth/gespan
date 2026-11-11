@@ -572,23 +572,23 @@ impl Render for ApprovalNotices {
             .w_full()
             .children(pill)
             .children(
-            self.notices
-                .iter()
-                .enumerate()
-                .map(|(ix, (session, input))| {
-                    let close_key = session.key(input);
-                    let open_id = session.session_id.clone();
-                    let allow_session = session.session_id.clone();
-                    let deny_session = session.session_id.clone();
-                    let allow_request = input.request_id.clone();
-                    let needs_review = input.needs_review;
-                    let primary = if needs_review {
-                        "Review in chat"
-                    } else {
-                        "Allow"
-                    };
-                    let deny_request = input.request_id.clone();
-                    super::surface::toast_frame()
+                self.notices
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, (session, input))| {
+                        let close_key = session.key(input);
+                        let open_id = session.session_id.clone();
+                        let allow_session = session.session_id.clone();
+                        let deny_session = session.session_id.clone();
+                        let allow_request = input.request_id.clone();
+                        let needs_review = input.needs_review;
+                        let primary = if needs_review {
+                            "Review in chat"
+                        } else {
+                            "Allow"
+                        };
+                        let deny_request = input.request_id.clone();
+                        super::surface::toast_frame()
                         .id(("approval-toast", ix))
                         .role(Role::Status)
                         .child(
@@ -834,8 +834,8 @@ impl Render for ApprovalNotices {
                                     ),
                             )
                         })
-                }),
-        )
+                    }),
+            )
     }
 }
 

@@ -1054,8 +1054,11 @@ impl Shell {
         });
         let stack = div()
             .id("notification-stack")
+            .debug_selector(|| "notification-stack".into())
             .absolute()
-            .top(px(12.))
+            // Below the tab bar, so a notice that stays up (the pill of
+            // closed requests) never covers its controls.
+            .top(px(crate::theme::TITLE_BAR_HEIGHT + 8.))
             .right(px(12.))
             .w(px(360.))
             .max_w(px((self.viewport_width - 24.).max(0.)))
@@ -1503,7 +1506,9 @@ mod error_tests {
         let app = visual.debug_bounds("app-error").unwrap();
         let file = visual.debug_bounds("file-action-error").unwrap();
         let viewport = window.update(visual, |_, w, _| w.viewport_size()).unwrap();
-        assert_eq!(app.top(), px(12.));
+        // Below the tab bar, so nothing in the stack covers its controls.
+        let top = px(crate::theme::TITLE_BAR_HEIGHT + 8.);
+        assert_eq!(app.top(), top);
         assert_eq!(app.right(), viewport.width - px(12.));
         assert_eq!(app.size.width, px(360.));
         assert_eq!(file.size.width, app.size.width);
@@ -1516,10 +1521,7 @@ mod error_tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("app-error").is_none());
-        assert_eq!(
-            visual.debug_bounds("file-action-error").unwrap().top(),
-            px(12.)
-        );
+        assert_eq!(visual.debug_bounds("file-action-error").unwrap().top(), top);
 
         visual.simulate_resize(gpui::size(px(300.), px(800.)));
         visual.run_until_parked();
