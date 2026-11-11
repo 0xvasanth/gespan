@@ -12,6 +12,7 @@ pub use placement::{already_imported, place, Placement, Skip};
 
 mod claude;
 mod codex;
+mod kiro;
 mod placement;
 #[cfg(test)]
 mod tests;
@@ -44,6 +45,7 @@ pub fn list(kind: Kind, home: &Path) -> Vec<Candidate> {
     let mut found: Vec<Candidate> = match kind {
         Kind::Claude => claude::list(home),
         Kind::Codex => codex::list(home),
+        Kind::Kiro => kiro::list(home),
         _ => Vec::new(),
     };
     found.sort_by_key(|c| std::cmp::Reverse(c.updated_at));
@@ -55,6 +57,7 @@ pub fn read_turns(candidate: &Candidate) -> Result<Vec<OutsideTurn>, String> {
     match candidate.kind {
         Kind::Claude => claude::read(&candidate.path),
         Kind::Codex => codex::read(&candidate.path),
+        Kind::Kiro => kiro::read(&candidate.path),
         _ => Err("not supported".into()),
     }
 }
@@ -64,6 +67,7 @@ pub fn count_messages(candidate: &Candidate) -> Option<u32> {
     let turns = match candidate.kind {
         Kind::Claude => claude::read(&candidate.path).ok()?,
         Kind::Codex => codex::read(&candidate.path).ok()?,
+        Kind::Kiro => kiro::read(&candidate.path).ok()?,
         _ => return None,
     };
     u32::try_from(turns.len()).ok()

@@ -409,6 +409,211 @@ fn codex_bad_id_in_name_is_skipped() {
     assert!(list(Kind::Codex, home.path()).is_empty());
 }
 
+const KIRO_ID: &str = "sess_0f1e2d3c-4b5a-4968-8776-655443322110";
+
+/// A Kiro V3 session folder, `sessions/<workspace hash>/<id>`, with the
+/// fields a real `session.json` carries (values made up).
+fn kiro_session(home: &Path, id: &str, workspaces: &[&str], lines: &[String]) -> PathBuf {
+    let folder = home.join("sessions/0a1b2c3d4e5f6a7b").join(id);
+    fs::create_dir_all(&folder).unwrap();
+    let session = serde_json::json!({
+        "_meta": {"kiro": {}},
+        "agentMode": "auto",
+        "createdAt": "2026-11-11T10:20:30.000Z",
+        "dataModelVersion": 1,
+        "id": id,
+        "lastModifiedAt": "2026-11-11T10:21:00.000Z",
+        "modelId": "auto",
+        "rootPaths": workspaces,
+        "schemaVersion": "1.0.0",
+        "status": "idle",
+        "title": "Kiro's own summary",
+        "workspacePaths": workspaces,
+    });
+    fs::write(folder.join("session.json"), session.to_string()).unwrap();
+    if !lines.is_empty() {
+        fs::write(folder.join("messages.jsonl"), lines.join("\n") + "\n").unwrap();
+    }
+    folder
+}
+
+fn kiro_line(at: &str, payload: serde_json::Value) -> String {
+    serde_json::json!({"id": "e", "payload": payload, "timestamp": at}).to_string()
+}
+
+fn kiro_user(at: &str, text: &str) -> String {
+    kiro_line(
+        at,
+        serde_json::json!({
+            "_meta": {"kiro": {"userMessageTag": "tag"}},
+            "content": text, "documents": [], "images": [], "type": "user",
+        }),
+    )
+}
+
+/// An assistant entry; `operation` is `Say` for visible text and
+/// `Reasoning` for thinking.
+fn kiro_assistant(at: &str, operation: &str, text: &str) -> String {
+    kiro_line(
+        at,
+        serde_json::json!({
+            "_meta": {"kiro": {"agentMode": "auto"}},
+            "content": text, "executionId": "x", "operationType": operation,
+            "turnId": "t", "type": "assistant",
+        }),
+    )
+}
+
+fn kiro_event(kind: &str) -> String {
+    kiro_line(
+        "2026-11-11T10:20:30.000Z",
+        serde_json::json!({"type": kind, "content": "not a turn", "turnId": "t"}),
+    )
+}
+
+fn kiro_tool_call() -> String {
+    kiro_line(
+        "2026-11-11T10:20:31.000Z",
+        serde_json::json!({
+            "type": "tool_call", "toolCallId": "c", "toolName": "read",
+            "title": "Reading file", "args": {"path": "a.rs"}, "status": "completed",
+            "kind": "read", "turnId": "t",
+        }),
+    )
+}
+
+fn kiro_tool_result() -> String {
+    kiro_line(
+        "2026-11-11T10:20:32.000Z",
+        serde_json::json!({
+            "type": "tool_result", "toolCallId": "c", "success": true,
+            "content": "fn main() {}", "turnId": "t",
+        }),
+    )
+}
+
+#[test]
+fn kiro_lists_title_cwd_time_and_id() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = kiro_session(
+        home.path(),
+        KIRO_ID,
+        &["/tmp/p", "/tmp/q"],
+        &[
+            kiro_event("agent_note"),
+            kiro_user("2026-11-11T10:20:30.000Z", "Fix the login redirect\nmore"),
+            kiro_event("turn_start"),
+            kiro_assistant("2026-11-11T10:20:31.000Z", "Say", "On it."),
+        ],
+    );
+    set_mtime(&folder.join("messages.jsonl"), 1_800_000_000);
+
+    let found = list(Kind::Kiro, home.path());
+    assert_eq!(found.len(), 1);
+    let c = &found[0];
+    assert_eq!(c.kind, Kind::Kiro);
+    assert_eq!(c.provider_id, KIRO_ID);
+    assert_eq!(c.cwd, "/tmp/p");
+    assert_eq!(c.title, "Fix the login redirect");
+    assert_eq!(c.branch, None);
+    assert_eq!(c.updated_at, 1_800_000_000_000);
+    assert_eq!(c.messages, None);
+    assert_eq!(c.path, folder);
+}
+
+#[test]
+fn kiro_reads_user_and_assistant_text_only() {
+    let home = tempfile::tempdir().unwrap();
+    let mut lines = vec![
+        kiro_event("agent_note"),
+        kiro_user("2026-11-11T10:20:30.000Z", "Read a.rs"),
+        kiro_event("turn_start"),
+        kiro_assistant("2026-11-11T10:20:31.000Z", "Say", "Reading it:"),
+        kiro_assistant("2026-11-11T10:20:31.500Z", "Reasoning", "..."),
+        kiro_tool_call(),
+        kiro_tool_result(),
+        kiro_assistant("2026-11-11T10:20:33.000Z", "Say", "It is empty."),
+        kiro_event("turn_end"),
+        kiro_event("session_start"),
+        kiro_user("2026-11-11T10:21:00.000Z", "Thanks"),
+    ];
+    // Kiro is still writing the next entry.
+    lines.push(r#"{"id":"e","payload":{"type":"assistant","operationType":"Say","con"#.into());
+    let folder = kiro_session(home.path(), KIRO_ID, &["/tmp/p"], &[]);
+    fs::write(folder.join("messages.jsonl"), lines.join("\n")).unwrap();
+
+    let c = list(Kind::Kiro, home.path()).remove(0);
+    let turns = read_turns(&c).unwrap();
+    assert_eq!(
+        texts(&turns),
+        [
+            (TurnRole::User, "Read a.rs"),
+            (TurnRole::Assistant, "Reading it:"),
+            (TurnRole::Assistant, "It is empty."),
+            (TurnRole::User, "Thanks"),
+        ]
+    );
+    let sent: Vec<_> = turns.iter().map(|t| t.sent_at).collect();
+    assert_eq!(
+        sent,
+        [
+            Some(1_794_392_430_000),
+            Some(1_794_392_431_000),
+            Some(1_794_392_433_000),
+            Some(1_794_392_460_000),
+        ]
+    );
+    assert_eq!(count_messages(&c), Some(4));
+}
+
+#[test]
+fn kiro_skips_sessions_with_no_user_message() {
+    let home = tempfile::tempdir().unwrap();
+    let good = [kiro_user("2026-11-11T10:20:30.000Z", "Hello")];
+    // Opened but never prompted: no messages file at all.
+    kiro_session(home.path(), "sess_never-prompted", &["/tmp/p"], &[]);
+    kiro_session(
+        home.path(),
+        "sess_only-events",
+        &["/tmp/p"],
+        &[kiro_event("agent_note"), kiro_event("session_start")],
+    );
+    kiro_session(
+        home.path(),
+        "sess_blank-prompt",
+        &["/tmp/p"],
+        &[kiro_user("2026-11-11T10:20:30.000Z", "  \n")],
+    );
+    let broken = kiro_session(home.path(), "sess_broken-meta", &["/tmp/p"], &good);
+    fs::write(broken.join("session.json"), b"{not json").unwrap();
+    kiro_session(home.path(), "sess_good", &["/tmp/p"], &good);
+    // Kiro's own bookkeeping next to the sessions.
+    fs::create_dir_all(home.path().join("sessions/0a1b2c3d4e5f6a7b/.index")).unwrap();
+    fs::write(
+        home.path().join("sessions/0a1b2c3d4e5f6a7b/stray.json"),
+        "{}",
+    )
+    .unwrap();
+
+    let found = list(Kind::Kiro, home.path());
+    let ids: Vec<_> = found.iter().map(|c| c.provider_id.as_str()).collect();
+    assert_eq!(ids, ["sess_good"]);
+}
+
+#[test]
+fn kiro_head_read_is_bounded() {
+    let home = tempfile::tempdir().unwrap();
+    let filler = kiro_line(
+        "2026-11-11T10:20:30.000Z",
+        serde_json::json!({"type": "agent_note", "content": "x".repeat(900)}),
+    );
+    let mut lines = vec![filler; (HEAD_LIMIT as usize / 900) + 10];
+    lines.push(kiro_user("2026-11-11T10:20:30.000Z", "Too far in"));
+    kiro_session(home.path(), KIRO_ID, &["/tmp/p"], &lines);
+
+    assert!(list(Kind::Kiro, home.path()).is_empty());
+}
+
 mod placement {
     use super::*;
     use crate::store::Session;
