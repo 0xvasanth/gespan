@@ -1,0 +1,44 @@
+docs/assets/features/worktrees.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/pilots.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/remote.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+README.md
+  s_3a61535e1d26b7::t_6442ee19f2647a 133-136,138-141,143-146,150-153,155-163,167-170,172-180,184-187,189-197,202
+  s_3a61535e1d26b7::t_d7c544d76efd4b 203
+docs/assets/features/review.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/workspace.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/mcp.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/editor.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/usage.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/inbox.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/operator.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/browser.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+docs/assets/features/board.svg
+  s_3a61535e1d26b7::t_6442ee19f2647a 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e038a5e8e31f6ccf9d9e74dde9cc61a63cb38b1",
+  "prompts": {},
+  "sessions": {
+    "s_3a61535e1d26b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4216030c-4f7b-40c4-b80a-2b9458826e4f",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
