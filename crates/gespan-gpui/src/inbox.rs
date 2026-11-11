@@ -29,6 +29,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+impl Inbox {
+    /// The GitLab merge requests in the current list, for automations that
+    /// wait for comments on them.
+    pub(crate) fn merge_requests(&self) -> Vec<Item> {
+        self.snapshot
+            .items
+            .iter()
+            .filter(|item| item.provider == "gitlab" && item.kind == "pr")
+            .cloned()
+            .collect()
+    }
+}
 pub(crate) enum Event {
     Close,
     OpenSession(i64),

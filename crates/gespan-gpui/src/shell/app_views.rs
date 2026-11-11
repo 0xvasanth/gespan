@@ -531,7 +531,7 @@ impl Shell {
             self.app_view_events.push(cx.subscribe_in(
                 &view,
                 window,
-                |this, _, event: &inbox::Event, window, cx| match event {
+                |this, view, event: &inbox::Event, window, cx| match event {
                     inbox::Event::Close => this.close_app_view(window, cx),
                     inbox::Event::OpenSession(id) => this.open(*id, window, cx),
                     inbox::Event::ComposeSession { item, prompt } => {
@@ -555,6 +555,7 @@ impl Shell {
                     }
                     inbox::Event::AskClosed => this.update_chat_visibility(cx),
                     inbox::Event::ItemsChanged(items) => {
+                        this.inbox_merge_requests(view.read(cx).merge_requests());
                         this.inbox_automation_events(items.clone(), cx)
                     }
                     inbox::Event::ConnectionsChanged => this.refresh_connected_trackers(cx),

@@ -40,6 +40,26 @@ fn every_kind_of_item(at: i64) -> Vec<Item> {
         created_at: created.clone(),
         ..Default::default()
     })
+    // A comment on a GitLab merge request, as the background refresh offers it.
+    .chain(gespan_core::inbox::mr_comment_items(
+        &Item {
+            provider: "gitlab".into(),
+            kind: "pr".into(),
+            number: 90,
+            repo: "acme/app".into(),
+            project_path: "/repo".into(),
+            title: "Commented".into(),
+            ..Default::default()
+        },
+        &[gespan_core::inbox::MrComment {
+            id: "501".into(),
+            author: "alice".into(),
+            body: "Please rename this".into(),
+            created_at: created.clone(),
+            url: String::new(),
+        }],
+        "",
+    ))
     .collect()
 }
 
