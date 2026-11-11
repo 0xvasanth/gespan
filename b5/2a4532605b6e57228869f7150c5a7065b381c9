@@ -1,0 +1,45 @@
+crates/gespan-gpui/src/shell/automation_runs_tests.rs
+  s_9cd6f215a5151a::t_89368afc15b5fc 1650-1656,1733-1739,1744
+  s_9cd6f215a5151a::t_78a765db13f7ea 1802-1805
+  s_9cd6f215a5151a::t_941179331d1861 1578-1649,1657-1732,1740-1743,1745-1772
+  s_9cd6f215a5151a::t_1f2c722ded5156 1773-1801,1806-1812
+crates/gespan-core/src/inbox.rs
+  s_9cd6f215a5151a::t_93f1e87df50479 89-151,159-170,174-184,2587-2614,2619-2682
+  s_9cd6f215a5151a::t_89368afc15b5fc 152-158,2615-2618
+crates/gespan-core/src/automations.rs
+  s_9cd6f215a5151a::t_89368afc15b5fc 3794-3800,3856-3859,3874-3878,3925-3930,4005-4007,4075-4081
+  s_9cd6f215a5151a::t_a668be4610bbe5 1327,1510-1560,1587,1602-1607,1666-1674,1732-1740,1745-1749,1752,1756-1761,3791-3793,3801-3855,3860-3873,3879-3924,3931-4004,4008-4074,4082-4102
+crates/gespan-gpui/src/automations/contract_tests.rs
+  s_9cd6f215a5151a::t_c89c9710e03c4a 43-62
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_9cd6f215a5151a::t_c89c9710e03c4a 31-33,59,284-285,287-291,294-307,310,317-318,815-819,821-846
+  s_9cd6f215a5151a::t_1f2c722ded5156 254-263
+  s_9cd6f215a5151a::t_2ef9607226b6c9 34-37,60,248-253,277-279,293,333-335
+  s_9cd6f215a5151a::t_6cd8032d82eb00 292
+  s_9cd6f215a5151a::t_941179331d1861 820
+  s_9cd6f215a5151a::t_b74a90df4ad6e9 847-848
+crates/gespan-gpui/src/inbox.rs
+  s_9cd6f215a5151a::t_2ef9607226b6c9 32-43
+crates/gespan-core/src/inbox/gitlab.rs
+  s_9cd6f215a5151a::t_93f1e87df50479 204-215
+crates/gespan-gpui/src/shell/app_views.rs
+  s_9cd6f215a5151a::t_2ef9607226b6c9 534,558
+crates/gespan-gpui/src/automations/editor.rs
+  s_9cd6f215a5151a::t_c89c9710e03c4a 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b52a4532605b6e57228869f7150c5a7065b381c9",
+  "prompts": {},
+  "sessions": {
+    "s_9cd6f215a5151a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7938db8f-1254-4c3a-910d-7efa4199ebca",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
