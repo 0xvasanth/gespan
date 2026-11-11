@@ -1,7 +1,8 @@
 //! Codex keeps one rollout per session, in
-//! `<home>/sessions/<year>/<month>/<day>/rollout-<time>-<id>.jsonl` and,
-//! once archived, under `<home>/archived_sessions`, possibly compressed as
-//! `.jsonl.zst`.
+//! `<home>/sessions/<year>/<month>/<day>/rollout-<time>-<id>.jsonl`, possibly
+//! compressed as `.jsonl.zst`. Archived rollouts, under
+//! `<home>/archived_sessions`, are not listed: Codex refuses to resume an
+//! archived thread ("Run `codex unarchive` first").
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -16,9 +17,7 @@ use crate::provider::Kind;
 
 pub(super) fn list(home: &Path) -> Vec<Candidate> {
     let mut files = Vec::new();
-    for root in ["sessions", "archived_sessions"] {
-        walk(&home.join(root), &mut files);
-    }
+    walk(&home.join("sessions"), &mut files);
     // Rollouts' heads are read side by side.
     files
         .par_iter()

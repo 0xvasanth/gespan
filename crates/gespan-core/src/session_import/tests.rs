@@ -351,7 +351,7 @@ fn codex_lists_meta_cwd_branch_title_and_id() {
 }
 
 #[test]
-fn codex_lists_zst_and_archived_rollouts() {
+fn codex_lists_zst_rollouts_but_not_archived_ones() {
     let home = tempfile::tempdir().unwrap();
     let body = [
         codex_meta("/tmp/z", None),
@@ -361,10 +361,12 @@ fn codex_lists_zst_and_archived_rollouts() {
     .join("\n")
         + "\n";
     let zst_id = "11111111-2222-3333-4444-555555555555";
-    let dir = home.path().join("archived_sessions/2026/10/01");
+    let dir = home.path().join("sessions/2026/10/01");
     fs::create_dir_all(&dir).unwrap();
     let zst = dir.join(rollout_name(zst_id, "jsonl.zst"));
     fs::write(&zst, zstd::encode_all(body.as_bytes(), 3).unwrap()).unwrap();
+    // Codex refuses to resume an archived thread until it is unarchived, so
+    // an archived rollout is not offered.
     write(
         home.path(),
         &format!("archived_sessions/{}", rollout_name(CODEX_ID, "jsonl")),
@@ -374,11 +376,10 @@ fn codex_lists_zst_and_archived_rollouts() {
         ],
     );
 
-    let mut found = list(Kind::Codex, home.path());
-    found.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+    let found = list(Kind::Codex, home.path());
     let ids: Vec<_> = found.iter().map(|c| c.provider_id.as_str()).collect();
-    assert_eq!(ids, [CODEX_ID, zst_id]);
-    let compressed = &found[1];
+    assert_eq!(ids, [zst_id]);
+    let compressed = &found[0];
     assert_eq!(compressed.cwd, "/tmp/z");
     assert_eq!(compressed.branch, None);
     assert_eq!(compressed.title, "Compressed question");
@@ -1771,9 +1772,14 @@ fn sources_lists_only_agents_present_on_disk() {
 }
 
 #[test]
-fn sources_counts_codex_archived_sessions_alone() {
+fn sources_skips_codex_with_only_archived_sessions() {
     let user = tempfile::tempdir().unwrap();
     fs::create_dir_all(user.path().join(".codex/archived_sessions")).unwrap();
+    assert!(
+        sources(user.path()).is_empty(),
+        "archived threads cannot resume"
+    );
+    fs::create_dir_all(user.path().join(".codex/sessions")).unwrap();
     let found = sources(user.path());
     assert_eq!(kinds_of(&found), vec![Kind::Codex]);
     assert_eq!(found[0].home, user.path().join(".codex"));

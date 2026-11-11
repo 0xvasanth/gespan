@@ -68,7 +68,8 @@ const IMPORTABLE: [Kind; 4] = [Kind::Claude, Kind::Codex, Kind::Cursor, Kind::Ki
 fn session_dirs(kind: Kind) -> &'static [&'static str] {
     match kind {
         Kind::Claude => &["projects"],
-        Kind::Codex => &["sessions", "archived_sessions"],
+        // Codex will not resume an archived thread until it is unarchived.
+        Kind::Codex => &["sessions"],
         Kind::Cursor => &["acp-sessions"],
         Kind::Kiro => &["sessions"],
         _ => &[],
