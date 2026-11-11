@@ -39,6 +39,11 @@ pub(super) fn events(kind: &str) -> Vec<(String, String)> {
             ("draft_opened", "Draft opened"),
             ("pull_request_opened", "Pull request opened"),
             ("issue_opened", "Issue opened"),
+            ("pull_request_comment", "Pull request comment"),
+            ("pull_request_review_requested", "Review requested"),
+            ("check_failed", "Check failed"),
+            ("pull_request_merged", "Pull request merged"),
+            ("issue_assigned", "Issue assigned"),
         ],
         "gitlab" => &[
             ("merge_request_opened", "Merge request opened"),

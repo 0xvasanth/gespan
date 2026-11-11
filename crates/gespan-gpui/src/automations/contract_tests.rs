@@ -40,26 +40,56 @@ fn every_kind_of_item(at: i64) -> Vec<Item> {
         created_at: created.clone(),
         ..Default::default()
     })
-    // A comment on a GitLab merge request, as the background refresh offers it.
-    .chain(gespan_core::inbox::mr_comment_items(
-        &Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number: 90,
+    // What the background refresh finds on listed items: comments on
+    // both forges, and GitHub's checks, reviews, merges and assignments.
+    .chain({
+        use gespan_core::inbox::{Check, Checks, Comment, events};
+        let on = |provider: &str, kind: &str, number: i64| Item {
+            provider: provider.into(),
+            kind: kind.into(),
+            number,
             repo: "acme/app".into(),
             project_path: "/repo".into(),
-            title: "Commented".into(),
+            title: format!("Item {number}"),
+            updated_at: created.clone(),
             ..Default::default()
-        },
-        &[gespan_core::inbox::MrComment {
+        };
+        let said = Comment {
             id: "501".into(),
+            kind: "comment".into(),
             author: "alice".into(),
             body: "Please rename this".into(),
             created_at: created.clone(),
-            url: String::new(),
-        }],
-        "",
-    ))
+            ..Default::default()
+        };
+        let failing = Checks {
+            head_oid: "abc1234".into(),
+            checks: vec![Check {
+                name: "test".into(),
+                state: "fail".into(),
+                completed_at: Some(created.clone()),
+                ..Default::default()
+            }],
+        };
+        let mut found =
+            events::comment_items(&on("gitlab", "pr", 90), std::slice::from_ref(&said), "");
+        found.extend(events::comment_items(&on("github", "pr", 91), &[said], ""));
+        found.extend(events::check_failed_items(
+            &on("github", "pr", 92),
+            &failing,
+        ));
+        found.push(events::review_requested_item(
+            &on("github", "pr", 93),
+            "abc1234",
+        ));
+        found.push(events::merged_item(
+            &on("github", "pr", 94),
+            &created,
+            "alice",
+        ));
+        found.push(events::assigned_item(&on("github", "issue", 95), "me"));
+        found
+    })
     .collect()
 }
 
