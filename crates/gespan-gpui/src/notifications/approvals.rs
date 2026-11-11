@@ -370,14 +370,19 @@ impl SessionInputs {
             request_id: input.request_id.clone(),
         }
     }
-    fn notice(&self) -> Option<&PendingInput> {
+    /// The request a notice shows, skipping the ones the user closed, so a
+    /// later request in the same session still gets its own notice.
+    fn notice_except(&self, closed: &HashSet<InputKey>) -> Option<&PendingInput> {
+        let open = |p: &&PendingInput| !closed.contains(&self.key(p));
         self.pending
             .iter()
+            .filter(open)
             .find(|p| p.kind == InputKind::Question)
             .or_else(|| {
                 self.pending
                     .iter()
                     .rev()
+                    .filter(open)
                     .find(|p| p.kind == InputKind::Approval)
             })
     }
@@ -392,6 +397,9 @@ pub(crate) enum Action {
         request_id: String,
         decision: Decision,
     },
+    /// The notices changed without a session changing (reopened), so the
+    /// host should sync them again.
+    Changed,
 }
 
 /// Mirrors useInputNotifications: coalesce each update per session, retain
@@ -430,6 +438,13 @@ impl InputAnnouncements {
 pub(crate) struct ApprovalNotices {
     notices: Vec<(SessionInputs, PendingInput)>,
     occurred: HashMap<InputKey, SystemTime>,
+    /// Requests whose notice the user closed without deciding. They stay
+    /// pending; only their notice is gone until reopened or resolved. Kept in
+    /// memory, so a relaunch shows anything still waiting again.
+    closed: HashSet<InputKey>,
+    /// Closed requests still waiting that would otherwise have a notice: the
+    /// count on the pill that brings them back.
+    hidden: usize,
 }
 impl EventEmitter<Action> for ApprovalNotices {}
 impl ApprovalNotices {
@@ -455,12 +470,24 @@ impl ApprovalNotices {
         cx: &mut Context<Self>,
     ) {
         self.track_pending(sessions);
+        // A request answered anywhere leaves the closed set with it.
+        self.closed.retain(|key| self.occurred.contains_key(key));
         let previous = std::mem::take(&mut self.notices);
+        let previous_hidden = std::mem::replace(&mut self.hidden, 0);
         for session in sessions {
             if session.inbox_ask || session.orchestration_worker || session.conversation_focused {
                 continue;
             }
-            let Some(input) = session.notice() else {
+            for input in &session.pending {
+                let key = session.key(input);
+                if self.closed.contains(&key)
+                    && let Some(occurred) = self.occurred.get(&key)
+                    && allows(session, *occurred)
+                {
+                    self.hidden += 1;
+                }
+            }
+            let Some(input) = session.notice_except(&self.closed) else {
                 continue;
             };
             let key = session.key(input);
@@ -471,256 +498,344 @@ impl ApprovalNotices {
         }
         // Shell syncs on every render; notifying unchanged notices would
         // dirty the shell again and redraw the window every frame.
-        if self.notices != previous {
+        if self.notices != previous || self.hidden != previous_hidden {
             cx.notify();
         }
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.notices.is_empty()
+        self.notices.is_empty() && self.hidden == 0
+    }
+    /// Hides a notice without deciding: the request keeps waiting.
+    fn close(&mut self, key: InputKey, cx: &mut Context<Self>) {
+        let before = self.notices.len();
+        self.notices
+            .retain(|(session, input)| session.key(input) != key);
+        if self.notices.len() < before {
+            self.hidden += 1;
+        }
+        self.closed.insert(key);
+        // A session with another waiting request shows that one next.
+        cx.emit(Action::Changed);
+        cx.notify();
+    }
+    /// Brings every closed notice that is still waiting back.
+    fn reopen(&mut self, cx: &mut Context<Self>) {
+        self.closed.clear();
+        cx.emit(Action::Changed);
+        cx.notify();
+    }
+    fn pill_label(&self) -> String {
+        match self.hidden {
+            1 => "1 request waiting".into(),
+            count => format!("{count} requests waiting"),
+        }
     }
 }
 impl Render for ApprovalNotices {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let pill = (self.hidden > 0).then(|| {
+            let label = self.pill_label();
+            let amber = gpui::rgb(0xffb900);
+            div().flex().justify_end().child(
+                div()
+                    .id("approval-toast-reopen")
+                    .debug_selector(|| "approval-toast-reopen".into())
+                    .role(Role::Button)
+                    .aria_label(format!("{label}: show the closed notices"))
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(30.))
+                    .pl(px(10.))
+                    .pr(px(12.))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(gpui::Hsla::from(amber).opacity(0.35))
+                    .occlude()
+                    .bg(floating_fill())
+                    .shadow_lg()
+                    .text_size(px(12.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .hover(|s| s.bg(content(0.12)))
+                    .child(div().size(px(7.)).rounded_full().bg(amber))
+                    .child(label)
+                    .child(div().text_color(content(0.55)).child("Show"))
+                    .child(icon("chevron-down", 12.).text_color(content(0.55)))
+                    .on_click(cx.listener(|this, _, _, cx| this.reopen(cx))),
+            )
+        });
         div()
             .flex()
             .flex_col()
             .gap_2()
             .w_full()
+            .children(pill)
             .children(
-                self.notices
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, (session, input))| {
-                        let open_id = session.session_id.clone();
-                        let allow_session = session.session_id.clone();
-                        let deny_session = session.session_id.clone();
-                        let allow_request = input.request_id.clone();
-                        let needs_review = input.needs_review;
-                        let primary = if needs_review {
-                            "Review in chat"
-                        } else {
-                            "Allow"
-                        };
-                        let deny_request = input.request_id.clone();
-                        super::surface::toast_frame()
-                            .id(("approval-toast", ix))
-                            .role(Role::Status)
-                            .child(
-                                div()
-                                    .id(("approval-toast-open", ix))
-                                    .role(Role::Button)
-                                    .cursor_pointer()
-                                    .px(px(14.))
-                                    .py_3()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .hover(|s| s.bg(content(0.05)))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(Action::OpenSession {
-                                            session_id: open_id.clone(),
-                                        })
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(provider_icon(&session.provider, 16.))
-                                            .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .flex_1()
-                                                    .truncate()
-                                                    .text_size(px(13.))
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .child(session.title.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .text_size(px(11.))
-                                                    .text_color(gpui::rgb(0xffb900))
-                                                    .child(
-                                                        icon("circle-alert", 14.)
-                                                            .text_color(gpui::rgb(0xffb900)),
-                                                    )
-                                                    .child(if input.kind == InputKind::Question {
-                                                        "Question"
-                                                    } else {
-                                                        "Approval"
-                                                    }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .line_height(px(19.5))
-                                            .line_clamp(3)
-                                            .text_color(content(0.7))
-                                            .child(input.label.clone()),
-                                    )
-                                    .when(!input.summary.is_empty(), |card| {
-                                        // The agent's words, set apart from the question.
-                                        card.child(
-                                            div()
-                                                .debug_selector(|| "approval-toast-summary".into())
-                                                .border_l_2()
-                                                .border_color(content(0.15))
-                                                .pl(px(8.))
-                                                .text_size(px(12.))
-                                                .line_height(px(18.))
-                                                .line_clamp(SUMMARY_ROWS)
-                                                .text_color(content(0.6))
-                                                .child(input.summary.clone()),
-                                        )
+            self.notices
+                .iter()
+                .enumerate()
+                .map(|(ix, (session, input))| {
+                    let close_key = session.key(input);
+                    let open_id = session.session_id.clone();
+                    let allow_session = session.session_id.clone();
+                    let deny_session = session.session_id.clone();
+                    let allow_request = input.request_id.clone();
+                    let needs_review = input.needs_review;
+                    let primary = if needs_review {
+                        "Review in chat"
+                    } else {
+                        "Allow"
+                    };
+                    let deny_request = input.request_id.clone();
+                    super::surface::toast_frame()
+                        .id(("approval-toast", ix))
+                        .role(Role::Status)
+                        .child(
+                            div()
+                                .id(("approval-toast-open", ix))
+                                .role(Role::Button)
+                                .cursor_pointer()
+                                .px(px(14.))
+                                .py_3()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .hover(|s| s.bg(content(0.05)))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(Action::OpenSession {
+                                        session_id: open_id.clone(),
                                     })
-                                    .children(input.alerts.iter().enumerate().map(
-                                        |(alert_ix, alert)| {
-                                            div()
-                                                .debug_selector(move || {
-                                                    format!("approval-toast-alert-{alert_ix}")
-                                                })
-                                                .flex()
-                                                .gap_1()
-                                                .rounded_md()
-                                                .px(px(8.))
-                                                .py_1()
-                                                .bg(gpui::rgba(0xf8717126))
-                                                .text_size(px(11.))
-                                                .line_height(px(17.))
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(gpui::rgb(0xf87171))
-                                                .child(
-                                                    icon("circle-alert", 14.)
-                                                        .flex_none()
-                                                        .text_color(gpui::rgb(0xf87171)),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .min_w_0()
-                                                        .line_clamp(2)
-                                                        .child(alert.clone()),
-                                                )
-                                        },
-                                    ))
-                                    .when(!input.detail.is_empty(), |card| {
-                                        card.child(
-                                            div()
-                                                .id(("approval-toast-detail", ix))
-                                                .debug_selector(|| "approval-toast-detail".into())
-                                                .font_family(crate::fonts::monospace())
-                                                .text_size(px(11.))
-                                                .line_height(px(17.))
-                                                .max_h(px(102.))
-                                                .overflow_y_scroll()
-                                                .text_color(content(0.85))
-                                                .child(input.detail.clone()),
-                                        )
-                                    })
-                                    .when(!input.omitted.is_empty(), |card| {
-                                        card.child(
-                                            div()
-                                                .id(("approval-toast-omitted", ix))
-                                                .debug_selector(|| "approval-toast-omitted".into())
-                                                .font_family(crate::fonts::monospace())
-                                                .text_size(px(11.))
-                                                .line_height(px(17.))
-                                                .flex_none()
-                                                .max_h(px(68.))
-                                                .overflow_y_scroll()
-                                                .text_color(content(0.85))
-                                                .child(input.omitted.clone()),
-                                        )
-                                    })
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(content(0.4))
-                                            .child(session.harness.clone()),
-                                    ),
-                            )
-                            .when(input.kind == InputKind::Approval, |card| {
-                                card.child(
+                                }))
+                                .child(
                                     div()
                                         .flex()
+                                        .items_center()
                                         .gap_2()
-                                        .border_t_1()
-                                        .border_color(content(0.1))
-                                        .px(px(14.))
-                                        .py(px(10.))
+                                        .child(provider_icon(&session.provider, 16.))
                                         .child(
                                             div()
-                                                .id(("approval-toast-allow", ix))
-                                                .debug_selector(move || {
-                                                    if needs_review {
-                                                        "approval-toast-review".into()
-                                                    } else {
-                                                        "approval-toast-allow".into()
-                                                    }
-                                                })
-                                                .role(Role::Button)
-                                                .aria_label(primary)
-                                                .cursor_pointer()
+                                                .min_w_0()
                                                 .flex_1()
-                                                .rounded_md()
-                                                .px(px(10.))
-                                                .py_1()
-                                                .text_center()
-                                                .text_size(px(11.))
-                                                .bg(content(1.))
-                                                .text_color({
-                                                    let mut color = pane_fill();
-                                                    color.a = 1.;
-                                                    color
-                                                })
-                                                .hover(|s| s.bg(content(0.8)))
-                                                .child(primary)
-                                                .on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.emit(if needs_review {
-                                                        Action::OpenSession {
-                                                            session_id: allow_session.clone(),
-                                                        }
-                                                    } else {
-                                                        Action::Decide {
-                                                            session_id: allow_session.clone(),
-                                                            request_id: allow_request.clone(),
-                                                            decision: Decision::Allow,
-                                                        }
-                                                    })
-                                                })),
+                                                .truncate()
+                                                .text_size(px(13.))
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .child(session.title.clone()),
                                         )
                                         .child(
                                             div()
-                                                .id(("approval-toast-deny", ix))
-                                                .debug_selector(|| "approval-toast-deny".into())
-                                                .role(Role::Button)
-                                                .aria_label("Deny")
-                                                .cursor_pointer()
-                                                .flex_1()
-                                                .rounded_md()
-                                                .px(px(10.))
-                                                .py_1()
-                                                .text_center()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
                                                 .text_size(px(11.))
-                                                .bg(content(0.1))
-                                                .text_color(content(0.7))
-                                                .hover(|s| s.bg(content(0.2)))
-                                                .child("Deny")
-                                                .on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.emit(Action::Decide {
-                                                        session_id: deny_session.clone(),
-                                                        request_id: deny_request.clone(),
-                                                        decision: Decision::Deny,
-                                                    })
+                                                .text_color(gpui::rgb(0xffb900))
+                                                .child(
+                                                    icon("circle-alert", 14.)
+                                                        .text_color(gpui::rgb(0xffb900)),
+                                                )
+                                                .child(if input.kind == InputKind::Question {
+                                                    "Question"
+                                                } else {
+                                                    "Approval"
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(("approval-toast-close", ix))
+                                                .debug_selector(move || {
+                                                    format!("approval-toast-close-{ix}")
+                                                })
+                                                .role(Role::Button)
+                                                .aria_label(
+                                                    "Close this notice; the request keeps waiting",
+                                                )
+                                                .cursor_pointer()
+                                                .flex_none()
+                                                .size(px(22.))
+                                                .mr(px(-4.))
+                                                .rounded(px(5.))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_color(content(0.5))
+                                                .hover(|s| {
+                                                    s.bg(content(0.1)).text_color(content(0.95))
+                                                })
+                                                .child(icon("close", 12.).text_color(content(0.6)))
+                                                .on_mouse_down(
+                                                    gpui::MouseButton::Left,
+                                                    |_, _, cx| cx.stop_propagation(),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.close(close_key.clone(), cx);
                                                 })),
                                         ),
                                 )
-                            })
-                    }),
-            )
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .line_height(px(19.5))
+                                        .line_clamp(3)
+                                        .text_color(content(0.7))
+                                        .child(input.label.clone()),
+                                )
+                                .when(!input.summary.is_empty(), |card| {
+                                    // The agent's words, set apart from the question.
+                                    card.child(
+                                        div()
+                                            .debug_selector(|| "approval-toast-summary".into())
+                                            .border_l_2()
+                                            .border_color(content(0.15))
+                                            .pl(px(8.))
+                                            .text_size(px(12.))
+                                            .line_height(px(18.))
+                                            .line_clamp(SUMMARY_ROWS)
+                                            .text_color(content(0.6))
+                                            .child(input.summary.clone()),
+                                    )
+                                })
+                                .children(input.alerts.iter().enumerate().map(
+                                    |(alert_ix, alert)| {
+                                        div()
+                                            .debug_selector(move || {
+                                                format!("approval-toast-alert-{alert_ix}")
+                                            })
+                                            .flex()
+                                            .gap_1()
+                                            .rounded_md()
+                                            .px(px(8.))
+                                            .py_1()
+                                            .bg(gpui::rgba(0xf8717126))
+                                            .text_size(px(11.))
+                                            .line_height(px(17.))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(gpui::rgb(0xf87171))
+                                            .child(
+                                                icon("circle-alert", 14.)
+                                                    .flex_none()
+                                                    .text_color(gpui::rgb(0xf87171)),
+                                            )
+                                            .child(
+                                                div().min_w_0().line_clamp(2).child(alert.clone()),
+                                            )
+                                    },
+                                ))
+                                .when(!input.detail.is_empty(), |card| {
+                                    card.child(
+                                        div()
+                                            .id(("approval-toast-detail", ix))
+                                            .debug_selector(|| "approval-toast-detail".into())
+                                            .font_family(crate::fonts::monospace())
+                                            .text_size(px(11.))
+                                            .line_height(px(17.))
+                                            .max_h(px(102.))
+                                            .overflow_y_scroll()
+                                            .text_color(content(0.85))
+                                            .child(input.detail.clone()),
+                                    )
+                                })
+                                .when(!input.omitted.is_empty(), |card| {
+                                    card.child(
+                                        div()
+                                            .id(("approval-toast-omitted", ix))
+                                            .debug_selector(|| "approval-toast-omitted".into())
+                                            .font_family(crate::fonts::monospace())
+                                            .text_size(px(11.))
+                                            .line_height(px(17.))
+                                            .flex_none()
+                                            .max_h(px(68.))
+                                            .overflow_y_scroll()
+                                            .text_color(content(0.85))
+                                            .child(input.omitted.clone()),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(content(0.4))
+                                        .child(session.harness.clone()),
+                                ),
+                        )
+                        .when(input.kind == InputKind::Approval, |card| {
+                            card.child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .border_t_1()
+                                    .border_color(content(0.1))
+                                    .px(px(14.))
+                                    .py(px(10.))
+                                    .child(
+                                        div()
+                                            .id(("approval-toast-allow", ix))
+                                            .debug_selector(move || {
+                                                if needs_review {
+                                                    "approval-toast-review".into()
+                                                } else {
+                                                    "approval-toast-allow".into()
+                                                }
+                                            })
+                                            .role(Role::Button)
+                                            .aria_label(primary)
+                                            .cursor_pointer()
+                                            .flex_1()
+                                            .rounded_md()
+                                            .px(px(10.))
+                                            .py_1()
+                                            .text_center()
+                                            .text_size(px(11.))
+                                            .bg(content(1.))
+                                            .text_color({
+                                                let mut color = pane_fill();
+                                                color.a = 1.;
+                                                color
+                                            })
+                                            .hover(|s| s.bg(content(0.8)))
+                                            .child(primary)
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(if needs_review {
+                                                    Action::OpenSession {
+                                                        session_id: allow_session.clone(),
+                                                    }
+                                                } else {
+                                                    Action::Decide {
+                                                        session_id: allow_session.clone(),
+                                                        request_id: allow_request.clone(),
+                                                        decision: Decision::Allow,
+                                                    }
+                                                })
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("approval-toast-deny", ix))
+                                            .debug_selector(|| "approval-toast-deny".into())
+                                            .role(Role::Button)
+                                            .aria_label("Deny")
+                                            .cursor_pointer()
+                                            .flex_1()
+                                            .rounded_md()
+                                            .px(px(10.))
+                                            .py_1()
+                                            .text_center()
+                                            .text_size(px(11.))
+                                            .bg(content(0.1))
+                                            .text_color(content(0.7))
+                                            .hover(|s| s.bg(content(0.2)))
+                                            .child("Deny")
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(Action::Decide {
+                                                    session_id: deny_session.clone(),
+                                                    request_id: deny_request.clone(),
+                                                    decision: Decision::Deny,
+                                                })
+                                            })),
+                                    ),
+                            )
+                        })
+                }),
+        )
     }
 }
 
@@ -1232,6 +1347,230 @@ mod render_tests {
         })
     }
 
+    fn approval(id: &str) -> PendingInput {
+        PendingInput::approval(&Approval {
+            id: id.into(),
+            title: format!("Allow {id}?"),
+            detail: "ls".into(),
+            can_remember: true,
+            tool: None,
+        })
+    }
+
+    fn waiting(session_id: &str, requests: &[&str]) -> SessionInputs {
+        SessionInputs {
+            session_id: session_id.into(),
+            title: format!("Session {session_id}"),
+            pending: requests.iter().map(|id| approval(id)).collect(),
+            ..session(approval("unused"))
+        }
+    }
+
+    /// A notices window synced to `sessions`, and the actions it sends.
+    fn notices(
+        sessions: Vec<SessionInputs>,
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::WindowHandle<ApprovalNotices>,
+        Rc<RefCell<Vec<String>>>,
+    ) {
+        let window = cx.update(|cx| {
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(Bounds {
+                        origin: point(gpui::px(0.), gpui::px(0.)),
+                        size: size(gpui::px(340.), gpui::px(WINDOW_HEIGHT)),
+                    })),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut notices = ApprovalNotices::default();
+                        notices.sync(&sessions, |_, _| true, cx);
+                        notices
+                    })
+                },
+            )
+            .unwrap()
+        });
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        let output = actions.clone();
+        window
+            .update(cx, |_, _, cx| {
+                cx.subscribe(&cx.entity(), move |_, _, action: &Action, _| {
+                    output.borrow_mut().push(match action {
+                        Action::OpenSession { session_id } => format!("open {session_id}"),
+                        Action::Decide { request_id, .. } => format!("decide {request_id}"),
+                        Action::Changed => "changed".into(),
+                    })
+                })
+                .detach()
+            })
+            .unwrap();
+        (window, actions)
+    }
+
+    fn shown(window: &gpui::WindowHandle<ApprovalNotices>, cx: &mut TestAppContext) -> Vec<String> {
+        window
+            .read_with(cx, |notices, _| {
+                notices
+                    .notices
+                    .iter()
+                    .map(|(session, input)| format!("{}:{}", session.session_id, input.request_id))
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    fn hidden(window: &gpui::WindowHandle<ApprovalNotices>, cx: &mut TestAppContext) -> usize {
+        window.read_with(cx, |notices, _| notices.hidden).unwrap()
+    }
+
+    fn resync(
+        window: &gpui::WindowHandle<ApprovalNotices>,
+        sessions: &[SessionInputs],
+        cx: &mut TestAppContext,
+    ) {
+        window
+            .update(cx, |notices, _, cx| notices.sync(sessions, |_, _| true, cx))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn closing_a_notice_hides_it_without_deciding_and_shows_the_pill(cx: &mut TestAppContext) {
+        let sessions = vec![waiting("a", &["a1"]), waiting("b", &["b1"])];
+        let (window, actions) = notices(sessions.clone(), cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("approval-toast-reopen").is_none(),
+            "nothing closed yet"
+        );
+        let close = visual
+            .debug_bounds("approval-toast-close-0")
+            .expect("a close button");
+        visual.simulate_click(close.center(), Default::default());
+        visual.refresh().unwrap();
+
+        assert_eq!(*actions.borrow(), ["changed"], "no Allow, Deny or open");
+        assert_eq!(shown(&window, visual), ["b:b1"]);
+        assert_eq!(hidden(&window, visual), 1);
+        // The shell syncs again on every render; the closed one stays closed.
+        resync(&window, &sessions, visual);
+        visual.refresh().unwrap();
+        assert_eq!(shown(&window, visual), ["b:b1"]);
+        assert_eq!(hidden(&window, visual), 1);
+        assert!(
+            visual.debug_bounds("approval-toast-reopen").is_some(),
+            "the pill shows"
+        );
+    }
+
+    #[gpui::test]
+    fn the_pill_brings_every_closed_notice_back(cx: &mut TestAppContext) {
+        let sessions = vec![waiting("a", &["a1"]), waiting("b", &["b1"])];
+        let (window, actions) = notices(sessions.clone(), cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        for _ in 0..2 {
+            visual.refresh().unwrap();
+            let close = visual.debug_bounds("approval-toast-close-0").unwrap();
+            visual.simulate_click(close.center(), Default::default());
+            resync(&window, &sessions, visual);
+        }
+        visual.refresh().unwrap();
+        assert!(shown(&window, visual).is_empty());
+        assert_eq!(hidden(&window, visual), 2);
+        window
+            .read_with(visual, |notices, _| {
+                assert_eq!(notices.pill_label(), "2 requests waiting")
+            })
+            .unwrap();
+
+        let pill = visual.debug_bounds("approval-toast-reopen").unwrap();
+        visual.simulate_click(pill.center(), Default::default());
+        resync(&window, &sessions, visual);
+        visual.refresh().unwrap();
+        assert_eq!(shown(&window, visual), ["a:a1", "b:b1"]);
+        assert_eq!(hidden(&window, visual), 0);
+        assert!(visual.debug_bounds("approval-toast-reopen").is_none());
+        assert!(actions.borrow().iter().all(|action| action == "changed"));
+    }
+
+    #[gpui::test]
+    fn a_later_request_in_the_same_session_still_gets_a_notice(cx: &mut TestAppContext) {
+        let (window, _) = notices(vec![waiting("a", &["first"])], cx);
+        let key = window
+            .read_with(cx, |notices, _| {
+                let (session, input) = &notices.notices[0];
+                session.key(input)
+            })
+            .unwrap();
+        window
+            .update(cx, |notices, _, cx| notices.close(key, cx))
+            .unwrap();
+        assert!(shown(&window, cx).is_empty());
+        resync(&window, &[waiting("a", &["first", "second"])], cx);
+        assert_eq!(shown(&window, cx), ["a:second"]);
+        assert_eq!(
+            hidden(&window, cx),
+            1,
+            "the first still waits behind the pill"
+        );
+    }
+
+    #[gpui::test]
+    fn an_answered_request_leaves_the_pill_and_never_comes_back(cx: &mut TestAppContext) {
+        let (window, _) = notices(vec![waiting("a", &["a1"])], cx);
+        let key = window
+            .read_with(cx, |notices, _| {
+                let (session, input) = &notices.notices[0];
+                session.key(input)
+            })
+            .unwrap();
+        window
+            .update(cx, |notices, _, cx| notices.close(key, cx))
+            .unwrap();
+        assert_eq!(hidden(&window, cx), 1);
+        // Answered in the chat or from the phone: no longer pending.
+        resync(&window, &[waiting("a", &[])], cx);
+        assert_eq!(hidden(&window, cx), 0);
+        window
+            .read_with(cx, |notices, _| assert!(notices.closed.is_empty()))
+            .unwrap();
+        // A new request reusing nothing from before shows normally.
+        resync(&window, &[waiting("a", &["a2"])], cx);
+        assert_eq!(shown(&window, cx), ["a:a2"]);
+    }
+
+    #[gpui::test]
+    fn a_closed_request_in_the_chat_you_are_in_is_not_counted(cx: &mut TestAppContext) {
+        let (window, _) = notices(vec![waiting("a", &["a1"])], cx);
+        let key = window
+            .read_with(cx, |notices, _| {
+                let (session, input) = &notices.notices[0];
+                session.key(input)
+            })
+            .unwrap();
+        window
+            .update(cx, |notices, _, cx| notices.close(key, cx))
+            .unwrap();
+        let mut focused = waiting("a", &["a1"]);
+        focused.conversation_focused = true;
+        resync(&window, &[focused], cx);
+        assert_eq!(
+            hidden(&window, cx),
+            0,
+            "its card is already in front of you"
+        );
+        resync(&window, &[waiting("a", &["a1"])], cx);
+        assert_eq!(
+            hidden(&window, cx),
+            1,
+            "and it stays closed after you leave"
+        );
+        assert!(shown(&window, cx).is_empty());
+    }
+
     fn card(detail: &str, cx: &mut TestAppContext) -> VisualTestContext {
         card_with(pending(detail), cx)
     }
@@ -1298,6 +1637,7 @@ mod render_tests {
                             decision,
                             ..
                         } => format!("decide {request_id} {decision:?}"),
+                        Action::Changed => "changed".into(),
                     })
                 })
                 .detach()

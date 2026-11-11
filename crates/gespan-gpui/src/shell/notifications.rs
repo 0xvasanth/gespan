@@ -209,6 +209,7 @@ impl Shell {
                     }
                     cx.notify();
                 }
+                approvals::Action::Changed => cx.notify(),
             },
         ));
         self.observations.push(cx.subscribe(
