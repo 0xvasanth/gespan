@@ -433,9 +433,10 @@ pub fn split_leading_cd(command: &str) -> Option<(String, &str)> {
 /// shell would expand, so the card can't name a place the shell won't go.
 fn plain_folder(dir: &str) -> bool {
     !dir.is_empty()
-        && dir
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | ' ' | '@' | '+' | ',' | ':' | '='))
+        && dir.chars().all(|c| {
+            c.is_alphanumeric()
+                || matches!(c, '/' | '.' | '-' | '_' | ' ' | '@' | '+' | ',' | ':' | '=')
+        })
 }
 
 /// `path` relative to the session folder, or under `~` for the home folder.

@@ -14,6 +14,9 @@ use crate::notifications::{
 };
 use std::{sync::mpsc::Receiver, time::Duration};
 
+/// The title bar's waiting-requests button, the size of its other controls.
+const WAITING_BUTTON: f32 = 24.;
+
 pub(super) struct State {
     pub region: AnchorSlot,
     pub harness: Entity<HarnessUpdates>,
@@ -39,6 +42,9 @@ pub(super) struct State {
     responding: HashSet<i64>,
     sequence: u64,
     badge: usize,
+    /// Closed requests the title bar last counted, so its room is re-laid
+    /// out only when the button appears, goes or changes.
+    waiting: usize,
     sounds_enabled: bool,
     sounds_enabled_at: u64,
     poll: Option<gpui::Task<()>>,
@@ -86,6 +92,7 @@ impl State {
             announcements: Default::default(),
             responding: HashSet::new(),
             sequence: 0,
+            waiting: 0,
             badge: 0,
             sounds_enabled: workspace.preferences.sounds,
             sounds_enabled_at: 0,
@@ -207,6 +214,10 @@ impl Shell {
                             view.decide_notification_request(request_id, decision.clone(), cx);
                         });
                     }
+                    cx.notify();
+                }
+                approvals::Action::Changed => {
+                    this.sync_waiting_button(cx);
                     cx.notify();
                 }
             },
@@ -551,6 +562,7 @@ impl Shell {
                 cx,
             )
         });
+        self.sync_waiting_button(cx);
         let due = self
             .reminders
             .iter()
@@ -1038,6 +1050,84 @@ impl Shell {
         cx.notify();
     }
 
+    /// Lays the title bar out again when its waiting-requests button
+    /// appears, goes or changes its count; the tabs give it its room.
+    fn sync_waiting_button(&mut self, cx: &mut Context<Self>) {
+        let waiting = self.notification_state.approvals.read(cx).waiting();
+        if waiting != self.notification_state.waiting {
+            self.notification_state.waiting = waiting;
+            self.invalidate_chrome(cx);
+        }
+    }
+
+    /// Room the waiting-requests button takes in the title bar.
+    pub(super) fn waiting_room(&self) -> f32 {
+        if self.notification_state.waiting > 0 {
+            WAITING_BUTTON + super::CORNER_CONTROL_GAP
+        } else {
+            0.
+        }
+    }
+
+    /// Closed requests still waiting, as a button in the title bar beside
+    /// the corner, so it never covers anything. It brings their notices back.
+    pub(super) fn waiting_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let count = self.notification_state.waiting;
+        if count == 0 {
+            return None;
+        }
+        let label = self.notification_state.approvals.read(cx).waiting_label();
+        let amber = gpui::rgb(0xffb900);
+        let badge = if count > 9 { "9+".to_owned() } else { count.to_string() };
+        Some(
+            div()
+                .id("waiting-requests")
+                .debug_selector(|| "waiting-requests".into())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .role(Role::Button)
+                .aria_label(format!("{label}: show their notices"))
+                .cursor_pointer()
+                .size(px(WAITING_BUTTON))
+                .mr(px(super::CORNER_CONTROL_GAP))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .hover(|s| s.bg(content(0.1)))
+                .child(
+                    div()
+                        .relative()
+                        .size(px(14.))
+                        .child(icon("square-lock", 14.).text_color(amber))
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(-6.))
+                                .right(px(-8.))
+                                .h(px(13.))
+                                .min_w(px(13.))
+                                .px(px(3.))
+                                .rounded_full()
+                                .bg(amber)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(black(0.9))
+                                .child(badge),
+                        ),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.notification_state
+                        .approvals
+                        .update(cx, |notices, cx| notices.reopen(cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn notices_overlay(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.sync_error_toast();
         let report_error = self.report_error_button(cx);
@@ -1053,8 +1143,11 @@ impl Shell {
         });
         let stack = div()
             .id("notification-stack")
+            .debug_selector(|| "notification-stack".into())
             .absolute()
-            .top(px(12.))
+            // Below the tab bar, so a notice that stays up (the pill of
+            // closed requests) never covers its controls.
+            .top(px(crate::theme::TITLE_BAR_HEIGHT + 8.))
             .right(px(12.))
             .w(px(360.))
             .max_w(px((self.viewport_width - 24.).max(0.)))
@@ -1502,7 +1595,9 @@ mod error_tests {
         let app = visual.debug_bounds("app-error").unwrap();
         let file = visual.debug_bounds("file-action-error").unwrap();
         let viewport = window.update(visual, |_, w, _| w.viewport_size()).unwrap();
-        assert_eq!(app.top(), px(12.));
+        // Below the tab bar, so nothing in the stack covers its controls.
+        let top = px(crate::theme::TITLE_BAR_HEIGHT + 8.);
+        assert_eq!(app.top(), top);
         assert_eq!(app.right(), viewport.width - px(12.));
         assert_eq!(app.size.width, px(360.));
         assert_eq!(file.size.width, app.size.width);
@@ -1515,10 +1610,7 @@ mod error_tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("app-error").is_none());
-        assert_eq!(
-            visual.debug_bounds("file-action-error").unwrap().top(),
-            px(12.)
-        );
+        assert_eq!(visual.debug_bounds("file-action-error").unwrap().top(), top);
 
         visual.simulate_resize(gpui::size(px(300.), px(800.)));
         visual.run_until_parked();
@@ -1620,5 +1712,79 @@ mod whats_new_tests {
         wheel(visual, pane.center());
         wheel(visual, pane.origin + point(px(8.), px(8.)));
         assert_eq!(offset(visual), open_position);
+    }
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    fn overlaps(a: gpui::Bounds<Pixels>, b: gpui::Bounds<Pixels>) -> bool {
+        a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
+    }
+
+    #[gpui::test]
+    fn a_closed_request_waits_in_the_title_bar_and_its_button_brings_it_back(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, first, second) = crate::shell::tests::window(cx);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        cx.simulate_window_resize(window.into(), gpui::size(px(1280.), px(800.)));
+        // Waiting in a session you're not looking at, so it has a notice.
+        window
+            .update(cx, |shell, _, cx| {
+                let waiting = if shell.workspace.active == Some(first) {
+                    second
+                } else {
+                    first
+                };
+                shell.sessions[&waiting].update(cx, |view, _| {
+                    view.set_approvals_for_test(vec![gespan_core::agent::Approval {
+                        id: "a1".into(),
+                        title: "Allow Bash?".into(),
+                        detail: "git status".into(),
+                        can_remember: false,
+                        tool: None,
+                    }])
+                });
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("waiting-requests").is_none(), "nothing closed");
+        let close = visual
+            .debug_bounds("approval-toast-close-0")
+            .expect("the request has a notice");
+        visual.simulate_click(close.center(), Default::default());
+        visual.refresh().unwrap();
+        visual.refresh().unwrap();
+
+        assert!(visual.debug_bounds("approval-toast-close-0").is_none(), "closed");
+        let button = visual
+            .debug_bounds("waiting-requests")
+            .expect("the title bar counts it");
+        assert!(
+            button.top() >= px(0.) && button.bottom() <= px(crate::theme::TITLE_BAR_HEIGHT),
+            "it sits in the title bar: {button:?}"
+        );
+        for other in ["toggle-right-panel", "notification-stack"] {
+            if let Some(bounds) = visual.debug_bounds(other) {
+                assert!(!overlaps(button, bounds), "it overlaps {other}");
+            }
+        }
+        window
+            .read_with(visual, |shell, cx| {
+                // The decision is still the user's to make.
+                assert!(shell.notification_chats(cx).iter().any(|v| v.read(cx).needs_approval()));
+            })
+            .unwrap();
+
+        visual.simulate_click(button.center(), Default::default());
+        visual.refresh().unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("approval-toast-close-0").is_some(), "back");
+        assert!(visual.debug_bounds("waiting-requests").is_none());
     }
 }
