@@ -1608,6 +1608,8 @@ fn mr_comment(
             id: id.into(),
             kind: "comment".into(),
             author: author.into(),
+            // Someone who can write to the repository.
+            author_association: "MEMBER".into(),
             body: body.into(),
             created_at: chrono::DateTime::from_timestamp_millis(now_ms())
                 .unwrap()

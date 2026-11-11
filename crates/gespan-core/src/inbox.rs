@@ -110,6 +110,10 @@ pub struct Occurrence {
     /// only when its trigger names that account, so an agent that acts with
     /// the account does not wake itself.
     pub mine: bool,
+    /// Its author can write to the repository. A comment from anyone else
+    /// runs an automation only when its trigger names that author: on a
+    /// public repository anyone can comment.
+    pub trusted: bool,
 }
 impl Item {
     pub fn key(&self) -> String {
@@ -253,6 +257,9 @@ pub struct Comment {
     pub id: String,
     pub kind: String,
     pub author: String,
+    /// How the author relates to the repository: `OWNER`, `MEMBER` or
+    /// `COLLABORATOR` can write to it. Empty when the provider does not say.
+    pub author_association: String,
     pub author_avatar_url: String,
     pub body: String,
     pub created_at: String,

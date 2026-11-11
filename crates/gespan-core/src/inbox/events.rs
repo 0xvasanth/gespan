@@ -228,6 +228,14 @@ fn occurred(source: &Item, at: &str, url: &str, occurrence: Occurrence) -> Item 
     }
 }
 
+/// The relations to a repository that come with write access.
+pub fn can_write(association: &str) -> bool {
+    matches!(
+        association.trim().to_ascii_uppercase().as_str(),
+        "OWNER" | "MEMBER" | "COLLABORATOR"
+    )
+}
+
 fn same_account(author: &str, me: &str) -> bool {
     let me = me.trim().trim_start_matches('@');
     !me.is_empty() && author.trim().eq_ignore_ascii_case(me)
@@ -277,6 +285,7 @@ pub fn comment_items(pr: &Item, comments: &[Comment], me: &str) -> Vec<Item> {
                     author: comment.author.trim().into(),
                     body: body.chars().take(MAX_OCCURRENCE_TEXT).collect(),
                     mine: same_account(&comment.author, me),
+                    trusted: can_write(&comment.author_association),
                 },
             ))
         })
@@ -320,6 +329,7 @@ pub fn check_failed_items(pr: &Item, checks: &Checks) -> Vec<Item> {
                         format!("Check \"{label}\" failed on commit {short}.")
                     },
                     mine: false,
+                    trusted: true,
                 },
             )
         })
@@ -343,6 +353,7 @@ pub fn review_requested_item(pr: &Item, head: &str) -> Item {
             author: String::new(),
             body: "Your review was requested.".into(),
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -369,6 +380,7 @@ pub fn merged_item(pr: &Item, at: &str, by: &str) -> Item {
                 format!("Merged by @{}.", by.trim())
             },
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -386,6 +398,7 @@ pub fn assigned_item(issue: &Item, me: &str) -> Item {
             author: String::new(),
             body: format!("Assigned to @{}.", me.trim().trim_start_matches('@')),
             mine: false,
+            trusted: true,
         },
     )
 }
@@ -395,11 +408,16 @@ pub fn assigned_item(issue: &Item, me: &str) -> Item {
 /// watched for comments only, and only once its account is known.
 pub struct LiveEvents {
     service: Service,
+    /// GitLab access levels already looked up, by repository and username.
+    access: HashMap<(String, String), i64>,
 }
 
 impl LiveEvents {
     pub fn new(service: Service) -> Self {
-        Self { service }
+        Self {
+            service,
+            access: HashMap::new(),
+        }
     }
     fn local(project: &str) -> Result<&Path, String> {
         let path = Path::new(project);
@@ -412,6 +430,40 @@ impl LiveEvents {
     }
 }
 
+impl LiveEvents {
+    fn mark_gitlab_access(&mut self, repo: &str, comment: &mut Comment) -> Result<(), String> {
+        let author = comment.author.trim().to_lowercase();
+        if author.is_empty() {
+            return Ok(());
+        }
+        let key = (repo.to_lowercase(), author.clone());
+        let level = match self.access.get(&key) {
+            Some(level) => *level,
+            None => {
+                let level = super::gitlab::gitlab_member_access(
+                    self.service.data_dir.clone(),
+                    repo.to_string(),
+                    author,
+                )?;
+                self.access.insert(key, level);
+                level
+            }
+        };
+        comment.author_association = gitlab_association(level).into();
+        Ok(())
+    }
+}
+
+/// A GitLab access level as GitHub would name the relation: Developer (30)
+/// and above can push.
+pub fn gitlab_association(level: i64) -> &'static str {
+    if level >= 30 {
+        "MEMBER"
+    } else {
+        "NONE"
+    }
+}
+
 impl EventSource for LiveEvents {
     fn login(&mut self, provider: &str, project: &str) -> Result<String, String> {
         match provider {
@@ -420,7 +472,18 @@ impl EventSource for LiveEvents {
         }
     }
     fn comments(&mut self, item: &Item) -> Result<Vec<Comment>, String> {
-        Ok(self.service.thread(item)?.comments)
+        let mut comments = self.service.thread(item)?.comments;
+        // GitHub says how each author relates to the repository; GitLab's
+        // comments do not, so their authors' access is looked up.
+        if item.provider == "gitlab" {
+            for comment in &mut comments {
+                self.mark_gitlab_access(&item.repo, comment)?;
+                for reply in &mut comment.replies {
+                    self.mark_gitlab_access(&item.repo, reply)?;
+                }
+            }
+        }
+        Ok(comments)
     }
     fn open_pull_requests(
         &mut self,
@@ -496,6 +559,7 @@ mod tests {
             id: id.into(),
             kind: kind.into(),
             author: author.into(),
+            author_association: "MEMBER".into(),
             body: body.into(),
             created_at: "2026-11-11T10:00:00Z".into(),
             url: format!("https://example.com/c/{id}"),
@@ -521,6 +585,8 @@ mod tests {
         approved.state = "APPROVED".into();
         let mut silent = said("r2", "review", "carol", "  ");
         silent.state = "COMMENTED".into();
+        let mut stranger = said("c9", "comment", "mallory", "Hi");
+        stranger.author_association = "NONE".into();
         let comments = [
             said("c1", "comment", "alice", "Looks good"),
             thread,
@@ -528,23 +594,37 @@ mod tests {
             silent,
             said("", "comment", "alice", "No id"),
             said("c2", "comment", "Gespan-Bot", "Pushed a fix"),
+            stranger,
         ];
         let items = comment_items(&pr("github", 7, ""), &comments, "@gespan-bot");
         let seen: Vec<_> = items
             .iter()
             .map(|item| {
                 let o = item.occurrence.as_ref().unwrap();
-                (o.id.as_str(), o.author.as_str(), o.body.as_str(), o.mine)
+                (
+                    o.id.as_str(),
+                    o.author.as_str(),
+                    o.body.as_str(),
+                    o.mine,
+                    o.trusted,
+                )
             })
             .collect();
         assert_eq!(
             seen,
             [
-                ("c1", "alice", "Looks good", false),
-                ("t1", "alice", "On src/login.rs:42:\nRename this", false),
-                ("t2", "bob", "Agreed", false),
-                ("r1", "carol", "Approved these changes.", false),
-                ("c2", "Gespan-Bot", "Pushed a fix", true),
+                ("c1", "alice", "Looks good", false, true),
+                (
+                    "t1",
+                    "alice",
+                    "On src/login.rs:42:\nRename this",
+                    false,
+                    true
+                ),
+                ("t2", "bob", "Agreed", false, true),
+                ("r1", "carol", "Approved these changes.", false, true),
+                ("c2", "Gespan-Bot", "Pushed a fix", true, true),
+                ("c9", "mallory", "Hi", false, false),
             ]
         );
         let first = &items[0];

@@ -58,6 +58,7 @@ fn every_kind_of_item(at: i64) -> Vec<Item> {
             id: "501".into(),
             kind: "comment".into(),
             author: "alice".into(),
+            author_association: "COLLABORATOR".into(),
             body: "Please rename this".into(),
             created_at: created.clone(),
             ..Default::default()
