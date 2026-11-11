@@ -130,87 +130,76 @@ Install and login commands for each agent are in [provider setup](docs/providers
 
 <table>
 <tr>
-<td colspan="2" valign="top">
-
-### 📋 Board
-Plan work as cards across boards and columns, linked to tracker tickets, pull
-requests and worktrees. Choose **Run with…** on a card to start a session with
-any agent, and the card moves to In progress when it starts and to Review when
-it finishes. See the [Board guide](docs/board.md).
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/board.svg" width="40" height="40" alt="" />
+<h4>Board</h4>
+Plan work as cards linked to tracker tickets, pull requests and worktrees. <b>Run with…</b> starts a session with any agent, and the card moves as the work does. See the <a href="docs/board.md">Board guide</a>.
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/features/workspace.svg" width="40" height="40" alt="" />
+<h4>Multi-agent workspace</h4>
+Every conversation is a tab. Split panes to run several agents at once, pin the tabs you keep coming back to, and set the model, effort and permission mode for each session.
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/features/worktrees.svg" width="40" height="40" alt="" />
+<h4>Worktrees built in</h4>
+Each parallel task gets its own Git worktree, named after the task. Setup and Teardown scripts prepare and clean up each one, and merged branches are offered for deletion.
 </td>
 </tr>
 <tr>
-<td width="50%" valign="top">
-
-### 🗂️ Multi-agent workspace
-Organize conversations by project, open each one as a tab, and split panes to
-run several agents at once. You can switch models, effort levels and permission
-modes for each session.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/review.svg" width="40" height="40" alt="" />
+<h4>Review, undo and fork</h4>
+Checkpoints record what each turn changed, including edits made through shell commands. Keep or undo a turn's diff, or fork a new chat from any message.
 </td>
-<td width="50%" valign="top">
-
-### 🌿 Worktrees built in
-Give parallel tasks their own Git worktree so agents never step on each other.
-A searchable Git history graph sits in the side panel.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/browser.svg" width="40" height="40" alt="" />
+<h4>In-app browser</h4>
+Agents can open, read and click through web pages in a browser that Gespan runs. You watch and use the same tab in a pane beside the chat.
 </td>
-</tr>
-<tr>
-<td valign="top">
-
-### 🔍 Review and undo
-Turn checkpoints record what each turn changed, including edits made through
-shell commands. You can keep or undo a turn's diff and review all changes in a
-fast diff viewer with syntax highlighting.
-
-</td>
-<td valign="top">
-
-### ✍️ Editor and terminal
-Edit files in the built-in code editor, preview Markdown, and open terminal tabs
-next to your sessions, all in the same window.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/mcp.svg" width="40" height="40" alt="" />
+<h4>MCP in one place</h4>
+Add an MCP server once and share it with every session. Servers need your approval before they start, keep their secrets in the keychain, and can be installed from the MCP Registry.
 </td>
 </tr>
 <tr>
-<td valign="top">
-
-### 🎛️ Agents that drive Gespan
-Start a message with `/operator` to let an agent open sessions, split panes,
-create worktrees and read your notes. You can also use `/plan` and
-`/orchestrator` to change how a turn runs.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/editor.svg" width="40" height="40" alt="" />
+<h4>Editor, terminal and actions</h4>
+Edit files, preview Markdown and split terminals next to your sessions. <a href="docs/actions.md">Project actions</a> run your test, build and dev-server commands from the footer.
 </td>
-<td valign="top">
-
-### 🧭 Pilots *(experimental)*
-Pilots are long-running agents that work across your projects. They keep a
-memory, run scheduled habits, write Markdown and HTML reports, and report back
-on the sessions they start.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/inbox.svg" width="40" height="40" alt="" />
+<h4>Inbox and automations</h4>
+Bring in GitHub, GitLab, Linear, Jira and Azure DevOps work items. Run agents on a schedule or when an Inbox event arrives, and see every run on the Runs page.
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/features/usage.svg" width="40" height="40" alt="" />
+<h4>Usage at a glance</h4>
+See your Claude Code, Codex and Kiro plan usage in the chat footer, updated during every turn. If a login expires, a Sign in card signs you back in and resends your message.
 </td>
 </tr>
 <tr>
-<td valign="top">
-
-### 📥 Inbox and automations
-Bring in GitHub, GitLab, Linear, Jira and Azure DevOps work items. Start a
-session from an issue, or run agents on a schedule or when an inbox event
-arrives.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/operator.svg" width="40" height="40" alt="" />
+<h4>Agents that drive Gespan</h4>
+Start a message with <code>/operator</code> to let an agent open sessions, split panes, create worktrees and read your notes. See <a href="docs/agent-access.md">agent access</a>.
 </td>
-<td valign="top">
-
-### 🌐 Remote machines *(experimental)*
-Connect a Mac, Linux or Windows host over SSH and run sessions there. They keep
-running when your laptop closes. An invite-only iPhone companion lets you check
-in from your phone.
-
+<td width="33%" valign="top">
+<img src="docs/assets/features/pilots.svg" width="40" height="40" alt="" />
+<h4>Pilots <sup><i>experimental</i></sup></h4>
+Long-running agents that work across your projects. They keep a memory, run scheduled habits, write Markdown and HTML reports, and report back on the sessions they start.
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/features/remote.svg" width="40" height="40" alt="" />
+<h4>Remote machines <sup><i>experimental</i></sup></h4>
+Run sessions on a Mac, Linux or Windows host over SSH, where they keep going when your laptop closes. Check in from the invite-only iPhone companion. See <a href="docs/remote-access.md">remote sessions</a>.
 </td>
 </tr>
 </table>
+
+The [changelog](CHANGELOG.md) lists what each release added.
 
 ## Install
 
