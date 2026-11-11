@@ -1,6 +1,6 @@
 //! Runs use the same conversation lifecycle as an ordinary native submission.
 use super::*;
-use gespan_core::automations::{self, DueAutomationRun, Service};
+use gespan_core::automations::{self, AutomationAction, AutomationRun, DueAutomationRun, Service};
 
 pub(super) type ServiceHandle = Arc<Mutex<Service>>;
 
@@ -338,6 +338,11 @@ impl Shell {
         reveal: bool,
         cx: &mut Context<Self>,
     ) {
+        if let AutomationAction::Pilot { pilot_id } = &due.automation.action {
+            let pilot_id = pilot_id.clone();
+            self.wake_pilot(due, &pilot_id, reveal, cx);
+            return;
+        }
         if self.automation_state.pending.contains(&due.run.id)
             || self
                 .automation_state
@@ -580,6 +585,59 @@ impl Shell {
         .detach();
     }
 
+    /// Delivers a run to its Pilot: the prompt is queued on the Pilot's chat,
+    /// where it waits while the Pilot is busy. The run is done once queued.
+    fn wake_pilot(
+        &mut self,
+        due: DueAutomationRun,
+        pilot_id: &str,
+        reveal: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let text = pilot_message(&due);
+        let sent = match self.pilots.clone() {
+            Some(pilots) => pilots.update(cx, |pilots, cx| {
+                let message = pilots.automation_send(pilot_id, text, cx)?;
+                Ok((message, pilots.automation_target(pilot_id, cx)))
+            }),
+            None => Err(format!("Pilot {pilot_id} is no longer available")),
+        };
+        match sent {
+            Ok((message, target)) => {
+                let run_id = due.run.id.clone();
+                self.write_automation_run(
+                    move |service| service.deliver_run(&run_id, &message, now()),
+                    cx,
+                );
+                if !reveal
+                    && let Some(body) = event_alert_body(&due.run)
+                    && let Some((pilot, Some(chat))) = target
+                {
+                    self.deliver_pilot_automation_notice(&chat, &due.automation, &pilot, &body, cx);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    automation = %due.run.automation_id,
+                    run = %due.run.id,
+                    "automation run was not delivered to its Pilot"
+                );
+                self.update_automation_run(
+                    due.run.id.clone(),
+                    "failed",
+                    None,
+                    Some(error.clone()),
+                    cx,
+                );
+                if reveal {
+                    self.error = Some(error);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     pub(super) fn automation_session_changed(&mut self, id: i64, cx: &mut Context<Self>) {
         let Some(run) = self.automation_state.running.get(&id) else {
             return;
@@ -625,18 +683,31 @@ impl Shell {
         error: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let status = status.to_string();
+        self.write_automation_run(
+            move |service| service.update_run(&run_id, &status, session, error, now()),
+            cx,
+        );
+    }
+
+    /// Saves a run's result after the writes before it, then refreshes the
+    /// views that list runs.
+    fn write_automation_run(
+        &mut self,
+        write: impl FnOnce(&mut Service) -> Result<AutomationRun, String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         let Some(service) = self.automation_state.service.clone() else {
             return;
         };
         let previous = self.automation_state.writes.take();
-        let status = status.to_string();
         self.automation_state.writes = Some(cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
             }
-            let work = cx.background_executor().spawn(async move {
-                service_lock(&service)?.update_run(&run_id, &status, session, error, now())
-            });
+            let work = cx
+                .background_executor()
+                .spawn(async move { write(&mut *service_lock(&service)?) });
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = result {
@@ -773,6 +844,26 @@ fn event_alert_body(run: &gespan_core::automations::AutomationRun) -> Option<Str
     })
 }
 
+/// What a Pilot is sent for a run: which automation and run it is, what
+/// started it, then the run's prompt as it would be given to a session.
+fn pilot_message(due: &DueAutomationRun) -> String {
+    let run = &due.run;
+    let trigger = match run.trigger.as_str() {
+        "event" => automations::event_label(
+            run.event_kind.as_deref().unwrap_or_default(),
+            run.event.as_deref().unwrap_or_default(),
+        ),
+        "manual" => "Manual".into(),
+        _ => "Scheduled".into(),
+    };
+    let name = due.automation.name.replace(['\n', '\r'], " ");
+    let prompt = run.prompt.as_deref().unwrap_or(&due.automation.prompt);
+    format!(
+        "[Automation: {name}]\nTrigger: {trigger}  ·  Run: {}\n{prompt}",
+        run.id
+    )
+}
+
 fn automation_work_item(
     run: &gespan_core::automations::AutomationRun,
 ) -> Option<gespan_core::session_groups::WorkItem> {
@@ -821,6 +912,7 @@ mod tests {
             event: Some("issue_created".into()),
             event_title: title.map(Into::into),
             prompt: None,
+            pilot_message_id: None,
         };
         assert_eq!(
             event_alert_body(&run("event", Some("ENG-1 Crash"))).as_deref(),

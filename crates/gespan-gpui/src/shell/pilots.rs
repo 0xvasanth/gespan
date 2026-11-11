@@ -45,6 +45,13 @@ impl Shell {
     pub(crate) fn pilot_quick_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_quick_composer(window, cx);
     }
+    /// Every Pilot's id and name, for pickers outside the Pilot views.
+    pub(super) fn pilot_names(&self, cx: &App) -> Vec<(String, String)> {
+        self.pilots
+            .as_ref()
+            .map(|pilots| pilots.read(cx).names())
+            .unwrap_or_default()
+    }
     pub(super) fn pilot_active(&self, cx: &App) -> bool {
         self.pilots
             .as_ref()

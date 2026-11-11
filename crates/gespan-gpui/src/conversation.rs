@@ -72,6 +72,8 @@ use gpui::{
 pub(crate) use mobile::{Waiting as MobileWaiting, mobile_access_modes};
 pub(crate) use pilot::QueueChanged as PilotQueueChanged;
 pub(crate) use pilot::Submitted as PilotSubmitted;
+#[cfg(test)]
+pub(crate) use pilot::internal_header;
 use std::{
     path::Path,
     sync::{

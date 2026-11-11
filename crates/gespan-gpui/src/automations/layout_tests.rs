@@ -462,3 +462,181 @@ fn tabs_switch_between_instructions_and_recent_runs(cx: &mut TestAppContext) {
     assert!(visual.drawn("automation-history-tab").is_none());
     assert_eq!(shown(&mut visual), (true, false));
 }
+
+// --- "Do": start a session, or wake a Pilot.
+
+fn stored(page: &Page, id: &str) -> Automation {
+    page.service
+        .lock()
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap()
+}
+
+#[gpui::test]
+fn waking_a_pilot_hides_the_session_settings_and_saves_the_pilot(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Review comments",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.set_pilots(
+                vec![
+                    ("pilot-1".into(), "ReviewPilot".into()),
+                    ("pilot-2".into(), "Shroom".into()),
+                ],
+                cx,
+            )
+        })
+        .unwrap();
+    click(&mut visual, &format!("automation-card-{}", automation.id));
+    let choose = |visual: &mut VisualTestContext, field: Choice, value: &str| {
+        window
+            .update(visual, |view, _, cx| {
+                view.apply_choice(field, value.into(), cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let action = |visual: &VisualTestContext| {
+        window
+            .read_with(visual, |view, _| {
+                view.editor.as_ref().unwrap().draft.action.clone()
+            })
+            .unwrap()
+    };
+
+    // A saved automation starts a session, with every session setting shown.
+    assert_eq!(action(&visual), AutomationAction::Session);
+    for shown in [
+        "automation-action",
+        "automation-model",
+        "automation-session-settings",
+    ] {
+        assert!(visual.drawn(shown).is_some(), "{shown}");
+    }
+    assert!(visual.drawn("automation-pilot").is_none());
+    choose(&mut visual, Choice::Access, "supervised");
+    choose(&mut visual, Choice::Workspace, "current");
+    choose(&mut visual, Choice::Conversation, "reuse");
+    choose(&mut visual, Choice::Folder, "folder-1");
+
+    // "Wake a Pilot" picks the first Pilot and hides what only a session uses.
+    choose(&mut visual, Choice::Action, "pilot");
+    assert_eq!(
+        action(&visual),
+        AutomationAction::Pilot {
+            pilot_id: "pilot-1".into()
+        }
+    );
+    assert!(visual.drawn("automation-pilot").is_some());
+    for hidden in ["automation-model", "automation-session-settings"] {
+        assert!(visual.drawn(hidden).is_none(), "{hidden} is still drawn");
+    }
+    choose(&mut visual, Choice::Pilot, "pilot-2");
+    let cards = window
+        .read_with(&visual, |view, cx| view.summary_cards(cx))
+        .unwrap();
+    let agent = cards.iter().find(|card| card.key == "agent").unwrap();
+    assert_eq!((agent.title, agent.primary.as_str()), ("Pilot", "Shroom"));
+
+    // Back to a session: its settings are as they were left.
+    choose(&mut visual, Choice::Action, "session");
+    assert_eq!(action(&visual), AutomationAction::Session);
+    assert!(visual.drawn("automation-session-settings").is_some());
+    assert!(visual.drawn("automation-model").is_some());
+    assert!(visual.drawn("automation-pilot").is_none());
+    let kept = window
+        .read_with(&visual, |view, _| {
+            let draft = &view.editor.as_ref().unwrap().draft;
+            (
+                draft.runtime_mode.clone(),
+                draft.workspace_mode.clone(),
+                draft.reuse_session,
+                draft.session_folder_id.clone(),
+                draft.harness.clone(),
+                draft.model.clone(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "supervised".into(),
+            "current".into(),
+            true,
+            "folder-1".into(),
+            "codex".into(),
+            "gpt-5.5".into()
+        )
+    );
+
+    // And back again returns to the Pilot chosen before, which is what saves.
+    choose(&mut visual, Choice::Action, "pilot");
+    assert_eq!(
+        action(&visual),
+        AutomationAction::Pilot {
+            pilot_id: "pilot-2".into()
+        }
+    );
+    window
+        .update(&mut visual, |view, _, cx| view.save(cx))
+        .unwrap();
+    visual.run_until_parked();
+    let saved = stored(&page, &automation.id);
+    assert_eq!(
+        serde_json::to_value(&saved.action).unwrap(),
+        serde_json::json!({"kind": "pilot", "pilotId": "pilot-2"})
+    );
+    assert_eq!(saved.runtime_mode, "supervised");
+    assert_eq!(saved.session_folder_id, "folder-1");
+    assert!(saved.reuse_session);
+
+    // The list names the Pilot; one that was deleted is said to be gone.
+    let labels = window
+        .read_with(&visual, |view, _| {
+            (view.pilot_label("pilot-2"), view.pilot_label("deleted"))
+        })
+        .unwrap();
+    assert_eq!(labels, ("Shroom".into(), "Unavailable Pilot".into()));
+}
+
+#[gpui::test]
+fn waking_a_pilot_with_no_pilots_cannot_be_saved(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Review comments",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", automation.id));
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Action, "pilot".into(), cx);
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(
+        window
+            .read_with(&visual, |view, _| view.error.clone())
+            .unwrap()
+            .as_deref(),
+        Some("Choose a Pilot for this automation.")
+    );
+    assert_eq!(
+        stored(&page, &automation.id).action,
+        AutomationAction::Session
+    );
+}

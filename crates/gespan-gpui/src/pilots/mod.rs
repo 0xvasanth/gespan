@@ -593,6 +593,52 @@ impl Pilots {
         self.enqueue(id, text, attachments, false, cx);
         Ok(())
     }
+    /// An automation's run, queued on Pilot `id`'s chat as an internal
+    /// message that waits while the Pilot is busy; returns the message's id.
+    /// `text` names its run, so a run still waiting there is not queued twice.
+    pub(crate) fn automation_send(
+        &mut self,
+        id: &str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) -> Result<String, String> {
+        let unavailable = || format!("Pilot {id} is no longer available");
+        let pilot = self.roster.get(id).ok_or_else(unavailable)?;
+        if let Some(queued) = pilot.outbox.iter().find(|m| m.internal && m.text == text) {
+            return Ok(queued.id.clone());
+        }
+        self.ensure_chat(id, cx);
+        self.enqueue(id, text, Vec::new(), true, cx)
+            .ok_or_else(unavailable)
+    }
+    /// Pilot `id`'s name and, once it has a chat, that chat's session: where
+    /// the alert for an automation's run points.
+    pub(crate) fn automation_target(
+        &self,
+        id: &str,
+        cx: &App,
+    ) -> Option<(String, Option<Session>)> {
+        let pilot = self.roster.get(id)?;
+        let summary = self
+            .chats
+            .get(id)
+            .map(|view| view.read(cx).summary.clone())
+            .or_else(|| {
+                locked(&self.store)
+                    .ok()?
+                    .pilot_session(pilot.session_id?)
+                    .ok()?
+            });
+        Some((pilot.label(), summary))
+    }
+    /// Every Pilot's id and name, in roster order.
+    pub(crate) fn names(&self) -> Vec<(String, String)> {
+        self.roster
+            .pilots
+            .iter()
+            .map(|pilot| (pilot.id.clone(), pilot.label()))
+            .collect()
+    }
     pub(crate) fn account_changed(
         &mut self,
         kind: Kind,

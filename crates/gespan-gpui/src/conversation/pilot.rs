@@ -688,11 +688,7 @@ impl Conversation {
                                             .bg(content(0.04))
                                             .text_size(px(13.))
                                             .text_color(content(0.6))
-                                            .child(if message.internal {
-                                                "Completion update".into()
-                                            } else {
-                                                message.text.clone()
-                                            })
+                                            .child(internal_header(&message.text))
                                             .child(
                                                 div()
                                                     .text_size(px(11.))
@@ -1346,6 +1342,19 @@ impl Conversation {
             )
             .into_any_element()
     }
+}
+
+/// What a queued internal message is called in the chat: an automation's run
+/// by its automation, anything else a completion update.
+pub(crate) fn internal_header(text: &str) -> String {
+    text.lines()
+        .next()
+        .and_then(|line| line.strip_prefix("[Automation: ")?.strip_suffix(']'))
+        .filter(|name| !name.trim().is_empty())
+        .map_or_else(
+            || "Completion update".into(),
+            |name| format!("Automation: {name}"),
+        )
 }
 
 #[cfg(test)]

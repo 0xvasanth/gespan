@@ -1207,3 +1207,371 @@ fn the_sidebar_runs_entry_drops_the_automation_filter(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+// --- "Wake a Pilot": the run is queued on a Pilot's chat instead of starting
+// a session.
+
+use gespan_core::automations::{AutomationAction, AutomationEventClaim};
+
+/// Creates a Pilot as the Pilots page does, so it has a chat, and names it.
+fn add_pilot(
+    window: &WindowHandle<Shell>,
+    data: &Data,
+    name: &str,
+    cx: &mut TestAppContext,
+) -> String {
+    let project = data.project.clone();
+    let id = window
+        .update(cx, |shell, window, cx| {
+            shell.pilot_manager().update(cx, |pilots, cx| {
+                pilots.create(vec![project], window, cx);
+                let id = pilots.current().unwrap().id.clone();
+                pilots.roster.get_mut(&id).unwrap().name = name.into();
+                id
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    id
+}
+
+fn waking(data: &Data, pilot: &str, triggers: Vec<AutomationTrigger>) -> String {
+    let mut draft = draft(&data.project, triggers);
+    draft.action = AutomationAction::Pilot {
+        pilot_id: pilot.into(),
+    };
+    save(&data.db, draft)
+}
+
+fn saved_automation(data: &Data, id: &str) -> gespan_core::automations::Automation {
+    Service::open(&data.db)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|automation| automation.id == id)
+        .unwrap()
+}
+
+/// Hands `due` to the app and returns the Pilot's queue as it stands before
+/// anything else runs: the queue is filled at once, not after a wait.
+fn launch_for_pilot(
+    window: &WindowHandle<Shell>,
+    due: DueAutomationRun,
+    pilot: &str,
+    cx: &mut TestAppContext,
+) -> Vec<gespan_core::pilot::Message> {
+    let pilot = pilot.to_string();
+    let queued = window
+        .update(cx, |shell, _, cx| {
+            shell.launch_automation(due, false, cx);
+            shell
+                .pilot_manager()
+                .read(cx)
+                .roster
+                .get(&pilot)
+                .map(|pilot| pilot.outbox.clone())
+                .unwrap_or_default()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    queued
+}
+
+fn all_sessions(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> usize {
+    window
+        .update(cx, |shell, _, _| shell.session_summaries.len())
+        .unwrap()
+}
+
+#[gpui::test]
+fn an_event_run_for_a_pilot_queues_one_internal_message_and_starts_no_session(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let window = open(&data, cx);
+    let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+    let id = waking(
+        &data,
+        &pilot,
+        vec![AutomationTrigger::new("github", "issue_opened")],
+    );
+    let prompt = "Check the build and report\n\n<external>Issue 12: login is broken</external>";
+    let due = Service::open(&data.db)
+        .unwrap()
+        .claim_event(
+            &id,
+            AutomationEventClaim {
+                event_key: "github:issue:acme/app:12".into(),
+                event_kind: "github".into(),
+                event: "issue_opened".into(),
+                scheduled_for: now_ms(),
+                prompt: prompt.into(),
+                title: "acme/app#12 Issue 12".into(),
+            },
+            now_ms(),
+        )
+        .unwrap()
+        .expect("the event is claimed");
+    let run = due.run.id.clone();
+    let before = all_sessions(&window, cx);
+    let queued = launch_for_pilot(&window, due.clone(), &pilot, cx);
+
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert!(
+        queued[0].internal,
+        "the Pilot's own queue, not a typed message"
+    );
+    assert!(queued[0].attachments.is_empty());
+    assert_eq!(
+        queued[0].text,
+        format!("[Automation: Check the build]\nTrigger: Issue opened  ·  Run: {run}\n{prompt}"),
+        "the header, then the run prompt exactly as a session would get it"
+    );
+
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].status, "succeeded", "delivered is done: {saved:?}");
+    assert_eq!(
+        saved[0].pilot_message_id.as_deref(),
+        Some(queued[0].id.as_str())
+    );
+    assert_eq!(saved[0].session_id, None);
+    assert_eq!(saved[0].error, None);
+    assert!(saved[0].completed_at.is_some());
+    assert_eq!(sessions(&window, &id, cx), 0);
+    assert_eq!(all_sessions(&window, cx), before, "no session was opened");
+    assert_eq!(saved_automation(&data, &id).last_session_id, None);
+
+    // Handing over the same run again (a restart between queueing and saving
+    // the result) does not queue it twice while it still waits.
+    let again = launch_for_pilot(&window, due, &pilot, cx);
+    assert_eq!(
+        again.iter().filter(|m| m.text.contains(&run)).count(),
+        1,
+        "{again:?}"
+    );
+}
+
+#[gpui::test]
+fn scheduled_and_hand_started_pilot_runs_say_what_started_them(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+    let id = waking(&data, &pilot, vec![]);
+    let automation = saved_automation(&data, &id);
+    let manual = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    let queued = launch_for_pilot(
+        &window,
+        DueAutomationRun {
+            automation: automation.clone(),
+            run: manual.clone(),
+        },
+        &pilot,
+        cx,
+    );
+    let text = &queued.last().unwrap().text;
+    assert_eq!(
+        text,
+        &format!(
+            "[Automation: Check the build]\nTrigger: Manual  ·  Run: {}\nCheck the build and report",
+            manual.id
+        )
+    );
+    let mut scheduled = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    scheduled.trigger = "scheduled".into();
+    let queued = launch_for_pilot(
+        &window,
+        DueAutomationRun {
+            automation,
+            run: scheduled.clone(),
+        },
+        &pilot,
+        cx,
+    );
+    assert!(
+        queued.iter().any(|m| m.text.starts_with(&format!(
+            "[Automation: Check the build]\nTrigger: Scheduled  ·  Run: {}\n",
+            scheduled.id
+        ))),
+        "{queued:?}"
+    );
+}
+
+#[gpui::test]
+fn a_due_schedule_for_a_pilot_is_delivered_once_end_to_end(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+    let mut hourly = AutomationTrigger::new("time", "hourly");
+    hourly.minute = (i64::from(chrono::Timelike::minute(&chrono::Local::now())) + 30) % 60;
+    let id = waking(&data, &pilot, vec![hourly]);
+    reschedule(&data.db, &id, now_ms() - 20_000);
+    let before = all_sessions(&window, cx);
+    poll(&window, cx);
+    poll(&window, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].trigger, "scheduled");
+    assert_eq!(saved[0].status, "succeeded");
+    assert!(saved[0].pilot_message_id.is_some());
+    assert_eq!(saved[0].session_id, None);
+    assert_eq!(all_sessions(&window, cx), before);
+}
+
+#[gpui::test]
+fn a_run_for_a_pilot_that_is_gone_fails_with_a_reason_and_starts_nothing(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let kept = add_pilot(&window, &data, "Other", cx);
+    let id = waking(&data, "0123456789abcdef", vec![]);
+    let automation = saved_automation(&data, &id);
+    let run = Service::open(&data.db)
+        .unwrap()
+        .run_now(&id, now_ms())
+        .unwrap();
+    let before = all_sessions(&window, cx);
+    let queued = launch_for_pilot(&window, DueAutomationRun { automation, run }, &kept, cx);
+    assert!(queued.is_empty(), "another Pilot is not woken instead");
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].status, "failed");
+    assert_eq!(
+        saved[0].error.as_deref(),
+        Some("Pilot 0123456789abcdef is no longer available")
+    );
+    assert_eq!(saved[0].pilot_message_id, None);
+    assert_eq!(saved[0].session_id, None);
+    assert_eq!(sessions(&window, &id, cx), 0);
+    assert_eq!(all_sessions(&window, cx), before);
+}
+
+#[gpui::test]
+fn a_pilot_run_claimed_before_gespan_quit_is_queued_once_when_it_reopens(cx: &mut TestAppContext) {
+    let data = data();
+    // Creating the Pilot saves it in the app's database; then Gespan quits.
+    let pilot = {
+        let window = open(&data, cx);
+        let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        pilot
+    };
+    let mut hourly = AutomationTrigger::new("time", "hourly");
+    hourly.minute = (i64::from(chrono::Timelike::minute(&chrono::Local::now())) + 30) % 60;
+    let id = waking(&data, &pilot, vec![hourly]);
+    reschedule(&data.db, &id, now_ms() - 20_000);
+    let mut service = Service::open(&data.db).unwrap();
+    // One run was already delivered; another was claimed but never handed over.
+    let delivered = service.run_now(&id, now_ms()).unwrap();
+    service
+        .deliver_run(&delivered.id, "0123456789abcdef", now_ms())
+        .unwrap();
+    let claimed = service.claim_due(now_ms()).unwrap();
+    assert_eq!(claimed.len(), 1);
+    drop(service);
+
+    let window = open(&data, cx);
+    poll(&window, cx);
+    poll(&window, cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 2, "recovered, not claimed again: {saved:?}");
+    let pending = saved
+        .iter()
+        .find(|run| run.id == claimed[0].run.id)
+        .unwrap();
+    assert_eq!(pending.status, "succeeded");
+    let message = pending
+        .pilot_message_id
+        .clone()
+        .expect("queued on recovery");
+    let resent = saved.iter().find(|run| run.id == delivered.id).unwrap();
+    assert_eq!(
+        resent.pilot_message_id.as_deref(),
+        Some("0123456789abcdef"),
+        "a delivered run is left as it was"
+    );
+    let texts: Vec<String> = window
+        .update(cx, |shell, _, cx| {
+            let pilots = shell.pilot_manager();
+            let pilots = pilots.read(cx);
+            let chat = pilots.open_chat(&pilot);
+            let mut texts: Vec<String> = pilots
+                .roster
+                .get(&pilot)
+                .unwrap()
+                .outbox
+                .iter()
+                .map(|m| format!("{}\n{}", m.id, m.text))
+                .collect();
+            if let Some(chat) = chat {
+                texts.extend(
+                    chat.read(cx)
+                        .pilot_rows(cx)
+                        .iter()
+                        .map(|row| row.text.clone()),
+                );
+            }
+            texts
+        })
+        .unwrap();
+    assert!(
+        !texts.iter().any(|text| text.contains(&delivered.id)),
+        "the delivered run is not sent again: {texts:?}"
+    );
+    let _ = message;
+    assert_eq!(sessions(&window, &id, cx), 0);
+}
+
+#[gpui::test]
+fn a_pilot_run_started_by_an_issue_alerts_with_the_pilots_name_and_opens_its_chat(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let window = open(&data, cx);
+    let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+    let chat = window
+        .update(cx, |shell, _, cx| {
+            shell
+                .pilot_manager()
+                .read(cx)
+                .roster
+                .get(&pilot)
+                .unwrap()
+                .session_id
+        })
+        .unwrap()
+        .expect("the Pilot has a chat");
+    let id = waking(
+        &data,
+        &pilot,
+        vec![AutomationTrigger::new("github", "issue_opened")],
+    );
+    // The page is not showing the Pilot's chat.
+    window
+        .update(cx, |shell, window, cx| shell.close_app_view(window, cx))
+        .unwrap();
+    allow_notices(&window, cx);
+    let opened = issue(&data, 12, now_ms());
+    deliver(&window, vec![opened.clone()], cx);
+    deliver(&window, vec![opened], cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].status, "succeeded");
+    assert_eq!(
+        run_alerts(&window, cx),
+        [(
+            chat,
+            "Check the build".to_string(),
+            "Issue opened: acme/app#12 Issue 12 → ReviewPilot".to_string()
+        )]
+    );
+}

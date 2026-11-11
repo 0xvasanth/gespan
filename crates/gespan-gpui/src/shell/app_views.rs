@@ -631,6 +631,7 @@ impl Shell {
         if let Some(view) = &self.automations {
             let cwd = self.workspace.project.clone();
             let projects = self.workspace.projects.clone();
+            let pilots = self.pilot_names(cx);
             view.update(cx, |view, cx| {
                 view.set_appearances(self.workspace.project_appearance.clone(), cx);
                 let connections = self
@@ -642,6 +643,7 @@ impl Shell {
                     .map(|(provider, (connected, _))| (provider, connected))
                     .collect();
                 view.set_trigger_connections(connections, cx);
+                view.set_pilots(pilots, cx);
                 view.set_context(cwd, projects, cx);
                 view.refresh(cx);
             });

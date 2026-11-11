@@ -9,8 +9,8 @@ use crate::{
 };
 use gespan_core::{
     automations::{
-        self, Automation, AutomationRun, AutomationTrigger, AutomationUpsert, DueAutomationRun,
-        Service,
+        self, Automation, AutomationAction, AutomationRun, AutomationTrigger, AutomationUpsert,
+        DueAutomationRun, Service,
     },
     provider::Kind,
     session_groups::Folder,
@@ -95,10 +95,15 @@ struct Editor {
     fields: Vec<TriggerFields>,
     saved: bool,
     dirty: bool,
+    /// The Pilot last chosen here, so "Wake a Pilot" comes back to it.
+    last_pilot: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 #[derive(Clone)]
 enum Choice {
+    /// What a run does: start a session or wake a Pilot.
+    Action,
+    Pilot,
     Access,
     Workspace,
     Conversation,
@@ -145,6 +150,8 @@ pub(crate) struct Automations {
     advanced: bool,
     confirm_delete: bool,
     folders: Vec<Folder>,
+    /// Every Pilot's id and name, for the "Wake a Pilot" picker.
+    pilots: Vec<(String, String)>,
     choice: Option<ChoiceMenu>,
     models: Option<Entity<ModelList>>,
     model_controls: Vec<gespan_core::catalog::ModelControl>,
@@ -202,6 +209,7 @@ impl Automations {
             advanced: false,
             confirm_delete: false,
             folders: Vec::new(),
+            pilots: Vec::new(),
             choice: None,
             models: None,
             model_controls: Vec::new(),
@@ -229,6 +237,19 @@ impl Automations {
     ) {
         self.appearances = appearances;
         cx.notify();
+    }
+    pub(crate) fn set_pilots(&mut self, pilots: Vec<(String, String)>, cx: &mut Context<Self>) {
+        if self.pilots != pilots {
+            self.pilots = pilots;
+            cx.notify();
+        }
+    }
+    /// The name of Pilot `id`, or what stands in for one that is gone.
+    fn pilot_label(&self, id: &str) -> String {
+        self.pilots
+            .iter()
+            .find(|(pilot, _)| pilot == id)
+            .map_or_else(|| "Unavailable Pilot".into(), |(_, name)| name.clone())
     }
     /// The name of the automation `id`, once the list has loaded it.
     pub(crate) fn automation_name(&self, id: &str) -> Option<String> {
@@ -438,8 +459,10 @@ impl Automations {
                 cx.notify();
             }));
         }
+        let last_pilot = draft.action.pilot_id().map(str::to_string);
         self.editor = Some(Editor {
             draft,
+            last_pilot,
             name,
             prompt,
             completion,

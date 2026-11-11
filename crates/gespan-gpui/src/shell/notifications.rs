@@ -606,6 +606,26 @@ impl Shell {
         self.deliver_session_notice(&summary, "automationRuns", body, None, cx);
     }
 
+    /// Tells the user an automation handed a run to a Pilot. The alert opens
+    /// the Pilot's chat, and is muted with the automation's project.
+    pub(super) fn deliver_pilot_automation_notice(
+        &mut self,
+        chat: &Session,
+        automation: &gespan_core::automations::Automation,
+        pilot: &str,
+        body: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut summary = chat.clone();
+        summary.cwd = automation.cwd.clone();
+        self.deliver_automation_notice(
+            &summary,
+            &automation.name,
+            &format!("{body} → {pilot}"),
+            cx,
+        );
+    }
+
     /// Tells the user a herdr agent needs input or finished a turn, unless
     /// they are looking at its terminal tab. Follows the global
     /// notification and sound preferences; herdr agents belong to no project.

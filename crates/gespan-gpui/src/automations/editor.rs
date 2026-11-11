@@ -195,6 +195,26 @@ impl Automations {
             return;
         };
         match field {
+            // The session settings stay in the draft while a Pilot is chosen,
+            // so switching back shows them as they were.
+            Choice::Action => {
+                editor.draft.action = if value == "pilot" {
+                    AutomationAction::Pilot {
+                        pilot_id: editor
+                            .last_pilot
+                            .clone()
+                            .filter(|id| self.pilots.iter().any(|(pilot, _)| pilot == id))
+                            .or_else(|| self.pilots.first().map(|(id, _)| id.clone()))
+                            .unwrap_or_default(),
+                    }
+                } else {
+                    AutomationAction::Session
+                };
+            }
+            Choice::Pilot => {
+                editor.last_pilot = Some(value.clone());
+                editor.draft.action = AutomationAction::Pilot { pilot_id: value };
+            }
             Choice::Access => editor.draft.runtime_mode = value,
             Choice::Workspace => {
                 editor.draft.workspace_mode = value;
@@ -777,6 +797,7 @@ impl Automations {
                         })),
                 ),
         );
+        let pilot = draft.action.pilot_id();
         let kind = Kind::from_id(&draft.harness);
         let model = gespan_core::store::native_model(&draft.model, &draft.harness);
         let access = access_label(&draft.runtime_mode);
@@ -804,6 +825,7 @@ impl Automations {
                     .relative()
                     .role(Role::Button)
                     .aria_label("Choose automation model")
+                    .debug_selector(|| "automation-model".into())
                     .px(px(6.))
                     .h(px(26.))
                     .rounded(px(6.))
@@ -873,7 +895,8 @@ impl Automations {
                             .py(px(12.))
                             .child(editor.completion.clone()),
                     )
-                    .child(controls),
+                    // A Pilot answers with its own agent, model and access.
+                    .when(pilot.is_none(), |d| d.child(controls)),
             )
             .child(
                 div()
@@ -925,8 +948,61 @@ impl Automations {
                 cx,
             )
             .when(draft.workspace_mode == "worktree", |d| d.opacity(0.5));
-        let session = div().child(section("Session")).child(
+        let action = self.select_control(
+            "automation-action",
+            if pilot.is_some() {
+                "Wake a Pilot"
+            } else {
+                "Start a session"
+            }
+            .into(),
+            Choice::Action,
+            options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")]),
+            cx,
+        );
+        let pilot_row = pilot.map(|id| {
+            settings_row(
+                "Pilot",
+                "The run's prompt is queued on its chat",
+                self.select_control(
+                    "automation-pilot",
+                    if id.is_empty() {
+                        if self.pilots.is_empty() {
+                            "No Pilots yet".into()
+                        } else {
+                            "Choose a Pilot".into()
+                        }
+                    } else {
+                        self.pilot_label(id)
+                    },
+                    Choice::Pilot,
+                    self.pilots.clone(),
+                    cx,
+                )
+                .debug_selector(|| "automation-pilot".into()),
+            )
+            .border_b_0()
+        });
+        let does = div().child(section("Do")).child(
             div()
+                .mt(px(12.))
+                .rounded(px(6.))
+                .overflow_hidden()
+                .border_1()
+                .border_color(content(0.1))
+                .child(
+                    settings_row(
+                        "Do",
+                        "Start a session, or hand the run to a Pilot",
+                        action.debug_selector(|| "automation-action".into()),
+                    )
+                    .when(pilot.is_none(), |d| d.border_b_0()),
+                )
+                .children(pilot_row),
+        );
+        let session = div().mt(px(32.)).child(section("Session")).child(
+            div()
+                .debug_selector(|| "automation-session-settings".into())
                 .mt(px(12.))
                 .rounded(px(6.))
                 .overflow_hidden()
@@ -1052,7 +1128,8 @@ impl Automations {
             .gap(px(32.))
             .child(frame(triggers_section))
             .child(frame(instructions))
-            .child(frame(session))
+            // "Do" shares the Session slot: `layout::Section` indexes these.
+            .child(frame(does.when(pilot.is_none(), |d| d.child(session))))
             .child(frame(advanced))
             .into_any_element()
     }
