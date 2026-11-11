@@ -506,7 +506,9 @@ pub fn worktree_branch(root: &Path, worktree: &Path) -> Option<String> {
 /// is never a project of its own. `None` for a main checkout, a folder inside
 /// a worktree, a bare repository's worktree, or a folder outside Git.
 pub fn linked_worktree_root(path: &Path) -> Option<PathBuf> {
-    if crate::files::remote::is_remote(path) || !path.is_dir() {
+    // A linked worktree's own folder holds a `.git` file, so anything else
+    // is answered without starting git.
+    if crate::files::remote::is_remote(path) || !path.join(".git").is_file() {
         return None;
     }
     let trees = worktrees(path).ok()?;
@@ -518,6 +520,59 @@ pub fn linked_worktree_root(path: &Path) -> Option<PathBuf> {
             .iter()
             .any(|tree| same_tree(Path::new(&tree.path), path)))
     .then(|| root.to_path_buf())
+}
+
+/// [`linked_worktree_root`] for many folders, asking git once per
+/// repository rather than once per folder: every worktree of a repository
+/// shares its list. Sessions often ran in dozens of worktrees of one repo.
+#[derive(Default)]
+pub struct WorktreeRoots {
+    /// The repository's main checkout and its linked worktrees, by the
+    /// repository's common git folder; `None` when git could not list them.
+    by_repository: std::collections::HashMap<PathBuf, Option<(PathBuf, Vec<PathBuf>)>>,
+}
+
+impl WorktreeRoots {
+    /// The main checkout the linked worktree at `path` belongs to; the same
+    /// answer as [`linked_worktree_root`].
+    pub fn root(&mut self, path: &Path) -> Option<PathBuf> {
+        if crate::files::remote::is_remote(path) || !path.join(".git").is_file() {
+            return None;
+        }
+        let Some(repository) = common_git_dir(path) else {
+            return linked_worktree_root(path);
+        };
+        let (main, linked) = self
+            .by_repository
+            .entry(repository)
+            .or_insert_with(|| {
+                let trees = worktrees(path).ok()?;
+                let (main, linked) = trees.split_first()?;
+                Some((
+                    PathBuf::from(&main.path),
+                    linked
+                        .iter()
+                        .map(|tree| PathBuf::from(&tree.path))
+                        .collect(),
+                ))
+            })
+            .as_ref()?;
+        (main.join(".git").is_dir()
+            && !same_tree(main, path)
+            && linked.iter().any(|tree| same_tree(tree, path)))
+        .then(|| main.clone())
+    }
+}
+
+/// The common git folder of the worktree at `path`, read from its `.git`
+/// file and the `commondir` file it points to, without starting git.
+fn common_git_dir(path: &Path) -> Option<PathBuf> {
+    let link = std::fs::read_to_string(path.join(".git")).ok()?;
+    let own = path.join(link.strip_prefix("gitdir:")?.trim());
+    let common = std::fs::read_to_string(own.join("commondir"))
+        .map(|dir| own.join(dir.trim()))
+        .unwrap_or(own);
+    std::fs::canonicalize(common).ok()
 }
 
 /// Renames the branch of the app-created worktree at `worktree` from the
@@ -1576,6 +1631,39 @@ mod tests {
         assert_eq!(linked_worktree_root(&temp.path().join("gone")), None);
     }
     #[test]
+    fn worktree_roots_answer_as_linked_worktree_root_does() {
+        let (temp, cwd) = repo();
+        let first = PathBuf::from(create_named_worktree(&cwd, "first").unwrap().path);
+        let second = PathBuf::from(create_named_worktree(&cwd, "second").unwrap().path);
+        let inside = first.join("src");
+        std::fs::create_dir(&inside).unwrap();
+        let plain = temp.path().join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let (other_temp, other) = repo();
+        let other_tree = PathBuf::from(create_named_worktree(&other, "elsewhere").unwrap().path);
+        let mut roots = WorktreeRoots::default();
+        for path in [
+            &first,
+            &second,
+            &cwd,
+            &inside,
+            &plain,
+            &temp.path().join("gone"),
+            &other_tree,
+            &first,
+        ] {
+            assert_eq!(roots.root(path), linked_worktree_root(path), "{path:?}");
+        }
+        assert!(same_tree(&roots.root(&second).unwrap(), &cwd));
+        assert!(same_tree(&roots.root(&other_tree).unwrap(), &other));
+        assert_eq!(
+            roots.by_repository.len(),
+            2,
+            "one listing per repository, not per worktree"
+        );
+        drop(other_temp);
+    }
+    #[test]
     fn a_bare_repositorys_worktree_has_no_root_to_fold_into() {
         let (temp, cwd) = repo();
         let bare = temp.path().join("bare.git");
@@ -1592,6 +1680,7 @@ mod tests {
         let tree = temp.path().join("bare-tree");
         git(&bare, &["worktree", "add", tree.to_str().unwrap(), "main"]).unwrap();
         assert_eq!(linked_worktree_root(&tree), None);
+        assert_eq!(WorktreeRoots::default().root(&tree), None);
     }
     #[test]
     fn branches_the_user_owns_are_never_renamed() {

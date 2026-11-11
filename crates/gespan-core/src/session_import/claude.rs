@@ -5,6 +5,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use super::{title_of, Candidate, HEAD_LIMIT};
@@ -15,7 +16,7 @@ pub(super) fn list(home: &Path) -> Vec<Candidate> {
     let Ok(folders) = fs::read_dir(home.join("projects")) else {
         return Vec::new();
     };
-    let mut found = Vec::new();
+    let mut sessions = Vec::new();
     for folder in folders.flatten() {
         let Ok(files) = fs::read_dir(folder.path()) else {
             continue;
@@ -24,16 +25,22 @@ pub(super) fn list(home: &Path) -> Vec<Candidate> {
             let path = file.path();
             let is_session = path.extension().is_some_and(|e| e == "jsonl")
                 && file.file_type().is_ok_and(|t| t.is_file());
-            if !is_session {
-                continue;
-            }
-            if let Some(candidate) = candidate(&path) {
-                found.push(candidate);
+            if is_session {
+                sessions.push(path);
             }
         }
     }
-    found
+    // A home holds thousands of sessions; their heads are read side by side.
+    sessions
+        .par_iter()
+        .filter_map(|path| candidate(path))
+        .collect()
 }
+
+/// How far the head is read, step by step: nearly every session names its
+/// first prompt and folder in the first step, so the rest of the head is read
+/// only when it does not.
+const HEAD_STEPS: [u64; 3] = [64 << 10, 256 << 10, HEAD_LIMIT];
 
 /// The file's candidate, or `None` when it is unreadable or holds no real
 /// user prompt in its head.
@@ -46,20 +53,19 @@ fn candidate(path: &Path) -> Option<Candidate> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_millis() as u64;
+    let mut file = File::open(path).ok()?;
     let mut head = Vec::new();
-    File::open(path)
-        .ok()?
-        .take(HEAD_LIMIT)
-        .read_to_end(&mut head)
-        .ok()?;
-
-    let turns = parse_claude(&head, None).turns;
-    let title = turns
-        .iter()
-        .filter(|t| t.role == TurnRole::User)
-        .map(|t| title_of(&t.text))
-        .find(|t| !t.is_empty())?;
-    let (cwd, branch) = cwd_and_branch(&head);
+    let mut found = None;
+    for step in HEAD_STEPS {
+        let more = step - head.len() as u64;
+        let read = (&mut file).take(more).read_to_end(&mut head).ok()?;
+        found = summary(&head);
+        let complete = found.as_ref().is_some_and(|(_, cwd, _)| cwd.is_some());
+        if complete || (read as u64) < more {
+            break;
+        }
+    }
+    let (title, cwd, branch) = found?;
     Some(Candidate {
         kind: Kind::Claude,
         provider_id: id,
@@ -70,6 +76,18 @@ fn candidate(path: &Path) -> Option<Candidate> {
         messages: None,
         path: path.to_path_buf(),
     })
+}
+
+/// The title, cwd and branch a head shows; `None` without a real prompt.
+fn summary(head: &[u8]) -> Option<(String, Option<String>, Option<String>)> {
+    let title = parse_claude(head, None)
+        .turns
+        .iter()
+        .filter(|t| t.role == TurnRole::User)
+        .map(|t| title_of(&t.text))
+        .find(|t| !t.is_empty())?;
+    let (cwd, branch) = cwd_and_branch(head);
+    Some((title, cwd, branch))
 }
 
 #[derive(Deserialize)]

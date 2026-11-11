@@ -8,7 +8,7 @@ use crate::provider::Kind;
 use crate::store::{Session, Store};
 use crate::transcript::{Interjection, Row, Transcript};
 
-pub use placement::{already_imported, place, Placement, Skip};
+pub use placement::{already_imported, place, Placement, Placer, Skip};
 
 mod claude;
 mod codex;
@@ -224,12 +224,13 @@ pub fn import(
     store: &Mutex<Store>,
     picks: &[Candidate],
     projects: &[String],
-    root: impl Fn(&str) -> Option<String>,
+    root: impl FnMut(&str) -> Option<String>,
     home: impl Fn(Kind) -> Option<PathBuf>,
 ) -> Report {
     let mut report = Report::default();
+    let mut placer = Placer::new(projects, root);
     for pick in picks {
-        let (project, worktree) = match place(&pick.cwd, projects, &root) {
+        let (project, worktree) = match placer.place(&pick.cwd) {
             Placement::Project { project } => (project, None),
             Placement::Worktree { project, worktree } => (project, Some(worktree)),
             Placement::Skip(why) => {

@@ -195,6 +195,33 @@ fn claude_head_read_is_bounded() {
 }
 
 #[test]
+fn claude_finds_a_prompt_past_the_quick_head() {
+    let home = tempfile::tempdir().unwrap();
+    // A file snapshot far larger than the first read, then the prompt.
+    let snapshot = serde_json::json!({
+        "type": "file-history-snapshot", "messageId": "m",
+        "snapshot": {"trackedFileBackups": {"a": "y".repeat(200 * 1024)}},
+    })
+    .to_string();
+    let prompt = serde_json::json!({
+        "type": "user", "uuid": "u1", "parentUuid": null,
+        "cwd": "/tmp/late", "gitBranch": "dev",
+        "message": {"role": "user", "content": "Late prompt"},
+    })
+    .to_string();
+    write(
+        home.path(),
+        "projects/-tmp-late/late.jsonl",
+        &[snapshot, prompt],
+    );
+    let found = list(Kind::Claude, home.path());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Late prompt");
+    assert_eq!(found[0].cwd, "/tmp/late");
+    assert_eq!(found[0].branch.as_deref(), Some("dev"));
+}
+
+#[test]
 fn claude_count_messages_counts_user_and_assistant_turns() {
     let home = tempfile::tempdir().unwrap();
     write(
@@ -1135,6 +1162,54 @@ mod placement {
             place(&s(&file), &[s(&file)], no_root),
             Placement::Skip(Skip::FolderMissing)
         );
+    }
+
+    #[test]
+    fn a_placer_asks_git_once_per_folder_and_agrees_with_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = s(&dir.path().join("app"));
+        let tree = s(&dir.path().join("app-tree"));
+        let loose = s(&dir.path().join("loose"));
+        for folder in [&project, &tree, &loose] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        let projects = vec![project.clone()];
+        let asked = std::cell::RefCell::new(Vec::new());
+        let main = project.clone();
+        let root = |cwd: &str| {
+            asked.borrow_mut().push(cwd.to_owned());
+            (cwd.ends_with("-tree")).then(|| main.clone())
+        };
+        let mut placer = Placer::new(&projects, &root);
+        let folders = [
+            &tree,
+            &loose,
+            &project,
+            &tree,
+            &loose,
+            &tree,
+            "/no/such/folder",
+        ];
+        let placed: Vec<Placement> = folders.iter().map(|cwd| placer.place(cwd)).collect();
+        assert_eq!(
+            *asked.borrow(),
+            [tree.clone(), loose.clone()],
+            "git is asked once per folder, never for the project itself"
+        );
+        let one_off = |cwd: &str| place(cwd, &projects, |c: &str| root(c));
+        for (cwd, got) in folders.iter().zip(&placed) {
+            assert_eq!(*got, one_off(cwd), "{cwd}");
+        }
+        assert_eq!(
+            placed[0],
+            Placement::Worktree {
+                project: project.clone(),
+                worktree: tree.clone()
+            }
+        );
+        assert_eq!(placed[1], Placement::Skip(Skip::NoProject));
+        assert_eq!(placed[2], Placement::Project { project });
+        assert_eq!(placed[6], Placement::Skip(Skip::FolderMissing));
     }
 
     #[test]

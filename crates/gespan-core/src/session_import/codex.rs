@@ -4,8 +4,9 @@
 //! `.jsonl.zst`.
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use super::{title_of, Candidate, HEAD_LIMIT};
@@ -14,16 +15,19 @@ use crate::outside_turns::{parse_codex, OutsideTurn, TurnRole};
 use crate::provider::Kind;
 
 pub(super) fn list(home: &Path) -> Vec<Candidate> {
-    let mut found = Vec::new();
+    let mut files = Vec::new();
     for root in ["sessions", "archived_sessions"] {
-        walk(&home.join(root), &mut found);
+        walk(&home.join(root), &mut files);
     }
-    found
+    // Rollouts' heads are read side by side.
+    files
+        .par_iter()
+        .filter_map(|path| candidate(path))
+        .collect()
 }
 
-/// Collects the candidate of every rollout under `dir`. Symlinks are not
-/// followed.
-fn walk(dir: &Path, found: &mut Vec<Candidate>) {
+/// Collects every file under `dir`. Symlinks are not followed.
+fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -33,11 +37,9 @@ fn walk(dir: &Path, found: &mut Vec<Candidate>) {
         };
         let path = entry.path();
         if kind.is_dir() {
-            walk(&path, found);
+            walk(&path, files);
         } else if kind.is_file() {
-            if let Some(candidate) = candidate(&path) {
-                found.push(candidate);
-            }
+            files.push(path);
         }
     }
 }
