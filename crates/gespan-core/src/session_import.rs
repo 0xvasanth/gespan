@@ -5,8 +5,11 @@ use std::path::{Path, PathBuf};
 use crate::outside_turns::OutsideTurn;
 use crate::provider::Kind;
 
+pub use placement::{already_imported, place, Placement, Skip};
+
 mod claude;
 mod codex;
+mod placement;
 #[cfg(test)]
 mod tests;
 

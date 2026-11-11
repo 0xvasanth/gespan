@@ -408,3 +408,178 @@ fn codex_bad_id_in_name_is_skipped() {
     }
     assert!(list(Kind::Codex, home.path()).is_empty());
 }
+
+mod placement {
+    use super::*;
+    use crate::store::Session;
+
+    fn real_root(p: &str) -> Option<String> {
+        crate::git::linked_worktree_root(Path::new(p)).map(|r| r.to_string_lossy().into_owned())
+    }
+
+    fn no_root(_: &str) -> Option<String> {
+        None
+    }
+
+    fn s(p: &Path) -> String {
+        p.to_string_lossy().into_owned()
+    }
+
+    fn session(provider: &str, id: Option<&str>, archived: bool) -> Session {
+        Session {
+            id: 1,
+            title: String::new(),
+            provider: provider.into(),
+            cwd: String::new(),
+            provider_id: id.map(str::to_owned),
+            has_messages: true,
+            updated_at: 0,
+            created_at: 0,
+            archived,
+            pinned: false,
+            work_item: None,
+        }
+    }
+
+    #[test]
+    fn places_the_project_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = s(dir.path());
+        let got = place(&project, std::slice::from_ref(&project), no_root);
+        assert_eq!(got, Placement::Project { project });
+    }
+
+    #[test]
+    fn places_a_path_spelled_differently() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("proj");
+        fs::create_dir(&project).unwrap();
+        let projects = vec![s(&project)];
+        let expected = Placement::Project {
+            project: s(&project),
+        };
+
+        let slash = format!("{}/", s(&project));
+        assert_eq!(
+            place(&slash, &projects, no_root),
+            expected,
+            "trailing slash"
+        );
+
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&project, &link).unwrap();
+            assert_eq!(place(&s(&link), &projects, no_root), expected, "symlink");
+            // The project may be the one spelled through the link.
+            let linked = vec![s(&link)];
+            assert_eq!(
+                place(&s(&project), &linked, no_root),
+                Placement::Project { project: s(&link) },
+                "project stored via symlink"
+            );
+        }
+    }
+
+    #[test]
+    fn places_a_linked_worktree_under_its_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let main = temp.path().join("main");
+        fs::create_dir(&main).unwrap();
+        let git = |args: &[&str]| crate::git::git(&main, args).unwrap();
+        git(&["init", "-b", "main"]);
+        fs::write(main.join("f"), "x\n").unwrap();
+        git(&["add", "f"]);
+        git(&[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-m",
+            "init",
+        ]);
+        let tree = temp.path().join("tree");
+        git(&["worktree", "add", "-b", "feat", &s(&tree)]);
+
+        let projects = vec![s(&main)];
+        assert_eq!(
+            place(&s(&tree), &projects, real_root),
+            Placement::Worktree {
+                project: s(&main),
+                worktree: s(&tree)
+            }
+        );
+        // The project itself wins over the worktree rule.
+        assert_eq!(
+            place(&s(&main), &projects, real_root),
+            Placement::Project { project: s(&main) }
+        );
+        // A worktree of a folder that isn't a project is skipped.
+        assert_eq!(
+            place(&s(&tree), &[s(temp.path())], real_root),
+            Placement::Skip(Skip::NoProject)
+        );
+    }
+
+    #[test]
+    fn skips_a_plain_subfolder_of_a_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("src");
+        fs::create_dir(&sub).unwrap();
+        assert_eq!(
+            place(&s(&sub), &[s(dir.path())], real_root),
+            Placement::Skip(Skip::NoProject)
+        );
+    }
+
+    #[test]
+    fn skips_an_unknown_folder() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        assert_eq!(
+            place(&s(a.path()), &[s(b.path())], real_root),
+            Placement::Skip(Skip::NoProject)
+        );
+        assert_eq!(
+            place(&s(a.path()), &[], real_root),
+            Placement::Skip(Skip::NoProject)
+        );
+    }
+
+    #[test]
+    fn skips_a_deleted_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone");
+        // Even when it is spelled exactly like a project.
+        assert_eq!(
+            place(&s(&gone), &[s(&gone)], no_root),
+            Placement::Skip(Skip::FolderMissing)
+        );
+        // A file is not a folder.
+        let file = dir.path().join("file");
+        fs::write(&file, "x").unwrap();
+        assert_eq!(
+            place(&s(&file), &[s(&file)], no_root),
+            Placement::Skip(Skip::FolderMissing)
+        );
+    }
+
+    #[test]
+    fn already_imported_sees_live_and_archived_sessions() {
+        let sessions = vec![
+            session("claude", Some("live"), false),
+            session("claude", Some("old"), true),
+            session("codex", Some("shared"), false),
+            session("claude", None, false),
+        ];
+        assert!(already_imported(&sessions, Kind::Claude, "live"));
+        assert!(already_imported(&sessions, Kind::Claude, "old"));
+        assert!(!already_imported(&sessions, Kind::Claude, "new"));
+        assert!(!already_imported(&sessions, Kind::Claude, ""));
+        assert!(!already_imported(&sessions, Kind::Claude, "shared"));
+        assert!(already_imported(&sessions, Kind::Codex, "shared"));
+        assert!(!already_imported(&sessions, Kind::Codex, "live"));
+        assert!(!already_imported(&[], Kind::Claude, "live"));
+    }
+}
