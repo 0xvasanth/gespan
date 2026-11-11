@@ -1309,8 +1309,8 @@ impl Conversation {
         if self.sends_as_follow_up() {
             self.enqueue_follow_up_inverted(prompt, mode.map(str::to_owned), invert, typed, cx);
             if self.stopping || self.settings.pending_provider_switch.is_some() {
-                // A fresh Send continues the conversation, while older queued
-                // messages remain paused after Stop.
+                // A fresh Send while stopping goes first; the older queue
+                // follows once it has started.
                 if let Some(id) = self
                     .follow_ups
                     .state
@@ -1864,7 +1864,11 @@ impl Conversation {
                             if this.settings.pilot.is_some() {
                                 this.pilot_turn_ended();
                             }
-                            if this.status != "Ready" && !this.follow_ups.state.messages.is_empty()
+                            // A failed turn holds the queue for the user to
+                            // look first; a stopped one does not.
+                            if !stopping
+                                && this.status != "Ready"
+                                && !this.follow_ups.state.messages.is_empty()
                             {
                                 this.follow_ups.state.paused = true;
                                 this.save_follow_ups(cx);
@@ -3256,11 +3260,9 @@ impl Conversation {
         self.follow_ups.continuations.clear();
         self.notification_cancelled = true;
         self.cancel.store(true, Ordering::Relaxed);
-        if !self.follow_ups.state.messages.is_empty() {
-            self.follow_ups.state.paused = true;
-            self.follow_ups.requested = None;
-            self.save_follow_ups(cx);
-        }
+        // Stop ends this turn only: once it has wound down, the next queued
+        // message starts the next turn.
+        self.follow_ups.requested = None;
         // A provider switch stops the turn so the queue goes to the new one.
         if self.settings.pilot.is_some() && self.settings.pending_provider_switch.is_none() {
             self.pilot_pause_queue();

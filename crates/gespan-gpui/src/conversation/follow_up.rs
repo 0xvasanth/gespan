@@ -910,29 +910,51 @@ mod tests {
     }
 
     #[gpui::test]
-    fn stop_pauses_the_queue_and_retires_its_controls(cx: &mut TestAppContext) {
+    fn stop_retires_its_controls_and_sends_the_next_queued_message_once_stopped(
+        cx: &mut TestAppContext,
+    ) {
         let window = conversation(cx);
         let (controls, received) = std::sync::mpsc::channel();
+        crate::conversation::turn_capture::start();
         window
             .update(cx, |view, _, cx| {
                 view.busy = true;
                 view.controls = Some(controls);
-                view.input
-                    .update(cx, |input, cx| input.set_text("keep this".into(), cx));
-                view.send(cx);
+                for text in ["next", "after that"] {
+                    view.input
+                        .update(cx, |input, cx| input.set_text(text.into(), cx));
+                    view.send(cx);
+                }
                 view.stop(cx);
                 assert!(view.stopping);
-                assert!(view.follow_ups.state.paused);
+                assert!(!view.follow_ups.state.paused, "Stop keeps the queue live");
                 assert!(!view.follow_ups.ready);
                 assert!(view.controls.is_none());
-                assert_eq!(view.follow_ups.state.messages[0].text, "keep this");
             })
             .unwrap();
         cx.run_until_parked();
+        // Nothing starts while the stopped turn is still winding down.
+        assert!(crate::conversation::turn_capture::all().is_empty());
         assert!(matches!(
             received.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Disconnected)
         ));
+        window
+            .update(cx, |view, _, cx| {
+                // The stopped turn's last update clears `stopping`.
+                view.stopping = false;
+                view.pump_follow_ups(cx);
+                assert!(view.busy, "the next message starts a new turn");
+                // Only the head is sent; it leaves the queue once accepted.
+                let head = &view.follow_ups.state.messages[0];
+                assert_eq!(head.text, "next");
+                assert_eq!(view.follow_ups.sending.as_ref(), Some(&head.id));
+            })
+            .unwrap();
+        assert_eq!(
+            crate::conversation::turn_capture::last().map(|(_, prompt)| prompt),
+            Some("next".into())
+        );
     }
 
     #[gpui::test]
