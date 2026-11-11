@@ -1,10 +1,16 @@
+<a id="top"></a>
+
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Gespan logo" width="120" />
+  <a href="https://github.com/0xvasanth/gespan">
+    <img src="docs/assets/logo.svg" alt="Gespan logo" width="128" />
+  </a>
 </p>
 
 <h1 align="center">Gespan</h1>
 
-<h3 align="center">One desktop app to drive all of your coding agents.</h3>
+<p align="center">
+  <strong>One desktop app to drive all of your coding agents.</strong>
+</p>
 
 <p align="center">
   Run Claude Code, Codex, Cursor, OpenCode and eight more coding agents side by side,<br/>
@@ -13,27 +19,32 @@
 </p>
 
 <p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/Download-macOS-6e2ada?style=for-the-badge" alt="Download for macOS" /></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Download-Windows-6e2ada?style=for-the-badge" alt="Download for Windows" /></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Download-Linux-6e2ada?style=for-the-badge" alt="Download for Linux" /></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/0xvasanth/gespan/actions/workflows/ci.yml"><img src="https://github.com/0xvasanth/gespan/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/0xvasanth/gespan/releases"><img src="https://img.shields.io/github/v/release/0xvasanth/gespan?include_prereleases&sort=semver&label=release&color=7c3aed" alt="Latest release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-a78bfa.svg" alt="License: MIT" /></a>
-  <a href="#install"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-4c1d95.svg" alt="Platforms" /></a>
-  <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui"><img src="https://img.shields.io/badge/built%20with-GPUI%20%2B%20Rust-24c8db.svg" alt="Built with GPUI" /></a>
-  <a href="https://github.com/0xvasanth/gespan/stargazers"><img src="https://img.shields.io/github/stars/0xvasanth/gespan?style=flat&color=c4b5fd" alt="GitHub stars" /></a>
+  <a href="https://github.com/0xvasanth/gespan/releases"><img src="https://img.shields.io/github/v/release/0xvasanth/gespan?include_prereleases&sort=semver&label=release&color=7e47ea" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7e47ea" alt="License: MIT" /></a>
+  <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui"><img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20GPUI-7e47ea?logo=rust&logoColor=white" alt="Built with Rust and GPUI" /></a>
+  <a href="https://github.com/0xvasanth/gespan/stargazers"><img src="https://img.shields.io/github/stars/0xvasanth/gespan?style=flat&color=7e47ea" alt="GitHub stars" /></a>
+</p>
+
+<p align="center">
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#supported-agents">Agents</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="#faq">FAQ</a> ·
+  <a href="#contributing">Contribute</a>
 </p>
 
 <p align="center">
   <sub>Gespan began as a fork of <a href="https://github.com/hardbeat920/monocode">MonoCode</a> and has grown quickly from there. <a href="#acknowledgements">Read the acknowledgements.</a></sub>
-</p>
-
-<p align="center">
-  <a href="#install"><strong>Install</strong></a> ·
-  <a href="#how-it-works"><strong>How it works</strong></a> ·
-  <a href="#features"><strong>Features</strong></a> ·
-  <a href="#supported-agents"><strong>Agents</strong></a> ·
-  <a href="#documentation"><strong>Docs</strong></a> ·
-  <a href="#build-from-source"><strong>Build from source</strong></a> ·
-  <a href="#faq"><strong>FAQ</strong></a> ·
-  <a href="#contributing"><strong>Contribute</strong></a>
 </p>
 
 ---
@@ -90,11 +101,28 @@ If an agent is installed and signed in, Gespan can run it. One is enough to get
 started. Gespan checks for each CLI at startup and points you to the install
 steps for any that are missing.
 
-| | | | |
-| :-- | :-- | :-- | :-- |
-| **[Claude Code](https://claude.com/product/claude-code)** | **[Codex](https://developers.openai.com/codex/cli)** | **[Cursor CLI](https://cursor.com/cli)** | **[Grok Build](https://docs.x.ai/build/overview)** |
-| **[OpenCode](https://opencode.ai)** | **[Antigravity](https://antigravity.google/docs/cli-install)** | **[Pi](https://pi.dev/)** | **[omp](https://omp.sh)** |
-| **[fx](https://fx.sh)** | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **[Kiro CLI](https://kiro.dev/docs/cli/)** | **[Devin CLI](https://docs.devin.ai/cli)** |
+<div align="center">
+
+<table>
+<tr>
+<td align="center" width="16.6%"><a href="https://claude.com/product/claude-code"><img src="docs/assets/agents/claude.svg" width="48" height="48" alt="" /><br/><sub><b>Claude Code</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://developers.openai.com/codex/cli"><img src="docs/assets/agents/codex.svg" width="48" height="48" alt="" /><br/><sub><b>Codex</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://cursor.com/cli"><img src="docs/assets/agents/cursor.svg" width="48" height="48" alt="" /><br/><sub><b>Cursor CLI</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://docs.x.ai/build/overview"><img src="docs/assets/agents/grok.svg" width="48" height="48" alt="" /><br/><sub><b>Grok Build</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://opencode.ai"><img src="docs/assets/agents/opencode.svg" width="48" height="48" alt="" /><br/><sub><b>OpenCode</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://antigravity.google/docs/cli-install"><img src="docs/assets/agents/antigravity.svg" width="48" height="48" alt="" /><br/><sub><b>Antigravity</b></sub></a></td>
+</tr>
+<tr>
+<td align="center" width="16.6%"><a href="https://pi.dev/"><img src="docs/assets/agents/pi.svg" width="48" height="48" alt="" /><br/><sub><b>Pi</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://omp.sh"><img src="docs/assets/agents/omp.svg" width="48" height="48" alt="" /><br/><sub><b>omp</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://fx.sh"><img src="docs/assets/agents/fx.svg" width="48" height="48" alt="" /><br/><sub><b>fx</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://github.com/NousResearch/hermes-agent"><img src="docs/assets/agents/hermes.svg" width="48" height="48" alt="" /><br/><sub><b>Hermes Agent</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://kiro.dev/docs/cli/"><img src="docs/assets/agents/kiro.svg" width="48" height="48" alt="" /><br/><sub><b>Kiro CLI</b></sub></a></td>
+<td align="center" width="16.6%"><a href="https://docs.devin.ai/cli"><img src="docs/assets/agents/devin.svg" width="48" height="48" alt="" /><br/><sub><b>Devin CLI</b></sub></a></td>
+</tr>
+</table>
+
+</div>
 
 Install and login commands for each agent are in [provider setup](docs/providers.md).
 
@@ -374,6 +402,10 @@ Gespan is released under the [MIT License](LICENSE).
 
 Provider names and logos are trademarks of their respective owners. See [NOTICE](NOTICE).
 
+---
+
 <p align="center">
-  <sub>If Gespan saves you a few terminal windows, consider giving it a ⭐</sub>
+  <img src="docs/assets/logo.svg" alt="" width="40" /><br/>
+  <sub>If Gespan saves you a few terminal windows, consider giving it a ⭐</sub><br/>
+  <sub><a href="#top">Back to top ↑</a></sub>
 </p>
