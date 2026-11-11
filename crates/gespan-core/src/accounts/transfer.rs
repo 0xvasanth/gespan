@@ -2,7 +2,7 @@
 use super::Profile;
 use crate::provider::Kind;
 use std::path::{Path, PathBuf};
-mod codex;
+pub(crate) mod codex;
 use codex::*;
 pub(super) fn transfer(from: &Profile, to: &Profile, kind: Kind, id: &str) -> Result<(), String> {
     validate_thread_id(id)?;

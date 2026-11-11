@@ -32,7 +32,7 @@ pub(super) fn bare_ids(rows: &[Row]) -> HashSet<String> {
 
 /// Claude names a transcript after its session id. Anything else could walk
 /// out of the projects folder.
-fn transcript(home: &Path, session: &str) -> Option<PathBuf> {
+pub(crate) fn transcript(home: &Path, session: &str) -> Option<PathBuf> {
     let valid = !session.is_empty()
         && session
             .bytes()

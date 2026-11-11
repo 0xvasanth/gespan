@@ -75,6 +75,12 @@ pub fn discard_worktree(path: &Path) {
     parked::discard_worktree(path);
     opencode::discard_worktree(path);
 }
+/// Whether an agent Gespan ran for this session may still be writing to
+/// the session's file: Hold parked it with background work, or Stop left it
+/// finishing its turn.
+pub fn agent_still_writing(kind: Kind, provider_id: &str, account_id: &str, cwd: &Path) -> bool {
+    parked::has_live(kind, provider_id, account_id, cwd)
+}
 pub fn forget_session(kind: Kind, provider_id: &str, account_id: &str, cwd: &Path) {
     parked::forget_session(kind, provider_id, account_id, cwd);
     if kind == Kind::OpenCode {
