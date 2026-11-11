@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
+### Added
+
+- **Continue in your terminal:** an arrow icon under every chat box opens the
+  agent's own resume command for that session, such as
+  `claude --resume <id>`, with Copy (which adds the `cd` into the session's
+  folder), Terminal dock and Terminal app buttons. Only plain session ids
+  and safe folder names go into a command; anything else is offered as an id
+  to copy.
+- **Terminal turns come back:** when you send in a session you continued in
+  Claude Code or Codex outside Gespan, the turns taken there show in the chat
+  under a "From terminal" divider first, and the reply has them as context.
+- **Cursor usage:** the chat footer chip shows how much of Cursor's included
+  usage this period is used and when it resets, with the plan, weekly meters
+  and on-demand spend in its popover. Settings › Providers › Accounts lists
+  Cursor and Kiro with their sign-in state, Kiro's monthly credits and
+  Cursor's plan.
+- **Linux version metadata:** the AppImage, .deb and .rpm carry the release
+  version, so software centres and AppImage managers show it.
+
+### Changed
+
+- **Settings, trimmed:** the classic layout is gone (a saved classic layout
+  opens in Focused with the boxy frame). Each sidebar entry has one switch in
+  Appearance › Sidebar, search always opens as the command panel, the Pilots
+  page is removed, editor rows moved to Chat › Editor, and Interface scale
+  is a slider.
+- **New installs:** the agent browser starts on, and the look defaults to
+  neutral black glass. Saved choices always win.
+- **Sidebar sessions:** one Sessions heading replaces the Today, Yesterday and
+  older date groups. A worktree is never a project of its own: its sessions
+  are listed under the main checkout, grouped by branch. Clicking the project
+  opens the project picker directly, and the last session in the list is no
+  longer hidden under the bottom fade.
+- **Pilots and SOPs:** every app action a Pilot can call has a schema, an
+  example and up-front checks, and the Pilot is told that SOPs are Flows. A
+  bad call says everything that is wrong at once, so SOP edits land on the
+  first try instead of after several retries.
+
+### Fixed
+
+- **Kiro:** long turns are only stopped after 30 minutes with no word from
+  the agent, never while an approval waits for you, and a dropped Kiro
+  connection is retried once ("Reconnecting to Kiro…") instead of ending the
+  turn.
+- **Windows Terminal app:** continuing a session in a new terminal window runs
+  the agent there, in the session's folder, instead of in a hidden launcher.
+
 ## [0.0.12] - 2026-11-09
 
 ### Added
@@ -2189,7 +2238,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.0.12...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/0xvasanth/gespan/compare/v0.0.12...v0.1.0
 [0.0.12]: https://github.com/0xvasanth/gespan/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.11
 [0.0.8]: https://github.com/0xvasanth/gespan/compare/v0.0.7...v0.0.8
