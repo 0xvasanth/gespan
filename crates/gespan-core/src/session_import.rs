@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::outside_turns::{OutsideTurn, TurnRole};
+use crate::outside_turns::{without_injected, OutsideTurn, TurnRole};
 use crate::provider::Kind;
 use crate::store::{Session, Store};
 use crate::transcript::{Interjection, Row, Transcript};
@@ -145,15 +145,15 @@ pub fn count_messages(candidate: &Candidate) -> Option<u32> {
     u32::try_from(turns.len()).ok()
 }
 
-/// A prompt's first line, trimmed. A leading `<gespan_context>` block, which
-/// Gespan puts before a Pilot's first prompt, is not part of it.
+/// A prompt's first line, trimmed. The hook and Gespan context blocks it
+/// may start with are not part of it; a prompt that is only those has no title.
 pub(crate) fn title_of(prompt: &str) -> String {
-    let prompt = prompt.trim_start();
-    let prompt = prompt
-        .strip_prefix("<gespan_context>")
-        .and_then(|rest| rest.split_once("</gespan_context>"))
-        .map_or(prompt, |(_, after)| after.trim_start());
-    prompt.lines().next().unwrap_or("").trim().to_string()
+    without_injected(prompt)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 /// `custom_type` of the divider that opens an imported history.

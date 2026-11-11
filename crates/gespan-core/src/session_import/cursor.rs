@@ -36,7 +36,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{title_of, Candidate, HEAD_LIMIT};
-use crate::outside_turns::{OutsideTurn, TurnRole};
+use crate::outside_turns::{without_injected, OutsideTurn, TurnRole};
 use crate::provider::cursor_store::{open_cursor_store, read_cursor_metadata};
 use crate::provider::Kind;
 
@@ -221,7 +221,10 @@ fn turn(message: &Value) -> Option<OutsideTurn> {
     let text = text_parts(message.get("content")?);
     let (role, text, sent_at) = match message.get("role")?.as_str()? {
         "user" => {
-            let queries: Vec<&str> = tagged(&text, "user_query").map(str::trim).collect();
+            let queries: Vec<&str> = tagged(&text, "user_query")
+                .map(without_injected)
+                .filter(|query| !query.is_empty())
+                .collect();
             let sent_at = tagged(&text, "timestamp").next().and_then(unix_ms);
             (TurnRole::User, queries.join("\n\n"), sent_at)
         }

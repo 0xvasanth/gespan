@@ -128,6 +128,100 @@ fn title_of_keeps_prompts_without_a_closed_gespan_context() {
 }
 
 #[test]
+fn title_of_skips_each_leading_wrapper_block() {
+    assert_eq!(
+        title_of("<system-reminder>\nhook context\n</system-reminder>\nFix the build\nmore"),
+        "Fix the build"
+    );
+    assert_eq!(
+        title_of("<gespan_browser>\nUse your tabs.\n</gespan_browser>\n\nOpen the docs"),
+        "Open the docs"
+    );
+    assert_eq!(
+        title_of("<gespan_context>\nYou are Ada.\n</gespan_context>\n\nPlan the week"),
+        "Plan the week"
+    );
+}
+
+#[test]
+fn title_of_skips_stacked_wrappers_in_any_order() {
+    assert_eq!(
+        title_of(
+            "  <gespan_context>a</gespan_context>\n\n<gespan_browser>b</gespan_browser>\n\n \
+             <system-reminder>c</system-reminder>\nShip it"
+        ),
+        "Ship it"
+    );
+    assert_eq!(
+        title_of("<system-reminder>c</system-reminder><gespan_browser>b</gespan_browser>Go"),
+        "Go"
+    );
+}
+
+#[test]
+fn title_of_a_wrapper_only_prompt_is_empty() {
+    assert_eq!(title_of("<system-reminder>\nonly\n</system-reminder>"), "");
+    assert_eq!(
+        title_of("<gespan_browser>x</gespan_browser>\n<gespan_context>y</gespan_context>\n"),
+        ""
+    );
+    assert_eq!(
+        title_of("<gespan_browser>\nnever closed\nOpen the docs"),
+        "<gespan_browser>",
+        "an unclosed block is left as written"
+    );
+}
+
+#[test]
+fn claude_title_skips_a_system_reminder_block_before_the_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    let first = serde_json::json!({
+        "type": "user", "uuid": "u1", "parentUuid": null, "cwd": "/tmp/p",
+        "message": {"role": "user", "content": [
+            {"type": "text", "text": "<system-reminder>\nSessionStart hook context\n</system-reminder>"},
+            {"type": "text", "text": "Fix the login redirect\nmore"},
+        ]},
+    })
+    .to_string();
+    write(
+        home.path(),
+        "projects/-tmp-p/abc.jsonl",
+        &[first, assistant("a1", "u1", "On it.")],
+    );
+    let found = list(Kind::Claude, home.path());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Fix the login redirect");
+    assert_eq!(
+        texts(&read_turns(&found[0]).unwrap()),
+        [
+            (TurnRole::User, "Fix the login redirect\nmore"),
+            (TurnRole::Assistant, "On it."),
+        ]
+    );
+}
+
+#[test]
+fn claude_title_moves_past_a_wrapper_only_first_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    write(
+        home.path(),
+        "projects/-tmp-p/abc.jsonl",
+        &[
+            user(
+                "u1",
+                None,
+                "<gespan_browser>\nUse your tabs.\n</gespan_browser>",
+            ),
+            assistant("a1", "u1", "Ready."),
+            user("u2", Some("a1"), "Second prompt"),
+        ],
+    );
+    let found = list(Kind::Claude, home.path());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Second prompt");
+}
+
+#[test]
 fn claude_skips_sidechain_folders_and_empty_files() {
     let home = tempfile::tempdir().unwrap();
     let good = [user("u1", None, "Hello"), assistant("a1", "u1", "Hi")];
@@ -635,6 +729,36 @@ fn kiro_reads_user_and_assistant_text_only() {
 }
 
 #[test]
+fn kiro_strips_gespan_wrappers_from_prompts() {
+    let home = tempfile::tempdir().unwrap();
+    kiro_session(
+        home.path(),
+        KIRO_ID,
+        &["/tmp/p"],
+        &[
+            kiro_user(
+                "2026-11-11T10:20:30.000Z",
+                "<gespan_browser>\nUse your tabs.\n</gespan_browser>\n\nOpen the pricing page\nand read it",
+            ),
+            kiro_assistant("2026-11-11T10:20:31.000Z", "Say", "Opened."),
+            kiro_user(
+                "2026-11-11T10:21:00.000Z",
+                "<gespan_browser>\nUse your tabs.\n</gespan_browser>",
+            ),
+        ],
+    );
+    let c = list(Kind::Kiro, home.path()).remove(0);
+    assert_eq!(c.title, "Open the pricing page");
+    assert_eq!(
+        texts(&read_turns(&c).unwrap()),
+        [
+            (TurnRole::User, "Open the pricing page\nand read it"),
+            (TurnRole::Assistant, "Opened."),
+        ]
+    );
+}
+
+#[test]
 fn kiro_skips_sessions_with_no_user_message() {
     let home = tempfile::tempdir().unwrap();
     let good = [kiro_user("2026-11-11T10:20:30.000Z", "Hello")];
@@ -904,6 +1028,35 @@ fn cursor_reads_user_and_assistant_text_only() {
         ]
     );
     assert_eq!(count_messages(&found[0]), Some(5));
+}
+
+#[test]
+fn cursor_strips_gespan_wrappers_from_prompts() {
+    let home = tempfile::tempdir().unwrap();
+    cursor_session(
+        home.path(),
+        "acp-sessions",
+        CURSOR_ID,
+        &[
+            cursor_system(),
+            cursor_context(),
+            cursor_user(
+                "Wednesday, Nov 11, 2026, 7:32 AM (UTC+5:30)",
+                "<gespan_browser>\nUse your tabs.\n</gespan_browser>\n\nOpen the docs",
+            ),
+            cursor_assistant(serde_json::json!([{"type": "text", "text": "Opened."}])),
+        ],
+        None,
+    );
+    let found = list(Kind::Cursor, home.path());
+    assert_eq!(found[0].title, "Open the docs");
+    assert_eq!(
+        texts(&read_turns(&found[0]).unwrap()),
+        vec![
+            (TurnRole::User, "Open the docs"),
+            (TurnRole::Assistant, "Opened."),
+        ]
+    );
 }
 
 #[test]

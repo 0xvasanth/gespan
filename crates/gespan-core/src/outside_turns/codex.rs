@@ -1,6 +1,6 @@
 //! Turns from a region of a Codex rollout file.
 use super::raw::CodexLine;
-use super::{complete_len, unix_ms, visible_text, OutsideTurn, Parsed, TurnRole};
+use super::{complete_len, unix_ms, visible_text, without_injected, OutsideTurn, Parsed, TurnRole};
 
 /// Reads turns from a region of a Codex rollout file. The `event_msg` entries
 /// are preferred; `response_item` messages are the fallback when the region
@@ -29,7 +29,11 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
                 } else {
                     TurnRole::Assistant
                 };
-                let text = payload.message.get().map(str::trim).unwrap_or_default();
+                let text = payload.message.get().unwrap_or_default();
+                let text = match role {
+                    TurnRole::User => without_injected(text),
+                    TurnRole::Assistant => text.trim(),
+                };
                 push(&mut events, role, text, at);
             }
             (Some("event_msg"), Some("thread_rolled_back")) => {
@@ -45,10 +49,13 @@ pub fn parse_codex(region: &[u8]) -> Parsed {
                 };
                 grew = true;
                 // Codex's message content is always a list of blocks.
-                let text = match &payload.content {
+                let mut text = match &payload.content {
                     super::raw::Content::Blocks(_) => visible_text(&payload.content, block),
                     _ => String::new(),
                 };
+                if role == TurnRole::User {
+                    text = without_injected(&text).to_string();
+                }
                 if role == TurnRole::User && is_injected(&text) {
                     continue;
                 }
@@ -157,6 +164,29 @@ mod tests {
         let parsed = parse_codex(&region);
         assert!(parsed.turns.is_empty());
         assert!(parsed.grew);
+    }
+
+    #[test]
+    fn gespan_wrappers_are_stripped_from_codex_prompts() {
+        let wrapped = "<gespan_browser>\nUse your tabs.\n</gespan_browser>\n\nfix it";
+        let events = jsonl(&[
+            event("user_message", wrapped),
+            event("agent_message", "Fixed."),
+            event(
+                "user_message",
+                "<gespan_browser>\nUse your tabs.\n</gespan_browser>",
+            ),
+        ]);
+        let items = jsonl(&[
+            item("user", "input_text", wrapped),
+            item("assistant", "output_text", "Fixed."),
+        ]);
+        for region in [events, items] {
+            assert_eq!(
+                texts(&parse_codex(&region)),
+                vec![(TurnRole::User, "fix it"), (TurnRole::Assistant, "Fixed.")]
+            );
+        }
     }
 
     #[test]

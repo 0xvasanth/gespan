@@ -10,7 +10,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::{title_of, Candidate, HEAD_LIMIT};
-use crate::outside_turns::{OutsideTurn, TurnRole};
+use crate::outside_turns::{without_injected, OutsideTurn, TurnRole};
 use crate::provider::Kind;
 
 const LOG: &str = "messages.jsonl";
@@ -127,9 +127,15 @@ fn parse(log: &[u8]) -> Vec<OutsideTurn> {
             ("assistant", Some("Say")) => TurnRole::Assistant,
             _ => continue,
         };
-        let Some(text) = line.payload.content.filter(|t| !t.trim().is_empty()) else {
+        let Some(mut text) = line.payload.content else {
             continue;
         };
+        if role == TurnRole::User {
+            text = without_injected(&text).to_string();
+        }
+        if text.trim().is_empty() {
+            continue;
+        }
         turns.push(OutsideTurn {
             role,
             text,
