@@ -82,21 +82,32 @@ fn resume_in_scope(
         _ => Ok(()),
     }
 }
-/// The `flow` a Pilot sent, owned by `owner` whatever it claimed. The store
-/// sets the timestamps, so the Pilot may leave them out.
-fn pilot_flow(v: &Value, owner: &str) -> Result<Flow, String> {
-    let mut flow = v.get("flow").cloned().ok_or("Provide flow")?;
-    let fields = flow.as_object_mut().ok_or("flow must be a Flow object")?;
-    fields.insert("owner".into(), json!(owner));
-    fields.entry("id").or_insert(json!(""));
-    for key in ["createdAt", "updatedAt"] {
-        fields.entry(key).or_insert(json!(0));
-    }
-    serde_json::from_value(flow).map_err(|e| format!("flow is not a valid Flow: {e}"))
+/// The `flow` a Pilot sent to `action`, owned by `owner` whatever it claimed,
+/// or every problem in it at once with how to get the Flow's schema.
+fn pilot_flow(action: &str, v: &Value, owner: &str) -> Result<Flow, String> {
+    let flow = v.get("flow").ok_or("Provide flow")?;
+    gespan_core::flow::pilot_schema::pilot_flow(flow, owner).map_err(|problems| {
+        let listed: Vec<String> = problems
+            .iter()
+            .enumerate()
+            .map(|(index, problem)| format!("{}. {problem}", index + 1))
+            .collect();
+        format!(
+            "flow is not a valid Flow ({} {}): {}. {}",
+            problems.len(),
+            if problems.len() == 1 {
+                "problem"
+            } else {
+                "problems"
+            },
+            listed.join("; "),
+            pilot::actions::hint(action)
+        )
+    })
 }
 /// A Flow `flows.save` may store: in one of the Pilot's projects, with an id.
 fn saved_flow(v: &Value, pilot: &pilot::Pilot) -> Result<Flow, String> {
-    let mut flow = pilot_flow(v, &pilot.id)?;
+    let mut flow = pilot_flow("flows.save", v, &pilot.id)?;
     if !pilot.works_on(&flow.cwd) {
         return Err(FLOW_OUTSIDE_PROJECTS.into());
     }
@@ -911,7 +922,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 self.flows_call(call, &pilot, cx);
                 return;
             }
-            _ => Err("Unknown action. Run app help to see supported actions".into()),
+            _ => Err("Unknown action. Call the app_help tool to see supported actions".into()),
         };
         self.finish_call(call, result, cx);
     }
@@ -975,7 +986,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 }
                 changed
             }
-            _ => Err("Unknown action. Run app help to see supported actions".into()),
+            _ => Err("Unknown action. Call the app_help tool to see supported actions".into()),
         };
         self.finish_call(call, result, cx);
     }
@@ -1034,7 +1045,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             }
             "flows.editRun" => {
                 let run_id = text(input, "runId", 256)?;
-                let flow = pilot_flow(input, owner)?;
+                let flow = pilot_flow("flows.editRun", input, owner)?;
                 let note = text(input, "note", 4000)?;
                 let result = self.owner.update(cx, |shell, cx| {
                     shell

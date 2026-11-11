@@ -10,28 +10,36 @@ use std::{
     time::Duration,
 };
 
-pub const HELP: &str = r#"Gespan app access
-Usage: gespan-gpui app ACTION --json '{...}' [--request-id ID]
-Pass --input FILE or --input - to read a JSON object instead.
-Actions:
-models.list {}
-sessions.list {project?}
-sessions.read {sessionId,project?,before?,limit?,maxChars?}
-sessions.start {prompt,project?,harness?,model?,modelSettings?,effort?,runtimeMode?,title?,draft?,reveal?,workspaceMode?,worktreeBase?,worktreeCwd?,placement?,besideSessionId?,notifyOnComplete?}
-sessions.send {sessionId,prompt,project?,notifyOnComplete?}
-sessions.draft {sessionId,prompt,project?}
-sessions.stop / sessions.archive / sessions.delete {sessionId,project?}
-worktrees.list {project?}
-worktrees.create {branch,base?,existing?,project?}
-folders.list {project?}
-folders.move {sessionId,folderId?,newFolderName?,project?}
-notes.list {limit?,offset?}; notes.read {id}; notes.write {id?,title?,body?,tags?}
-artifacts.list {kind?,limit?,offset?}; artifacts.read {id}; artifacts.write {id?,kind,title,body,summary?}
-soul.read {}; soul.update {text,expectedHash}
-memory.read {topic?}; memory.search {query,since?}; memory.add {fact,topic?,until?}; memory.replace {find,fact,topic?,until?}; memory.remove {find,topic?}
-habits.list {}; habits.add {name,instructions,schedule:{kind,time?,minute?,dayOfWeek?}}; habits.update {id,name?,instructions?,schedule?,enabled?}; habits.run {id}; habits.remove {id}
-flows.list {}; flows.read {flowId}; flows.save {flow}; flows.delete {flowId}; flows.start {flowId,goal,task,inputs?}; flows.runs {goal?}; flows.run {runId}; flows.editRun {runId,flow,note}; flows.cancel {runId}; flows.resume {runId,stateId}
-chat.card {type:"pr",repo?,number,note?} / {type:"session",sessionId,note?} / {type:"choices",options:[text]} / {type:"habit",name,instructions,schedule}
+/// The `app` surface's help: usage, every action's fields from
+/// `actions`, and the rules that span actions.
+pub fn help() -> &'static str {
+    static HELP: OnceLock<String> = OnceLock::new();
+    HELP.get_or_init(|| {
+        let mut lines = vec![
+            "Gespan app access".to_owned(),
+            "Usage: gespan-gpui app ACTION --json '{...}' [--request-id ID]".into(),
+            "Pass --input FILE or --input - to read a JSON object instead.".into(),
+            "Run gespan-gpui app help ACTION for one action's input schema and an example that works. Fields marked ? are optional.".into(),
+            "Actions:".into(),
+        ];
+        let mut namespaces: Vec<(&str, Vec<String>)> = Vec::new();
+        for action in super::actions::all() {
+            let namespace = action.name.split('.').next().unwrap_or_default();
+            if matches!(namespace, "ticket" | "card" | "chat") {
+                continue;
+            }
+            match namespaces.iter_mut().find(|(n, _)| *n == namespace) {
+                Some((_, entries)) => entries.push(action.signature()),
+                None => namespaces.push((namespace, vec![action.signature()])),
+            }
+        }
+        lines.extend(namespaces.into_iter().map(|(_, entries)| entries.join("; ")));
+        lines.push(HELP_RULES.into());
+        lines.join("\n")
+    })
+}
+const HELP_RULES: &str = r#"chat.card {type:"pr",repo?,number,note?} / {type:"session",sessionId,note?} / {type:"choices",options:[text]} / {type:"habit",name,instructions,schedule}
+A Pilot's SOPs, on its SOP Roadmap tab, are Flows. flows.save creates one; to change one, flows.read it and save the whole Flow with its id.
 Ordinary Operator sessions are visible in project history. Pilot launches follow its Show started sessions preference. reveal defaults to false and controls navigation, not history visibility. placement right/down explicitly opens a split beside besideSessionId (or the caller).
 sessions.read returns up to three prose exchanges and nextBefore for older turns; pass that turn ID as before.
 notes.write requires body for a new note; existing notes accept title, body or tags independently.
@@ -40,8 +48,7 @@ card.subtasks {}; card.subtask_done {subtaskId,done}
 ticket.* and card.* act on this session's own linked ticket and cards, in any agent turn, without Operator. Orchestration leads and workers have neither. Read-only turns may read and list only.
 Artifacts, memory, soul, habits, cards and notifyOnComplete:true require a Pilot.
 The CLI returns {ok,result,requestId}. Retry uncertain mutations with the same request ID and identical input.
-Assigned projects alone may be addressed.
-"#;
+Assigned projects alone may be addressed."#;
 pub struct Call {
     pub session: i64,
     pub request_id: String,
@@ -118,7 +125,7 @@ impl Surface {
     }
     fn help(self) -> &'static str {
         match self {
-            Self::App => HELP,
+            Self::App => help(),
             Self::Control => crate::orchestration::CONTROL_HELP,
         }
     }
@@ -127,9 +134,26 @@ impl Surface {
     fn tool_help(self) -> String {
         let tool = self.tool();
         format!(
-            "Through the {tool} tool, ACTION below is its `action` field, the JSON object is `input` and a request ID is `requestId`. The command line usage and its flags don't apply. A reply is an object with `ok`, `result` and `requestId`, and a failure is a tool error whose text ends with the request ID.\n\n{}",
+            "Through the {tool} tool, ACTION below is its `action` field, the JSON object is `input` and a request ID is `requestId`. The command line usage and its flags don't apply. A reply is an object with `ok`, `result` and `requestId`, and a failure is a tool error whose text ends with the request ID.{}\n\n{}",
+            if self == Self::App {
+                " Call app_help with {\"action\": ACTION} for one action's input schema and an example that works."
+            } else {
+                ""
+            },
             self.help()
         )
+    }
+    /// What the help tool returns: one action's schema, or every action.
+    fn help_for(self, action: Option<&Value>) -> Result<Value, String> {
+        match (self, action) {
+            (_, None | Some(Value::Null)) | (Self::Control, _) => {
+                Ok(json!({"help":self.tool_help()}))
+            }
+            (Self::App, Some(Value::String(name))) => super::actions::find(name)
+                .map(super::actions::Action::describe)
+                .ok_or_else(|| super::api::unknown_action(name)),
+            (Self::App, Some(_)) => Err("action must be an action name".into()),
+        }
     }
     fn unavailable(self) -> &'static str {
         match self {
@@ -161,28 +185,34 @@ impl mcp_hub::Toolkit for Toolkit {
         }
     }
     fn tools(&self, _: &mcp_hub::Grant) -> Vec<Value> {
-        let (help, call) = match self.0 {
-            Surface::App => (
-                "List every Gespan app action and the JSON each takes.",
-                "Act on Gespan itself: sessions, worktrees, folders, notes and more. Read app_help first for the actions.",
-            ),
-            Surface::Control => (
-                "List every orchestration action and the JSON each takes, with the retry rule.",
-                "Supervise this orchestration run. Read control_help first for the actions.",
-            ),
-        };
-        vec![
-            json!({"name":self.0.help_tool(),"description":help,"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
-            json!({"name":self.0.tool(),"description":call,"inputSchema":{"type":"object","properties":{
-                "action":{"type":"string"},
-                "input":{"type":"object","description":"The action's JSON fields"},
-                "requestId":{"type":"string","maxLength":128,"description":"Reuse when retrying an uncertain mutation, with identical input"},
-            },"required":["action"],"additionalProperties":false},"annotations":{"openWorldHint":false}}),
-        ]
+        let request_id = json!({"type":"string","maxLength":128,"description":"Reuse when retrying an uncertain mutation, with identical input"});
+        match self.0 {
+            Surface::App => {
+                let names: Vec<&str> = super::actions::all().iter().map(|a| a.name).collect();
+                vec![
+                    json!({"name":"app_help","description":"With action, return that app action's input JSON Schema, which fields are required, and an app_call that works. Without it, list every action. SOPs are Flows: see flows.save.","inputSchema":{"type":"object","properties":{
+                        "action":{"enum":names,"description":"The action to describe"},
+                    },"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
+                    json!({"name":"app_call","description":"Act on Gespan itself: sessions, worktrees, folders, notes, memory, soul, habits, and your SOPs (Flows). Each action takes its own input object; before an action's first call, or after an error, call app_help with {\"action\": ACTION} for its schema.","inputSchema":{"type":"object","properties":{
+                        "action":{"enum":names},
+                        "input":{"type":"object","description":"The action's own fields, as app_help describes them. Not the action name."},
+                        "requestId":request_id,
+                    },"required":["action"],"additionalProperties":false},"annotations":{"openWorldHint":false}}),
+                ]
+            }
+            Surface::Control => vec![
+                json!({"name":"control_help","description":"List every orchestration action and the JSON each takes, with the retry rule.","inputSchema":{"type":"object","properties":{},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
+                json!({"name":"control_call","description":"Supervise this orchestration run. Read control_help first for the actions.","inputSchema":{"type":"object","properties":{
+                    "action":{"type":"string"},
+                    "input":{"type":"object","description":"The action's JSON fields"},
+                    "requestId":request_id,
+                },"required":["action"],"additionalProperties":false},"annotations":{"openWorldHint":false}}),
+            ],
+        }
     }
     fn call(&self, grant: &mcp_hub::Grant, tool: &str, arguments: Value) -> Result<Value, String> {
         if tool == self.0.help_tool() {
-            return Ok(json!({"help":self.0.tool_help()}));
+            return self.0.help_for(arguments.get("action"));
         }
         let action = arguments["action"]
             .as_str()
@@ -192,6 +222,11 @@ impl mcp_hub::Toolkit for Toolkit {
             input if input.is_object() => input.clone(),
             _ => return Err("input must be a JSON object".into()),
         };
+        // `app_call {action:"app_help", input:{action}}` is a call meant for
+        // the help tool: answer it rather than fail.
+        if self.0 == Surface::App && matches!(action, "app_help" | "help") {
+            return self.0.help_for(input.get("action"));
+        }
         let request_id = match &arguments["requestId"] {
             Value::Null => super::new_id(),
             Value::String(id) if !id.is_empty() && id.len() <= 128 => id.clone(),
@@ -199,6 +234,9 @@ impl mcp_hub::Toolkit for Toolkit {
         };
         let result = if self.0 == Surface::App && crate::ticket_bridge::is_app_action(action) {
             crate::ticket_bridge::app_call(grant.session, action, &input, &request_id)
+        } else if self.0 == Surface::App {
+            precheck(action, &input)
+                .and_then(|()| dispatch(self.0, grant.session, &request_id, action, input))
         } else {
             dispatch(self.0, grant.session, &request_id, action, input)
         };
@@ -207,6 +245,15 @@ impl mcp_hub::Toolkit for Toolkit {
             Err(error) => Err(format!("{error} (requestId: {request_id})")),
         }
     }
+}
+
+/// The app's own input check, run before the call reaches the app so a
+/// malformed input fails at once and says how to call the action.
+fn precheck(action: &str, input: &Value) -> Result<(), String> {
+    super::api::validate(action, input).map_err(|error| match super::actions::find(action) {
+        Some(_) => format!("{error}. {}", super::actions::hint(action)),
+        None => error,
+    })
 }
 
 fn dispatch(
@@ -250,7 +297,12 @@ fn client_for(surface: Surface, args: &[String]) -> Result<Value, String> {
         .first()
         .is_none_or(|s| matches!(s.as_str(), "help" | "--help" | "-h"))
     {
-        return Ok(json!({"help":surface.help()}));
+        return match args.get(1) {
+            Some(action) if surface == Surface::App => Ok(surface
+                .help_for(Some(&json!(action)))
+                .unwrap_or_else(|error| json!({"ok":false,"error":error}))),
+            _ => Ok(json!({"help":surface.help()})),
+        };
     }
     let action = args[0].clone();
     let mut input = json!({});
@@ -416,6 +468,136 @@ mod capability_tests {
     }
 
     #[test]
+    fn app_help_describes_one_action_with_a_call_that_works() {
+        let described = Toolkit::APP
+            .call(&grant(80), "app_help", json!({"action":"memory.add"}))
+            .unwrap();
+        assert_eq!(described["input"]["required"], json!(["fact"]));
+        assert_eq!(
+            described["example"],
+            json!({"action":"memory.add","input":{"fact":"The user ships releases on Fridays.","topic":"decisions"}})
+        );
+        let flow = Toolkit::APP
+            .call(&grant(80), "app_help", json!({"action":"flows.save"}))
+            .unwrap();
+        assert_eq!(
+            flow["input"]["properties"]["flow"]["properties"]["states"]["items"]["required"],
+            json!(["id", "title", "harness", "model", "brief", "transitions"])
+        );
+        let unknown = Toolkit::APP
+            .call(&grant(80), "app_help", json!({"action":"flow.save"}))
+            .unwrap_err();
+        assert_eq!(
+            unknown,
+            "Unknown app action flow.save. Did you mean flows.save?"
+        );
+    }
+
+    /// A model seen calling `app_call {action:"app_help", input:{action}}`
+    /// gets the help it meant instead of an unknown-action error.
+    #[test]
+    fn help_asked_through_app_call_is_answered() {
+        let described = Toolkit::APP
+            .call(
+                &grant(81),
+                "app_call",
+                json!({"action":"app_help","input":{"action":"memory.add"}}),
+            )
+            .unwrap();
+        assert_eq!(described["action"], "memory.add");
+        let all = Toolkit::APP
+            .call(&grant(81), "app_call", json!({"action":"app_help"}))
+            .unwrap();
+        assert!(all["help"]
+            .as_str()
+            .unwrap()
+            .contains("memory.add {fact,topic?,until?}"));
+    }
+
+    /// The guesses from a real Pilot transcript, which each cost a round trip
+    /// to the app: now refused before dispatch, naming what to call.
+    #[test]
+    fn a_malformed_input_fails_before_the_app_and_says_how_to_call_it() {
+        let (server, rx) = Server::start().unwrap();
+        let _ = server.environment(82);
+        for (input, error) in [
+            (
+                json!({"text":"Ships on Fridays"}),
+                "memory.add does not take text",
+            ),
+            (
+                json!({"content":"Ships on Fridays"}),
+                "memory.add does not take content",
+            ),
+            (json!({"topic":"decisions"}), "memory.add needs fact"),
+        ] {
+            let refused = Toolkit::APP
+                .call(
+                    &grant(82),
+                    "app_call",
+                    json!({"action":"memory.add","input":input,"requestId":"r"}),
+                )
+                .unwrap_err();
+            assert_eq!(
+                refused,
+                format!("{error}. Call the app_help tool with {{\"action\":\"memory.add\"}} for its input schema and an example that works. (requestId: r)")
+            );
+        }
+        let unknown = Toolkit::APP
+            .call(
+                &grant(82),
+                "app_call",
+                json!({"action":"flows.create","requestId":"r"}),
+            )
+            .unwrap_err();
+        assert!(
+            unknown.starts_with("Unknown app action flows.create. flows actions are flows.list, flows.read, flows.save,"),
+            "{unknown}"
+        );
+        assert!(rx.try_recv().is_err(), "nothing reached the app");
+    }
+
+    #[test]
+    fn the_app_tools_list_every_action_by_name() {
+        let tools = Toolkit::APP.tools(&grant(83));
+        let names = |tool: &Value, path: &str| -> Vec<String> {
+            serde_json::from_value(tool["inputSchema"]["properties"][path]["enum"].clone()).unwrap()
+        };
+        let all: Vec<String> = super::super::actions::all()
+            .iter()
+            .map(|a| a.name.to_owned())
+            .collect();
+        assert_eq!(tools[0]["name"], "app_help");
+        assert_eq!(names(&tools[0], "action"), all);
+        assert_eq!(tools[1]["name"], "app_call");
+        assert_eq!(names(&tools[1], "action"), all);
+        for action in ["flows.save", "memory.add", "ticket.comment"] {
+            assert!(all.iter().any(|a| a == action), "{action}");
+        }
+        let help = help();
+        for action in super::super::actions::all() {
+            assert!(help.contains(action.name), "{}", action.name);
+        }
+    }
+
+    #[test]
+    fn the_cli_describes_one_action() {
+        let value = client(&["help".to_owned(), "flows.start".to_owned()]).unwrap();
+        assert_eq!(
+            value["input"]["required"],
+            json!(["flowId", "goal", "task"])
+        );
+        let value = client(&["help".to_owned(), "flow.start".to_owned()]).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(
+            value["error"],
+            "Unknown app action flow.start. Did you mean flows.start?"
+        );
+        let value = client(&["help".to_owned()]).unwrap();
+        assert!(value["help"].as_str().unwrap().contains("app help ACTION"));
+    }
+
+    #[test]
     fn a_lead_with_no_route_is_told_to_confirm_the_proposal() {
         let refused = dispatch(Surface::Control, 76, "r", "list", json!({})).unwrap_err();
         assert!(
@@ -508,7 +690,7 @@ mod capability_tests {
             Toolkit::APP.call(
                 &grant(72),
                 "app_call",
-                json!({"action":"sessions.send","requestId":"r-2"}),
+                json!({"action":"sessions.send","input":{"sessionId":"5","prompt":"Go on"},"requestId":"r-2"}),
             )
         });
         let call = rx.recv_blocking().unwrap();

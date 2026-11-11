@@ -205,6 +205,36 @@ fn context_explains_roadmap_requests() {
     assert!(prompt[flows..at].ends_with("every blueprint change with its reason, in memory.\n\n"));
 }
 
+/// A Pilot asked to "update the SOP" must know that means a Flow, and where
+/// its nested shape is described, in both the tool and the CLI form.
+#[test]
+fn context_maps_sops_to_flows_and_points_at_each_actions_schema() {
+    let pilot = Pilot {
+        projects: vec!["/one/app".into()],
+        ..Pilot::default()
+    };
+    let files = files::AgentFiles {
+        id: pilot.id.clone(),
+        dir: "/agents/pilot".into(),
+        soul: None,
+        soul_hash: String::new(),
+        memory: String::new(),
+        memory_hash: String::new(),
+        memory_path: "/agents/pilot/MEMORY.md".into(),
+        topics: Vec::new(),
+    };
+    let sop = "Your SOPs, shown on your SOP Roadmap tab, are Flows: when the user asks to create or update an SOP, use flows.save, and to change an existing one, flows.read it and save the whole Flow with its id.";
+    let tools = context(&pilot, &files, &AppAccess::Tools);
+    assert_eq!(tools.matches(sop).count(), 1);
+    assert!(tools.contains("call app_help with {\"action\": ACTION} for its schema"));
+    let cli = context(&pilot, &files, &AppAccess::Cli("/usr/bin/gespan".into()));
+    assert_eq!(cli.matches(sop).count(), 1);
+    assert!(
+        cli.contains("run `/usr/bin/gespan app help ACTION` for its schema"),
+        "{cli}"
+    );
+}
+
 #[test]
 fn context_explains_pilot_flows_supervision_and_memory() {
     let pilot = Pilot {

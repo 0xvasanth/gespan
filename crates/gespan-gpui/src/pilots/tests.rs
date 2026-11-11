@@ -2895,7 +2895,10 @@ fn flows_save_rejects_approval_states_and_forces_the_owner(cx: &mut TestAppConte
             "transitions":[{"to":"build"}],"maxVisits":3}),
     );
     let error = flows_err(&s, "gated", "flows.save", json!({"flow":gated}), cx);
-    assert!(error.starts_with("Flow is invalid: "), "{error}");
+    assert!(
+        error.starts_with("flow is not a valid Flow (1 problem): 1. State \"review\""),
+        "{error}"
+    );
     assert!(
         error.contains("State \"review\": approval states are not allowed in a Pilot Flow"),
         "{error}"
@@ -2930,8 +2933,19 @@ fn flows_save_rejects_approval_states_and_forces_the_owner(cx: &mut TestAppConte
         cx,
     );
     assert_eq!(error, "Flow project is outside the assigned projects");
-    let error = flows_err(&s, "shape", "flows.save", json!({"flow":{"name":"x"}}), cx);
-    assert!(error.starts_with("flow is not a valid Flow:"), "{error}");
+    // A guessed shape gets every problem in one reply, and how to get the
+    // schema, instead of one missing field per retry.
+    let error = flows_err(
+        &s,
+        "shape",
+        "flows.save",
+        json!({"flow":{"name":"x","steps":["Build"]}}),
+        cx,
+    );
+    assert_eq!(
+        error,
+        "flow is not a valid Flow (4 problems): 1. the Flow is missing \"cwd\"; 2. the Flow is missing \"initial\"; 3. the Flow is missing \"states\"; 4. Unknown field \"steps\" in the Flow. Call the app_help tool with {\"action\":\"flows.save\"} for its input schema and an example that works."
+    );
 }
 #[gpui::test]
 fn flows_start_requires_goal_and_task(cx: &mut TestAppContext) {
@@ -2951,12 +2965,12 @@ fn flows_start_requires_goal_and_task(cx: &mut TestAppContext) {
         (
             "no-goal",
             json!({"flowId":flow_id,"task":"t","inputs":inputs}),
-            "Provide goal (up to 300 characters)",
+            "flows.start needs goal",
         ),
         (
             "no-task",
             json!({"flowId":flow_id,"goal":"g","inputs":inputs}),
-            "Provide task (up to 300 characters)",
+            "flows.start needs task",
         ),
         (
             "blank-goal",

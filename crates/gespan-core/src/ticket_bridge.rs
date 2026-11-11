@@ -1644,7 +1644,7 @@ mod tests {
     fn the_app_help_covers_every_ticket_and_card_action() {
         for (action, _) in APP_ACTIONS {
             assert!(is_app_action(action));
-            assert!(crate::pilot::bridge::HELP.contains(action), "{action}");
+            assert!(crate::pilot::bridge::help().contains(action), "{action}");
         }
         assert!(!is_app_action("sessions.list"));
     }
