@@ -1,10 +1,10 @@
 //! Where an on-disk session belongs in Gespan: a project, one of its linked
 //! worktrees, or nowhere. Also whether Gespan already holds it.
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::files::path_key;
 use crate::provider::Kind;
-use crate::store::Session;
 
 /// Where an imported session goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,10 +65,9 @@ pub fn place(cwd: &str, projects: &[String], root: impl Fn(&str) -> Option<Strin
     }
 }
 
-/// Whether Gespan holds a live or archived session of `kind` with this
-/// provider id.
-pub fn already_imported(sessions: &[Session], kind: Kind, provider_id: &str) -> bool {
-    sessions
-        .iter()
-        .any(|s| s.provider == kind.id() && s.provider_id.as_deref() == Some(provider_id))
+/// Whether Gespan holds a session of `kind` with this provider id. `held`
+/// is [`crate::store::Store::provider_session_ids`]: live, archived and
+/// hidden sessions alike.
+pub fn already_imported(held: &HashSet<(String, String)>, kind: Kind, provider_id: &str) -> bool {
+    held.contains(&(kind.id().to_owned(), provider_id.to_owned()))
 }

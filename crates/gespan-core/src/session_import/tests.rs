@@ -88,6 +88,46 @@ fn claude_title_skips_slash_command_prompts() {
 }
 
 #[test]
+fn claude_title_drops_a_leading_gespan_context_block() {
+    let home = tempfile::tempdir().unwrap();
+    write(
+        home.path(),
+        "projects/-tmp-p/abc.jsonl",
+        &[
+            user(
+                "u1",
+                None,
+                "<gespan_context>\nGespan adds this context.\n\n<soul>\nbe kind\n</soul>\n</gespan_context>\n\nShip the release notes\nand more",
+            ),
+            assistant("a1", "u1", "Done."),
+        ],
+    );
+    let found = list(Kind::Claude, home.path());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Ship the release notes");
+}
+
+#[test]
+fn title_of_keeps_prompts_without_a_closed_gespan_context() {
+    assert_eq!(title_of("  Plain prompt\nmore"), "Plain prompt");
+    assert_eq!(
+        title_of("<gespan_context>ctx</gespan_context>Same line"),
+        "Same line"
+    );
+    assert_eq!(
+        title_of("Quote <gespan_context>x</gespan_context> later"),
+        "Quote <gespan_context>x</gespan_context> later",
+        "only a leading block is Gespan's"
+    );
+    assert_eq!(
+        title_of("<gespan_context>\nnever closed"),
+        "<gespan_context>",
+        "an unclosed block is left as written"
+    );
+    assert_eq!(title_of("<gespan_context>ctx</gespan_context>\n\n"), "");
+}
+
+#[test]
 fn claude_skips_sidechain_folders_and_empty_files() {
     let home = tempfile::tempdir().unwrap();
     let good = [user("u1", None, "Hello"), assistant("a1", "u1", "Hi")];
@@ -960,7 +1000,6 @@ fn cursor_corrupt_store_is_skipped_not_fatal() {
 
 mod placement {
     use super::*;
-    use crate::store::Session;
 
     fn real_root(p: &str) -> Option<String> {
         crate::git::linked_worktree_root(Path::new(p)).map(|r| r.to_string_lossy().into_owned())
@@ -972,22 +1011,6 @@ mod placement {
 
     fn s(p: &Path) -> String {
         p.to_string_lossy().into_owned()
-    }
-
-    fn session(provider: &str, id: Option<&str>, archived: bool) -> Session {
-        Session {
-            id: 1,
-            title: String::new(),
-            provider: provider.into(),
-            cwd: String::new(),
-            provider_id: id.map(str::to_owned),
-            has_messages: true,
-            updated_at: 0,
-            created_at: 0,
-            archived,
-            pinned: false,
-            work_item: None,
-        }
     }
 
     #[test]
@@ -1115,13 +1138,12 @@ mod placement {
     }
 
     #[test]
-    fn already_imported_sees_live_and_archived_sessions() {
-        let sessions = vec![
-            session("claude", Some("live"), false),
-            session("claude", Some("old"), true),
-            session("codex", Some("shared"), false),
-            session("claude", None, false),
-        ];
+    fn already_imported_matches_provider_and_id() {
+        let sessions: std::collections::HashSet<(String, String)> =
+            [("claude", "live"), ("claude", "old"), ("codex", "shared")]
+                .into_iter()
+                .map(|(provider, id)| (provider.to_owned(), id.to_owned()))
+                .collect();
         assert!(already_imported(&sessions, Kind::Claude, "live"));
         assert!(already_imported(&sessions, Kind::Claude, "old"));
         assert!(!already_imported(&sessions, Kind::Claude, "new"));
@@ -1129,7 +1151,7 @@ mod placement {
         assert!(!already_imported(&sessions, Kind::Claude, "shared"));
         assert!(already_imported(&sessions, Kind::Codex, "shared"));
         assert!(!already_imported(&sessions, Kind::Codex, "live"));
-        assert!(!already_imported(&[], Kind::Claude, "live"));
+        assert!(!already_imported(&Default::default(), Kind::Claude, "live"));
     }
 }
 
@@ -1450,6 +1472,93 @@ mod importing {
                     (TurnRole::Assistant, "Done.")
                 ],
                 "{name}"
+            );
+        }
+    }
+
+    /// An Ask conversation holding `provider_id`, which no session list shows.
+    fn ask_session(store: &Store, provider_id: &str) {
+        let item = crate::inbox::Item {
+            provider: "github".into(),
+            kind: "pr".into(),
+            number: 3,
+            title: "Item 3".into(),
+            url: "https://github.com/acme/widgets/pull/3".into(),
+            repo: "acme/widgets".into(),
+            ..Default::default()
+        };
+        let context = crate::inbox::ask::Context::new(&item, None);
+        let (session, _) = store
+            .open_inbox_ask(
+                "claude",
+                "/project",
+                &context,
+                &crate::agent::Settings::default(),
+            )
+            .unwrap();
+        store.provider_id(session.id, provider_id).unwrap();
+    }
+
+    /// A session the sidebar hides: a hidden Pilot conversation on the
+    /// shared store, a hidden legacy remote session on the local one.
+    fn hidden_session(store: &Store, provider_id: &str) {
+        let session = store.create("claude", "/project").unwrap();
+        store.provider_id(session.id, provider_id).unwrap();
+        if store.uses_gespan_schema() {
+            let original = store.persisted_session_id(session.id).unwrap();
+            store
+                .conn()
+                .execute(
+                    "UPDATE sessions SET sidebar_hidden=1 WHERE id=?1",
+                    [&original],
+                )
+                .unwrap();
+        } else {
+            store
+                .save_setting(
+                    "remote-hidden-legacy.v1",
+                    &serde_json::to_string(&[session.id]).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn sessions_gespan_hides_count_as_imported_and_are_never_imported_again() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let asked = candidate_of(home.path(), "asked", &p);
+            let hidden = candidate_of(home.path(), "hidden", &p);
+            {
+                let guard = store.lock().unwrap();
+                ask_session(&guard, "asked");
+                hidden_session(&guard, "hidden");
+                assert!(guard.sessions().unwrap().is_empty(), "{name}: both hidden");
+                let held = guard.provider_session_ids().unwrap();
+                assert!(already_imported(&held, Kind::Claude, "asked"), "{name}");
+                assert!(already_imported(&held, Kind::Claude, "hidden"), "{name}");
+                assert!(!already_imported(&held, Kind::Codex, "asked"), "{name}");
+            }
+            let report = import(
+                &store,
+                &[asked, hidden],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert!(report.imported.is_empty(), "{name}: {:?}", report.imported);
+            let why: Vec<&Skip> = report.skipped.iter().map(|(_, why)| why).collect();
+            assert_eq!(
+                why,
+                [&Skip::AlreadyImported, &Skip::AlreadyImported],
+                "{name}"
+            );
+            assert_eq!(
+                store.lock().unwrap().provider_session_ids().unwrap().len(),
+                2,
+                "{name}: nothing new was created"
             );
         }
     }

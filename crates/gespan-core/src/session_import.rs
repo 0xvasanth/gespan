@@ -144,8 +144,14 @@ pub fn count_messages(candidate: &Candidate) -> Option<u32> {
     u32::try_from(turns.len()).ok()
 }
 
-/// A prompt's first line, trimmed.
+/// A prompt's first line, trimmed. A leading `<gespan_context>` block, which
+/// Gespan puts before a Pilot's first prompt, is not part of it.
 pub(crate) fn title_of(prompt: &str) -> String {
+    let prompt = prompt.trim_start();
+    let prompt = prompt
+        .strip_prefix("<gespan_context>")
+        .and_then(|rest| rest.split_once("</gespan_context>"))
+        .map_or(prompt, |(_, after)| after.trim_start());
     prompt.lines().next().unwrap_or("").trim().to_string()
 }
 
@@ -261,7 +267,7 @@ fn create(
     rows: &[Row],
 ) -> Result<Option<Session>, String> {
     let mut store = store.lock().unwrap_or_else(|e| e.into_inner());
-    if already_imported(&store.sessions()?, pick.kind, &pick.provider_id) {
+    if already_imported(&store.provider_session_ids()?, pick.kind, &pick.provider_id) {
         return Ok(None);
     }
     let mut session = store.create_from(pick.kind.id(), project, &pick.title, settings, rows)?;

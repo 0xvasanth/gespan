@@ -106,8 +106,8 @@ impl Shell {
         let store = self.store.clone();
         let find_sources = self.import_sessions.find_sources.clone();
         let found = cx.background_executor().spawn(async move {
-            let sessions = locked(&store)?.sessions()?;
-            Ok::<_, String>((sessions, find_sources()))
+            let held = locked(&store)?.provider_session_ids()?;
+            Ok::<_, String>((held, find_sources()))
         });
         cx.spawn_in(window, async move |this, cx| {
             let found = found.await;
@@ -116,9 +116,7 @@ impl Shell {
                     return;
                 }
                 match found {
-                    Ok((sessions, sources)) => {
-                        this.show_import_dialog(path, sessions, sources, window, cx)
-                    }
+                    Ok((held, sources)) => this.show_import_dialog(path, held, sources, window, cx),
                     Err(error) => {
                         this.error = Some(format!("Could not open Import sessions: {error}"));
                         cx.notify();
@@ -131,14 +129,14 @@ impl Shell {
     fn show_import_dialog(
         &mut self,
         path: String,
-        sessions: Vec<Session>,
+        held: import_dialog::Held,
         sources: Vec<Source>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let projects = self.workspace.projects.clone();
         let shown = sources.clone();
-        let view = cx.new(|cx| ImportDialog::new(path, projects, sessions, shown, window, cx));
+        let view = cx.new(|cx| ImportDialog::new(path, projects, held, shown, window, cx));
         let events = cx.subscribe_in(
             &view,
             window,
@@ -617,6 +615,41 @@ mod tests {
         f.window
             .update(visual, |shell, _, _| assert!(shell.error.is_none()))
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn sessions_gespan_hides_show_as_imported(cx: &mut TestAppContext) {
+        let f = fixture(cx);
+        claude_session(f.user.path(), "s-asked", &f.here, "Ask about the PR", 2_000);
+        claude_session(f.user.path(), "s-free", &f.here, "Fresh work", 1_000);
+        let here = f.here.clone();
+        f.window
+            .update(cx, |shell, _, _| {
+                let store = locked(&shell.store).unwrap();
+                let item = gespan_core::inbox::Item {
+                    provider: "github".into(),
+                    kind: "pr".into(),
+                    number: 9,
+                    title: "Item 9".into(),
+                    url: "https://github.com/acme/widgets/pull/9".into(),
+                    repo: "acme/widgets".into(),
+                    ..Default::default()
+                };
+                let context = gespan_core::inbox::ask::Context::new(&item, None);
+                let (ask, _) = store
+                    .open_inbox_ask("claude", &here, &context, &Default::default())
+                    .unwrap();
+                store.provider_id(ask.id, "s-asked").unwrap();
+                assert!(store.sessions().unwrap().iter().all(|s| s.id != ask.id));
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+        open_dialog(f.window, &f.here, visual);
+        assert!(
+            shown(visual, "import-row-s-asked-imported"),
+            "an Ask conversation's session is already in Gespan"
+        );
+        assert!(!shown(visual, "import-row-s-free-imported"));
     }
 
     #[gpui::test]

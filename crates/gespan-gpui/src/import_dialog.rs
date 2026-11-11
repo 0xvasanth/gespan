@@ -14,7 +14,6 @@ use gespan_core::{
     files::path_key,
     provider::Kind,
     session_import::{self, Candidate, Placement, Source},
-    store::Session,
 };
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
@@ -84,12 +83,16 @@ pub(crate) fn worktree_root(path: &str) -> Option<String> {
         .map(|root| root.to_string_lossy().into_owned())
 }
 
-fn rows(found: Vec<(Candidate, Placement)>, sessions: &[Session]) -> Vec<Row> {
+/// `(provider, provider id)` of every session Gespan holds, hidden ones
+/// included; see `Store::provider_session_ids`.
+pub(crate) type Held = HashSet<(String, String)>;
+
+fn rows(found: Vec<(Candidate, Placement)>, held: &Held) -> Vec<Row> {
     found
         .into_iter()
         .map(|(candidate, placement)| Row {
             imported: session_import::already_imported(
-                sessions,
+                held,
                 candidate.kind,
                 &candidate.provider_id,
             ),
@@ -162,7 +165,7 @@ impl ImportDialog {
     pub(crate) fn new(
         project: String,
         projects: Vec<String>,
-        sessions: Vec<Session>,
+        held: Held,
         sources: Vec<Source>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -177,9 +180,9 @@ impl ImportDialog {
             .collect();
         let mut this = Self::with_tabs(project, tabs, window, cx);
         let projects = Arc::new(projects);
-        let sessions = Arc::new(sessions);
+        let held = Arc::new(held);
         for (ix, source) in sources.into_iter().enumerate() {
-            this.load(ix, source, projects.clone(), sessions.clone(), cx);
+            this.load(ix, source, projects.clone(), held.clone(), cx);
         }
         this
     }
@@ -189,7 +192,7 @@ impl ImportDialog {
     fn from_rows(
         project: String,
         tabs: Vec<(Kind, Vec<(Candidate, Placement)>)>,
-        sessions: &[Session],
+        held: &Held,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -197,7 +200,7 @@ impl ImportDialog {
             .into_iter()
             .map(|(kind, found)| Tab {
                 kind,
-                rows: rows(found, sessions),
+                rows: rows(found, held),
                 loading: false,
             })
             .collect();
@@ -248,7 +251,7 @@ impl ImportDialog {
         ix: usize,
         source: Source,
         projects: Arc<Vec<String>>,
-        sessions: Arc<Vec<Session>>,
+        held: Arc<Held>,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -263,7 +266,7 @@ impl ImportDialog {
                             (candidate, placement)
                         })
                         .collect();
-                    rows(placed, &sessions)
+                    rows(placed, &held)
                 })
                 .await;
             let uncounted: Vec<Candidate> = found
@@ -841,21 +844,6 @@ mod tests {
     fn nowhere() -> Placement {
         Placement::Skip(Skip::NoProject)
     }
-    fn session(kind: Kind, id: &str, archived: bool) -> Session {
-        Session {
-            id: 1,
-            title: "Already here".into(),
-            provider: kind.id().into(),
-            cwd: PROJECT.into(),
-            provider_id: Some(id.into()),
-            has_messages: true,
-            updated_at: 0,
-            created_at: 0,
-            archived,
-            pinned: false,
-            work_item: None,
-        }
-    }
     /// Claude: two rows in this project (one in a linked worktree), one in
     /// another project, one with no project, one already imported. Codex:
     /// one here, one with no project.
@@ -952,10 +940,10 @@ mod tests {
             cx.set_reduce_motion(true);
             crate::input::bind(cx);
         });
-        let sessions = [session(Kind::Claude, "c-done", true)];
+        let held = Held::from([("claude".to_owned(), "c-done".to_owned())]);
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |window, cx| {
-                cx.new(|cx| ImportDialog::from_rows(PROJECT.into(), tabs(), &sessions, window, cx))
+                cx.new(|cx| ImportDialog::from_rows(PROJECT.into(), tabs(), &held, window, cx))
             })
             .unwrap()
         });
@@ -1183,7 +1171,7 @@ mod tests {
                     ImportDialog::new(
                         project.clone(),
                         vec![project.clone()],
-                        Vec::new(),
+                        Held::new(),
                         sources,
                         window,
                         cx,
