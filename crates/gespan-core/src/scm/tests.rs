@@ -1131,8 +1131,7 @@ fn a_silent_git_failure_names_only_the_subcommand() {
     std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::make_executable(&hook, 0o755);
     }
     let mut committed = Ok(());
     let logged = crate::diagnostics::test_capture(|| {

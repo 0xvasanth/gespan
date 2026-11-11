@@ -267,7 +267,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn running_process_waits_for_turn_readiness_and_streams_after_steering() {
-        use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
         let binary = temp.path().join("provider");
         std::fs::write(&binary, r##"#!/usr/bin/env python3
@@ -291,7 +290,7 @@ for line in sys.stdin:
         send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'after', 'delta': 'After'}})
         send({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}})
 "##).unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_exec::make_executable(&binary, 0o700);
         let (controls, receive) = mpsc::channel();
         let mut delivered = false;
         let mut output = String::new();

@@ -1453,12 +1453,11 @@ mod tests {
     mod counters {
         use super::*;
         use crate::diagnostics::metrics::{capture, ErrorKind};
-        use std::os::unix::fs::PermissionsExt;
 
         fn agent(dir: &Path, kind: Kind, script: &str) -> Request {
             let binary = dir.join("agent");
             std::fs::write(&binary, format!("#!/bin/sh\n{script}\n")).unwrap();
-            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_exec::make_executable(&binary, 0o755);
             Request {
                 kind,
                 binary,
@@ -2280,12 +2279,11 @@ cat >/dev/null"#,
 #[cfg(all(test, unix))]
 mod process_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     fn fixture(script: &str) -> (tempfile::TempDir, Request) {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("provider");
         std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_exec::make_executable(&path, 0o700);
         let request = Request {
             kind: Kind::Codex,
             binary: path,

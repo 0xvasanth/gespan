@@ -140,13 +140,12 @@ pub fn inspect(kind: Kind, path: Option<&str>) -> Result<Inspection, String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     #[test]
     fn validates_executable_and_provider_version_before_saving() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("CLI with spaces");
         std::fs::write(&path, "#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_exec::make_executable(&path, 0o700);
         assert_eq!(
             inspect(Kind::Codex, path.to_str()).unwrap().version,
             "codex-cli 1.2.3"

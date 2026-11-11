@@ -120,10 +120,7 @@ fn account_cli_login_models_usage_reset_and_text_jobs_share_the_same_private_hom
         provider::{self, Request},
         usage,
     };
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::{atomic::AtomicBool, Arc},
-    };
+    use std::sync::{atomic::AtomicBool, Arc};
     struct Binary(std::ffi::OsString, Option<std::ffi::OsString>);
     impl Drop for Binary {
         fn drop(&mut self) {
@@ -171,7 +168,7 @@ for line in sys.stdin:
         print(json.dumps({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':label}}), flush=True)
         print(json.dumps({'method':'turn/completed','params':{'turn':{'status':'completed'}}}), flush=True)
 "#).unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&binary, 0o700);
     let key = std::ffi::OsString::from("GESPAN_CODEX_BINARY");
     let _restore = Binary(key.clone(), std::env::var_os(&key));
     unsafe {
@@ -254,12 +251,9 @@ for line in sys.stdin:
 #[cfg(unix)]
 #[test]
 fn chat_sign_in_relays_the_prompt_and_trusts_only_the_cli_status() {
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            mpsc, Arc, Mutex,
-        },
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
     };
     struct Binary(std::ffi::OsString, Option<std::ffi::OsString>);
     impl Drop for Binary {
@@ -299,7 +293,7 @@ sys.exit(2)
 "#,
     )
     .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&binary, 0o700);
     let key = std::ffi::OsString::from("GESPAN_KIRO_BINARY");
     let _restore = Binary(key.clone(), std::env::var_os(&key));
     unsafe {
@@ -373,10 +367,7 @@ sys.exit(2)
 #[cfg(unix)]
 #[test]
 fn cursor_account_reports_missing_signed_out_and_signed_in() {
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::{atomic::AtomicBool, Arc},
-    };
+    use std::sync::{atomic::AtomicBool, Arc};
     struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -431,7 +422,7 @@ sys.exit(2)
 "#,
     )
     .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&binary, 0o700);
     unsafe {
         std::env::set_var("GESPAN_CURSOR_BINARY", &binary);
     }

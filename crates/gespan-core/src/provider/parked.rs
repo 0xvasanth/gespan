@@ -782,7 +782,6 @@ fn reap_in_background(parked: Vec<Parked>) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn start_request(kind: Kind, binary: &str) -> Request {
         Request {
@@ -929,7 +928,7 @@ for line in sys.stdin:
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_exec::make_executable(&binary, 0o700);
         configure(1);
         let mut request = Request {
             kind: Kind::Codex,
@@ -1024,7 +1023,7 @@ for line in sys.stdin:
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_exec::make_executable(&binary, 0o700);
         configure(1);
         let mut request = Request {
             kind: Kind::Kiro,

@@ -4,7 +4,6 @@
 //! until the snapshot is.
 use super::*;
 use crate::checkpoint::Baseline;
-use std::os::unix::fs::PermissionsExt;
 
 /// Appends its pid to `pids` in its folder, then logs every stdin line to
 /// `stdin.log`. The body answers each parsed frame `v`.
@@ -58,7 +57,7 @@ fn agent(kind: Kind, body: &str) -> (tempfile::TempDir, Request) {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("provider");
     std::fs::write(&path, format!("{PRELUDE}{body}")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&path, 0o700);
     let request = Request {
         kind,
         binary: path,
@@ -336,7 +335,7 @@ fn a_steer_sent_while_the_baseline_records_follows_the_prompt() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("provider");
     std::fs::write(&path, CLAUDE_STEERED).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&path, 0o700);
     let mut request = Request {
         kind: Kind::Claude,
         binary: path,

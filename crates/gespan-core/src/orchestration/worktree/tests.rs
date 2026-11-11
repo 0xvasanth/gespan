@@ -244,7 +244,7 @@ fn an_executable_stays_executable() {
     let workspace = prepare(&repo.root, "t1").unwrap().unwrap();
     let script = Path::new(&workspace.path).join("src/run.sh");
     std::fs::write(&script, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::make_executable(&script, 0o755);
     integrate(&repo.root, &workspace, "t1", &all()).unwrap();
     let mode = std::fs::metadata(repo.root.join("src/run.sh"))
         .unwrap()

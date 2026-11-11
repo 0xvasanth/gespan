@@ -129,14 +129,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn claude_transport_delivers_the_limit_before_returning_its_terminal_error() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("claude-fixture");
         std::fs::write(&binary, r#"#!/bin/sh
 read -r initialize
 printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1792600200}}' '{"type":"assistant","error":"rate_limit"}'
 "#).unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::make_executable(&binary, 0o755);
         let mut request = protocol().request;
         request.binary = binary;
         request.cwd = dir.path().into();
