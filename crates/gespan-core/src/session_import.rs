@@ -250,7 +250,7 @@ pub fn import(
                 report.imported.push(Imported { session, project });
             }
             Ok(None) => report.skipped.push((pick.clone(), Skip::AlreadyImported)),
-            Err(error) => report.skipped.push((pick.clone(), Skip::Unreadable(error))),
+            Err(error) => report.skipped.push((pick.clone(), Skip::Failed(error))),
         }
     }
     report
@@ -272,7 +272,13 @@ fn create(
     }
     let mut session = store.create_from(pick.kind.id(), project, &pick.title, settings, rows)?;
     if let Err(error) = store.provider_id(session.id, &pick.provider_id) {
-        let _ = store.delete(session.id);
+        if let Err(cleanup) = store.delete(session.id) {
+            tracing::warn!(
+                error = %cleanup,
+                session = session.id,
+                "could not remove an imported session left without its provider id"
+            );
+        }
         return Err(error);
     }
     session.provider_id = Some(pick.provider_id.clone());

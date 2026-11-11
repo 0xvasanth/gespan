@@ -49,6 +49,7 @@ fn skip_reason(skip: &Skip) -> (u8, &'static str) {
         Skip::FolderMissing => (1, "folder missing"),
         Skip::AlreadyImported => (2, "already imported"),
         Skip::Unreadable(_) => (3, "couldn't be read"),
+        Skip::Failed(_) => (4, "couldn't be saved"),
     }
 }
 
@@ -729,12 +730,14 @@ mod tests {
                 (pick("c"), Skip::FolderMissing),
                 (pick("d"), Skip::NoProject),
                 (pick("e"), Skip::AlreadyImported),
+                (pick("f"), Skip::Failed("disk full".into())),
             ],
         };
         assert_eq!(
             import_notice(&report, |p| p.to_owned()),
             "Imported 0 sessions · 1 skipped (no matching project) · 1 skipped (folder missing) \
-             · 2 skipped (already imported) · 1 skipped (couldn't be read)"
+             · 2 skipped (already imported) · 1 skipped (couldn't be read) \
+             · 1 skipped (couldn't be saved)"
         );
         let session = |project: &str| Imported {
             session: Session {

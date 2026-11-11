@@ -1564,6 +1564,85 @@ mod importing {
     }
 
     #[test]
+    fn a_store_failure_is_reported_as_failed_not_unreadable() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "full", &p);
+            let table = if store.lock().unwrap().uses_gespan_schema() {
+                "sessions"
+            } else {
+                "native_sessions"
+            };
+            store
+                .lock()
+                .unwrap()
+                .conn()
+                .execute_batch(&format!(
+                    "CREATE TRIGGER no_room BEFORE INSERT ON {table}
+                     BEGIN SELECT RAISE(ABORT,'database or disk is full'); END"
+                ))
+                .unwrap();
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert!(report.imported.is_empty(), "{name}");
+            assert!(
+                matches!(&report.skipped[0].1, Skip::Failed(why) if why.contains("disk is full")),
+                "{name}: {:?}",
+                report.skipped
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_whose_provider_id_cannot_be_saved_is_removed_and_failed() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "orphan", &p);
+            let (table, column) = if store.lock().unwrap().uses_gespan_schema() {
+                ("sessions", "provider_session_id")
+            } else {
+                ("native_sessions", "provider_id")
+            };
+            store
+                .lock()
+                .unwrap()
+                .conn()
+                .execute_batch(&format!(
+                    "CREATE TRIGGER no_id BEFORE UPDATE OF {column} ON {table}
+                     WHEN NEW.{column} IS NOT NULL
+                     BEGIN SELECT RAISE(ABORT,'locked'); END"
+                ))
+                .unwrap();
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert!(report.imported.is_empty(), "{name}");
+            assert!(
+                matches!(&report.skipped[0].1, Skip::Failed(_)),
+                "{name}: {:?}",
+                report.skipped
+            );
+            assert!(
+                store.lock().unwrap().sessions().unwrap().is_empty(),
+                "{name}: the half-made session is removed again"
+            );
+        }
+    }
+
+    #[test]
     fn imported_divider_label() {
         let note = Interjection {
             text: "Claude Code".into(),

@@ -32,6 +32,8 @@ pub enum Skip {
     AlreadyImported,
     /// The session file could not be read.
     Unreadable(String),
+    /// Gespan could not save the session.
+    Failed(String),
 }
 
 /// Comparison key that survives a trailing slash or a symlinked spelling.
