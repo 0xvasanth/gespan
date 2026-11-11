@@ -443,7 +443,7 @@ pub(crate) struct ApprovalNotices {
     /// memory, so a relaunch shows anything still waiting again.
     closed: HashSet<InputKey>,
     /// Closed requests still waiting that would otherwise have a notice: the
-    /// count on the pill that brings them back.
+    /// count on the title bar's button that brings them back.
     hidden: usize,
 }
 impl EventEmitter<Action> for ApprovalNotices {}
@@ -503,7 +503,11 @@ impl ApprovalNotices {
         }
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.notices.is_empty() && self.hidden == 0
+        self.notices.is_empty()
+    }
+    /// Closed requests still waiting, for the title bar's button.
+    pub(crate) fn waiting(&self) -> usize {
+        self.hidden
     }
     /// Hides a notice without deciding: the request keeps waiting.
     fn close(&mut self, key: InputKey, cx: &mut Context<Self>) {
@@ -519,12 +523,12 @@ impl ApprovalNotices {
         cx.notify();
     }
     /// Brings every closed notice that is still waiting back.
-    fn reopen(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn reopen(&mut self, cx: &mut Context<Self>) {
         self.closed.clear();
         cx.emit(Action::Changed);
         cx.notify();
     }
-    fn pill_label(&self) -> String {
+    pub(crate) fn waiting_label(&self) -> String {
         match self.hidden {
             1 => "1 request waiting".into(),
             count => format!("{count} requests waiting"),
@@ -533,44 +537,11 @@ impl ApprovalNotices {
 }
 impl Render for ApprovalNotices {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pill = (self.hidden > 0).then(|| {
-            let label = self.pill_label();
-            let amber = gpui::rgb(0xffb900);
-            div().flex().justify_end().child(
-                div()
-                    .id("approval-toast-reopen")
-                    .debug_selector(|| "approval-toast-reopen".into())
-                    .role(Role::Button)
-                    .aria_label(format!("{label}: show the closed notices"))
-                    .cursor_pointer()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(30.))
-                    .pl(px(10.))
-                    .pr(px(12.))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(gpui::Hsla::from(amber).opacity(0.35))
-                    .occlude()
-                    .bg(floating_fill())
-                    .shadow_lg()
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .hover(|s| s.bg(content(0.12)))
-                    .child(div().size(px(7.)).rounded_full().bg(amber))
-                    .child(label)
-                    .child(div().text_color(content(0.55)).child("Show"))
-                    .child(icon("chevron-down", 12.).text_color(content(0.55)))
-                    .on_click(cx.listener(|this, _, _, cx| this.reopen(cx))),
-            )
-        });
         div()
             .flex()
             .flex_col()
             .gap_2()
             .w_full()
-            .children(pill)
             .children(
                 self.notices
                     .iter()
@@ -1437,15 +1408,12 @@ mod render_tests {
     }
 
     #[gpui::test]
-    fn closing_a_notice_hides_it_without_deciding_and_shows_the_pill(cx: &mut TestAppContext) {
+    fn closing_a_notice_hides_it_without_deciding_and_counts_it(cx: &mut TestAppContext) {
         let sessions = vec![waiting("a", &["a1"]), waiting("b", &["b1"])];
         let (window, actions) = notices(sessions.clone(), cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
-        assert!(
-            visual.debug_bounds("approval-toast-reopen").is_none(),
-            "nothing closed yet"
-        );
+        assert_eq!(hidden(&window, visual), 0, "nothing closed yet");
         let close = visual
             .debug_bounds("approval-toast-close-0")
             .expect("a close button");
@@ -1461,13 +1429,13 @@ mod render_tests {
         assert_eq!(shown(&window, visual), ["b:b1"]);
         assert_eq!(hidden(&window, visual), 1);
         assert!(
-            visual.debug_bounds("approval-toast-reopen").is_some(),
-            "the pill shows"
+            visual.debug_bounds("approval-toast-close-1").is_none(),
+            "only the one notice left on screen"
         );
     }
 
     #[gpui::test]
-    fn the_pill_brings_every_closed_notice_back(cx: &mut TestAppContext) {
+    fn reopening_brings_every_closed_notice_back(cx: &mut TestAppContext) {
         let sessions = vec![waiting("a", &["a1"]), waiting("b", &["b1"])];
         let (window, actions) = notices(sessions.clone(), cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
@@ -1482,17 +1450,17 @@ mod render_tests {
         assert_eq!(hidden(&window, visual), 2);
         window
             .read_with(visual, |notices, _| {
-                assert_eq!(notices.pill_label(), "2 requests waiting")
+                assert_eq!(notices.waiting_label(), "2 requests waiting")
             })
             .unwrap();
 
-        let pill = visual.debug_bounds("approval-toast-reopen").unwrap();
-        visual.simulate_click(pill.center(), Default::default());
+        window
+            .update(visual, |notices, _, cx| notices.reopen(cx))
+            .unwrap();
         resync(&window, &sessions, visual);
         visual.refresh().unwrap();
         assert_eq!(shown(&window, visual), ["a:a1", "b:b1"]);
         assert_eq!(hidden(&window, visual), 0);
-        assert!(visual.debug_bounds("approval-toast-reopen").is_none());
         assert!(actions.borrow().iter().all(|action| action == "changed"));
     }
 
@@ -1514,12 +1482,12 @@ mod render_tests {
         assert_eq!(
             hidden(&window, cx),
             1,
-            "the first still waits behind the pill"
+            "the first still waits, counted"
         );
     }
 
     #[gpui::test]
-    fn an_answered_request_leaves_the_pill_and_never_comes_back(cx: &mut TestAppContext) {
+    fn an_answered_request_leaves_the_count_and_never_comes_back(cx: &mut TestAppContext) {
         let (window, _) = notices(vec![waiting("a", &["a1"])], cx);
         let key = window
             .read_with(cx, |notices, _| {
