@@ -7665,11 +7665,16 @@ impl Shell {
     /// `leaving` is the pane that had focus while `shuffle` (linear) runs
     /// the deck shuffle that deals the focused pane's tile to the front.
     fn pane_tile_stack(&self, copy: &TabCopy, leaving: Option<usize>, shuffle: f32) -> AnyElement {
-        // The focused pane in front, the rest behind in layout order.
+        // The focused pane in front, the rest behind in layout order. A tab
+        // can draw one frame with no panes left (its last file closed, the
+        // tab closing next), so a focus past the end puts nothing in front.
         let depths = |focus: usize| {
-            let mut depth = vec![0; copy.panes.len()];
-            for (d, ix) in std::iter::once(focus)
-                .chain((0..copy.panes.len()).filter(|ix| *ix != focus))
+            let len = copy.panes.len();
+            let mut depth = vec![0; len];
+            for (d, ix) in (focus < len)
+                .then_some(focus)
+                .into_iter()
+                .chain((0..len).filter(|ix| *ix != focus))
                 .enumerate()
             {
                 depth[ix] = d;

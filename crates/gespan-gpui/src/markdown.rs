@@ -563,6 +563,7 @@ fn rich_inline(
             children.push(
                 div()
                     .id(SharedString::from(format!("{id}-code-{run_ix}")))
+                    .debug_selector(move || format!("rich-code-{run_ix}"))
                     .flex()
                     .items_center()
                     .gap_1()
@@ -595,7 +596,10 @@ fn rich_inline(
                             })
                             .child(crate::activity::file_icon(&text, 14.))
                     })
-                    .child(child)
+                    // A long path is one unbroken word: its text shrinks to
+                    // the chip, which the column caps, and breaks there
+                    // instead of running into the next table column.
+                    .child(div().flex_1().min_w_0().child(child))
                     .into_any_element(),
             );
             offset += run.text.len();
@@ -1210,6 +1214,74 @@ mod rich_wrap_tests {
         );
         // A short word still sizes to its text rather than the column.
         let short = visual.debug_bounds("rich-prose-0-0").unwrap();
+        assert!(short.size.width < column.size.width, "{short:?}");
+        assert_eq!(short.size.height, px(24.));
+    }
+
+    /// A table cell holding one long path in backticks, as an agent writes
+    /// a spec's file name.
+    struct LongChip;
+    impl gpui::Render for LongChip {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let runs = vec![
+                InlineRun {
+                    text:
+                        "docs/steroids/specs/2026-11-11-gitlab-mr-comment-trigger-requirements.md"
+                            .into(),
+                    style: InlineStyle {
+                        code: true,
+                        ..Default::default()
+                    },
+                },
+                InlineRun {
+                    text: " and ".into(),
+                    style: InlineStyle::default(),
+                },
+                InlineRun {
+                    text: "short".into(),
+                    style: InlineStyle {
+                        code: true,
+                        ..Default::default()
+                    },
+                },
+            ];
+            div()
+                .w(px(220.))
+                .debug_selector(|| "chip-column".into())
+                .child(rich_inline(
+                    &runs,
+                    "chips".into(),
+                    Tone::Normal,
+                    None,
+                    Instant::now(),
+                    0,
+                    12.,
+                    None,
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_code_chip_wraps_within_its_column(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|_| LongChip))
+                .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let column = visual.debug_bounds("chip-column").unwrap();
+        let long = visual.debug_bounds("rich-code-0").unwrap();
+        assert!(
+            long.right() <= column.right(),
+            "chip {long:?} runs past {column:?}"
+        );
+        assert!(
+            long.size.height > px(24.),
+            "long chip did not wrap: {long:?}"
+        );
+        // A short chip keeps to one line and its own width.
+        let short = visual.debug_bounds("rich-code-2").unwrap();
         assert!(short.size.width < column.size.width, "{short:?}");
         assert_eq!(short.size.height, px(24.));
     }
