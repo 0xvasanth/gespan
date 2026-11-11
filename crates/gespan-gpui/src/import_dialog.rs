@@ -17,7 +17,8 @@ use gespan_core::{
 };
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, Role, SharedString, Subscription, Window, div, prelude::*, px,
+    KeyDownEvent, Role, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
+    Window, div, prelude::*, px, uniform_list,
 };
 use std::{collections::HashSet, path::Path, sync::Arc};
 
@@ -34,6 +35,12 @@ const TAB_TILE: TileSize = TileSize {
 };
 /// Rows counted per trip off the UI thread, so counts fill in as they come.
 const COUNT_BATCH: usize = 8;
+/// Rows placed per trip off the UI thread, so This folder fills in as they
+/// come.
+const PLACE_BATCH: usize = 128;
+/// Every list item's height, rows and headings alike, so the list draws only
+/// the items in view.
+const ITEM_HEIGHT: f32 = 44.;
 const DAY_MS: u64 = 86_400_000;
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 3_600_000;
@@ -46,15 +53,26 @@ enum Scope {
 
 struct Row {
     candidate: Candidate,
-    placement: Placement,
-    /// Gespan already holds it, live or archived.
+    /// `None` until placed, which follows the listing.
+    placement: Option<Placement>,
+    /// Gespan already holds it, live, archived or hidden.
     imported: bool,
 }
 
 struct Tab {
     kind: Kind,
     rows: Vec<Row>,
+    /// Still listing from disk.
     loading: bool,
+    /// Listed, but not every row is placed yet.
+    placing: bool,
+}
+
+/// One line of the list: a day heading or a row of the active tab.
+#[derive(Clone, Copy)]
+enum Item {
+    Group(&'static str),
+    Row(usize),
 }
 
 pub(crate) struct ImportDialog {
@@ -65,6 +83,7 @@ pub(crate) struct ImportDialog {
     selected: HashSet<(Kind, String)>,
     scope: Scope,
     query: Entity<Input>,
+    scroll: UniformListScrollHandle,
     focus: FocusHandle,
     /// The laid-out dialog, so the shell can centre it.
     bounds: AnchorSlot,
@@ -77,17 +96,22 @@ impl Focusable for ImportDialog {
     }
 }
 
-/// The main checkout a linked worktree belongs to.
-pub(crate) fn worktree_root(path: &str) -> Option<String> {
-    gespan_core::git::linked_worktree_root(Path::new(path))
-        .map(|root| root.to_string_lossy().into_owned())
+/// Maps a linked worktree to its main checkout, asking git once per
+/// repository, however many of its worktrees it is asked about.
+pub(crate) fn worktree_roots() -> impl FnMut(&str) -> Option<String> + Send + 'static {
+    let mut roots = gespan_core::git::WorktreeRoots::default();
+    move |path| {
+        roots
+            .root(Path::new(path))
+            .map(|root| root.to_string_lossy().into_owned())
+    }
 }
 
 /// `(provider, provider id)` of every session Gespan holds, hidden ones
 /// included; see `Store::provider_session_ids`.
 pub(crate) type Held = HashSet<(String, String)>;
 
-fn rows(found: Vec<(Candidate, Placement)>, held: &Held) -> Vec<Row> {
+fn rows(found: Vec<(Candidate, Option<Placement>)>, held: &Held) -> Vec<Row> {
     found
         .into_iter()
         .map(|(candidate, placement)| Row {
@@ -176,6 +200,7 @@ impl ImportDialog {
                 kind: source.kind,
                 rows: Vec::new(),
                 loading: true,
+                placing: false,
             })
             .collect();
         let mut this = Self::with_tabs(project, tabs, window, cx);
@@ -200,8 +225,15 @@ impl ImportDialog {
             .into_iter()
             .map(|(kind, found)| Tab {
                 kind,
-                rows: rows(found, held),
+                rows: rows(
+                    found
+                        .into_iter()
+                        .map(|(candidate, placement)| (candidate, Some(placement)))
+                        .collect(),
+                    held,
+                ),
                 loading: false,
+                placing: false,
             })
             .collect();
         Self::with_tabs(project, tabs, window, cx)
@@ -215,7 +247,10 @@ impl ImportDialog {
     ) -> Self {
         let query =
             cx.new(|cx| Input::field("Search sessions", "Search sessions", content(0.4), cx));
-        let query_events = cx.subscribe(&query, |_, _, _: &input::Changed, cx| cx.notify());
+        let query_events = cx.subscribe(&query, |this: &mut Self, _, _: &input::Changed, cx| {
+            this.scroll_to_top();
+            cx.notify()
+        });
         Self {
             project,
             tabs,
@@ -223,6 +258,7 @@ impl ImportDialog {
             selected: HashSet::new(),
             scope: Scope::ThisFolder,
             query,
+            scroll: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
             bounds: AnchorSlot::default(),
             _query_events: query_events,
@@ -243,9 +279,9 @@ impl ImportDialog {
         self.bounds.get().map(|bounds| bounds.size.height.as_f32())
     }
 
-    /// Lists and places `source`'s sessions in the background, then counts
-    /// their messages a batch at a time. `place` asks git about worktrees,
-    /// so it stays off the UI thread too.
+    /// Lists `source`'s sessions in the background and shows them, then
+    /// places them and counts their messages a batch at a time. Placing
+    /// asks git about worktrees, so it stays off the UI thread too.
     fn load(
         &mut self,
         ix: usize,
@@ -258,28 +294,63 @@ impl ImportDialog {
             let executor = cx.background_executor().clone();
             let found = executor
                 .spawn(async move {
-                    let placed = session_import::list(source.kind, &source.home)
+                    let listed = session_import::list(source.kind, &source.home)
                         .into_iter()
-                        .map(|candidate| {
-                            let placement =
-                                session_import::place(&candidate.cwd, &projects, worktree_root);
-                            (candidate, placement)
-                        })
+                        .map(|candidate| (candidate, None))
                         .collect();
-                    rows(placed, &held)
+                    rows(listed, &held)
                 })
                 .await;
-            let uncounted: Vec<Candidate> = found
+            let unplaced: Vec<(usize, String)> = found
                 .iter()
-                .filter(|row| row.candidate.messages.is_none())
-                .map(|row| row.candidate.clone())
+                .enumerate()
+                .map(|(at, row)| (at, row.candidate.cwd.clone()))
+                .collect();
+            let uncounted: Vec<(usize, Candidate)> = found
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.candidate.messages.is_none())
+                .map(|(at, row)| (at, row.candidate.clone()))
                 .collect();
             let shown = this.update(cx, |this, cx| {
-                this.tabs[ix].rows = found;
-                this.tabs[ix].loading = false;
+                let tab = &mut this.tabs[ix];
+                tab.placing = !found.is_empty();
+                tab.rows = found;
+                tab.loading = false;
                 cx.notify();
             });
             if shown.is_err() {
+                return;
+            }
+            let mut placer = session_import::Placer::new(&projects, worktree_roots());
+            for batch in unplaced.chunks(PLACE_BATCH) {
+                let batch = batch.to_vec();
+                let (back, placed) = executor
+                    .spawn(async move {
+                        let placed: Vec<(usize, Placement)> = batch
+                            .into_iter()
+                            .map(|(at, cwd)| (at, placer.place(&cwd)))
+                            .collect();
+                        (placer, placed)
+                    })
+                    .await;
+                placer = back;
+                let filled = this.update(cx, |this, cx| {
+                    let rows = &mut this.tabs[ix].rows;
+                    for (at, placement) in placed {
+                        rows[at].placement = Some(placement);
+                    }
+                    cx.notify();
+                });
+                if filled.is_err() {
+                    return;
+                }
+            }
+            let placed = this.update(cx, |this, cx| {
+                this.tabs[ix].placing = false;
+                cx.notify();
+            });
+            if placed.is_err() {
                 return;
             }
             for batch in uncounted.chunks(COUNT_BATCH) {
@@ -288,22 +359,14 @@ impl ImportDialog {
                     .spawn(async move {
                         batch
                             .into_iter()
-                            .map(|c| {
-                                let n = session_import::count_messages(&c);
-                                (c.provider_id, n)
-                            })
+                            .map(|(at, c)| (at, session_import::count_messages(&c)))
                             .collect::<Vec<_>>()
                     })
                     .await;
                 let counted = this.update(cx, |this, cx| {
-                    for (id, n) in counts {
-                        if let Some(row) = this.tabs[ix]
-                            .rows
-                            .iter_mut()
-                            .find(|row| row.candidate.provider_id == id)
-                        {
-                            row.candidate.messages = n;
-                        }
+                    let rows = &mut this.tabs[ix].rows;
+                    for (at, n) in counts {
+                        rows[at].candidate.messages = n;
                     }
                     cx.notify();
                 });
@@ -318,9 +381,11 @@ impl ImportDialog {
     fn in_scope(&self, row: &Row) -> bool {
         match self.scope {
             Scope::AllFolders => true,
-            Scope::ThisFolder => {
-                placed_in(&row.placement).is_some_and(|p| path_key(p) == path_key(&self.project))
-            }
+            Scope::ThisFolder => row
+                .placement
+                .as_ref()
+                .and_then(placed_in)
+                .is_some_and(|p| path_key(p) == path_key(&self.project)),
         }
     }
 
@@ -333,18 +398,26 @@ impl ImportDialog {
             .count()
     }
 
-    /// The active tab's rows in scope whose title holds the search.
-    fn visible(&self, cx: &App) -> Vec<&Row> {
+    /// The active tab's rows in scope whose title holds the search, by
+    /// their place in the tab.
+    fn visible(&self, cx: &App) -> Vec<usize> {
         let query = self.query.read(cx).content.trim().to_lowercase();
         self.tabs.get(self.active).map_or_else(Vec::new, |tab| {
             tab.rows
                 .iter()
-                .filter(|row| self.in_scope(row))
-                .filter(|row| {
+                .enumerate()
+                .filter(|(_, row)| self.in_scope(row))
+                .filter(|(_, row)| {
                     query.is_empty() || row.candidate.title.to_lowercase().contains(&query)
                 })
+                .map(|(at, _)| at)
                 .collect()
         })
+    }
+
+    /// The list from its first item, after the rows it shows change.
+    fn scroll_to_top(&self) {
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
     fn is_ticked(&self, candidate: &Candidate) -> bool {
@@ -360,6 +433,12 @@ impl ImportDialog {
         cx.notify();
     }
 
+    /// How many rows are ticked, across every tab. Only a row not yet
+    /// imported can be ticked, so this is the selection's size.
+    fn ticked_count(&self) -> usize {
+        self.selected.len()
+    }
+
     /// Every ticked row, tab by tab, in list order.
     fn ticked(&self) -> Vec<Candidate> {
         self.tabs
@@ -371,8 +450,12 @@ impl ImportDialog {
     }
 
     /// The footer's count and its Import button's label.
+    #[cfg(test)]
     fn footer(&self) -> (String, String) {
-        let n = self.ticked().len();
+        Self::footer_labels(self.ticked().len())
+    }
+
+    fn footer_labels(n: usize) -> (String, String) {
         (
             format!("{n} selected"),
             format!("Import {}", plural(n, "session", "sessions")),
@@ -388,6 +471,7 @@ impl ImportDialog {
 
     fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         self.scope = scope;
+        self.scroll_to_top();
         cx.notify();
     }
 
@@ -478,6 +562,7 @@ impl ImportDialog {
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active = ix;
+                        this.scroll_to_top();
                         cx.notify();
                     }))
             }))
@@ -555,9 +640,11 @@ impl ImportDialog {
         let selector = format!("import-group-{}", label.to_lowercase());
         div()
             .debug_selector(move || selector)
+            .h(px(ITEM_HEIGHT))
+            .flex()
+            .items_end()
             .px_2()
-            .pt_2()
-            .pb_1()
+            .pb(px(6.))
             .text_size(px(10.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(content(0.4))
@@ -570,7 +657,7 @@ impl ImportDialog {
         let id = c.provider_id.clone();
         let ticked = !row.imported && self.is_ticked(c);
         let all = self.scope == Scope::AllFolders;
-        let no_project = all && matches!(row.placement, Placement::Skip(_));
+        let no_project = all && matches!(row.placement, Some(Placement::Skip(_)));
         let mut meta: Vec<String> = Vec::new();
         if let Some(n) = c.messages {
             meta.push(plural(n as usize, "message", "messages"));
@@ -628,11 +715,11 @@ impl ImportDialog {
             .debug_selector(move || selector.clone())
             .role(Role::CheckBox)
             .aria_label(c.title.clone())
+            .h(px(ITEM_HEIGHT))
             .flex()
             .items_center()
             .gap(px(10.))
             .px_2()
-            .py(px(7.))
             .rounded(px(7.))
             .when(ticked, |d| d.bg(accent_color().opacity(0.08)))
             .when(!row.imported, |d| {
@@ -679,50 +766,72 @@ impl ImportDialog {
             .into_any_element()
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let list = div()
-            .id("import-list")
-            .h(px(300.))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .px_2()
-            .pb_2()
-            .bg(content(0.04));
+    /// What the list says in place of rows, when it shows none.
+    fn empty_note(&self, cx: &App) -> Option<String> {
         let Some(tab) = self.tabs.get(self.active) else {
-            return list.child(Self::empty(
-                "No other agents' sessions were found on this computer.",
-            ));
+            return Some("No other agents' sessions were found on this computer.".into());
         };
         if tab.loading {
-            return list.child(Self::empty("Looking for sessions…"));
+            return Some("Looking for sessions…".into());
         }
+        if !self.visible(cx).is_empty() {
+            return None;
+        }
+        let agent = session_import::agent_name(tab.kind);
+        Some(if self.tab_count(self.active) > 0 {
+            "No sessions match your search.".to_owned()
+        } else if tab.placing && self.scope == Scope::ThisFolder {
+            "Looking for sessions…".to_owned()
+        } else if self.scope == Scope::ThisFolder {
+            format!("No {agent} sessions in this folder.")
+        } else {
+            format!("No {agent} sessions found.")
+        })
+    }
+
+    /// The active tab's rows under Today and Earlier. Only the items in
+    /// view are built, so a tab of thousands draws as fast as a short one.
+    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let frame = div().h(px(300.)).flex().flex_col().px_2().bg(content(0.04));
+        if let Some(note) = self.empty_note(cx) {
+            return frame.child(Self::empty(note)).into_any_element();
+        }
+        let tab = &self.tabs[self.active];
         let visible = self.visible(cx);
-        if visible.is_empty() {
-            let agent = session_import::agent_name(tab.kind);
-            let note = if self.tab_count(self.active) > 0 {
-                "No sessions match your search.".to_owned()
-            } else if self.scope == Scope::ThisFolder {
-                format!("No {agent} sessions in this folder.")
-            } else {
-                format!("No {agent} sessions found.")
-            };
-            return list.child(Self::empty(note));
-        }
         let now = gespan_core::time::now_ms();
         let start = today_start(now);
-        let (today, earlier): (Vec<&Row>, Vec<&Row>) = visible
+        let (today, earlier): (Vec<usize>, Vec<usize>) = visible
             .into_iter()
-            .partition(|row| row.candidate.updated_at >= start);
-        let mut children = Vec::new();
+            .partition(|&at| tab.rows[at].candidate.updated_at >= start);
+        let mut items = Vec::new();
         for (label, rows) in [("Today", today), ("Earlier", earlier)] {
             if rows.is_empty() {
                 continue;
             }
-            children.push(Self::group(label));
-            children.extend(rows.into_iter().map(|row| self.row(row, now, cx)));
+            items.push(Item::Group(label));
+            items.extend(rows.into_iter().map(Item::Row));
         }
-        list.children(children)
+        let entity = cx.entity();
+        frame
+            .child(
+                uniform_list("import-list", items.len(), move |range, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        range
+                            .map(|at| match items[at] {
+                                Item::Group(label) => Self::group(label),
+                                Item::Row(row) => {
+                                    this.row(&this.tabs[this.active].rows[row], now, cx)
+                                }
+                            })
+                            .collect()
+                    })
+                })
+                .track_scroll(&self.scroll)
+                .flex_1()
+                .min_h_0()
+                .pb_2(),
+            )
+            .into_any_element()
     }
 
     fn empty(note: impl Into<SharedString>) -> impl IntoElement {
@@ -736,9 +845,9 @@ impl ImportDialog {
             .child(note.into())
     }
 
-    fn footer_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (count, label) = self.footer();
-        let none = self.ticked().is_empty();
+    fn footer_bar(&self, ticked: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let (count, label) = Self::footer_labels(ticked);
+        let none = ticked == 0;
         div()
             .flex_shrink_0()
             .flex()
@@ -775,6 +884,7 @@ impl ImportDialog {
 
 impl Render for ImportDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ticked = self.ticked_count();
         div()
             .id("import-dialog")
             .debug_selector(|| "import-dialog".into())
@@ -797,7 +907,7 @@ impl Render for ImportDialog {
             .child(self.tab_strip(cx))
             .child(self.bar(cx))
             .child(self.list(cx))
-            .child(self.footer_bar(cx))
+            .child(self.footer_bar(ticked, cx))
     }
 }
 
@@ -1135,6 +1245,123 @@ mod tests {
         click(visual, "import-cancel");
         click(visual, "import-close");
         assert_eq!(*log.borrow(), vec![Seen::Close, Seen::Close, Seen::Close]);
+    }
+
+    /// Rows not placed yet list under All folders at once, and join This
+    /// folder as they are placed.
+    #[gpui::test]
+    fn import_dialog_shows_rows_before_they_are_placed(cx: &mut TestAppContext) {
+        let (window, _log, _events) = open(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        let placements = window
+            .update(visual, |dialog, _, cx| {
+                let tab = &mut dialog.tabs[0];
+                tab.placing = true;
+                let saved: Vec<_> = tab.rows.iter_mut().map(|r| r.placement.take()).collect();
+                cx.notify();
+                saved
+            })
+            .unwrap();
+        assert!(!shown(visual, "import-row-c-today"));
+        window
+            .update(visual, |dialog, _, cx| {
+                assert_eq!(dialog.tab_count(0), 0);
+                assert_eq!(
+                    dialog.empty_note(cx).as_deref(),
+                    Some("Looking for sessions…"),
+                    "not \"No Claude Code sessions in this folder\" while placing"
+                );
+            })
+            .unwrap();
+        click(visual, "import-scope-all");
+        assert!(shown(visual, "import-row-c-today"));
+        assert!(shown(visual, "import-row-c-loose"));
+        assert!(
+            !shown(visual, "import-row-c-loose-no-project"),
+            "no verdict before it is placed"
+        );
+        click(visual, "import-row-c-today");
+        assert_eq!(footer(window, visual).0, "1 selected");
+        click(visual, "import-scope-this");
+        window
+            .update(visual, |dialog, _, cx| {
+                let tab = &mut dialog.tabs[0];
+                for (row, placement) in tab.rows.iter_mut().zip(placements) {
+                    row.placement = placement;
+                }
+                tab.placing = false;
+                cx.notify();
+            })
+            .unwrap();
+        assert!(shown(visual, "import-row-c-today-ticked"));
+        assert!(shown(visual, "import-row-c-tree"));
+        assert!(!shown(visual, "import-row-c-loose"));
+    }
+
+    /// Thousands of rows build only those in view, and scrolling brings
+    /// the rest in.
+    #[gpui::test]
+    fn import_dialog_draws_only_the_rows_in_view(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_reduce_motion(true);
+            crate::input::bind(cx);
+        });
+        let found: Vec<(Candidate, Placement)> = (0..2000)
+            .map(|n| {
+                (
+                    candidate(
+                        Kind::Claude,
+                        &format!("r{n}"),
+                        &format!("Session {n}"),
+                        PROJECT,
+                        DAY + n as u64 * 1000,
+                    ),
+                    here(),
+                )
+            })
+            .collect();
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                cx.new(|cx| {
+                    ImportDialog::from_rows(
+                        PROJECT.into(),
+                        vec![(Kind::Claude, found)],
+                        &Held::new(),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        assert!(shown(visual, "import-group-earlier"));
+        assert!(shown(visual, "import-row-r0"));
+        assert!(!shown(visual, "import-row-r40"), "far below the fold");
+        assert!(!shown(visual, "import-row-r1999"));
+        window
+            .update(visual, |dialog, _, cx| {
+                // The heading, then 2000 rows.
+                dialog.scroll.scroll_to_item(2000, ScrollStrategy::Bottom);
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        // The scroll lands in one frame; the rows it brings in, the next.
+        shown(visual, "import-list");
+        assert!(shown(visual, "import-row-r1999"));
+        assert!(!shown(visual, "import-row-r0"));
+        // Searching starts the list from the top again.
+        window
+            .update(visual, |dialog, _, cx| {
+                dialog
+                    .query
+                    .update(cx, |query, cx| query.set_text("Session 1999".into(), cx))
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(shown(visual, "import-row-r1999"));
+        assert!(shown(visual, "import-group-earlier"));
     }
 
     #[gpui::test]

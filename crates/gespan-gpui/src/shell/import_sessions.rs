@@ -187,7 +187,7 @@ impl Shell {
                 &store,
                 &picks,
                 &projects,
-                import_dialog::worktree_root,
+                import_dialog::worktree_roots(),
                 home,
             );
             (report, picks)
