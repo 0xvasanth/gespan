@@ -1,0 +1,20 @@
+README.md
+  s_3a61535e1d26b7::t_2697b34b5df6ae 47-49
+  s_3a61535e1d26b7::t_98412c0af00e56 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99fd846ede9c9026f81ec8131e6f8ff0b9b16ca0",
+  "prompts": {},
+  "sessions": {
+    "s_3a61535e1d26b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4216030c-4f7b-40c4-b80a-2b9458826e4f",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
