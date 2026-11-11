@@ -1464,3 +1464,56 @@ mod importing {
         assert_eq!(note.label(), "Imported from Claude Code");
     }
 }
+
+fn kinds_of(sources: &[Source]) -> Vec<Kind> {
+    sources.iter().map(|s| s.kind).collect()
+}
+
+#[test]
+fn sources_lists_only_agents_present_on_disk() {
+    let user = tempfile::tempdir().unwrap();
+    assert!(sources(user.path()).is_empty());
+
+    // An agent's home without its session folder has nothing to import.
+    fs::create_dir_all(user.path().join(".claude")).unwrap();
+    fs::create_dir_all(user.path().join(".kiro/settings")).unwrap();
+    assert!(sources(user.path()).is_empty());
+
+    fs::create_dir_all(user.path().join(".claude/projects")).unwrap();
+    fs::create_dir_all(user.path().join(".cursor/acp-sessions")).unwrap();
+    let found = sources(user.path());
+    assert_eq!(kinds_of(&found), vec![Kind::Claude, Kind::Cursor]);
+    assert_eq!(found[0].home, user.path().join(".claude"));
+    assert_eq!(found[1].home, user.path().join(".cursor"));
+}
+
+#[test]
+fn sources_counts_codex_archived_sessions_alone() {
+    let user = tempfile::tempdir().unwrap();
+    fs::create_dir_all(user.path().join(".codex/archived_sessions")).unwrap();
+    let found = sources(user.path());
+    assert_eq!(kinds_of(&found), vec![Kind::Codex]);
+    assert_eq!(found[0].home, user.path().join(".codex"));
+}
+
+#[test]
+fn sources_keeps_the_tab_order() {
+    let user = tempfile::tempdir().unwrap();
+    for dir in [
+        ".kiro/sessions",
+        ".cursor/acp-sessions",
+        ".codex/sessions",
+        ".claude/projects",
+    ] {
+        fs::create_dir_all(user.path().join(dir)).unwrap();
+    }
+    assert_eq!(
+        kinds_of(&sources(user.path())),
+        vec![Kind::Claude, Kind::Codex, Kind::Cursor, Kind::Kiro]
+    );
+}
+
+#[test]
+fn default_home_is_none_for_agents_without_sessions_to_import() {
+    assert_eq!(default_home(Kind::Grok), None);
+}

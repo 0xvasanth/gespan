@@ -54,6 +54,66 @@ pub fn list(kind: Kind, home: &Path) -> Vec<Candidate> {
     found
 }
 
+/// An agent whose sessions can be imported, and the home they sit under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub kind: Kind,
+    pub home: PathBuf,
+}
+
+/// The agents, in the order their tabs show.
+const IMPORTABLE: [Kind; 4] = [Kind::Claude, Kind::Codex, Kind::Cursor, Kind::Kiro];
+
+/// Folders under an agent's home that hold its sessions.
+fn session_dirs(kind: Kind) -> &'static [&'static str] {
+    match kind {
+        Kind::Claude => &["projects"],
+        Kind::Codex => &["sessions", "archived_sessions"],
+        Kind::Cursor => &["acp-sessions"],
+        Kind::Kiro => &["sessions"],
+        _ => &[],
+    }
+}
+
+/// The folder an agent keeps its files in, by default.
+fn home_in(kind: Kind, user_home: &Path) -> Option<PathBuf> {
+    let dir = match kind {
+        Kind::Claude => ".claude",
+        Kind::Codex => ".codex",
+        Kind::Cursor => ".cursor",
+        Kind::Kiro => ".kiro",
+        _ => return None,
+    };
+    Some(user_home.join(dir))
+}
+
+/// Where `kind` keeps its sessions on this machine; `None` when it cannot be
+/// imported from or the user's home is unknown.
+pub fn default_home(kind: Kind) -> Option<PathBuf> {
+    match kind {
+        Kind::Claude | Kind::Codex => crate::accounts::Profile::default().home(kind).ok(),
+        Kind::Cursor => crate::provider::cursor_store::cursor_dir(),
+        Kind::Kiro => home_in(kind, &crate::accounts::home()?),
+        _ => None,
+    }
+}
+
+/// The agents with sessions on disk under `user_home`, in tab order. An
+/// agent counts only when one of its session folders exists, not just its
+/// home. Uses the default folder names, ignoring any environment override.
+pub fn sources(user_home: &Path) -> Vec<Source> {
+    IMPORTABLE
+        .into_iter()
+        .filter_map(|kind| {
+            let home = home_in(kind, user_home)?;
+            session_dirs(kind)
+                .iter()
+                .any(|dir| home.join(dir).is_dir())
+                .then_some(Source { kind, home })
+        })
+        .collect()
+}
+
 /// Every visible turn of the session, oldest first.
 pub fn read_turns(candidate: &Candidate) -> Result<Vec<OutsideTurn>, String> {
     match candidate.kind {
