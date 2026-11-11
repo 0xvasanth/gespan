@@ -102,10 +102,17 @@ pub fn default_home(kind: Kind) -> Option<PathBuf> {
 /// agent counts only when one of its session folders exists, not just its
 /// home. Uses the default folder names, ignoring any environment override.
 pub fn sources(user_home: &Path) -> Vec<Source> {
+    present_sources(|kind| home_in(kind, user_home))
+}
+
+/// The agents with sessions on disk under the home `home` gives each, in
+/// tab order. With [`default_home`] this honours `CLAUDE_CONFIG_DIR` and
+/// `CODEX_HOME`, which [`sources`] does not.
+pub fn present_sources(home: impl Fn(Kind) -> Option<PathBuf>) -> Vec<Source> {
     IMPORTABLE
         .into_iter()
         .filter_map(|kind| {
-            let home = home_in(kind, user_home)?;
+            let home = home(kind)?;
             session_dirs(kind)
                 .iter()
                 .any(|dir| home.join(dir).is_dir())

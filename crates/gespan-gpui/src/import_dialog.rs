@@ -2,12 +2,10 @@
 //! search field, a This folder / All folders toggle and a ticked list. The
 //! shell opens it from the project's menu and does the import itself when
 //! [`Event::Import`] arrives.
-// Opened by the shell once its menu entry lands; until then only tests
-// build it.
-#![cfg_attr(not(test), allow(dead_code))]
 use crate::{
     input::{self, Input},
     modal,
+    popover::AnchorSlot,
     tab_tile::{Face, TileSize, mark_tile},
     theme::*,
 };
@@ -69,6 +67,8 @@ pub(crate) struct ImportDialog {
     scope: Scope,
     query: Entity<Input>,
     focus: FocusHandle,
+    /// The laid-out dialog, so the shell can centre it.
+    bounds: AnchorSlot,
     _query_events: Subscription,
 }
 impl EventEmitter<Event> for ImportDialog {}
@@ -79,7 +79,7 @@ impl Focusable for ImportDialog {
 }
 
 /// The main checkout a linked worktree belongs to.
-fn worktree_root(path: &str) -> Option<String> {
+pub(crate) fn worktree_root(path: &str) -> Option<String> {
     gespan_core::git::linked_worktree_root(Path::new(path))
         .map(|root| root.to_string_lossy().into_owned())
 }
@@ -221,8 +221,23 @@ impl ImportDialog {
             scope: Scope::ThisFolder,
             query,
             focus: cx.focus_handle(),
+            bounds: AnchorSlot::default(),
             _query_events: query_events,
         }
+    }
+
+    /// Every row found, on every tab, in list order.
+    #[cfg(test)]
+    pub(crate) fn found_candidates(&self) -> Vec<Candidate> {
+        self.tabs
+            .iter()
+            .flat_map(|tab| tab.rows.iter().map(|row| row.candidate.clone()))
+            .collect()
+    }
+
+    /// The dialog's height at the last layout.
+    pub(crate) fn measured_height(&self) -> Option<f32> {
+        self.bounds.get().map(|bounds| bounds.size.height.as_f32())
     }
 
     /// Lists and places `source`'s sessions in the background, then counts
@@ -763,9 +778,11 @@ impl Render for ImportDialog {
             .role(Role::Dialog)
             .aria_label("Import sessions")
             .track_focus(&self.focus)
+            .relative()
             .flex()
             .flex_col()
             .text_color(content(1.))
+            .child(self.bounds.layout_probe())
             .on_key_down(cx.listener(|_, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     cx.emit(Event::Close);

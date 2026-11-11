@@ -1517,3 +1517,36 @@ fn sources_keeps_the_tab_order() {
 fn default_home_is_none_for_agents_without_sessions_to_import() {
     assert_eq!(default_home(Kind::Grok), None);
 }
+
+#[test]
+fn present_sources_uses_each_agents_own_home() {
+    // Homes moved by CLAUDE_CONFIG_DIR or CODEX_HOME sit anywhere, not under
+    // the user's home, and still count.
+    let root = tempfile::tempdir().unwrap();
+    let claude = root.path().join("elsewhere/claude-config");
+    let cursor = root.path().join("cursor");
+    let kiro = root.path().join("kiro");
+    fs::create_dir_all(claude.join("projects")).unwrap();
+    fs::create_dir_all(&cursor).unwrap();
+    fs::create_dir_all(kiro.join("sessions")).unwrap();
+    let found = present_sources(|kind| match kind {
+        Kind::Claude => Some(claude.clone()),
+        Kind::Codex => None,
+        Kind::Cursor => Some(cursor.clone()),
+        Kind::Kiro => Some(kiro.clone()),
+        _ => panic!("only importable agents are asked for"),
+    });
+    assert_eq!(
+        found,
+        vec![
+            Source {
+                kind: Kind::Claude,
+                home: claude.clone()
+            },
+            Source {
+                kind: Kind::Kiro,
+                home: kiro.clone()
+            },
+        ]
+    );
+}
