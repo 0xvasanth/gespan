@@ -129,6 +129,20 @@ fn terminal_marker(row: &Row) -> bool {
             .is_ok_and(|note| note.custom_type == gespan_core::outside_turns::MARKER_TYPE)
 }
 
+/// A divider row that stands between replies: the "From terminal" marker or
+/// the "Imported from <agent>" row that opens an imported history. It closes
+/// the reply before it and never opens a reply group of its own.
+fn divider_row(row: &Row) -> bool {
+    row.first
+        && row.role == "interjection"
+        && serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text).is_ok_and(
+            |note| {
+                note.custom_type == gespan_core::outside_turns::MARKER_TYPE
+                    || note.custom_type == gespan_core::session_import::IMPORTED_TYPE
+            },
+        )
+}
+
 struct Message {
     start: usize,
     display_start: usize,
@@ -751,7 +765,7 @@ impl TranscriptView {
                 let text = match &r.body {
                     Body::Markdown(md) => markdown::row_text(md),
                     Body::Plain(text) => text.to_string(),
-                    Body::Interjection(note) => note.text.clone(),
+                    Body::Interjection(note) => note.body().to_owned(),
                     Body::Tool { .. } => query.to_owned(),
                     _ => String::new(),
                 };
@@ -3405,6 +3419,7 @@ impl TranscriptView {
             let skipped = self.document
                 || is_prompt
                 || stopped_notice
+                || divider_row(&self.source[at])
                 || matches!(
                     role.as_str(),
                     "pilot-card"
@@ -3908,10 +3923,10 @@ impl TranscriptView {
             }
             // Picked-up terminal turns follow the reply they continue: the
             // marker closes that reply's group, actions and all, and the
-            // marker and any reply before the next prompt get none.
-            let closes_group = (end == turn_end
-                || self.source.get(end).is_some_and(terminal_marker))
-                && !self.source[turn.min(at)..end].iter().any(terminal_marker);
+            // marker and any reply before the next prompt get none. An
+            // imported history's divider is drawn the same way.
+            let closes_group = (end == turn_end || self.source.get(end).is_some_and(divider_row))
+                && !self.source[turn.min(at)..end].iter().any(divider_row);
             if !self.document
                 && !self.source[at].is_prompt()
                 && self.source[at].role != "pilot-card"
@@ -4911,7 +4926,8 @@ impl TranscriptView {
             }
             Body::Interjection(ref note) => {
                 let open = self.expanded.contains(&message_start);
-                let long = note.text.lines().count() > 4 || note.text.len() > 300;
+                let body = note.body();
+                let long = body.lines().count() > 4 || body.len() > 300;
                 let severity = note.severity.as_deref();
                 let color = match severity {
                     Some("blocker") => rgb(0xf87171).into(),
@@ -4938,7 +4954,7 @@ impl TranscriptView {
                                     .aria_label(format!("Interjection: {}", note.label()))
                                     .text_size(px(12.))
                                     .text_color(content(0.55))
-                                    .child(note.label().to_owned()),
+                                    .child(note.label().into_owned()),
                             )
                             .when_some(severity, |d, severity| {
                                 let label = match severity {
@@ -4956,15 +4972,18 @@ impl TranscriptView {
                             })
                             .child(div().h(px(1.)).flex_1().bg(content(0.12))),
                     )
-                    .when(!note.text.is_empty(), |d| {
+                    .when(!body.is_empty(), |d| {
                         d.child(
                             div()
+                                .debug_selector(move || {
+                                    format!("interjection-body-{message_start}")
+                                })
                                 .w_full()
                                 .text_size(px(12.5))
                                 .line_height(px(20.))
                                 .text_color(content(0.7))
                                 .when(!open, |d| d.max_h(px(80.)).overflow_hidden())
-                                .child(note.text.clone()),
+                                .child(body.to_owned()),
                         )
                     })
                     .when(long, |d| {
@@ -7635,6 +7654,143 @@ mod scroll_tests {
                     .unwrap();
             }
         }
+    }
+
+    fn imported_row() -> Row {
+        row(
+            "interjection",
+            &serde_json::to_string(&gespan_core::transcript::Interjection {
+                text: "Claude Code".into(),
+                custom_type: gespan_core::session_import::IMPORTED_TYPE.into(),
+                severity: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    /// Each drawn row, by the source row it belongs to and what it draws.
+    fn drawn(view: &TranscriptView) -> Vec<(usize, String)> {
+        view.rows
+            .iter()
+            .map(|row| {
+                let what = match &row.body {
+                    Body::Interjection(note) => format!("divider {}", note.label()),
+                    Body::Plain(text) => format!("text {text}"),
+                    Body::Markdown(md) => format!("text {}", markdown::row_text(md)),
+                    Body::WorkLine { .. } => "work".into(),
+                    Body::Actions { turn, .. } => format!("actions {turn}"),
+                    Body::Review { .. } => "review".into(),
+                    _ => "other".into(),
+                };
+                (view.messages[row.message].start, what)
+            })
+            .collect()
+    }
+
+    /// An imported history opens with its divider: drawn as the label alone,
+    /// with no body text, no reply group and no actions of its own, ahead
+    /// of the imported prompt and reply.
+    #[gpui::test]
+    fn an_imported_history_opens_with_the_divider_alone(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let window = cx.update(|cx| {
+                cx.open_window(WindowOptions::default(), |_, cx| {
+                    cx.new(|_| TranscriptView::new())
+                })
+                .unwrap()
+            });
+            window
+                .update(cx, |view, _, cx| {
+                    if pilot {
+                        view.pilot_mode("bot", 0x336699, "Pilot");
+                    }
+                    view.patch(
+                        0,
+                        vec![
+                            imported_row(),
+                            row("user", "Fix the login"),
+                            row("assistant", "Fixed it."),
+                        ],
+                        cx,
+                    );
+                    let drawn = drawn(view);
+                    let at_divider: Vec<&str> = drawn
+                        .iter()
+                        .filter(|(start, _)| *start == 0)
+                        .map(|(_, what)| what.as_str())
+                        .collect();
+                    assert_eq!(
+                        at_divider,
+                        ["divider Imported from Claude Code"],
+                        "pilot {pilot}: the divider draws its label only: {drawn:?}"
+                    );
+                    assert!(
+                        !drawn
+                            .iter()
+                            .any(|(start, what)| *start == 0 && what == "work"),
+                        "pilot {pilot}: no empty Worked group above the divider: {drawn:?}"
+                    );
+                    assert!(
+                        !drawn.iter().any(|(_, what)| what == "text Claude Code"),
+                        "pilot {pilot}: the agent name is not a reply: {drawn:?}"
+                    );
+                    let actions: Vec<&str> = drawn
+                        .iter()
+                        .filter(|(_, what)| what.starts_with("actions"))
+                        .map(|(_, what)| what.as_str())
+                        .collect();
+                    assert_eq!(
+                        actions.len(),
+                        1,
+                        "pilot {pilot}: only the imported reply has actions: {drawn:?}"
+                    );
+                    let reply = drawn
+                        .iter()
+                        .position(|(start, _)| *start == 2)
+                        .expect("the reply is drawn");
+                    let divider = drawn.iter().position(|(start, _)| *start == 0).unwrap();
+                    assert!(divider < reply, "pilot {pilot}");
+                })
+                .unwrap();
+            let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            visual.refresh().unwrap();
+            assert!(
+                visual.debug_bounds("interjection-body-0").is_none(),
+                "pilot {pilot}: the agent's name shows in the label, not as body text"
+            );
+        }
+    }
+
+    /// Other interjections still show their text under the label.
+    #[gpui::test]
+    fn a_notice_interjection_shows_its_text(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), |_, cx| {
+                cx.new(|_| TranscriptView::new())
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| {
+                let note = gespan_core::transcript::Interjection {
+                    text: "Check the migration".into(),
+                    custom_type: "custom".into(),
+                    severity: None,
+                };
+                view.patch(
+                    0,
+                    vec![
+                        row("user", "Ship it"),
+                        row("assistant", "Shipped."),
+                        row("interjection", &serde_json::to_string(&note).unwrap()),
+                    ],
+                    cx,
+                );
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("interjection-body-2").is_some());
     }
 
     #[gpui::test]

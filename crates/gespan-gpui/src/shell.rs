@@ -22,6 +22,7 @@ mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
+mod import_sessions;
 mod in_flight;
 mod inbox_ask;
 mod layout;
@@ -810,6 +811,7 @@ pub(crate) struct Shell {
     menu_bar: menu_bar::MenuBar,
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
+    import_sessions: import_sessions::ImportSessions,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
     /// The last active chat and whether it drew a background, so arriving
     /// from one without fades the next one in.
@@ -1227,6 +1229,7 @@ impl Shell {
             menu_bar: menu_bar::MenuBar::new(!cfg!(target_os = "macos")),
             menu: None,
             background_dialog: None,
+            import_sessions: Default::default(),
             backgrounds: HashMap::new(),
             backdrop: None,
             background_card: AnchorSlot::default(),
@@ -6098,6 +6101,17 @@ impl Shell {
                     MenuItem::Separator,
                     self.project_notification_menu(path).into(),
                     MenuItem::Separator,
+                ]);
+                // Sessions on a remote host stay there; only local ones import.
+                if !path.starts_with("remote://") {
+                    items.extend([
+                        MenuAction::new(import_sessions::ACTION, "Import sessions…")
+                            .icon("login-01")
+                            .into(),
+                        MenuItem::Separator,
+                    ]);
+                }
+                items.extend([
                     MenuAction::new("archive", "Archive").icon("archive").into(),
                     MenuAction::new("delete", "Delete")
                         .icon("trash")
@@ -6186,6 +6200,8 @@ impl Shell {
                     self.open_project_theme(path, window, cx);
                 } else if action == "background" {
                     self.open_background_dialog(path, window, cx);
+                } else if action == import_sessions::ACTION {
+                    self.open_import_dialog(path, window, cx);
                 } else if action == "archive" {
                     self.archive_project(&path, window, cx);
                 } else if action == "delete" {
@@ -9452,6 +9468,7 @@ impl Render for Shell {
             }))
             .children(self.drag_ghost(cx))
             .children(self.background_modal(window, cx))
+            .children(self.import_modal(window, cx))
             .children(self.link_modal(window, cx))
             .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))

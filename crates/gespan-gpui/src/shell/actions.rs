@@ -526,7 +526,11 @@ impl Shell {
         cx.notify();
     }
     /// A short note, such as where an action was saved, that goes by itself.
-    fn show_action_notice(&mut self, text: &'static str, cx: &mut Context<Self>) {
+    pub(super) fn show_action_notice(
+        &mut self,
+        text: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         self.action_notice = Some(text.into());
         // Each note gets its own number, so an older note's timer never
         // clears a newer one, even with the same text.

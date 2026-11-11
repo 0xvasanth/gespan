@@ -163,7 +163,7 @@ fn lookup_subagent_runs(
     runs
 }
 
-fn read_cursor_metadata(connection: &Connection) -> Result<Value, String> {
+pub(crate) fn read_cursor_metadata(connection: &Connection) -> Result<Value, String> {
     let raw: String = connection
         .query_row("SELECT value FROM meta WHERE key = '0'", [], |row| {
             row.get(0)
@@ -359,7 +359,7 @@ fn read_tool_calls(path: &Path, tool_call_ids: &[String]) -> Result<Vec<CursorTo
     lookup_tool_calls(&connection, tool_call_ids).map_err(|e| e.to_string())
 }
 
-fn open_cursor_store(path: &Path) -> Result<Connection, String> {
+pub(crate) fn open_cursor_store(path: &Path) -> Result<Connection, String> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let mut wal = path.as_os_str().to_os_string();
     wal.push("-wal");

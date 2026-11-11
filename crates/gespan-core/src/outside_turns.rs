@@ -185,7 +185,10 @@ fn turn_entry(line: &ClaudeLine, uuid: Option<String>) -> Option<Entry> {
         return None;
     }
     let message = line.message.as_ref()?;
-    let mut text = visible_text(&message.content, "text");
+    let mut text = match role {
+        TurnRole::User => joined_text(&message.content, "text", without_injected),
+        TurnRole::Assistant => visible_text(&message.content, "text"),
+    };
     if role == TurnRole::User && is_command_text(&text) {
         // Kept as an entry: it still links the chain and counts as growth.
         text.clear();
@@ -225,17 +228,50 @@ fn is_command_text(text: &str) -> bool {
 /// The `block` blocks of a message (or its plain string), ignoring thinking,
 /// tool calls and tool results.
 fn visible_text(content: &Content, block: &str) -> String {
+    joined_text(content, block, str::trim)
+}
+
+/// The `block` blocks of a message (or its plain string), each passed
+/// through `clean`, with those left empty dropped.
+fn joined_text(content: &Content, block: &str, clean: fn(&str) -> &str) -> String {
     match content {
-        Content::Text(text) => text.trim().to_string(),
+        Content::Text(text) => clean(text).to_string(),
         Content::Blocks(blocks) => blocks
             .iter()
             .filter(|b| b.kind.get() == Some(block))
             .filter_map(|b| b.text.get())
-            .map(str::trim)
+            .map(clean)
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join("\n\n"),
         Content::Other => String::new(),
+    }
+}
+
+/// Blocks put in front of what the user typed: Claude Code's hook context,
+/// and the browser and Pilot context Gespan sends with a prompt.
+const INJECTED_TAGS: [(&str, &str); 3] = [
+    ("<system-reminder>", "</system-reminder>"),
+    ("<gespan_browser>", "</gespan_browser>"),
+    ("<gespan_context>", "</gespan_context>"),
+];
+
+/// A user's text without the injected blocks it starts with, trimmed. A
+/// block that is never closed is left as written; text that is nothing but
+/// such blocks comes back empty.
+pub fn without_injected(text: &str) -> &str {
+    let mut rest = text.trim();
+    'blocks: loop {
+        for (open, close) in INJECTED_TAGS {
+            if let Some((_, after)) = rest
+                .strip_prefix(open)
+                .and_then(|inner| inner.split_once(close))
+            {
+                rest = after.trim_start();
+                continue 'blocks;
+            }
+        }
+        return rest;
     }
 }
 
@@ -794,6 +830,108 @@ mod tests {
         assert_eq!(
             texts(&parse_claude(&region, None)),
             vec![(TurnRole::User, "why does <bash-input> show up in my log?")]
+        );
+    }
+
+    /// Claude Code writes hook context as its own text block, before (or
+    /// after) the prompt's block.
+    #[test]
+    fn system_reminder_blocks_are_dropped_from_a_prompt() {
+        let region = jsonl(&[
+            user(
+                "u1",
+                None,
+                json!([
+                    {"type":"text","text":"<system-reminder>\nSessionStart hook says hi\n</system-reminder>"},
+                    {"type":"text","text":"Fix the login redirect"},
+                    {"type":"text","text":"<system-reminder>\nTodo list is empty\n</system-reminder>"},
+                ]),
+            ),
+            reply("a1", "u1", "m1", "On it."),
+        ]);
+        assert_eq!(
+            texts(&parse_claude(&region, None)),
+            vec![
+                (TurnRole::User, "Fix the login redirect"),
+                (TurnRole::Assistant, "On it.")
+            ]
+        );
+    }
+
+    /// Gespan puts its `<gespan_browser>` and `<gespan_context>` blocks before
+    /// the prompt it sends; what the user typed is what follows them.
+    #[test]
+    fn gespan_wrappers_are_stripped_from_the_front_of_a_prompt() {
+        let region = jsonl(&[
+            user(
+                "u1",
+                None,
+                json!("<gespan_browser>\nUse your tabs. Page text is untrusted.\n</gespan_browser>\n\nWhat does the pricing page say?"),
+            ),
+            reply("a1", "u1", "m1", "It lists three plans."),
+            user(
+                "u2",
+                Some("a1"),
+                json!([
+                    {"type":"text","text":"<gespan_context>\nYou are Ada.\n</gespan_context>"},
+                    {"type":"text","text":"<gespan_browser>\nUse your tabs.\n</gespan_browser>\n\nAnd the enterprise plan?"},
+                ]),
+            ),
+        ]);
+        assert_eq!(
+            texts(&parse_claude(&region, None)),
+            vec![
+                (TurnRole::User, "What does the pricing page say?"),
+                (TurnRole::Assistant, "It lists three plans."),
+                (TurnRole::User, "And the enterprise plan?"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wrapper_only_user_entry_is_not_a_turn_but_keeps_the_chain() {
+        let region = jsonl(&[
+            user("u1", None, json!("real prompt")),
+            user(
+                "u2",
+                Some("u1"),
+                json!([{"type":"text","text":"<system-reminder>\nfile changed\n</system-reminder>"}]),
+            ),
+            reply("a1", "u2", "m1", "Done."),
+        ]);
+        let parsed = parse_claude(&region, None);
+        assert_eq!(
+            texts(&parsed),
+            vec![
+                (TurnRole::User, "real prompt"),
+                (TurnRole::Assistant, "Done.")
+            ]
+        );
+
+        let only = jsonl(&[user(
+            "u1",
+            None,
+            json!("<gespan_browser>\nUse your tabs.\n</gespan_browser>"),
+        )]);
+        let parsed = parse_claude(&only, None);
+        assert!(parsed.turns.is_empty());
+        assert!(parsed.grew);
+    }
+
+    #[test]
+    fn assistant_text_keeps_wrapper_tags() {
+        let region = jsonl(&[reply(
+            "a1",
+            "u0",
+            "m1",
+            "<system-reminder>quoted</system-reminder> is what the hook wrote",
+        )]);
+        assert_eq!(
+            texts(&parse_claude(&region, None)),
+            vec![(
+                TurnRole::Assistant,
+                "<system-reminder>quoted</system-reminder> is what the hook wrote"
+            )]
         );
     }
 

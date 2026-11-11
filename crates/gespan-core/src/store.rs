@@ -6,6 +6,7 @@ mod inbox_ask;
 mod managed_sessions;
 mod notes;
 mod pilots;
+mod provider_ids;
 mod remote;
 mod remote_legacy;
 pub use remote::{RemoteProject, RemoteSession, RemoteUpload};

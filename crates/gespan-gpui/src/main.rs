@@ -44,6 +44,7 @@ mod hold;
 mod hold_confirm;
 mod image_lightbox;
 mod image_memory;
+mod import_dialog;
 mod inbox;
 mod input;
 mod installed_providers;
