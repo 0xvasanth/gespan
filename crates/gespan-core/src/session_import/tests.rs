@@ -1311,6 +1311,11 @@ mod importing {
             assert_eq!(report.imported.len(), 1, "{name}: {:?}", report.skipped);
             let s = &report.imported[0].session;
             assert_eq!(s.cwd, p, "{name}");
+            assert_eq!(
+                report.imported[0].worktree.as_deref(),
+                Some(tree.as_str()),
+                "{name}: the report names the worktree, so the sidebar can file it at once"
+            );
             let saved = store.lock().unwrap().agent_settings(s.id).unwrap().unwrap();
             assert_eq!(saved.worktree_cwd.as_deref(), Some(tree.as_str()), "{name}");
         }
@@ -1331,6 +1336,7 @@ mod importing {
                 home_of(home.path()),
             );
             let id = report.imported[0].session.id;
+            assert_eq!(report.imported[0].worktree, None, "{name}");
             let saved = store.lock().unwrap().agent_settings(id).unwrap().unwrap();
             assert_eq!(saved.account, crate::accounts::Profile::default(), "{name}");
             assert_eq!(saved.worktree_cwd, None, "{name}");
@@ -1640,6 +1646,14 @@ mod importing {
                 "{name}: the half-made session is removed again"
             );
         }
+    }
+
+    #[test]
+    fn agent_names_are_the_product_names() {
+        assert_eq!(agent_name(Kind::Claude), "Claude Code");
+        assert_eq!(agent_name(Kind::Codex), "Codex");
+        assert_eq!(agent_name(Kind::Cursor), "Cursor");
+        assert_eq!(agent_name(Kind::Kiro), "Kiro");
     }
 
     #[test]

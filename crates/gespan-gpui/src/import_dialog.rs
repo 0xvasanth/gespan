@@ -441,7 +441,7 @@ impl ImportDialog {
                     .id(SharedString::from(selector.clone()))
                     .debug_selector(move || selector)
                     .role(Role::Tab)
-                    .aria_label(tab.kind.label())
+                    .aria_label(session_import::agent_name(tab.kind))
                     .px(px(12.))
                     .py(px(7.))
                     .flex()
@@ -467,7 +467,7 @@ impl ImportDialog {
                         Face::provider(id),
                         provider_glyph(id, 10.),
                     ))
-                    .child(tab.kind.label())
+                    .child(session_import::agent_name(tab.kind))
                     .when(!tab.loading, |d| {
                         d.child(
                             div()
@@ -699,7 +699,7 @@ impl ImportDialog {
         }
         let visible = self.visible(cx);
         if visible.is_empty() {
-            let agent = tab.kind.label();
+            let agent = session_import::agent_name(tab.kind);
             let note = if self.tab_count(self.active) > 0 {
                 "No sessions match your search.".to_owned()
             } else if self.scope == Scope::ThisFolder {

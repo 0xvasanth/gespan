@@ -164,6 +164,8 @@ pub struct Imported {
     pub session: Session,
     /// The project it was filed under.
     pub project: String,
+    /// The linked worktree it runs in, when it ran in one.
+    pub worktree: Option<String>,
 }
 
 /// What an import did with each pick.
@@ -173,9 +175,13 @@ pub struct Report {
     pub skipped: Vec<(Candidate, Skip)>,
 }
 
-/// The agent's product name, as the divider shows it.
-fn agent_name(kind: Kind) -> &'static str {
+/// The agent's product name, as the import window's tab and the imported
+/// divider show it.
+pub fn agent_name(kind: Kind) -> &'static str {
     match kind {
+        Kind::Claude => "Claude Code",
+        Kind::Codex => "Codex",
+        Kind::Cursor => "Cursor",
         Kind::Kiro => "Kiro",
         other => other.label(),
     }
@@ -241,13 +247,17 @@ pub fn import(
         let rows = rows_of(pick.kind, &turns);
         let settings = crate::agent::Settings {
             account: crate::accounts::Profile::default(),
-            worktree_cwd: worktree,
+            worktree_cwd: worktree.clone(),
             ..Default::default()
         };
         match create(store, pick, &project, &settings, &rows) {
             Ok(Some(session)) => {
                 save_checkpoint(store, pick, session.id, &home);
-                report.imported.push(Imported { session, project });
+                report.imported.push(Imported {
+                    session,
+                    project,
+                    worktree,
+                });
             }
             Ok(None) => report.skipped.push((pick.clone(), Skip::AlreadyImported)),
             Err(error) => report.skipped.push((pick.clone(), Skip::Failed(error))),

@@ -53,14 +53,14 @@ fn skip_reason(skip: &Skip) -> (u8, &'static str) {
     }
 }
 
-/// "Imported N sessions into <projects>", then how many were skipped, one
-/// part per reason. `label` names a project.
+/// "Imported N sessions into <projects>", or "Nothing imported", then how
+/// many were skipped, one part per reason. `label` names a project.
 fn import_notice(report: &Report, label: impl Fn(&str) -> String) -> String {
-    let count = report.imported.len();
-    let mut text = format!(
-        "Imported {count} {}",
-        if count == 1 { "session" } else { "sessions" }
-    );
+    let mut text = match report.imported.len() {
+        0 => "Nothing imported".to_owned(),
+        1 => "Imported 1 session".to_owned(),
+        count => format!("Imported {count} sessions"),
+    };
     let mut projects: Vec<&str> = Vec::new();
     for imported in &report.imported {
         if !projects.contains(&imported.project.as_str()) {
@@ -229,6 +229,9 @@ impl Shell {
             if item.project == self.workspace.project {
                 newest_here = Some(id);
             }
+            // Before `add`, so the conversation and the sidebar start out in
+            // the worktree rather than waiting for the next reload.
+            self.session_worktrees.insert(id, item.worktree);
             self.add(item.session, cx);
             self.order.retain(|s| *s != id);
             self.order.insert(0, id);
@@ -735,7 +738,7 @@ mod tests {
         };
         assert_eq!(
             import_notice(&report, |p| p.to_owned()),
-            "Imported 0 sessions · 1 skipped (no matching project) · 1 skipped (folder missing) \
+            "Nothing imported · 1 skipped (no matching project) · 1 skipped (folder missing) \
              · 2 skipped (already imported) · 1 skipped (couldn't be read) \
              · 1 skipped (couldn't be saved)"
         );
@@ -754,7 +757,12 @@ mod tests {
                 work_item: None,
             },
             project: project.into(),
+            worktree: None,
         };
+        assert_eq!(
+            import_notice(&Report::default(), |p| p.to_owned()),
+            "Nothing imported"
+        );
         let report = Report {
             imported: vec![session("/w/a"), session("/w/a")],
             skipped: Vec::new(),
@@ -764,5 +772,47 @@ mod tests {
             "Imported 2 sessions into a",
             "each project is named once"
         );
+    }
+
+    #[gpui::test]
+    fn finishing_an_import_files_a_worktree_session_under_its_worktree(cx: &mut TestAppContext) {
+        let f = fixture(cx);
+        let tree = format!("{}-tree", f.here);
+        fs::create_dir_all(&tree).unwrap();
+        let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+        f.window
+            .update(visual, |shell, window, cx| {
+                let session = {
+                    let mut store = locked(&shell.store).unwrap();
+                    let settings = gespan_core::agent::Settings {
+                        worktree_cwd: Some(tree.clone()),
+                        ..Default::default()
+                    };
+                    let mut session = store
+                        .create_from("claude", &f.here, "In the tree", &settings, &[])
+                        .unwrap();
+                    store.provider_id(session.id, "s-tree").unwrap();
+                    session.provider_id = Some("s-tree".into());
+                    session
+                };
+                let id = session.id;
+                let report = Report {
+                    imported: vec![Imported {
+                        session,
+                        project: f.here.clone(),
+                        worktree: Some(tree.clone()),
+                    }],
+                    skipped: Vec::new(),
+                };
+                let revision = shell.navigation_revision;
+                shell.finish_import(report, &[], revision, window, cx);
+                assert_eq!(
+                    shell.session_worktrees.get(&id),
+                    Some(&Some(tree.clone())),
+                    "registered at once, not on the next reload"
+                );
+                assert_eq!(shell.session_working_copy(id, cx), tree);
+            })
+            .unwrap();
     }
 }
