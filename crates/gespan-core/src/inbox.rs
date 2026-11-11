@@ -257,9 +257,13 @@ pub struct Comment {
     pub id: String,
     pub kind: String,
     pub author: String,
-    /// How the author relates to the repository: `OWNER`, `MEMBER` or
-    /// `COLLABORATOR` can write to it. Empty when the provider does not say.
+    /// How the author relates to the repository, as GitHub says (`OWNER`,
+    /// `MEMBER`, `CONTRIBUTOR`...). Shown only: it does not say whether they
+    /// can write, so it is never trusted for that.
     pub author_association: String,
+    /// The author's permission on the repository once it has been looked
+    /// up: `admin`, `maintain` and `write` can push. Empty until then.
+    pub permission: String,
     pub author_avatar_url: String,
     pub body: String,
     pub created_at: String,

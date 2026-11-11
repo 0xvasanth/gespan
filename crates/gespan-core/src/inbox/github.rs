@@ -1363,6 +1363,29 @@ fn git_diff_full_context(root: &Path, base: &str, head: &str) -> Result<(String,
     }
 }
 
+/// `user`'s permission on `repo`: `admin`, `maintain`, `write`, `triage`,
+/// `read` or `none`. Only a login GitHub could have issued is asked about.
+pub(super) fn git_github_permission_for(
+    root: &Path,
+    repo: &str,
+    user: &str,
+) -> Result<String, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let user = user.trim();
+    if user.is_empty()
+        || user.len() > 39
+        || !user.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(format!(
+            "{user:?} is not a GitHub account that can be looked up"
+        ));
+    }
+    let path = format!("repos/{owner}/{name}/collaborators/{user}/permission");
+    // `role_name` tells maintain and triage apart; `permission` folds them.
+    let permission = gh_checked(root, &["api", &path, "--jq", ".role_name // .permission"])?;
+    Ok(permission.trim().to_lowercase())
+}
+
 /// The login of the account `gh` is signed in with.
 pub(super) fn git_github_login_for(root: &Path) -> Result<String, String> {
     let login = gh_checked(root, &["api", "user", "--jq", ".login"])?;
@@ -1587,6 +1610,16 @@ mod automation_event_tests {
                 query.matches("authorAssociation").count()
             );
         }
+    }
+
+    #[test]
+    fn only_a_real_github_login_is_looked_up_for_its_permission() {
+        let root = std::env::temp_dir();
+        for login in ["", "cubic-dev-ai[bot]", "../admin", "a b", &"x".repeat(40)] {
+            let error = git_github_permission_for(&root, "acme/app", login).unwrap_err();
+            assert!(error.contains("not a GitHub account"), "{login:?}: {error}");
+        }
+        assert!(git_github_permission_for(&root, "not a repo", "alice").is_err());
     }
 
     #[test]
