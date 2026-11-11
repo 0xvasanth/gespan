@@ -510,7 +510,7 @@ impl TranscriptView {
             let text = match &row.body {
                 Body::Markdown(md) => crate::markdown::selection_text(md),
                 Body::Plain(text) => text.to_string(),
-                Body::Interjection(note) => note.text.clone(),
+                Body::Interjection(note) => note.body().to_owned(),
                 _ => continue,
             };
             let start = if row.key == a.row {
@@ -727,5 +727,90 @@ mod tests {
             assert_eq!(view.selected_text().as_deref(), Some("this"));
             assert!(view.selection_menu(cx).is_some());
         });
+    }
+    fn divider(custom_type: &str, text: &str) -> Row {
+        Row {
+            role: "interjection".into(),
+            text: serde_json::to_string(&gespan_core::transcript::Interjection {
+                text: text.into(),
+                custom_type: custom_type.into(),
+                severity: None,
+            })
+            .unwrap(),
+            first: true,
+            sent_at: None,
+        }
+    }
+    /// A divider shows only its label, which is not selectable text, so a
+    /// selection across it copies the rows around it and not the agent's
+    /// name kept in the imported divider's raw text.
+    #[gpui::test]
+    fn copying_across_a_divider_copies_none_of_its_raw_text(cx: &mut TestAppContext) {
+        for (custom_type, text) in [
+            (gespan_core::session_import::IMPORTED_TYPE, "Claude Code"),
+            (gespan_core::outside_turns::MARKER_TYPE, ""),
+        ] {
+            let view = cx.new(|_| TranscriptView::new());
+            view.update(cx, |view, cx| {
+                let plain = |role: &str, text: &str| Row {
+                    role: role.into(),
+                    text: text.into(),
+                    first: true,
+                    sent_at: None,
+                };
+                view.patch(
+                    0,
+                    vec![
+                        plain("assistant", "Earlier reply"),
+                        divider(custom_type, text),
+                        plain("user", "Fix it"),
+                        plain("assistant", "Fixed."),
+                    ],
+                    cx,
+                );
+                let key = |text: &str| {
+                    view.rows
+                        .iter()
+                        .find(|row| match &row.body {
+                            Body::Markdown(md) => crate::markdown::selection_text(md) == text,
+                            Body::Plain(plain) => plain.as_ref() == text,
+                            _ => false,
+                        })
+                        .unwrap()
+                        .key
+                };
+                let (before, after) = (key("Earlier reply"), key("Fix it"));
+                let divider = view
+                    .rows
+                    .iter()
+                    .find(|row| matches!(row.body, Body::Interjection(_)))
+                    .unwrap();
+                let response = view.messages[divider.message].start;
+                {
+                    let mut state = view.selection.0.borrow_mut();
+                    state.response = response;
+                    state.anchor = Some(Position {
+                        row: before,
+                        byte: 0,
+                    });
+                    state.head = Some(Position {
+                        row: after,
+                        byte: 6,
+                    });
+                }
+                assert_eq!(
+                    view.selected_text(),
+                    None,
+                    "{custom_type} divider copies nothing"
+                );
+                view.selection.0.borrow_mut().response = view
+                    .messages
+                    .iter()
+                    .find(|m| m.role == "user")
+                    .unwrap()
+                    .start;
+                assert_eq!(view.selected_text().as_deref(), Some("Fix it"));
+            });
+        }
     }
 }

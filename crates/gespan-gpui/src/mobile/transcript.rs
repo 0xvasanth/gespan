@@ -249,7 +249,11 @@ fn notice(rows: &[Row], at: usize, end: usize) -> Option<Value> {
             .ok()
             .filter(|note| !note.text.trim().is_empty())
             .map(|note| {
-                let text = crate::transcript::finished_marker(&note).unwrap_or(note.text);
+                let text = if note.custom_type == gespan_core::session_import::IMPORTED_TYPE {
+                    note.label().into_owned()
+                } else {
+                    crate::transcript::finished_marker(&note).unwrap_or(note.text)
+                };
                 json!({"type": "notice", "id": id, "text": text})
             }),
         "visual" => {
@@ -1044,6 +1048,39 @@ mod tests {
         assert_eq!(
             turn["items"][3],
             json!({"type":"notice","id":"r2","text":"Provider disconnected","error":true})
+        );
+    }
+
+    /// An imported history's divider keeps the agent's name as its text;
+    /// mobile shows it as the desktop labels it. The "From terminal" marker
+    /// has no text and shows nothing.
+    #[test]
+    fn the_imported_divider_shows_as_imported_from_the_agent() {
+        let divider = |custom_type: &str, text: &str| {
+            serde_json::to_string(&Interjection {
+                text: text.into(),
+                custom_type: custom_type.into(),
+                severity: None,
+            })
+            .unwrap()
+        };
+        let rows = [
+            row("user", "Go"),
+            row(
+                "interjection",
+                &divider(gespan_core::session_import::IMPORTED_TYPE, "Claude Code"),
+            ),
+            row(
+                "interjection",
+                &divider(gespan_core::outside_turns::MARKER_TYPE, ""),
+            ),
+        ];
+        let infos = HashMap::new();
+        let turn = &all(&source(&rows, &infos, false))[0];
+        assert_eq!(types(turn), ["user", "header", "notice"]);
+        assert_eq!(
+            turn["items"][2],
+            json!({"type":"notice","id":"r1","text":"Imported from Claude Code"})
         );
     }
 
