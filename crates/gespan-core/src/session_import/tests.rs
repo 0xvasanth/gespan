@@ -583,3 +583,335 @@ mod placement {
         assert!(!already_imported(&[], Kind::Claude, "live"));
     }
 }
+
+mod importing {
+    use super::*;
+    use crate::outside_turns::{self, Checkpoint};
+    use crate::store::Store;
+    use crate::transcript::Interjection;
+    use std::sync::Mutex;
+
+    fn native() -> Mutex<Store> {
+        Mutex::new(Store::open(Path::new(":memory:")).unwrap())
+    }
+
+    fn shared() -> Mutex<Store> {
+        Mutex::new(Store::open_gespan(Path::new(":memory:")).unwrap())
+    }
+
+    fn backends() -> [(&'static str, Mutex<Store>); 2] {
+        [("native", native()), ("shared", shared())]
+    }
+
+    fn no_root(_: &str) -> Option<String> {
+        None
+    }
+
+    /// A Claude session of two turns that ran in `cwd`.
+    fn claude_file(home: &Path, id: &str, cwd: &str) -> PathBuf {
+        let body = |uuid: &str, parent: Option<&str>, text: &str, at: &str| {
+            let mut v: serde_json::Value = serde_json::from_str(&user(uuid, parent, text)).unwrap();
+            v["cwd"] = cwd.into();
+            v["timestamp"] = at.into();
+            v.to_string()
+        };
+        let mut reply: serde_json::Value =
+            serde_json::from_str(&assistant("a1", "u1", "On it.")).unwrap();
+        reply["timestamp"] = "2026-11-11T10:00:05Z".into();
+        write(
+            home,
+            &format!("projects/-x/{id}.jsonl"),
+            &[
+                snapshot(),
+                body("u1", None, "Fix the login\nmore", "2026-11-11T10:00:00Z"),
+                reply.to_string(),
+                serde_json::json!({
+                    "type": "assistant", "uuid": "t1", "parentUuid": "a1",
+                    "message": {"role": "assistant", "id": "t1",
+                                "content": [{"type": "tool_use", "id": "x", "name": "Bash",
+                                             "input": {"command": "SECRET-TOOL-TEXT"}}]},
+                })
+                .to_string(),
+            ],
+        )
+    }
+
+    fn candidate_of(home: &Path, id: &str, cwd: &str) -> Candidate {
+        let path = claude_file(home, id, cwd);
+        let mut found = list(Kind::Claude, home);
+        found.retain(|c| c.path == path);
+        found.pop().unwrap()
+    }
+
+    fn project(dir: &tempfile::TempDir, name: &str) -> String {
+        let path = dir.path().join(name);
+        fs::create_dir_all(&path).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn home_of(home: &Path) -> impl Fn(Kind) -> Option<PathBuf> {
+        let home = home.to_path_buf();
+        move |_| Some(home.clone())
+    }
+
+    #[test]
+    fn import_creates_a_resumable_session_with_rows() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "abc", &p);
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert!(report.skipped.is_empty(), "{name}: {:?}", report.skipped);
+            assert_eq!(report.imported.len(), 1, "{name}");
+            let done = &report.imported[0];
+            assert_eq!(done.project, p, "{name}");
+            let s = &done.session;
+            assert_eq!(s.provider, "claude", "{name}");
+            assert_eq!(s.provider_id.as_deref(), Some("abc"), "{name}");
+            assert_eq!(s.cwd, p, "{name}");
+            assert_eq!(s.title, "Fix the login", "{name}");
+
+            let guard = store.lock().unwrap();
+            let saved = guard
+                .sessions()
+                .unwrap()
+                .into_iter()
+                .find(|x| x.id == s.id)
+                .unwrap();
+            assert_eq!(saved.provider_id.as_deref(), Some("abc"), "{name}");
+            assert!(saved.has_messages, "{name}");
+            let rows = guard.load(s.id).unwrap().rows;
+            let shape: Vec<(&str, &str)> = rows
+                .iter()
+                .map(|r| (r.role.as_str(), r.text.as_str()))
+                .collect();
+            let divider = serde_json::to_string(&Interjection {
+                text: "Claude Code".into(),
+                custom_type: IMPORTED_TYPE.into(),
+                severity: None,
+            })
+            .unwrap();
+            assert_eq!(
+                shape,
+                vec![
+                    ("interjection", divider.as_str()),
+                    ("user", "Fix the login\nmore"),
+                    ("assistant", "On it."),
+                ],
+                "{name}"
+            );
+            assert!(rows.iter().all(|r| !r.text.contains("SECRET-TOOL-TEXT")));
+            assert!(
+                rows[1].sent_at.is_some_and(|t| t > 1_700_000_000_000),
+                "{name}"
+            );
+            assert!(
+                rows[2]
+                    .sent_at
+                    .is_some_and(|t| t >= rows[1].sent_at.unwrap()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn import_files_a_worktree_session_under_its_project() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let tree = project(&work, "app-tree");
+            let pick = candidate_of(home.path(), "wt1", &tree);
+            let main = p.clone();
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                move |_| Some(main.clone()),
+                home_of(home.path()),
+            );
+            assert_eq!(report.imported.len(), 1, "{name}: {:?}", report.skipped);
+            let s = &report.imported[0].session;
+            assert_eq!(s.cwd, p, "{name}");
+            let saved = store.lock().unwrap().agent_settings(s.id).unwrap().unwrap();
+            assert_eq!(saved.worktree_cwd.as_deref(), Some(tree.as_str()), "{name}");
+        }
+    }
+
+    #[test]
+    fn import_pins_the_default_account() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "acc", &p);
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            let id = report.imported[0].session.id;
+            let saved = store.lock().unwrap().agent_settings(id).unwrap().unwrap();
+            assert_eq!(saved.account, crate::accounts::Profile::default(), "{name}");
+            assert_eq!(saved.worktree_cwd, None, "{name}");
+        }
+    }
+
+    #[test]
+    fn import_twice_skips_the_second_as_already_imported() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "dup", &p);
+            // Twice in one call, then again in a later call.
+            let first = import(
+                &store,
+                &[pick.clone(), pick.clone()],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert_eq!(first.imported.len(), 1, "{name}");
+            assert_eq!(first.skipped.len(), 1, "{name}");
+            assert_eq!(first.skipped[0].1, Skip::AlreadyImported, "{name}");
+            let second = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert!(second.imported.is_empty(), "{name}");
+            assert_eq!(second.skipped[0].1, Skip::AlreadyImported, "{name}");
+            let held = store.lock().unwrap().sessions().unwrap();
+            assert_eq!(held.len(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn import_reports_skips_and_imports_the_rest() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let elsewhere = project(&work, "elsewhere");
+            let good = candidate_of(home.path(), "good", &p);
+            let stray = candidate_of(home.path(), "stray", &elsewhere);
+            let gone = candidate_of(home.path(), "gone", &p);
+            fs::remove_file(&gone.path).unwrap();
+            let report = import(
+                &store,
+                &[gone.clone(), stray.clone(), good.clone()],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert_eq!(report.imported.len(), 1, "{name}");
+            assert_eq!(
+                report.imported[0].session.provider_id.as_deref(),
+                Some("good")
+            );
+            assert_eq!(report.skipped.len(), 2, "{name}");
+            assert_eq!(report.skipped[0].0, gone, "{name}");
+            assert!(matches!(report.skipped[0].1, Skip::Unreadable(_)), "{name}");
+            assert_eq!(report.skipped[1].0, stray, "{name}");
+            assert_eq!(report.skipped[1].1, Skip::NoProject, "{name}");
+        }
+    }
+
+    #[test]
+    fn import_reads_a_file_ending_mid_line() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "open", &p);
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&pick.path)
+                .unwrap();
+            use std::io::Write;
+            write!(
+                file,
+                "{{\"type\":\"user\",\"uuid\":\"u9\",\"message\":{{\"role\":\"us"
+            )
+            .unwrap();
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            assert_eq!(report.imported.len(), 1, "{name}: {:?}", report.skipped);
+            let id = report.imported[0].session.id;
+            let rows = store.lock().unwrap().load(id).unwrap().rows;
+            let roles: Vec<&str> = rows.iter().map(|r| r.role.as_str()).collect();
+            assert_eq!(roles, ["interjection", "user", "assistant"], "{name}");
+        }
+    }
+
+    #[test]
+    fn import_sets_the_terminal_sync_checkpoint() {
+        for (name, store) in backends() {
+            let home = tempfile::tempdir().unwrap();
+            let work = tempfile::tempdir().unwrap();
+            let p = project(&work, "app");
+            let pick = candidate_of(home.path(), "sync", &p);
+            let path = pick.path.clone();
+            let report = import(
+                &store,
+                &[pick],
+                std::slice::from_ref(&p),
+                no_root,
+                home_of(home.path()),
+            );
+            let id = report.imported[0].session.id;
+            let raw = store
+                .lock()
+                .unwrap()
+                .setting(&outside_turns::checkpoint_key(id))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{name}: no checkpoint saved"));
+            let checkpoint: Checkpoint = serde_json::from_str(&raw).unwrap();
+            let none =
+                outside_turns::sync(Kind::Claude, home.path(), "sync", Some(&checkpoint), None);
+            assert!(none.turns.is_empty(), "{name}: {:?}", none.turns);
+
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            use std::io::Write;
+            writeln!(file, "{}", user("u2", Some("t1"), "Add a test")).unwrap();
+            writeln!(file, "{}", assistant("a2", "u2", "Done.")).unwrap();
+            let more =
+                outside_turns::sync(Kind::Claude, home.path(), "sync", Some(&checkpoint), None);
+            assert_eq!(
+                texts(&more.turns),
+                vec![
+                    (TurnRole::User, "Add a test"),
+                    (TurnRole::Assistant, "Done.")
+                ],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn imported_divider_label() {
+        let note = Interjection {
+            text: "Claude Code".into(),
+            custom_type: "imported".into(),
+            severity: None,
+        };
+        assert_eq!(note.label(), "Imported from Claude Code");
+    }
+}

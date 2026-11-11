@@ -371,7 +371,7 @@ fn shape(rows: &[Row]) -> Vec<(String, String)> {
                 serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text)
                     .unwrap()
                     .label()
-                    .to_owned()
+                    .into_owned()
             } else {
                 row.text.clone()
             };

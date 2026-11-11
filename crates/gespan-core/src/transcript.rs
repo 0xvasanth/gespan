@@ -1,5 +1,6 @@
 //! Incremental, UTF-8-safe transcript blocks. Even a giant single answer is virtualizable.
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 pub mod attachments;
 
@@ -12,13 +13,14 @@ pub struct Interjection {
     pub severity: Option<String>,
 }
 impl Interjection {
-    pub fn label(&self) -> &str {
-        match self.custom_type.as_str() {
+    pub fn label(&self) -> Cow<'_, str> {
+        Cow::Borrowed(match self.custom_type.as_str() {
             "advisor" => "Advisor",
             "custom" => "Notice",
             "terminal" => "From terminal",
+            "imported" => return Cow::Owned(format!("Imported from {}", self.text)),
             label => label,
-        }
+        })
     }
 }
 

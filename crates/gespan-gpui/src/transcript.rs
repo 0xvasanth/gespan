@@ -4938,7 +4938,7 @@ impl TranscriptView {
                                     .aria_label(format!("Interjection: {}", note.label()))
                                     .text_size(px(12.))
                                     .text_color(content(0.55))
-                                    .child(note.label().to_owned()),
+                                    .child(note.label().into_owned()),
                             )
                             .when_some(severity, |d, severity| {
                                 let label = match severity {
