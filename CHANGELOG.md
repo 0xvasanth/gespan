@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-11
+
+### Added
+
+- **Import sessions:** the project menu (the gear next to the project name)
+  has Import sessions…, which lists past Claude Code, Codex, Cursor and Kiro
+  sessions on this Mac, one tab per agent. Tick the ones you want and they
+  are filed under the project whose folder they ran in, with their history
+  under an "Imported from …" divider. An imported session continues the same
+  native session, and sessions already in Gespan can't be imported twice.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added
@@ -2238,7 +2249,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/0xvasanth/gespan/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xvasanth/gespan/compare/v0.0.12...v0.1.0
 [0.0.12]: https://github.com/0xvasanth/gespan/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/0xvasanth/gespan/compare/v0.0.8...v0.0.11
