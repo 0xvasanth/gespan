@@ -201,6 +201,18 @@ pub fn gitlab_work_item_thread(
     gitlab_work_item_thread_for(&config, &repo, &kind, number)
 }
 
+/// The username of the account the saved token belongs to.
+pub fn gitlab_current_user(app: PathBuf) -> Result<String, String> {
+    let config = require_config(&app)?;
+    parse_current_user(&gitlab_get(&config, "/user")?.value)
+}
+
+fn parse_current_user(value: &Value) -> Result<String, String> {
+    string_field(value, "username")
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| "GitLab did not say which account is connected".to_string())
+}
+
 pub fn gitlab_work_item_comment(
     app: PathBuf,
     repo: String,

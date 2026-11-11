@@ -1575,3 +1575,238 @@ fn a_pilot_run_started_by_an_issue_alerts_with_the_pilots_name_and_opens_its_cha
         )]
     );
 }
+
+// --- GitLab merge request comments.
+
+fn merge_request(data: &Data, number: i64, updated: i64) -> gespan_core::inbox::Item {
+    gespan_core::inbox::Item {
+        provider: "gitlab".into(),
+        kind: "pr".into(),
+        number,
+        state: "opened".into(),
+        title: format!("MR {number}"),
+        url: format!("https://gitlab.com/acme/app/-/merge_requests/{number}"),
+        repo: "acme/app".into(),
+        project_path: data.project.clone(),
+        updated_at: chrono::DateTime::from_timestamp_millis(updated)
+            .unwrap()
+            .to_rfc3339(),
+        ..Default::default()
+    }
+}
+
+fn mr_comment(
+    mr: &gespan_core::inbox::Item,
+    id: &str,
+    author: &str,
+    body: &str,
+    me: &str,
+) -> Vec<gespan_core::inbox::Item> {
+    gespan_core::inbox::mr_comment_items(
+        mr,
+        &[gespan_core::inbox::MrComment {
+            id: id.into(),
+            author: author.into(),
+            body: body.into(),
+            created_at: chrono::DateTime::from_timestamp_millis(now_ms())
+                .unwrap()
+                .to_rfc3339(),
+            url: format!("{}#note_{id}", mr.url),
+        }],
+        me,
+    )
+}
+
+fn on_mr_comment(data: &Data) -> AutomationUpsert {
+    draft(
+        &data.project,
+        vec![AutomationTrigger::new("gitlab", "merge_request_comment")],
+    )
+}
+
+#[gpui::test]
+fn a_new_merge_request_comment_launches_one_run_however_often_it_is_offered(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let id = save(&data.db, on_mr_comment(&data));
+    let window = open(&data, cx);
+    let mr = merge_request(&data, 7, now_ms());
+    let first = mr_comment(&mr, "101", "alice", "Please rename this", "gespan-bot");
+    deliver(&window, first.clone(), cx);
+    deliver(&window, first.clone(), cx);
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_launched(&saved[0], "event");
+    assert_eq!(
+        saved[0].event_key.as_deref(),
+        Some("gitlab:mr_comment:acme/app:7:101")
+    );
+    assert_eq!(sessions(&window, &id, cx), 1);
+
+    // A second comment on the same merge request is a second run; the
+    // connected account's own reply is not.
+    let mut next = first;
+    next.extend(mr_comment(
+        &mr,
+        "102",
+        "bob",
+        "And add a test",
+        "gespan-bot",
+    ));
+    next.extend(mr_comment(&mr, "103", "gespan-bot", "Done", "gespan-bot"));
+    deliver(&window, next, cx);
+    let keys: Vec<_> = runs(&data.db, &id)
+        .into_iter()
+        .filter_map(|run| run.event_key)
+        .collect();
+    assert_eq!(keys.len(), 2, "{keys:?}");
+    assert!(keys.contains(&"gitlab:mr_comment:acme/app:7:102".to_string()));
+    assert_eq!(sessions(&window, &id, cx), 2);
+}
+
+#[gpui::test]
+fn a_merge_request_comment_can_wake_a_pilot_with_the_comment_in_its_message(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    let window = open(&data, cx);
+    let pilot = add_pilot(&window, &data, "ReviewPilot", cx);
+    let mut draft = on_mr_comment(&data);
+    draft.action = AutomationAction::Pilot {
+        pilot_id: pilot.clone(),
+    };
+    let id = save(&data.db, draft);
+    let mr = merge_request(&data, 7, now_ms());
+    let comment = mr_comment(&mr, "101", "alice", "Please rename this", "");
+    let due = gespan_core::automations::claim_inbox_events(
+        &mut Service::open(&data.db).unwrap(),
+        &comment,
+        now_ms(),
+    )
+    .unwrap()
+    .remove(0);
+    let before = all_sessions(&window, cx);
+    let queued = launch_for_pilot(&window, due, &pilot, cx);
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    let text = &queued[0].text;
+    assert!(
+        text.starts_with("[Automation: Check the build]\nTrigger: Merge request comment  ·  Run: "),
+        "{text}"
+    );
+    for part in [
+        "Check the build and report",
+        "Respond to this comment on a GitLab merge request:",
+        "Comment by @alice:\nPlease rename this",
+        "https://gitlab.com/acme/app/-/merge_requests/7#note_101",
+    ] {
+        assert!(text.contains(part), "{part} missing from {text}");
+    }
+    let saved = runs(&data.db, &id);
+    assert_eq!(saved[0].status, "succeeded");
+    assert_eq!(all_sessions(&window, cx), before);
+}
+
+#[test]
+fn comments_are_read_only_for_changed_merge_requests_and_a_failed_read_is_tried_again() {
+    use super::automation_runs::new_mr_comments;
+    let data = data();
+    let since = now_ms() - 60_000;
+    let watchers = vec![(data.project.clone(), since)];
+    let items = vec![
+        merge_request(&data, 1, since + 10),
+        merge_request(&data, 2, since + 20),
+        merge_request(&data, 3, since + 30),
+        issue(&data, 4, since + 40),
+    ];
+    let mut asked = Vec::new();
+    let mut lookups = 0;
+    let mut fetch = |mr: &gespan_core::inbox::Item, me: &mut Option<String>| {
+        asked.push(mr.number);
+        if me.is_none() {
+            lookups += 1;
+            *me = Some("gespan-bot".into());
+        }
+        if mr.number == 2 {
+            return Err("GitLab is unreachable".to_string());
+        }
+        Ok(mr_comment(
+            mr,
+            &format!("{}00", mr.number),
+            "alice",
+            "Hi",
+            me.as_deref().unwrap(),
+        ))
+    };
+    let mut read = HashMap::new();
+    let (comments, now_read) = new_mr_comments(&watchers, &items, &read, &mut fetch);
+    assert_eq!(
+        comments.iter().map(|item| item.key()).collect::<Vec<_>>(),
+        [
+            "gitlab:acme/app:mr_comment:1:100",
+            "gitlab:acme/app:mr_comment:3:300"
+        ]
+    );
+    assert_eq!(
+        now_read,
+        [
+            (items[0].key(), items[0].updated_ms()),
+            (items[2].key(), items[2].updated_ms())
+        ]
+    );
+    read.extend(now_read);
+
+    // Next refresh: nothing changed, so only the failed one is asked again.
+    let (_, now_read) = new_mr_comments(&watchers, &items, &read, &mut fetch);
+    assert!(now_read.is_empty());
+    // Then someone comments on the first, which moves its update time.
+    let mut changed = items.clone();
+    changed[0] = merge_request(&data, 1, since + 500);
+    let (_, now_read) = new_mr_comments(&watchers, &changed, &read, &mut fetch);
+    assert_eq!(now_read, [(changed[0].key(), changed[0].updated_ms())]);
+    // With nobody watching, nothing is asked at all.
+    let (comments, now_read) = new_mr_comments(&[], &changed, &HashMap::new(), &mut fetch);
+    assert!(comments.is_empty() && now_read.is_empty());
+    assert_eq!(asked, [1, 2, 3, 2, 1, 2]);
+    assert_eq!(lookups, 3, "the account is looked up once per refresh");
+}
+
+#[gpui::test]
+fn listing_merge_requests_again_starts_no_opened_run_and_is_looked_at_once(
+    cx: &mut TestAppContext,
+) {
+    let data = data();
+    // One automation waits for comments, another for opened merge requests.
+    let on_comments = save(&data.db, on_mr_comment(&data));
+    let on_opened = save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![AutomationTrigger::new("gitlab", "merge_request_opened")],
+        ),
+    );
+    let window = open(&data, cx);
+    // The Inbox lists an existing merge request on every refresh. GitLab is
+    // not connected here, so its comments cannot be read.
+    let listed = vec![merge_request(&data, 7, now_ms())];
+    for _ in 0..2 {
+        let listed = listed.clone();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.inbox_merge_requests(listed);
+                shell.inbox_automation_events(Vec::new(), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert!(
+        runs(&data.db, &on_opened).is_empty(),
+        "a backlog is not new"
+    );
+    assert!(runs(&data.db, &on_comments).is_empty());
+    let (left, read) = window
+        .update(cx, |shell, _, _| shell.merge_request_watch_for_test())
+        .unwrap();
+    assert_eq!(left, 0, "the list is looked at once per refresh");
+    assert_eq!(read, 0, "a failed read is not marked as read");
+}
