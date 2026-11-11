@@ -42,6 +42,36 @@ mod error;
 #[cfg(all(test, unix))]
 mod hold_tests;
 mod kind;
+
+/// The call a Claude or Codex approval is about, for a readable card. Claude
+/// sends the tool's name and input; Codex names an item it already announced,
+/// or sends the command and its directory with the request.
+fn approval_tool(
+    kind: &str,
+    request: &Value,
+    tools: &HashMap<String, ToolCall>,
+) -> Option<ToolCall> {
+    if kind == "claude" {
+        let name = request["tool_name"].as_str()?;
+        let mut call = ToolCall::new(request["tool_use_id"].as_str().unwrap_or(""), name);
+        call.input = serde_json::to_string(&request["input"]).unwrap_or_default();
+        return Some(call);
+    }
+    if let Some(known) = request["itemId"].as_str().and_then(|id| tools.get(id)) {
+        return Some(known.clone());
+    }
+    let command = request
+        .get("command")
+        .filter(|c| c.is_string() || c.is_array())?;
+    let mut call = ToolCall::new(request["itemId"].as_str().unwrap_or(""), "commandExecution");
+    let mut input = json!({ "command": command });
+    if let Some(cwd) = request.get("cwd").filter(|cwd| cwd.is_string()) {
+        input["cwd"] = cwd.clone();
+    }
+    call.input = input.to_string();
+    Some(call)
+}
+
 #[cfg(test)]
 mod launch_argv_tests;
 mod lifecycle;
@@ -518,6 +548,7 @@ impl Protocol {
         } else {
             "Allow this command?".into()
         };
+        let tool = approval_tool(kind, &request, &self.tools);
         let mut detail =
             if let Some(tool) = request["itemId"].as_str().and_then(|id| self.tools.get(id)) {
                 let detail = if detail.is_empty() {
@@ -592,6 +623,7 @@ impl Protocol {
             title,
             detail,
             can_remember: self.request.kind != Kind::Codex && !file_change,
+            tool,
         }));
         Ok(())
     }
@@ -2128,6 +2160,63 @@ cat >/dev/null"#,
             response["behavior"], "deny",
             "a plan turn keeps denying Bash"
         );
+    }
+    #[test]
+    fn approvals_carry_the_call_they_ask_about() {
+        let mut claude = protocol(Kind::Claude);
+        let mut out = Vec::new();
+        let input = json!({"command":"cd /tmp && ls","description":"List files"});
+        let events = claude.frame(json!({"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tu1","input":input}}), &mut out).unwrap();
+        let Event::Approval(approval) = &events[0] else {
+            panic!("expected an approval")
+        };
+        let tool = approval.tool.as_ref().expect("Claude names its tool");
+        assert_eq!((tool.id.as_str(), tool.name.as_str()), ("tu1", "Bash"));
+        assert_eq!(serde_json::from_str::<Value>(&tool.input).unwrap(), input);
+        assert_eq!(
+            serde_json::from_str::<Value>(&approval.detail).unwrap(),
+            input,
+            "the raw detail is kept for the notification card"
+        );
+        let events = claude.frame(json!({"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"mcp__github__create_issue","input":{"title":"Bug"}}}), &mut out).unwrap();
+        let Event::Approval(approval) = &events[0] else {
+            panic!("expected an approval")
+        };
+        assert_eq!(
+            approval.tool.as_ref().unwrap().name,
+            "mcp__github__create_issue"
+        );
+
+        // Codex: a command it announced as an item, then one it didn't.
+        let mut codex = protocol(Kind::Codex);
+        codex.frame(json!({"method":"item/started","params":{"item":{"id":"c1","type":"commandExecution","command":"/bin/zsh -lc 'cargo build'","cwd":"/work"}}}), &mut out).unwrap();
+        let events = codex.frame(json!({"id":"p1","method":"item/commandExecution/requestApproval","params":{"itemId":"c1","reason":"Build it"}}), &mut out).unwrap();
+        let Event::Approval(approval) = events
+            .iter()
+            .find(|e| matches!(e, Event::Approval(_)))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let tool = approval.tool.as_ref().expect("the announced item");
+        assert_eq!(tool.id, "c1");
+        assert_eq!(tool.presentation().command.as_deref(), Some("cargo build"));
+        let events = codex.frame(json!({"id":"p2","method":"execCommandApproval","params":{"command":["git","push"],"cwd":"/work/app"}}), &mut out).unwrap();
+        let Event::Approval(approval) = &events[0] else {
+            panic!("expected an approval")
+        };
+        let tool = approval.tool.as_ref().expect("built from the request");
+        assert_eq!(tool.name, "commandExecution");
+        assert_eq!(
+            serde_json::from_str::<Value>(&tool.input).unwrap(),
+            json!({"command":["git","push"],"cwd":"/work/app"})
+        );
+        assert_eq!(tool.presentation().command.as_deref(), Some("git push"));
+        let events = codex.frame(json!({"id":"p3","method":"item/fileChange/requestApproval","params":{"itemId":"unknown","reason":"Edit"}}), &mut out).unwrap();
+        let Event::Approval(approval) = &events[0] else {
+            panic!("expected an approval")
+        };
+        assert_eq!(approval.tool, None, "nothing to show but the reason");
     }
     #[test]
     fn approvals_wait_for_a_decision_and_keep_the_requested_input() {

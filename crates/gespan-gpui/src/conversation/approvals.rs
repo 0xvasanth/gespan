@@ -6,6 +6,8 @@ use std::cell::RefCell;
 pub(super) struct State {
     current: RefCell<Option<String>>,
     motion: composer_shelf::Motion,
+    /// The current request's long content is open. Each request starts closed.
+    expanded: std::cell::Cell<bool>,
 }
 
 impl State {
@@ -13,6 +15,7 @@ impl State {
         let mut current = self.current.borrow_mut();
         if current.as_deref() != id {
             *current = id.map(str::to_owned);
+            self.expanded.set(false);
             if let Some(id) = id {
                 self.motion.insert(id, true, animate);
             }
@@ -31,6 +34,9 @@ impl Conversation {
         let Some(approval) = self.approvals.front() else {
             return div().into_any_element();
         };
+        let cwd = (!self.summary.cwd.starts_with("remote://")).then_some(self.summary.cwd.as_str());
+        let detail = approval_card::Card::new(approval, cwd);
+        let expanded = self.approval_ui.expanded.get();
         let mut ink = shell_fill();
         ink.a = 1.;
         let deny_id = approval.id.clone();
@@ -87,27 +93,27 @@ impl Conversation {
                             .flex_1()
                             .py_1()
                             .text_color(content(0.75))
-                            .child(approval.title.clone()),
+                            .child(detail.title(approval)),
                     )
                     .child(actions),
             )
-            .when(!approval.detail.is_empty(), |card| {
+            .when(!detail.is_empty(), |card| {
                 card.child(
                     div()
-                        .id("approval-detail")
+                        .id("approval-body")
                         .role(Role::Label)
                         .aria_label(approval.detail.clone())
-                        .border_t_1()
-                        .border_color(content(0.05))
-                        .py_1()
-                        .max_h(px(180.))
-                        .overflow_y_scroll()
-                        .font_family(crate::fonts::monospace())
-                        .text_size(px(12.))
-                        .line_height(px(18.))
-                        .text_color(content(0.75))
-                        .child(approval.detail.clone()),
+                        .when(expanded, |d| d.max_h(px(360.)).overflow_y_scroll())
+                        .child(detail.render(expanded)),
                 )
+                .children(detail.toggle(
+                    expanded,
+                    cx.listener(|this, _, _, cx| {
+                        let open = &this.approval_ui.expanded;
+                        open.set(!open.get());
+                        cx.notify();
+                    }),
+                ))
             });
         let card_width = (width.unwrap_or_default() - px(16.)).max(px(0.));
         composer_shelf::shelf("approval-shelf")
@@ -172,7 +178,124 @@ mod tests {
             title: "Run a command?".into(),
             detail: "git status --short".into(),
             can_remember,
+            tool: None,
         }
+    }
+
+    fn bash(id: &str, lines: usize) -> Approval {
+        let script = (1..=lines)
+            .map(|n| format!("echo {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let input = serde_json::json!({
+            "command": format!("cd /srv/scratch && {script}"),
+            "description": "Print some numbers",
+        });
+        let mut tool = gespan_core::tool::ToolCall::new(id, "Bash");
+        tool.input = input.to_string();
+        Approval {
+            id: id.into(),
+            title: "Allow Bash?".into(),
+            detail: serde_json::to_string_pretty(&input).unwrap(),
+            can_remember: true,
+            tool: Some(tool),
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_request_opens_behind_its_toggle_and_the_next_one_starts_closed(
+        cx: &mut TestAppContext,
+    ) {
+        let window = conversation(cx);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (send, receive) = std::sync::mpsc::channel();
+        window
+            .update(cx, |view, _, cx| {
+                view.controls = Some(send);
+                view.approvals.extend([bash("long", 20), bash("short", 2)]);
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        for part in ["approval-summary", "approval-command", "approval-cwd"] {
+            assert!(visual.debug_bounds(part).is_some(), "{part} is shown");
+        }
+        let collapsed = visual.debug_bounds("approval-command").unwrap();
+        let toggle = visual
+            .debug_bounds("approval-expand")
+            .expect("long enough to fold");
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.refresh().unwrap();
+        let opened = visual.debug_bounds("approval-command").unwrap();
+        assert!(
+            opened.size.height > collapsed.size.height,
+            "the rest of the command shows"
+        );
+        assert!(
+            visual.debug_bounds("approval-expand").is_some(),
+            "an open card can be closed again"
+        );
+
+        let allow = visual.debug_bounds("approval-allow").unwrap();
+        visual.simulate_click(allow.center(), Default::default());
+        visual.refresh().unwrap();
+        assert_eq!(receive.try_recv().unwrap().id, "long");
+        window
+            .read_with(visual, |view, _| {
+                assert_eq!(view.approvals.front().unwrap().id, "short");
+                assert!(
+                    !view.approval_ui.expanded.get(),
+                    "each request starts closed"
+                );
+            })
+            .unwrap();
+        assert!(
+            visual.debug_bounds("approval-expand").is_none(),
+            "nothing to fold"
+        );
+    }
+
+    #[gpui::test]
+    fn an_edit_shows_its_diff_and_opens_to_its_whole_texts(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let input = serde_json::json!({
+            "file_path": "/tmp/src/a.rs",
+            "old_string": "let a = 1;",
+            "new_string": "let a = 2;",
+        });
+        let mut tool = gespan_core::tool::ToolCall::new("edit", "Edit");
+        tool.input = input.to_string();
+        window
+            .update(cx, |view, _, cx| {
+                view.approvals.push_back(Approval {
+                    id: "edit".into(),
+                    title: "Allow Edit?".into(),
+                    detail: input.to_string(),
+                    can_remember: true,
+                    tool: Some(tool),
+                });
+                cx.notify();
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("approval-file").is_some());
+        assert!(visual.debug_bounds("approval-diff").is_some());
+        assert!(
+            visual.debug_bounds("approval-fields").is_none(),
+            "texts wait"
+        );
+        let toggle = visual
+            .debug_bounds("approval-expand")
+            .expect("the texts can be read");
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("approval-fields").is_some(),
+            "the whole texts"
+        );
     }
 
     #[gpui::test]

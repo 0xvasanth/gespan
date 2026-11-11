@@ -254,12 +254,15 @@ impl TurnMetrics {
             || self.credits.is_some()
     }
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Approval {
     pub id: String,
     pub title: String,
     pub detail: String,
     pub can_remember: bool,
+    /// The call being approved, when the provider names one, so a card can
+    /// show its command, file or arguments instead of the raw `detail`.
+    pub tool: Option<crate::tool::ToolCall>,
 }
 #[derive(Clone, Debug)]
 pub enum Decision {

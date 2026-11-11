@@ -1,6 +1,7 @@
 //! Pending approval/question cards and request-level announcement bookkeeping.
 use crate::theme::*;
 use gespan_core::agent::{Approval, Decision};
+use gespan_core::tool::approval_view::{ApprovalView, Body, approval_view};
 use gpui::{Context, EventEmitter, Role, div, prelude::*, px};
 use serde_json::Value;
 use std::{
@@ -13,6 +14,8 @@ use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 /// Claude's field for running a command outside its sandbox.
 const SANDBOX_OVERRIDE: &str = "dangerouslyDisableSandbox";
 const MAX_NAMED_FIELDS: usize = 4;
+/// Rows of the agent's description a notice shows before it needs the chat.
+const SUMMARY_ROWS: usize = 2;
 const MAX_FIELD_CHARS: usize = 40;
 /// The rows the card's scrolling detail shows before anything is out of view.
 const DETAIL_ROWS: usize = 6;
@@ -30,6 +33,9 @@ pub(crate) struct PendingInput {
     pub request_id: String,
     pub kind: InputKind,
     pub label: String,
+    /// The agent's own description of the request, apart from the question
+    /// so it can't pass for part of it.
+    pub summary: String,
     /// What is being approved, so the card can be decided without the chat.
     pub detail: String,
     /// Names the fields `detail` leaves out. It sits outside the scrolling
@@ -45,20 +51,118 @@ pub(crate) struct PendingInput {
 impl PendingInput {
     /// What a card shows for `approval`. Only the id goes back with a decision,
     /// so none of this cleanup reaches what runs.
+    #[cfg(test)]
     pub(crate) fn approval(approval: &Approval) -> Self {
-        let detail = approval_detail(&approval.detail);
+        Self::approval_in(approval, None)
+    }
+
+    /// The card for `approval` in a session whose folder is `cwd`. A request
+    /// that names its tool reads like the chat's card; one that doesn't shows
+    /// its detail as sent.
+    pub(crate) fn approval_in(approval: &Approval, cwd: Option<&str>) -> Self {
         let alerts = approval_alerts(&approval.detail);
+        let (label, summary, detail, omitted) = match &approval.tool {
+            Some(tool) => {
+                let home = gespan_core::accounts::home();
+                let home = home.as_deref().and_then(|home| home.to_str());
+                let view = approval_view(Some(tool), &approval.detail, cwd, home);
+                let shown = toast_text(&approval.title, &view);
+                let omitted = [shown.folder, shown.omitted]
+                    .into_iter()
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (shown.label, shown.summary, shown.detail, omitted)
+            }
+            None => (
+                approval.title.clone(),
+                String::new(),
+                approval_detail(&approval.detail),
+                approval_omitted(&approval.detail),
+            ),
+        };
         Self {
             request_id: approval.id.clone(),
             kind: InputKind::Approval,
-            label: mark_hidden(&approval.title),
             needs_review: !alerts.is_empty()
-                || approval.title.contains(distorts_text)
+                || label.contains(distorts_text)
+                || summary.contains(distorts_text)
+                || summary.lines().map(wrapped_rows).sum::<usize>() > SUMMARY_ROWS
                 || overflows_detail(&detail),
+            label: mark_hidden(&label),
+            summary: mark_hidden(&summary),
             detail,
-            omitted: approval_omitted(&approval.detail),
+            omitted,
             alerts,
         }
+    }
+}
+
+/// A notice's question, the agent's description, the monospace detail and
+/// what it leaves out, read from the same view as the chat's card. Detail
+/// and folder have hidden characters marked; the rest is marked by the caller.
+#[derive(Debug, PartialEq, Eq)]
+struct ToastText {
+    label: String,
+    summary: String,
+    detail: String,
+    folder: String,
+    /// The arguments the detail doesn't show, by name.
+    omitted: String,
+}
+
+fn toast_text(title: &str, view: &ApprovalView) -> ToastText {
+    let label = match &view.mcp {
+        Some(mcp) => format!("Allow {} on {}?", mcp.tool, mcp.server),
+        None => title.to_owned(),
+    };
+    let field_lines = || {
+        view.fields
+            .iter()
+            .map(|field| {
+                if field.value.contains('\n') {
+                    format!("{}:\n{}", field.key, field.value)
+                } else {
+                    format!("{}: {}", field.key, field.value)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let detail = match &view.body {
+        Body::Command(command) | Body::Text(command) => command.clone(),
+        Body::Target { verb, target } => format!("{verb} {target}"),
+        Body::Url(url) => format!("Fetch {url}"),
+        Body::Change { path, preview } => match preview {
+            Some(p) if p.additions + p.deletions > 0 => {
+                format!("{path}  +{} −{}", p.additions, p.deletions)
+            }
+            _ => path.clone(),
+        },
+        // An MCP or unknown tool: its arguments are what's being approved.
+        Body::None => field_lines(),
+    };
+    // Every argument the detail leaves out is named, whatever the provider.
+    let omitted = match view.body {
+        Body::None => String::new(),
+        _ => name_fields(
+            view.fields
+                .iter()
+                .map(|field| (field.key.as_str(), &field.value)),
+        ),
+    };
+    ToastText {
+        label,
+        summary: view.summary.clone().unwrap_or_default(),
+        detail: mark_hidden(&detail.replace("\r\n", "\n")),
+        // The whole folder: the notice's scrolling line has room for it.
+        folder: view
+            .cwd_full
+            .as_ref()
+            .or(view.cwd.as_ref())
+            .map(|cwd| mark_hidden(&format!("in {cwd}")))
+            .unwrap_or_default(),
+        omitted,
     }
 }
 
@@ -90,7 +194,7 @@ fn distorts_text(c: char) -> bool {
 /// `text` with each hidden character replaced by a tag such as `[U+202E]`.
 /// Removing them would show something other than what runs: `r\u{200B}m` is
 /// not `rm`. The card is display only, so what runs keeps them.
-fn mark_hidden(text: &str) -> String {
+pub(crate) fn mark_hidden(text: &str) -> String {
     let mut marked = String::with_capacity(text.len());
     for c in text.chars() {
         if distorts_text(c) {
@@ -182,23 +286,33 @@ fn approval_omitted(detail: &str) -> String {
     };
     let sandbox = sandbox_override(detail);
     let alerted = sandbox.as_ref().is_some_and(turns_sandbox_off);
-    let mut others: Vec<&String> = input
+    let others = input
         .as_object()
         .into_iter()
-        .flat_map(|fields| fields.keys())
-        .filter(|other| *other != key && *other != "description")
-        .filter(|other| !(alerted && *other == SANDBOX_OVERRIDE))
-        .collect();
-    others
-        .sort_unstable_by_key(|other| (!other.to_ascii_lowercase().contains("dangerous"), *other));
+        .flat_map(|fields| fields.iter())
+        .filter(|(other, _)| *other != key && *other != "description")
+        .filter(|(other, _)| !(alerted && *other == SANDBOX_OVERRIDE))
+        .map(|(other, value)| (other.as_str(), value.to_string()));
+    let others: Vec<(&str, String)> = others.collect();
+    name_fields(others.iter().map(|(key, value)| (*key, value)))
+}
+
+/// `+ a, b, +2 more` for the fields a card leaves out. Dangerous names lead,
+/// so a long list can't bury them, and a sandbox override shows its value.
+fn name_fields<'a>(fields: impl Iterator<Item = (&'a str, &'a String)>) -> String {
+    let mut others: Vec<(&str, &String)> = fields.collect();
+    others.sort_unstable_by_key(|(other, _)| {
+        (!other.to_ascii_lowercase().contains("dangerous"), *other)
+    });
     let mut named: Vec<String> = others
         .iter()
         .take(MAX_NAMED_FIELDS)
-        .map(|other| match &sandbox {
-            Some(value) if *other == SANDBOX_OVERRIDE => {
-                format!("{other}: {}", compact(&value.to_string()))
+        .map(|(other, value)| {
+            if *other == SANDBOX_OVERRIDE {
+                format!("{other}: {}", compact(value))
+            } else {
+                compact(other)
             }
-            _ => compact(other),
         })
         .collect();
     if others.len() > MAX_NAMED_FIELDS {
@@ -212,7 +326,7 @@ fn approval_omitted(detail: &str) -> String {
 }
 
 /// Warnings a card leads with, because the scrolling detail could hide them.
-fn approval_alerts(detail: &str) -> Vec<String> {
+pub(crate) fn approval_alerts(detail: &str) -> Vec<String> {
     let sandbox = sandbox_override(detail)
         .filter(turns_sandbox_off)
         .map(|value| {
@@ -448,6 +562,21 @@ impl Render for ApprovalNotices {
                                             .text_color(content(0.7))
                                             .child(input.label.clone()),
                                     )
+                                    .when(!input.summary.is_empty(), |card| {
+                                        // The agent's words, set apart from the question.
+                                        card.child(
+                                            div()
+                                                .debug_selector(|| "approval-toast-summary".into())
+                                                .border_l_2()
+                                                .border_color(content(0.15))
+                                                .pl(px(8.))
+                                                .text_size(px(12.))
+                                                .line_height(px(18.))
+                                                .line_clamp(SUMMARY_ROWS)
+                                                .text_color(content(0.6))
+                                                .child(input.summary.clone()),
+                                        )
+                                    })
                                     .children(input.alerts.iter().enumerate().map(
                                         |(alert_ix, alert)| {
                                             div()
@@ -858,6 +987,7 @@ mod detail_tests {
             title: "Allow \u{202E}Bash?".into(),
             detail: raw.clone(),
             can_remember: true,
+            tool: None,
         };
         let card = PendingInput::approval(&approval);
         assert_eq!(card.request_id, "request-1");
@@ -873,6 +1003,7 @@ mod detail_tests {
             title: "Allow Bash?".into(),
             detail: detail.to_owned(),
             can_remember: true,
+            tool: None,
         })
     }
 
@@ -899,6 +1030,7 @@ mod detail_tests {
             title: "Allow \u{202E}Bash?".into(),
             detail: "ls".into(),
             can_remember: true,
+            tool: None,
         });
         assert!(card.needs_review);
     }
@@ -918,6 +1050,147 @@ mod detail_tests {
     fn long_words_cannot_wrap_past_the_card_unnoticed() {
         // 7 rows once wrapped, though it would fit 6 rows if it broke anywhere.
         assert!(card_for(&vec!["x".repeat(30); 7].join(" ")).needs_review);
+    }
+
+    fn tool_card(name: &str, input: serde_json::Value, cwd: Option<&str>) -> PendingInput {
+        let mut tool = gespan_core::tool::ToolCall::new("t", name);
+        tool.input = input.to_string();
+        PendingInput::approval_in(
+            &Approval {
+                id: "request".into(),
+                title: format!("Allow {name}?"),
+                detail: serde_json::to_string_pretty(&input).unwrap(),
+                can_remember: true,
+                tool: Some(tool),
+            },
+            cwd,
+        )
+    }
+
+    #[test]
+    fn a_named_command_reads_as_its_description_command_and_folder() {
+        let card = tool_card(
+            "Bash",
+            serde_json::json!({
+                "command": "cd \"/srv/scratch\" && python3 -c 'print(1)\nprint(2)'",
+                "description": "Print two numbers",
+                "timeout": 1000,
+            }),
+            Some("/repo"),
+        );
+        assert_eq!(card.label, "Allow Bash?");
+        assert_eq!(
+            card.summary, "Print two numbers",
+            "the agent's words, apart"
+        );
+        assert_eq!(card.detail, "python3 -c 'print(1)\nprint(2)'");
+        assert_eq!(card.omitted, "in /srv/scratch\n+ timeout");
+        assert!(card.alerts.is_empty());
+        assert!(!card.needs_review, "short enough to allow from the notice");
+    }
+
+    #[test]
+    fn mcp_and_edit_requests_read_without_json() {
+        let mcp = tool_card(
+            "mcp__github__create_issue",
+            serde_json::json!({"labels": ["bug"], "title": "Crash"}),
+            None,
+        );
+        assert_eq!(mcp.label, "Allow create_issue on github?");
+        assert_eq!(mcp.detail, "labels: bug\ntitle: Crash");
+        assert!(!mcp.detail.contains(['{', '"']));
+        assert!(!mcp.needs_review);
+
+        let edit = tool_card(
+            "Edit",
+            serde_json::json!({"file_path": "/repo/src/a.rs", "old_string": "a", "new_string": "b\nc"}),
+            Some("/repo"),
+        );
+        assert_eq!(edit.detail, "src/a.rs  +2 −1");
+        assert_eq!(
+            edit.omitted, "+ new_string, old_string",
+            "the texts it doesn't show"
+        );
+    }
+
+    #[test]
+    fn a_named_request_keeps_the_notice_safety_rules() {
+        // Too long to show whole: Allow moves to the chat.
+        let body = (1..=8)
+            .map(|n| format!("step {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let long = tool_card("mcp__s__t", serde_json::json!({"body": body}), None);
+        assert!(long.needs_review);
+        // A hidden character in the description is marked and needs the chat.
+        let sneaky = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "description": "List\u{202E}files"}),
+            None,
+        );
+        assert_eq!(sneaky.label, "Allow Bash?");
+        assert_eq!(sneaky.summary, "List[U+202E]files");
+        assert!(sneaky.needs_review);
+        // So does a sandbox override, as before.
+        let unsandboxed = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "dangerouslyDisableSandbox": true}),
+            None,
+        );
+        assert!(unsandboxed.needs_review);
+        assert_eq!(unsandboxed.alerts.len(), 1);
+    }
+
+    #[test]
+    fn every_argument_a_notice_leaves_out_is_named_for_any_provider() {
+        // An ACP call (Cursor, Kiro): its detail isn't JSON, yet `env` and
+        // `timeout` must still be named.
+        let mut tool = gespan_core::tool::ToolCall::new("t", "git push");
+        tool.input =
+            serde_json::json!({"command": "git push", "env": {"GIT_SSH": "x"}, "timeout": 5})
+                .to_string();
+        tool.display = Some(serde_json::json!({"title": "git push", "kind": "execute"}));
+        let card = PendingInput::approval_in(
+            &Approval {
+                id: "r".into(),
+                title: "Allow this command?".into(),
+                detail: format!("git push\n{}\n", tool.input),
+                can_remember: true,
+                tool: Some(tool),
+            },
+            None,
+        );
+        assert_eq!(card.label, "Allow this command?");
+        assert_eq!(card.detail, "git push");
+        assert_eq!(card.omitted, "+ env, timeout");
+    }
+
+    #[test]
+    fn a_long_description_needs_the_chat() {
+        let card = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "description": "word ".repeat(30)}),
+            None,
+        );
+        assert!(card.needs_review, "it could crowd out what runs");
+        let short = tool_card(
+            "Bash",
+            serde_json::json!({"command": "ls", "description": "List files"}),
+            None,
+        );
+        assert!(!short.needs_review);
+    }
+
+    #[test]
+    fn a_cut_folder_shows_whole_on_the_notice() {
+        let folder = format!("/srv/{}/build", "very-long-folder-name/".repeat(4));
+        let card = tool_card(
+            "Bash",
+            serde_json::json!({"command": format!("cd {folder} && make")}),
+            None,
+        );
+        assert_eq!(card.detail, "make");
+        assert_eq!(card.omitted, format!("in {folder}"));
     }
 
     #[test]
@@ -955,6 +1228,7 @@ mod render_tests {
             title: "Run a command".into(),
             detail: detail.to_owned(),
             can_remember: true,
+            tool: None,
         })
     }
 
@@ -1075,6 +1349,7 @@ mod render_tests {
                 request_id: "r".into(),
                 kind: InputKind::Approval,
                 label: "Run a command".into(),
+                summary: String::new(),
                 detail: "ls".into(),
                 omitted: vec!["field"; 500].join("\n"),
                 alerts: Vec::new(),

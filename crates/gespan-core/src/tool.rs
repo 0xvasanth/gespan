@@ -1,5 +1,6 @@
 //! Provider-neutral tool presentation, persisted as a native `tool` row.
 use serde::{Deserialize, Serialize};
+pub mod approval_view;
 pub mod edit_preview;
 pub mod handback;
 mod presentation;

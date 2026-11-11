@@ -10,13 +10,18 @@ impl Conversation {
     pub(crate) fn pending_notification_inputs(&self, cx: &gpui::App) -> Vec<PendingInput> {
         self.approvals
             .iter()
-            .map(PendingInput::approval)
+            .map(|approval| {
+                let cwd = (!self.summary.cwd.starts_with("remote://"))
+                    .then_some(self.summary.cwd.as_str());
+                PendingInput::approval_in(approval, cwd)
+            })
             .chain(self.questions.iter().map(|(card, _)| {
                 let question = card.read(cx);
                 PendingInput {
                     request_id: question.id().to_owned(),
                     kind: InputKind::Question,
                     label: question.notification_label().to_owned(),
+                    summary: String::new(),
                     detail: String::new(),
                     omitted: String::new(),
                     alerts: Vec::new(),

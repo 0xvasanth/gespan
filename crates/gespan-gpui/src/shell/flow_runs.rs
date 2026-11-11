@@ -923,6 +923,7 @@ mod tests {
                         title: "Run a command?".into(),
                         detail: "git status".into(),
                         can_remember: false,
+                        tool: None,
                     }])
                 });
                 shell.flow_session_changed(id, cx);
@@ -957,6 +958,7 @@ mod tests {
                         title: "Run a command?".into(),
                         detail: "ls".into(),
                         can_remember: false,
+                        tool: None,
                     }])
                 });
                 shell.flow_session_closed(id, cx);
