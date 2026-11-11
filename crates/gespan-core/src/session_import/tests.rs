@@ -220,3 +220,191 @@ fn other_kinds_are_not_supported_yet() {
     assert!(read_turns(&c).is_err());
     assert_eq!(count_messages(&c), None);
 }
+
+const CODEX_ID: &str = "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+
+fn rollout_name(id: &str, ext: &str) -> String {
+    format!("rollout-2026-11-11T10-20-30-{id}.{ext}")
+}
+
+fn codex_meta(cwd: &str, branch: Option<&str>) -> String {
+    let git = branch.map_or(serde_json::json!({}), |b| serde_json::json!({"branch": b}));
+    serde_json::json!({
+        "type": "session_meta",
+        "payload": {"id": CODEX_ID, "cwd": cwd, "git": git},
+    })
+    .to_string()
+}
+
+fn codex_event(kind: &str, text: &str) -> String {
+    serde_json::json!({
+        "timestamp": "2026-11-11T10:20:31.000Z",
+        "type": "event_msg",
+        "payload": {"type": kind, "message": text},
+    })
+    .to_string()
+}
+
+fn codex_rollback(turns: u64) -> String {
+    serde_json::json!({
+        "type": "event_msg",
+        "payload": {"type": "thread_rolled_back", "num_turns": turns},
+    })
+    .to_string()
+}
+
+fn texts(turns: &[crate::outside_turns::OutsideTurn]) -> Vec<(TurnRole, &str)> {
+    turns.iter().map(|t| (t.role, t.text.as_str())).collect()
+}
+
+#[test]
+fn codex_lists_meta_cwd_branch_title_and_id() {
+    let home = tempfile::tempdir().unwrap();
+    let rel = format!("sessions/2026/11/11/{}", rollout_name(CODEX_ID, "jsonl"));
+    let path = write(
+        home.path(),
+        &rel,
+        &[
+            codex_meta("/tmp/p", Some("feature/x")),
+            codex_event("user_message", "  Add the export button\nwith detail"),
+            codex_event("agent_message", "Done."),
+        ],
+    );
+    let found = list(Kind::Codex, home.path());
+    assert_eq!(found.len(), 1);
+    let c = &found[0];
+    assert_eq!(c.kind, Kind::Codex);
+    assert_eq!(c.provider_id, CODEX_ID);
+    assert_eq!(c.cwd, "/tmp/p");
+    assert_eq!(c.branch.as_deref(), Some("feature/x"));
+    assert_eq!(c.title, "Add the export button");
+    assert_eq!(c.path, path);
+    assert_eq!(c.messages, None);
+    assert_eq!(count_messages(c), Some(2));
+}
+
+#[test]
+fn codex_lists_zst_and_archived_rollouts() {
+    let home = tempfile::tempdir().unwrap();
+    let body = [
+        codex_meta("/tmp/z", None),
+        codex_event("user_message", "Compressed question"),
+        codex_event("agent_message", "Compressed answer"),
+    ]
+    .join("\n")
+        + "\n";
+    let zst_id = "11111111-2222-3333-4444-555555555555";
+    let dir = home.path().join("archived_sessions/2026/10/01");
+    fs::create_dir_all(&dir).unwrap();
+    let zst = dir.join(rollout_name(zst_id, "jsonl.zst"));
+    fs::write(&zst, zstd::encode_all(body.as_bytes(), 3).unwrap()).unwrap();
+    write(
+        home.path(),
+        &format!("archived_sessions/{}", rollout_name(CODEX_ID, "jsonl")),
+        &[
+            codex_meta("/tmp/a", None),
+            codex_event("user_message", "Archived question"),
+        ],
+    );
+
+    let mut found = list(Kind::Codex, home.path());
+    found.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+    let ids: Vec<_> = found.iter().map(|c| c.provider_id.as_str()).collect();
+    assert_eq!(ids, [CODEX_ID, zst_id]);
+    let compressed = &found[1];
+    assert_eq!(compressed.cwd, "/tmp/z");
+    assert_eq!(compressed.branch, None);
+    assert_eq!(compressed.title, "Compressed question");
+    assert_eq!(
+        texts(&read_turns(compressed).unwrap()),
+        vec![
+            (TurnRole::User, "Compressed question"),
+            (TurnRole::Assistant, "Compressed answer")
+        ]
+    );
+}
+
+#[test]
+fn codex_zst_head_is_bounded() {
+    let home = tempfile::tempdir().unwrap();
+    let mut body = codex_meta("/tmp/z", None) + "\n";
+    body += &(codex_event("user_message", "First prompt") + "\n");
+    // Far past the head limit, and compressible, so the .zst stays small.
+    let filler = codex_event("agent_message", &"x".repeat(1000)) + "\n";
+    body += &filler.repeat((HEAD_LIMIT as usize / filler.len()) * 3);
+    body += &(codex_event("user_message", "Late prompt") + "\n");
+    let dir = home.path().join("sessions/2026/11/11");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(rollout_name(CODEX_ID, "jsonl.zst")),
+        zstd::encode_all(body.as_bytes(), 1).unwrap(),
+    )
+    .unwrap();
+    let found = list(Kind::Codex, home.path());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "First prompt");
+    // The full read still sees the late prompt.
+    let turns = read_turns(&found[0]).unwrap();
+    assert_eq!(turns.last().unwrap().text, "Late prompt");
+}
+
+#[test]
+fn codex_skips_rollouts_with_no_user_message() {
+    let home = tempfile::tempdir().unwrap();
+    write(
+        home.path(),
+        &format!("sessions/2026/11/11/{}", rollout_name(CODEX_ID, "jsonl")),
+        &[
+            codex_meta("/tmp/p", None),
+            codex_event("agent_message", "Unprompted"),
+            codex_event("token_count", ""),
+        ],
+    );
+    assert!(list(Kind::Codex, home.path()).is_empty());
+}
+
+#[test]
+fn codex_read_honours_rollbacks() {
+    let home = tempfile::tempdir().unwrap();
+    let path = write(
+        home.path(),
+        &format!("sessions/2026/11/11/{}", rollout_name(CODEX_ID, "jsonl")),
+        &[
+            codex_meta("/tmp/p", None),
+            codex_event("user_message", "First"),
+            codex_event("agent_message", "First reply"),
+            codex_event("user_message", "Second"),
+            codex_event("agent_message", "Second reply"),
+            codex_rollback(1),
+        ],
+    );
+    let found = list(Kind::Codex, home.path());
+    assert_eq!(found[0].path, path);
+    assert_eq!(
+        texts(&read_turns(&found[0]).unwrap()),
+        vec![
+            (TurnRole::User, "First"),
+            (TurnRole::Assistant, "First reply")
+        ]
+    );
+    assert_eq!(count_messages(&found[0]), Some(2));
+}
+
+#[test]
+fn codex_bad_id_in_name_is_skipped() {
+    let home = tempfile::tempdir().unwrap();
+    let body = [
+        codex_meta("/tmp/p", None),
+        codex_event("user_message", "Hello"),
+    ];
+    for name in [
+        "rollout-2026-11-11T10-20-30-bad id.jsonl",
+        "rollout-2026-11-11T10-20-30-..jsonl",
+        "rollout-2026-11-11T10-20-30-.jsonl",
+        "notes-2026-11-11T10-20-30-abc.jsonl",
+        "rollout.jsonl",
+    ] {
+        write(home.path(), &format!("sessions/2026/11/11/{name}"), &body);
+    }
+    assert!(list(Kind::Codex, home.path()).is_empty());
+}
