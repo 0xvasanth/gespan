@@ -418,7 +418,7 @@ pub fn split_leading_cd(command: &str) -> Option<(String, &str)> {
                 let args = shlex::split(&command[..at])?;
                 let rest = command[at + 2..].trim();
                 return match args.as_slice() {
-                    [cd, dir] if cd == "cd" && !dir.is_empty() && !rest.is_empty() => {
+                    [cd, dir] if cd == "cd" && plain_folder(dir) && !rest.is_empty() => {
                         Some((dir.clone(), rest))
                     }
                     _ => None,
@@ -427,6 +427,15 @@ pub fn split_leading_cd(command: &str) -> Option<(String, &str)> {
         }
     }
     None
+}
+
+/// A folder that reads the same quoted or not: no `~`, globs or braces the
+/// shell would expand, so the card can't name a place the shell won't go.
+fn plain_folder(dir: &str) -> bool {
+    !dir.is_empty()
+        && dir
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | ' ' | '@' | '+' | ',' | ':' | '='))
 }
 
 /// `path` relative to the session folder, or under `~` for the home folder.
