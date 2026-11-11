@@ -1,0 +1,38 @@
+crates/gespan-core/src/store/provider_ids.rs
+  s_6549201e50b654::t_20566d1d4d0bdf 1-66,68-135
+  s_6549201e50b654::t_5b46f8af7af281 67
+crates/gespan-core/src/session_import/tests.rs
+  s_6549201e50b654::t_a6b6b6820cbde5 1141-1146
+  s_6549201e50b654::t_755fb91f145939 1154
+  s_6549201e50b654::t_9b0959c4a84a85 90-129
+  s_6549201e50b654::t_0e06b4a57855cb 1479-1565
+crates/gespan-core/src/store.rs
+  s_6549201e50b654::t_79e1cc1ebd59c7 9
+crates/gespan-core/src/session_import.rs
+  s_6549201e50b654::t_182a5c9ca59d4d 147-148,150-154
+  s_6549201e50b654::t_5932496b9626d4 270
+crates/gespan-gpui/src/import_dialog.rs
+  s_6549201e50b654::t_d53b14c767aba0 86-90,95,168,183,185,195,203,254,269,943,946,1174
+crates/gespan-gpui/src/shell/import_sessions.rs
+  s_6549201e50b654::t_4e7f8f64cd92b5 646-654
+  s_6549201e50b654::t_d53b14c767aba0 109-110,119,132,139
+  s_6549201e50b654::t_75fbbe08e67b5e 620-645
+crates/gespan-core/src/session_import/placement.rs
+  s_6549201e50b654::t_755fb91f145939 3,68-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5d997bcacbaf0d5064d39347f77593348aa5afc",
+  "prompts": {},
+  "sessions": {
+    "s_6549201e50b654": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c1a5de22-c6e1-4b13-9ec9-6d4a9964a0ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
