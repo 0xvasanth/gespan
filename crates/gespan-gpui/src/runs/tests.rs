@@ -53,6 +53,7 @@ fn run(id: &str, automation: &str, status: &str, created_at: i64) -> AutomationR
         event: None,
         event_title: None,
         prompt: None,
+        pilot_message_id: None,
     }
 }
 

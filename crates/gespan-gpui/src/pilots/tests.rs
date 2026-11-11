@@ -5877,3 +5877,131 @@ fn focused_rail_shows_status_dot_not_words(cx: &mut TestAppContext) {
     set(false, visual);
     assert_eq!(dot_colour(visual), idle);
 }
+
+// --- Automations that wake a Pilot (`Pilots::automation_send`).
+
+fn automation_outbox(s: &Setup, cx: &mut TestAppContext) -> Vec<Message> {
+    cx.update(|cx| s.manager.read(cx).roster.get(&s.id).unwrap().outbox.clone())
+}
+
+#[gpui::test]
+fn automation_runs_wait_while_the_pilot_is_busy_and_are_delivered_in_order(
+    cx: &mut TestAppContext,
+) {
+    let s = setup(cx);
+    let chat = cx.update(|cx| s.manager.read(cx).open_chat(&s.id).unwrap());
+    cx.update(|cx| chat.update(cx, |chat, _| chat.busy = true));
+    let send = |text: &str, cx: &mut TestAppContext| {
+        let sent = cx.update(|cx| {
+            s.manager
+                .update(cx, |m, cx| m.automation_send(&s.id, text.into(), cx))
+        });
+        cx.run_until_parked();
+        sent.unwrap()
+    };
+    let first = send(
+        "[Automation: Review]\nTrigger: Scheduled  ·  Run: one\nReview",
+        cx,
+    );
+    let second = send(
+        "[Automation: Review]\nTrigger: Scheduled  ·  Run: two\nReview",
+        cx,
+    );
+    assert_ne!(first, second);
+
+    // Both wait: an internal message never interrupts the turn in progress.
+    let waiting = automation_outbox(&s, cx);
+    assert_eq!(
+        waiting.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [first.as_str(), second.as_str()]
+    );
+    assert!(waiting.iter().all(|m| m.internal && m.error.is_none()));
+    let next = |busy: bool, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            s.manager
+                .read(cx)
+                .next_outbox_message(&s.id, busy)
+                .map(|m| m.id)
+        })
+    };
+    assert_eq!(next(true, cx), None, "nothing is sent into the busy turn");
+    // They survive a restart while they wait.
+    let saved = Roster::load(&locked(&s.store).unwrap()).unwrap();
+    assert_eq!(
+        saved.pilots[0]
+            .outbox
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        [first.as_str(), second.as_str()]
+    );
+
+    // The turn ends: the first run goes, then the second.
+    assert_eq!(next(false, cx).as_deref(), Some(first.as_str()));
+    cx.update(|cx| chat.update(cx, |chat, cx| chat.deliver_for_test(first.clone(), cx)));
+    cx.run_until_parked();
+    let left = automation_outbox(&s, cx);
+    assert_eq!(
+        left.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [second.as_str()]
+    );
+    assert_eq!(next(false, cx).as_deref(), Some(second.as_str()));
+}
+
+#[gpui::test]
+fn an_automation_run_is_queued_once_and_only_for_a_pilot_that_exists(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let chat = cx.update(|cx| s.manager.read(cx).open_chat(&s.id).unwrap());
+    cx.update(|cx| chat.update(cx, |chat, _| chat.busy = true));
+    let send = |id: &str, text: &str, cx: &mut TestAppContext| {
+        let sent = cx.update(|cx| {
+            s.manager
+                .update(cx, |m, cx| m.automation_send(id, text.into(), cx))
+        });
+        cx.run_until_parked();
+        sent
+    };
+    let text = "[Automation: Review]\nTrigger: Manual  ·  Run: one\nReview";
+    let first = send(&s.id, text, cx).unwrap();
+    // The same run handed over again is the message already waiting.
+    assert_eq!(send(&s.id, text, cx).unwrap(), first);
+    assert_eq!(automation_outbox(&s, cx).len(), 1);
+    // What the user typed with the same words is theirs, not the run's.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.mobile_send(&s.id, text.into(), Vec::new(), cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(send(&s.id, text, cx).unwrap(), first);
+    assert_eq!(automation_outbox(&s, cx).len(), 2);
+
+    assert_eq!(
+        send("gone", text, cx).unwrap_err(),
+        "Pilot gone is no longer available"
+    );
+    assert_eq!(automation_outbox(&s, cx).len(), 2);
+}
+
+#[test]
+fn a_queued_automation_run_is_named_by_its_automation() {
+    use crate::conversation::internal_header;
+    assert_eq!(
+        internal_header("[Automation: Review comments]\nTrigger: Scheduled  ·  Run: 1\nGo"),
+        "Automation: Review comments"
+    );
+    // A name with brackets keeps them.
+    assert_eq!(
+        internal_header("[Automation: [bot] triage]\nTrigger: Manual  ·  Run: 1\nGo"),
+        "Automation: [bot] triage"
+    );
+    for other in [
+        "Session 776 finished",
+        "",
+        "[Automation: ]\nrest",
+        "Reply\n[Automation: Review]",
+    ] {
+        assert_eq!(internal_header(other), "Completion update", "{other:?}");
+    }
+}

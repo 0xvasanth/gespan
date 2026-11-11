@@ -190,7 +190,14 @@ impl Automations {
                                             .child(format!(
                                                 "{} · {}",
                                                 automation.trigger_label(),
-                                                cached_model_name(kind, model.as_deref())
+                                                match automation.action.pilot_id() {
+                                                    Some(id) => {
+                                                        format!("→ {}", self.pilot_label(id))
+                                                    }
+                                                    None =>
+                                                        cached_model_name(kind, model.as_deref())
+                                                            .to_string(),
+                                                }
                                             )),
                                     ),
                             ),
@@ -237,7 +244,12 @@ impl Automations {
             } else {
                 self.project_label(&draft.cwd)
             },
-            secondary: editor::workspace_label(&draft.workspace_mode).into(),
+            // A Pilot works where it chooses; the project only matches events.
+            secondary: if draft.action.is_session() {
+                editor::workspace_label(&draft.workspace_mode).into()
+            } else {
+                "Events are matched here".into()
+            },
             section: Section::Session,
         };
         let triggers = draft.triggers.clone().unwrap_or_default();
@@ -294,6 +306,20 @@ impl Automations {
         }
         if draft.harness != "fx" {
             details.push(editor::access_label(&draft.runtime_mode).into());
+        }
+        if let Some(id) = draft.action.pilot_id() {
+            let pilot = Summary {
+                key: "agent",
+                title: "Pilot",
+                primary: if id.is_empty() {
+                    "Choose a Pilot".into()
+                } else {
+                    self.pilot_label(id)
+                },
+                secondary: "The run is queued on its chat".into(),
+                section: Section::Session,
+            };
+            return vec![project, when, pilot];
         }
         let agent = Summary {
             key: "agent",

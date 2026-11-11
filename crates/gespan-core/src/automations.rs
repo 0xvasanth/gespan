@@ -37,6 +37,31 @@ const MAX_EVENT_TITLE: usize = 300;
 /// fetched every few minutes, so "Do not catch up" still runs while Gespan is open.
 const ON_TIME_MS: i64 = 10 * 60_000;
 
+/// What a run does: start a session, or queue its prompt on a Pilot's chat.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AutomationAction {
+    #[default]
+    Session,
+    /// The Pilot is looked up when the run starts: Pilots are not stored here.
+    #[serde(rename_all = "camelCase")]
+    Pilot { pilot_id: String },
+}
+
+impl AutomationAction {
+    pub fn is_session(&self) -> bool {
+        *self == Self::Session
+    }
+    pub fn pilot_id(&self) -> Option<&str> {
+        match self {
+            Self::Session => None,
+            Self::Pilot { pilot_id } => Some(pilot_id),
+        }
+    }
+}
+
+const MAX_PILOT_ID: usize = 80;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Automation {
@@ -55,6 +80,9 @@ pub struct Automation {
     pub session_folder_id: String,
     pub reuse_session: bool,
     pub runtime_mode: String,
+    /// With the Pilot action the session settings above are kept but unused.
+    #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
+    pub action: AutomationAction,
     #[serde(default = "default_trigger_kind")]
     pub trigger_kind: String,
     #[serde(default)]
@@ -104,6 +132,8 @@ pub struct AutomationUpsert {
     #[serde(default)]
     pub reuse_session: bool,
     pub runtime_mode: String,
+    #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
+    pub action: AutomationAction,
     #[serde(default = "default_trigger_kind")]
     pub trigger_kind: String,
     #[serde(default)]
@@ -149,6 +179,9 @@ pub struct AutomationRun {
     pub event_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// The message a Pilot-action run queued on its Pilot's chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pilot_message_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -309,6 +342,11 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
         "supervised" | "auto-accept-edits" | "auto" | "full-access"
     ) {
         return Err("Invalid automation run mode.".into());
+    }
+    if let AutomationAction::Pilot { pilot_id } = &input.action {
+        if pilot_id.len() > MAX_PILOT_ID || validate_id(pilot_id, "Pilot").is_err() {
+            return Err("Choose a Pilot for this automation.".into());
+        }
     }
     if !matches!(
         input.trigger_kind.as_str(),
@@ -566,6 +604,7 @@ fn new_run(
         event: None,
         event_title: None,
         prompt: Some(prompt.to_string()),
+        pilot_message_id: None,
     }
 }
 
@@ -791,6 +830,7 @@ impl Service {
             session_folder_id: automation.session_folder_id.trim().to_string(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode,
+            action: automation.action,
             trigger_kind: automation.trigger_kind,
             trigger_event: automation.trigger_event.trim().to_string(),
             schedule_kind: automation.schedule_kind,
@@ -1097,6 +1137,37 @@ impl Service {
         error: Option<String>,
         now: i64,
     ) -> Result<AutomationRun, String> {
+        self.finish_run(run_id, status, session_id, error, None, now)
+    }
+
+    /// A Pilot-action run is done once its message is queued on the Pilot's
+    /// chat: delivery is the action's job, the Pilot's work is its own.
+    pub fn deliver_run(
+        &mut self,
+        run_id: &str,
+        pilot_message_id: &str,
+        now: i64,
+    ) -> Result<AutomationRun, String> {
+        validate_id(pilot_message_id, "Pilot message")?;
+        self.finish_run(
+            run_id,
+            "succeeded",
+            None,
+            None,
+            Some(pilot_message_id.to_string()),
+            now,
+        )
+    }
+
+    fn finish_run(
+        &mut self,
+        run_id: &str,
+        status: &str,
+        session_id: Option<String>,
+        error: Option<String>,
+        pilot_message_id: Option<String>,
+        now: i64,
+    ) -> Result<AutomationRun, String> {
         validate_id(run_id, "automation run")?;
         if let Some(session_id) = session_id.as_deref() {
             validate_id(session_id, "session")?;
@@ -1132,6 +1203,9 @@ impl Service {
         }
         if session_id.is_some() {
             run.session_id = session_id;
+        }
+        if pilot_message_id.is_some() {
+            run.pilot_message_id = pilot_message_id;
         }
         run.error = error.filter(|value| !value.trim().is_empty());
         let mut automation =
@@ -1337,6 +1411,7 @@ impl AutomationUpsert {
             session_folder_id: String::new(),
             reuse_session: false,
             runtime_mode: "auto".into(),
+            action: AutomationAction::Session,
             trigger_kind: "time".into(),
             trigger_event: String::new(),
             schedule_kind: "weekdays".into(),
@@ -1363,6 +1438,7 @@ impl AutomationUpsert {
             session_folder_id: automation.session_folder_id.clone(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode.clone(),
+            action: automation.action.clone(),
             trigger_kind: automation.trigger_kind.clone(),
             trigger_event: automation.trigger_event.clone(),
             schedule_kind: automation.schedule_kind.clone(),
@@ -3432,5 +3508,198 @@ mod tests {
         assert!(service
             .update_run(&run.id, "exploded", None, None, now_millis())
             .is_err());
+    }
+
+    fn waking(pilot_id: &str) -> AutomationUpsert {
+        let mut draft = AutomationUpsert::new("/repo".into(), "codex".into(), "model".into());
+        draft.name = "Review comments".into();
+        draft.prompt = "Review the comment.".into();
+        draft.action = AutomationAction::Pilot {
+            pilot_id: pilot_id.into(),
+        };
+        draft.sync_triggers(now_millis());
+        draft
+    }
+
+    #[test]
+    fn an_automation_saved_before_actions_starts_a_session_and_round_trips_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let saved = save(&mut service, vec![]);
+        // What every automation saved before this field looks like on disk.
+        let mut old: serde_json::Value = serde_json::to_value(&saved).unwrap();
+        assert!(old.get("action").is_none(), "session is not written");
+        old["triggers"] = serde_json::Value::Null;
+        let loaded = parse_automation(old.to_string()).unwrap();
+        assert_eq!(loaded.action, AutomationAction::Session);
+        let mut again = serde_json::to_value(&loaded).unwrap();
+        again["triggers"] = serde_json::Value::Null;
+        assert_eq!(again, old);
+        // An upsert from an older client has no action either.
+        let mut upsert = serde_json::to_value(AutomationUpsert::from_automation(&saved)).unwrap();
+        upsert.as_object_mut().unwrap().remove("action");
+        let upsert: AutomationUpsert = serde_json::from_value(upsert).unwrap();
+        assert_eq!(upsert.action, AutomationAction::Session);
+        assert_eq!(
+            service.upsert(upsert).unwrap().action,
+            AutomationAction::Session
+        );
+    }
+
+    #[test]
+    fn the_pilot_action_is_tagged_by_kind_with_a_camel_case_pilot_id() {
+        let pilot = AutomationAction::Pilot {
+            pilot_id: "abc123".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&pilot).unwrap(),
+            serde_json::json!({"kind": "pilot", "pilotId": "abc123"})
+        );
+        assert_eq!(
+            serde_json::to_value(AutomationAction::Session).unwrap(),
+            serde_json::json!({"kind": "session"})
+        );
+        assert_eq!(
+            serde_json::from_str::<AutomationAction>(r#"{"kind":"pilot","pilotId":"abc123"}"#)
+                .unwrap(),
+            pilot
+        );
+        // A pilot action with no id is not a session by accident.
+        assert!(serde_json::from_str::<AutomationAction>(r#"{"kind":"pilot"}"#).is_err());
+    }
+
+    #[test]
+    fn a_pilot_action_needs_a_well_formed_pilot_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let long = "a".repeat(81);
+        for bad in [
+            "",
+            "   ",
+            "has space",
+            "semi;colon",
+            "../etc",
+            long.as_str(),
+        ] {
+            assert_eq!(
+                service.upsert(waking(bad)).unwrap_err(),
+                "Choose a Pilot for this automation.",
+                "{bad:?}"
+            );
+        }
+        assert!(service.list().unwrap().is_empty());
+        let longest = "a".repeat(80);
+        for good in ["0123456789abcdef0123456789abcdef", longest.as_str()] {
+            let saved = service.upsert(waking(good)).unwrap();
+            assert_eq!(
+                stored(&service, &saved.id).action,
+                AutomationAction::Pilot {
+                    pilot_id: good.into()
+                }
+            );
+        }
+        // The Pilot is looked up when the automation runs, not when it saves:
+        // this id belongs to no Pilot, and a project is still required.
+        let mut homeless = waking("0123456789abcdef0123456789abcdef");
+        homeless.cwd = String::new();
+        assert_eq!(
+            service.upsert(homeless).unwrap_err(),
+            "Choose a project for this automation."
+        );
+    }
+
+    #[test]
+    fn a_pilot_automation_keeps_its_session_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = waking("pilot-1");
+        draft.model_settings.insert("effort".into(), "high".into());
+        draft.workspace_mode = "existing".into();
+        draft.worktree_cwd = "/repo/.worktrees/a".into();
+        draft.reuse_session = true;
+        draft.runtime_mode = "supervised".into();
+        draft.session_folder_id = "folder-1".into();
+        let saved = service.upsert(draft).unwrap();
+        let saved = stored(&service, &saved.id);
+        assert_eq!(saved.harness, "codex");
+        assert_eq!(saved.model, "model");
+        assert_eq!(saved.model_settings["effort"], "high");
+        assert_eq!(saved.workspace_mode, "existing");
+        assert_eq!(saved.worktree_cwd, "/repo/.worktrees/a");
+        assert!(saved.reuse_session);
+        assert_eq!(saved.runtime_mode, "supervised");
+        assert_eq!(saved.session_folder_id, "folder-1");
+        // Editing it again, or turning it off and on, keeps the action.
+        let again = service
+            .upsert(AutomationUpsert::from_automation(&saved))
+            .unwrap();
+        assert_eq!(again.action, saved.action);
+        let toggled = service.set_enabled(&saved.id, false).unwrap();
+        assert_eq!(toggled.action, saved.action);
+        assert_eq!(toggled.session_folder_id, "folder-1");
+    }
+
+    #[test]
+    fn a_delivered_run_succeeds_with_its_message_and_no_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = service.upsert(waking("pilot-1")).unwrap();
+        let run = service.run_now(&automation.id, now_millis()).unwrap();
+        assert_eq!(run.pilot_message_id, None);
+        assert!(serde_json::to_value(&run)
+            .unwrap()
+            .get("pilotMessageId")
+            .is_none());
+        let done = service
+            .deliver_run(&run.id, "message-1", now_millis())
+            .unwrap();
+        assert_eq!(done.status, "succeeded");
+        assert_eq!(done.pilot_message_id.as_deref(), Some("message-1"));
+        assert_eq!(done.session_id, None);
+        assert!(done.completed_at.is_some());
+        let listed = service.runs(&automation.id).unwrap();
+        assert_eq!(listed[0].pilot_message_id.as_deref(), Some("message-1"));
+        let saved = stored(&service, &automation.id);
+        assert_eq!(saved.last_run_status.as_deref(), Some("succeeded"));
+        assert_eq!(saved.last_session_id, None);
+        assert!(service
+            .deliver_run(&run.id, "bad id", now_millis())
+            .is_err());
+    }
+
+    #[test]
+    fn recovery_requeues_a_pending_pilot_run_once_and_never_a_delivered_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = service.upsert(waking("pilot-1")).unwrap();
+        let now = now_millis();
+        let delivered = service.run_now(&automation.id, now).unwrap();
+        service
+            .deliver_run(&delivered.id, "message-1", now)
+            .unwrap();
+        let pending = service.run_now(&automation.id, now).unwrap();
+        let recovered = service.recover(now, now).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].run.id, pending.id);
+        assert_eq!(recovered[0].run.status, "pending");
+        assert_eq!(
+            recovered[0].automation.action,
+            AutomationAction::Pilot {
+                pilot_id: "pilot-1".into()
+            }
+        );
+        // Once it is queued it is delivered, and a later restart leaves both.
+        service.deliver_run(&pending.id, "message-2", now).unwrap();
+        assert!(service.recover(now, now).unwrap().is_empty());
+        let statuses: Vec<_> = service
+            .runs(&automation.id)
+            .unwrap()
+            .into_iter()
+            .map(|run| (run.status, run.pilot_message_id))
+            .collect();
+        assert_eq!(statuses.len(), 2);
+        assert!(statuses
+            .iter()
+            .all(|(status, message)| status == "succeeded" && message.is_some()));
     }
 }

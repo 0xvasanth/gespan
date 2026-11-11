@@ -1335,6 +1335,11 @@ impl Shell {
             this.observations.push(cx.subscribe(
                 &pilots,
                 |this, _, _: &crate::pilots::Changed, cx| {
+                    // A Pilot created or renamed shows in the automation editor.
+                    if let Some(view) = this.automations.clone() {
+                        let pilots = this.pilot_names(cx);
+                        view.update(cx, |view, cx| view.set_pilots(pilots, cx));
+                    }
                     this.sync_pilot_search(cx);
                     this.update_usage_provider(cx);
                     this.invalidate_chrome(cx);
