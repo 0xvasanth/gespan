@@ -1349,3 +1349,227 @@ fn git_diff_full_context(root: &Path, base: &str, head: &str) -> Result<(String,
         Ok((output, false))
     }
 }
+
+/// The login of the account `gh` is signed in with.
+pub(super) fn git_github_login_for(root: &Path) -> Result<String, String> {
+    let login = gh_checked(root, &["api", "user", "--jq", ".login"])?;
+    let login = login.trim();
+    if login.is_empty() {
+        return Err("GitHub did not say which account is signed in".into());
+    }
+    Ok(login.to_string())
+}
+
+/// A pull request with what automations need beyond the Inbox list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitHubPrState {
+    pub item: GitHubWorkItem,
+    pub head_oid: String,
+    pub checks: Vec<GitHubPrCheck>,
+    pub merged_at: String,
+    pub merged_by: String,
+}
+
+/// Open pull requests with their head commit and checks, or (`state`
+/// `merged`) merged ones with who merged them and when. `search` narrows
+/// the list the way GitHub's search box does.
+pub(super) fn git_github_pr_states_for(
+    root: &Path,
+    repo: &str,
+    state: &str,
+    search: &str,
+    limit: u32,
+) -> Result<Vec<GitHubPrState>, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let args = github_pr_states_args(repo, state, search, limit)?;
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    parse_github_pr_states(&gh_checked(root, &refs)?, &format!("{owner}/{name}"))
+}
+
+fn github_pr_states_args(
+    repo: &str,
+    state: &str,
+    search: &str,
+    limit: u32,
+) -> Result<Vec<String>, String> {
+    let (owner, name) = split_github_repo(repo)?;
+    let merged = state.trim().eq_ignore_ascii_case("merged");
+    let fields = if merged {
+        "number,title,url,state,createdAt,updatedAt,isDraft,mergedAt,mergedBy"
+    } else {
+        "number,title,url,state,createdAt,updatedAt,isDraft,headRefOid,statusCheckRollup"
+    };
+    let mut args: Vec<String> = [
+        "pr",
+        "list",
+        "--state",
+        if merged { "merged" } else { "open" },
+        "--limit",
+        &limit.clamp(1, 100).to_string(),
+        "--repo",
+        &format!("{owner}/{name}"),
+        "--json",
+        fields,
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    if !search.trim().is_empty() {
+        args.push("--search".into());
+        args.push(search.trim().into());
+    }
+    Ok(args)
+}
+
+fn parse_github_pr_states(json: &str, repo: &str) -> Result<Vec<GitHubPrState>, String> {
+    #[derive(Deserialize)]
+    struct Login {
+        #[serde(default)]
+        login: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Row {
+        number: i64,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        url: String,
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        created_at: String,
+        #[serde(default)]
+        updated_at: String,
+        #[serde(default)]
+        is_draft: bool,
+        #[serde(default)]
+        head_ref_oid: String,
+        #[serde(default)]
+        status_check_rollup: Option<Vec<GitHubStatusCheckRow>>,
+        #[serde(default)]
+        merged_at: Option<String>,
+        #[serde(default)]
+        merged_by: Option<Login>,
+    }
+    let rows: Vec<Row> = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.number > 0)
+        .map(|row| GitHubPrState {
+            item: GitHubWorkItem {
+                kind: "pr".into(),
+                number: row.number,
+                title: row.title,
+                url: row.url,
+                state: row.state.to_lowercase(),
+                state_reason: String::new(),
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                labels: Vec::new(),
+                assignees: Vec::new(),
+                draft: row.is_draft,
+                repo: repo.to_string(),
+            },
+            head_oid: row.head_ref_oid.trim().to_string(),
+            checks: row
+                .status_check_rollup
+                .unwrap_or_default()
+                .into_iter()
+                .map(github_pr_check_from_row)
+                .collect(),
+            merged_at: row.merged_at.unwrap_or_default().trim().to_string(),
+            merged_by: row
+                .merged_by
+                .map(|by| by.login.trim().to_string())
+                .unwrap_or_default(),
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod automation_event_tests {
+    use super::*;
+
+    #[test]
+    fn open_pull_requests_carry_their_head_commit_and_checks() {
+        // The shape `gh pr list --json ...,headRefOid,statusCheckRollup` prints.
+        let json = r#"[{"number":12,"title":"Add login","url":"https://github.com/acme/app/pull/12",
+            "state":"OPEN","createdAt":"2026-11-10T09:00:00Z","updatedAt":"2026-11-11T09:00:00Z",
+            "isDraft":false,"headRefOid":"abc1234def5678",
+            "statusCheckRollup":[
+              {"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED",
+               "conclusion":"FAILURE","detailsUrl":"https://github.com/acme/app/actions/runs/1/job/2",
+               "startedAt":"2026-11-11T09:01:00Z","completedAt":"2026-11-11T09:05:00Z"},
+              {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"IN_PROGRESS","conclusion":""},
+              {"__typename":"StatusContext","context":"deploy/preview","state":"ERROR",
+               "targetUrl":"https://deploy.example/1","createdAt":"2026-11-11T09:02:00Z"}]}]"#;
+        let states = parse_github_pr_states(json, "acme/app").unwrap();
+        assert_eq!(states.len(), 1);
+        let pr = &states[0];
+        assert_eq!(pr.item.number, 12);
+        assert_eq!(pr.item.state, "open");
+        assert_eq!(pr.item.repo, "acme/app");
+        assert_eq!(pr.head_oid, "abc1234def5678");
+        let checks: Vec<_> = pr
+            .checks
+            .iter()
+            .map(|check| (check.name.as_str(), check.state.as_str()))
+            .collect();
+        assert_eq!(
+            checks,
+            [
+                ("test", "fail"),
+                ("lint", "pending"),
+                ("deploy/preview", "fail")
+            ]
+        );
+        assert_eq!(
+            pr.checks[0].completed_at.as_deref(),
+            Some("2026-11-11T09:05:00Z")
+        );
+        assert_eq!(pr.merged_at, "");
+    }
+
+    #[test]
+    fn merged_pull_requests_say_who_merged_them_and_when() {
+        // The shape `gh pr list --state merged --json ...,mergedAt,mergedBy` prints.
+        let json = r#"[{"number":9,"title":"Fix","url":"https://github.com/acme/app/pull/9",
+            "state":"MERGED","createdAt":"2026-11-09T09:00:00Z","updatedAt":"2026-11-11T14:38:22Z",
+            "isDraft":false,"mergedAt":"2026-11-11T14:38:22Z",
+            "mergedBy":{"id":"U_1","is_bot":false,"login":"octocat","name":"Octo Cat"}},
+            {"number":0,"title":"broken"}]"#;
+        let states = parse_github_pr_states(json, "acme/app").unwrap();
+        assert_eq!(states.len(), 1, "a row without a number is dropped");
+        assert_eq!(states[0].merged_at, "2026-11-11T14:38:22Z");
+        assert_eq!(states[0].merged_by, "octocat");
+        assert_eq!(states[0].item.state, "merged");
+        assert!(states[0].checks.is_empty() && states[0].head_oid.is_empty());
+    }
+
+    #[test]
+    fn the_lists_ask_gh_for_only_what_each_event_needs() {
+        assert_eq!(
+            github_pr_states_args("acme/app", "open", "review-requested:@me", 500).unwrap(),
+            [
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                "100",
+                "--repo",
+                "acme/app",
+                "--json",
+                "number,title,url,state,createdAt,updatedAt,isDraft,headRefOid,statusCheckRollup",
+                "--search",
+                "review-requested:@me"
+            ]
+        );
+        let merged = github_pr_states_args("acme/app", "merged", " ", 20).unwrap();
+        assert_eq!(&merged[2..6], ["--state", "merged", "--limit", "20"]);
+        assert!(merged[9].ends_with("mergedAt,mergedBy"));
+        assert_eq!(merged.len(), 10, "a blank search is left out");
+        assert!(github_pr_states_args("not a repo", "open", "", 20).is_err());
+    }
+}

@@ -28,13 +28,14 @@ pub(super) struct State {
     events_polling: bool,
     retry_revision: Arc<AtomicU64>,
     pub session_automations: HashMap<i64, String>,
-    /// When each merge request's comments were last read, by Inbox item key
-    /// and the merge request's update time then.
-    mr_comments_read: HashMap<String, i64>,
-    /// The merge requests the Inbox listed at its last refresh, until their
-    /// comments have been looked at. The Inbox offers an undated item to
-    /// automations only when it first appears, so these arrive separately.
-    merge_requests: Vec<gespan_core::inbox::Item>,
+    /// When each pull or merge request's comments were last read, by Inbox
+    /// item key and its update time then.
+    comments_read: HashMap<String, i64>,
+    /// The GitHub and GitLab items the Inbox listed at its last refresh,
+    /// until they have been looked at for comments, checks, reviews, merges
+    /// and assignments. The Inbox offers an undated item to automations only
+    /// when it first appears, so these arrive separately.
+    listed: Vec<gespan_core::inbox::Item>,
 }
 
 impl Default for State {
@@ -56,8 +57,8 @@ impl Default for State {
             events_polling: false,
             retry_revision: Arc::new(AtomicU64::new(0)),
             session_automations: HashMap::new(),
-            mr_comments_read: HashMap::new(),
-            merge_requests: Vec::new(),
+            comments_read: HashMap::new(),
+            listed: Vec::new(),
         }
     }
 }
@@ -245,19 +246,19 @@ impl Shell {
         self.claim_inbox_events(cx);
     }
 
-    /// The merge requests the Inbox lists now. A new comment on one of them
-    /// can start a run; listing them again starts nothing else.
-    pub(super) fn inbox_merge_requests(&mut self, listed: Vec<gespan_core::inbox::Item>) {
-        self.automation_state.merge_requests = listed;
+    /// The GitHub and GitLab items the Inbox lists now. Something new on one
+    /// of them can start a run; listing them again starts nothing else.
+    pub(super) fn inbox_listed(&mut self, listed: Vec<gespan_core::inbox::Item>) {
+        self.automation_state.listed = listed;
     }
 
-    /// How many listed merge requests still wait to be looked at, and how
-    /// many have had their comments read.
+    /// How many listed items still wait to be looked at, and how many pull
+    /// requests have had their comments read.
     #[cfg(test)]
-    pub(super) fn merge_request_watch_for_test(&self) -> (usize, usize) {
+    pub(super) fn listed_watch_for_test(&self) -> (usize, usize) {
         (
-            self.automation_state.merge_requests.len(),
-            self.automation_state.mr_comments_read.len(),
+            self.automation_state.listed.len(),
+            self.automation_state.comments_read.len(),
         )
     }
 
@@ -275,36 +276,38 @@ impl Shell {
         }
         let items: Vec<_> = waiting.into_values().collect();
         // Looked at once per refresh; a failed read waits for the next one.
-        let listed = std::mem::take(&mut self.automation_state.merge_requests);
+        let listed = std::mem::take(&mut self.automation_state.listed);
         if items.is_empty() && listed.is_empty() {
             return;
         }
         self.automation_state.events_polling = true;
         let attempted = items.clone();
-        let read = self.automation_state.mr_comments_read.clone();
+        let read = self.automation_state.comments_read.clone();
         let store = self.store.clone();
+        let cwd = self.workspace.project.clone();
         let work = cx.background_executor().spawn(async move {
-            // Comments are fetched before the service is locked for claiming.
-            let watchers = automations::mr_comment_watchers(&mut *service_lock(&service)?, now())?;
-            let (comments, read) = if watchers.is_empty() {
-                (Vec::new(), Vec::new())
+            // The providers are asked before the service is locked for claiming.
+            let watches = automations::event_watches(&mut *service_lock(&service)?, now())?;
+            let watched = if watches.is_empty() || listed.is_empty() {
+                Default::default()
             } else {
-                let data_dir = locked(&store)?.data_dir().map(std::path::Path::to_path_buf);
-                new_mr_comments(&watchers, &listed, &read, |mr, me| {
-                    let data_dir = data_dir.clone().ok_or("Gespan has no data folder")?;
-                    let me = match me {
-                        Some(me) => me.clone(),
-                        None => me
-                            .insert(gespan_core::inbox::gitlab::gitlab_current_user(
-                                data_dir.clone(),
-                            )?)
-                            .clone(),
-                    };
-                    gespan_core::inbox::gitlab_mr_comment_items(data_dir, mr, &me)
-                })
+                let data_dir = locked(&store)?
+                    .data_dir()
+                    .map(std::path::Path::to_path_buf)
+                    .ok_or("Gespan has no data folder")?;
+                let mut source =
+                    gespan_core::inbox::events::LiveEvents::new(gespan_core::inbox::Service {
+                        data_dir,
+                        cwd: cwd.into(),
+                    });
+                gespan_core::inbox::events::watch_events(&watches, &listed, &read, &mut source)
             };
+            for error in &watched.errors {
+                tracing::warn!(%error, "an automation event was not looked up");
+            }
             let mut items = items;
-            items.extend(comments);
+            items.extend(watched.items);
+            let read = watched.read;
             let mut service = service_lock(&service)?;
             automations::claim_inbox_events_retry(&mut service, &items, now())
                 .map(|(runs, retry)| (runs, retry, read))
@@ -315,7 +318,7 @@ impl Shell {
                 this.automation_state.events_polling = false;
                 match result {
                     Ok((runs, retry, read)) => {
-                        this.automation_state.mr_comments_read.extend(read);
+                        this.automation_state.comments_read.extend(read);
                         this.set_event_retries(retry, cx);
                         for run in runs {
                             this.launch_automation(run, false, cx);
@@ -331,7 +334,7 @@ impl Shell {
                     }
                 }
                 if !this.automation_state.waiting_events.is_empty()
-                    || !this.automation_state.merge_requests.is_empty()
+                    || !this.automation_state.listed.is_empty()
                 {
                     this.claim_inbox_events(cx);
                 }
@@ -810,40 +813,6 @@ impl Shell {
             }
         }));
     }
-}
-
-/// The new-comment items for the merge requests in `items` that changed since
-/// their comments were last read, and which merge requests were read. `fetch`
-/// reads one merge request's comments; it is handed the connected account's
-/// name to fill in once and reuse. A merge request whose fetch fails is not
-/// marked read, so the next refresh tries it again.
-pub(super) fn new_mr_comments(
-    watchers: &[(String, i64)],
-    items: &[gespan_core::inbox::Item],
-    read: &HashMap<String, i64>,
-    mut fetch: impl FnMut(
-        &gespan_core::inbox::Item,
-        &mut Option<String>,
-    ) -> Result<Vec<gespan_core::inbox::Item>, String>,
-) -> (Vec<gespan_core::inbox::Item>, Vec<(String, i64)>) {
-    let mut me = None;
-    let mut comments = Vec::new();
-    let mut now_read = Vec::new();
-    for mr in automations::mr_comment_candidates(watchers, items, read) {
-        match fetch(mr, &mut me) {
-            Ok(found) => {
-                comments.extend(found);
-                now_read.push((mr.key(), mr.updated_ms()));
-            }
-            Err(error) => tracing::warn!(
-                %error,
-                repo = %mr.repo,
-                number = mr.number,
-                "merge request comments were not read"
-            ),
-        }
-    }
-    (comments, now_read)
 }
 
 /// Where a background run works: a new worktree from `HEAD`, an existing

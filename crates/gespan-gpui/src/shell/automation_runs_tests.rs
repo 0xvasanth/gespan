@@ -1602,16 +1602,18 @@ fn mr_comment(
     body: &str,
     me: &str,
 ) -> Vec<gespan_core::inbox::Item> {
-    gespan_core::inbox::mr_comment_items(
+    gespan_core::inbox::events::comment_items(
         mr,
-        &[gespan_core::inbox::MrComment {
+        &[gespan_core::inbox::Comment {
             id: id.into(),
+            kind: "comment".into(),
             author: author.into(),
             body: body.into(),
             created_at: chrono::DateTime::from_timestamp_millis(now_ms())
                 .unwrap()
                 .to_rfc3339(),
             url: format!("{}#note_{id}", mr.url),
+            ..Default::default()
         }],
         me,
     )
@@ -1640,7 +1642,7 @@ fn a_new_merge_request_comment_launches_one_run_however_often_it_is_offered(
     assert_launched(&saved[0], "event");
     assert_eq!(
         saved[0].event_key.as_deref(),
-        Some("gitlab:mr_comment:acme/app:7:101")
+        Some("gitlab:merge_request_comment:acme/app:7:101")
     );
     assert_eq!(sessions(&window, &id, cx), 1);
 
@@ -1661,7 +1663,7 @@ fn a_new_merge_request_comment_launches_one_run_however_often_it_is_offered(
         .filter_map(|run| run.event_key)
         .collect();
     assert_eq!(keys.len(), 2, "{keys:?}");
-    assert!(keys.contains(&"gitlab:mr_comment:acme/app:7:102".to_string()));
+    assert!(keys.contains(&"gitlab:merge_request_comment:acme/app:7:102".to_string()));
     assert_eq!(sessions(&window, &id, cx), 2);
 }
 
@@ -1707,70 +1709,6 @@ fn a_merge_request_comment_can_wake_a_pilot_with_the_comment_in_its_message(
     assert_eq!(all_sessions(&window, cx), before);
 }
 
-#[test]
-fn comments_are_read_only_for_changed_merge_requests_and_a_failed_read_is_tried_again() {
-    use super::automation_runs::new_mr_comments;
-    let data = data();
-    let since = now_ms() - 60_000;
-    let watchers = vec![(data.project.clone(), since)];
-    let items = vec![
-        merge_request(&data, 1, since + 10),
-        merge_request(&data, 2, since + 20),
-        merge_request(&data, 3, since + 30),
-        issue(&data, 4, since + 40),
-    ];
-    let mut asked = Vec::new();
-    let mut lookups = 0;
-    let mut fetch = |mr: &gespan_core::inbox::Item, me: &mut Option<String>| {
-        asked.push(mr.number);
-        if me.is_none() {
-            lookups += 1;
-            *me = Some("gespan-bot".into());
-        }
-        if mr.number == 2 {
-            return Err("GitLab is unreachable".to_string());
-        }
-        Ok(mr_comment(
-            mr,
-            &format!("{}00", mr.number),
-            "alice",
-            "Hi",
-            me.as_deref().unwrap(),
-        ))
-    };
-    let mut read = HashMap::new();
-    let (comments, now_read) = new_mr_comments(&watchers, &items, &read, &mut fetch);
-    assert_eq!(
-        comments.iter().map(|item| item.key()).collect::<Vec<_>>(),
-        [
-            "gitlab:acme/app:mr_comment:1:100",
-            "gitlab:acme/app:mr_comment:3:300"
-        ]
-    );
-    assert_eq!(
-        now_read,
-        [
-            (items[0].key(), items[0].updated_ms()),
-            (items[2].key(), items[2].updated_ms())
-        ]
-    );
-    read.extend(now_read);
-
-    // Next refresh: nothing changed, so only the failed one is asked again.
-    let (_, now_read) = new_mr_comments(&watchers, &items, &read, &mut fetch);
-    assert!(now_read.is_empty());
-    // Then someone comments on the first, which moves its update time.
-    let mut changed = items.clone();
-    changed[0] = merge_request(&data, 1, since + 500);
-    let (_, now_read) = new_mr_comments(&watchers, &changed, &read, &mut fetch);
-    assert_eq!(now_read, [(changed[0].key(), changed[0].updated_ms())]);
-    // With nobody watching, nothing is asked at all.
-    let (comments, now_read) = new_mr_comments(&[], &changed, &HashMap::new(), &mut fetch);
-    assert!(comments.is_empty() && now_read.is_empty());
-    assert_eq!(asked, [1, 2, 3, 2, 1, 2]);
-    assert_eq!(lookups, 3, "the account is looked up once per refresh");
-}
-
 #[gpui::test]
 fn listing_merge_requests_again_starts_no_opened_run_and_is_looked_at_once(
     cx: &mut TestAppContext,
@@ -1793,7 +1731,7 @@ fn listing_merge_requests_again_starts_no_opened_run_and_is_looked_at_once(
         let listed = listed.clone();
         window
             .update(cx, |shell, _, cx| {
-                shell.inbox_merge_requests(listed);
+                shell.inbox_listed(listed);
                 shell.inbox_automation_events(Vec::new(), cx);
             })
             .unwrap();
@@ -1805,8 +1743,71 @@ fn listing_merge_requests_again_starts_no_opened_run_and_is_looked_at_once(
     );
     assert!(runs(&data.db, &on_comments).is_empty());
     let (left, read) = window
-        .update(cx, |shell, _, _| shell.merge_request_watch_for_test())
+        .update(cx, |shell, _, _| shell.listed_watch_for_test())
         .unwrap();
     assert_eq!(left, 0, "the list is looked at once per refresh");
     assert_eq!(read, 0, "a failed read is not marked as read");
+}
+
+#[gpui::test]
+fn github_comments_and_failed_checks_each_launch_their_own_run(cx: &mut TestAppContext) {
+    let data = data();
+    let on_comment = save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![AutomationTrigger::new("github", "pull_request_comment")],
+        ),
+    );
+    let on_check = save(
+        &data.db,
+        draft(
+            &data.project,
+            vec![AutomationTrigger::new("github", "check_failed")],
+        ),
+    );
+    let window = open(&data, cx);
+    let mut pr = merge_request(&data, 12, now_ms());
+    pr.provider = "github".into();
+    pr.url = "https://github.com/acme/app/pull/12".into();
+    let mut found = mr_comment(&pr, "IC_1", "alice", "Can you add a test?", "gespan-bot");
+    // The account's own reply would wake the agent that wrote it.
+    found.extend(mr_comment(
+        &pr,
+        "IC_2",
+        "gespan-bot",
+        "Added one",
+        "gespan-bot",
+    ));
+    found.extend(gespan_core::inbox::events::check_failed_items(
+        &pr,
+        &gespan_core::inbox::Checks {
+            head_oid: "abc1234def".into(),
+            checks: vec![gespan_core::inbox::Check {
+                name: "test".into(),
+                workflow: "CI".into(),
+                state: "fail".into(),
+                completed_at: pr.updated_at.clone().into(),
+                ..Default::default()
+            }],
+        },
+    ));
+    deliver(&window, found.clone(), cx);
+    deliver(&window, found, cx);
+    let commented = runs(&data.db, &on_comment);
+    assert_eq!(commented.len(), 1, "{commented:?}");
+    assert_launched(&commented[0], "event");
+    assert_eq!(
+        commented[0].event_key.as_deref(),
+        Some("github:pull_request_comment:acme/app:12:ic_1")
+    );
+    let checked = runs(&data.db, &on_check);
+    assert_eq!(checked.len(), 1, "{checked:?}");
+    assert_launched(&checked[0], "event");
+    assert_eq!(
+        checked[0].event_key.as_deref(),
+        Some("github:check_failed:acme/app:12:abc1234def:ci_/_test")
+    );
+    assert_eq!(sessions(&window, &on_comment, cx), 1);
+    assert_eq!(sessions(&window, &on_check, cx), 1);
 }

@@ -30,13 +30,13 @@ use std::{
 };
 
 impl Inbox {
-    /// The GitLab merge requests in the current list, for automations that
-    /// wait for comments on them.
-    pub(crate) fn merge_requests(&self) -> Vec<Item> {
+    /// The GitHub and GitLab items in the current list, for automations that
+    /// wait for something to happen on them.
+    pub(crate) fn watched_items(&self) -> Vec<Item> {
         self.snapshot
             .items
             .iter()
-            .filter(|item| item.provider == "gitlab" && item.kind == "pr")
+            .filter(|item| matches!(item.provider.as_str(), "github" | "gitlab"))
             .cloned()
             .collect()
     }

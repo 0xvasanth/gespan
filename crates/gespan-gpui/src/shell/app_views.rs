@@ -555,7 +555,7 @@ impl Shell {
                     }
                     inbox::Event::AskClosed => this.update_chat_visibility(cx),
                     inbox::Event::ItemsChanged(items) => {
-                        this.inbox_merge_requests(view.read(cx).merge_requests());
+                        this.inbox_listed(view.read(cx).watched_items());
                         this.inbox_automation_events(items.clone(), cx)
                     }
                     inbox::Event::ConnectionsChanged => this.refresh_connected_trackers(cx),

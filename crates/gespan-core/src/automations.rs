@@ -1324,7 +1324,8 @@ pub fn event_label(kind: &str, event: &str) -> String {
         (_, "pull_request_opened") => "Pull request opened",
         (_, "issue_opened") => "Issue opened",
         (_, "merge_request_opened") => "Merge request opened",
-        (_, MR_COMMENT_EVENT) => "Merge request comment",
+        (_, GITLAB_COMMENT_EVENT) => "Merge request comment",
+        (_, GITHUB_COMMENT_EVENT) => "Pull request comment",
         (_, "issue_created") => "Issue created",
         (_, "pull_request_appeared") => "Pull request appeared",
         (_, "work_item_appeared") => "Work item appeared",
@@ -1507,55 +1508,78 @@ impl Service {
     }
 }
 
-/// The event a new comment on a GitLab merge request raises.
-pub const MR_COMMENT_EVENT: &str = "merge_request_comment";
+/// A new comment on a GitHub pull request.
+pub const GITHUB_COMMENT_EVENT: &str = "pull_request_comment";
+/// A new comment on a GitLab merge request.
+pub const GITLAB_COMMENT_EVENT: &str = "merge_request_comment";
+/// A check failing on a GitHub pull request's latest commit.
+pub const CHECK_FAILED_EVENT: &str = "check_failed";
+/// A GitHub pull request awaiting the connected account's review.
+pub const REVIEW_REQUESTED_EVENT: &str = "pull_request_review_requested";
+/// A GitHub pull request being merged.
+pub const MERGED_EVENT: &str = "pull_request_merged";
+/// A GitHub issue being assigned to the connected account.
+pub const ISSUE_ASSIGNED_EVENT: &str = "issue_assigned";
 
-/// The projects whose merge request comments an enabled automation waits
-/// for, each with the time before which a comment is too old to run it.
-pub fn mr_comment_watchers(service: &mut Service, now: i64) -> Result<Vec<(String, i64)>, String> {
-    Ok(service
-        .list()?
-        .into_iter()
-        .filter(|automation| {
-            automation.enabled && has_event_trigger(automation, "gitlab", MR_COMMENT_EVENT)
-        })
-        .map(|automation| {
-            let since = automation
-                .events_since
-                .unwrap_or(automation.created_at)
-                .max(now.saturating_sub(catch_up_ms(&automation)));
-            (automation.cwd, since)
-        })
-        .collect())
+/// The events found by asking the provider about listed items, rather than
+/// from the Inbox list itself, each with the provider that raises it.
+pub const WATCHED_EVENTS: [(&str, &str); 6] = [
+    ("github", GITHUB_COMMENT_EVENT),
+    ("gitlab", GITLAB_COMMENT_EVENT),
+    ("github", CHECK_FAILED_EVENT),
+    ("github", REVIEW_REQUESTED_EVENT),
+    ("github", MERGED_EVENT),
+    ("github", ISSUE_ASSIGNED_EVENT),
+];
+
+/// An enabled automation waiting for `event` from `provider` in project
+/// `cwd`. Events from before `since` are too old to run it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Watch {
+    pub provider: String,
+    pub event: String,
+    pub cwd: String,
+    pub since: i64,
 }
 
-/// The merge requests in `items` whose comments are worth fetching: open,
-/// in a watched project, changed since that project started being watched,
-/// and changed since their comments were last read (`seen`, by item key).
-/// GitLab moves a merge request's update time when someone comments on it.
-pub fn mr_comment_candidates<'a>(
-    watchers: &[(String, i64)],
-    items: &'a [crate::inbox::Item],
-    seen: &HashMap<String, i64>,
-) -> Vec<&'a crate::inbox::Item> {
-    items
-        .iter()
-        .filter(|item| {
-            item.provider == "gitlab"
-                && item.kind == "pr"
-                && item.note.is_none()
-                && item.number > 0
-                && !item.repo.trim().is_empty()
-                && matches!(item.status(), "Open" | "Draft")
-        })
-        .filter(|item| {
-            let updated = item.updated_ms();
-            let project = crate::files::path_key(&item.project_path);
-            watchers.iter().any(|(cwd, since)| {
-                crate::files::path_key(cwd) == project && (updated == 0 || updated >= *since)
-            }) && seen.get(&item.key()).is_none_or(|read| updated > *read)
-        })
-        .collect()
+/// What enabled automations wait for that the Inbox list cannot show.
+pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, String> {
+    let mut watches = Vec::new();
+    for automation in service.list()? {
+        if !automation.enabled {
+            continue;
+        }
+        let since = automation
+            .events_since
+            .unwrap_or(automation.created_at)
+            .max(now.saturating_sub(catch_up_ms(&automation)));
+        for (provider, event) in WATCHED_EVENTS {
+            if has_event_trigger(&automation, provider, event) {
+                watches.push(Watch {
+                    provider: provider.into(),
+                    event: event.into(),
+                    cwd: automation.cwd.clone(),
+                    since,
+                });
+            }
+        }
+    }
+    Ok(watches)
+}
+
+/// The instruction before an event's outside text, such as "Respond to this
+/// comment on a GitHub pull request:".
+fn event_task(event: &str, provider: &str, kind: &str) -> String {
+    match event {
+        GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT => {
+            format!("Respond to this comment on a {provider} {kind}:")
+        }
+        CHECK_FAILED_EVENT => format!("A check failed on this {provider} {kind}:"),
+        REVIEW_REQUESTED_EVENT => format!("Review this {provider} {kind}:"),
+        MERGED_EVENT => format!("This {provider} {kind} was merged:"),
+        ISSUE_ASSIGNED_EVENT => format!("This {provider} {kind} was assigned to you:"),
+        _ => format!("Work on this {provider} {kind}:"),
+    }
 }
 
 /// Matches the original Inbox appeared-event filters before using the durable
@@ -1580,11 +1604,21 @@ pub fn claim_inbox_events_retry(
     let mut retry = Vec::new();
     for item in items {
         let event = match (item.provider.as_str(), item.kind.as_str(), item.draft) {
+            // An event found on the item names itself, before its kind does.
+            _ if item.occurrence.is_some() => {
+                let named = item.occurrence.as_ref().map(|o| o.event.as_str());
+                match WATCHED_EVENTS
+                    .iter()
+                    .find(|(provider, event)| *provider == item.provider && Some(*event) == named)
+                {
+                    Some((_, event)) => event,
+                    None => continue,
+                }
+            }
             ("github", "pr", true) => "draft_opened",
             ("github", "pr", false) => "pull_request_opened",
             ("github" | "gitlab", "issue", _) => "issue_opened",
             ("gitlab", "pr", _) => "merge_request_opened",
-            ("gitlab", crate::inbox::MR_COMMENT, _) if item.note.is_some() => MR_COMMENT_EVENT,
             ("linear" | "jira", _, _) => "issue_created",
             ("azuredevops", "pr", _) => "pull_request_appeared",
             ("azuredevops", "issue", _) => "work_item_appeared",
@@ -1599,11 +1633,11 @@ pub fn claim_inbox_events_retry(
                 item.number.to_string()
             };
             format!("{}:issue:{id}", item.provider)
-        } else if let Some(note) = &item.note {
-            // One claim per comment: a merge request runs again for the next.
+        } else if let Some(occurrence) = &item.occurrence {
+            // One claim per event: a pull request runs again for the next.
             format!(
-                "{}:{}:{}:{}:{}",
-                item.provider, item.kind, item.repo, item.number, note.id
+                "{}:{event}:{}:{}:{}",
+                item.provider, item.repo, item.number, occurrence.id
             )
         } else {
             format!(
@@ -1663,14 +1697,20 @@ pub fn claim_inbox_events_retry(
                 if trigger.kind != item.provider || trigger.event != event {
                     return false;
                 }
-                // Only a comment says who it is by; other events run for anyone.
+                // Only an event that says who did it can match a named
+                // author. The connected account's own events run only when
+                // the trigger names it, so an agent using it does not loop.
                 let actor = trigger.actor.trim().trim_start_matches('@');
-                if !actor.is_empty()
-                    && !actor.eq_ignore_ascii_case("anyone")
-                    && !item
-                        .note
+                let named = !actor.is_empty() && !actor.eq_ignore_ascii_case("anyone");
+                let by_actor = item
+                    .occurrence
+                    .as_ref()
+                    .is_some_and(|occurrence| occurrence.author.trim().eq_ignore_ascii_case(actor));
+                if (named && !by_actor)
+                    || item
+                        .occurrence
                         .as_ref()
-                        .is_some_and(|note| note.author.trim().eq_ignore_ascii_case(actor))
+                        .is_some_and(|occurrence| occurrence.mine && !(named && by_actor))
                 {
                     return false;
                 }
@@ -1729,33 +1769,33 @@ pub fn claim_inbox_events_retry(
                     format!("{}{reference} {title}", item.repo.trim())
                 };
             let mut external = format!("{reference} {title}");
-            if let Some(note) = &item.note {
-                let author = note.author.trim();
-                external.push_str(&if author.is_empty() {
-                    "\nComment:\n".to_string()
+            if let Some(occurrence) = &item.occurrence {
+                let author = occurrence.author.trim();
+                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT) {
+                    external.push_str(&if author.is_empty() {
+                        "\nComment:\n".to_string()
+                    } else {
+                        format!("\nComment by @{author}:\n")
+                    });
                 } else {
-                    format!("\nComment by @{author}:\n")
-                });
-                external.push_str(note.body.trim());
+                    external.push('\n');
+                }
+                external.push_str(occurrence.body.trim());
             }
             if !item.url.trim().is_empty() {
                 external.push('\n');
                 external.push_str(item.url.trim());
             }
-            let task = if item.note.is_some() {
-                format!("Respond to this comment on a {provider} merge request:")
-            } else {
-                format!("Work on this {provider} {kind}:")
-            };
+            let task = event_task(event, provider, kind);
             // `claim_event` limits the whole prompt, so nothing is cut here.
             let prompt = format!(
                 "{}\n\n{task}\n\n{}",
                 automation.prompt.trim(),
                 crate::external_text::external_block(&external, usize::MAX)
             );
-            let headline = match &item.note {
-                Some(note) if !note.author.trim().is_empty() => {
-                    format!("{headline} · @{}", note.author.trim())
+            let headline = match &item.occurrence {
+                Some(occurrence) if !occurrence.author.trim().is_empty() => {
+                    format!("{headline} · @{}", occurrence.author.trim())
                 }
                 _ => headline,
             };
@@ -3189,14 +3229,17 @@ mod tests {
     }
 
     #[test]
-    fn events_the_inbox_never_produces_never_match() {
+    fn watched_events_never_match_a_plain_listed_item() {
+        // They come only from items carrying an occurrence; the Inbox list
+        // itself never starts them, however often a pull request is listed.
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
         for event in [
-            "pull_request_merged",
-            "pull_request_review_requested",
-            "issue_assigned",
-            "check_failed",
+            MERGED_EVENT,
+            REVIEW_REQUESTED_EVENT,
+            ISSUE_ASSIGNED_EVENT,
+            CHECK_FAILED_EVENT,
+            GITHUB_COMMENT_EVENT,
         ] {
             on_event(
                 &mut service,
@@ -3789,314 +3832,452 @@ mod tests {
             .all(|(status, message)| status == "succeeded" && message.is_some()));
     }
 
-    // --- GitLab merge request comments.
+    // --- Events found on listed items: comments, checks, reviews, merges,
+    // assignments.
 
+    fn listed_pr(provider: &str, number: i64) -> crate::inbox::Item {
+        crate::inbox::Item {
+            provider: provider.into(),
+            kind: "pr".into(),
+            number,
+            title: "Add login".into(),
+            url: format!("https://example.com/acme/app/pull/{number}"),
+            state: "open".into(),
+            repo: "acme/app".into(),
+            project_path: "/repo".into(),
+            ..Default::default()
+        }
+    }
+    fn said(id: &str, author: &str, body: &str, at: i64) -> crate::inbox::Comment {
+        crate::inbox::Comment {
+            id: id.into(),
+            kind: "comment".into(),
+            author: author.into(),
+            body: body.into(),
+            created_at: rfc3339(at),
+            url: format!("https://example.com/acme/app/pull/7#c{id}"),
+            ..Default::default()
+        }
+    }
     fn comment(
+        provider: &str,
         number: i64,
         id: &str,
         author: &str,
         body: &str,
-        created: i64,
+        at: i64,
     ) -> crate::inbox::Item {
-        let mr = crate::inbox::Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number,
-            title: "Add login".into(),
-            url: format!("https://gitlab.com/acme/app/-/merge_requests/{number}"),
-            repo: "acme/app".into(),
-            project_path: "/repo".into(),
-            ..Default::default()
-        };
-        crate::inbox::mr_comment_items(
-            &mr,
-            &[crate::inbox::MrComment {
-                id: id.into(),
-                author: author.into(),
-                body: body.into(),
-                created_at: rfc3339(created),
-                url: format!("https://gitlab.com/acme/app/-/merge_requests/{number}#note_{id}"),
-            }],
-            "",
+        crate::inbox::events::comment_items(
+            &listed_pr(provider, number),
+            &[said(id, author, body, at)],
+            "gespan-bot",
         )
         .remove(0)
     }
-    fn on_comment(service: &mut Service) -> Automation {
-        on_event(
-            service,
-            "/repo",
-            AutomationTrigger::new("gitlab", MR_COMMENT_EVENT),
-        )
+    fn keys(runs: &[DueAutomationRun]) -> Vec<String> {
+        runs.iter()
+            .map(|run| run.run.event_key.clone().unwrap())
+            .collect()
     }
 
     #[test]
-    fn each_new_merge_request_comment_runs_once_with_the_comment_in_the_prompt() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
-        let automation = on_comment(&mut service);
-        let now = now_millis();
-        let first = comment(7, "101", "alice", "Please rename `login`", now);
-        let runs = claim_inbox_events(&mut service, std::slice::from_ref(&first), now).unwrap();
-        assert_eq!(runs.len(), 1);
-        let run = &runs[0].run;
-        assert_eq!(run.automation_id, automation.id);
-        assert_eq!(run.event_kind.as_deref(), Some("gitlab"));
-        assert_eq!(run.event.as_deref(), Some(MR_COMMENT_EVENT));
-        assert_eq!(
-            run.event_key.as_deref(),
-            Some("gitlab:mr_comment:acme/app:7:101")
-        );
-        assert_eq!(
-            run.event_title.as_deref(),
-            Some("acme/app#7 Add login · @alice")
-        );
-        let prompt = run.prompt.as_deref().unwrap();
-        let (own, external) = prompt.split_once("<").unwrap();
-        assert!(own.starts_with("Fix it\n\nRespond to this comment on a GitLab merge request:"));
-        assert!(
-            !own.contains("rename"),
-            "the comment is outside text: {own}"
-        );
-        for part in [
-            "#7 Add login",
-            "Comment by @alice:\nPlease rename `login`",
-            "https://gitlab.com/acme/app/-/merge_requests/7#note_101",
+    fn each_new_comment_runs_once_with_the_comment_in_the_prompt_on_both_forges() {
+        for (provider, event, kind) in [
+            ("github", GITHUB_COMMENT_EVENT, "pull request"),
+            ("gitlab", GITLAB_COMMENT_EVENT, "merge request"),
         ] {
-            assert!(external.contains(part), "{part} missing from {external}");
-        }
-        assert_eq!(
-            event_label("gitlab", MR_COMMENT_EVENT),
-            "Merge request comment"
-        );
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let automation = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(provider, event),
+            );
+            let now = now_millis();
+            let first = comment(provider, 7, "101", "alice", "Please rename `login`", now);
+            let runs = claim_inbox_events(&mut service, std::slice::from_ref(&first), now).unwrap();
+            assert_eq!(runs.len(), 1, "{provider}");
+            let run = &runs[0].run;
+            assert_eq!(run.automation_id, automation.id);
+            assert_eq!(run.event.as_deref(), Some(event));
+            assert_eq!(
+                run.event_key.as_deref(),
+                Some(format!("{provider}:{event}:acme/app:7:101").as_str())
+            );
+            assert_eq!(
+                run.event_title.as_deref(),
+                Some("acme/app#7 Add login · @alice")
+            );
+            let prompt = run.prompt.as_deref().unwrap();
+            let (own, external) = prompt.split_once('<').unwrap();
+            assert!(
+                own.starts_with(&format!(
+                    "Fix it\n\nRespond to this comment on a {} {kind}:",
+                    crate::inbox::provider_label(provider)
+                )),
+                "{own}"
+            );
+            assert!(
+                !own.contains("rename"),
+                "the comment is outside text: {own}"
+            );
+            for part in [
+                "#7 Add login",
+                "Comment by @alice:\nPlease rename `login`",
+                "https://example.com/acme/app/pull/7#c101",
+            ] {
+                assert!(external.contains(part), "{part} missing from {external}");
+            }
 
-        // Every refresh offers it again; it never runs twice.
-        for _ in 0..3 {
+            // Every refresh offers it again; it never runs twice. A later
+            // comment on the same pull request is a new run.
             assert!(
                 claim_inbox_events(&mut service, std::slice::from_ref(&first), now)
                     .unwrap()
                     .is_empty()
             );
+            let more = [
+                first,
+                comment(provider, 7, "102", "bob", "And add a test", now),
+                comment(provider, 8, "103", "alice", "Other one", now),
+            ];
+            assert_eq!(
+                keys(&claim_inbox_events(&mut service, &more, now).unwrap()),
+                [
+                    format!("{provider}:{event}:acme/app:7:102"),
+                    format!("{provider}:{event}:acme/app:8:103")
+                ]
+            );
         }
-        // A later comment on the same merge request is a new run, and two
-        // comments in one refresh are two runs.
-        let more = [
-            first.clone(),
-            comment(7, "102", "bob", "And add a test", now),
-            comment(8, "103", "alice", "Other MR", now),
-        ];
-        let runs = claim_inbox_events(&mut service, &more, now).unwrap();
-        let keys: Vec<_> = runs
-            .iter()
-            .map(|run| run.run.event_key.clone().unwrap())
-            .collect();
         assert_eq!(
-            keys,
-            [
-                "gitlab:mr_comment:acme/app:7:102",
-                "gitlab:mr_comment:acme/app:8:103"
-            ]
+            event_label("github", GITHUB_COMMENT_EVENT),
+            "Pull request comment"
+        );
+        assert_eq!(
+            event_label("gitlab", GITLAB_COMMENT_EVENT),
+            "Merge request comment"
         );
     }
 
     #[test]
-    fn comments_and_opened_merge_requests_run_only_their_own_trigger() {
+    fn a_github_comment_does_not_run_a_gitlab_comment_trigger_or_an_opened_one() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
-        let on_comments = on_comment(&mut service);
+        let on_gitlab = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("gitlab", GITLAB_COMMENT_EVENT),
+        );
         let on_opened = on_event(
             &mut service,
             "/repo",
-            AutomationTrigger::new("gitlab", "merge_request_opened"),
+            AutomationTrigger::new("github", "pull_request_opened"),
         );
         let now = now_millis();
-        let opened = crate::inbox::Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number: 7,
-            repo: "acme/app".into(),
-            project_path: "/repo".into(),
-            created_at: rfc3339(now),
-            ..Default::default()
-        };
-        let items = [opened, comment(7, "101", "alice", "Hi", now)];
-        let runs = claim_inbox_events(&mut service, &items, now).unwrap();
-        let by: Vec<_> = runs
-            .iter()
-            .map(|run| {
-                (
-                    run.run.automation_id.clone(),
-                    run.run.event.clone().unwrap(),
-                )
-            })
+        let mut opened = listed_pr("github", 9);
+        opened.created_at = rfc3339(now);
+        let items = [
+            opened,
+            comment("github", 7, "1", "alice", "Hi", now),
+            comment("gitlab", 7, "2", "alice", "Hi", now),
+        ];
+        let by: Vec<_> = claim_inbox_events(&mut service, &items, now)
+            .unwrap()
+            .into_iter()
+            .map(|run| (run.run.automation_id, run.run.event.unwrap()))
             .collect();
         assert_eq!(
             by,
             [
-                (on_opened.id, "merge_request_opened".to_string()),
-                (on_comments.id, MR_COMMENT_EVENT.to_string())
+                (on_opened.id, "pull_request_opened".to_string()),
+                (on_gitlab.id, GITLAB_COMMENT_EVENT.to_string())
             ]
         );
-        // A comment-kind item that lost its comment matches nothing.
-        let mut bare = comment(7, "104", "alice", "Hi", now);
-        bare.note = None;
-        assert!(claim_inbox_events(&mut service, &[bare], now)
+        // An occurrence naming an event its provider cannot raise matches nothing.
+        let mut odd = comment("gitlab", 7, "3", "alice", "Hi", now);
+        odd.occurrence.as_mut().unwrap().event = CHECK_FAILED_EVENT.into();
+        assert!(claim_inbox_events(&mut service, &[odd], now)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn the_accounts_own_comment_runs_only_a_trigger_that_names_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let anyone = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", GITHUB_COMMENT_EVENT),
+        );
+        let mut mine = AutomationTrigger::new("github", GITHUB_COMMENT_EVENT);
+        mine.actor = "@Gespan-Bot".into();
+        let named = on_event(&mut service, "/repo", mine);
+        let now = now_millis();
+        let own = comment("github", 7, "1", "gespan-bot", "/pilot fix the build", now);
+        assert!(own.occurrence.as_ref().unwrap().mine);
+        let runs = claim_inbox_events(&mut service, &[own], now).unwrap();
+        let ran: Vec<_> = runs
+            .iter()
+            .map(|run| run.run.automation_id.clone())
+            .collect();
+        assert_eq!(
+            ran,
+            std::slice::from_ref(&named.id),
+            "{anyone:?} must not wake itself"
+        );
+        // Someone else's comment runs the "anyone" trigger only.
+        let theirs = comment("github", 7, "2", "alice", "Thanks", now);
+        let ran: Vec<_> = claim_inbox_events(&mut service, &[theirs], now)
+            .unwrap()
+            .into_iter()
+            .map(|run| run.run.automation_id)
+            .collect();
+        assert_eq!(ran, [anyone.id]);
     }
 
     #[test]
     fn comments_from_before_the_automation_watched_or_from_other_projects_do_not_run() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
-        let automation = on_comment(&mut service);
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", GITHUB_COMMENT_EVENT),
+        );
         let since = automation.events_since.unwrap();
-        let old = comment(7, "90", "alice", "Old", since - 60_000);
-        let mut elsewhere = comment(7, "91", "alice", "Elsewhere", since + 1);
+        let old = comment("github", 7, "90", "alice", "Old", since - 60_000);
+        let mut elsewhere = comment("github", 7, "91", "alice", "Elsewhere", since + 1);
         elsewhere.project_path = "/other".into();
         assert!(
             claim_inbox_events(&mut service, &[old, elsewhere], since + 2)
                 .unwrap()
                 .is_empty()
         );
-        let fresh = comment(7, "92", "alice", "New", since + 1);
+        let fresh = comment("github", 7, "92", "alice", "New", since + 1);
         assert_eq!(
             claim_inbox_events(&mut service, &[fresh], since + 2)
                 .unwrap()
                 .len(),
             1
         );
-        // Turned off, it ignores comments.
         service.set_enabled(&automation.id, false).unwrap();
-        let later = comment(7, "93", "alice", "Later", now_millis());
+        let later = comment("github", 7, "93", "alice", "Later", now_millis());
         assert!(claim_inbox_events(&mut service, &[later], now_millis())
             .unwrap()
             .is_empty());
     }
 
     #[test]
-    fn a_comment_trigger_can_be_limited_to_an_author_and_a_repository() {
+    fn a_trigger_can_be_limited_to_an_author_and_a_repository() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
-        let mut by_alice = AutomationTrigger::new("gitlab", MR_COMMENT_EVENT);
+        let mut by_alice = AutomationTrigger::new("gitlab", GITLAB_COMMENT_EVENT);
         by_alice.actor = "@Alice".into();
         by_alice.repos = vec!["acme/app".into()];
-        let automation = on_event(&mut service, "/repo", by_alice);
+        on_event(&mut service, "/repo", by_alice);
         let now = now_millis();
-        let mut other_repo = comment(7, "4", "alice", "Other repo", now);
+        let mut other_repo = comment("gitlab", 7, "4", "alice", "Other repo", now);
         other_repo.repo = "acme/site".into();
         let items = [
-            comment(7, "1", "bob", "Not Alice", now),
-            comment(7, "2", "alice", "From Alice", now),
-            comment(7, "3", "ALICE", "Also Alice", now),
+            comment("gitlab", 7, "1", "bob", "Not Alice", now),
+            comment("gitlab", 7, "2", "alice", "From Alice", now),
+            comment("gitlab", 7, "3", "ALICE", "Also Alice", now),
             other_repo,
         ];
-        let runs = claim_inbox_events(&mut service, &items, now).unwrap();
-        let keys: Vec<_> = runs
-            .iter()
-            .map(|run| run.run.event_key.clone().unwrap())
-            .collect();
         assert_eq!(
-            keys,
+            keys(&claim_inbox_events(&mut service, &items, now).unwrap()),
             [
-                "gitlab:mr_comment:acme/app:7:2",
-                "gitlab:mr_comment:acme/app:7:3"
+                "gitlab:merge_request_comment:acme/app:7:2",
+                "gitlab:merge_request_comment:acme/app:7:3"
             ]
         );
-        assert!(runs
-            .iter()
-            .all(|run| run.run.automation_id == automation.id));
-
-        // Other events still have no author: a named one never matches them.
-        let mut opened_by = AutomationTrigger::new("gitlab", "merge_request_opened");
-        opened_by.actor = "alice".into();
-        on_event(&mut service, "/repo", opened_by);
-        let opened = crate::inbox::Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number: 9,
-            repo: "acme/app".into(),
-            project_path: "/repo".into(),
-            created_at: rfc3339(now),
-            ..Default::default()
-        };
-        assert!(claim_inbox_events(&mut service, &[opened], now)
-            .unwrap()
-            .is_empty());
+        // A merge names who merged it; a review request names nobody, so a
+        // named author never matches it.
+        let mut merged_by = AutomationTrigger::new("github", MERGED_EVENT);
+        merged_by.actor = "carol".into();
+        let mut review_by = AutomationTrigger::new("github", REVIEW_REQUESTED_EVENT);
+        review_by.actor = "carol".into();
+        on_event(&mut service, "/repo", merged_by);
+        on_event(&mut service, "/repo", review_by);
+        // These started watching just now, after the comments above.
+        let now = now_millis();
+        let items = [
+            crate::inbox::events::merged_item(&listed_pr("github", 20), &rfc3339(now), "carol"),
+            crate::inbox::events::merged_item(&listed_pr("github", 21), &rfc3339(now), "dave"),
+            crate::inbox::events::review_requested_item(
+                &crate::inbox::Item {
+                    updated_at: rfc3339(now),
+                    ..listed_pr("github", 22)
+                },
+                "abc",
+            ),
+        ];
+        assert_eq!(
+            keys(&claim_inbox_events(&mut service, &items, now).unwrap()),
+            ["github:pull_request_merged:acme/app:20:merged"]
+        );
     }
 
     #[test]
-    fn only_changed_open_merge_requests_in_watched_projects_have_their_comments_read() {
+    fn checks_reviews_merges_and_assignments_each_run_once_with_what_happened() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        for event in [
+            CHECK_FAILED_EVENT,
+            REVIEW_REQUESTED_EVENT,
+            MERGED_EVENT,
+            ISSUE_ASSIGNED_EVENT,
+        ] {
+            on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new("github", event),
+            );
+        }
+        let now = now_millis();
+        let at = rfc3339(now);
+        let pr = crate::inbox::Item {
+            updated_at: at.clone(),
+            ..listed_pr("github", 7)
+        };
+        let checks = crate::inbox::Checks {
+            head_oid: "abc1234def".into(),
+            checks: vec![
+                crate::inbox::Check {
+                    name: "test".into(),
+                    workflow: "CI".into(),
+                    state: "fail".into(),
+                    url: Some("https://github.com/acme/app/actions/runs/1/job/2".into()),
+                    completed_at: Some(at.clone()),
+                    ..Default::default()
+                },
+                crate::inbox::Check {
+                    name: "lint".into(),
+                    state: "pass".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let issue = crate::inbox::Item {
+            kind: "issue".into(),
+            number: 30,
+            title: "Crash on start".into(),
+            updated_at: at.clone(),
+            ..listed_pr("github", 30)
+        };
+        let items: Vec<_> = crate::inbox::events::check_failed_items(&pr, &checks)
+            .into_iter()
+            .chain([
+                crate::inbox::events::review_requested_item(&pr, "abc1234def"),
+                crate::inbox::events::merged_item(&listed_pr("github", 8), &at, "alice"),
+                crate::inbox::events::assigned_item(&issue, "Gespan-Bot"),
+            ])
+            .collect();
+        let runs = claim_inbox_events(&mut service, &items, now).unwrap();
+        let by: Vec<_> = runs
+            .iter()
+            .map(|run| {
+                (
+                    run.run.event_key.clone().unwrap(),
+                    run.run.prompt.clone().unwrap(),
+                )
+            })
+            .collect();
+        let expected = [
+            (
+                "github:check_failed:acme/app:7:abc1234def:ci_/_test",
+                "A check failed on this GitHub pull request:",
+                "Check \"CI / test\" failed on commit abc1234.",
+            ),
+            (
+                "github:pull_request_review_requested:acme/app:7:abc1234def",
+                "Review this GitHub pull request:",
+                "Your review was requested.",
+            ),
+            (
+                "github:pull_request_merged:acme/app:8:merged",
+                "This GitHub pull request was merged:",
+                "Merged by @alice.",
+            ),
+            (
+                "github:issue_assigned:acme/app:30:gespan-bot",
+                "This GitHub issue was assigned to you:",
+                "Assigned to @Gespan-Bot.",
+            ),
+        ];
+        assert_eq!(by.len(), expected.len(), "{by:?}");
+        for ((key, prompt), (want_key, task, line)) in by.iter().zip(expected) {
+            assert_eq!(key, want_key);
+            assert!(prompt.contains(task), "{task} missing from {prompt}");
+            assert!(prompt.contains(line), "{line} missing from {prompt}");
+        }
+        assert!(by[0]
+            .1
+            .contains("https://github.com/acme/app/actions/runs/1/job/2"));
+        // A passing check raises nothing, and nothing runs twice.
+        assert!(claim_inbox_events(&mut service, &items, now)
+            .unwrap()
+            .is_empty());
+        // The same check failing on a new commit is a new run; a new push to
+        // a pull request still awaiting review asks again.
+        let pushed = crate::inbox::Checks {
+            head_oid: "fff9999".into(),
+            ..checks
+        };
+        let again: Vec<_> = crate::inbox::events::check_failed_items(&pr, &pushed)
+            .into_iter()
+            .chain([crate::inbox::events::review_requested_item(&pr, "fff9999")])
+            .collect();
+        assert_eq!(
+            claim_inbox_events(&mut service, &again, now).unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn only_enabled_automations_with_watched_events_are_watched() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
         let now = now_millis();
-        // Nobody waits for comments: nothing is read.
         on_event(
             &mut service,
             "/repo",
-            AutomationTrigger::new("gitlab", "merge_request_opened"),
+            AutomationTrigger::new("github", "pull_request_opened"),
         );
-        assert!(mr_comment_watchers(&mut service, now).unwrap().is_empty());
-        let automation = on_comment(&mut service);
-        let watchers = mr_comment_watchers(&mut service, now).unwrap();
-        let since = automation.events_since.unwrap();
-        assert_eq!(watchers, [("/repo".to_string(), since)]);
-
-        let mr = |number: i64, updated: i64| crate::inbox::Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number,
-            state: "opened".into(),
-            repo: "acme/app".into(),
-            project_path: "/repo".into(),
-            updated_at: rfc3339(updated),
-            ..Default::default()
-        };
-        let mut merged = mr(2, since + 10);
-        merged.state = "merged".into();
-        let mut closed = mr(3, since + 10);
-        closed.state = "closed".into();
-        let mut elsewhere = mr(4, since + 10);
-        elsewhere.project_path = "/other".into();
-        let mut issue = mr(5, since + 10);
-        issue.kind = "issue".into();
-        let mut github = mr(6, since + 10);
-        github.provider = "github".into();
-        let mut draft = mr(8, since + 10);
-        draft.draft = true;
-        let items = [
-            mr(1, since + 10),
-            merged,
-            closed,
-            elsewhere,
-            issue,
-            github,
-            mr(7, since - 60_000),
-            draft,
-            comment(
-                1,
-                "55",
-                "alice",
-                "A comment is not a merge request",
-                since + 10,
-            ),
-        ];
-        let numbers = |seen: &HashMap<String, i64>| {
-            mr_comment_candidates(&watchers, &items, seen)
-                .into_iter()
-                .map(|item| item.number)
-                .collect::<Vec<_>>()
-        };
-        let mut seen = HashMap::new();
-        assert_eq!(numbers(&seen), [1, 8]);
-        // Read once, a merge request waits until it changes again.
-        seen.insert(items[0].key(), items[0].updated_ms());
-        assert_eq!(numbers(&seen), [8]);
-        seen.insert(items[0].key(), items[0].updated_ms() - 1);
-        assert_eq!(numbers(&seen), [1, 8]);
-
-        // A disabled automation watches nothing.
-        service.set_enabled(&automation.id, false).unwrap();
-        assert!(mr_comment_watchers(&mut service, now_millis())
+        assert!(event_watches(&mut service, now).unwrap().is_empty());
+        let mut draft = AutomationUpsert::new("/repo".into(), "codex".into(), "model".into());
+        draft.name = "Both".into();
+        draft.prompt = "Go".into();
+        draft.triggers = Some(vec![
+            AutomationTrigger::new("github", CHECK_FAILED_EVENT),
+            AutomationTrigger::new("gitlab", GITLAB_COMMENT_EVENT),
+            AutomationTrigger::new("time", "daily"),
+        ]);
+        draft.sync_triggers(now);
+        let both = service.upsert(draft).unwrap();
+        let since = both.events_since.unwrap();
+        let watches = event_watches(&mut service, now).unwrap();
+        let seen: Vec<_> = watches
+            .iter()
+            .map(|w| {
+                (
+                    w.provider.as_str(),
+                    w.event.as_str(),
+                    w.cwd.as_str(),
+                    w.since,
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("gitlab", GITLAB_COMMENT_EVENT, "/repo", since),
+                ("github", CHECK_FAILED_EVENT, "/repo", since)
+            ]
+        );
+        service.set_enabled(&both.id, false).unwrap();
+        assert!(event_watches(&mut service, now_millis())
             .unwrap()
             .is_empty());
     }

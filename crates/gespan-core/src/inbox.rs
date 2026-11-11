@@ -12,6 +12,7 @@ pub use media::video as media_video;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub mod ci_repair;
+pub mod events;
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -86,100 +87,42 @@ pub struct Item {
     pub project_name: String,
     pub project_path: String,
     pub attention_reason: String,
-    /// The comment this item stands for, when it is one comment on a merge
-    /// request rather than the merge request itself. Such items are offered
-    /// to automations only; the Inbox never lists them.
+    /// What happened on the item, when this item stands for one event on
+    /// it (a comment, a failed check, a review request, a merge or an
+    /// assignment) rather than the item itself. Such items are offered to
+    /// automations only; the Inbox never lists them.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<Note>,
+    pub occurrence: Option<Occurrence>,
 }
-/// One comment on an item.
+/// One event on an item, for automations. See [`events`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct Note {
+pub struct Occurrence {
+    /// The automation event it raises, such as `pull_request_comment`.
+    pub event: String,
+    /// Tells this event apart from others of its kind on the same item.
     pub id: String,
+    /// Who did it, when the provider says.
     pub author: String,
+    /// What it says: the comment, or a line describing what happened.
     pub body: String,
-}
-/// The most of a comment an automation is given.
-pub const MAX_NOTE_TEXT: usize = 20_000;
-/// The kind of an item that is one comment on a merge request.
-pub const MR_COMMENT: &str = "mr_comment";
-
-/// The comments on merge request `mr` as items for automations, oldest
-/// first. `me` is the connected account: its own comments are left out, so
-/// an agent that replies on the merge request does not wake itself.
-pub fn mr_comment_items(mr: &Item, comments: &[MrComment], me: &str) -> Vec<Item> {
-    let me = me.trim().trim_start_matches('@');
-    comments
-        .iter()
-        .filter(|comment| !comment.id.trim().is_empty() && !comment.body.trim().is_empty())
-        .filter(|comment| me.is_empty() || !comment.author.trim().eq_ignore_ascii_case(me))
-        .map(|comment| Item {
-            provider: mr.provider.clone(),
-            kind: MR_COMMENT.into(),
-            id: comment.id.trim().into(),
-            number: mr.number,
-            title: mr.title.clone(),
-            url: if comment.url.trim().is_empty() {
-                mr.url.clone()
-            } else {
-                comment.url.trim().into()
-            },
-            created_at: comment.created_at.clone(),
-            updated_at: comment.created_at.clone(),
-            repo: mr.repo.clone(),
-            project_path: mr.project_path.clone(),
-            note: Some(Note {
-                id: comment.id.trim().into(),
-                author: comment.author.trim().into(),
-                body: comment.body.chars().take(MAX_NOTE_TEXT).collect(),
-            }),
-            ..Default::default()
-        })
-        .collect()
-}
-/// A comment as a provider returned it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MrComment {
-    pub id: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    pub url: String,
-}
-/// Fetches GitLab merge request `mr`'s latest comments as items for
-/// automations; see [`mr_comment_items`].
-pub fn gitlab_mr_comment_items(
-    data_dir: PathBuf,
-    mr: &Item,
-    me: &str,
-) -> Result<Vec<Item>, String> {
-    let thread =
-        gitlab::gitlab_work_item_thread(data_dir, mr.repo.clone(), "pr".into(), mr.number)?;
-    let comments: Vec<_> = thread
-        .comments
-        .into_iter()
-        .map(|comment| MrComment {
-            id: comment.id,
-            author: comment.author,
-            body: comment.body,
-            created_at: comment.created_at,
-            url: comment.url,
-        })
-        .collect();
-    Ok(mr_comment_items(mr, &comments, me))
+    /// It was done by the connected account. Such events run an automation
+    /// only when its trigger names that account, so an agent that acts with
+    /// the account does not wake itself.
+    pub mine: bool,
 }
 impl Item {
     pub fn key(&self) -> String {
-        // Each comment is its own item, so two on one merge request differ.
-        if let Some(note) = &self.note {
+        // Each event is its own item, so two on one pull request differ.
+        if let Some(occurrence) = &self.occurrence {
             return format!(
-                "{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}",
                 self.provider,
                 self.repo.trim().to_lowercase(),
                 self.kind,
                 self.number,
-                note.id.trim().to_lowercase()
+                occurrence.event,
+                occurrence.id.trim().to_lowercase()
             );
         }
         let identity = if self.provider == "linear" {
@@ -2583,101 +2526,5 @@ mod prompt_tests {
         let prompt = Item::default().prompt(&body, false);
         let (_, inner) = split_prompt(&prompt);
         assert_eq!(inner.chars().count(), MAX_PROMPT_TEXT);
-    }
-
-    fn merge_request() -> Item {
-        Item {
-            provider: "gitlab".into(),
-            kind: "pr".into(),
-            number: 7,
-            title: "Add login".into(),
-            url: "https://gitlab.com/acme/app/-/merge_requests/7".into(),
-            repo: "acme/app".into(),
-            project_path: "/repo".into(),
-            ..Default::default()
-        }
-    }
-    fn said(id: &str, author: &str, body: &str) -> MrComment {
-        MrComment {
-            id: id.into(),
-            author: author.into(),
-            body: body.into(),
-            created_at: "2026-11-11T10:00:00Z".into(),
-            url: format!("https://gitlab.com/acme/app/-/merge_requests/7#note_{id}"),
-        }
-    }
-
-    #[test]
-    fn each_comment_on_a_merge_request_is_its_own_item() {
-        let mr = merge_request();
-        let items = mr_comment_items(
-            &mr,
-            &[
-                said("101", "alice", "Rename this"),
-                said("102", "bob", "LGTM"),
-            ],
-            "gespan-bot",
-        );
-        assert_eq!(items.len(), 2);
-        let first = &items[0];
-        assert_eq!(first.kind, MR_COMMENT);
-        assert_eq!((first.provider.as_str(), first.number), ("gitlab", 7));
-        assert_eq!(first.repo, "acme/app");
-        assert_eq!(first.project_path, "/repo");
-        assert_eq!(first.title, "Add login");
-        assert_eq!(
-            first.url,
-            "https://gitlab.com/acme/app/-/merge_requests/7#note_101"
-        );
-        assert_eq!(first.created_at, "2026-11-11T10:00:00Z");
-        assert_eq!(
-            first.note,
-            Some(Note {
-                id: "101".into(),
-                author: "alice".into(),
-                body: "Rename this".into()
-            })
-        );
-        // Two comments on one merge request, and the merge request, all differ.
-        assert_eq!(first.key(), "gitlab:acme/app:mr_comment:7:101");
-        assert_ne!(first.key(), items[1].key());
-        assert_ne!(first.key(), mr.key());
-        // They survive being saved for a retry.
-        let saved: Item = serde_json::from_str(&serde_json::to_string(first).unwrap()).unwrap();
-        assert_eq!(&saved, first);
-        // An item saved before comments existed has none.
-        assert_eq!(serde_json::from_str::<Item>("{}").unwrap().note, None);
-        assert!(!serde_json::to_string(&mr).unwrap().contains("note"));
-    }
-
-    #[test]
-    fn the_connected_accounts_own_comments_and_empty_ones_are_left_out() {
-        let mr = merge_request();
-        let comments = [
-            said("1", "Gespan-Bot", "I fixed it"),
-            said("2", "alice", "   "),
-            said("", "alice", "No id"),
-            said("3", "alice", "Thanks"),
-        ];
-        let ids = |me: &str| {
-            mr_comment_items(&mr, &comments, me)
-                .into_iter()
-                .map(|item| item.id)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids("gespan-bot"), ["3"]);
-        assert_eq!(ids("@gespan-bot"), ["3"]);
-        // With no known account every author counts.
-        assert_eq!(ids(""), ["1", "3"]);
-    }
-
-    #[test]
-    fn a_huge_comment_is_cut_and_one_without_a_link_points_at_the_merge_request() {
-        let mr = merge_request();
-        let mut long = said("9", "alice", &"x".repeat(MAX_NOTE_TEXT * 2));
-        long.url = String::new();
-        let item = mr_comment_items(&mr, &[long], "").remove(0);
-        assert_eq!(item.note.unwrap().body.chars().count(), MAX_NOTE_TEXT);
-        assert_eq!(item.url, mr.url);
     }
 }
