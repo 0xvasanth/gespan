@@ -1479,11 +1479,7 @@ mod render_tests {
         assert!(shown(&window, cx).is_empty());
         resync(&window, &[waiting("a", &["first", "second"])], cx);
         assert_eq!(shown(&window, cx), ["a:second"]);
-        assert_eq!(
-            hidden(&window, cx),
-            1,
-            "the first still waits, counted"
-        );
+        assert_eq!(hidden(&window, cx), 1, "the first still waits, counted");
     }
 
     #[gpui::test]
