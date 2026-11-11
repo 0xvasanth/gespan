@@ -44,6 +44,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/assets/screenshot.png" alt="The Gespan window. The sidebar lists Inbox, Runs, Automations, Board and Notes, then the acme-web project with five sessions run by Claude Code, Codex, Cursor CLI, OpenCode and Kiro. The open session shows Claude Code's summary of a login redirect fix, and the Changes panel on the right lists the two files it edited, ready to commit." width="920" />
+</p>
+
+<p align="center">
   <sub>Gespan began as a fork of <a href="https://github.com/hardbeat920/monocode">MonoCode</a> and has grown quickly from there. <a href="#acknowledgements">Read the acknowledgements.</a></sub>
 </p>
 
