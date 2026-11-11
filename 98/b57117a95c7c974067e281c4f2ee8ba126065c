@@ -1,0 +1,46 @@
+docs/assets/agents/codex.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-15
+docs/assets/agents/fx.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-7
+docs/assets/agents/kiro.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-7
+docs/assets/agents/omp.svg
+  s_3a61535e1d26b7::t_cedcad9e7fe656 4
+  s_3a61535e1d26b7::t_76160e277506fc 1-3,5-14
+docs/assets/agents/hermes.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-3,5-7
+  s_3a61535e1d26b7::t_cedcad9e7fe656 4
+docs/assets/agents/cursor.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-7
+docs/assets/agents/pi.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-8
+docs/assets/agents/grok.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-8
+docs/assets/agents/claude.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-14
+docs/assets/agents/antigravity.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-74
+README.md
+  s_3a61535e1d26b7::t_c0c8ec3917381c 104-105,124-125
+  s_3a61535e1d26b7::t_304431b9e63fe5 1-2,4-6,11-13,21-26,29-32,36-43,47,106-123,405-406,408-410
+docs/assets/agents/devin.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-7
+docs/assets/agents/opencode.svg
+  s_3a61535e1d26b7::t_76160e277506fc 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98b57117a95c7c974067e281c4f2ee8ba126065c",
+  "prompts": {},
+  "sessions": {
+    "s_3a61535e1d26b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4216030c-4f7b-40c4-b80a-2b9458826e4f",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
