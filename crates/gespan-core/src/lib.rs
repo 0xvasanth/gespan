@@ -48,6 +48,8 @@ pub mod session_groups;
 pub mod session_import;
 pub mod session_title;
 pub mod store;
+#[cfg(all(test, unix))]
+pub(crate) mod test_exec;
 pub mod ticket_bridge;
 pub use gespan_tracker_client::tickets;
 pub mod time;

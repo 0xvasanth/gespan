@@ -522,8 +522,7 @@ fn a_quoted_program_path_with_spaces_runs() {
         std::fs::write(&tool, "#!/bin/sh\nprintf '[%s]\\n' \"$1\"\n").unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_exec::make_executable(&tool, 0o755);
         }
         tool
     };

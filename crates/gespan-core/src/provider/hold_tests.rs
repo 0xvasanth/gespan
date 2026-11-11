@@ -1,7 +1,6 @@
 //! Hold against scripted Codex and Claude processes: a running command always
 //! finishes, approvals stay pending, and background work is left alone.
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use std::sync::Mutex;
 
 const READER: &str = r#"#!/usr/bin/env python3
@@ -111,7 +110,7 @@ fn agent(kind: Kind, mode: &str) -> (tempfile::TempDir, Request) {
     let path = tmp.path().join("provider");
     let body = if kind == Kind::Claude { CLAUDE } else { CODEX };
     std::fs::write(&path, format!("{READER}{body}")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&path, 0o700);
     std::fs::write(tmp.path().join("mode"), mode).unwrap();
     let request = Request {
         kind,

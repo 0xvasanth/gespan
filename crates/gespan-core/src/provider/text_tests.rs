@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 
 fn fixture(mode: &str) -> (tempfile::TempDir, Request) {
     let dir = tempfile::tempdir().unwrap();
@@ -35,7 +34,7 @@ for line in sys.stdin:
 "#
     );
     std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_exec::make_executable(&path, 0o700);
     let request = Request {
         kind: Kind::Codex,
         binary: path,

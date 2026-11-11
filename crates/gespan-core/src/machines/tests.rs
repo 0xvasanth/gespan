@@ -266,10 +266,9 @@ fn missing_herdr_is_none() {
 
 #[cfg(unix)]
 fn fake_herdr(dir: &Path, script: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join("herdr");
     std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::make_executable(&path, 0o755);
     path
 }
 
@@ -747,7 +746,6 @@ fn concurrent_reloads_apply_one_at_a_time() {
 
 #[cfg(unix)]
 fn fake_ssh(dir: &Path, uname: &str) -> (PathBuf, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let log = dir.join("ssh-args");
     let path = dir.join("ssh");
     std::fs::write(
@@ -758,7 +756,7 @@ fn fake_ssh(dir: &Path, uname: &str) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::make_executable(&path, 0o755);
     (path, log)
 }
 
@@ -930,12 +928,11 @@ fn unreachable_machine_is_an_error() {
 /// its arguments. Returns the stub's view of ssh's arguments and herdr's.
 #[cfg(unix)]
 fn run_attach(command: &str) -> (String, String) {
-    use std::os::unix::fs::PermissionsExt;
     let home = tempfile::tempdir().unwrap();
     let herdr = home.path().join(".local/bin/herdr");
     std::fs::create_dir_all(herdr.parent().unwrap()).unwrap();
     std::fs::write(&herdr, "#!/bin/sh\nprintf '[%s]' \"$@\"\n").unwrap();
-    std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::make_executable(&herdr, 0o755);
     // The last argument is what ssh would hand the remote login shell.
     let stub = r#"ssh() { printf '<%s>' "$@" >&2; eval "last=\${$#}"; sh -c "$last"; }"#;
     let out = std::process::Command::new("sh")

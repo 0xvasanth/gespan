@@ -976,7 +976,7 @@ mod tests {
                     ),
                 )
                 .unwrap();
-                std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+                crate::test_exec::make_executable(&cli, 0o700);
 
                 let status = std::process::Command::new(std::env::current_exe().unwrap())
                     .args([
