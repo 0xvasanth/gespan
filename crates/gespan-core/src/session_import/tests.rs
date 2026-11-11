@@ -614,6 +614,350 @@ fn kiro_head_read_is_bounded() {
     assert!(list(Kind::Kiro, home.path()).is_empty());
 }
 
+const CURSOR_ID: &str = "0f1e2d3c-4b5a-4968-8776-655443322110";
+
+/// The id Cursor gives a blob; any 64 hex digits do for a fixture.
+fn cursor_blob_id(n: usize) -> String {
+    format!("{n:064x}")
+}
+
+/// A root blob as Cursor writes it: a protobuf message whose field 1 repeats
+/// the 32-byte ids of the conversation's messages, in order, and whose field
+/// 21 holds the workspace path and branch. Field 26 is a time, as in the real
+/// root.
+fn cursor_root(ids: &[String], branch: Option<&str>) -> Vec<u8> {
+    let mut root = Vec::new();
+    for id in ids {
+        root.extend([0x0a, 32]);
+        root.extend(
+            (0..64)
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&id[i..i + 2], 16).unwrap()),
+        );
+    }
+    if let Some(branch) = branch {
+        let mut workspace = vec![0x0a, 6];
+        workspace.extend(b"/tmp/p");
+        workspace.extend([0x12, branch.len() as u8]);
+        workspace.extend(branch.as_bytes());
+        root.extend([0xaa, 0x01, workspace.len() as u8]);
+        root.extend(workspace);
+    }
+    root.extend([0xd0, 0x01, 0xe8, 0x07]);
+    root
+}
+
+/// A Cursor session folder, `<home>/<dir>/<id>/`, holding a `meta.json` and
+/// a `store.db` in the shape Cursor writes (values made up): the `meta` row
+/// `0` is hex-encoded JSON naming the latest root blob, and `blobs` holds the
+/// JSON messages, the root, an ACP turn record in protobuf, and a message
+/// left behind by an earlier root.
+fn cursor_session(
+    home: &Path,
+    dir: &str,
+    id: &str,
+    messages: &[serde_json::Value],
+    branch: Option<&str>,
+) -> PathBuf {
+    let folder = home.join(dir).join(id);
+    fs::create_dir_all(&folder).unwrap();
+    let meta =
+        serde_json::json!({"schemaVersion": 1, "cwd": "/tmp/p", "title": "Cursor's own title"});
+    fs::write(folder.join("meta.json"), meta.to_string()).unwrap();
+
+    let db = rusqlite::Connection::open(folder.join("store.db")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB);
+         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);",
+    )
+    .unwrap();
+    let insert = |id: &str, data: &[u8]| {
+        db.execute(
+            "INSERT INTO blobs VALUES (?1, ?2)",
+            rusqlite::params![id, data],
+        )
+        .unwrap();
+    };
+    let ids: Vec<String> = (1..=messages.len()).map(cursor_blob_id).collect();
+    for (id, message) in ids.iter().zip(messages) {
+        insert(id, &serde_json::to_vec(message).unwrap());
+    }
+    insert(
+        &cursor_blob_id(900),
+        &serde_json::to_vec(&cursor_assistant(serde_json::json!([
+            {"type": "text", "text": "Abandoned draft"}
+        ])))
+        .unwrap(),
+    );
+    insert(
+        &cursor_blob_id(901),
+        &[0x1a, 0x06, 0x0a, 0x04, b'P', b'O', b'N', b'G'],
+    );
+    let root = cursor_blob_id(999);
+    insert(&root, &cursor_root(&ids, branch));
+    let metadata = serde_json::json!({
+        "agentId": id, "latestRootBlobId": root, "name": "New Agent",
+        "mode": "default", "createdAt": 1_794_362_533_999_u64,
+    })
+    .to_string();
+    let hex: String = metadata.bytes().map(|b| format!("{b:02x}")).collect();
+    db.execute("INSERT INTO meta VALUES ('0', ?1)", [hex])
+        .unwrap();
+    folder
+}
+
+fn cursor_system() -> serde_json::Value {
+    serde_json::json!({"role": "system", "content": "You are an AI coding assistant.", "providerOptions": {}})
+}
+
+/// The context message Cursor sends before the first prompt.
+fn cursor_context() -> serde_json::Value {
+    serde_json::json!({
+        "role": "user",
+        "content": "<user_info>\nWorkspace Path: /tmp/p\n</user_info>\n<rules>\nbe brief\n</rules>",
+        "providerOptions": {"cursor": {"requestContextCompleteness": {"rules": true}}},
+    })
+}
+
+/// A prompt, wrapped the way Cursor stores it, with a mode reminder before it.
+fn cursor_user(timestamp: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "\n<system_reminder>\nAsk mode is active.\n</system_reminder>"},
+            {"type": "text", "text": format!(
+                "<timestamp>{timestamp}</timestamp>\n<user_query>\n{text}\n</user_query>"
+            )},
+        ],
+        "providerOptions": {"cursor": {"requestId": "r"}},
+    })
+}
+
+fn cursor_assistant(parts: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "role": "assistant", "id": "msg_1", "content": parts,
+        "providerOptions": {"cursor": {"modelProviderMessageId": "msg_1"}},
+    })
+}
+
+fn cursor_tool_result() -> serde_json::Value {
+    serde_json::json!({"role": "tool", "content": [
+        {"type": "tool-result", "toolCallId": "c", "toolName": "Read", "result": "fn main() {}"}
+    ]})
+}
+
+fn cursor_conversation() -> Vec<serde_json::Value> {
+    vec![
+        cursor_system(),
+        cursor_context(),
+        cursor_user(
+            "Wednesday, Nov 11, 2026, 7:32 AM (UTC+5:30)",
+            "Fix the login redirect\nmore",
+        ),
+        cursor_assistant(serde_json::json!([
+            {"type": "reasoning", "text": "", "signature": "opaque"},
+            {"type": "text", "text": "Let me look."},
+            {"type": "tool-call", "toolCallId": "c", "toolName": "Read", "args": {"path": "a.rs"}},
+        ])),
+        cursor_tool_result(),
+        cursor_assistant(serde_json::json!([
+            {"type": "reasoning", "text": "Thinking it over."},
+            {"type": "text", "text": "Fixed."},
+        ])),
+        cursor_user("Wednesday, Nov 11, 2026, 11:05 PM (UTC-4:00)", "Add a test"),
+        cursor_assistant(serde_json::json!([{"type": "text", "text": "Done."}])),
+    ]
+}
+
+fn unix_ms(rfc3339: &str) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .unwrap()
+        .timestamp_millis() as u64
+}
+
+#[test]
+fn cursor_lists_title_cwd_time_and_id() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = cursor_session(
+        home.path(),
+        "acp-sessions",
+        CURSOR_ID,
+        &cursor_conversation(),
+        Some("main"),
+    );
+    set_mtime(&folder.join("store.db"), 1_800_000_000);
+
+    let found = list(Kind::Cursor, home.path());
+    assert_eq!(found.len(), 1);
+    let c = &found[0];
+    assert_eq!(c.kind, Kind::Cursor);
+    assert_eq!(c.provider_id, CURSOR_ID);
+    assert_eq!(c.cwd, "/tmp/p");
+    assert_eq!(c.title, "Fix the login redirect");
+    assert_eq!(c.branch.as_deref(), Some("main"));
+    assert_eq!(c.updated_at, 1_800_000_000_000);
+    assert_eq!(c.messages, None);
+    assert_eq!(c.path, folder);
+}
+
+#[test]
+fn cursor_reads_user_and_assistant_text_only() {
+    let home = tempfile::tempdir().unwrap();
+    cursor_session(
+        home.path(),
+        "acp-sessions",
+        CURSOR_ID,
+        &cursor_conversation(),
+        None,
+    );
+    let found = list(Kind::Cursor, home.path());
+    assert_eq!(found[0].branch, None);
+
+    let turns = read_turns(&found[0]).unwrap();
+    assert_eq!(
+        texts(&turns),
+        vec![
+            (TurnRole::User, "Fix the login redirect\nmore"),
+            (TurnRole::Assistant, "Let me look."),
+            (TurnRole::Assistant, "Fixed."),
+            (TurnRole::User, "Add a test"),
+            (TurnRole::Assistant, "Done."),
+        ]
+    );
+    let sent: Vec<Option<u64>> = turns.iter().map(|t| t.sent_at).collect();
+    assert_eq!(
+        sent,
+        vec![
+            Some(unix_ms("2026-11-11T07:32:00+05:30")),
+            None,
+            None,
+            Some(unix_ms("2026-11-11T23:05:00-04:00")),
+            None,
+        ]
+    );
+    assert_eq!(count_messages(&found[0]), Some(5));
+}
+
+#[test]
+fn cursor_skips_chats_without_conversation() {
+    let home = tempfile::tempdir().unwrap();
+    cursor_session(
+        home.path(),
+        "acp-sessions",
+        "good",
+        &cursor_conversation(),
+        None,
+    );
+    // Opened over ACP and never prompted: Cursor writes only `meta.json`.
+    let empty = home.path().join("acp-sessions/never-prompted");
+    fs::create_dir_all(&empty).unwrap();
+    fs::write(
+        empty.join("meta.json"),
+        r#"{"schemaVersion":1,"cwd":"/tmp/p","title":"x"}"#,
+    )
+    .unwrap();
+    // Context sent, but no prompt in it.
+    cursor_session(
+        home.path(),
+        "acp-sessions",
+        "context-only",
+        &[cursor_system(), cursor_context()],
+        None,
+    );
+    // A `cursor-agent` chat: ACP's session/load cannot find it, so it is not offered.
+    cursor_session(
+        home.path(),
+        "chats/0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
+        "terminal-chat",
+        &cursor_conversation(),
+        None,
+    );
+    fs::write(home.path().join("acp-sessions/stray"), "not a folder").unwrap();
+
+    let ids: Vec<String> = list(Kind::Cursor, home.path())
+        .into_iter()
+        .map(|c| c.provider_id)
+        .collect();
+    assert_eq!(ids, vec!["good"]);
+}
+
+#[test]
+fn cursor_corrupt_store_is_skipped_not_fatal() {
+    let home = tempfile::tempdir().unwrap();
+    cursor_session(
+        home.path(),
+        "acp-sessions",
+        "good",
+        &cursor_conversation(),
+        None,
+    );
+    let garbage = home.path().join("acp-sessions/garbage");
+    fs::create_dir_all(&garbage).unwrap();
+    fs::write(garbage.join("meta.json"), r#"{"cwd":"/tmp/p"}"#).unwrap();
+    fs::write(garbage.join("store.db"), b"not a database at all").unwrap();
+
+    let bad_meta = cursor_session(
+        home.path(),
+        "acp-sessions",
+        "bad-meta",
+        &cursor_conversation(),
+        None,
+    );
+    rusqlite::Connection::open(bad_meta.join("store.db"))
+        .unwrap()
+        .execute("UPDATE meta SET value = 'zz' WHERE key = '0'", [])
+        .unwrap();
+
+    let no_root = cursor_session(
+        home.path(),
+        "acp-sessions",
+        "no-root",
+        &cursor_conversation(),
+        None,
+    );
+    rusqlite::Connection::open(no_root.join("store.db"))
+        .unwrap()
+        .execute("DELETE FROM blobs WHERE id = ?1", [cursor_blob_id(999)])
+        .unwrap();
+
+    // A message missing from the store, or not JSON, is left out of the rest.
+    let holes = cursor_session(
+        home.path(),
+        "acp-sessions",
+        "holes",
+        &cursor_conversation(),
+        None,
+    );
+    let db = rusqlite::Connection::open(holes.join("store.db")).unwrap();
+    db.execute("DELETE FROM blobs WHERE id = ?1", [cursor_blob_id(4)])
+        .unwrap();
+    db.execute(
+        "UPDATE blobs SET data = x'00ff' WHERE id = ?1",
+        [cursor_blob_id(6)],
+    )
+    .unwrap();
+    drop(db);
+
+    let found = list(Kind::Cursor, home.path());
+    let mut ids: Vec<&str> = found.iter().map(|c| c.provider_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec!["good", "holes"]);
+    let holes = found.iter().find(|c| c.provider_id == "holes").unwrap();
+    assert_eq!(
+        texts(&read_turns(holes).unwrap()),
+        vec![
+            (TurnRole::User, "Fix the login redirect\nmore"),
+            (TurnRole::User, "Add a test"),
+            (TurnRole::Assistant, "Done."),
+        ]
+    );
+
+    let mut broken = found[0].clone();
+    broken.path = garbage;
+    assert!(read_turns(&broken).is_err());
+    assert_eq!(count_messages(&broken), None);
+}
+
 mod placement {
     use super::*;
     use crate::store::Session;

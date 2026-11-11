@@ -29,7 +29,7 @@ mod baseline_tests;
 mod batch;
 mod compaction;
 mod cursor_live;
-mod cursor_store;
+pub(crate) mod cursor_store;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;
