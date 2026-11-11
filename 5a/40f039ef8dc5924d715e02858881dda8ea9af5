@@ -1,0 +1,51 @@
+crates/gespan-core/src/lib.rs
+  s_5d2a7fdd41858b::t_8c27ca23374c2c 51-52
+crates/gespan-core/src/orchestration/worktree/tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 247
+crates/gespan-core/src/provider/hold_tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 113
+crates/gespan-core/src/provider.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 1460,2286
+crates/gespan-core/src/accounts/tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 171,296,425
+  s_5d2a7fdd41858b::t_79f69df876a00f 123,254-256,370
+crates/gespan-core/src/cli.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 148
+crates/gespan-core/src/test_exec.rs
+  s_5d2a7fdd41858b::t_0c4b89bf0fc4c5 97-100
+  s_5d2a7fdd41858b::t_8c27ca23374c2c 1-96,101-110
+crates/gespan-core/src/machines/tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 271,759,935
+crates/gespan-core/src/provider/limits.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 138
+crates/gespan-core/src/provider/baseline_tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 60,338
+crates/gespan-core/src/provider/follow_up.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 293
+crates/gespan-core/src/scm/tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 1134
+crates/gespan-core/src/provider/text_tests.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 37
+crates/gespan-core/src/provider/parked.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 931,1026
+crates/gespan-core/src/project_actions/tests/runs.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 525
+crates/gespan-core/src/mcp.rs
+  s_5d2a7fdd41858b::t_ded75e3e4769d9 979
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a40f039ef8dc5924d715e02858881dda8ea9af5",
+  "prompts": {},
+  "sessions": {
+    "s_5d2a7fdd41858b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a154897-a111-4056-b84d-3f27ff5b152c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
