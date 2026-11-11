@@ -1,0 +1,19 @@
+crates/gespan-core/src/tool/approval_view.rs
+  s_a2c0f0f2f96e87::t_77b5b9cc2e488f 436-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "95978fc48772b679347c8f5b8ff7bd3341ee4bd4",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
