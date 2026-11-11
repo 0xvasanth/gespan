@@ -13,6 +13,14 @@ pub struct Interjection {
     pub severity: Option<String>,
 }
 impl Interjection {
+    /// The text shown under the label. An imported history's divider keeps
+    /// the agent's name in `text` for its label, so it has no body.
+    pub fn body(&self) -> &str {
+        match self.custom_type.as_str() {
+            "imported" => "",
+            _ => &self.text,
+        }
+    }
     pub fn label(&self) -> Cow<'_, str> {
         Cow::Borrowed(match self.custom_type.as_str() {
             "advisor" => "Advisor",

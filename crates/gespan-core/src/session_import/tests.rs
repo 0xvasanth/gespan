@@ -1664,6 +1664,12 @@ mod importing {
             severity: None,
         };
         assert_eq!(note.label(), "Imported from Claude Code");
+        assert_eq!(note.body(), "", "the agent's name is the label, not a body");
+        let notice = Interjection {
+            custom_type: "custom".into(),
+            ..note
+        };
+        assert_eq!(notice.body(), "Claude Code");
     }
 }
 
