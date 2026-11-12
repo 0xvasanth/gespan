@@ -8,6 +8,12 @@
 //! - readers of other apps' databases (Cursor, Codex, WebKit, the Tauri
 //!   importer), whose schemas are not ours to migrate.
 //!
+//! Queries follow the same rule: reads and writes of Gespan's tables use
+//! Toasty's typed API. Raw query SQL (`toasty::sql`, `Store::sql()`, a
+//! rusqlite connection) is only for what Toasty 0.11 cannot express, and
+//! every file's raw query lines are counted in [`QUERIES`] so the number can
+//! only go down.
+//!
 //! A new table or column is a Toasty model plus a migration:
 //! `cargo run -p gespan-core --bin toasty-migrate -- <kind> <name>` (see
 //! `docs/toasty.md`). Never add a `CREATE TABLE` or `ALTER TABLE`, and never
@@ -93,6 +99,7 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         "legacy shape and constraints",
     ),
     ("gespan-core/src/orm/adopt.rs", 8, "the ORM's adoption"),
+    ("gespan-core/src/orm.rs", 1, "test-only checkpoint helper"),
     ("gespan-core/src/orm/kind.rs", 2, "the ORM's registration"),
     (
         "gespan-core/src/provider/cursor_store.rs",
@@ -124,6 +131,11 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         1,
         "legacy JSON settings import",
     ),
+    (
+        "gespan-core/src/store/shared.rs",
+        3,
+        "the shared store's rusqlite connection, to move to Toasty",
+    ),
     ("gespan-graph/src/db.rs", 1, "the graph's own Toasty driver"),
     (
         "gespan-graph/src/schema.rs",
@@ -131,6 +143,173 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         "constraints Toasty cannot express",
     ),
     ("gespan-graph/src/store.rs", 1, "test-only plain connection"),
+];
+
+/// Raw query SQL: the statements Toasty's typed API is for.
+const QUERY_PATTERNS: &[&str] = &[
+    "SELECT ",
+    "INSERT INTO",
+    "INSERT OR ",
+    "DELETE FROM",
+    "REPLACE INTO",
+];
+
+/// Each file's raw query lines as of the rule that every query goes through
+/// Toasty, with why it has them. "to move to Toasty" is debt: when a change
+/// moves a file's queries to the typed API, lower its number (the test fails
+/// until it matches, so the count can only fall). Never raise a number or add
+/// a file, unless the new SQL reads another app's database, is part of
+/// adoption or a constraint, or is something Toasty 0.11 cannot express
+/// (see docs/toasty.md), with a comment on the statement saying which.
+const QUERIES: &[(&str, usize, &str)] = &[
+    ("board-store/src/agent.rs", 4, "to move to Toasty"),
+    ("board-store/src/auto_move.rs", 1, "to move to Toasty"),
+    ("board-store/src/card_ops.rs", 24, "to move to Toasty"),
+    ("board-store/src/comments.rs", 1, "to move to Toasty"),
+    (
+        "board-store/src/constraints.rs",
+        26,
+        "trigger bodies of constraints Toasty cannot express",
+    ),
+    ("board-store/src/fields.rs", 15, "to move to Toasty"),
+    ("board-store/src/labels.rs", 15, "to move to Toasty"),
+    ("board-store/src/links.rs", 15, "to move to Toasty"),
+    ("board-store/src/meta.rs", 16, "to move to Toasty"),
+    (
+        "board-store/src/migrate.rs",
+        24,
+        "legacy board upgrade for adoption",
+    ),
+    ("board-store/src/ops.rs", 32, "to move to Toasty"),
+    ("board-store/src/relations.rs", 10, "to move to Toasty"),
+    ("board-store/src/seed.rs", 12, "to move to Toasty"),
+    ("board-store/src/settings.rs", 9, "to move to Toasty"),
+    ("board-store/src/subtasks.rs", 3, "to move to Toasty"),
+    ("board-store/src/templates.rs", 3, "to move to Toasty"),
+    ("board-store/src/testing.rs", 1, "test fixture"),
+    ("board-store/src/views.rs", 20, "to move to Toasty"),
+    (
+        "gespan-browser/src/audit.rs",
+        10,
+        "a constraint trigger, and queries to move to Toasty",
+    ),
+    (
+        "gespan-core/src/accounts/transfer.rs",
+        2,
+        "reads Codex's database",
+    ),
+    (
+        "gespan-core/src/accounts/transfer/codex.rs",
+        3,
+        "reads Codex's database",
+    ),
+    (
+        "gespan-core/src/automations.rs",
+        17,
+        "constraint triggers, and queries to move to Toasty",
+    ),
+    (
+        "gespan-core/src/automations/review_drafts.rs",
+        2,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/desktop_preferences/webview.rs",
+        1,
+        "reads WebKit's database",
+    ),
+    (
+        "gespan-core/src/diagnostics/metrics.rs",
+        2,
+        "legacy shape, and queries to move to Toasty",
+    ),
+    (
+        "gespan-core/src/flow/store.rs",
+        8,
+        "constraint triggers, and queries to move to Toasty",
+    ),
+    (
+        "gespan-core/src/inbox/azure_devops.rs",
+        1,
+        "an Azure DevOps WIQL query, not SQLite",
+    ),
+    ("gespan-core/src/orm/adopt.rs", 8, "the ORM's adoption"),
+    (
+        "gespan-core/src/provider/cursor_store.rs",
+        4,
+        "reads Cursor's database",
+    ),
+    (
+        "gespan-core/src/session_import/cursor.rs",
+        2,
+        "reads Cursor's database",
+    ),
+    (
+        "gespan-core/src/store.rs",
+        57,
+        "native_* fixture tables on rusqlite, to move to Toasty",
+    ),
+    ("gespan-core/src/store/edit.rs", 2, "to move to Toasty"),
+    (
+        "gespan-core/src/store/gespan_import.rs",
+        8,
+        "reads the Tauri database",
+    ),
+    ("gespan-core/src/store/in_flight.rs", 5, "to move to Toasty"),
+    ("gespan-core/src/store/inbox_ask.rs", 1, "to move to Toasty"),
+    (
+        "gespan-core/src/store/managed_sessions.rs",
+        1,
+        "to move to Toasty",
+    ),
+    ("gespan-core/src/store/my_tasks.rs", 3, "to move to Toasty"),
+    ("gespan-core/src/store/notes.rs", 6, "to move to Toasty"),
+    ("gespan-core/src/store/pilots.rs", 8, "to move to Toasty"),
+    (
+        "gespan-core/src/store/provider_ids.rs",
+        2,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/store/remote_legacy.rs",
+        6,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/store/schema.rs",
+        21,
+        "legacy upgrade and constraint triggers",
+    ),
+    (
+        "gespan-core/src/store/session_metadata.rs",
+        2,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/store/session_preview.rs",
+        2,
+        "to move to Toasty",
+    ),
+    ("gespan-core/src/store/shared.rs", 50, "to move to Toasty"),
+    (
+        "gespan-core/src/store/shared/edit.rs",
+        1,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/store/shared/settings.rs",
+        3,
+        "to move to Toasty",
+    ),
+    (
+        "gespan-core/src/store/shared/window.rs",
+        6,
+        "to move to Toasty",
+    ),
+    ("gespan-graph/src/db.rs", 2, "the graph's own Toasty driver"),
+    ("gespan-graph/src/query.rs", 13, "to move to Toasty"),
+    ("gespan-graph/src/schema.rs", 5, "constraint triggers"),
+    ("gespan-graph/src/store.rs", 17, "to move to Toasty"),
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -158,19 +337,58 @@ fn raw_lines(source: &str) -> usize {
         .count()
 }
 
-/// `source` without its trailing `#[cfg(test)] mod tests` block.
-fn production(source: &str) -> &str {
+/// Lines that hold raw query SQL. Comments do not count.
+fn query_lines(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter(|line| {
+            QUERY_PATTERNS.iter().any(|pattern| line.contains(pattern))
+                || (line.contains("UPDATE ") && line.contains(" SET "))
+        })
+        .count()
+}
+
+/// `source` without its inline `#[cfg(test)] mod tests { ... }` blocks. An
+/// out-of-line `mod tests;` keeps the rest of the file, which is production
+/// code.
+fn production(source: &str) -> String {
+    let mut kept = String::new();
+    let mut from = 0;
     let mut search = 0;
     while let Some(at) = source[search..].find("#[cfg(test)]") {
         let start = search + at;
+        search = start + 1;
         let rest = source[start + "#[cfg(test)]".len()..].trim_start();
         let rest = rest.strip_prefix("pub(crate) ").unwrap_or(rest);
-        if rest.starts_with("mod tests") {
-            return &source[..start];
+        let Some(rest) = rest.strip_prefix("mod tests") else {
+            continue;
+        };
+        if !rest.trim_start().starts_with('{') {
+            continue;
         }
-        search = start + 1;
+        let open = source.len() - rest.len() + rest.find('{').unwrap();
+        let mut depth = 0;
+        let mut end = source.len();
+        for (offset, c) in source[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + offset + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        kept.push_str(&source[from..start]);
+        from = end;
+        search = end;
     }
-    source
+    kept.push_str(&source[from..]);
+    kept
 }
 
 fn is_test_file(path: &Path) -> bool {
@@ -181,8 +399,8 @@ fn is_test_file(path: &Path) -> bool {
     name == "tests.rs" || name.ends_with("_tests.rs")
 }
 
-/// Raw schema or open lines per production file, keyed `crate/src/...`.
-fn found() -> BTreeMap<String, usize> {
+/// `count` lines per production file, keyed `crate/src/...`.
+fn found(count: fn(&str) -> usize) -> BTreeMap<String, usize> {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut counts = BTreeMap::new();
     for krate in CRATES {
@@ -190,7 +408,7 @@ fn found() -> BTreeMap<String, usize> {
         rust_files(&crates.join(krate).join("src"), &mut files);
         for file in files.into_iter().filter(|f| !is_test_file(f)) {
             let source = std::fs::read_to_string(&file).unwrap();
-            let count = raw_lines(production(&source));
+            let count = count(&production(&source));
             if count > 0 {
                 let key = file
                     .strip_prefix(&crates)
@@ -208,7 +426,7 @@ fn found() -> BTreeMap<String, usize> {
 fn gespan_databases_are_only_reached_through_toasty() {
     let allowed: BTreeMap<&str, usize> = ALLOWED.iter().map(|(f, n, _)| (*f, *n)).collect();
     let mut problems = Vec::new();
-    for (file, count) in found() {
+    for (file, count) in found(raw_lines) {
         match allowed.get(file.as_str()) {
             None => problems.push(format!(
                 "{file}: {count} raw SQLite schema or open line(s). Gespan's own tables are \
@@ -225,11 +443,67 @@ fn gespan_databases_are_only_reached_through_toasty() {
 }
 
 #[test]
+fn gespan_queries_only_go_through_toasty() {
+    let allowed: BTreeMap<&str, usize> = QUERIES.iter().map(|(f, n, _)| (*f, *n)).collect();
+    let found = found(query_lines);
+    let mut problems = Vec::new();
+    for (file, count) in &found {
+        match allowed.get(file.as_str()) {
+            None => problems.push(format!(
+                "{file}: {count} raw SQL query line(s). Read and write Gespan's tables \
+                 through Toasty's typed API (docs/toasty.md)."
+            )),
+            Some(limit) if count > limit => problems.push(format!(
+                "{file}: {count} raw SQL query lines, {limit} allowed. Use Toasty's typed \
+                 API instead."
+            )),
+            Some(limit) if count < limit => problems.push(format!(
+                "{file}: {count} raw SQL query lines, down from {limit}. Lower its number \
+                 in QUERIES to {count}."
+            )),
+            Some(_) => {}
+        }
+    }
+    for (file, limit, _) in QUERIES {
+        if !found.contains_key(*file) {
+            problems.push(format!(
+                "{file}: no raw SQL query lines left, {limit} listed. Remove it from QUERIES."
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn the_query_guard_counts_raw_statements_but_not_comments() {
+    let source = "fn f() {\n\
+                  db.sql(\"SELECT id FROM sessions\");\n\
+                  db.sql(\"UPDATE sessions SET title = ?1\");\n\
+                  // DELETE FROM sessions is what this replaces\n\
+                  Session::filter_by_id(id).delete().exec(db);\n\
+                  }";
+    assert_eq!(query_lines(source), 2);
+}
+
+#[test]
+fn the_guard_still_reads_a_file_after_its_out_of_line_tests_module() {
+    let source = "#[cfg(test)]\nmod tests;\n\
+                  fn f() { conn.execute(\"CREATE TABLE x (y)\"); }\n\
+                  #[cfg(test)]\nmod tests { fn g() { Connection::open(\"t\"); } }\n\
+                  fn h() { Connection::open(\"u\"); }";
+    assert_eq!(
+        raw_lines(&production(source)),
+        2,
+        "code after `mod tests;` and after an inline tests module both count"
+    );
+}
+
+#[test]
 fn the_toasty_guard_catches_hand_written_schema() {
     let source = "fn f() { conn.execute(\"CREATE TABLE x (y)\"); }\n\
                   #[cfg(test)]\nmod tests { fn g() { Connection::open(\"t\"); } }";
     assert_eq!(
-        raw_lines(production(source)),
+        raw_lines(&production(source)),
         1,
         "production code counts, the tests module does not"
     );
