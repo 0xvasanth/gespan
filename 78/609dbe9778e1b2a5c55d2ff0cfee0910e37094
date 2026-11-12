@@ -1,0 +1,61 @@
+crates/gespan-gpui/src/my_tasks/list.rs
+  s_c9a3e735922492::t_a19cf0109a89f7 11,18-20,37-63,135,246,253-258,263
+  s_c9a3e735922492::t_ec74247f7b5735 72-76,157-169
+  s_c9a3e735922492::t_53537fa5662cea 259-262,302-306
+crates/gespan-gpui/src/my_tasks/card.rs
+  s_c9a3e735922492::t_df558fdce80ed7 8-23,29-33,39-51,54-55,61-63,149-151,158-164,167,271,277,281,285-286,297-307
+  s_c9a3e735922492::t_3f3159437c4256 52-53,56-60
+  s_c9a3e735922492::t_ec74247f7b5735 24-28,34-38,116-121,134-136,172-174
+  s_c9a3e735922492::t_324ca31090cec9 114-115,122-133,137-145
+crates/gespan-gpui/src/glass.rs
+  s_c9a3e735922492::t_b03e6e6eaf80cd 94-95,123,125,130-131,174
+crates/gespan-gpui/src/my_tasks/pane.rs
+  s_c9a3e735922492::t_5853af7d4fde35 14,90,164
+  s_c9a3e735922492::t_ec74247f7b5735 21
+  s_c9a3e735922492::t_0595381bcdc0eb 2-4,8
+  s_a2c0f0f2f96e87::t_5c37d58d258440 193
+crates/gespan-gpui/src/assets.rs
+  s_c9a3e735922492::t_afca2c1b1f5eea 231-245
+crates/gespan-gpui/src/conversation/approval_card.rs
+  s_c9a3e735922492::t_df558fdce80ed7 54-68
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_c9a3e735922492::t_c752c38427bbba 195,215,239,276
+crates/gespan-gpui/src/shell/my_tasks_tests.rs
+  s_c9a3e735922492::t_ec74247f7b5735 593-600,636-639,641-643,645-648,651-654,661-668,685-689,692-694,716-719,721-723,726-728
+  s_c9a3e735922492::t_c752c38427bbba 41
+  s_c9a3e735922492::t_ba217a713f4fca 537,563-564,566-567,575-577,581-587,589,601-635,640,644,649-650,655-660,669-684,690-691,695-715,720,724-725,926-927
+crates/gespan-gpui/src/my_tasks.rs
+  s_c9a3e735922492::t_c752c38427bbba 61-63
+  s_c9a3e735922492::t_324ca31090cec9 335
+crates/gespan-gpui/src/my_tasks/history.rs
+  s_c9a3e735922492::t_36b2ea608bd46b 2-3,7-8,13-16,18-40,42,48-75,77-100,112,117,144,148-149,152,170,184,186,188,192,207-212,216-237,241-263,268-275
+  s_c9a3e735922492::t_e8f9e4718c61ad 41,43-45,264-267
+  s_c9a3e735922492::t_ec74247f7b5735 194-205
+crates/gespan-gpui/src/my_tasks/tests.rs
+  s_c9a3e735922492::t_fd71301c3e461f 408-438
+  s_c9a3e735922492::t_c752c38427bbba 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78609dbe9778e1b2a5c55d2ff0cfee0910e37094",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_c9a3e735922492": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de6fa327-3fb2-4561-904b-4b509524c369",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
