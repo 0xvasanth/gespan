@@ -691,3 +691,43 @@ fn typing_in_the_search_field_filters_the_list(cx: &mut TestAppContext) {
         assert_eq!(ids(&view.rows()), vec!["one", "two"])
     });
 }
+
+#[gpui::test]
+fn the_project_control_steps_aside_while_one_automation_is_shown(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![run("one", "a", "succeeded", 1_000)],
+            vec![automation("a", "Triage", &project("alpha"))],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-filter-project-all").is_some());
+    assert!(cx.debug_bounds("runs-filter-automation").is_none());
+
+    view.update(cx, |view, cx| {
+        view.set_filter(
+            RunsFilter {
+                automation: Some("a".into()),
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-filter-automation").is_some());
+    assert!(cx.debug_bounds("runs-filter-project-all").is_none());
+    assert!(cx.debug_bounds("runs-filter-project-0").is_none());
+    // The status control and search stay.
+    assert!(cx.debug_bounds("runs-filter-status-all").is_some());
+    assert!(cx.debug_bounds("runs-search").is_some());
+
+    // Clearing the chip brings the project control back.
+    let clear = cx.debug_bounds("runs-filter-automation").unwrap();
+    cx.simulate_click(clear.center(), Default::default());
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.filter().automation, None));
+    assert!(cx.debug_bounds("runs-filter-project-all").is_some());
+}
