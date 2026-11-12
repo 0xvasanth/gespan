@@ -42,6 +42,7 @@ pub mod remote;
 pub mod resources;
 pub mod response;
 pub mod resume_outside;
+pub mod review_policy;
 pub mod scm;
 pub mod session_filters;
 pub mod session_groups;

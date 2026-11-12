@@ -2,7 +2,7 @@
 //! frames only Claude sends.
 use super::*;
 
-pub(super) mod read_only;
+pub(crate) mod read_only;
 
 #[derive(Default)]
 pub(super) struct State {

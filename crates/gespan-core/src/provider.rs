@@ -36,7 +36,7 @@ mod follow_up;
 mod hold;
 pub use hold::HoldPoint;
 use lifecycle::Interrupt;
-mod claude;
+pub(crate) mod claude;
 mod codex;
 mod error;
 #[cfg(all(test, unix))]
