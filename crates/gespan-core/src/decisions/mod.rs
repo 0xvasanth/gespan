@@ -1,6 +1,7 @@
 //! The decision log: preferences and project decisions shared by every agent.
 
 pub mod context;
+pub mod files;
 pub mod scope;
 pub mod service;
 pub(crate) mod toolkit;

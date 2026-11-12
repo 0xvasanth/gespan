@@ -75,7 +75,7 @@ fn root_commit(workspace: &Path) -> Option<String> {
     Some(root.chars().take(12).collect())
 }
 
-fn git_common_dir(workspace: &Path) -> Option<PathBuf> {
+pub(crate) fn git_common_dir(workspace: &Path) -> Option<PathBuf> {
     let out = crate::git::git_probe(
         workspace,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],

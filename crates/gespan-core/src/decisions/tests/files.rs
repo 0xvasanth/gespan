@@ -1,0 +1,352 @@
+use crate::decisions::files::{
+    ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic, BEGIN,
+    END,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::TempDir;
+
+fn section(body: &str) -> String {
+    format!("{BEGIN}\n{body}\n{END}\n")
+}
+
+// Trailing spaces, tabs, unicode, a code fence and no final newline.
+const USER_TEXT: &str =
+    "# Notes  \n\ttabbed line\t\nünïcode ✓ 日本語\n```\nfenced\n```\nlast line, no newline";
+
+#[test]
+fn appends_section_when_missing_and_keeps_user_text_byte_for_byte() {
+    let out = replace_section(USER_TEXT, "- D-1 use sqlite");
+    assert!(out.starts_with(USER_TEXT));
+    assert_eq!(
+        out,
+        format!("{USER_TEXT}\n\n{}", section("- D-1 use sqlite"))
+    );
+    // A file that already ends in a newline gets exactly one blank line.
+    let out = replace_section("hello\n", "x");
+    assert_eq!(out, format!("hello\n\n{}", section("x")));
+    // An empty file gets just the section.
+    assert_eq!(replace_section("", "x"), section("x"));
+}
+
+#[test]
+fn replaces_only_between_markers() {
+    let before = "intro  \n\n";
+    let after = "\noutro\t\nno newline";
+    let existing = format!("{before}{}{after}", section("old\nbody"));
+    let out = replace_section(&existing, "new body");
+    assert_eq!(out, format!("{before}{}{after}", section("new body")));
+    // Re-applying the same body is a no-op.
+    assert_eq!(replace_section(&out, "new body"), out);
+}
+
+#[test]
+fn empty_body_removes_section_and_its_blank_line_only() {
+    let with = replace_section(USER_TEXT, "body");
+    assert_eq!(replace_section(&with, ""), format!("{USER_TEXT}\n"));
+
+    let with = replace_section("a\n", "body");
+    assert_eq!(replace_section(&with, ""), "a\n");
+
+    // Text after the section is untouched; a blank line the user added
+    // after it stays.
+    let existing = format!("a\n\n{}\nb\n", section("body"));
+    assert_eq!(replace_section(&existing, ""), "a\n\nb\n");
+
+    // Nothing to remove: unchanged, byte for byte.
+    assert_eq!(replace_section(USER_TEXT, ""), USER_TEXT);
+    // A section alone in the file leaves an empty file.
+    assert_eq!(replace_section(&section("x"), ""), "");
+}
+
+#[test]
+fn begin_without_end_keeps_everything_and_appends_one_new_section() {
+    let existing = format!("top\n{BEGIN}\nuser wrote this after a damaged marker\n");
+    let out = replace_section(&existing, "fresh");
+    assert!(out.starts_with(&existing));
+    assert_eq!(out, format!("{existing}\n{}", section("fresh")));
+    assert_eq!(out.matches(BEGIN).count(), 2);
+    assert_eq!(out.matches(&format!("{END}\n")).count(), 1);
+    // The orphan stays orphaned on the next pass: still one complete section.
+    let again = replace_section(&out, "fresh2");
+    assert!(again.starts_with(&existing));
+    assert!(again.ends_with(&section("fresh2")));
+    assert_eq!(again.matches(END).count(), 1);
+    // Removing keeps the user's orphan line.
+    assert_eq!(replace_section(&out, ""), existing);
+}
+
+#[test]
+fn end_without_begin_is_user_text() {
+    let existing = format!("a\n{END}\nb\n");
+    let out = replace_section(&existing, "x");
+    assert!(out.starts_with(&existing));
+    assert!(out.ends_with(&section("x")));
+}
+
+#[test]
+fn two_sections_collapse_to_the_first() {
+    let existing = format!("a\n\n{}mid\n\n{}tail\n", section("one"), section("two"));
+    let out = replace_section(&existing, "new");
+    assert_eq!(out, format!("a\n\n{}mid\ntail\n", section("new")));
+    assert_eq!(out.matches(BEGIN).count(), 1);
+    assert_eq!(replace_section(&existing, ""), "a\nmid\ntail\n");
+}
+
+#[test]
+fn markers_inside_a_code_fence_are_ignored() {
+    let existing = format!("doc\n```\n{BEGIN}\nexample\n{END}\n```\nafter\n");
+    let out = replace_section(&existing, "real");
+    assert!(out.starts_with(&existing));
+    assert!(out.ends_with(&section("real")));
+    assert_eq!(out.matches(BEGIN).count(), 2);
+    // Removing never touches the fenced example.
+    assert_eq!(replace_section(&out, ""), existing);
+    // A marker with extra text on its line is not a marker.
+    let inline = format!("see {BEGIN} here\n");
+    assert!(replace_section(&inline, "x").starts_with(&inline));
+    assert_eq!(replace_section(&inline, "x").matches(END).count(), 1);
+}
+
+#[test]
+fn markers_tolerate_surrounding_whitespace() {
+    let existing = format!("  {BEGIN}\t\nold\n {END}  \nrest\n");
+    let out = replace_section(&existing, "new");
+    assert!(out.contains("new"));
+    assert!(!out.contains("old"));
+    assert!(out.ends_with("rest\n"));
+    assert_eq!(out.matches(BEGIN).count(), 1);
+}
+
+#[test]
+fn crlf_files_stay_crlf() {
+    let existing = "line one\r\nline two\r\n";
+    let out = replace_section(existing, "a\nb");
+    assert_eq!(
+        out,
+        format!("line one\r\nline two\r\n\r\n{BEGIN}\r\na\r\nb\r\n{END}\r\n")
+    );
+    assert!(!out.replace("\r\n", "").contains('\n'));
+    let replaced = replace_section(&out, "c");
+    assert_eq!(
+        replaced,
+        format!("line one\r\nline two\r\n\r\n{BEGIN}\r\nc\r\n{END}\r\n")
+    );
+    assert_eq!(replace_section(&replaced, ""), existing);
+    // No trailing newline in a CRLF file: the added newline is CRLF.
+    let out = replace_section("x\r\ny", "z");
+    assert!(out.starts_with("x\r\ny\r\n\r\n"));
+}
+
+#[test]
+fn user_edited_section_detects_change() {
+    let written = replace_section("user\n", "line 1\nline 2");
+    assert!(!user_edited_section(&written, &written));
+    // Edits outside the section are not edits of the section.
+    let outside = format!("added by user\n{written}");
+    assert!(!user_edited_section(&outside, &written));
+    // An edit inside is.
+    let edited = written.replace("line 2", "line 2 (mine)");
+    assert!(user_edited_section(&edited, &written));
+    // Line-ending conversion alone is not an edit.
+    assert!(!user_edited_section(
+        &written.replace('\n', "\r\n"),
+        &written
+    ));
+    // A file with no section has nothing of ours to lose.
+    assert!(!user_edited_section("plain\n", &written));
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn init_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.name", "Test"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", "init"]);
+}
+
+fn exclude_lines(common: &Path) -> Vec<String> {
+    fs::read_to_string(common.join("info").join("exclude"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn ensure_excluded_is_idempotent_and_writes_to_common_dir_from_a_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let main = tmp.path().join("main");
+    fs::create_dir(&main).unwrap();
+    init_repo(&main);
+    let wt: PathBuf = tmp.path().join("wt");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            wt.to_str().unwrap(),
+        ],
+    );
+
+    let file = wt.join("sub").join("CLAUDE.md");
+    fs::create_dir(wt.join("sub")).unwrap();
+    fs::write(&file, "x").unwrap();
+    // Pre-existing user entries stay, including one with no final newline.
+    let info = main.join(".git").join("info");
+    fs::create_dir_all(&info).unwrap();
+    fs::write(info.join("exclude"), "# mine\n*.log").unwrap();
+
+    ensure_excluded(&wt, &file).unwrap();
+    ensure_excluded(&wt, &file).unwrap();
+    assert_eq!(
+        exclude_lines(&main.join(".git")),
+        ["# mine", "*.log", "/sub/CLAUDE.md"]
+    );
+    // Nothing was written into the worktree's private git dir.
+    assert!(!main
+        .join(".git")
+        .join("worktrees")
+        .join("wt")
+        .join("info")
+        .join("exclude")
+        .exists());
+    // Git really ignores it.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&wt)
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&status.stdout).contains("CLAUDE.md"));
+
+    // A second file is appended; removing the first leaves everything else.
+    let other = wt.join("AGENTS.md");
+    ensure_excluded(&wt, &other).unwrap();
+    remove_excluded(&wt, &file).unwrap();
+    remove_excluded(&wt, &file).unwrap();
+    assert_eq!(
+        exclude_lines(&main.join(".git")),
+        ["# mine", "*.log", "/AGENTS.md"]
+    );
+}
+
+#[test]
+fn ensure_excluded_creates_info_dir_in_a_plain_repo() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+    let info = tmp.path().join(".git").join("info");
+    let _ = fs::remove_dir_all(&info);
+    ensure_excluded(tmp.path(), &tmp.path().join("CLAUDE.md")).unwrap();
+    assert_eq!(exclude_lines(&tmp.path().join(".git")), ["/CLAUDE.md"]);
+}
+
+#[test]
+fn ensure_excluded_outside_git_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("CLAUDE.md");
+    ensure_excluded(tmp.path(), &file).unwrap();
+    remove_excluded(tmp.path(), &file).unwrap();
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn ensure_excluded_for_a_file_outside_the_work_tree_is_a_no_op() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    let elsewhere = tmp.path().join("elsewhere.md");
+    let before = exclude_lines(&repo.join(".git"));
+    ensure_excluded(&repo, &elsewhere).unwrap();
+    remove_excluded(&repo, &elsewhere).unwrap();
+    assert_eq!(exclude_lines(&repo.join(".git")), before);
+}
+
+#[test]
+fn write_atomic_replaces_content_and_leaves_no_temp_file() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("out.md");
+    write_atomic(&path, "first").unwrap();
+    write_atomic(&path, "second ✓").unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "second ✓");
+    let names: Vec<_> = fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["out.md"]);
+    // Missing parent directories are created.
+    let nested = tmp.path().join("a").join("b").join("f.md");
+    write_atomic(&nested, "n").unwrap();
+    assert_eq!(fs::read_to_string(nested).unwrap(), "n");
+}
+
+#[cfg(unix)]
+#[test]
+fn write_atomic_preserves_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("script.md");
+    fs::write(&path, "x").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    write_atomic(&path, "y").unwrap();
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_atomic_never_leaves_partial_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("CLAUDE.md");
+    fs::write(&path, "original").unwrap();
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let running_as_root = fs::File::create(tmp.path().join("probe")).is_ok();
+    let result = write_atomic(&path, "replacement");
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    if running_as_root {
+        return; // Read-only directories do not stop root.
+    }
+    assert!(result.is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    let names: Vec<_> = fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["CLAUDE.md"]);
+}
+
+#[test]
+fn write_atomic_failure_keeps_original_when_rename_fails() {
+    // The target is a non-empty directory, so the final rename must fail.
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("target");
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("child"), "x").unwrap();
+    assert!(write_atomic(&path, "data").is_err());
+    assert!(path.join("child").exists());
+    let names: Vec<_> = fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["target"], "temp file cleaned up");
+}
