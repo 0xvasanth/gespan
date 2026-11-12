@@ -1761,9 +1761,9 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+            assert!(visual.debug_bounds("agents-footer").is_none());
             window
                 .update(visual, |shell, _, cx| {
                     assert!(!shell.workspace.preferences.working_agents);
@@ -1776,7 +1776,7 @@ mod tests {
                 })
                 .unwrap();
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             window
                 .update(visual, |shell, _, _| {
                     let saved = shell.latest_state.lock().unwrap().clone();
@@ -1792,7 +1792,7 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+        assert!(visual.debug_bounds("agents-footer").is_none());
     }
 
     #[gpui::test]
