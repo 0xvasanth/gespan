@@ -83,9 +83,36 @@ pub fn instruction(policy: &ReviewPolicy) -> String {
 }
 
 pub fn verdict(policy: &ReviewPolicy, command: &str) -> Verdict {
+    verdict_at(policy, command, true)
+}
+
+/// The shell launcher agents wrap commands in, e.g. `/bin/zsh -lc '<script>'`.
+/// Only the exact shape `[shell, -c|-lc, script]` is unwrapped, and only once:
+/// a launcher inside the script is itself denied.
+fn launcher_script(words: &[String]) -> Option<&str> {
+    let [shell, flag, script] = words else {
+        return None;
+    };
+    let name = if shell.starts_with('/') {
+        shell.rsplit('/').next()?
+    } else {
+        shell
+    };
+    (matches!(name, "bash" | "zsh" | "sh") && matches!(flag.as_str(), "-c" | "-lc"))
+        .then_some(script.as_str())
+}
+
+fn verdict_at(policy: &ReviewPolicy, command: &str, unwrap: bool) -> Verdict {
     let Some(words) = shlex::split(command) else {
         return Verdict::Deny;
     };
+    if let Some(script) = launcher_script(&words) {
+        return if unwrap {
+            verdict_at(policy, script, false)
+        } else {
+            Verdict::Deny
+        };
+    }
     if words.first().map(String::as_str) != Some("gh") {
         return if read_only::allowed(command) {
             Verdict::Allow
@@ -435,6 +462,41 @@ mod tests {
                 repo: "acme/app".into(),
                 number: 7,
             }),
+        }
+    }
+
+    #[test]
+    fn a_shell_launcher_is_unwrapped_once_and_only_in_its_exact_shape() {
+        let v = |r, c: &str| verdict(&policy(r), c);
+        assert_eq!(
+            v(
+                ReviewResults::Draft,
+                "/bin/zsh -lc 'gh pr diff 7 -R acme/app'"
+            ),
+            Verdict::Allow
+        );
+        assert_eq!(
+            v(
+                ReviewResults::Draft,
+                "/usr/bin/bash -c 'gh pr view 7 -R acme/app'"
+            ),
+            Verdict::Allow
+        );
+        let post = r#"bash -c "gh pr review 7 --repo acme/app --comment --body 'x'""#;
+        assert_eq!(v(ReviewResults::Post, post), Verdict::Allow);
+        assert_eq!(v(ReviewResults::Draft, post), Verdict::Ask);
+        assert_eq!(v(ReviewResults::Gespan, post), Verdict::Deny);
+        for c in [
+            r#"zsh -lc "gh pr diff 7 -R acme/app; rm x""#,
+            r#"zsh -lc 'bash -c "gh pr diff 7 -R acme/app"'"#,
+            "zsh -lc 'gh pr diff 7 -R acme/app' extra",
+            "zsh -ic 'gh pr diff 7 -R acme/app'",
+            "env zsh -lc 'gh pr diff 7 -R acme/app'",
+            "zsh -l -c 'gh pr diff 7 -R acme/app'",
+            "/bin/fish -c 'gh pr diff 7 -R acme/app'",
+            "zsh -lc 'gh pr merge 7 -R acme/app'",
+        ] {
+            assert_eq!(v(ReviewResults::Post, c), Verdict::Deny, "{c}");
         }
     }
 

@@ -362,14 +362,14 @@ pub(super) enum Interrupt {
 
 impl Protocol {
     pub(super) fn codex_access(&self) -> (Value, &'static str, Value, &'static str) {
-        let (mut policy, sandbox, mut sandbox_policy, reviewer) =
+        let (mut policy, mut sandbox, mut sandbox_policy, reviewer) =
             self.request.settings.access.codex();
-        // A review run asks Gespan about every command (a trusted-command
-        // allowlist still runs sandboxed reads), and needs the network for `gh`.
-        let review = self.request.settings.review.is_some();
-        if review && sandbox_policy["type"] != "dangerFullAccess" {
+        // A review run never depends on the access mode: every command asks
+        // Gespan, nothing is written, and `gh` gets the network.
+        if self.request.settings.review.is_some() {
             policy = "untrusted".into();
-            sandbox_policy["networkAccess"] = true.into();
+            sandbox = "read-only";
+            sandbox_policy = json!({"type":"readOnly","networkAccess":true});
         }
         if (self.request.settings.operator
             || self.request.settings.operator_enabled

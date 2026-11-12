@@ -551,8 +551,18 @@ impl Protocol {
                 _ => None,
             };
             let is_command = kind == "execCommandApproval" || kind.contains("ommandExecution");
+            // A command asking for more than the sandbox gives is never routine.
+            let extra =
+                ["additionalPermissions", "permissions"]
+                    .iter()
+                    .any(|key| match &request[*key] {
+                        Value::Null => false,
+                        Value::Object(o) => !o.is_empty(),
+                        Value::Array(a) => !a.is_empty(),
+                        _ => true,
+                    });
             return Some(match command {
-                Some(command) if is_command => review_policy::verdict(policy, &command),
+                Some(command) if is_command && !extra => review_policy::verdict(policy, &command),
                 _ => Verdict::Deny,
             });
         }
@@ -1949,6 +1959,111 @@ cat >/dev/null"#,
                 }
             }
         }
+    }
+    #[test]
+    fn codex_review_unwraps_the_shell_launcher_in_both_wire_shapes() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr diff 7 -R acme/app"]}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "approved");
+        let (events, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"/bin/zsh -lc 'gh pr diff 7 -R acme/app'"}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "accept");
+        // A wrapped post still follows Results (Draft asks).
+        let (events, _) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr review 7 -R acme/app --comment -b x"]}),
+        );
+        assert!(
+            matches!(events.as_slice(), [Event::Approval(_)]),
+            "{events:?}"
+        );
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr diff 7 -R acme/app; rm x"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+    }
+    #[test]
+    fn codex_review_access_ignores_the_access_mode() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Auto,
+            AccessMode::FullAccess,
+        ] {
+            for plan in [false, true] {
+                let mut p = codex_review_protocol(ReviewResults::Draft);
+                p.request.settings.access = access;
+                p.request.settings.plan = plan;
+                let starts = codex_starts(&mut p);
+                assert_eq!(starts.len(), 2, "{access:?}");
+                for m in &starts {
+                    let params = &m["params"];
+                    assert_eq!(params["approvalPolicy"], "untrusted", "{access:?} {m}");
+                    assert_eq!(
+                        params["sandboxPolicy"]["type"], "readOnly",
+                        "{access:?} {m}"
+                    );
+                    assert_eq!(params["sandboxPolicy"]["networkAccess"], true, "{access:?}");
+                }
+                assert_eq!(starts[0]["params"]["sandbox"], "read-only", "{access:?}");
+            }
+        }
+    }
+    #[test]
+    fn codex_review_denies_a_command_that_asks_for_extra_permissions() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        for extra in [
+            json!({"additionalPermissions":{"network":{"enabled":true}}}),
+            json!({"permissions":{"fileSystem":{"write":["/"]}}}),
+        ] {
+            let mut params = json!({"command":"gh pr diff 7 -R acme/app"});
+            params
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let (events, r) =
+                codex_request(&mut p, "item/commandExecution/requestApproval", params);
+            assert!(events.is_empty(), "{events:?}");
+            assert_eq!(r["result"]["decision"], "decline", "{extra}");
+        }
+        // Empty or null extras do not make a plain read suspicious.
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"gh pr diff 7 -R acme/app","additionalPermissions":null}),
+        );
+        assert_eq!(r["result"]["decision"], "accept");
+    }
+    #[test]
+    fn codex_mcp_elicitations_ignore_the_review_policy() {
+        use crate::review_policy::ReviewResults;
+        let elicitation = json!({"id":5,"method":"mcpServer/elicitation/request","params":{
+            "mode":"form","message":"Run it?","requestedSchema":{"type":"object","properties":{}}}});
+        let run = |mut p: Protocol| {
+            let mut out = Vec::new();
+            let events = p.frame(elicitation.clone(), &mut out).unwrap();
+            (format!("{events:?}"), String::from_utf8(out).unwrap())
+        };
+        let mut plain = protocol(Kind::Codex);
+        plain.request.settings.access = AccessMode::ReadOnly;
+        let reviewed = codex_review_protocol(ReviewResults::Draft);
+        assert_eq!(run(plain), run(reviewed));
     }
     fn replay(kind: Kind, raw: &str) -> Vec<Event> {
         let mut protocol = protocol(kind);
