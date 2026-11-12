@@ -77,6 +77,7 @@ pub(crate) enum Event {
         note: String,
     },
     Choose {
+        key: String,
         pilot: String,
         text: String,
     },
@@ -97,6 +98,8 @@ pub(crate) struct MyTasks {
     /// A Flow approval's note.
     pub(crate) note: Entity<Input>,
     history_scroll: ScrollHandle,
+    /// When scrolling last asked for earlier turns: one page per gesture.
+    last_load: Option<std::time::Instant>,
     _search_changed: Subscription,
 }
 
@@ -111,7 +114,9 @@ impl Focusable for MyTasks {
 impl MyTasks {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| Input::field("Search tasks", "Search tasks", content(0.4), cx));
-        let _search_changed = cx.subscribe(&search, |_, _, _: &input::Changed, cx| cx.notify());
+        let _search_changed = cx.subscribe(&search, |this, _, _: &input::Changed, cx| {
+            this.sync_selection(cx)
+        });
         Self {
             tasks: Vec::new(),
             selected: None,
@@ -124,6 +129,7 @@ impl MyTasks {
             note: cx
                 .new(|cx| Input::field("Note for the run", "Note (optional)", content(0.4), cx)),
             history_scroll: ScrollHandle::new(),
+            last_load: None,
             _search_changed,
         }
     }
@@ -172,6 +178,24 @@ impl MyTasks {
         self.tasks = tasks;
         self.now_ms = now_ms;
         if moved {
+            self.selection_changed(cx);
+        }
+        self.sync_selection(cx);
+    }
+
+    /// Keeps the card on a task the list shows: when the filter or search
+    /// hides the selected one, the first shown task takes its place, with a
+    /// fresh note.
+    fn sync_selection(&mut self, cx: &mut Context<Self>) {
+        let first = {
+            let shown = self.visible(cx);
+            let kept = shown.iter().any(|t| Some(&t.key) == self.selected.as_ref());
+            (!kept).then(|| shown.first().map(|t| t.key.clone()))
+        };
+        if let Some(first) = first
+            && first != self.selected
+        {
+            self.selected = first;
             self.selection_changed(cx);
         }
         cx.notify();

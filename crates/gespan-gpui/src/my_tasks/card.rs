@@ -2,12 +2,17 @@
 //! on the left, and "‹ i of N ›" on the right.
 use super::*;
 use crate::conversation::approval_card::Card;
-use gpui::{AnyElement, Div, FontWeight, SharedString, Stateful, px};
+use gpui::{AnyElement, Div, ElementId, FontWeight, SharedString, Stateful, px};
 
-fn answer(id: &'static str, label: impl Into<SharedString>, primary: bool) -> Stateful<Div> {
+fn answer(
+    id: impl Into<ElementId>,
+    selector: String,
+    label: impl Into<SharedString>,
+    primary: bool,
+) -> Stateful<Div> {
     div()
         .id(id)
-        .debug_selector(move || id.into())
+        .debug_selector(move || selector.clone())
         .cursor_pointer()
         .h(px(32.))
         .px(px(14.))
@@ -34,7 +39,7 @@ impl MyTasks {
         match &task.body {
             Body::Approval { approval, cwd } => {
                 let Source::Session(session) = task.source else {
-                    unreachable!("approvals come from sessions");
+                    return div().into_any_element();
                 };
                 let card = Card::new(approval, cwd.as_deref());
                 if !card.is_empty() {
@@ -43,7 +48,7 @@ impl MyTasks {
                 let decide =
                     |id: &'static str, label: &'static str, primary, decision: Decision| {
                         let request = approval.id.clone();
-                        answer(id, label, primary)
+                        answer(id, id.into(), label, primary)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(Event::Decide {
                                     session,
@@ -70,10 +75,13 @@ impl MyTasks {
                 buttons.push(decide("my-tasks-deny", "Deny", false, Decision::Deny));
             }
             // The session's own card: its controls answer the session directly.
-            Body::Question(question) => body.push(question.clone().into_any_element()),
+            // The session's own card: its controls answer the session directly.
+            // Its chat is never on screen with this page: opening the page
+            // closes an open Pilot, and opening a chat replaces the page.
+            Body::Question(card) => body.push(card.clone().into_any_element()),
             Body::Flow { prompt } => {
                 let Source::FlowRun(run) = &task.source else {
-                    unreachable!("Flow approvals come from runs");
+                    return div().into_any_element();
                 };
                 if !prompt.trim().is_empty() {
                     body.push(
@@ -104,7 +112,7 @@ impl MyTasks {
                 ] {
                     let run = run.clone();
                     buttons.push(
-                        answer(id, label, approved)
+                        answer(id, id.into(), label, approved)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let note = this.note.read(cx).content.to_string();
                                 cx.emit(Event::FlowDecide {
@@ -119,22 +127,27 @@ impl MyTasks {
             }
             Body::Choice { options } => {
                 let Source::Pilot { pilot, .. } = &task.source else {
-                    unreachable!("choices come from Pilots");
+                    return div().into_any_element();
                 };
                 for (ix, option) in options.iter().enumerate() {
-                    let id: &'static str =
-                        Box::leak(format!("my-tasks-choice-{ix}").into_boxed_str());
                     let pilot = pilot.clone();
                     let text = option.clone();
+                    let key = task.key.clone();
                     buttons.push(
-                        answer(id, option.clone(), ix == 0)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(Event::Choose {
-                                    pilot: pilot.clone(),
-                                    text: text.clone(),
-                                })
-                            }))
-                            .into_any_element(),
+                        answer(
+                            ("my-tasks-choice", ix),
+                            format!("my-tasks-choice-{ix}"),
+                            option.clone(),
+                            ix == 0,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(Event::Choose {
+                                key: key.clone(),
+                                pilot: pilot.clone(),
+                                text: text.clone(),
+                            })
+                        }))
+                        .into_any_element(),
                     );
                 }
             }

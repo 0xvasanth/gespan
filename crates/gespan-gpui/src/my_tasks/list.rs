@@ -12,10 +12,10 @@ const LONG_WAIT_MS: u64 = 60 * 60 * 1000;
 /// A kind's mark in the list and on the card.
 pub(super) fn kind_icon(kind: Kind) -> &'static str {
     match kind {
-        Kind::Question => "help-circle",
+        Kind::Question => "chat",
         Kind::Approval => "terminal",
         Kind::FlowApproval => "git-merge",
-        Kind::PilotChoice => "list",
+        Kind::PilotChoice => "queue-list",
     }
 }
 

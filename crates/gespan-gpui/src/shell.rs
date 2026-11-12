@@ -777,6 +777,10 @@ pub(crate) struct Shell {
     /// Turns of history each task shows, once the user loaded more.
     my_task_turns: HashMap<String, usize>,
     my_tasks_events: Option<Subscription>,
+    /// Tasks answered from the page whose source has not caught up yet.
+    my_task_sent: HashSet<String>,
+    /// The last Flow approvals read, for a tick whose store is busy.
+    my_task_flows: Vec<crate::my_tasks::TaskItem>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1206,6 +1210,8 @@ impl Shell {
             my_task_seen: HashMap::new(),
             my_task_turns: HashMap::new(),
             my_tasks_events: None,
+            my_task_sent: HashSet::new(),
+            my_task_flows: Vec::new(),
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),

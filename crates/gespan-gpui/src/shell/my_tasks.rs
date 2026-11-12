@@ -46,6 +46,16 @@ impl Shell {
         let keys: HashSet<String> = tasks.iter().map(|t| t.key.clone()).collect();
         self.my_task_seen.retain(|key, _| keys.contains(key));
         self.my_task_turns.retain(|key, _| keys.contains(key));
+        // An answer sent from the page leaves it at once, even before its
+        // reply shows in the session.
+        self.my_task_sent.retain(|key| keys.contains(key));
+        tasks.retain(|t| !self.my_task_sent.contains(&t.key));
+        // Kept for a tick whose Flow store is busy writing.
+        self.my_task_flows = tasks
+            .iter()
+            .filter(|t| t.kind == Kind::FlowApproval)
+            .cloned()
+            .collect();
         for task in &mut tasks {
             task.since_ms = *self
                 .my_task_seen
@@ -72,10 +82,19 @@ impl Shell {
             let harness = harness_label(&chat.summary.provider);
             let title = chat.display_title().to_owned();
             let rows = chat.history_rows(cx);
+            if chat.pending_approvals().next().is_none() && chat.front_question().is_none() {
+                continue;
+            }
+            // Read once per session; a task with more turns loaded reads its own.
+            let base = tasks::history(rows, cwd, HISTORY_TURNS);
+            let history = |key: &str| match turns(key) {
+                HISTORY_TURNS => base.clone(),
+                more => tasks::history(rows, cwd, more),
+            };
             for approval in chat.pending_approvals() {
                 let key = format!("approval:{id}:{}", approval.id);
                 found.push(TaskItem {
-                    history: tasks::history(rows, cwd, turns(&key)),
+                    history: history(&key),
                     headline: Card::new(approval, cwd).title(approval),
                     key,
                     kind: Kind::Approval,
@@ -94,7 +113,7 @@ impl Shell {
                 let question = card.read(cx);
                 let key = format!("question:{id}:{}", question.id());
                 found.push(TaskItem {
-                    history: tasks::history(rows, cwd, turns(&key)),
+                    history: history(&key),
                     headline: question.headline().to_owned(),
                     key,
                     kind: Kind::Question,
@@ -132,8 +151,17 @@ impl Shell {
                 });
             }
         }
-        if let Some(store) = &self.flows_state.store
-            && let Ok(store) = store.lock()
+        // A run write in progress holds the store; this tick keeps the last
+        // list rather than wait for it on the UI thread.
+        let store = self
+            .flows_state
+            .store
+            .as_ref()
+            .map(|store| store.try_lock());
+        if let Some(Err(std::sync::TryLockError::WouldBlock)) = &store {
+            found.extend(self.my_task_flows.iter().cloned());
+        }
+        if let Some(Ok(store)) = store
             && let Ok(runs) = store.active_runs()
         {
             for run in runs {
@@ -208,7 +236,8 @@ impl Shell {
                     self.error = Some(error);
                 }
             }
-            my_tasks::Event::Choose { pilot, text } => {
+            my_tasks::Event::Choose { key, pilot, text } => {
+                self.my_task_sent.insert(key.clone());
                 if let Some(pilots) = self.pilots.clone() {
                     pilots.update(cx, |pilots, cx| pilots.choose(pilot, text, cx));
                 }

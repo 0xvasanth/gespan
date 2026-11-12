@@ -6086,3 +6086,45 @@ fn choosing_a_pilot_option_on_my_tasks_sends_it_to_the_pilot(cx: &mut TestAppCon
         .expect("the choice was sent");
     assert_eq!(sent.text, "ae!31");
 }
+
+#[gpui::test]
+fn a_pilot_choice_is_sent_once_however_often_it_is_clicked(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    s.window
+        .update(visual, |shell, window, cx| {
+            let chat = s.manager.read(cx).chats[&s.id].clone();
+            chat.update(cx, |v, cx| {
+                v.pilot_post(
+                    "pilot-card",
+                    serde_json::json!({"type": "choices", "options": ["ae!29", "ae!31"]})
+                        .to_string(),
+                    cx,
+                )
+                .unwrap();
+            });
+            shell.open_my_tasks(window, cx);
+            shell.refresh_my_tasks(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let before = s
+        .manager
+        .read_with(visual, |m, _| m.roster.get(&s.id).unwrap().outbox.len());
+    let bounds = visual.debug_bounds("my-tasks-choice-0").unwrap();
+    visual.simulate_click(bounds.center(), Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // Held in the outbox, the reply is not a chat row yet; the task must go
+    // anyway, so a second click can't queue a second answer.
+    if let Some(again) = visual.debug_bounds("my-tasks-choice-0") {
+        visual.simulate_click(again.center(), Default::default());
+        visual.run_until_parked();
+    }
+    let after = s
+        .manager
+        .read_with(visual, |m, _| m.roster.get(&s.id).unwrap().outbox.len());
+    assert_eq!(after - before, 1);
+}

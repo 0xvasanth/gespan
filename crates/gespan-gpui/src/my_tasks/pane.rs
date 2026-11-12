@@ -4,6 +4,19 @@ use super::*;
 use crate::workspace::project_name;
 use gpui::{AnyElement, px, relative};
 
+/// Every icon the page draws outside the kind marks, so a test can check
+/// each one exists.
+#[cfg(test)]
+pub(super) const ICONS: &[&str] = &[
+    "external-link",
+    "chevron-left",
+    "chevron-right",
+    "terminal",
+    "search",
+    "filter",
+    "check",
+];
+
 impl MyTasks {
     pub(super) fn task_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let task = self.selected_in(&self.visible(cx)).cloned();
@@ -60,7 +73,7 @@ impl MyTasks {
                     .text_color(content(0.9))
                     .hover(|s| s.bg(content(0.1)))
                     .child(open_label)
-                    .child(icon("arrow-up-right", 11.))
+                    .child(icon("external-link", 11.))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone())))),
             );
         let history = self.history(&task, cx);

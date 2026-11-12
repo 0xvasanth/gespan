@@ -295,3 +295,27 @@ fn order_puts_the_longest_wait_first() {
     let names: Vec<_> = items.iter().map(|i| i.0).collect();
     assert_eq!(names, ["oldest", "tie", "middle", "new"]);
 }
+
+#[test]
+fn a_leading_turn_without_a_user_message_counts_as_earlier() {
+    let rows = [
+        bash("t1", "ls"),
+        row("assistant", "Listed."),
+        row("user", "ask 1"),
+        row("assistant", "reply 1"),
+        row("user", "   "),
+        row("user", "ask 2"),
+        row("assistant", "reply 2"),
+    ];
+    let one = history(&rows, None, 1);
+    assert_eq!(one.earlier, 2);
+    assert_eq!(kinds(&one.turns[0]), ["you", "agent"]);
+    let Entry::You { text, .. } = &one.turns[0].entries[0] else {
+        panic!("expected a user entry");
+    };
+    assert_eq!(text, "ask 2");
+    let all = history(&rows, None, 10);
+    assert_eq!(all.earlier, 0);
+    assert_eq!(all.turns.len(), 3);
+    assert_eq!(kinds(&all.turns[0]), ["tools", "agent"]);
+}

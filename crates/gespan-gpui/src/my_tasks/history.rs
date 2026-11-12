@@ -4,6 +4,10 @@ use super::*;
 use gespan_core::tasks::Entry;
 use gpui::{AnyElement, FontWeight, SharedString, px};
 
+/// How long scrolling waits before asking for another page, so one flick
+/// loads one page rather than the whole session.
+const LOAD_PAUSE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// "07:23", from Unix milliseconds, in local time.
 fn clock(at: Option<u64>) -> String {
     use chrono::TimeZone;
@@ -72,7 +76,9 @@ impl MyTasks {
             .on_scroll_wheel(
                 cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
                     let up = event.delta.pixel_delta(px(16.)).y > px(0.);
-                    if more && up && this.history_scroll.offset().y >= px(-1.) {
+                    let rested = this.last_load.is_none_or(|at| at.elapsed() >= LOAD_PAUSE);
+                    if more && up && rested && this.history_scroll.offset().y >= px(-1.) {
+                        this.last_load = Some(std::time::Instant::now());
                         cx.emit(Event::LoadEarlier(wheel_key.clone()));
                     }
                 }),

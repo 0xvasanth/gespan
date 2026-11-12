@@ -79,7 +79,7 @@ impl MyTasks {
     }
 
     fn filter_changed(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
+        self.sync_selection(cx);
     }
 
     pub(super) fn filter_menu(&self, cx: &mut Context<Self>) -> AnyElement {

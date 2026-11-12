@@ -49,6 +49,39 @@ pub struct History {
 /// The last `turns` turns of `rows`. Rows the transcript hides (reasoning,
 /// Pilot system prompts and cards, interjections, blank replies) are left out.
 pub fn history(rows: &[Row], cwd: Option<&str>, turns: usize) -> History {
+    // Find where each turn starts without reading what the rows say, so a
+    // long session only parses the turns it shows.
+    let mut user_turns = Vec::new();
+    let mut leading = false;
+    let mut at = 0;
+    while at < rows.len() {
+        let start = at;
+        at += 1;
+        while at < rows.len() && !rows[at].first && rows[at].role == rows[start].role {
+            at += 1;
+        }
+        let said = || rows[start..at].iter().any(|r| !r.text.trim().is_empty());
+        match rows[start].role.as_str() {
+            "user" if said() => user_turns.push(start),
+            "assistant" if user_turns.is_empty() && said() => leading = true,
+            "tool" if user_turns.is_empty() => leading = true,
+            _ => {}
+        }
+    }
+    let total = user_turns.len() + usize::from(leading);
+    let earlier = total.saturating_sub(turns);
+    let from = match earlier {
+        0 => 0,
+        n => user_turns[n - usize::from(leading)],
+    };
+    History {
+        turns: build_turns(&rows[from..], cwd),
+        earlier,
+    }
+}
+
+/// Every turn of `rows`, oldest first.
+fn build_turns(rows: &[Row], cwd: Option<&str>) -> Vec<Turn> {
     let mut all: Vec<Turn> = Vec::new();
     let mut at = 0;
     while at < rows.len() {
@@ -92,11 +125,7 @@ pub fn history(rows: &[Row], cwd: Option<&str>, turns: usize) -> History {
             (_, entry) => turn.push(entry),
         }
     }
-    let earlier = all.len().saturating_sub(turns);
-    History {
-        turns: all.split_off(earlier),
-        earlier,
-    }
+    all
 }
 
 /// A tool call in one line: the model's own description of it when given,

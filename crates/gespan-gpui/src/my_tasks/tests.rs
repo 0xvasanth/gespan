@@ -187,3 +187,77 @@ fn clicking_a_row_selects_it(cx: &mut TestAppContext) {
     click(&mut visual, "my-tasks-row-b");
     assert_eq!(selected(window, &mut visual).as_deref(), Some("b"));
 }
+
+#[test]
+fn every_icon_the_page_uses_exists() {
+    use gpui::AssetSource;
+    let names = Kind::ALL
+        .iter()
+        .map(|kind| super::list::kind_icon(*kind))
+        .chain(super::pane::ICONS.iter().copied());
+    for name in names {
+        assert!(
+            crate::assets::Assets.load(name).unwrap().is_some(),
+            "{name} is not an icon the app has"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_filter_that_hides_the_card_moves_it_and_clears_the_note(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    show(
+        window,
+        &mut visual,
+        vec![
+            task("old", Kind::FlowApproval, "/work/web", 90),
+            task("new", Kind::FlowApproval, "/work/api", 5),
+        ],
+    );
+    let note = window
+        .read_with(&visual, |view, _| view.note.clone())
+        .unwrap();
+    note.update(&mut visual, |input, cx| {
+        input.set_text("ship it".into(), cx)
+    });
+    click(&mut visual, "my-tasks-filter");
+    click(&mut visual, "my-tasks-filter-project-/work/web");
+    assert_eq!(selected(window, &mut visual).as_deref(), Some("new"));
+    // The note was written for the old run; it must not reach the new one.
+    note.read_with(&visual, |input, _| assert_eq!(input.content.as_ref(), ""));
+}
+
+#[gpui::test]
+fn scrolling_up_at_the_top_loads_one_page_per_gesture(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    let mut long = task("a", Kind::FlowApproval, "/work/web", 5);
+    long.history.earlier = 12;
+    long.history.turns = vec![gespan_core::tasks::Turn::default(); 4];
+    show(window, &mut visual, vec![long]);
+    let loads = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = loads.clone();
+    let _sub = window
+        .update(&mut visual, |_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
+                if matches!(event, Event::LoadEarlier(_)) {
+                    counted.set(counted.get() + 1);
+                }
+            })
+        })
+        .unwrap();
+    let history = visual.debug_bounds("my-tasks-history").unwrap();
+    for _ in 0..30 {
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: history.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(400.))),
+            modifiers: Default::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+    }
+    visual.run_until_parked();
+    assert_eq!(
+        loads.get(),
+        1,
+        "one flick asks for one page, not all of them"
+    );
+}
