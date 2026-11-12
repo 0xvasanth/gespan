@@ -1,6 +1,7 @@
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex};
+use crate::models::CommentRow;
 use crate::now_millis;
-use crate::ops::{db, get_card, log_edit, new_id, touch, write_tx};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::ops::{get_card_in, log_edit, new_id, touch};
 use serde::Serialize;
 
 const MAX_COMMENT: usize = 20_000;
@@ -34,6 +35,19 @@ pub struct Comment {
     pub edited_at: Option<i64>,
 }
 
+impl From<CommentRow> for Comment {
+    fn from(row: CommentRow) -> Self {
+        Comment {
+            id: row.id,
+            card_id: row.card_id,
+            body: row.body,
+            author: row.author,
+            created_at: row.created_at,
+            edited_at: row.edited_at,
+        }
+    }
+}
+
 fn check_body(body: &str) -> Result<String, String> {
     if body.trim().is_empty() {
         return Err("Comment is empty".into());
@@ -44,32 +58,37 @@ fn check_body(body: &str) -> Result<String, String> {
     Ok(body.trim().to_string())
 }
 
-pub fn list_comments(conn: &Connection, card_id: &str) -> Result<Vec<Comment>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT id, card_id, body, author, created_at, edited_at FROM board_comments
-             WHERE card_id = ?1 ORDER BY created_at, rowid",
-        )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([card_id], |r| {
-            Ok(Comment {
-                id: r.get(0)?,
-                card_id: r.get(1)?,
-                body: r.get(2)?,
-                author: r.get(3)?,
-                created_at: r.get(4)?,
-                edited_at: r.get(5)?,
-            })
+pub(crate) async fn list_comments_in(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+) -> Result<Vec<Comment>, String> {
+    query(
+        ex,
+        "SELECT id, card_id, body, author, created_at, edited_at FROM board_comments
+         WHERE card_id = ?1 ORDER BY created_at, rowid",
+        args![card_id],
+    )
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(Comment {
+            id: r.get(0)?,
+            card_id: r.get(1)?,
+            body: r.get(2)?,
+            author: r.get(3)?,
+            created_at: r.get(4)?,
+            edited_at: r.get(5)?,
         })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+    })
+    .collect()
+}
+
+pub fn list_comments(conn: &Conn, card_id: &str) -> Result<Vec<Comment>, String> {
+    with_db!(conn, |ex| list_comments_in(ex, card_id).await)
 }
 
 pub fn add_comment(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     body: &str,
     author: &str,
@@ -78,60 +97,59 @@ pub fn add_comment(
         return Err(format!("Unknown comment author: {author}"));
     }
     let body = check_body(body)?;
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let comment = Comment {
-        id: new_id(),
-        card_id: card_id.to_string(),
-        body,
-        author: author.to_string(),
-        created_at: now_millis(),
-        edited_at: None,
-    };
-    tx.execute(
-        "INSERT INTO board_comments (id, card_id, body, author, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            comment.id,
-            comment.card_id,
-            comment.body,
-            comment.author,
-            comment.created_at
-        ],
-    )
-    .map_err(db)?;
-    touch(&tx, card_id)?;
-    log_edit(&tx, &card.board_id, card_id, "comment added")?;
-    tx.commit().map_err(db)?;
+    with_tx!(conn, |ex| add_comment_in(ex, card_id, body, author).await)
+}
+
+/// [`add_comment`] inside the caller's write transaction; `author` is not
+/// checked here.
+pub(crate) async fn add_comment_in(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+    body: String,
+    author: &str,
+) -> Result<Comment, String> {
+    let card = get_card_in(ex, card_id).await?;
+    let comment: Comment = CommentRow::create()
+        .id(new_id())
+        .card_id(card_id)
+        .body(body)
+        .author(author)
+        .created_at(now_millis())
+        .edited_at(None::<i64>)
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into();
+    touch(ex, card_id).await?;
+    log_edit(ex, &card.board_id, card_id, "comment added").await?;
     Ok(comment)
 }
 
 /// Returns the owning board id.
-pub fn edit_comment(conn: &Connection, comment_id: &str, body: &str) -> Result<String, String> {
+pub fn edit_comment(conn: &Conn, comment_id: &str, body: &str) -> Result<String, String> {
     let body = check_body(body)?;
-    let tx = write_tx(conn)?;
-    let row: Option<(String, String)> = tx
-        .query_row(
-            "SELECT card_id, body FROM board_comments WHERE id = ?1",
-            [comment_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(db)?;
-    let Some((card_id, current)) = row else {
-        return Err("Comment not found".into());
-    };
-    let card = get_card(&tx, &card_id)?;
-    if current == body {
-        return Ok(card.board_id);
-    }
-    tx.execute(
-        "UPDATE board_comments SET body = ?1, edited_at = ?2 WHERE id = ?3",
-        params![body, now_millis(), comment_id],
-    )
-    .map_err(db)?;
-    touch(&tx, &card_id)?;
-    log_edit(&tx, &card.board_id, &card_id, "comment edited")?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let Some(comment) = CommentRow::filter_by_id(comment_id)
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+        else {
+            return Err("Comment not found".into());
+        };
+        let card = get_card_in(ex, &comment.card_id).await?;
+        if comment.body == body {
+            return Ok(card.board_id);
+        }
+        CommentRow::filter_by_id(comment_id)
+            .update()
+            .body(body)
+            .edited_at(Some(now_millis()))
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        touch(ex, &comment.card_id).await?;
+        log_edit(ex, &card.board_id, &comment.card_id, "comment edited").await?;
+        Ok(card.board_id)
+    })
 }

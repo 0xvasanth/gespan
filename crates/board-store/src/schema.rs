@@ -1,6 +1,9 @@
-use crate::migrate;
-use rusqlite::Connection;
+//! The hand-made board schema, version by version, as older builds created
+//! it. Only the legacy upgrade in [`crate::migrate`] uses it now: Toasty's
+//! migrations create the tables of a new database from [`crate::models`].
 
+/// The last hand-made version. A database adopted into Toasty has every
+/// column and row this version had.
 pub const VERSION: i64 = 8;
 
 /// The tables as both apps created them before `board_schema` existed.
@@ -220,12 +223,3 @@ pub(crate) const V8_COLUMNS: [(&str, &str, &str); 2] = [
     ("board_settings", "run_in_worktree", "INTEGER"),
     ("board_settings", "run_worktree_choice", "INTEGER"),
 ];
-
-/// Brings the board tables to the current version. Both apps call this on
-/// every open, so it is cheap once the database is current.
-pub fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    if migrate::version(conn)? >= VERSION {
-        return Ok(());
-    }
-    migrate::run(conn)
-}

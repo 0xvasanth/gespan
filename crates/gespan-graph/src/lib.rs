@@ -14,10 +14,10 @@
 //!   operation.
 //! - **Privacy.** Labels and keys are stored as given; callers redact them.
 //!   Nothing opens or writes `graph.db` outside tests until #386/#132.
+mod db;
 mod error;
 mod key;
 mod kind;
-pub mod migrate;
 pub mod query;
 pub mod schema;
 mod store;

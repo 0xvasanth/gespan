@@ -1,8 +1,15 @@
-//! Native metadata lives separately from the desktop schema. Updating one key
-//! must not clone, serialize and fsync every cached app result under the Store
-//! mutex. SQLite commits only the changed key and retains durable receipts.
+//! Native metadata lives separately from the desktop schema, in the Settings
+//! database (`orm::Kind::Settings`). Updating one key must not clone,
+//! serialize and fsync every cached app result under the Store mutex. SQLite
+//! commits only the changed key and retains durable receipts.
+//!
+//! Before this file existed, the values lived in `<db>.gpui.json`. They are
+//! imported once, with `user_version` 1 marking the import done; that import
+//! is the Settings database's only legacy step.
 use super::{parse, sql};
-use rusqlite::{params, Connection, OpenFlags, Transaction, TransactionBehavior};
+use crate::orm::{Database, Kind};
+use crate::store::schema::Setting;
+use rusqlite::{Connection, OpenFlags};
 use std::{collections::BTreeMap, path::Path};
 
 type Snapshot = BTreeMap<String, String>;
@@ -15,85 +22,135 @@ fn legacy(path: &Path) -> Result<Snapshot, String> {
     }
 }
 
+/// Saves one setting.
+pub(super) fn save(database: &Database, key: &str, value: &str) -> Result<(), String> {
+    let (key, value) = (key.to_owned(), value.to_owned());
+    database.run(|mut db| async move {
+        Setting::upsert_by_key(key)
+            .value(value)
+            .exec(&mut db)
+            .await
+            .map(drop)
+    })
+}
+
+/// The `user_version` of the Settings database: 1 once the legacy JSON is in.
+fn import_marker(database: &Database) -> Result<i64, String> {
+    let rows = database.run(|mut db| async move {
+        toasty::sql::query("PRAGMA user_version")
+            .exec(&mut db)
+            .await
+    })?;
+    match rows.first() {
+        Some(toasty::stmt::Value::Record(record)) => match record.fields.first() {
+            Some(toasty::stmt::Value::I64(version)) => Ok(*version),
+            other => Err(format!("Unexpected user_version {other:?}")),
+        },
+        other => Err(format!("Unexpected user_version {other:?}")),
+    }
+}
+
 pub(super) fn open(
     database: &Path,
     read_only: bool,
-) -> Result<(Snapshot, Option<Connection>), String> {
+) -> Result<(Snapshot, Option<Database>), String> {
     if database == Path::new(":memory:") {
         return Ok((BTreeMap::new(), None));
     }
     let name = database.file_name().unwrap_or_default().to_string_lossy();
     let path = database.with_file_name(format!("{name}.gpui.sqlite3"));
     let old_path = database.with_file_name(format!("{name}.gpui.json"));
-    if read_only && !path.exists() {
-        return Ok((legacy(&old_path)?, None));
+    if read_only {
+        return read(&path, &old_path).map(|values| (values, None));
     }
-    if !read_only {
-        // Match the old metadata file's permissions before storing any values.
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(&path) {
-            Ok(_) => (),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error.to_string()),
-        }
+    // Match the old metadata file's permissions before storing any values.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    let flags = if read_only {
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-    } else {
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-    };
-    let conn = sql(Connection::open_with_flags(&path, flags))?;
+    match options.open(&path) {
+        Ok(_) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(error) => return Err(error.to_string()),
+    }
+    let settings = crate::orm::open(Kind::Settings, &path)?;
+    settings.run(|mut db| async move {
+        toasty::sql::statement("PRAGMA synchronous=FULL")
+            .exec(&mut db)
+            .await
+            .map(drop)
+    })?;
+    let version = import_marker(&settings)?;
+    if version > 1 {
+        return Err(format!("Unsupported native settings version: {version}"));
+    }
+    if version == 0 {
+        let values = legacy(&old_path)?;
+        let rows = values.clone();
+        // Another native window may have finished the import while this one
+        // waited for the write lock: the marker is read again inside.
+        settings.transaction(|tx| {
+            Box::pin(async move {
+                let rows_marker = toasty::sql::query("PRAGMA user_version").exec(tx).await?;
+                let done = !matches!(
+                    rows_marker.first(),
+                    Some(toasty::stmt::Value::Record(record))
+                        if matches!(record.fields.first(), Some(toasty::stmt::Value::I64(0)))
+                );
+                if done {
+                    return Ok(());
+                }
+                for (key, value) in rows {
+                    toasty::sql::statement(
+                        "INSERT INTO settings(key,value) VALUES(?1,?2)
+                         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    )
+                    .bind(key)
+                    .bind(value)
+                    .exec(tx)
+                    .await?;
+                }
+                // The marker and all imported keys commit together. Keep the old
+                // file untouched as a backup, but never re-import stale values.
+                toasty::sql::statement("PRAGMA user_version=1")
+                    .exec(tx)
+                    .await?;
+                Ok(())
+            })
+        })?;
+    }
+    let values = settings.run(|mut db| async move { Setting::all().exec(&mut db).await })?;
+    let values = values
+        .into_iter()
+        .map(|setting| (setting.key, setting.value))
+        .collect();
+    Ok((values, Some(settings)))
+}
+
+/// A read-only store's settings: never creates, imports or adopts anything.
+fn read(path: &Path, old_path: &Path) -> Result<Snapshot, String> {
+    if !path.exists() {
+        return legacy(old_path);
+    }
+    let conn = sql(Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ))?;
     sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
     let version: i64 = sql(conn.query_row("PRAGMA user_version", [], |row| row.get(0)))?;
     if version > 1 {
         return Err(format!("Unsupported native settings version: {version}"));
     }
-    if read_only && version == 0 {
+    if version == 0 {
         // An interrupted initial import has not replaced the legacy snapshot.
-        return Ok((legacy(&old_path)?, None));
+        return legacy(old_path);
     }
-    if !read_only {
-        sql(conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"))?;
-        if version == 0 {
-            // Another native window may have finished the import while this
-            // connection waited. Acquire the writer before checking its marker.
-            let tx = sql(Transaction::new_unchecked(
-                &conn,
-                TransactionBehavior::Immediate,
-            ))?;
-            let version: i64 = sql(tx.query_row("PRAGMA user_version", [], |row| row.get(0)))?;
-            if version == 0 {
-                let values = legacy(&old_path)?;
-                sql(tx.execute_batch(
-                    "CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-                ))?;
-                {
-                    let mut insert =
-                        sql(tx.prepare("INSERT INTO settings(key,value) VALUES(?1,?2)"))?;
-                    for (key, value) in &values {
-                        sql(insert.execute(params![key, value]))?;
-                    }
-                }
-                // The marker and all imported keys commit together. Keep the old
-                // file untouched as a backup, but never re-import stale values.
-                sql(tx.execute_batch("PRAGMA user_version=1;"))?;
-                sql(tx.commit())?;
-                return Ok((values, Some(conn)));
-            }
-        }
-    }
-    let values = {
-        let mut query = sql(conn.prepare("SELECT key,value FROM settings"))?;
-        let values = sql(query.query_map([], |row| Ok((row.get(0)?, row.get(1)?))))?;
-        sql(values.collect())?
-    };
-    Ok((values, Some(conn)))
+    let mut query = sql(conn.prepare("SELECT key,value FROM settings"))?;
+    let values = sql(query.query_map([], |row| Ok((row.get(0)?, row.get(1)?))))?;
+    sql(values.collect())
 }
 
 #[cfg(test)]
@@ -160,8 +217,23 @@ mod tests {
         store
             .save_setting("pilot-app-receipt:1:large", &"x".repeat(10_000_000))
             .unwrap();
-        let conn = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        let database = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
+        let changes = || -> String {
+            let rows = database
+                .run(|mut db| async move {
+                    toasty::sql::query("SELECT total_changes()")
+                        .exec(&mut db)
+                        .await
+                })
+                .unwrap();
+            format!("{rows:?}")
+        };
+        database
+            .run(|mut db| async move {
+                toasty::sql::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                    .exec(&mut db)
+                    .await
+            })
             .unwrap();
         let wal = dir.path().join("gespan.db.gpui.sqlite3-wal");
         for i in 0..10 {
@@ -169,9 +241,9 @@ mod tests {
         }
         let bytes = std::fs::metadata(&wal).unwrap().len();
         assert!(bytes < 100_000, "ten tiny updates wrote {bytes} bytes");
-        let changes = conn.total_changes();
+        let before = changes();
         store.save_setting("workspace", "9").unwrap();
-        assert_eq!(conn.total_changes(), changes);
+        assert_eq!(changes(), before);
         assert_eq!(std::fs::metadata(&wal).unwrap().len(), bytes);
     }
 
@@ -180,11 +252,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
         store.save_setting("workspace", "old").unwrap();
-        let conn = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
-        conn.execute_batch("PRAGMA query_only=ON").unwrap();
+        let database = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
+        let pragma = |sql: &'static str| {
+            database
+                .run(|mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })
+                .unwrap()
+        };
+        pragma("PRAGMA query_only=ON");
         assert!(store.save_setting("workspace", "new").is_err());
         assert_eq!(store.setting("workspace").unwrap().as_deref(), Some("old"));
-        conn.execute_batch("PRAGMA query_only=OFF").unwrap();
+        pragma("PRAGMA query_only=OFF");
         store.save_setting("workspace", "new").unwrap();
         assert_eq!(store.setting("workspace").unwrap().as_deref(), Some("new"));
     }

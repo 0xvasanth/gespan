@@ -2,46 +2,23 @@
 //! read runs the same number of SQL statements at 10 and at 1,000 cards (no
 //! per-card queries). The time budget is in `scale_timing.rs`.
 use gespan_board_store::seed::{seed_board, SeedReport, SeedSpec};
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::trace::{TraceEvent, TraceEventCodes};
 use rusqlite::Connection;
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[allow(dead_code)]
 #[path = "../examples/seed_board.rs"]
 mod seed_example;
 
-thread_local! {
-    static STATEMENTS: Cell<usize> = const { Cell::new(0) };
+/// A new board database. [`Fixture::statements`] counts the statements its
+/// store connection sends; a trigger runs inside the statement that fired
+/// it, so it doesn't count.
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
-/// Counts each statement as it starts. Trigger subprograms report as `-- …`
-/// and are part of the statement that fired them, so they don't count.
-fn count_statement(event: TraceEvent<'_>) {
-    if let TraceEvent::Stmt(_, sql) = event {
-        if !sql.starts_with("--") {
-            STATEMENTS.with(|count| count.set(count.get() + 1));
-        }
-    }
-}
-
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_statement));
-    conn
-}
-
-/// How many SQL statements `read` ran on this thread.
-fn statements<T>(read: impl FnOnce() -> T) -> (usize, T) {
-    STATEMENTS.with(|count| count.set(0));
-    let value = read();
-    (STATEMENTS.with(Cell::get), value)
-}
-
-fn seeded(conn: &Connection, cards: usize) -> SeedReport {
+fn seeded(conn: &Fixture, cards: usize) -> SeedReport {
     let board = create_board(conn, "Scale").unwrap();
     let spec = SeedSpec {
         cards,
@@ -50,8 +27,10 @@ fn seeded(conn: &Connection, cards: usize) -> SeedReport {
     seed_board(conn, &board.id, &spec).unwrap()
 }
 
-fn count(conn: &Connection, sql: &str, board_id: &str) -> i64 {
-    conn.query_row(sql, [board_id], |row| row.get(0)).unwrap()
+fn count(conn: &Fixture, sql: &str, board_id: &str) -> i64 {
+    conn.raw()
+        .query_row(sql, [board_id], |row| row.get(0))
+        .unwrap()
 }
 
 fn row(field: &str, values: &[&str]) -> FilterRow {
@@ -238,10 +217,10 @@ fn seed_is_deterministic_and_fills_every_part() {
     let other = fresh();
     let again = seeded(&other, 1000);
     assert_eq!(
-        fingerprint(&conn, &report.board_id),
-        fingerprint(&other, &again.board_id)
+        fingerprint(conn.raw(), &report.board_id),
+        fingerprint(other.raw(), &again.board_id)
     );
-    assert_eq!(fingerprint(&conn, &report.board_id).len(), 1000);
+    assert_eq!(fingerprint(conn.raw(), &report.board_id).len(), 1000);
 }
 
 #[test]
@@ -253,6 +232,7 @@ fn seed_rejects_an_unknown_board_and_writes_nothing() {
     );
     assert!(seed_board(&conn, "bad id", &SeedSpec::default()).is_err());
     let cards: i64 = conn
+        .raw()
         .query_row("SELECT COUNT(*) FROM board_cards", [], |r| r.get(0))
         .unwrap();
     assert_eq!(cards, 0);
@@ -311,8 +291,8 @@ fn board_wide_reads_use_the_same_statements_at_10_and_1000_cards() {
         ),
     ];
     for (name, read) in &reads {
-        let (at_10, small_rows) = statements(|| read(&small));
-        let (at_1000, large_rows) = statements(|| read(&large));
+        let (at_10, small_rows) = conn.statements(|| read(&small));
+        let (at_1000, large_rows) = conn.statements(|| read(&large));
         assert!(at_10 > 0, "{name} ran no statement");
         assert_eq!(
             at_10, at_1000,
@@ -343,7 +323,7 @@ fn column_card_counts_equal_per_column_counts() {
     // Another board's cards never count.
     seeded(&conn, 10);
 
-    let (ran, counts) = statements(|| column_card_counts(&conn, &report.board_id).unwrap());
+    let (ran, counts) = conn.statements(|| column_card_counts(&conn, &report.board_id).unwrap());
     assert_eq!(ran, 1, "column_card_counts runs one statement");
     let columns = get_board(&conn, &report.board_id).unwrap().columns;
     assert_eq!(counts.len(), columns.len());
@@ -381,17 +361,16 @@ fn seed_example_creates_a_new_board_and_leaves_others() {
     let path = dir.path().join("gespan.db");
     let path_text = path.to_str().unwrap();
     let existing = {
-        let conn = Connection::open(&path).unwrap();
-        ensure_tables(&conn).unwrap();
+        let conn = testing::open(&path).unwrap();
         let board = create_board(&conn, "Mine").unwrap();
         let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
         create_card(&conn, &column, "Keep me", "").unwrap();
         board
     };
     let before = {
-        let conn = Connection::open(&path).unwrap();
+        let conn = testing::open(&path).unwrap();
         (
-            fingerprint(&conn, &existing.id),
+            fingerprint(conn.raw(), &existing.id),
             get_board(&conn, &existing.id).unwrap().board.updated_at,
         )
     };
@@ -401,7 +380,7 @@ fn seed_example_creates_a_new_board_and_leaves_others() {
         seed_example::run(args(&["--db", path_text, "--name", "Load", "--cards", "3"])).unwrap();
     assert_ne!(first, second);
 
-    let conn = Connection::open(&path).unwrap();
+    let conn = testing::open(&path).unwrap();
     let boards = list_boards(&conn).unwrap();
     let names: Vec<&str> = boards.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(names, ["Mine", "Scale test (25 cards)", "Load"]);
@@ -413,12 +392,13 @@ fn seed_example_creates_a_new_board_and_leaves_others() {
     // The board that was already there is untouched.
     assert_eq!(
         (
-            fingerprint(&conn, &existing.id),
+            fingerprint(conn.raw(), &existing.id),
             get_board(&conn, &existing.id).unwrap().board.updated_at,
         ),
         before
     );
     let mode: String = conn
+        .raw()
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .unwrap();
     assert_eq!(mode, "wal");
@@ -449,9 +429,7 @@ fn seed_example_refuses_a_missing_database() {
 }
 
 fn existing_board(path: &std::path::Path) -> Board {
-    let conn = Connection::open(path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
+    let conn = testing::open(path).unwrap();
     let board = create_board(&conn, "Mine").unwrap();
     let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
     create_card(&conn, &column, "Keep me", "").unwrap();
@@ -517,12 +495,13 @@ fn seed_example_removes_only_its_board_when_the_seed_fails() {
     })
     .unwrap_err();
     assert_eq!(error, "Seed failed");
-    let conn = Connection::open(&path).unwrap();
+    let conn = testing::open(&path).unwrap();
     let boards = list_boards(&conn).unwrap();
     assert_eq!(boards.len(), 1);
     assert_eq!(boards[0].id, mine.id);
     assert!(get_board(&conn, &seen.unwrap()).is_err());
     let orphans: i64 = conn
+        .raw()
         .query_row(
             "SELECT COUNT(*) FROM board_columns WHERE board_id NOT IN (SELECT id FROM boards)",
             [],
@@ -530,7 +509,7 @@ fn seed_example_removes_only_its_board_when_the_seed_fails() {
         )
         .unwrap();
     assert_eq!(orphans, 0, "the removed board's columns went with it");
-    assert_eq!(fingerprint(&conn, &mine.id), before);
+    assert_eq!(fingerprint(conn.raw(), &mine.id), before);
 }
 
 #[test]
@@ -541,9 +520,10 @@ fn seed_example_reports_a_failed_cleanup() {
     let mut seen = String::new();
     let error = seed_example::run_with(args(&["--db", path.to_str().unwrap()]), |conn, id, _| {
         // Block the cleanup on this connection only.
-        conn.execute_batch(
+        conn.execute_sql(
             "CREATE TEMP TRIGGER keep_boards BEFORE DELETE ON boards
-             BEGIN SELECT RAISE(ABORT, 'boards are kept'); END;",
+             BEGIN SELECT RAISE(ABORT, 'boards are kept'); END",
+            vec![],
         )
         .unwrap();
         seen = id.to_string();
@@ -554,6 +534,6 @@ fn seed_example_reports_a_failed_cleanup() {
         error,
         format!("Seed failed. The new board {seen} could not be removed: boards are kept")
     );
-    let conn = Connection::open(&path).unwrap();
+    let conn = testing::open(&path).unwrap();
     assert_eq!(list_boards(&conn).unwrap().len(), 2);
 }

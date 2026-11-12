@@ -32,13 +32,8 @@ impl Store {
     pub fn mobile_session_metadata(&self) -> Result<HashMap<i64, MobileSessionMetadata>, String> {
         let shared = self.shared.is_some();
         let query = if shared {
-            format!(
-                "SELECT id,harness,substr(model,1,512),substr({},1,512),substr({},1,4096),coalesce({},0),coalesce({},'supervised') FROM sessions",
-                self.shared_field("branch", "NULL"),
-                self.shared_field("worktree_cwd", "NULL"),
-                self.shared_field("worktree_removed", "0"),
-                self.shared_field("runtime_mode", "'supervised'"),
-            )
+            "SELECT id,harness,substr(model,1,512),substr(branch,1,512),substr(worktree_cwd,1,4096),
+             coalesce(worktree_removed,0),coalesce(runtime_mode,'supervised') FROM sessions"
         } else {
             "SELECT cast(n.id AS TEXT),n.provider,
              CASE WHEN json_valid(s.value) THEN substr(json_extract(s.value,'$.model'),1,512) END,
@@ -46,26 +41,24 @@ impl Store {
              CASE WHEN json_valid(s.value) THEN substr(json_extract(s.value,'$.worktree_cwd'),1,4096) END,
              CASE WHEN json_valid(s.value) THEN coalesce(json_extract(s.value,'$.worktree_removed'),0) ELSE 0 END,
              CASE WHEN json_valid(s.value) THEN coalesce(json_extract(s.value,'$.access'),'supervised') ELSE 'supervised' END
-             FROM native_sessions n LEFT JOIN native_settings s ON s.key='agent:'||n.id".into()
+             FROM native_sessions n LEFT JOIN native_settings s ON s.key='agent:'||n.id"
         };
-        let mut statement = self.conn.prepare(&query).map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, bool>(5)?,
-                    row.get::<_, String>(6)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
+        let sql = if shared {
+            self.sql()?
+        } else {
+            super::db::Sql::Conn(&self.conn)
+        };
         let mut result = HashMap::new();
-        for row in rows {
-            let (id, provider, model, branch, worktree_cwd, worktree_removed, access) =
-                row.map_err(|e| e.to_string())?;
+        for row in sql.query(query, super::db::args![])? {
+            let (id, provider, model, branch, worktree_cwd, worktree_removed, access) = (
+                row.get::<String>(0)?,
+                row.get::<String>(1)?,
+                row.get::<Option<String>>(2)?,
+                row.get::<Option<String>>(3)?,
+                row.get::<Option<String>>(4)?,
+                row.get::<bool>(5)?,
+                row.get::<String>(6)?,
+            );
             let id = if shared {
                 self.shared_register(&id)?
             } else {

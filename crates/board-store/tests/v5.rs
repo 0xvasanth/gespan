@@ -1,25 +1,18 @@
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
-fn open(path: &std::path::Path) -> Connection {
-    let conn = Connection::open(path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
-        .unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn open(path: &std::path::Path) -> Fixture {
+    testing::open(path).unwrap()
 }
 
-fn count(conn: &Connection, sql: &str) -> i64 {
-    conn.query_row(sql, [], |row| row.get(0)).unwrap()
+fn count(conn: &Fixture, sql: &str) -> i64 {
+    conn.raw().query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
 fn json_of(raw: &str) -> Value {
@@ -33,19 +26,17 @@ fn patch_icon(icon: &str) -> SettingsPatch {
     }
 }
 
-fn set_raw(conn: &Connection, board: &Board, column: &str, value: &str) {
-    conn.execute(
-        &format!("UPDATE board_settings SET {column} = ?1 WHERE board_id = ?2"),
-        [value, &board.id],
-    )
-    .unwrap();
+fn set_raw(conn: &Fixture, board: &Board, column: &str, value: &str) {
+    conn.raw()
+        .execute(
+            &format!("UPDATE board_settings SET {column} = ?1 WHERE board_id = ?2"),
+            [value, &board.id],
+        )
+        .unwrap();
 }
 
 /// (name, role, colour) of each column, in order.
-fn column_summary(
-    conn: &Connection,
-    board: &Board,
-) -> Vec<(String, Option<String>, Option<String>)> {
+fn column_summary(conn: &Fixture, board: &Board) -> Vec<(String, Option<String>, Option<String>)> {
     get_board(conn, &board.id)
         .unwrap()
         .columns
@@ -54,7 +45,7 @@ fn column_summary(
         .collect()
 }
 
-fn label_summary(conn: &Connection, board: &Board) -> Vec<(String, String)> {
+fn label_summary(conn: &Fixture, board: &Board) -> Vec<(String, String)> {
     list_labels(conn, &board.id)
         .unwrap()
         .into_iter()
@@ -62,7 +53,7 @@ fn label_summary(conn: &Connection, board: &Board) -> Vec<(String, String)> {
         .collect()
 }
 
-fn field_summary(conn: &Connection, board: &Board) -> Vec<(String, String, Option<String>)> {
+fn field_summary(conn: &Fixture, board: &Board) -> Vec<(String, String, Option<String>)> {
     list_fields(conn, &board.id)
         .unwrap()
         .into_iter()
@@ -101,22 +92,25 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
     )
     .unwrap();
     // Turn it back into a v4 database: no v5 tables or settings columns.
-    conn.execute_batch(
-        "DROP TABLE board_templates;
+    conn.raw()
+        .execute_batch(
+            "DROP TABLE board_templates;
          DROP TABLE board_session_settings;
          ALTER TABLE board_settings DROP COLUMN icon;
          ALTER TABLE board_settings DROP COLUMN color;
          ALTER TABLE board_settings DROP COLUMN default_view_id;
          ALTER TABLE board_settings DROP COLUMN display_json;
          ALTER TABLE board_settings DROP COLUMN priority_json;
-         UPDATE board_schema SET version = 4;",
-    )
-    .unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 4);
+         DROP TABLE __toasty_migrations;
+         CREATE TABLE board_schema (version INTEGER NOT NULL);
+         INSERT INTO board_schema (version) VALUES (4);",
+        )
+        .unwrap();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), 4);
 
-    ensure_tables(&conn).unwrap();
+    let conn = conn.reopen();
     const { assert!(SCHEMA_VERSION >= 5) };
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema"), 1);
     assert_eq!(
         list_views(&conn, &board.id).unwrap(),
@@ -137,9 +131,8 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
     set_session_status_setting(&conn, "s1", Some(false)).unwrap();
     save_board_as_template(&conn, &board.id, "Mine").unwrap();
 
-    ensure_tables(&conn).unwrap();
-    migrate::run(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(list_views(&conn, &board.id).unwrap(), [view]);
     assert_eq!(
         board_settings(&conn, &board.id).unwrap().icon.as_deref(),
@@ -150,7 +143,7 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
 
     // A second connection opening the same file finds the work done.
     let other = open(path.path());
-    assert_eq!(migrate::version(&other).unwrap(), SCHEMA_VERSION);
+    assert_eq!(migrate::version(other.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&other, "SELECT COUNT(*) FROM board_templates"), 1);
 }
 
@@ -215,7 +208,10 @@ fn settings_patch_changes_only_named_fields() {
 
     // A board with no settings row (made before v3) gets one holding only
     // what the patch names.
-    native.execute("DELETE FROM board_settings", []).unwrap();
+    native
+        .raw()
+        .execute("DELETE FROM board_settings", [])
+        .unwrap();
     let patched = update_board_settings(
         &native,
         &board.id,
@@ -609,11 +605,12 @@ fn session_override_wins_else_strictest_linked_board_else_on() {
     add_link(&conn, &on_strict.id, "session", "s1", None).unwrap();
     assert!(!may_change_ticket_status(&conn, "s1"));
     // A board with no settings row reads as on, so the strict board decides.
-    conn.execute(
-        "DELETE FROM board_settings WHERE board_id = ?1",
-        [&open_board.id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "DELETE FROM board_settings WHERE board_id = ?1",
+            [&open_board.id],
+        )
+        .unwrap();
     assert!(!may_change_ticket_status(&conn, "s1"));
 
     // The session override wins in both directions.
@@ -681,11 +678,12 @@ fn a_legacy_card_column_session_link_counts_for_status_permission() {
     let legacy = create_card(&conn, &column(&strict), "b", "").unwrap();
     // The only link to the strict board is in the card's own columns.
     let set_legacy = |kind: &str, id: &str| {
-        conn.execute(
-            "UPDATE board_cards SET link_kind = ?2, link_id = ?3 WHERE id = ?1",
-            rusqlite::params![legacy.id, kind, id],
-        )
-        .unwrap();
+        conn.raw()
+            .execute(
+                "UPDATE board_cards SET link_kind = ?2, link_id = ?3 WHERE id = ?1",
+                rusqlite::params![legacy.id, kind, id],
+            )
+            .unwrap();
     };
     set_legacy("session", "s1");
     assert!(!may_change_ticket_status(&conn, "s1"));
@@ -715,7 +713,8 @@ fn an_unreadable_session_override_refuses() {
     assert!(!may_change_ticket_status(&conn, "s1"));
 
     // When the override can't be read, the answer is no, never the boards'.
-    conn.execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+    conn.raw()
+        .execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
         .unwrap();
     // The read itself reports the failure instead of "follows the boards".
     assert!(session_status_setting(&conn, "s1").is_err());
@@ -724,7 +723,8 @@ fn an_unreadable_session_override_refuses() {
     // That includes a session with no override that would otherwise be on.
     assert!(!may_change_ticket_status(&conn, "s2"));
 
-    conn.execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
+    conn.raw()
+        .execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
         .unwrap();
     assert!(!may_change_ticket_status(&conn, "s1"));
     assert!(may_change_ticket_status(&conn, "s2"));
@@ -739,7 +739,8 @@ fn a_failed_status_setting_read_is_an_error_not_follow_the_boards() {
     assert_eq!(session_status_setting(&conn, "on"), Ok(Some(true)));
 
     // A broken table: every session's read is an error, whatever it held.
-    conn.execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+    conn.raw()
+        .execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
         .unwrap();
     for key in ["none", "on"] {
         let error = session_status_setting(&conn, key).expect_err(key);
@@ -748,7 +749,8 @@ fn a_failed_status_setting_read_is_an_error_not_follow_the_boards() {
     }
 
     // Once readable again, the saved value comes back unchanged.
-    conn.execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
+    conn.raw()
+        .execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
         .unwrap();
     assert_eq!(session_status_setting(&conn, "on"), Ok(Some(true)));
     assert_eq!(session_status_setting(&conn, "none"), Ok(None));

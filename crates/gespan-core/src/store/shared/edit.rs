@@ -17,12 +17,10 @@ impl Store {
     pub(in crate::store) fn shared_edit_queue_empty(&self, id: i64) -> Result<(), String> {
         // Validation must not refresh the optimistic queue/history revision:
         // a failed edit leaves the visible revision old and still guarded.
-        let field = self.shared_field("queued_messages_json", "'[]'");
-        let raw: String = sql(self.conn.query_row(
-            &format!("SELECT {field} FROM sessions WHERE id=?1"),
-            [self.persisted_session_id(id)?],
-            |row| row.get(0),
-        ))?;
+        let raw: String = self.db()?.value(
+            "SELECT queued_messages_json FROM sessions WHERE id=?1",
+            args![self.persisted_session_id(id)?],
+        )?;
         let queued: Vec<Value> = parse(&raw)?;
         if !queued.is_empty()
             || self
@@ -171,7 +169,7 @@ impl Store {
         provider_id: &str,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(crate::store::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         self.validate_edit_last_turn(id, edit)?;
         let blocks = edit
             .blocks
@@ -199,7 +197,7 @@ impl Store {
             self.shared_save_agent_preferences(id, &settings)?;
         }
         self.save_context_usage(id, &Default::default())?;
-        sql(tx.commit())?;
+        tx.commit()?;
         self.shared
             .as_ref()
             .unwrap()

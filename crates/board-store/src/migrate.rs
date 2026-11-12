@@ -1,4 +1,9 @@
-//! Schema migrations, one step per version:
+//! The legacy upgrade: the hand-made schema's own versions, which gespan-core
+//! runs once, while it adopts an old `gespan.db` into Toasty
+//! (`Kind::legacy_upgrade`), before it rebuilds each table into the first
+//! migration's shape. Nothing here runs on a database Toasty already owns.
+//!
+//! One step per version of the old `board_schema` table:
 //! - v2: the tables both apps created before `board_schema` existed.
 //! - v3: the native app's `board_native_*` extras become the shared v3
 //!   tables, and each card's single `link_kind`/`link_id` becomes a row in
@@ -19,14 +24,15 @@
 //!
 //! A step runs only when the stored version is below it, so a v3 database
 //! moving to v4 does not copy the native extras again (which would bring back
-//! labels or values removed since).
+//! labels or values removed since). [`drop_legacy_tables`] then removes the
+//! version table and the native tables, which a fresh install never has.
 use crate::schema::{
     V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, V6_COLUMNS, V7_COLUMNS,
     V8_COLUMNS, VERSION,
 };
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::Connection;
 
-type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
+type Step = fn(&Connection) -> rusqlite::Result<()>;
 
 /// Each step with the version it brings the database to, oldest first.
 const STEPS: [(i64, Step); 7] = [
@@ -37,6 +43,18 @@ const STEPS: [(i64, Step); 7] = [
     (6, to_v6),
     (7, to_v7),
     (8, to_v8),
+];
+
+/// The tables the native app kept its extras in before v3, and the version
+/// table. A fresh install has none of them.
+const LEGACY_TABLES: [&str; 7] = [
+    "board_schema",
+    "board_native_card_labels",
+    "board_native_labels",
+    "board_native_meta",
+    "board_native_projects",
+    "board_native_subtasks",
+    "board_native_comments",
 ];
 
 /// The stored board schema version; 0 when none was ever written.
@@ -51,32 +69,43 @@ pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
     )
 }
 
-/// Runs every step above the stored version, then records the current one.
-/// It holds the write lock throughout and re-reads the version once it has
-/// it, so when both apps open an old database at the same moment the second
-/// one finds the work done; the copies use `INSERT OR IGNORE` for the same
-/// reason.
-pub fn run(conn: &Connection) -> rusqlite::Result<()> {
-    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
-    let from = version(&tx)?;
+/// Brings a hand-made board schema up to version 8, the last one, and
+/// records it. The caller holds the write transaction (adoption runs this in
+/// its own, with foreign keys off). A file without a `boards` table has no
+/// board to keep and is left alone: adoption creates the tables new.
+pub fn legacy_upgrade(conn: &Connection) -> rusqlite::Result<()> {
+    if !table_exists(conn, "boards")? {
+        return Ok(());
+    }
+    let from = version(conn)?;
     if from >= VERSION {
         return Ok(());
     }
     for (to, step) in STEPS {
         if from < to {
-            step(&tx)?;
+            step(conn)?;
         }
     }
-    tx.execute("DELETE FROM board_schema", [])?;
-    tx.execute("INSERT INTO board_schema (version) VALUES (?1)", [VERSION])?;
-    tx.commit()
+    conn.execute("DELETE FROM board_schema", [])?;
+    conn.execute("INSERT INTO board_schema (version) VALUES (?1)", [VERSION])?;
+    Ok(())
 }
 
-fn to_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+/// Drops the version table and the pre-v3 native tables, once
+/// [`legacy_upgrade`] has copied what they held. Adoption runs it last, so
+/// an adopted file has the same tables as a fresh install.
+pub fn drop_legacy_tables(conn: &Connection) -> rusqlite::Result<()> {
+    for table in LEGACY_TABLES {
+        conn.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+    }
+    Ok(())
+}
+
+fn to_v2(tx: &Connection) -> rusqlite::Result<()> {
     tx.execute_batch(V2_TABLES)
 }
 
-fn to_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v3(tx: &Connection) -> rusqlite::Result<()> {
     tx.execute_batch(V3_TABLES)?;
     add_columns(tx, &V3_COLUMNS)?;
     copy_native_extras(tx)?;
@@ -87,25 +116,25 @@ fn to_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     )
 }
 
-fn to_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v4(tx: &Connection) -> rusqlite::Result<()> {
     tx.execute_batch(V4_TABLES)
 }
 
-fn to_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v5(tx: &Connection) -> rusqlite::Result<()> {
     tx.execute_batch(V5_TABLES)?;
     add_columns(tx, &V5_COLUMNS)
 }
 
-fn to_v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v6(tx: &Connection) -> rusqlite::Result<()> {
     add_columns(tx, &V6_COLUMNS)?;
     mark_ticket_titles(tx)
 }
 
-fn to_v7(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v7(tx: &Connection) -> rusqlite::Result<()> {
     add_columns(tx, &V7_COLUMNS)
 }
 
-fn to_v8(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn to_v8(tx: &Connection) -> rusqlite::Result<()> {
     add_columns(tx, &V8_COLUMNS)
 }
 
@@ -113,7 +142,7 @@ fn to_v8(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 /// whose title is its ticket's key or its snapshot title (ignoring case and
 /// surrounding space). The mark then outlives a later ticket rename. Only
 /// ever sets the mark, so running it again changes nothing.
-fn mark_ticket_titles(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn mark_ticket_titles(tx: &Connection) -> rusqlite::Result<()> {
     let links: Vec<(String, String, String)> = {
         let mut statement = tx.prepare(
             "SELECT c.id, c.title, l.ref FROM board_cards c
@@ -147,7 +176,7 @@ fn mark_ticket_titles(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 }
 
 /// Adds each (table, column, declaration) the table does not have yet.
-fn add_columns(tx: &Transaction<'_>, columns: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
+fn add_columns(tx: &Connection, columns: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
     for (table, column, declaration) in columns {
         if !column_exists(tx, table, column)? {
             tx.execute_batch(&format!(
@@ -158,7 +187,7 @@ fn add_columns(tx: &Transaction<'_>, columns: &[(&str, &str, &str)]) -> rusqlite
     Ok(())
 }
 
-fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+fn copy_native_extras(tx: &Connection) -> rusqlite::Result<()> {
     // Rows whose card or label is gone (a delete made with foreign keys off)
     // are skipped rather than failing the whole migration. Subtasks and
     // comments are listed by position or time, then rowid, so they are

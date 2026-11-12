@@ -1,15 +1,12 @@
 //! Board schema v7: `board_cards.body_from_ticket`.
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 
-fn open(path: &std::path::Path) -> Connection {
-    let conn = Connection::open(path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn open(path: &std::path::Path) -> Fixture {
+    testing::open(path).unwrap()
 }
 
-fn card_in_new_board(conn: &Connection) -> (String, Card) {
+fn card_in_new_board(conn: &Fixture) -> (String, Card) {
     let board = create_board(conn, "Work").unwrap();
     let column = get_board(conn, &board.id).unwrap().columns[0].id.clone();
     let card = create_card(conn, &column, "Mine", "My words").unwrap();
@@ -108,14 +105,16 @@ fn a_v6_database_upgrades_with_its_cards_unmarked() {
     let path = tempfile::NamedTempFile::new().unwrap();
     let conn = open(path.path());
     let (_, card) = card_in_new_board(&conn);
-    conn.execute_batch(
-        "ALTER TABLE board_cards DROP COLUMN body_from_ticket;
-         UPDATE board_schema SET version = 6;",
-    )
-    .unwrap();
-    migrate::run(&conn).unwrap();
-    ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    conn.raw()
+        .execute_batch(
+            "ALTER TABLE board_cards DROP COLUMN body_from_ticket;
+         DROP TABLE __toasty_migrations;
+         CREATE TABLE board_schema (version INTEGER NOT NULL);
+         INSERT INTO board_schema (version) VALUES (6);",
+        )
+        .unwrap();
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(ticket_body(&conn, &card.id).unwrap(), None);
     assert!(run_prompt(&conn, &card.id).unwrap().contains("My words"));
 }

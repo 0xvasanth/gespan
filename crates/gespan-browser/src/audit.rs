@@ -1,19 +1,26 @@
 //! Audit: what the agent did and where, never what
-//! it saw. Three tables in the app's SQLite database:
+//! it saw. Four tables in the app's browser database:
 //!
 //! - `browser_audit`: one row per agent action with redacted parameters.
 //! - `browser_events`: connection and permission events (who caused them).
 //! - `browser_leases`: tabs the module opened, for diagnostics after a crash.
 //!   Tabs from an earlier run are never re-adopted.
+//! - `browser_settings`: the saved settings, the run counter and the
+//!   fingerprint secret.
+//!
+//! The tables are Toasty models ([`models`]). The app opens the database
+//! with them, applies their migrations and runs [`CONSTRAINTS`]; this module
+//! never creates or alters a table.
 //!
 //! Retention is 30 days, pruned at startup; the user can clear everything
 //! from Settings.
 
 use hmac::{Hmac, KeyInit, Mac};
-use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
+use toasty::schema::db::Type;
 
+use super::embedder::BrowserDb;
 use super::policy::{audit_url, now_ms};
 use super::protocol::{ActionKind, AuditEntry, BrowserSettings, Epoch, Outcome, Reason, TabId};
 
@@ -23,57 +30,89 @@ pub const RETENTION_MS: i64 = 30 * 24 * 3600 * 1000;
 pub const DEFAULT_LIST_LIMIT: u32 = 50;
 pub const MAX_LIST_LIMIT: u32 = 1000;
 
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS browser_audit (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  session_id TEXT NOT NULL,
-  request_id TEXT NOT NULL,
-  global_epoch TEXT NOT NULL,
-  session_epoch TEXT NOT NULL,
-  action TEXT NOT NULL,
-  tab_id TEXT,
-  url TEXT,
-  params TEXT NOT NULL,
-  outcome TEXT NOT NULL,
-  reason TEXT,
-  duration_ms INTEGER NOT NULL,
-  commands_sent INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS browser_audit_session_ts ON browser_audit (session_id, ts DESC);
-CREATE INDEX IF NOT EXISTS browser_audit_ts ON browser_audit (ts);
-CREATE TABLE IF NOT EXISTS browser_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  kind TEXT NOT NULL,
-  actor TEXT NOT NULL,
-  session_id TEXT,
-  detail TEXT
-);
-CREATE INDEX IF NOT EXISTS browser_events_ts ON browser_events (ts);
-CREATE TABLE IF NOT EXISTS browser_leases (
-  tab_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  opened_by TEXT,
-  url TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  closed_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS browser_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-"#;
+/// One agent action.
+#[derive(Debug, toasty::Model)]
+#[table = "browser_audit"]
+#[index(name = "browser_audit_ts", ts)]
+pub(crate) struct AuditRow {
+    #[key]
+    #[auto]
+    id: i64,
+    ts: i64,
+    session_id: String,
+    request_id: String,
+    global_epoch: String,
+    session_epoch: String,
+    action: String,
+    tab_id: Option<String>,
+    url: Option<String>,
+    params: String,
+    outcome: String,
+    reason: Option<String>,
+    duration_ms: i64,
+    commands_sent: i64,
+}
+
+/// A connection or permission event.
+#[derive(Debug, toasty::Model)]
+#[table = "browser_events"]
+#[index(name = "browser_events_ts", ts)]
+pub(crate) struct EventRow {
+    #[key]
+    #[auto]
+    id: i64,
+    ts: i64,
+    kind: String,
+    actor: String,
+    session_id: Option<String>,
+    detail: Option<String>,
+}
+
+/// A tab the module opened.
+#[derive(Debug, toasty::Model)]
+#[table = "browser_leases"]
+pub(crate) struct LeaseRow {
+    #[key]
+    tab_id: String,
+    run_id: String,
+    target_id: String,
+    session_id: String,
+    opened_by: Option<String>,
+    url: String,
+    created_at: i64,
+    closed_at: Option<i64>,
+}
+
+/// One saved value (settings, run counter, secret).
+#[derive(Debug, toasty::Model)]
+#[table = "browser_settings"]
+pub(crate) struct SettingRow {
+    #[key]
+    key: String,
+    value: String,
+}
+
+/// Every table of the browser database, for the app to open it with.
+pub fn models() -> toasty::ModelSet {
+    toasty::models!(AuditRow, EventRow, LeaseRow, SettingRow)
+}
+
+/// What Toasty's generated DDL cannot say, run after the migrations on every
+/// open. Idempotent.
+///
+/// - `browser_audit_session_ts` lists a session's rows newest first; Toasty
+///   indexes have no descending columns.
+pub const CONSTRAINTS: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS browser_audit_session_ts ON browser_audit (session_id, ts DESC)",
+];
 
 const SETTINGS_KEY: &str = "settings";
 const RUN_COUNTER_KEY: &str = "run_counter";
 const SECRET_KEY: &str = "audit_secret";
 
-/// Create the tables. Idempotent; called from `browser::init`.
-pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(SCHEMA)
+/// `value` as a nullable TEXT parameter: a NULL needs its type spelled out.
+fn text(value: Option<&str>) -> (toasty::stmt::Value, Type) {
+    (value.map(str::to_owned).into(), Type::Text)
 }
 
 /// Who caused a `browser_events` row.
@@ -115,27 +154,23 @@ pub struct AuditRecord<'a> {
     pub commands_sent: i64,
 }
 
-pub fn record(conn: &Connection, row: &AuditRecord<'_>) -> rusqlite::Result<i64> {
-    conn.execute(
-        "INSERT INTO browser_audit (ts, session_id, request_id, global_epoch, session_epoch, action, tab_id, url, params, outcome, reason, duration_ms, commands_sent)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            now_ms(),
-            row.session_id,
-            row.request_id,
-            row.global_epoch.to_string(),
-            row.session_epoch.to_string(),
-            row.action,
-            row.tab.map(|t| t.0.as_str()),
-            row.url,
-            row.params.to_string(),
-            outcome_str(row.outcome),
-            row.reason.map(Reason::as_str),
-            row.duration_ms,
-            row.commands_sent,
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
+pub fn record(db: &BrowserDb, row: &AuditRecord<'_>) -> toasty::Result<i64> {
+    let create = AuditRow::create()
+        .ts(now_ms())
+        .session_id(row.session_id)
+        .request_id(row.request_id)
+        .global_epoch(row.global_epoch.to_string())
+        .session_epoch(row.session_epoch.to_string())
+        .action(row.action)
+        .tab_id(row.tab.map(|t| t.0.clone()))
+        .url(row.url.map(str::to_owned))
+        .params(row.params.to_string())
+        .outcome(outcome_str(row.outcome))
+        .reason(row.reason.map(|r| r.as_str().to_owned()))
+        .duration_ms(row.duration_ms)
+        .commands_sent(row.commands_sent);
+    let created = db.run(|mut db| async move { create.exec(&mut db).await })?;
+    Ok(created.id)
 }
 
 fn outcome_str(outcome: Outcome) -> &'static str {
@@ -160,75 +195,86 @@ fn parse_reason(text: &str) -> Option<Reason> {
     Reason::ALL.iter().copied().find(|r| r.as_str() == text)
 }
 
+impl AuditRow {
+    fn entry(self) -> AuditEntry {
+        AuditEntry {
+            id: self.id,
+            ts_ms: self.ts,
+            session_id: self.session_id,
+            request_id: self.request_id,
+            global_epoch: self.global_epoch,
+            session_epoch: self.session_epoch,
+            action: self.action,
+            tab: self.tab_id,
+            url: self.url,
+            params: serde_json::from_str(&self.params).unwrap_or(Value::Null),
+            outcome: parse_outcome(&self.outcome),
+            reason: self.reason.as_deref().and_then(parse_reason),
+            duration_ms: self.duration_ms,
+            commands_sent: self.commands_sent,
+        }
+    }
+}
+
 /// Newest first; `session` narrows to one session.
-pub fn list(
-    conn: &Connection,
-    session: Option<&str>,
-    limit: u32,
-) -> rusqlite::Result<Vec<AuditEntry>> {
-    let limit = limit.clamp(1, MAX_LIST_LIMIT) as i64;
-    let mut statement = conn.prepare(
-        "SELECT id, ts, session_id, request_id, global_epoch, session_epoch, action, tab_id, url, params, outcome, reason, duration_ms, commands_sent
-         FROM browser_audit
-         WHERE (?1 IS NULL OR session_id = ?1)
-         ORDER BY id DESC
-         LIMIT ?2",
-    )?;
-    let rows = statement.query_map(params![session, limit], |row| {
-        let params_text: String = row.get(9)?;
-        let outcome: String = row.get(10)?;
-        let reason: Option<String> = row.get(11)?;
-        Ok(AuditEntry {
-            id: row.get(0)?,
-            ts_ms: row.get(1)?,
-            session_id: row.get(2)?,
-            request_id: row.get(3)?,
-            global_epoch: row.get(4)?,
-            session_epoch: row.get(5)?,
-            action: row.get(6)?,
-            tab: row.get(7)?,
-            url: row.get(8)?,
-            params: serde_json::from_str(&params_text).unwrap_or(Value::Null),
-            outcome: parse_outcome(&outcome),
-            reason: reason.as_deref().and_then(parse_reason),
-            duration_ms: row.get(12)?,
-            commands_sent: row.get(13)?,
-        })
-    })?;
-    rows.collect()
+pub fn list(db: &BrowserDb, session: Option<&str>, limit: u32) -> toasty::Result<Vec<AuditEntry>> {
+    let limit = limit.clamp(1, MAX_LIST_LIMIT) as usize;
+    let row = AuditRow::fields();
+    let query = match session {
+        Some(session) => AuditRow::filter(row.session_id().eq(session)),
+        None => AuditRow::all(),
+    }
+    .order_by(row.id().desc())
+    .limit(limit);
+    let rows = db.run(|mut db| async move { query.exec(&mut db).await })?;
+    Ok(rows.into_iter().map(AuditRow::entry).collect())
 }
 
 /// Settings "clear audit": everything, including events and lease history.
-pub fn clear(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "DELETE FROM browser_audit; DELETE FROM browser_events; DELETE FROM browser_leases;",
-    )
+pub fn clear(db: &BrowserDb) -> toasty::Result<()> {
+    db.run(|mut db| async move {
+        AuditRow::all().delete().exec(&mut db).await?;
+        EventRow::all().delete().exec(&mut db).await?;
+        LeaseRow::all().delete().exec(&mut db).await
+    })
 }
 
 /// Drop rows older than the retention window. Returns rows removed.
-pub fn prune(conn: &Connection, now_ms: i64) -> rusqlite::Result<usize> {
+pub fn prune(db: &BrowserDb, now_ms: i64) -> toasty::Result<usize> {
     let cutoff = now_ms - RETENTION_MS;
-    let mut removed = conn.execute("DELETE FROM browser_audit WHERE ts < ?1", params![cutoff])?;
-    removed += conn.execute("DELETE FROM browser_events WHERE ts < ?1", params![cutoff])?;
-    removed += conn.execute(
-        "DELETE FROM browser_leases WHERE COALESCE(closed_at, created_at) < ?1",
-        params![cutoff],
-    )?;
-    Ok(removed)
+    // Deletes that report their count: raw SQL.
+    let removed = db.run(|mut db| async move {
+        let mut removed = 0;
+        for sql in [
+            "DELETE FROM browser_audit WHERE ts < ?1",
+            "DELETE FROM browser_events WHERE ts < ?1",
+            "DELETE FROM browser_leases WHERE COALESCE(closed_at, created_at) < ?1",
+        ] {
+            removed += toasty::sql::statement(sql)
+                .bind(cutoff)
+                .exec(&mut db)
+                .await?;
+        }
+        Ok(removed)
+    })?;
+    Ok(removed as usize)
 }
 
 /// A connection or permission event (`browser_events`).
 pub fn event(
-    conn: &Connection,
+    db: &BrowserDb,
     kind: &str,
     actor: Actor,
     session: Option<&str>,
     detail: Option<&str>,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO browser_events (ts, kind, actor, session_id, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![now_ms(), kind, actor.as_str(), session, detail],
-    )?;
+) -> toasty::Result<()> {
+    let create = EventRow::create()
+        .ts(now_ms())
+        .kind(kind)
+        .actor(actor.as_str())
+        .session_id(session.map(str::to_owned))
+        .detail(detail.map(str::to_owned));
+    db.run(|mut db| async move { create.exec(&mut db).await })?;
     Ok(())
 }
 
@@ -245,121 +291,143 @@ pub struct EventEntry {
     pub detail: Option<String>,
 }
 
-pub fn events(conn: &Connection, limit: u32) -> rusqlite::Result<Vec<EventEntry>> {
-    let limit = limit.clamp(1, MAX_LIST_LIMIT) as i64;
-    let mut statement = conn.prepare(
-        "SELECT id, ts, kind, actor, session_id, detail FROM browser_events ORDER BY id DESC LIMIT ?1",
-    )?;
-    let rows = statement.query_map(params![limit], |row| {
-        Ok(EventEntry {
-            id: row.get(0)?,
-            ts_ms: row.get(1)?,
-            kind: row.get(2)?,
-            actor: row.get(3)?,
-            session_id: row.get(4)?,
-            detail: row.get(5)?,
+pub fn events(db: &BrowserDb, limit: u32) -> toasty::Result<Vec<EventEntry>> {
+    let limit = limit.clamp(1, MAX_LIST_LIMIT) as usize;
+    let row = EventRow::fields();
+    let query = EventRow::all().order_by(row.id().desc()).limit(limit);
+    let rows = db.run(|mut db| async move { query.exec(&mut db).await })?;
+    Ok(rows
+        .into_iter()
+        .map(|row| EventEntry {
+            id: row.id,
+            ts_ms: row.ts,
+            kind: row.kind,
+            actor: row.actor,
+            session_id: row.session_id,
+            detail: row.detail,
         })
-    })?;
-    rows.collect()
+        .collect())
 }
 
 pub fn lease_opened(
-    conn: &Connection,
+    db: &BrowserDb,
     run_id: u64,
     tab: &TabId,
     target_id: &str,
     session: &str,
     opened_by: Option<&TabId>,
     url: &str,
-) -> rusqlite::Result<()> {
-    conn.execute(
+) -> toasty::Result<()> {
+    // A tab id seen again replaces its row: an upsert, so raw SQL.
+    let (opened_by, ty) = text(opened_by.map(|t| t.0.as_str()));
+    let upsert = toasty::sql::statement(
         "INSERT OR REPLACE INTO browser_leases (tab_id, run_id, target_id, session_id, opened_by, url, created_at, closed_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
-        params![
-            tab.0,
-            format!("{run_id:x}"),
-            target_id,
-            session,
-            opened_by.map(|t| t.0.as_str()),
-            audit_url(url),
-            now_ms(),
-        ],
-    )?;
+    )
+    .bind(tab.0.clone())
+    .bind(format!("{run_id:x}"))
+    .bind(target_id)
+    .bind(session)
+    .bind_typed(opened_by, ty)
+    .bind(audit_url(url))
+    .bind(now_ms());
+    db.run(|mut db| async move { upsert.exec(&mut db).await })?;
     Ok(())
 }
 
-pub fn lease_closed(conn: &Connection, tab: &TabId) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE browser_leases SET closed_at = ?2 WHERE tab_id = ?1 AND closed_at IS NULL",
-        params![tab.0, now_ms()],
-    )?;
-    Ok(())
+pub fn lease_closed(db: &BrowserDb, tab: &TabId) -> toasty::Result<()> {
+    let row = LeaseRow::fields();
+    let update = LeaseRow::filter(row.tab_id().eq(&tab.0).and(row.closed_at().is_none()))
+        .update()
+        .closed_at(Some(now_ms()));
+    db.run(|mut db| async move { update.exec(&mut db).await })
 }
 
 /// Close every open row of `run_id` whose tab is not in `live`.
 pub fn close_leases_except(
-    conn: &Connection,
+    db: &BrowserDb,
     run_id: u64,
     live: &std::collections::HashSet<String>,
-) -> rusqlite::Result<usize> {
-    let open: Vec<String> = {
-        let mut statement = conn
-            .prepare("SELECT tab_id FROM browser_leases WHERE closed_at IS NULL AND run_id = ?1")?;
-        let rows = statement.query_map(params![format!("{run_id:x}")], |row| row.get(0))?;
-        rows.collect::<rusqlite::Result<_>>()?
-    };
+) -> toasty::Result<usize> {
+    let row = LeaseRow::fields();
+    let open = LeaseRow::filter(
+        row.closed_at()
+            .is_none()
+            .and(row.run_id().eq(format!("{run_id:x}"))),
+    );
+    let gone: Vec<String> = db
+        .run(|mut db| async move { open.exec(&mut db).await })?
+        .into_iter()
+        .map(|lease| lease.tab_id)
+        .filter(|tab| !live.contains(tab))
+        .collect();
     let now = now_ms();
-    let mut closed = 0;
-    for tab in open.iter().filter(|tab| !live.contains(*tab)) {
-        closed += conn.execute(
-            "UPDATE browser_leases SET closed_at = ?2 WHERE tab_id = ?1 AND closed_at IS NULL",
-            params![tab, now],
-        )?;
-    }
-    Ok(closed)
+    let closed = db.run(|mut db| async move {
+        let mut closed = 0;
+        for tab in gone {
+            closed += toasty::sql::statement(
+                "UPDATE browser_leases SET closed_at = ?2 WHERE tab_id = ?1 AND closed_at IS NULL",
+            )
+            .bind(tab)
+            .bind(now)
+            .exec(&mut db)
+            .await?;
+        }
+        Ok(closed)
+    })?;
+    Ok(closed as usize)
 }
 
-pub fn lease_transferred(conn: &Connection, tab: &TabId, to: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE browser_leases SET session_id = ?2 WHERE tab_id = ?1",
-        params![tab.0, to],
-    )?;
-    Ok(())
+pub fn lease_transferred(db: &BrowserDb, tab: &TabId, to: &str) -> toasty::Result<()> {
+    let update = LeaseRow::filter_by_tab_id(&tab.0).update().session_id(to);
+    db.run(|mut db| async move { update.exec(&mut db).await })
 }
 
 /// Leases of earlier runs still marked open: closed on startup because the
 /// module never re-adopts tabs. Returns how many were closed out.
-pub fn close_stale_leases(conn: &Connection, run_id: u64) -> rusqlite::Result<usize> {
-    conn.execute(
+pub fn close_stale_leases(db: &BrowserDb, run_id: u64) -> toasty::Result<usize> {
+    let close = toasty::sql::statement(
         "UPDATE browser_leases SET closed_at = ?2 WHERE closed_at IS NULL AND run_id <> ?1",
-        params![format!("{run_id:x}"), now_ms()],
     )
+    .bind(format!("{run_id:x}"))
+    .bind(now_ms());
+    let closed = db.run(|mut db| async move { close.exec(&mut db).await })?;
+    Ok(closed as usize)
 }
 
 #[cfg(test)]
-pub fn open_lease_count(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM browser_leases WHERE closed_at IS NULL",
-        [],
-        |row| row.get(0),
+pub fn open_lease_count(db: &BrowserDb) -> toasty::Result<i64> {
+    let row = LeaseRow::fields();
+    let count = LeaseRow::filter(row.closed_at().is_none()).count();
+    let count = db.run(|mut db| async move { count.exec(&mut db).await })?;
+    Ok(count as i64)
+}
+
+/// The value saved under `key`, if any.
+fn setting(db: &BrowserDb, key: &'static str) -> toasty::Result<Option<String>> {
+    let row =
+        db.run(|mut db| async move { SettingRow::filter_by_key(key).first().exec(&mut db).await })?;
+    Ok(row.map(|row| row.value))
+}
+
+/// Saves `value` under `key`, replacing what was there.
+fn put_setting(db: &BrowserDb, key: &'static str, value: String) -> toasty::Result<()> {
+    let upsert = toasty::sql::statement(
+        "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
-    .optional()
-    .map(|count| count.unwrap_or(0))
+    .bind(key)
+    .bind(value);
+    db.run(|mut db| async move { upsert.exec(&mut db).await })?;
+    Ok(())
 }
 
 /// Persisted module settings, the main switch included (`enabled`): a
 /// remembered ON comes back at launch without connecting or starting
 /// anything until an agent needs the browser, so attaching to the user's
 /// own browser still asks for its consent every time.
-pub fn load_settings(conn: &Connection) -> rusqlite::Result<Option<BrowserSettings>> {
-    let text: Option<String> = conn
-        .query_row(
-            "SELECT value FROM browser_settings WHERE key = ?1",
-            params![SETTINGS_KEY],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
+pub fn load_settings(db: &BrowserDb) -> toasty::Result<Option<BrowserSettings>> {
+    Ok(setting(db, SETTINGS_KEY)?.and_then(|t| serde_json::from_str(&t).ok()))
 }
 
 /// The browser settings row as a start finds it.
@@ -386,15 +454,8 @@ impl StoredSettings {
     }
 }
 
-pub fn stored_settings(conn: &Connection) -> StoredSettings {
-    let text = conn
-        .query_row(
-            "SELECT value FROM browser_settings WHERE key = ?1",
-            params![SETTINGS_KEY],
-            |row| row.get::<_, String>(0),
-        )
-        .optional();
-    match text {
+pub fn stored_settings(db: &BrowserDb) -> StoredSettings {
+    match setting(db, SETTINGS_KEY) {
         Ok(None) => StoredSettings::Missing,
         Ok(Some(text)) => serde_json::from_str(&text)
             .map(StoredSettings::Saved)
@@ -403,37 +464,22 @@ pub fn stored_settings(conn: &Connection) -> StoredSettings {
     }
 }
 
-pub fn save_settings(conn: &Connection, settings: &BrowserSettings) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![
-            SETTINGS_KEY,
-            serde_json::to_string(settings).unwrap_or_default()
-        ],
-    )?;
-    Ok(())
+pub fn save_settings(db: &BrowserDb, settings: &BrowserSettings) -> toasty::Result<()> {
+    put_setting(
+        db,
+        SETTINGS_KEY,
+        serde_json::to_string(settings).unwrap_or_default(),
+    )
 }
 
 /// Monotonic app-run counter so an epoch from an earlier run never equals a
 /// current one. Returns the id for this run.
-pub fn next_run_id(conn: &Connection) -> rusqlite::Result<u64> {
-    let previous: Option<String> = conn
-        .query_row(
-            "SELECT value FROM browser_settings WHERE key = ?1",
-            params![RUN_COUNTER_KEY],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let next = previous
+pub fn next_run_id(db: &BrowserDb) -> toasty::Result<u64> {
+    let next = setting(db, RUN_COUNTER_KEY)?
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0)
         .saturating_add(1);
-    conn.execute(
-        "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![RUN_COUNTER_KEY, next.to_string()],
-    )?;
+    put_setting(db, RUN_COUNTER_KEY, next.to_string())?;
     Ok(next)
 }
 
@@ -441,31 +487,24 @@ pub fn next_run_id(conn: &Connection) -> rusqlite::Result<u64> {
 /// database (`audit::clear` leaves it), so a stored fingerprint cannot be
 /// matched against a table of common secrets computed elsewhere. Created on
 /// first use.
-pub fn install_secret(conn: &Connection) -> [u8; 32] {
-    let stored = || -> Option<[u8; 32]> {
-        let text: String = conn
-            .query_row(
-                "SELECT value FROM browser_settings WHERE key = ?1",
-                params![SECRET_KEY],
-                |row| row.get(0),
-            )
-            .optional()
-            .ok()??;
-        decode_secret(&text)
-    };
+pub fn install_secret(db: &BrowserDb) -> [u8; 32] {
+    let stored = || -> Option<[u8; 32]> { decode_secret(&setting(db, SECRET_KEY).ok()??) };
     if let Some(secret) = stored() {
         return secret;
     }
     let fresh = random_secret();
     let encoded: String = fresh.iter().map(|b| format!("{b:02x}")).collect();
     // Replaces a damaged value; a concurrent first start keeps whichever
-    // was written first, which `stored` then returns.
-    let _ = conn.execute(
+    // was written first, which `stored` then returns. A conditional upsert:
+    // raw SQL.
+    let upsert = toasty::sql::statement(
         "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value
          WHERE length(browser_settings.value) <> 64",
-        params![SECRET_KEY, encoded],
-    );
+    )
+    .bind(SECRET_KEY)
+    .bind(encoded);
+    let _ = db.run(|mut db| async move { upsert.exec(&mut db).await });
     stored().unwrap_or(fresh)
 }
 
@@ -597,11 +636,8 @@ mod tests {
         redact_params(action, input, &[7u8; 32], None)
     }
 
-    fn conn() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate(&conn).unwrap();
-        migrate(&conn).unwrap();
-        conn
+    fn conn() -> BrowserDb {
+        BrowserDb::memory()
     }
 
     #[test]
@@ -677,23 +713,11 @@ mod tests {
             "https://a.b/c?secret=1#frag",
         )
         .unwrap();
-        let url: String = conn
-            .query_row(
-                "SELECT url FROM browser_leases WHERE tab_id = 't_00000001'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let url = conn.text("SELECT url FROM browser_leases WHERE tab_id = 't_00000001'");
         assert_eq!(url, "https://a.b/c");
         assert_eq!(open_lease_count(&conn).unwrap(), 1);
         lease_transferred(&conn, &tab, "s2").unwrap();
-        let owner: String = conn
-            .query_row(
-                "SELECT session_id FROM browser_leases WHERE tab_id = 't_00000001'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let owner = conn.text("SELECT session_id FROM browser_leases WHERE tab_id = 't_00000001'");
         assert_eq!(owner, "s2");
         // A previous run's open lease is closed out at startup, ours is kept.
         lease_opened(
@@ -731,16 +755,11 @@ mod tests {
         )
         .unwrap();
         let now = now_ms();
-        conn.execute(
-            "UPDATE browser_audit SET ts = ?1",
-            params![now - RETENTION_MS - 1000],
-        )
-        .unwrap();
-        conn.execute(
-            "UPDATE browser_events SET ts = ?1 WHERE kind = 'connected'",
-            params![now - RETENTION_MS - 1000],
-        )
-        .unwrap();
+        let old = now - RETENTION_MS - 1000;
+        conn.execute(&format!("UPDATE browser_audit SET ts = {old}"));
+        conn.execute(&format!(
+            "UPDATE browser_events SET ts = {old} WHERE kind = 'connected'"
+        ));
         let removed = prune(&conn, now).unwrap();
         assert_eq!(removed, 2);
         assert!(list(&conn, None, 10).unwrap().is_empty());
@@ -760,11 +779,7 @@ mod tests {
 
         // A damaged row falls back to off and Ask, never to the fresh-install
         // default.
-        conn.execute(
-            "INSERT INTO browser_settings (key, value) VALUES (?1, 'not json')",
-            params![SETTINGS_KEY],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO browser_settings (key, value) VALUES ('settings', 'not json')");
         assert_eq!(stored_settings(&conn), StoredSettings::Unreadable);
         let damaged = stored_settings(&conn).start_from();
         assert!(!damaged.enabled);
@@ -863,7 +878,7 @@ mod tests {
         );
     }
 
-    fn test_db() -> Connection {
+    fn test_db() -> BrowserDb {
         conn()
     }
 
@@ -911,14 +926,28 @@ mod tests {
     #[test]
     fn a_damaged_stored_secret_is_replaced_not_trusted() {
         let conn = test_db();
-        conn.execute(
-            "INSERT INTO browser_settings (key, value) VALUES ('audit_secret', 'nothex')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO browser_settings (key, value) VALUES ('audit_secret', 'nothex')");
         let secret = install_secret(&conn);
         assert_ne!(secret, [0u8; 32]);
         assert_eq!(install_secret(&conn), secret);
+    }
+
+    /// The descending session index Toasty cannot declare comes from
+    /// [`CONSTRAINTS`], and a second run of them changes nothing.
+    #[test]
+    fn the_session_index_lists_newest_first() {
+        let conn = test_db();
+        let sql = conn.text(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'browser_audit_session_ts'",
+        );
+        assert!(sql.contains("(session_id, ts DESC)"), "{sql}");
+        for constraint in CONSTRAINTS {
+            conn.execute(constraint);
+        }
+        let count = conn.text(
+            "SELECT CAST(count(*) AS TEXT) FROM sqlite_master WHERE name = 'browser_audit_session_ts'",
+        );
+        assert_eq!(count, "1");
     }
 
     #[test]

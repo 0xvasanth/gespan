@@ -1,7 +1,7 @@
 //! Read-only bindings for the original desktop's remote shell tabs. Original
 //! session IDs, metadata, block history, and WebKit preferences stay intact.
+use super::db::args;
 use super::{desktop_session_handle, RemoteSession, Session, Store};
-use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
@@ -15,12 +15,12 @@ impl Store {
         } else {
             "SELECT CAST(id AS TEXT) FROM native_sessions WHERE cwd >= 'remote://' AND cwd < 'remote:/0'"
         };
-        let mut query = self.conn.prepare(sql).map_err(|error| error.to_string())?;
-        let originals: Vec<String> = query
-            .query_map([], |row| row.get(0))
-            .map_err(|error| error.to_string())?
-            .collect::<Result<_, _>>()
-            .map_err(|error| error.to_string())?;
+        let originals: Vec<String> = self
+            .session_sql()?
+            .query(sql, args![])?
+            .iter()
+            .map(|row| row.get(0))
+            .collect::<Result<_, _>>()?;
         let mut result = BTreeMap::new();
         for original in originals {
             let id = if self.shared.is_some() {
@@ -185,12 +185,11 @@ impl Store {
         } else {
             "SELECT CAST(id AS TEXT),cwd FROM native_sessions WHERE cwd >= 'remote://' AND cwd < 'remote:/0'"
         };
-        let mut query = self.conn.prepare(sql).map_err(|error| error.to_string())?;
-        let rows = query
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|error| error.to_string())?;
+        let rows = self
+            .session_sql()?
+            .query(sql, args![])?
+            .into_iter()
+            .map(|row| Ok::<_, String>((row.get::<String>(0)?, row.get::<String>(1)?)));
         let stored: BTreeMap<i64, RemoteSession> = self
             .setting("remote-sessions.v1")?
             .map(|raw| serde_json::from_str(&raw).map_err(|error| error.to_string()))
@@ -273,30 +272,30 @@ impl Store {
 
     fn legacy_source_summary(&self, id: i64, original: &str) -> Result<Option<Session>, String> {
         let sql = if self.shared.is_some() {
-            format!("SELECT title,harness,cwd,provider_session_id,updated_at,{},{},{},{} FROM sessions WHERE id=?1 AND cwd >= 'remote://' AND cwd < 'remote:/0'",self.shared_field("has_user_message","0"),self.shared_field("archived","0"),self.shared_field("pinned","0"),self.shared_field("linked_work_item_json","NULL"))
+            "SELECT title,harness,cwd,provider_session_id,updated_at,has_user_message,archived,pinned,linked_work_item_json FROM sessions WHERE id=?1 AND cwd >= 'remote://' AND cwd < 'remote:/0'"
         } else {
-            "SELECT title,provider,cwd,provider_id,updated_at,0,archived,pinned,work_item FROM native_sessions WHERE id=?1 AND cwd >= 'remote://' AND cwd < 'remote:/0'".into()
+            "SELECT title,provider,cwd,provider_id,updated_at,0,archived,pinned,work_item FROM native_sessions WHERE id=?1 AND cwd >= 'remote://' AND cwd < 'remote:/0'"
         };
-        self.conn
-            .query_row(&sql, [original], |row| {
+        self.session_sql()?
+            .optional(sql, args![original])?
+            .map(|row| {
                 Ok(Session {
                     id,
                     title: row.get(0)?,
                     provider: row.get(1)?,
                     cwd: row.get(2)?,
                     provider_id: row.get(3)?,
-                    updated_at: row.get::<_, i64>(4)?.max(0) as u64,
+                    updated_at: row.get::<i64>(4)?.max(0) as u64,
                     has_messages: row.get(5)?,
                     archived: row.get(6)?,
                     pinned: row.get(7)?,
                     created_at: 0,
                     work_item: row
-                        .get::<_, Option<String>>(8)?
+                        .get::<Option<String>>(8)?
                         .and_then(|raw| serde_json::from_str(&raw).ok()),
                 })
             })
-            .optional()
-            .map_err(|error| error.to_string())
+            .transpose()
     }
 
     /// Execution directory for a pre-existing remote tab, qualified for the
@@ -398,6 +397,20 @@ mod tests {
             ..Default::default()
         };
         store.save_agent_settings(bound.id, &settings).unwrap();
+        drop(store);
+        // The Toasty connection closes on its own task, so its last commits
+        // may still be in the WAL: fold them into the file, so a test that
+        // compares the file's bytes starts from a settled file.
+        let conn = rusqlite::Connection::open(path).unwrap();
+        while conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap()
+            != 0
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         (bound.id, bound_original, blank.id, blank_original)
     }
 

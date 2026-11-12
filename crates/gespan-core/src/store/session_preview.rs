@@ -1,4 +1,5 @@
 //! Bounded hover-card metadata. Never read transcripts or discover agent state.
+use super::db::args;
 use super::Store;
 use rusqlite::OptionalExtension;
 
@@ -10,25 +11,24 @@ pub struct SessionPreviewData {
 
 impl Store {
     pub fn session_preview(&self, id: i64) -> Result<SessionPreviewData, String> {
-        let result = if self.shared.is_some() {
-            // Old desktop schemas may not have worktree metadata. Read just
-            // these two scalar columns, never blocks_json/model_settings.
-            let cwd = self.shared_field("worktree_cwd", "NULL");
-            self.conn
-                .query_row(
-                    &format!(
-                        "SELECT substr(model,1,512),substr({cwd},1,4096) FROM sessions WHERE id=?1"
-                    ),
-                    [self.persisted_session_id(id)?],
-                    |row| {
-                        Ok(SessionPreviewData {
-                            model: row.get(0)?,
-                            worktree_cwd: row.get(1)?,
-                        })
-                    },
-                )
-                .optional()
-        } else {
+        if self.shared.is_some() {
+            // Read just these two scalar columns, never blocks_json/model_settings.
+            return self
+                .sql()?
+                .optional(
+                    "SELECT substr(model,1,512),substr(worktree_cwd,1,4096) FROM sessions WHERE id=?1",
+                    args![self.persisted_session_id(id)?],
+                )?
+                .map(|row| {
+                    Ok(SessionPreviewData {
+                        model: row.get(0)?,
+                        worktree_cwd: row.get(1)?,
+                    })
+                })
+                .transpose()
+                .map(Option::unwrap_or_default);
+        }
+        let result = {
             self.conn.query_row(
                 "SELECT CASE WHEN json_valid(value) THEN substr(json_extract(value,'$.model'),1,512) END,
                  CASE WHEN json_valid(value) THEN substr(json_extract(value,'$.worktree_cwd'),1,4096) END

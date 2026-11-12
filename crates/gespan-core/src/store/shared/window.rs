@@ -18,12 +18,10 @@ pub struct HistoryPage {
 
 impl Store {
     pub(super) fn shared_indexed(&self, original: &str) -> Result<bool, String> {
-        Ok(has_table(&self.conn, "pilot_transcripts")?
-            && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
-                [original],
-                |row| row.get::<_, bool>(0),
-            ))?)
+        self.db()?.value(
+            "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
+            args![original],
+        )
     }
     /// The first block sequence of an indexed Pilot's window, chosen once per
     /// store so that every row index handed out for it shares one origin.
@@ -36,19 +34,15 @@ impl Store {
         if let Some(from) = windows.borrow().get(&id) {
             return Ok(Some(*from));
         }
-        let from = if has_table(&self.conn, "pilot_turns")? {
-            sql(self
-                .conn
-                .query_row(
-                    "SELECT seq FROM pilot_turns WHERE session_id=?1 ORDER BY seq DESC LIMIT 1 OFFSET ?2",
-                    params![original, PAGE_TURNS as i64 - 1],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional())?
-            .unwrap_or(0)
-        } else {
-            0
-        };
+        let from = self
+            .db()?
+            .optional(
+                "SELECT seq FROM pilot_turns WHERE session_id=?1 ORDER BY seq DESC LIMIT 1 OFFSET ?2",
+                args![original, PAGE_TURNS as i64 - 1],
+            )?
+            .map(|row| row.get::<i64>(0))
+            .transpose()?
+            .unwrap_or(0);
         windows.borrow_mut().insert(id, from);
         Ok(Some(from))
     }
@@ -58,13 +52,13 @@ impl Store {
         from: i64,
         before: i64,
     ) -> Result<Vec<Value>, String> {
-        let mut query = sql(self.conn.prepare(
+        let records = self.db()?.query(
             "SELECT block_json FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 AND seq<?3 ORDER BY seq",
-        ))?;
-        let mut records = sql(query.query(params![original, from, before]))?;
+            args![original, from, before],
+        )?;
         let mut result = Vec::new();
-        while let Some(record) = sql(records.next())? {
-            result.push(parse(&sql(record.get::<_, String>(0))?)?);
+        for record in records {
+            result.push(parse(&record.get::<String>(0)?)?);
         }
         Ok(result)
     }
@@ -84,11 +78,10 @@ impl Store {
         let Some(from) = self.shared_window(id, &original)? else {
             return Ok(None);
         };
-        let older = sql(self.conn.query_row(
+        let older: bool = self.db()?.value(
             "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND seq<?2)",
-            params![original, from],
-            |row| row.get::<_, bool>(0),
-        ))?;
+            args![original, from],
+        )?;
         Ok(older.then_some(from))
     }
     /// The turns before `before`: one page, or with `all` everything older.
@@ -106,15 +99,16 @@ impl Store {
         }
         let mut start = 0;
         let mut more = false;
-        if !all && has_table(&self.conn, "pilot_turns")? {
-            let mut query = sql(self.conn.prepare(
-                "SELECT seq FROM pilot_turns WHERE session_id=?1 AND seq<?2 ORDER BY seq DESC LIMIT ?3",
-            ))?;
-            let starts = sql(sql(query
-                .query_map(params![original, before, PAGE_TURNS as i64 + 1], |row| {
-                    row.get::<_, i64>(0)
-                }))?
-            .collect::<rusqlite::Result<Vec<_>>>())?;
+        if !all {
+            let starts = self
+                .db()?
+                .query(
+                    "SELECT seq FROM pilot_turns WHERE session_id=?1 AND seq<?2 ORDER BY seq DESC LIMIT ?3",
+                    args![&original, before, PAGE_TURNS as i64 + 1],
+                )?
+                .iter()
+                .map(|row| row.get::<i64>(0))
+                .collect::<Result<Vec<_>, _>>()?;
             if starts.len() > PAGE_TURNS {
                 start = starts[PAGE_TURNS - 1];
                 more = true;
@@ -137,11 +131,10 @@ impl Store {
                 .iter()
                 .any(|b| b["appRequestId"].as_str() == Some(message)));
         }
-        sql(self.conn.query_row(
+        self.db()?.value(
             "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1
              AND json_extract(block_json,'$.appRequestId')=?2)",
-            params![original, message],
-            |row| row.get::<_, bool>(0),
-        ))
+            args![original, message],
+        )
     }
 }

@@ -29,6 +29,7 @@ pub mod machines;
 pub mod mobile;
 pub mod net;
 pub mod notes;
+pub mod orm;
 pub mod outside_turns;
 pub mod pilot;
 pub mod plan;

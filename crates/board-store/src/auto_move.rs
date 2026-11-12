@@ -6,11 +6,11 @@
 //! `needs_input`, `completed`, `failed`, `pr_opened`, `pr_merged`), each
 //! `"default"`, `"stay"` or `{"column": id}`. "Default" is the forward-only
 //! rule both apps used before rules existed.
+use crate::db::{args, query_value, with_tx, Conn};
 use crate::ops::NewActivity;
-use crate::ops::{board_columns, db, get_card, is_archived, log_activity, move_card_in, write_tx};
-use crate::settings::board_settings;
+use crate::ops::{board_columns, get_card_in, is_archived, log_activity, move_card_in};
+use crate::settings::board_settings_in;
 use crate::Column;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -191,49 +191,49 @@ pub fn auto_move_target<'a>(
 
 /// Applies the board's rule to one card and records the event, all in one
 /// write transaction. Returns whether it wrote anything.
-fn apply(conn: &Connection, card_id: &str, event: LinkedEvent) -> Result<Option<String>, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if is_archived(&tx, card_id)? {
-        return Ok(None);
-    }
-    if event.once_per_card() {
-        let fired: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM board_activity WHERE card_id = ?1 AND kind = ?2)",
-                [card_id, event.as_str()],
-                |r| r.get(0),
-            )
-            .map_err(db)?;
-        if fired {
+fn apply(conn: &Conn, card_id: &str, event: LinkedEvent) -> Result<Option<String>, String> {
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        if is_archived(ex, card_id).await? {
             return Ok(None);
         }
-    }
-    let rules = auto_move_rules(&board_settings(&tx, &card.board_id)?);
-    // Only the columns: loading every card per event would scale with the board.
-    let columns = board_columns(&tx, &card.board_id)?;
-    let target = columns
-        .iter()
-        .find(|column| column.id == card.column_id)
-        .and_then(|current| auto_move_target(&columns, current, event, &rules))
-        .map(|column| column.id.clone());
-    if let Some(target) = target {
-        move_card_in(&tx, card_id, &target, usize::MAX, "system")?;
-    }
-    log_activity(
-        &tx,
-        NewActivity {
-            board_id: &card.board_id,
-            card_id: Some(card_id),
-            kind: event.as_str(),
-            actor: "system",
-            from_column: None,
-            to_column: None,
-            detail: None,
-        },
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(Some(card.board_id))
+        if event.once_per_card() {
+            let fired: bool = query_value(
+                ex,
+                "SELECT EXISTS(SELECT 1 FROM board_activity WHERE card_id = ?1 AND kind = ?2)",
+                args![card_id, event.as_str()],
+            )
+            .await?;
+            if fired {
+                return Ok(None);
+            }
+        }
+        let rules = auto_move_rules(&board_settings_in(ex, &card.board_id).await?);
+        // Only the columns: loading every card per event would scale with the board.
+        let columns = board_columns(ex, &card.board_id).await?;
+        let target = columns
+            .iter()
+            .find(|column| column.id == card.column_id)
+            .and_then(|current| auto_move_target(&columns, current, event, &rules))
+            .map(|column| column.id.clone());
+        if let Some(target) = target {
+            move_card_in(ex, card_id, &target, usize::MAX, "system").await?;
+        }
+        log_activity(
+            ex,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind: event.as_str(),
+                actor: "system",
+                from_column: None,
+                to_column: None,
+                detail: None,
+            },
+        )
+        .await?;
+        Ok(Some(card.board_id))
+    })
 }
 
 /// Applies the auto-move rules to every live card linked to `kind`/`reference`:
@@ -244,7 +244,7 @@ fn apply(conn: &Connection, card_id: &str, event: LinkedEvent) -> Result<Option<
 /// returned after every card was tried. Returns the ids of the boards written,
 /// in first-seen order.
 pub fn on_linked_work(
-    conn: &Connection,
+    conn: &Conn,
     kind: &str,
     reference: &str,
     event: LinkedEvent,

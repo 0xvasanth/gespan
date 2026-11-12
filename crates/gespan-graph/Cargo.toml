@@ -9,8 +9,16 @@ publish = false
 # workspace too once gespan-core depends on it, so nothing here inherits from
 # either workspace.
 [dependencies]
-# `cache` adds prepared-statement caching (hashlink only); the SQLite build is
-# the same bundled one board-store uses.
+# The store goes through Toasty (same pin as gespan-core, which registers
+# these models as its Graph kind). Its SQLite driver links this rusqlite.
+toasty = { version = "=0.11.0", features = ["sqlite", "migration"] }
+toasty-core = "=0.11.0"
+toasty-driver-sqlite = "=0.11.0"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# The check for unknown migrations before Toasty opens a file, and the
+# plain connection tests use. The SQLite build is the same bundled one
+# board-store uses.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "hooks"] }
 serde_json = "1"
 thiserror = "2"
