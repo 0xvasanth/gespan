@@ -31,6 +31,7 @@ pub(super) fn kind_status(kind: Kind) -> (&'static str, Tone) {
         Kind::Question => ("Question", Tone::Muted),
         Kind::FlowApproval => ("Flow", Tone::Muted),
         Kind::PilotChoice => ("Choice", Tone::Muted),
+        Kind::DraftReview => ("Review", Tone::Muted),
     }
 }
 
@@ -41,6 +42,7 @@ fn kind_ink(kind: Kind) -> Hsla {
         Kind::Question => gpui::rgb(if is_light() { 0x6d4fd6 } else { 0xc0affc }).into(),
         Kind::FlowApproval => diff_foreground(true),
         Kind::PilotChoice => accent_color(),
+        Kind::DraftReview => Tone::Muted.ink(),
     }
 }
 

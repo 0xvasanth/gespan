@@ -404,3 +404,40 @@ fn scrolling_up_at_the_top_loads_one_page_per_gesture(cx: &mut TestAppContext) {
         "one flick asks for one page, not all of them"
     );
 }
+
+#[gpui::test]
+fn a_draft_review_is_answered_from_its_card(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    let mut draft = task("d", Kind::DraftReview, "/work/web", 5);
+    draft.source = Source::DraftReview {
+        run: "run-7".into(),
+        url: "https://github.com/o/r/pull/1".into(),
+    };
+    draft.body = Body::DraftReview {
+        body: "Looks close; two nits.".into(),
+        comments: Vec::new(),
+        outside: 0,
+    };
+    show(window, &mut visual, vec![draft]);
+    assert_eq!(shown(&mut visual, &["d"]), ["d"], "the draft has a row");
+    assert_eq!(list::kind_status(Kind::DraftReview).0, "Review");
+
+    let decided = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = decided.clone();
+    let _sub = window
+        .update(&mut visual, |_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
+                if let Event::DraftDecide { run, submit } = event {
+                    seen.borrow_mut().push((run.clone(), *submit));
+                }
+            })
+        })
+        .unwrap();
+    click(&mut visual, "my-tasks-draft-submit");
+    click(&mut visual, "my-tasks-draft-keep");
+    assert_eq!(
+        *decided.borrow(),
+        [("run-7".to_owned(), true), ("run-7".to_owned(), false)],
+        "Submit submits and Keep as draft keeps it, for the run that left it"
+    );
+}
