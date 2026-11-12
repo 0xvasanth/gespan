@@ -54,10 +54,23 @@ pub(crate) fn subcommand<'a>(args: &[&'a str]) -> &'a str {
 pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     git_with(cwd, args, &[])
 }
+/// Runs a Git command whose failure is an ordinary answer ("not a repository",
+/// "no remotes"), so it records no failure metric. `None` unless Git exits 0.
+pub(crate) fn git_probe(cwd: &Path, args: &[&str]) -> Option<String> {
+    match git_answer(cwd, args, &[], None) {
+        Ok((Some(0), stdout)) => String::from_utf8(stdout).ok(),
+        _ => None,
+    }
+}
+
 /// The URL of a repository's `origin` remote, or of its first remote
 /// alphabetically when there is no `origin`. `None` when it has no remotes.
+/// Only the repository's own config is read, never global or system config.
 pub(crate) fn origin_url(root: &Path) -> Option<String> {
-    let out = git(root, &["config", "--get-regexp", r"^remote\..*\.url$"]).ok()?;
+    let out = git_probe(
+        root,
+        &["config", "--local", "--get-regexp", r"^remote\..*\.url$"],
+    )?;
     let mut remotes: Vec<(&str, &str)> = out
         .lines()
         .filter_map(|line| {

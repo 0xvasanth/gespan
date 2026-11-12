@@ -1,3 +1,4 @@
+use crate::decisions::scope::strip_verbatim;
 use crate::decisions::{normalize_remote, scope_for, shared_file};
 use gespan_memory::Scope;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,16 @@ fn commit_empty(dir: &Path) {
     git(dir, &["commit", "-q", "--allow-empty", "-m", "init"]);
 }
 
+fn root_of(dir: &Path) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-list", "--max-parents=0", "HEAD"])
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim()[..12].to_owned()
+}
+
 fn canon(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap()
 }
@@ -48,14 +59,14 @@ fn normalize_remote_unifies_spellings() {
 }
 
 #[test]
-fn normalize_remote_drops_the_port() {
+fn normalize_remote_keeps_the_port() {
     assert_eq!(
         normalize_remote("ssh://git@git.example.com:2222/o/r.git"),
-        "git.example.com/o/r"
+        "git.example.com:2222/o/r"
     );
-    assert_eq!(
+    assert_ne!(
         normalize_remote("https://git.example.com:8443/o/r"),
-        "git.example.com/o/r"
+        normalize_remote("https://git.example.com/o/r")
     );
 }
 
@@ -85,7 +96,11 @@ fn scope_for_repo_with_origin_is_repo() {
         dir.path(),
         &["remote", "add", "origin", "git@github.com:O/R.git"],
     );
-    assert_eq!(scope_for(dir.path()), Scope::Repo("github.com/o/r".into()));
+    commit_empty(dir.path());
+    assert_eq!(
+        scope_for(dir.path()),
+        Scope::Repo(format!("github.com/o/r@{}", root_of(dir.path())))
+    );
 }
 
 #[test]
@@ -97,7 +112,11 @@ fn scope_for_prefers_origin_over_other_remotes() {
         dir.path(),
         &["remote", "add", "origin", "https://h.com/o/r"],
     );
-    assert_eq!(scope_for(dir.path()), Scope::Repo("h.com/o/r".into()));
+    commit_empty(dir.path());
+    assert_eq!(
+        scope_for(dir.path()),
+        Scope::Repo(format!("h.com/o/r@{}", root_of(dir.path())))
+    );
 }
 
 #[test]
@@ -106,7 +125,11 @@ fn scope_for_without_origin_uses_first_remote_alphabetically() {
     init_repo(dir.path());
     git(dir.path(), &["remote", "add", "zeta", "https://h.com/z/z"]);
     git(dir.path(), &["remote", "add", "alpha", "https://h.com/a/a"]);
-    assert_eq!(scope_for(dir.path()), Scope::Repo("h.com/a/a".into()));
+    commit_empty(dir.path());
+    assert_eq!(
+        scope_for(dir.path()),
+        Scope::Repo(format!("h.com/a/a@{}", root_of(dir.path())))
+    );
 }
 
 #[test]
@@ -171,7 +194,7 @@ fn worktree_and_main_checkout_share_scope_and_shared_file() {
 }
 
 #[test]
-fn worktree_without_remote_shares_the_shared_file_but_not_the_project_scope() {
+fn worktree_without_remote_shares_project_scope_and_shared_file() {
     let dir = TempDir::new().unwrap();
     let main = dir.path().join("main");
     std::fs::create_dir(&main).unwrap();
@@ -190,16 +213,94 @@ fn worktree_without_remote_shares_the_shared_file_but_not_the_project_scope() {
         ],
     );
     let data = TempDir::new().unwrap();
-    let (a, b) = (
+    assert_eq!(
         shared_file(&main, data.path()),
-        shared_file(&wt, data.path()),
+        shared_file(&wt, data.path())
     );
-    assert_eq!(a, b);
-    // Each checkout is its own project when there is no remote to unify them.
     let (Scope::Project(pa), Scope::Project(pb)) = (scope_for(&main), scope_for(&wt)) else {
         panic!("expected project scopes");
     };
-    assert_ne!(canon(Path::new(&pa)), canon(Path::new(&pb)));
+    assert_eq!(pa, pb);
+    assert_eq!(canon(Path::new(&pa)), canon(&main));
+}
+
+#[test]
+fn same_remote_url_with_unrelated_histories_is_a_different_scope() {
+    let (a, b) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    for (dir, msg) in [(&a, "one"), (&b, "two")] {
+        init_repo(dir.path());
+        git(
+            dir.path(),
+            &["remote", "add", "origin", "https://h.com/o/r"],
+        );
+        git(dir.path(), &["commit", "-q", "--allow-empty", "-m", msg]);
+    }
+    assert_ne!(scope_for(a.path()), scope_for(b.path()));
+}
+
+#[test]
+fn clone_with_the_same_origin_url_shares_the_scope() {
+    let parent = TempDir::new().unwrap();
+    let original = parent.path().join("original");
+    std::fs::create_dir(&original).unwrap();
+    init_repo(&original);
+    commit_empty(&original);
+    git(
+        &original,
+        &["remote", "add", "origin", "git@github.com:O/R.git"],
+    );
+    let clone = parent.path().join("clone");
+    git(
+        parent.path(),
+        &[
+            "clone",
+            "-q",
+            original.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    git(
+        &clone,
+        &["remote", "set-url", "origin", "https://github.com/o/r"],
+    );
+    assert_eq!(scope_for(&original), scope_for(&clone));
+}
+
+#[test]
+fn remote_without_commits_is_a_project_scope() {
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+    git(
+        dir.path(),
+        &["remote", "add", "origin", "https://h.com/o/r"],
+    );
+    assert!(matches!(scope_for(dir.path()), Scope::Project(_)));
+}
+
+#[test]
+fn strip_verbatim_removes_windows_prefixes() {
+    assert_eq!(strip_verbatim(r"\\?\C:\Users\me"), r"C:\Users\me");
+    assert_eq!(strip_verbatim(r"\\?\UNC\host\share\x"), r"\\host\share\x");
+    assert_eq!(strip_verbatim(r"C:\Users\me"), r"C:\Users\me");
+    assert_eq!(strip_verbatim("/home/me"), "/home/me");
+}
+
+#[test]
+fn scope_lookups_in_non_git_and_remoteless_dirs_record_no_git_failures() {
+    use crate::diagnostics::metrics::capture;
+    let plain = TempDir::new().unwrap();
+    let repo = TempDir::new().unwrap();
+    init_repo(repo.path());
+    commit_empty(repo.path());
+    let data = TempDir::new().unwrap();
+    let (_, counts) = capture(|| {
+        for dir in [plain.path(), repo.path()] {
+            scope_for(dir);
+            shared_file(dir, data.path());
+        }
+    });
+    let git_counts: Vec<_> = counts.iter().filter(|c| c.name == "git.command").collect();
+    assert!(git_counts.is_empty(), "{git_counts:?}");
 }
 
 #[test]

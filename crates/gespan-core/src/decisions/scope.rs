@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Reduces a remote URL to `host/owner/repo`: lowercase, with no scheme, user,
-/// port, `.git` suffix or trailing slash. Local paths keep their path, lowercased
+/// `.git` suffix or trailing slash. A port stays, since another port can be
+/// another server. Local paths keep their path, lowercased
 /// with `/` separators.
 pub fn normalize_remote(url: &str) -> String {
     let url = url.trim().to_lowercase().replace('\\', "/");
@@ -38,19 +39,20 @@ fn scp_like(url: &str) -> Option<(&str, &str)> {
     Some((left, path.trim_start_matches('/')))
 }
 
-/// The host of `user@host:port`, without the user or the port.
+/// The host of `user@host:port`, without the user.
 fn host_of(authority: &str) -> &str {
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    host.split_once(':').map_or(host, |(h, _)| h)
+    authority.rsplit_once('@').map_or(authority, |(_, h)| h)
 }
 
-/// The decision scope of a workspace: its remote (`origin`, else the first
-/// remote) as `Repo`, otherwise `Project` with the canonical checkout path.
+/// The decision scope of a workspace. A remote alone must not merge scopes, so
+/// `Repo` is the remote plus the first 12 hex digits of the root commit: a
+/// clone shares it, an unrelated repository with the same URL does not.
+/// Without a remote or a commit it is `Project` with the main checkout's path.
 pub fn scope_for(workspace: &Path) -> Scope {
-    match crate::git::origin_url(workspace) {
-        Some(url) => Scope::Repo(normalize_remote(&url)),
-        None => Scope::Project(project_path(workspace)),
+    if let (Some(url), Some(root)) = (crate::git::origin_url(workspace), root_commit(workspace)) {
+        return Scope::Repo(format!("{}@{root}", normalize_remote(&url)));
     }
+    Scope::Project(project_path(workspace))
 }
 
 /// The shared decision file: `<git common dir>/gespan/decisions.md`, so every
@@ -66,28 +68,54 @@ pub fn shared_file(workspace: &Path, data_dir: &Path) -> PathBuf {
     data_dir.join("decisions").join(format!("{name}.md"))
 }
 
+/// The first 12 hex digits of the smallest root commit; `None` with no commits.
+fn root_commit(workspace: &Path) -> Option<String> {
+    let out = crate::git::git_probe(workspace, &["rev-list", "--max-parents=0", "HEAD"])?;
+    let root = out.lines().map(str::trim).filter(|l| !l.is_empty()).min()?;
+    Some(root.chars().take(12).collect())
+}
+
 fn git_common_dir(workspace: &Path) -> Option<PathBuf> {
-    let out = crate::git::git(
+    let out = crate::git::git_probe(
         workspace,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()?;
+    )?;
     let out = out.trim();
     (!out.is_empty()).then(|| PathBuf::from(out))
 }
 
-/// The checkout's top level inside a repository, otherwise the canonical path.
+/// The project's path: the main checkout of a repository (so its worktrees
+/// agree), otherwise the workspace itself, canonicalized.
 fn project_path(workspace: &Path) -> String {
-    let top = crate::git::git(workspace, &["rev-parse", "--show-toplevel"])
-        .ok()
-        .map(|t| t.trim().to_owned())
-        .filter(|t| !t.is_empty());
-    let path = match top {
-        Some(top) => PathBuf::from(top),
-        None => workspace.to_path_buf(),
-    };
-    std::fs::canonicalize(&path)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
+    let path = main_checkout(workspace).unwrap_or_else(|| workspace.to_path_buf());
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    strip_verbatim(&path.to_string_lossy())
+}
+
+fn main_checkout(workspace: &Path) -> Option<PathBuf> {
+    let common = git_common_dir(workspace)?;
+    let bare = crate::git::git_probe(workspace, &["config", "--bool", "core.bare"])
+        .is_some_and(|v| v.trim() == "true");
+    if bare {
+        return Some(common);
+    }
+    if common.file_name().is_some_and(|n| n == ".git") {
+        return common.parent().map(Path::to_path_buf);
+    }
+    // A separate git dir: the checkout cannot be derived from it.
+    let top = crate::git::git_probe(workspace, &["rev-parse", "--show-toplevel"])?;
+    let top = top.trim();
+    (!top.is_empty()).then(|| PathBuf::from(top))
+}
+
+/// Windows canonicalization yields `\\?\C:\x` and `\\?\UNC\h\s`; drop the
+/// verbatim prefix so one folder has one key and one hash.
+pub(crate) fn strip_verbatim(path: &str) -> String {
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_owned()
+    } else {
+        path.to_owned()
+    }
 }
