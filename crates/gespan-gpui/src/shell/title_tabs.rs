@@ -131,7 +131,8 @@ impl Shell {
 
     /// Whether `tab` can draw at all, whichever project it belongs to: its
     /// app view is turned on, its session's summary is loaded, its pilot
-    /// still exists.
+    /// still exists in a project the sidebar lists. A removed project's
+    /// Pilot tab, saved by an older build, stays hidden.
     pub(super) fn tab_drawable(&self, tab: &TitleTab, cx: &App) -> bool {
         match tab {
             TitleTab::App(view) => {
@@ -147,8 +148,13 @@ impl Shell {
                             .session_for_pane(self.workspace.scope_pane(*tab)),
                     )
             }
-            TitleTab::Pilot { id, .. } => {
+            TitleTab::Pilot { id, project, .. } => {
                 self.workspace.preferences.pilots
+                    && self
+                        .workspace
+                        .projects
+                        .iter()
+                        .any(|p| path_key(p) == path_key(project))
                     && self
                         .pilots
                         .as_ref()

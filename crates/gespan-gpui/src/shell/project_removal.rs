@@ -161,6 +161,16 @@ impl Shell {
         for pane in panes {
             self.close_pane(pane, window, cx);
         }
+        // Its Pilot tabs go too, pins included, so no chip is left behind.
+        let key = gespan_core::files::path_key(path);
+        let gone = |tab: &TitleTab| {
+            matches!(tab, TitleTab::Pilot { project, .. }
+                if gespan_core::files::path_key(project) == key)
+        };
+        self.workspace.title_order.retain(|tab| !gone(tab));
+        self.workspace.scope_focus.retain(|_, tab| !gone(tab));
+        self.workspace.tab_focused_at.retain(|tab, _| !gone(tab));
+        self.workspace.prune_pinned_tabs();
         self.workspace.projects.retain(|p| p != path);
         if self.workspace.project == path {
             let next = self

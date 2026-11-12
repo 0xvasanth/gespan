@@ -1684,3 +1684,92 @@ fn a_running_pilot_tab_stays_until_it_is_idle(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Starts a Pilot in `project`, then goes back to /work/gespan. Returns the
+/// Pilot's id and its tab.
+fn pilot_in(
+    window: gpui::WindowHandle<Shell>,
+    project: &str,
+    cx: &mut TestAppContext,
+) -> (String, TitleTab) {
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            shell.select_project(project.into(), w, cx);
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tab = window
+        .update(cx, |shell, w, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            shell.select_project("/work/gespan".into(), w, cx);
+            tab
+        })
+        .unwrap();
+    cx.run_until_parked();
+    (pilot, tab)
+}
+
+fn has_group(shell: &Shell, project: &str, cx: &App) -> bool {
+    groups(shell.strip_entries(cx))
+        .iter()
+        .any(|(p, _)| p == project)
+}
+
+#[gpui::test]
+fn archiving_a_project_drops_its_pilot_tabs(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = window(cx);
+    let (_, tab) = pilot_in(window, "/work/another-project", cx);
+    window
+        .update(cx, |shell, w, cx| {
+            assert!(shell.workspace.title_order.contains(&tab));
+            shell.toggle_pin_tab(tab.clone(), cx);
+            shell.archive_project("/work/another-project", w, cx);
+            assert!(!shell.workspace.title_order.contains(&tab));
+            assert!(!shell.workspace.pinned_tabs.contains(&tab));
+            assert!(!shell.workspace.tab_focused_at.contains_key(&tab));
+            assert!(!has_group(shell, "/work/another-project", cx));
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(!drawn(visual, "tab-group-chip-another-project".into()));
+    assert!(drawn(visual, "tab-group-chip-gespan".into()));
+}
+
+#[gpui::test]
+fn a_saved_pilot_tab_of_an_unknown_project_draws_no_group(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = window(cx);
+    let (pilot, _) = pilot_in(window, "/work/gespan", cx);
+    // An older build kept a removed project's Pilot tab, pinned and not.
+    let stale = |project: &str| TitleTab::Pilot {
+        id: pilot.clone(),
+        project: project.into(),
+        worktree: project.into(),
+    };
+    window
+        .update(cx, |shell, _, cx| {
+            shell.workspace.title_order.push(stale("/work/gone"));
+            shell.workspace.title_order.push(stale("/work/pinned-gone"));
+            shell.workspace.pinned_tabs.push(stale("/work/pinned-gone"));
+            assert!(!shell.workspace.projects.iter().any(|p| p.contains("gone")));
+            assert!(!has_group(shell, "/work/gone", cx));
+            assert!(!shell.tab_drawable(&stale("/work/gone"), cx));
+            assert!(
+                !shell
+                    .pinned_visible(cx)
+                    .contains(&stale("/work/pinned-gone"))
+            );
+            assert!(!shell.visible_tabs(cx).contains(&stale("/work/gone")));
+            shell.invalidate_chrome(cx);
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(!drawn(visual, "tab-group-chip-gone".into()));
+    assert!(drawn(visual, "tab-group-chip-another-project".into()));
+}
