@@ -7,11 +7,20 @@ use crate::theme::*;
 use gespan_core::agent::{Approval, Decision};
 use gespan_core::tasks::{Filter, History, Kind};
 use gpui::{
-    Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Window, div, prelude::*,
+    Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Window, div,
+    prelude::*,
 };
 
+mod card;
 mod filter;
+mod history;
 mod list;
+mod pane;
+
+/// Turns of history each "Load earlier" adds.
+pub(crate) const HISTORY_PAGE: usize = 4;
+/// The card's largest share of the pane's height.
+const CARD_MAX_HEIGHT: f32 = 0.62;
 
 /// Where a task comes from, so the page can open it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +94,9 @@ pub(crate) struct MyTasks {
     filter: Filter,
     filters_open: bool,
     filter_anchor: AnchorSlot,
+    /// A Flow approval's note.
+    pub(crate) note: Entity<Input>,
+    history_scroll: ScrollHandle,
     _search_changed: Subscription,
 }
 
@@ -109,6 +121,9 @@ impl MyTasks {
             filter: Filter::default(),
             filters_open: false,
             filter_anchor: AnchorSlot::default(),
+            note: cx
+                .new(|cx| Input::field("Note for the run", "Note (optional)", content(0.4), cx)),
+            history_scroll: ScrollHandle::new(),
             _search_changed,
         }
     }
@@ -141,6 +156,7 @@ impl MyTasks {
         cx: &mut Context<Self>,
     ) {
         gespan_core::tasks::order(&mut tasks, |t| t.since_ms);
+        let before = self.selected.clone();
         let was = self
             .selected
             .as_ref()
@@ -152,8 +168,12 @@ impl MyTasks {
                 .and_then(|at| tasks.get(at.min(tasks.len().saturating_sub(1))))
                 .map(|t| t.key.clone()),
         };
+        let moved = self.selected != before;
         self.tasks = tasks;
         self.now_ms = now_ms;
+        if moved {
+            self.selection_changed(cx);
+        }
         cx.notify();
     }
 
@@ -196,10 +216,44 @@ impl MyTasks {
     }
 
     pub(crate) fn select(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.tasks.iter().any(|t| t.key == key) {
+        if self.tasks.iter().any(|t| t.key == key) && self.selected.as_deref() != Some(key) {
             self.selected = Some(key.into());
+            self.selection_changed(cx);
             cx.notify();
         }
+    }
+
+    /// A new task is on the card: its note starts empty and its history
+    /// opens on the latest turn.
+    fn selection_changed(&mut self, cx: &mut Context<Self>) {
+        self.note
+            .update(cx, |note, cx| note.set_text(String::new(), cx));
+        self.history_scroll.scroll_to_bottom();
+    }
+
+    /// "2 of 5": the card's place among the tasks shown.
+    pub(crate) fn position(&self, cx: &gpui::App) -> String {
+        let shown = self.visible(cx);
+        let at = self
+            .selected_in(&shown)
+            .and_then(|t| shown.iter().position(|s| s.key == t.key))
+            .map_or(0, |at| at + 1);
+        format!("{at} of {}", shown.len())
+    }
+
+    /// Moves the card `by` tasks through those shown, wrapping at either end.
+    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let shown = self.visible(cx);
+        if shown.is_empty() {
+            return;
+        }
+        let at = self
+            .selected_in(&shown)
+            .and_then(|t| shown.iter().position(|s| s.key == t.key))
+            .unwrap_or(0) as isize;
+        let len = shown.len() as isize;
+        let key = shown[(at + by).rem_euclid(len) as usize].key.clone();
+        self.select(&key, cx);
     }
 }
 
@@ -213,6 +267,7 @@ impl Render for MyTasks {
             .flex()
             .text_color(content(1.))
             .child(self.list_column(cx))
+            .child(self.task_pane(cx))
             .when(self.filters_open, |d| d.child(self.filter_menu(cx)))
     }
 }

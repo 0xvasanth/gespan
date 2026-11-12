@@ -6048,3 +6048,41 @@ fn a_pilot_choices_card_is_a_task_until_the_user_replies(cx: &mut TestAppContext
     post("user", "ae!29".into(), visual);
     assert!(tasks(visual).is_empty());
 }
+
+#[gpui::test]
+fn choosing_a_pilot_option_on_my_tasks_sends_it_to_the_pilot(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    s.window
+        .update(visual, |shell, window, cx| {
+            let chat = s.manager.read(cx).chats[&s.id].clone();
+            chat.update(cx, |v, cx| {
+                v.pilot_post("assistant", "Which first?".into(), cx)
+                    .unwrap();
+                v.pilot_post(
+                    "pilot-card",
+                    serde_json::json!({"type": "choices", "options": ["ae!29", "ae!31"]})
+                        .to_string(),
+                    cx,
+                )
+                .unwrap();
+            });
+            shell.open_my_tasks(window, cx);
+            shell.refresh_my_tasks(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let bounds = visual
+        .debug_bounds("my-tasks-choice-1")
+        .expect("the second option is a button");
+    visual.simulate_click(bounds.center(), Default::default());
+    visual.run_until_parked();
+    let sent = s
+        .manager
+        .read_with(visual, |m, _| m.roster.get(&s.id).unwrap().outbox.clone())
+        .pop()
+        .expect("the choice was sent");
+    assert_eq!(sent.text, "ae!31");
+}

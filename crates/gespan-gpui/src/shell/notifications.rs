@@ -376,7 +376,7 @@ impl Shell {
         views
     }
 
-    fn notification_chat(&self, id: i64, cx: &App) -> Option<Entity<Conversation>> {
+    pub(super) fn notification_chat(&self, id: i64, cx: &App) -> Option<Entity<Conversation>> {
         self.sessions
             .get(&id)
             .cloned()

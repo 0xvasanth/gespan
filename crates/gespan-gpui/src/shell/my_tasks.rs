@@ -3,7 +3,7 @@
 //! the Pilots and the Flow store.
 use super::*;
 use crate::conversation::approval_card::Card;
-use crate::my_tasks::{Body, MyTasks, Source, TaskItem};
+use crate::my_tasks::{self, Body, MyTasks, Source, TaskItem};
 use gespan_core::tasks::{self, History, Kind};
 
 /// Turns of history a task opens with, and how many each "load more" adds.
@@ -163,10 +163,75 @@ impl Shell {
         found
     }
 
-    pub(super) fn open_my_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_my_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.prepare_app_view(window, cx);
-        self.ensure_my_tasks(cx);
+        let view = self.ensure_my_tasks(cx);
+        if self.my_tasks_events.is_none() {
+            self.my_tasks_events = Some(cx.subscribe_in(
+                &view,
+                window,
+                |this, _, event: &my_tasks::Event, window, cx| {
+                    this.route_my_task(event, window, cx)
+                },
+            ));
+        }
+        self.refresh_my_tasks(cx);
         self.show_app_view(app_views::AppView::MyTasks, window, cx);
+    }
+
+    /// Sends an answer from the page where the request came from, then
+    /// refreshes the list so the answered task leaves it.
+    fn route_my_task(
+        &mut self,
+        event: &my_tasks::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            my_tasks::Event::Decide {
+                session,
+                request,
+                decision,
+            } => {
+                if let Some(view) = self.notification_chat(*session, cx) {
+                    view.update(cx, |view, cx| {
+                        view.decide_notification_request(request, decision.clone(), cx)
+                    });
+                }
+            }
+            my_tasks::Event::FlowDecide {
+                run,
+                approved,
+                note,
+            } => {
+                if let Err(error) = self.resolve_flow_approval(run, *approved, note, cx) {
+                    self.error = Some(error);
+                }
+            }
+            my_tasks::Event::Choose { pilot, text } => {
+                if let Some(pilots) = self.pilots.clone() {
+                    pilots.update(cx, |pilots, cx| pilots.choose(pilot, text, cx));
+                }
+            }
+            my_tasks::Event::Open(source) => match source {
+                Source::Session(id) => self.open(*id, window, cx),
+                Source::FlowRun(_) => self.open_flows(window, cx),
+                Source::Pilot { pilot, .. } => {
+                    if let Some(pilots) = self.pilots.clone() {
+                        self.workspace.right_panel_open = true;
+                        pilots.update(cx, |pilots, cx| pilots.open(pilot, window, cx));
+                    }
+                }
+            },
+            my_tasks::Event::LoadEarlier(key) => {
+                let turns = self
+                    .my_task_turns
+                    .entry(key.clone())
+                    .or_insert(HISTORY_TURNS);
+                *turns += my_tasks::HISTORY_PAGE;
+            }
+        }
+        self.refresh_my_tasks(cx);
     }
 
     #[cfg(test)]

@@ -106,9 +106,23 @@ impl Conversation {
         self.questions.front().map(|(card, _)| card.clone())
     }
 
-    /// The session's history rows, as saved.
+    /// Every loaded row of the session's history, older pages included.
     pub(crate) fn history_rows<'a>(&self, cx: &'a gpui::App) -> &'a [gespan_core::transcript::Row] {
-        self.transcript.read(cx).source_rows()
+        self.transcript.read(cx).history_rows()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_history_for_test(&mut self, role: &str, text: &str, cx: &mut Context<Self>) {
+        let row = gespan_core::transcript::Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: Some(1_000),
+        };
+        self.transcript.update(cx, |t, cx| {
+            let at = t.source_rows().len();
+            t.patch(at, vec![row], cx);
+        });
     }
 
     #[cfg(test)]

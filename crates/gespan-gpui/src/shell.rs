@@ -776,6 +776,7 @@ pub(crate) struct Shell {
     my_task_seen: HashMap<String, u64>,
     /// Turns of history each task shows, once the user loaded more.
     my_task_turns: HashMap<String, usize>,
+    my_tasks_events: Option<Subscription>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1204,6 +1205,7 @@ impl Shell {
             my_tasks: None,
             my_task_seen: HashMap::new(),
             my_task_turns: HashMap::new(),
+            my_tasks_events: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
