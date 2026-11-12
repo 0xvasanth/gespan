@@ -1,0 +1,63 @@
+crates/gespan-core/src/automations.rs
+  s_f33dd6ecc3b42a::t_b755f0d9b8db17 116-119,346,801-808,813-814,1242-1309,1311-1349,1573-1592,3232-3317,3327-3360,3362-3385
+crates/gespan-core/src/inbox.rs
+  s_f33dd6ecc3b42a::t_188a31785ede19 728-746,1422
+crates/gespan-core/src/provider.rs
+  s_6549201e50b654::t_a5f52333101711 39,573,582,591,602-611,625,673,693,704
+crates/gespan-core/src/provider/acp.rs
+  s_6549201e50b654::t_ad1832b744ecf3 171,181,188,435,438,523,529,540,551,946-947,956-957,978
+crates/gespan-core/src/provider/claude.rs
+  s_6549201e50b654::t_eda51943acc2b4 5,38,52,62,69,106
+crates/gespan-core/src/provider/codex.rs
+  s_6549201e50b654::t_a9eb5269980a82 202,369
+crates/gespan-core/src/provider/lifecycle.rs
+  s_6549201e50b654::t_3b20ac2d262b49 160,365
+crates/gespan-core/src/provider/opencode/client.rs
+  s_6549201e50b654::t_89f0ce06386385 428,433-436,439,505
+crates/gespan-core/src/provider/opencode/events.rs
+  s_6549201e50b654::t_2a33fa34d7e6f3 444,446,460
+crates/gespan-core/src/provider/pi.rs
+  s_6549201e50b654::t_917ab34bb1b11e 37
+crates/gespan-gpui/src/automations.rs
+  s_f33dd6ecc3b42a::t_87d1eb64dabeb0 13,24-25,88-97,170-179,238-242,265-276,302-318,564-577,580-584,594,597-701,711-713,723-725,935-936,938,940,945-946,956-971,985-986,991,999,1002-1004,1020,1030-1044,1062-1065,1174,1189,1203-1205,1210,1320-1334
+crates/gespan-gpui/src/automations/editor.rs
+  s_f33dd6ecc3b42a::t_5188491d6dbf48 4-87,219-309,637-638,644-649,690-691,695-714,724-725,823,839,1016,1114,1187-1188
+crates/gespan-gpui/src/automations/gallery.rs
+  s_f33dd6ecc3b42a::t_1ecfed5e645bb4 16,150-152
+crates/gespan-gpui/src/automations/layout.rs
+  s_f33dd6ecc3b42a::t_43f3d49c11c90e 308,345-348,391-397
+crates/gespan-gpui/src/automations/layout_tests.rs
+  s_f33dd6ecc3b42a::t_5fc64e36be751d 11,13,29,58,73,82,341-348,648-692,695,697-698,703-708,710,714-715,718,720-793,795-824,826-831,833-834,838-865,869,871-877,879-881,883-918,920-922,924,926-927,930-943,946,952-956,958-975,979,981-995,997-998,1000-1008,1011-1050,1054,1056-1059,1061-1073,1075-1077,1079-1085,1088-1089,1091-1093,1096-1099,1102-1103,1105-1106,1111,1114,1116-1124,1129,1133-1143,1146-1148,1151-1154,1156-1159,1164,1166-1170,1172-1174,1176-1178,1180-1190,1194-1195,1197-1198,1200-1204,1206-1207,1210-1211,1213,1215,1217-1218
+crates/gespan-gpui/src/automations/templates.json
+  s_6549201e50b654::t_cad5fb10790773 73,76,78-92
+crates/gespan-gpui/src/shell.rs
+  s_f33dd6ecc3b42a::t_bcc29d251a578b 9323-9328
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_6549201e50b654::t_70b05f5641ce00 491,536,546,597-601
+crates/gespan-gpui/src/shell/automation_runs_tests.rs
+  s_f33dd6ecc3b42a::t_e3060f3742c491 8,1816-1863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52d7068f87b0b1c67b48ddc1ccb5dae7d8ad620a",
+  "prompts": {},
+  "sessions": {
+    "s_6549201e50b654": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c1a5de22-c6e1-4b13-9ec9-6d4a9964a0ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_f33dd6ecc3b42a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8338d099-703b-4330-b9ce-83cf46d8cb82",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
